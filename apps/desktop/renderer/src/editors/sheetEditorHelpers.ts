@@ -614,53 +614,102 @@ export function makeIncrementalRecalcState(): IncrementalRecalcState {
 }
 
 /**
- * Apply a single-cell edit to a `rows` array while preserving the
- * reference identity of every row that was NOT touched. Returns a new
- * top-level array (so React's `setSheet` sees a fresh `rows` ref and
- * commits a render) where the target row is a freshly-cloned array
- * with the new value written at `colIdx`, and every other row is the
- * same reference that was passed in.
+ * A single (row, col) → value edit to feed into
+ * {@link updateCellsInRows}. The convenience
+ * {@link updateCellInRows} wraps a one-element batch.
+ */
+export interface CellEdit {
+  row: number;
+  col: number;
+  value: string;
+}
+
+/**
+ * Apply one-or-more cell edits to a `rows` array while preserving the
+ * reference identity of every row that was NOT touched.
+ *
+ * Returns a new top-level array (so React's `setSheet` sees a fresh
+ * `rows` ref and commits a render). Each row that holds at least one
+ * edited cell is freshly cloned exactly once and then mutated
+ * in-place for subsequent edits on the same row; every other row is
+ * the same reference that was passed in.
  *
  * Why this matters: {@link incrementalRecalc} short-circuits unchanged
  * rows with an O(1) `prevRow === nextRow` check (see the main diff
  * loop). The naive shape — `rows.map((r) => [...r])` — clones every
  * row on every edit, defeating that skip and forcing the diff into
  * O(rows × cols) cell-by-cell comparison even for a single-cell
- * keystroke. With this helper, the diff cost stays at
- * O(cols_of_edited_row) per keystroke.
+ * keystroke (per-keystroke `updateCell` is the worst offender, but the
+ * same waste applies to bulk Delete and fill-series operations on a
+ * tall sheet). With this helper, the diff cost stays at
+ * O(cols_of_edited_rows) per state update — regardless of how many
+ * cells were edited together, only the affected rows pay the cost.
  *
  * Also handles row + column extension:
- *  - If `rowIdx` is past the end of `rows`, blank rows are appended
- *    (each padded to `columnCount`) until index `rowIdx` exists.
- *  - If `colIdx` is past the end of the target row, the target row is
- *    extended with empty strings so the new value fits.
+ *  - If any edit's `row` is past the end of `rows`, blank rows are
+ *    appended (each padded to `columnCount`) until that index exists.
+ *  - If an edit's `col` is past the end of the target row, the target
+ *    row is extended with empty strings so the new value fits.
  *
  * The target row's clone is shallow — cells are strings (primitives),
  * so identity is value identity. Newly-appended rows are fresh arrays
  * full of `""`; they have no pre-existing reference to preserve.
+ *
+ * The input row type is `ReadonlyArray<string[]>` — the top-level
+ * array is read-only (we slice into a fresh `string[][]`), but the
+ * individual rows are typed as `string[]` because that matches the
+ * actual `SheetContent.rows` shape and lets us avoid an unsafe cast
+ * before slicing.
+ */
+export function updateCellsInRows(
+  rows: ReadonlyArray<string[]>,
+  columnCount: number,
+  edits: ReadonlyArray<CellEdit>,
+): string[][] {
+  // `slice()` preserves every existing row's array reference in the
+  // new top-level array. Touched rows are replaced below; everything
+  // else survives by reference.
+  const newRows: string[][] = rows.slice();
+  // Track which row indices already hold a freshly-cloned array so
+  // multiple edits to the same row mutate the clone in place rather
+  // than re-cloning it.
+  const cloned = new Set<number>();
+  for (const { row, col, value } of edits) {
+    while (newRows.length <= row) {
+      // Auto-extended rows are fresh arrays with no aliasing
+      // concern — count them as already-cloned so further edits
+      // mutate them directly.
+      const fresh = new Array<string>(columnCount).fill("");
+      newRows.push(fresh);
+      cloned.add(newRows.length - 1);
+    }
+    if (!cloned.has(row)) {
+      newRows[row] = newRows[row].slice();
+      cloned.add(row);
+    }
+    const targetRow = newRows[row];
+    while (targetRow.length <= col) {
+      targetRow.push("");
+    }
+    targetRow[col] = value;
+  }
+  return newRows;
+}
+
+/**
+ * Convenience single-edit wrapper around {@link updateCellsInRows}.
+ * Used by `SheetEditor.updateCell` (per-keystroke path).
  */
 export function updateCellInRows(
-  rows: ReadonlyArray<ReadonlyArray<string>>,
+  rows: ReadonlyArray<string[]>,
   columnCount: number,
   rowIdx: number,
   colIdx: number,
   value: string,
 ): string[][] {
-  // `slice()` preserves every existing row's array reference in the
-  // new top-level array. Only the target row is replaced below.
-  const newRows: string[][] = (rows as ReadonlyArray<string[]>).slice();
-  while (newRows.length <= rowIdx) {
-    newRows.push(new Array(columnCount).fill(""));
-  }
-  // Clone ONLY the target row before mutation. Every other entry in
-  // `newRows` is still a reference into the original `rows`.
-  const targetRow = newRows[rowIdx].slice();
-  while (targetRow.length <= colIdx) {
-    targetRow.push("");
-  }
-  targetRow[colIdx] = value;
-  newRows[rowIdx] = targetRow;
-  return newRows;
+  return updateCellsInRows(rows, columnCount, [
+    { row: rowIdx, col: colIdx, value },
+  ]);
 }
 
 /**

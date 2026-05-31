@@ -27,6 +27,7 @@ import {
   incrementalRecalc,
   makeIncrementalRecalcState,
   updateCellInRows,
+  updateCellsInRows,
 } from "../sheetEditorHelpers";
 import { cellKey, isFormulaError } from "../formulaEngine";
 import type { SheetContent } from "../sheetEditorTypes";
@@ -412,7 +413,7 @@ describe("updateCellInRows (row-reference preservation)", () => {
     const r0 = ["1", "2", "3"];
     const r1 = ["4", "5", "6"];
     const r2 = ["7", "8", "9"];
-    const rows: ReadonlyArray<ReadonlyArray<string>> = [r0, r1, r2];
+    const rows: string[][] = [r0, r1, r2];
 
     const next = updateCellInRows(rows, 3, 1, 0, "X");
 
@@ -429,13 +430,13 @@ describe("updateCellInRows (row-reference preservation)", () => {
   });
 
   it("returns a new top-level rows array (React-friendly setSheet)", () => {
-    const rows: ReadonlyArray<ReadonlyArray<string>> = [
+    const rows: string[][] = [
       ["a", "b"],
       ["c", "d"],
     ];
     const next = updateCellInRows(rows, 2, 0, 1, "Z");
     // setState requires a new array ref to commit a render.
-    expect(next).not.toBe(rows as unknown as string[][]);
+    expect(next).not.toBe(rows);
     // And the edit landed.
     expect(next[0][1]).toBe("Z");
     expect(next[1]).toBe(rows[1]);
@@ -445,7 +446,7 @@ describe("updateCellInRows (row-reference preservation)", () => {
     // SheetEditor lets the user edit row 4 of an empty 2-row
     // sheet; the helper must auto-extend with blank rows so the
     // intermediate rows aren't `undefined`.
-    const rows: ReadonlyArray<ReadonlyArray<string>> = [
+    const rows: string[][] = [
       ["1", "2", "3"],
       ["4", "5", "6"],
     ];
@@ -464,8 +465,8 @@ describe("updateCellInRows (row-reference preservation)", () => {
   it("extends the target row when the edited column is past the row's end", () => {
     // The same auto-extend behavior applies horizontally: editing
     // a cell past the row's current width pads the row out.
-    const r0: ReadonlyArray<string> = ["a"];
-    const rows: ReadonlyArray<ReadonlyArray<string>> = [r0];
+    const r0: string[] = ["a"];
+    const rows: string[][] = [r0];
     const next = updateCellInRows(rows, 3, 0, 2, "Q");
 
     // Edited row is a fresh array (not r0).
@@ -504,5 +505,92 @@ describe("updateCellInRows (row-reference preservation)", () => {
     // Untouched rows' formulas stay at their previous values.
     expect(valAt(after, 0, 1)).toBe(2);
     expect(valAt(after, 2, 1)).toBe(200);
+  });
+});
+
+describe("updateCellsInRows (multi-edit row-reference preservation)", () => {
+  // Same row-ref preservation contract as `updateCellInRows`, but for
+  // bulk-edit paths (Delete/Backspace clears + fill-series). Each row
+  // that holds at least one edit gets cloned exactly once; everything
+  // else survives by reference.
+
+  it("clones each touched row exactly once when multiple edits land on the same row", () => {
+    const rows = [
+      ["1", "2", "3"],
+      ["4", "5", "6"],
+    ];
+    const next = updateCellsInRows(rows, 3, [
+      { row: 0, col: 0, value: "X" },
+      { row: 0, col: 1, value: "Y" },
+      { row: 0, col: 2, value: "Z" },
+    ]);
+    // Edited row is a fresh array …
+    expect(next[0]).not.toBe(rows[0]);
+    // … but the un-touched row survives by reference.
+    expect(next[1]).toBe(rows[1]);
+    // All three edits land on the same cloned row.
+    expect(next[0]).toEqual(["X", "Y", "Z"]);
+  });
+
+  it("preserves reference identity for every row not in the edit set", () => {
+    // Sparse edit pattern: edit row 0 and row 3, leave rows 1, 2, 4 alone.
+    const rows = [
+      ["a", "b"],
+      ["c", "d"],
+      ["e", "f"],
+      ["g", "h"],
+      ["i", "j"],
+    ];
+    const next = updateCellsInRows(rows, 2, [
+      { row: 0, col: 1, value: "B" },
+      { row: 3, col: 0, value: "G" },
+    ]);
+    // The two edited rows are fresh.
+    expect(next[0]).not.toBe(rows[0]);
+    expect(next[3]).not.toBe(rows[3]);
+    // The three untouched rows are the same reference.
+    expect(next[1]).toBe(rows[1]);
+    expect(next[2]).toBe(rows[2]);
+    expect(next[4]).toBe(rows[4]);
+    // Edits landed correctly.
+    expect(next[0]).toEqual(["a", "B"]);
+    expect(next[3]).toEqual(["G", "h"]);
+  });
+
+  it("preserves every row by reference when given an empty edits list", () => {
+    // No edits → the helper still mints a fresh top-level array
+    // (slice is cheap, and a consistent return shape simplifies the
+    // caller). Every row is the same reference. SheetEditor's
+    // Delete handler additionally short-circuits with
+    // `if (edits.length === 0) return prev` to avoid even the slice
+    // cost when no in-bounds cells were targeted.
+    const rows = [
+      ["1", "2"],
+      ["3", "4"],
+    ];
+    const next = updateCellsInRows(rows, 2, []);
+    expect(next[0]).toBe(rows[0]);
+    expect(next[1]).toBe(rows[1]);
+    expect(next.length).toBe(rows.length);
+  });
+
+  it("auto-extends rows/cols past current bounds (fill-series scenario)", () => {
+    // Vertical fill from a 2-row source down into rows 2 and 3 of a
+    // 2-row sheet — matches the actual fill-series shape.
+    const rows = [
+      ["1"],
+      ["2"],
+    ];
+    const next = updateCellsInRows(rows, 1, [
+      { row: 2, col: 0, value: "3" },
+      { row: 3, col: 0, value: "4" },
+    ]);
+    expect(next.length).toBe(4);
+    // Original two rows survive by reference.
+    expect(next[0]).toBe(rows[0]);
+    expect(next[1]).toBe(rows[1]);
+    // Auto-extended rows are fresh arrays with the new values.
+    expect(next[2]).toEqual(["3"]);
+    expect(next[3]).toEqual(["4"]);
   });
 });

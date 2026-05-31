@@ -7,6 +7,8 @@ import {
   parseCSVLines,
   parseSheetContent,
   updateCellInRows,
+  updateCellsInRows,
+  type CellEdit,
   type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
 import { cellKey, isFormulaError } from "./formulaEngine";
@@ -364,14 +366,31 @@ export default function SheetEditor({
       // Clear every cell in the current selection (primary +
       // extras). One state update so the debounced save fires
       // once per Delete keystroke, not once per cleared cell.
+      //
+      // `updateCellsInRows` preserves reference identity for
+      // every row that doesn't intersect the selection — so a
+      // Delete on a single-row selection in a 10k-row sheet
+      // touches one row's reference, not 10k. Same row-skip
+      // optimisation `incrementalRecalc` relies on.
       const cells = selectionCells(selection);
+      // Filter to in-bounds cells so we don't auto-extend on
+      // Delete (semantically wrong — Delete clears existing
+      // cells, it doesn't materialise new ones beyond the
+      // current grid).
       setSheet((prev) => {
-        const newRows = prev.rows.map((r) => [...r]);
+        const edits: CellEdit[] = [];
         for (const { row, col } of cells) {
-          if (newRows[row] && col < newRows[row].length) {
-            newRows[row][col] = "";
+          const targetRow = prev.rows[row];
+          if (targetRow && col < targetRow.length) {
+            edits.push({ row, col, value: "" });
           }
         }
+        if (edits.length === 0) return prev;
+        const newRows = updateCellsInRows(
+          prev.rows,
+          prev.columns.length,
+          edits,
+        );
         const updated = { ...prev, rows: newRows };
         debouncedSave(updated);
         return updated;
@@ -714,48 +733,54 @@ export default function SheetEditor({
       if (!selection) return;
       const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
       setSheet((prev) => {
-        const newRows = prev.rows.map((r) => [...r]);
-        // Build source slices column-by-column (for vertical fill)
-        // or row-by-row (for horizontal fill) so each lane fills
-        // its own series independently.
+        // Collect every (row, col, value) write the fill produces
+        // FIRST, then hand the batch to `updateCellsInRows`. This
+        // preserves reference identity for every row outside the
+        // fill range — so a vertical fill on a 3-column selection
+        // in a 10k-row sheet only allocates fresh arrays for the
+        // rows it actually touches, not all 10k. The source reads
+        // come from `prev.rows` (the pre-edit state) so we never
+        // race with our own writes.
+        const edits: CellEdit[] = [];
         if (direction === "down" || direction === "up") {
+          // Vertical fill: each column gets its own source slice
+          // + filled series.
           for (let col = c1; col <= c2; col++) {
             const source: string[] = [];
             for (let row = r1; row <= r2; row++) {
-              source.push(newRows[row]?.[col] ?? "");
+              source.push(prev.rows[row]?.[col] ?? "");
             }
             const filled = fillSeries(source, length, direction);
             for (let i = 0; i < length; i++) {
               const targetRow =
                 direction === "down" ? r2 + 1 + i : r1 - 1 - i;
-              while (newRows.length <= targetRow) {
-                newRows.push(
-                  new Array(prev.columns.length).fill(""),
-                );
-              }
               if (targetRow < 0) continue;
-              newRows[targetRow][col] = filled[i];
+              edits.push({ row: targetRow, col, value: filled[i] });
             }
           }
         } else {
+          // Horizontal fill: each row gets its own source slice +
+          // filled series.
           for (let row = r1; row <= r2; row++) {
             const source: string[] = [];
             for (let col = c1; col <= c2; col++) {
-              source.push(newRows[row]?.[col] ?? "");
+              source.push(prev.rows[row]?.[col] ?? "");
             }
             const filled = fillSeries(source, length, direction);
             for (let i = 0; i < length; i++) {
               const targetCol =
                 direction === "right" ? c2 + 1 + i : c1 - 1 - i;
               if (targetCol < 0) continue;
-              // Widen if needed.
-              while (newRows[row].length <= targetCol) {
-                newRows[row].push("");
-              }
-              newRows[row][targetCol] = filled[i];
+              edits.push({ row, col: targetCol, value: filled[i] });
             }
           }
         }
+        if (edits.length === 0) return prev;
+        const newRows = updateCellsInRows(
+          prev.rows,
+          prev.columns.length,
+          edits,
+        );
         const updated = { ...prev, rows: newRows };
         debouncedSave(updated);
         return updated;
