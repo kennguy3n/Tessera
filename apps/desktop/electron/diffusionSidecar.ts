@@ -199,6 +199,36 @@ export class DiffusionSidecar {
   }
 
   /**
+   * Replace the idle-unload window in milliseconds. Mirrors
+   * `ModelSidecar.setIdleUnloadMs` (see `./sidecar.ts` for the full
+   * rationale): live settings updates restart the periodic idle
+   * monitor with the new threshold so the diffusion sidecar picks
+   * up the new window without a relaunch, and `0` disables idle
+   * unloading entirely (`startIdleMonitor` short-circuits when
+   * `idleUnloadMs <= 0`).
+   *
+   * Phase 19 PR 9 Task 5: wired from `SettingsData.modelIdleTimeoutSecs`
+   * via `appState.applyModelIdleTimeoutToSidecars`. The diffusion
+   * idle window defaults to 30 s rather than the text sidecar's
+   * 60 s, but both sidecars now respect the user's preferred
+   * window when it is set — the per-sidecar default only applies
+   * if the user has never touched the setting.
+   */
+  setIdleUnloadMs(idleUnloadMs: number): void {
+    const next = Math.max(0, Math.floor(idleUnloadMs));
+    if (next === this.options.idleUnloadMs) return;
+    this.options.idleUnloadMs = next;
+    if (this._isRunning) {
+      this.stopIdleMonitor();
+      this.startIdleMonitor();
+    }
+  }
+
+  get idleUnloadMs(): number {
+    return this.options.idleUnloadMs;
+  }
+
+  /**
    * Build the full argv passed to `spawn`. Exported on the instance
    * (via `buildSpawnArgs`) so the per-instance defaults remain
    * encapsulated, but exposed for tests to assert that --steps /
@@ -466,6 +496,12 @@ export class DiffusionSidecar {
   }
 
   private startIdleMonitor(): void {
+    // `idleUnloadMs <= 0` is the documented "disable idle unloading"
+    // sentinel — mirrors the equivalent guard in
+    // `ModelSidecar.startIdleMonitor`. Skipping the `setInterval`
+    // both avoids a per-10s wake-up and removes the need for the
+    // tick body to special-case the disabled threshold.
+    if (this.options.idleUnloadMs <= 0) return;
     this.idleTimer = setInterval(async () => {
       const idleTime = Date.now() - this.lastRequestTime;
       if (

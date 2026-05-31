@@ -21,6 +21,7 @@ import { z } from "zod";
 import {
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
+  MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
   TASK_PRIORITIES,
@@ -189,6 +190,21 @@ export const SettingsUpdateSchema = z.object({
   recentArtifactIds: z
     .array(z.string().max(1024))
     .max(MAX_RECENT_ARTIFACTS)
+    .optional(),
+  // Phase 19 PR 9 Task 5: idle-unload window in seconds for the
+  // local sidecars. `0` disables idle unloading entirely ("Keep
+  // loaded forever"). The upper bound is shared with
+  // `MAX_MODEL_IDLE_TIMEOUT_SECS` in `shared/types.ts` (24 h) so
+  // the IPC schema, on-disk schema, and `SettingsPage` validator
+  // stay in lockstep. No `.catch()` (matches sibling fields
+  // above): the renderer's `<select>` only emits values from a
+  // bounded set, so any out-of-range value here means the renderer
+  // shipped a bug worth surfacing rather than silently coercing.
+  modelIdleTimeoutSecs: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_MODEL_IDLE_TIMEOUT_SECS)
     .optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;

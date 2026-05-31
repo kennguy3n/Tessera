@@ -268,6 +268,12 @@ export function registerSettingsHandlers(): void {
       // unambiguous in tests.
       pinnedArtifactIds: config.pinnedArtifactIds,
       recentArtifactIds: config.recentArtifactIds,
+      // Phase 19 PR 9 Task 5: surface the persisted model idle-unload
+      // window so `SettingsPage` can hydrate the select. The value is
+      // already validated by the on-disk schema (`.catch(...)`-healed
+      // to `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` if corrupted) so a fresh
+      // install or healed config sees a usable bucket on first render.
+      modelIdleTimeoutSecs: config.modelIdleTimeoutSecs,
     } as SettingsData;
   });
 
@@ -324,6 +330,34 @@ export function registerSettingsHandlers(): void {
         "recentArtifactIds",
         `${parsed.recentArtifactIds.length} entry(ies)`,
       );
+    if (parsed.modelIdleTimeoutSecs !== undefined) {
+      auditSettingsField(
+        "modelIdleTimeoutSecs",
+        String(parsed.modelIdleTimeoutSecs),
+      );
+      // Phase 19 PR 9 Task 5: push the new window to every live
+      // sidecar so the change takes effect immediately, even if the
+      // user has a model loaded mid-session. Imported here rather
+      // than statically at the top so test files that mock
+      // `../appState` keep working without forcing every other
+      // settings handler test to also stub `getDiffusionSidecar` /
+      // `getVisionSidecar`. Errors are swallowed: a sidecar that
+      // hasn't been initialised (fresh install with no models) or
+      // that fails to update its timer is not worth blocking the
+      // settings write — the next sidecar `start()` will read the
+      // updated config value.
+      try {
+        const { applyModelIdleTimeoutToSidecars } = await import(
+          "../appState"
+        );
+        applyModelIdleTimeoutToSidecars(parsed.modelIdleTimeoutSecs);
+      } catch (err) {
+        console.warn(
+          "[Tessera] Failed to apply modelIdleTimeoutSecs to live sidecars:",
+          err,
+        );
+      }
+    }
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -332,6 +366,7 @@ export function registerSettingsHandlers(): void {
       onboardingCompleted: persisted.onboardingCompleted,
       pinnedArtifactIds: persisted.pinnedArtifactIds,
       recentArtifactIds: persisted.recentArtifactIds,
+      modelIdleTimeoutSecs: persisted.modelIdleTimeoutSecs,
     } as SettingsData;
   });
 

@@ -1007,6 +1007,29 @@ export interface SettingsData {
    * `pinnedArtifactIds`.
    */
   recentArtifactIds: string[];
+  /**
+   * Phase 19 PR 9 Task 5: idle window in seconds after which the
+   * local llama-server / vision / diffusion sidecars unload their
+   * model weights to release RAM / VRAM. `0` disables idle unloading
+   * entirely ("Keep loaded forever" — useful on workstations with
+   * abundant memory where reload latency hurts more than the memory
+   * pressure). The renderer exposes this as a `<select>` in
+   * `SettingsPage` with discrete buckets (30 s / 1 min / 5 min /
+   * 30 min / 1 hour / never) so users don't have to reason about
+   * raw second counts.
+   *
+   * Defaults to 60 s for the text/vision sidecars (matches the
+   * historical `idleUnloadMs: 60_000` hardcoded in `sidecar.ts`)
+   * and 30 s for diffusion (matches the historical hardcoded
+   * value in `diffusionSidecar.ts`). The persisted setting
+   * overrides BOTH sidecars to the same window — the per-sidecar
+   * defaults only apply if the user has never touched this field
+   * (corrupted on-disk config heals back to the text default).
+   *
+   * Bounds: `[0, 24 * 60 * 60]` (24 hours) — anything past 24h
+   * is effectively "never" and the UI surfaces it as such.
+   */
+  modelIdleTimeoutSecs: number;
 }
 
 /**
@@ -1036,6 +1059,34 @@ export const MAX_RECENT_ARTIFACTS = 32;
  * `256` / `32` duplicates risked drift.
  */
 export const MAX_PINNED_ARTIFACTS = 256;
+
+/**
+ * Phase 19 PR 9 Task 5: hard upper bound on `modelIdleTimeoutSecs`.
+ * 24 hours is well past any reasonable interactive session — beyond
+ * this the field is effectively the same as `0` (never unload) but
+ * we keep the explicit cap to bound the on-disk value and to keep
+ * `setInterval(...)` math from overflowing on the sidecar side.
+ *
+ * Shared between the IPC schema, the on-disk config schema, the
+ * renderer's `<select>` validator, and the doc comment above so a
+ * future change to the cap stays in lockstep across layers. Mirrors
+ * the constants-consolidation pattern from `MAX_PINNED_ARTIFACTS`
+ * and `MAX_RECENT_ARTIFACTS`.
+ */
+export const MAX_MODEL_IDLE_TIMEOUT_SECS = 24 * 60 * 60;
+
+/**
+ * Phase 19 PR 9 Task 5: default idle window in seconds for the
+ * local text/vision sidecar host. Matches the historical
+ * `idleUnloadMs: 60_000` literal that lived in
+ * `electron/sidecar.ts` DEFAULT_OPTIONS before the field was made
+ * user-configurable. Re-exporting from `shared/types.ts` keeps the
+ * IPC `settings:get` fallback, the on-disk config `.catch(...)`
+ * default, and the renderer's `DEFAULT_SETTINGS` in lockstep so a
+ * fresh install behaves identically with or without the field on
+ * disk.
+ */
+export const DEFAULT_MODEL_IDLE_TIMEOUT_SECS = 60;
 
 // -----------------------------------------------------------------
 // External provider configuration
