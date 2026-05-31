@@ -773,3 +773,66 @@ describe("BaseEditor — expanded modal auto-closes when target record is delete
     expect(screen.queryByRole("dialog", { name: /Edit Body/ })).toBeNull();
   });
 });
+
+describe("BaseEditor — expanded modal auto-closes when target field is removed", () => {
+  // Devin Review PR #78 ANALYSIS_0006 (round 6):
+  //
+  // `expandedCell` used to hold a BaseField object reference; if
+  // the field was removed via ManageFields while the modal was
+  // open, the modal would keep rendering against a field that
+  // no longer existed in `data.fields`, so a save would write
+  // back a key with no corresponding column (orphaned data). The
+  // fix stores fieldName (not the BaseField ref) and the cleanup
+  // effect now watches `data.fields` symmetrically with
+  // `data.records`. Pin both ends of the contract: the modal must
+  // close AND no orphan key must be written.
+  it("clears `expandedCell` after the field currently being edited is removed", async () => {
+    renderEditor({
+      fields: [
+        { name: "Body", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Body: "first", Other: "x" }],
+    });
+    // Open the long-text modal on the Body field.
+    fireEvent.click(screen.getByTitle("Expand"));
+    expect(
+      screen.getByRole("dialog", { name: /Edit Body/ }),
+    ).toBeInTheDocument();
+
+    // Now remove the Body field. The "x" button on each column
+    // has title="Remove field". The first one corresponds to the
+    // Body column (which is the field the modal is anchored to).
+    const removeFieldButtons = screen.getAllByTitle("Remove field");
+    fireEvent.click(removeFieldButtons[0]);
+    await flushSave();
+    // The cleanup effect must have cleared `expandedCell`, so the
+    // dialog is gone.
+    expect(
+      screen.queryByRole("dialog", { name: /Edit Body/ }),
+    ).toBeNull();
+  });
+
+  it("does not write the removed field's key back when the modal closes silently", async () => {
+    const { onSave } = renderEditor({
+      fields: [
+        { name: "Body", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Body: "first", Other: "x" }],
+    });
+    fireEvent.click(screen.getByTitle("Expand"));
+    expect(
+      screen.getByRole("dialog", { name: /Edit Body/ }),
+    ).toBeInTheDocument();
+    const removeFieldButtons = screen.getAllByTitle("Remove field");
+    fireEvent.click(removeFieldButtons[0]);
+    await flushSave();
+    // The latest persisted record must NOT carry a `Body` key —
+    // removeField strips it from every record, and the closing
+    // modal must NOT resurrect it.
+    const records = lastSavedRecords(onSave);
+    expect(records[0]).not.toHaveProperty("Body");
+    expect(records[0]).toMatchObject({ id: "r1", Other: "x" });
+  });
+});
