@@ -19,8 +19,15 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed = false }: SidebarProps) {
   const cspNonce = useCspNonce();
-  const { artifacts } = useArtifactList();
   const { pinnedIds } = usePinnedArtifacts();
+  // Gate the artifact-list IPC on `pinnedIds.length > 0` so a
+  // fresh-install / zero-pins user never pays the cost of fetching
+  // every artifact (including `content: string`) just to render an
+  // empty Pinned section. PR #87 Devin Review ANALYSIS_0003 round
+  // 3. When the user pins their first artifact the gate flips
+  // open, `useArtifactList` re-runs its mount effect, and the
+  // sidebar's Pinned section populates on the next render.
+  const { artifacts } = useArtifactList({ enabled: pinnedIds.length > 0 });
   const isMac =
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform);

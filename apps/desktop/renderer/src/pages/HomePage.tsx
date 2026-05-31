@@ -287,68 +287,81 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
   const { isPinned, togglePin } = usePinnedArtifacts();
   const menu = useContextMenu();
 
-  const items: ContextMenuItem[] = [
-    {
-      id: "open",
-      label: "Open",
-      onSelect: () => navigate(`/artifacts/${artifact.id}/edit`),
-    },
-    {
-      id: "pin",
-      label: isPinned(artifact.id) ? "Unpin" : "Pin",
-      onSelect: () => {
-        void togglePin(artifact.id);
+  // Memoise the menu rows so each parent render doesn't allocate a
+  // fresh `items` array with fresh `onSelect` closures, which then
+  // flow into `ContextMenu`'s `items`-keyed `useEffect` dep array
+  // and re-register the document-level keyboard listener every
+  // render. The deps cover everything that meaningfully alters a
+  // row: `artifact` (id/title/type/content/templateId), `navigate`,
+  // `togglePin`, and `isPinned`'s memoised `pinnedSet` (re-fires
+  // when the user pins/unpins this artifact). PR #87 Devin Review
+  // ANALYSIS_0006 round 3.
+  const pinned = isPinned(artifact.id);
+  const items: ContextMenuItem[] = useMemo(
+    () => [
+      {
+        id: "open",
+        label: "Open",
+        onSelect: () => navigate(`/artifacts/${artifact.id}/edit`),
       },
-    },
-    {
-      id: "duplicate",
-      label: "Duplicate",
-      separatorAbove: true,
-      onSelect: async () => {
-        try {
-          const api = window.tessera;
-          if (!api) return;
-          const copy = await api.artifacts.create(
-            `${artifact.title} (copy)`,
-            artifact.artifactType,
-            artifact.templateId ?? undefined,
-          );
-          await api.artifacts.update(copy.id, artifact.content);
-          // PR #87 Devin Review ANALYSIS_0005: broadcast so every
-          // live `useArtifactList()` consumer (sidebar, palette,
-          // recents grid) picks up the new artifact without a
-          // remount.
-          notifyArtifactsChanged();
-          navigate(`/artifacts/${copy.id}/edit`);
-        } catch {
-          // best-effort — the home page has no dedicated toast surface
-        }
+      {
+        id: "pin",
+        label: pinned ? "Unpin" : "Pin",
+        onSelect: () => {
+          void togglePin(artifact.id);
+        },
       },
-    },
-    {
-      id: "delete",
-      label: "Delete",
-      destructive: true,
-      separatorAbove: true,
-      onSelect: async () => {
-        if (!window.confirm("Delete this artifact? This cannot be undone."))
-          return;
-        try {
-          const api = window.tessera;
-          if (!api) return;
-          await api.artifacts.remove(artifact.id);
-          // PR #87 Devin Review ANALYSIS_0005: broadcast so the
-          // deleted card disappears from the recents grid
-          // immediately. Without this dispatch the user would see
-          // a stale card until they navigated away and back
-          // (which fires a fresh `useArtifactList()` mount).
-          notifyArtifactsChanged();
-        } catch {
-          // best-effort — see above
-        }
+      {
+        id: "duplicate",
+        label: "Duplicate",
+        separatorAbove: true,
+        onSelect: async () => {
+          try {
+            const api = window.tessera;
+            if (!api) return;
+            const copy = await api.artifacts.create(
+              `${artifact.title} (copy)`,
+              artifact.artifactType,
+              artifact.templateId ?? undefined,
+            );
+            await api.artifacts.update(copy.id, artifact.content);
+            // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+            // live `useArtifactList()` consumer (sidebar, palette,
+            // recents grid) picks up the new artifact without a
+            // remount.
+            notifyArtifactsChanged();
+            navigate(`/artifacts/${copy.id}/edit`);
+          } catch {
+            // best-effort — the home page has no dedicated toast surface
+          }
+        },
       },
-    },
-  ];
+      {
+        id: "delete",
+        label: "Delete",
+        destructive: true,
+        separatorAbove: true,
+        onSelect: async () => {
+          if (!window.confirm("Delete this artifact? This cannot be undone."))
+            return;
+          try {
+            const api = window.tessera;
+            if (!api) return;
+            await api.artifacts.remove(artifact.id);
+            // PR #87 Devin Review ANALYSIS_0005: broadcast so the
+            // deleted card disappears from the recents grid
+            // immediately. Without this dispatch the user would see
+            // a stale card until they navigated away and back
+            // (which fires a fresh `useArtifactList()` mount).
+            notifyArtifactsChanged();
+          } catch {
+            // best-effort — see above
+          }
+        },
+      },
+    ],
+    [artifact, navigate, pinned, togglePin],
+  );
 
   return (
     <>

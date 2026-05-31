@@ -55,7 +55,7 @@ export interface UseRecentlyViewedArtifactsResult {
 }
 
 export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
-  const { settings, loading, refresh } = useSettings();
+  const { settings, loading } = useSettings();
   const { update, error } = useUpdateSetting();
   const recentIds = settings.recentArtifactIds;
 
@@ -75,15 +75,16 @@ export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
           ? next.slice(0, MAX_RECENT_ARTIFACTS)
           : next;
       const result = await update({ recentArtifactIds: trimmed });
-      // Same refresh-after-write rationale as `usePinnedArtifacts`:
-      // multiple live consumers each hold their own `useSettings`
-      // snapshot, so we explicitly broadcast post-write to avoid
-      // the palette and the sidebar drifting from the editor's
-      // latest state.
-      await refresh();
+      // `useUpdateSetting.update` already broadcasts the post-write
+      // snapshot to every `useSettings()` subscriber via the
+      // module-level `settingsStore.setSettings(result)` call at
+      // `useSettings.ts:219`. A follow-up `refresh()` would fire a
+      // redundant `settings:get` IPC for no benefit. Mirrors the
+      // `usePinnedArtifacts.writePinned` fix. PR #87 Devin Review
+      // ANALYSIS_0001 round 3.
       return result.recentArtifactIds;
     },
-    [update, refresh],
+    [update],
   );
 
   const trackView = useCallback(

@@ -74,7 +74,7 @@ export interface UsePinnedArtifactsResult {
 }
 
 export function usePinnedArtifacts(): UsePinnedArtifactsResult {
-  const { settings, loading, refresh } = useSettings();
+  const { settings, loading } = useSettings();
   const { update, error } = useUpdateSetting();
   const pinnedIds = settings.pinnedArtifactIds;
 
@@ -107,17 +107,16 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
           ? next.slice(0, MAX_PINNED_ARTIFACTS)
           : next;
       const result = await update({ pinnedArtifactIds: trimmed });
-      // Broadcast to every live consumer via the shared store.
-      // Since the `useSettings()` refactor moved to a module-level
-      // store (see hooks/useSettings.ts header comment for the
-      // architectural rationale), a single refresh notifies the
-      // sidebar, palette, and editor pin button at once. Before
-      // the refactor each consumer held its own snapshot and the
-      // sidebar would lag behind palette pin toggles until remount.
-      await refresh();
+      // `useUpdateSetting.update` already broadcasts the post-write
+      // snapshot to every `useSettings()` subscriber via the
+      // module-level `settingsStore.setSettings(result)` call at
+      // `useSettings.ts:219`. A follow-up `refresh()` would fire a
+      // redundant `settings:get` IPC for no benefit (the value is
+      // already in the store). PR #87 Devin Review ANALYSIS_0001
+      // round 3.
       return result.pinnedArtifactIds;
     },
-    [update, refresh],
+    [update],
   );
 
   const togglePin = useCallback(

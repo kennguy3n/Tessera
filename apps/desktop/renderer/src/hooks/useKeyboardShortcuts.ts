@@ -37,8 +37,27 @@ import { useSettings, useUpdateSetting } from "./useSettings";
  * Set of chords that fire even when the focused element is a
  * typing target (input / textarea / contenteditable). These are
  * the "meta" shortcuts the user expects to work from anywhere —
- * Save, Export, Escape, palette opens, help. Everything else is
- * suppressed so we never shadow native browser typing behaviour.
+ * Save, Export, palette opens, help. Everything else is suppressed
+ * so we never shadow native browser typing behaviour or rich-text-
+ * editor shortcuts.
+ *
+ * NOTE on `view:toggleSidebar` (Cmd+B): intentionally EXCLUDED.
+ * TipTap's `StarterKit` (`DocumentEditor.tsx`) binds Cmd+B to the
+ * bold-text mark. Adding `view:toggleSidebar` to this set caused
+ * Cmd+B inside a document to both apply bold AND collapse the
+ * sidebar — a disruptive UX bug surfaced by PR #87 Devin Review
+ * BUG_0001 (round 3). The sidebar toggle is a chrome-level nav
+ * action, not an editor action, so suppressing it inside editors
+ * is the architecturally correct fix (matches how every native
+ * desktop app handles Cmd+B inside rich-text fields).
+ *
+ * NOTE on `palette:open` (Cmd+K): intentionally KEPT. TipTap's
+ * `Link` extension also binds Cmd+K but the command palette is
+ * the canonical "go anywhere from anywhere" entry point (matches
+ * the VSCode / Sublime / Linear pattern). Users typing in a
+ * document still need a way to summon the palette without
+ * leaving the editor first. PR #87 Devin Review ANALYSIS_0007
+ * round 3.
  */
 const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
   "action:save",
@@ -47,7 +66,6 @@ const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
   "palette:openShiftP",
   "palette:quickSwitcher",
   "help:shortcuts",
-  "view:toggleSidebar",
 ]);
 
 function isTypingTarget(target: EventTarget | null): boolean {

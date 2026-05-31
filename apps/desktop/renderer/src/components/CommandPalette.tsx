@@ -385,7 +385,15 @@ export default function CommandPalette({
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setActiveIndex((i) => Math.min(flatRows.length - 1, i + 1));
+        // `Math.max(0, ...)` guards the empty-rows case: when
+        // `flatRows.length === 0` (no matches state), naively
+        // computing `Math.min(-1, i + 1)` would set `activeIndex`
+        // to -1 and the clamp at the top of `flatRows` derivation
+        // only fires when the index is over the upper bound, not
+        // below 0. PR #87 Devin Review ANALYSIS_0004 round 3.
+        setActiveIndex((i) =>
+          Math.max(0, Math.min(flatRows.length - 1, i + 1)),
+        );
         return;
       }
       if (e.key === "ArrowUp") {
