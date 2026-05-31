@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
-  buildSheetDependencyGraph,
-  evaluateAllSheetFormulas,
+  activeSheetName,
   evaluateFormula,
+  incrementalRecalc,
+  makeIncrementalRecalcState,
   parseCSVLines,
   parseSheetContent,
+  type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
 import { cellKey, isFormulaError } from "./formulaEngine";
 import type { SheetContent } from "./sheetEditorTypes";
@@ -368,36 +370,45 @@ export default function SheetEditor({
     }
   };
 
-  // Memoize the evaluated value of every formula cell once per
-  // render pass. The previous implementation called
-  // `evaluateFormula` per-cell from render, which built a fresh
-  // resolver+cache for each cell — so a sheet with N formulas all
-  // referencing the same A1 re-parsed A1 N times. We now build a
-  // single shared resolver (via `evaluateSheetFormula`'s underlying
-  // cache) and walk every formula cell once, keyed by the same
-  // `cellKey(row, col)` the dependency graph uses.
+  // Memoize the evaluated value of every formula cell across
+  // renders using incremental recalculation.
   //
-  // The dependency graph itself is built alongside the cache (a)
-  // to keep both representations in lockstep for future
-  // incremental-recalc work, and (b) so we can detect references to
-  // cells outside `sheet.rows` length and still surface them.
+  // Pre-PR-9 path (Phase 16 PR 2 → PR 8): every render rebuilt the
+  // entire `cellCache` from scratch by walking every formula cell
+  // and calling the workbook resolver. The resolver's internal
+  // cache prevented O(N²) re-evaluation within a single render,
+  // but a sheet with thousands of formulas still re-parsed and
+  // re-evaluated every one of them on every keystroke — even
+  // single-cell edits that touched a single literal.
   //
-  // Phase 16 PR 2 Devin Review fix: instead of looping over formula
-  // cells and calling `evaluateSheetFormula(raw, sheet)` per cell —
-  // which built a fresh resolver each iteration and re-evaluated
-  // shared dependencies N² times — we delegate to
-  // `evaluateAllSheetFormulas`, which threads ONE workbook resolver
-  // (and its per-cell evaluation cache) across the whole grid. A1,
-  // B1, C1 all referencing A2 now evaluate A2 exactly once per
-  // render cycle, regardless of how many dependents touch it.
-  const cellCache = useMemo(() => {
-    // Building the graph also parses each formula and exposes
-    // structural info we'll need when wiring incremental recalc in
-    // a later PR. It's cheap (string compare + tokenize) and we
-    // already need to walk every cell either way.
-    buildSheetDependencyGraph(sheet);
-    return evaluateAllSheetFormulas(sheet);
-  }, [sheet]);
+  // PR-9 path: persist a `DependencyGraph` + per-cell result cache
+  // across renders in a `useRef`. On each `sheet` change,
+  // `incrementalRecalc` diffs the new rows against the previous
+  // snapshot to find dirty cells, then re-evaluates ONLY the
+  // dirty seeds and the cells transitively reading them. Untouched
+  // formulas hit the cache and return in O(1). For a 10k-formula
+  // sheet where the user types in one cell, the work drops from
+  // O(10k) to O(1 + |dependents|) per keystroke.
+  //
+  // The state is held in a `useRef` (not `useState`) because
+  // mutating the cache during render would otherwise trigger an
+  // infinite re-render loop. The cache is read imperatively by
+  // `getCellDisplay` below; React doesn't need to know about
+  // cache writes since the sheet state itself is what changes and
+  // drives re-renders.
+  const recalcState = useRef<IncrementalRecalcState>(
+    makeIncrementalRecalcState(),
+  );
+  const cellCache = useMemo(
+    () => incrementalRecalc(sheet, recalcState.current),
+    [sheet],
+  );
+  // The active sheet's canonical name — keeps the `getCellDisplay`
+  // lookup keyed identically to the qualified keys
+  // `incrementalRecalc` writes into the cache. Memoised on the
+  // `sheet` reference to avoid an extra workbook synthesis on every
+  // render.
+  const activeName = useMemo(() => activeSheetName(sheet), [sheet]);
 
   const getCellDisplay = (
     value: string,
@@ -405,7 +416,7 @@ export default function SheetEditor({
     colIdx: number,
   ): string => {
     if (!value.startsWith("=")) return value;
-    const cached = cellCache.get(cellKey(rowIdx, colIdx));
+    const cached = cellCache.get(cellKey(rowIdx, colIdx, activeName));
     if (cached === undefined) {
       // Shouldn't happen — `cellCache` is built from the same
       // `sheet` we're rendering — but fall back to a one-off
