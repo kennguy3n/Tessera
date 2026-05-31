@@ -11,6 +11,7 @@ import {
   removeBlock,
   appendBlock,
   replaceBlock,
+  buildBlock,
   slideWordCount,
   deckWordCount,
   findInSlides,
@@ -638,6 +639,37 @@ describe("removeBlock", () => {
     };
     expect(removeBlock(slide, -1)).toBe(slide);
     expect(removeBlock(slide, 5)).toBe(slide);
+  });
+});
+
+describe("buildBlock", () => {
+  // Harmonisation regression (PR #82 round 4 ANALYSIS_0001):
+  // `buildBlock`, `appendBlock`, and `replaceBlock` must all treat
+  // empty-string id the same way (= "missing"), so the id-injection
+  // policy is uniform from construction through mutation. Without
+  // alignment, `buildBlock` would have used `??` and kept "" while
+  // `appendBlock`/`replaceBlock` (truthiness) would have regenerated
+  // it — a surprising mid-pipeline mutation that breaks ref equality.
+
+  it("preserves a non-empty id supplied by the caller", () => {
+    const block = buildBlock({
+      id: "caller-supplied-1",
+      type: "text",
+      content: "hi",
+    });
+    expect(block.id).toBe("caller-supplied-1");
+  });
+
+  it("mints a new id when the caller omits one", () => {
+    const block = buildBlock({ type: "text", content: "hi" });
+    expect(block.id).toMatch(/^block-/);
+    expect(block.id.length).toBeGreaterThan(6);
+  });
+
+  it("mints a new id when the caller passes an empty-string id (harmonised with appendBlock/replaceBlock)", () => {
+    const block = buildBlock({ id: "", type: "text", content: "hi" });
+    expect(block.id).not.toBe("");
+    expect(block.id).toMatch(/^block-/);
   });
 });
 

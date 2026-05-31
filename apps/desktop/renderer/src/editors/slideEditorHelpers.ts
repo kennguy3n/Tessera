@@ -422,11 +422,19 @@ export function applyMarpToShadow(
  * every callsite (helpers below, SlideEditor's "+ Add Block" handler)
  * goes through one place and we can never accidentally construct a
  * block without an ID.
+ *
+ * Uses a truthiness check (`partial.id ? ... : ...`) — NOT nullish
+ * coalescing (`?? ...`) — so an empty string is treated as missing
+ * and we mint a fresh id. This harmonises with `appendBlock` and
+ * `replaceBlock` which also use truthiness; without alignment, a
+ * caller that did `buildBlock({ id: "", ... })` would keep the empty
+ * id here only to have it silently regenerated downstream — a
+ * surprising mid-pipeline mutation that breaks referential equality.
  */
 export function buildBlock(
   partial: Omit<SlideBlock, "id"> & { id?: string },
 ): SlideBlock {
-  return { ...partial, id: partial.id ?? newSlideId("block") };
+  return { ...partial, id: partial.id ? partial.id : newSlideId("block") };
 }
 
 export function buildSlideFromLayout(layout: SlideLayout): Slide {
