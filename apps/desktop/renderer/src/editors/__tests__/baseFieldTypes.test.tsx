@@ -245,6 +245,53 @@ describe("BaseEditor — long_text field", () => {
     const records = lastSavedRecords(onSave);
     expect(records[0].Notes).toBe("edited");
   });
+
+  it("locks the inline textarea + Expand button while the modal is open over the same cell", () => {
+    // Devin Review round-7 finding ANALYSIS_0006 — LongTextModal's
+    // `draft` initializes once from `value` on mount and only flushes
+    // on Save. If the user typed into the inline textarea WHILE the
+    // modal was open and then hit Save, the modal would overwrite the
+    // inline edit with stale text. Disabling the inline surface
+    // eliminates the ambiguity: while the modal is up, the modal is
+    // the sole edit surface, matching Airtable's behaviour.
+    const { container } = renderEditor({
+      fields: [
+        { name: "Notes", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Notes: "initial", Other: "untouched" }],
+    });
+    const inlineTextarea = container.querySelector(
+      "textarea.base-cell-longtext",
+    ) as HTMLTextAreaElement;
+    const expandButton = screen.getByTitle("Expand");
+    // Precondition — both editable before the modal opens.
+    expect(inlineTextarea.disabled).toBe(false);
+    expect(expandButton).not.toBeDisabled();
+
+    fireEvent.click(expandButton);
+
+    // Modal mounted — same inline textarea is now disabled + dimmed,
+    // and the Expand button is also disabled so a second click can't
+    // re-mount a new modal on top of the first.
+    expect(inlineTextarea.disabled).toBe(true);
+    expect(inlineTextarea).toHaveAttribute(
+      "title",
+      "Edit in the expanded modal",
+    );
+    const stillExpandButton = screen.getByTitle("Already open");
+    expect(stillExpandButton).toBeDisabled();
+    // The cell wrapper carries a `data-expanded="true"` flag the
+    // styling layer can hook into without needing class plumbing.
+    const cellWrapper = inlineTextarea.closest('[data-expanded="true"]');
+    expect(cellWrapper).not.toBeNull();
+
+    // Cells in OTHER records / OTHER fields stay editable — the lock
+    // is scoped to the exact (recordId, fieldName) pair.
+    const otherInput = screen.getByDisplayValue("untouched") as
+      HTMLInputElement;
+    expect(otherInput.disabled).toBe(false);
+  });
 });
 
 describe("BaseEditor — email field", () => {
@@ -825,5 +872,68 @@ describe("BaseEditor — expanded modal auto-closes when target record is delete
     fireEvent.click(delButtons[0]);
     await flushSave();
     expect(screen.queryByRole("dialog", { name: /Edit Body/ })).toBeNull();
+  });
+});
+
+describe("BaseEditor — expanded modal auto-closes when target field is removed", () => {
+  // Devin Review PR #78 ANALYSIS_0006 (round 6):
+  //
+  // `expandedCell` used to hold a BaseField object reference; if
+  // the field was removed via ManageFields while the modal was
+  // open, the modal would keep rendering against a field that
+  // no longer existed in `data.fields`, so a save would write
+  // back a key with no corresponding column (orphaned data). The
+  // fix stores fieldName (not the BaseField ref) and the cleanup
+  // effect now watches `data.fields` symmetrically with
+  // `data.records`. Pin both ends of the contract: the modal must
+  // close AND no orphan key must be written.
+  it("clears `expandedCell` after the field currently being edited is removed", async () => {
+    renderEditor({
+      fields: [
+        { name: "Body", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Body: "first", Other: "x" }],
+    });
+    // Open the long-text modal on the Body field.
+    fireEvent.click(screen.getByTitle("Expand"));
+    expect(
+      screen.getByRole("dialog", { name: /Edit Body/ }),
+    ).toBeInTheDocument();
+
+    // Now remove the Body field. The "x" button on each column
+    // has title="Remove field". The first one corresponds to the
+    // Body column (which is the field the modal is anchored to).
+    const removeFieldButtons = screen.getAllByTitle("Remove field");
+    fireEvent.click(removeFieldButtons[0]);
+    await flushSave();
+    // The cleanup effect must have cleared `expandedCell`, so the
+    // dialog is gone.
+    expect(
+      screen.queryByRole("dialog", { name: /Edit Body/ }),
+    ).toBeNull();
+  });
+
+  it("does not write the removed field's key back when the modal closes silently", async () => {
+    const { onSave } = renderEditor({
+      fields: [
+        { name: "Body", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Body: "first", Other: "x" }],
+    });
+    fireEvent.click(screen.getByTitle("Expand"));
+    expect(
+      screen.getByRole("dialog", { name: /Edit Body/ }),
+    ).toBeInTheDocument();
+    const removeFieldButtons = screen.getAllByTitle("Remove field");
+    fireEvent.click(removeFieldButtons[0]);
+    await flushSave();
+    // The latest persisted record must NOT carry a `Body` key —
+    // removeField strips it from every record, and the closing
+    // modal must NOT resurrect it.
+    const records = lastSavedRecords(onSave);
+    expect(records[0]).not.toHaveProperty("Body");
+    expect(records[0]).toMatchObject({ id: "r1", Other: "x" });
   });
 });

@@ -98,6 +98,55 @@ describe("ensureRecordIds", () => {
     const out = ensureRecordIds([null, undefined, 0, ""] as unknown[]);
     expect(out).toEqual([]);
   });
+
+  it("re-mints fresh ids on duplicate-id records (first occurrence keeps the id, subsequent collisions get a new one)", () => {
+    // Devin Review round-7 finding ANALYSIS_0003 — hand-edited JSON
+    // can ship two records both claiming `id: "abc"`. Downstream
+    // consumers (`recordIndexById`, `linked_record` resolver,
+    // `removeRecord`'s id-keyed lookup) all key on id; last write
+    // wins, which would silently alias the first visible duplicate
+    // onto the second record. The defensive path re-mints the
+    // duplicate so the in-memory data model never has id collisions.
+    const out = ensureRecordIds([
+      { id: "dup0000000000000", Name: "First" },
+      { id: "dup0000000000000", Name: "Second" },
+      { id: "unique0000000000", Name: "Other" },
+      { id: "dup0000000000000", Name: "Third" },
+    ] as unknown[]);
+    expect(out).toHaveLength(4);
+    // First occurrence keeps its id verbatim.
+    expect(out[0].id).toBe("dup0000000000000");
+    expect(out[0].Name).toBe("First");
+    // Second occurrence gets a fresh id — record content is preserved.
+    expect(out[1].id).not.toBe("dup0000000000000");
+    expect(out[1].id).toMatch(/^[0-9a-f]{16}$/);
+    expect(out[1].Name).toBe("Second");
+    // Unrelated unique id passes through.
+    expect(out[2].id).toBe("unique0000000000");
+    expect(out[2].Name).toBe("Other");
+    // Third occurrence also gets a fresh, distinct id.
+    expect(out[3].id).not.toBe("dup0000000000000");
+    expect(out[3].id).not.toBe(out[1].id);
+    expect(out[3].id).toMatch(/^[0-9a-f]{16}$/);
+    expect(out[3].Name).toBe("Third");
+    // All four ids in the output are pairwise distinct — this is the
+    // invariant downstream consumers rely on.
+    const ids = new Set(out.map((r) => r.id));
+    expect(ids.size).toBe(4);
+  });
+
+  it("treats empty-string id the same as missing id (mints fresh, deduplicates)", () => {
+    // Empty strings have id-shape but no identifying content — they
+    // must not collide with each other if multiple records have one.
+    const out = ensureRecordIds([
+      { id: "", Name: "A" },
+      { id: "", Name: "B" },
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0].id).toMatch(/^[0-9a-f]{16}$/);
+    expect(out[1].id).toMatch(/^[0-9a-f]{16}$/);
+    expect(out[0].id).not.toBe(out[1].id);
+  });
 });
 
 describe("parseBaseContent — record id integration", () => {
@@ -129,6 +178,29 @@ describe("parseBaseContent — record id integration", () => {
       expect(Array.isArray(parsed.records)).toBe(true);
       expect(parsed.records).toHaveLength(0);
     }
+  });
+
+  it("drops null / primitive / array elements from the fields array (defensive against hand-edited JSON)", () => {
+    // Devin Review round-5 finding — `parsed.fields` is array-checked
+    // but individual elements are unvalidated. `sanitizeBaseField(null)`
+    // would crash on `field.percentPrecision`. The parser must
+    // filter these out at the per-element level so the editor mounts
+    // cleanly instead of unmounting with a TypeError.
+    const json = JSON.stringify({
+      fields: [
+        null,
+        42,
+        "oops",
+        [],
+        { name: "Good", type: "text" },
+        { name: "AlsoGood", type: "number" },
+      ],
+      records: [{ Good: "value", AlsoGood: 5 }],
+    });
+    const parsed = parseBaseContent(json);
+    expect(parsed.fields).toHaveLength(2);
+    expect(parsed.fields[0].name).toBe("Good");
+    expect(parsed.fields[1].name).toBe("AlsoGood");
   });
 
   it("clamps a malformed percentPrecision into the safe range", () => {

@@ -64,17 +64,13 @@ export default function BaseEditor({
   // (a) waste a JSON.parse pass and (b) — more importantly — re-mint
   // a second set of random record IDs that we immediately throw
   // away, making the editor's view of "the records" diverge from
-  // the IDs we briefly handed to defaultViewConfig. Capture the
-  // initial parse once via useRef so both initializers can read it.
-  const initialDataRef = useRef<BaseContent | null>(null);
-  const getInitialData = (): BaseContent => {
-    if (initialDataRef.current === null) {
-      initialDataRef.current = parseBaseContent(content);
-    }
-    return initialDataRef.current;
-  };
-
-  const [data, setData] = useState<BaseContent>(getInitialData);
+  // the IDs we briefly handed to defaultViewConfig. React guarantees
+  // `data` is initialized before the next `useState` call runs, so
+  // we can pass the initial data forward through the closure of
+  // `viewConfig`'s initializer — a single shared parse, no render-
+  // phase ref mutation, no double-invoke surprises under React
+  // Strict Mode.
+  const [data, setData] = useState<BaseContent>(() => parseBaseContent(content));
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -98,19 +94,27 @@ export default function BaseEditor({
   const [importDialog, setImportDialog] = useState<
     "csv" | "json" | null
   >(null);
-  // Keyed by record `id`, not array index — a deletion of another
-  // record while this modal is open would otherwise shift the
-  // target index and silently rewrite the wrong record's value.
+  // Keyed by record `id` AND field `name` (NOT by `BaseField` ref or
+  // array index). The record id guards against shifting indices when
+  // another record is deleted while the modal is open. The field
+  // name guards against stale `BaseField` references when the field
+  // is removed via ManageFields (`removeField`) while the modal is
+  // open — storing a reference would otherwise let the modal render
+  // against a field that no longer exists in `data.fields`, allowing
+  // an edit to write back a key with no corresponding column.
   const [expandedCell, setExpandedCell] = useState<
-    { recordId: string; field: BaseField } | null
+    { recordId: string; fieldName: string } | null
   >(null);
   // Active view kind plus per-view config (which field drives kanban
   // columns, which date drives the calendar, etc.). Both are
   // renderer concerns: they're NOT serialized into the artifact
   // JSON, so switching views never dirties the document.
   const [view, setView] = useState<BaseViewKind>("grid");
+  // Initial viewConfig closes over the freshly-initialized `data`,
+  // sharing the same one-shot parse — no second parseBaseContent
+  // call, no ID drift.
   const [viewConfig, setViewConfig] = useState<BaseViewConfig>(() =>
-    defaultViewConfig(getInitialData().fields),
+    defaultViewConfig(data.fields),
   );
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
@@ -134,23 +138,28 @@ export default function BaseEditor({
     };
   }, []);
 
-  // If the record currently behind the expand modal disappears
-  // (deleted in the grid, or replaced by an out-of-band content
-  // sync), drop `expandedCell` to null. The render path already
-  // hides the modal in that case, but the dangling state would
-  // otherwise force `data.records.findIndex(...)` to scan a -1
-  // miss on every subsequent render until the user clicks Expand
+  // If the record OR the field currently behind the expand modal
+  // disappears (deleted in the grid, removed via ManageFields, or
+  // replaced by an out-of-band content sync), drop `expandedCell`
+  // to null. The render path already hides the modal in that case,
+  // but the dangling state would otherwise force a `findIndex(...)`
+  // -1 miss on every subsequent render until the user clicks Expand
   // again. We can't call setState during render — this is the
-  // architecturally correct place for that cleanup.
+  // architecturally correct place for that cleanup. Watching both
+  // `data.records` and `data.fields` ensures field-removal and
+  // record-removal close the modal symmetrically.
   useEffect(() => {
     if (!expandedCell) return;
-    const stillExists = data.records.some(
+    const recordStillExists = data.records.some(
       (r) => r.id === expandedCell.recordId,
     );
-    if (!stillExists) {
+    const fieldStillExists = data.fields.some(
+      (f) => f.name === expandedCell.fieldName,
+    );
+    if (!recordStillExists || !fieldStillExists) {
       setExpandedCell(null);
     }
-  }, [data.records, expandedCell]);
+  }, [data.records, data.fields, expandedCell]);
 
   const updateData = useCallback(
     (updated: BaseContent) => {
@@ -744,6 +753,22 @@ export default function BaseEditor({
     });
   }, [data, visibleSelectedIds, updateData]);
 
+  // Pre-built `id → original index` map so the grid row render is
+  // O(1) per row instead of O(n) via `data.records.indexOf(record)`.
+  // Brute-force `indexOf` made the grid render O(n²) in the number of
+  // records — negligible for typical bases, but a clear bottleneck
+  // at scale (10k records => 10^8 ops on every keystroke). Lifting
+  // it into its own memo keyed on `data.records` means we only
+  // rebuild the map when records add/remove/reorder, not on every
+  // filter/sort/edit. Keyed by `record.id` (not by object reference)
+  // so any code path that reconstructs the record object (e.g. JSON
+  // round-trip in tests) still resolves to the original position.
+  const recordIndexById = useMemo(() => {
+    const m = new Map<string, number>();
+    data.records.forEach((r, i) => m.set(r.id, i));
+    return m;
+  }, [data.records]);
+
   // Shared props passed to every non-grid view. The grid view stays
   // inline below because it has filter/sort behavior the others
   // don't need.
@@ -979,7 +1004,11 @@ export default function BaseEditor({
           </thead>
           <tbody>
             {filteredAndSorted.map((record, ri) => {
-              const originalIndex = data.records.indexOf(record);
+              // O(1) lookup via the pre-built `recordIndexById` map;
+              // falls back to -1 if a row somehow leaks through with no
+              // id (legacy hand-edited JSON), which `removeRecord` /
+              // `updateCell` are robust to.
+              const originalIndex = recordIndexById.get(record.id) ?? -1;
               const isSelected = selectedIds.has(record.id);
               return (
                 <tr
@@ -1002,22 +1031,36 @@ export default function BaseEditor({
                     />
                   </td>
                   <td className="base-row-num">{ri + 1}</td>
-                  {data.fields.map((field) => (
-                    <td key={field.name} className="base-cell">
-                      <CellInput
-                        field={field}
-                        value={record[field.name]}
-                        record={record}
-                        recordIndex={originalIndex}
-                        allRecords={data.records}
-                        allFields={data.fields}
-                        onChange={(val) => updateCell(originalIndex, field.name, val)}
-                        onExpand={() =>
-                          setExpandedCell({ recordId: record.id, field })
-                        }
-                      />
-                    </td>
-                  ))}
+                  {data.fields.map((field) => {
+                    // Match by the same (recordId, fieldName) tuple
+                    // the modal itself uses — so when the user opens
+                    // the modal on cell X, the inline cell X locks
+                    // and inline cells everywhere else stay editable.
+                    const isExpanded =
+                      expandedCell !== null &&
+                      expandedCell.recordId === record.id &&
+                      expandedCell.fieldName === field.name;
+                    return (
+                      <td key={field.name} className="base-cell">
+                        <CellInput
+                          field={field}
+                          value={record[field.name]}
+                          record={record}
+                          recordIndex={originalIndex}
+                          allRecords={data.records}
+                          allFields={data.fields}
+                          onChange={(val) => updateCell(originalIndex, field.name, val)}
+                          onExpand={() =>
+                            setExpandedCell({
+                              recordId: record.id,
+                              fieldName: field.name,
+                            })
+                          }
+                          isExpanded={isExpanded}
+                        />
+                      </td>
+                    );
+                  })}
                   <td className="base-actions-cell">
                     <button
                       type="button"
@@ -1036,22 +1079,26 @@ export default function BaseEditor({
       )}
 
       {expandedCell && (() => {
-        // Resolve the live record by id on every render so deletes /
-        // reorderings of OTHER records don't drift the target.
+        // Resolve the live record AND the live field by stable
+        // identifiers on every render so deletes / reorderings of
+        // OTHER records or fields don't drift the target.
         const expandedIndex = data.records.findIndex(
           (r) => r.id === expandedCell.recordId,
         );
-        if (expandedIndex === -1) {
-          // Target record was deleted out from under us — close the
-          // modal silently rather than write to nothing.
+        const expandedField = data.fields.find(
+          (f) => f.name === expandedCell.fieldName,
+        );
+        if (expandedIndex === -1 || !expandedField) {
+          // Target record or field was deleted out from under us —
+          // close the modal silently rather than write to nothing.
           return null;
         }
         return (
           <LongTextModal
-            field={expandedCell.field}
-            value={data.records[expandedIndex]?.[expandedCell.field.name]}
+            field={expandedField}
+            value={data.records[expandedIndex]?.[expandedField.name]}
             onChange={(val) =>
-              updateCell(expandedIndex, expandedCell.field.name, val)
+              updateCell(expandedIndex, expandedField.name, val)
             }
             onClose={() => setExpandedCell(null)}
           />
@@ -1114,6 +1161,14 @@ interface CellInputProps {
   allFields: BaseField[];
   onChange: (val: unknown) => void;
   onExpand?: () => void;
+  // True when the LongTextModal is currently mounted over THIS cell's
+  // (recordId, fieldName) pair. Threaded through CellInput so each
+  // per-type variant can decide how to render concurrently with the
+  // modal — at the moment only LongTextCell honours it (disables its
+  // inline textarea + Expand button so the modal's `draft` is the
+  // sole edit surface and can't be overwritten by an inline edit
+  // committed while the user types in the modal).
+  isExpanded?: boolean;
 }
 
 function CellInput(props: CellInputProps) {
@@ -1811,21 +1866,41 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function LongTextCell({ value, onChange, onExpand }: CellInputProps) {
+function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps) {
+  // When the LongTextModal is open over this cell, lock the inline
+  // surface. The modal's `draft` state is initialized once from
+  // `value` on mount and only flushes to the record on Save — so if
+  // the user typed into the inline textarea while the modal was open
+  // and then hit Save, the modal would overwrite the inline edit
+  // with stale text. Disabling the inline surface eliminates the
+  // ambiguity: while the modal is up, there is exactly one edit
+  // surface, and it's the one the user explicitly chose by clicking
+  // Expand. Mirrors Airtable's behaviour.
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.25rem" }}>
+    <div
+      style={{ display: "flex", alignItems: "flex-start", gap: "0.25rem" }}
+      data-expanded={isExpanded ? "true" : undefined}
+    >
       <textarea
         className="base-cell-input base-cell-longtext"
         value={value != null ? String(value) : ""}
         onChange={(e) => onChange(e.target.value)}
         rows={2}
-        style={{ flex: 1, resize: "vertical", minHeight: "1.5rem" }}
+        disabled={isExpanded}
+        style={{
+          flex: 1,
+          resize: "vertical",
+          minHeight: "1.5rem",
+          opacity: isExpanded ? 0.5 : undefined,
+        }}
+        title={isExpanded ? "Edit in the expanded modal" : undefined}
       />
       <button
         type="button"
         className="btn-sm"
-        title="Expand"
+        title={isExpanded ? "Already open" : "Expand"}
         onClick={onExpand}
+        disabled={isExpanded}
         style={{ fontSize: "0.75rem", padding: "0 0.3rem" }}
       >
         ⤢
