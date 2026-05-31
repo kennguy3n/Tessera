@@ -23,6 +23,7 @@ import {
   escapeRegex,
   MAX_IMAGE_BYTES,
   fileToDataUrl,
+  TRUSTED_LEADING_TAGS,
 } from "../documentEditorHelpers";
 
 describe("parseDocumentContent — artifact text → TipTap-friendly HTML", () => {
@@ -330,5 +331,174 @@ describe("fileToDataUrl — inline image embed", () => {
     const url = await fileToDataUrl(file);
     expect(url).toMatch(/^data:text\/plain;/);
     expect(url).toContain("ZGF0YQ=="); // base64 of "data"
+  });
+});
+
+describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered extensions", () => {
+  // Devin Review PR #82 round 7 ANALYSIS_…_0007 flagged that this
+  // whitelist (used by `parseDocumentContent` to distinguish
+  // already-rendered HTML from plain text) can silently drift if a
+  // new TipTap extension is wired into `DocumentEditor.tsx` without
+  // a matching entry here. The failure mode is subtle: saved HTML
+  // whose leading tag isn't on the list gets HTML-escaped on reload,
+  // losing the formatting wholesale.
+  //
+  // The fix is twofold:
+  //   1. A static snapshot pin that catches ANY change to the list
+  //      (so anyone adding / removing a tag has to update the test
+  //      and think about parity).
+  //   2. A dynamic introspection test that loads the actual TipTap
+  //      `StarterKit` extension set and validates that every HTML
+  //      tag each node extension can emit at the document root is
+  //      on the trusted list. This catches the *real* drift case —
+  //      "I added <Underline> to extensions but forgot to add `u` to
+  //      TRUSTED_LEADING_TAGS".
+
+  it("exposes the trust list in a stable, lowercase, deduplicated, alphabetised shape", () => {
+    // Static structural invariants. If anyone changes the list, the
+    // snapshot below also has to change — which is the whole point.
+    expect(TRUSTED_LEADING_TAGS.every((t) => t === t.toLowerCase())).toBe(
+      true,
+    );
+    expect(new Set(TRUSTED_LEADING_TAGS).size).toBe(
+      TRUSTED_LEADING_TAGS.length,
+    );
+    expect(TRUSTED_LEADING_TAGS.every((t) => /^[a-z][a-z0-9]*$/.test(t))).toBe(
+      true,
+    );
+  });
+
+  it("contains every block / inline tag the current editor extension set can emit at the document root", () => {
+    // Hardcoded list of (tag, why it's needed). Adding a TipTap
+    // extension means adding a row here. Reviewers see the test diff
+    // and confirm the corresponding `TRUSTED_LEADING_TAGS` edit.
+    const required: Array<readonly [tag: string, source: string]> = [
+      // Document structure (StarterKit).
+      ["p", "@tiptap/extension-paragraph"],
+      ["h1", "@tiptap/extension-heading (level 1)"],
+      ["h2", "@tiptap/extension-heading (level 2)"],
+      ["h3", "@tiptap/extension-heading (level 3)"],
+      ["ul", "@tiptap/extension-bullet-list (also @tiptap/extension-task-list)"],
+      ["ol", "@tiptap/extension-ordered-list"],
+      ["li", "@tiptap/extension-list-item (also @tiptap/extension-task-item)"],
+      ["blockquote", "@tiptap/extension-blockquote"],
+      ["pre", "@tiptap/extension-code-block-lowlight (wraps <pre><code>)"],
+      ["code", "@tiptap/extension-code (inline mark + codeBlock inner)"],
+      ["hr", "@tiptap/extension-horizontal-rule"],
+      ["br", "@tiptap/extension-hard-break"],
+      // Tables.
+      ["table", "@tiptap/extension-table"],
+      ["thead", "table rendering"],
+      ["tbody", "table rendering"],
+      ["tr", "@tiptap/extension-table-row"],
+      ["th", "@tiptap/extension-table-header"],
+      ["td", "@tiptap/extension-table-cell"],
+      // Inline marks.
+      ["strong", "@tiptap/extension-bold (canonical render)"],
+      ["b", "@tiptap/extension-bold (parse fallback)"],
+      ["em", "@tiptap/extension-italic (canonical render)"],
+      ["i", "@tiptap/extension-italic (parse fallback)"],
+      ["s", "@tiptap/extension-strike (canonical render)"],
+      ["del", "@tiptap/extension-strike (parse fallback)"],
+      ["u", "@tiptap/extension-underline (reserved for future use)"],
+      ["a", "@tiptap/extension-link"],
+      ["img", "@tiptap/extension-image"],
+      // Generic wrappers used by attribute-bearing nodes (e.g. data-
+      // type="taskList" on a <div>, TextStyle marks on a <span>).
+      ["div", "task-list wrapper + arbitrary block extensions"],
+      ["span", "@tiptap/extension-text-style (attribute carrier)"],
+    ];
+    for (const [tag, source] of required) {
+      expect(
+        TRUSTED_LEADING_TAGS,
+        `<${tag}> must be trusted for ${source}`,
+      ).toContain(tag);
+    }
+  });
+
+  it("excludes every executable / sandbox-escape tag", () => {
+    // Defence in depth: even though `parseDocumentContent` *escapes*
+    // unknown tags rather than rendering them, an attacker who finds
+    // a way to slip one of these into a content blob would only need
+    // the list to accidentally include the tag for the escape to be
+    // bypassed. Pin the dangerous set explicitly so a future "add a
+    // missing tag" patch can't expand the surface by accident.
+    const forbidden = [
+      "script",
+      "iframe",
+      "style",
+      "object",
+      "embed",
+      "form",
+      "input",
+      "button",
+      "textarea",
+      "select",
+      "option",
+      "frame",
+      "frameset",
+      "applet",
+      "base",
+      "link", // <link rel="stylesheet" …> (NOT the inline <a> mark)
+      "meta",
+      "noscript",
+      "svg", // can host scriptable handlers
+      "math",
+    ];
+    for (const tag of forbidden) {
+      expect(
+        TRUSTED_LEADING_TAGS,
+        `<${tag}> must NOT be trusted`,
+      ).not.toContain(tag);
+    }
+  });
+
+  it("dynamic introspection: every block-level node extension in StarterKit is represented", async () => {
+    // Load the StarterKit extension definition dynamically so the
+    // pure-helper test file doesn't pay the @tiptap/starter-kit
+    // module-graph cost unless it's reached. `addExtensions()` returns
+    // the nested extension list; we walk it and assert that every
+    // BLOCK node has a corresponding tag on the trust list.
+    //
+    // This is the half of the pinning test that catches "added an
+    // extension to DocumentEditor.tsx but forgot to update
+    // TRUSTED_LEADING_TAGS" — the static snapshot above pins the
+    // *current* list; this one pins the *parity contract*.
+    const starterKitMod: { default: { configure: (o: object) => unknown } } =
+      await import("@tiptap/starter-kit");
+    const StarterKit = starterKitMod.default;
+    const inst = StarterKit.configure({}) as {
+      config: { addExtensions: (this: unknown) => Array<{ type: string; name: string }> };
+    };
+    const exts = inst.config.addExtensions.call(inst);
+
+    // Map StarterKit extension names → expected document-root HTML tags.
+    // (Inline marks, formatting marks, and "no-tag" extensions like
+    // `doc` / `text` / `dropCursor` are omitted since they never
+    // appear as the LEADING tag of a serialised document.)
+    const NODE_TAG_MAP: Record<string, readonly string[]> = {
+      paragraph: ["p"],
+      heading: ["h1", "h2", "h3", "h4", "h5", "h6"],
+      blockquote: ["blockquote"],
+      bulletList: ["ul"],
+      orderedList: ["ol"],
+      listItem: ["li"],
+      codeBlock: ["pre"],
+      hardBreak: ["br"],
+      horizontalRule: ["hr"],
+    };
+
+    for (const ext of exts) {
+      if (ext.type !== "node") continue;
+      const tags = NODE_TAG_MAP[ext.name];
+      if (tags === undefined) continue; // doc / text / unknown
+      for (const tag of tags) {
+        expect(
+          TRUSTED_LEADING_TAGS,
+          `StarterKit node "${ext.name}" can serialise as leading <${tag}>; ` +
+            `it must be in TRUSTED_LEADING_TAGS or parseDocumentContent will escape the document on reload.`,
+        ).toContain(tag);
+      }
+    }
   });
 });

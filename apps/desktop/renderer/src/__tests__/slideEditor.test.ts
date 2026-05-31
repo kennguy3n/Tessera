@@ -11,6 +11,9 @@ import {
   moveSlide,
   backfillSlideIds,
   removeBlock,
+  discardUploadTokensForSlide,
+  discardUploadTokensForBlock,
+  uploadTokenKey,
   appendBlock,
   replaceBlock,
   buildBlock,
@@ -818,6 +821,144 @@ describe("removeBlock", () => {
     };
     expect(removeBlock(slide, -1)).toBe(slide);
     expect(removeBlock(slide, 5)).toBe(slide);
+  });
+});
+
+describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForBlock", () => {
+  // PR #82 round 7 ANALYSIS_…_0003: `SlideEditor` keeps a
+  // `Map<"${slideId}|${blockId}", number>` to disambiguate concurrent
+  // FileReader reads (race-guard pattern: latest token wins, stale
+  // completions drop). Without an explicit cleanup path the Map grew
+  // forever — a long edit session that added & deleted many image
+  // blocks would let it accumulate dead entries. These tests pin the
+  // helper contract so a future refactor can't silently re-introduce
+  // the leak by reverting the wiring in `removeSlide` / `onBlockRemove`.
+
+  it("uploadTokenKey concatenates slide + block ids with the | sentinel", () => {
+    expect(uploadTokenKey("slide-1", "block-2")).toBe("slide-1|block-2");
+  });
+
+  it("uploadTokenKey accepts any string \u2014 callers pass raw ids without sanitising", () => {
+    // The keys are internal Map keys, not URL-safe slugs. We only need
+    // the encoding to be injective per (slideId, blockId) pair, which
+    // the | sentinel achieves because the id generator (`newSlideId`)
+    // never emits |.
+    expect(uploadTokenKey("a", "b")).not.toBe(uploadTokenKey("ab", ""));
+    expect(uploadTokenKey("", "ab")).not.toBe(uploadTokenKey("a", "b"));
+  });
+
+  it("discardUploadTokensForSlide drops every block-keyed entry for the slide", () => {
+    const tokens = new Map<string, number>([
+      [uploadTokenKey("s-1", "b-1"), 1],
+      [uploadTokenKey("s-1", "b-2"), 2],
+      [uploadTokenKey("s-2", "b-3"), 3],
+    ]);
+    const slide: Slide = {
+      id: "s-1",
+      title: "T",
+      blocks: [
+        { id: "b-1", type: "image", content: "data:image/png;base64,..." },
+        { id: "b-2", type: "image", content: "data:image/png;base64,..." },
+      ],
+      notes: "",
+    };
+    discardUploadTokensForSlide(tokens, slide.id, slide.blocks);
+    // Entries for slide s-1 are gone; the unrelated s-2 entry survives.
+    expect(tokens.has(uploadTokenKey("s-1", "b-1"))).toBe(false);
+    expect(tokens.has(uploadTokenKey("s-1", "b-2"))).toBe(false);
+    expect(tokens.has(uploadTokenKey("s-2", "b-3"))).toBe(true);
+    expect(tokens.size).toBe(1);
+  });
+
+  it("discardUploadTokensForSlide ignores blocks that never had a token", () => {
+    // The race-guard Map only gets an entry when an upload starts, so a
+    // text-only slide can hit the cleanup path with zero matching keys.
+    // Cleanup must be a silent no-op in that case (no throw).
+    const tokens = new Map<string, number>([
+      [uploadTokenKey("other", "x"), 7],
+    ]);
+    const slide: Slide = {
+      id: "s-empty",
+      title: "T",
+      blocks: [
+        { id: "b-text", type: "text", content: "no upload here" },
+      ],
+      notes: "",
+    };
+    expect(() =>
+      discardUploadTokensForSlide(tokens, slide.id, slide.blocks),
+    ).not.toThrow();
+    expect(tokens.size).toBe(1);
+    expect(tokens.get(uploadTokenKey("other", "x"))).toBe(7);
+  });
+
+  it("discardUploadTokensForSlide on a slide with zero blocks is a no-op", () => {
+    // `removeBlock` is allowed to leave a slide with `blocks: []`
+    // (title-only layout). When that empty slide is later deleted,
+    // cleanup must not throw on the empty iterable.
+    const tokens = new Map<string, number>([
+      [uploadTokenKey("other", "x"), 1],
+    ]);
+    discardUploadTokensForSlide(tokens, "s-empty", []);
+    expect(tokens.size).toBe(1);
+  });
+
+  it("discardUploadTokensForBlock drops only the targeted block's entry", () => {
+    const tokens = new Map<string, number>([
+      [uploadTokenKey("s-1", "b-1"), 1],
+      [uploadTokenKey("s-1", "b-2"), 2],
+      [uploadTokenKey("s-1", "b-3"), 3],
+    ]);
+    const slide: Slide = {
+      id: "s-1",
+      title: "T",
+      blocks: [
+        { id: "b-1", type: "text", content: "" },
+        { id: "b-2", type: "image", content: "data:image/png;..." },
+        { id: "b-3", type: "text", content: "" },
+      ],
+      notes: "",
+    };
+    discardUploadTokensForBlock(tokens, slide, 1);
+    // Only the middle block's token is freed; siblings survive.
+    expect(tokens.has(uploadTokenKey("s-1", "b-1"))).toBe(true);
+    expect(tokens.has(uploadTokenKey("s-1", "b-2"))).toBe(false);
+    expect(tokens.has(uploadTokenKey("s-1", "b-3"))).toBe(true);
+  });
+
+  it("discardUploadTokensForBlock is a silent no-op for out-of-range indices", () => {
+    // Defence-in-depth: even though the caller in `SlideEditor.tsx`
+    // already early-returns on `removeBlockHelper(slide, …) === slide`,
+    // the helper itself must tolerate a stale index without throwing
+    // (e.g. a future caller that calls the helper before the helper
+    // runs the bounds check).
+    const tokens = new Map<string, number>([
+      [uploadTokenKey("s-1", "b-1"), 1],
+    ]);
+    const slide: Slide = {
+      id: "s-1",
+      title: "T",
+      blocks: [{ id: "b-1", type: "text", content: "" }],
+      notes: "",
+    };
+    expect(() => discardUploadTokensForBlock(tokens, slide, -1)).not.toThrow();
+    expect(() => discardUploadTokensForBlock(tokens, slide, 99)).not.toThrow();
+    expect(tokens.size).toBe(1);
+  });
+
+  it("discardUploadTokensForBlock on a block that never had a token is a no-op", () => {
+    const tokens = new Map<string, number>([
+      [uploadTokenKey("other", "x"), 5],
+    ]);
+    const slide: Slide = {
+      id: "s-1",
+      title: "T",
+      blocks: [{ id: "b-text", type: "text", content: "" }],
+      notes: "",
+    };
+    discardUploadTokensForBlock(tokens, slide, 0);
+    expect(tokens.size).toBe(1);
+    expect(tokens.get(uploadTokenKey("other", "x"))).toBe(5);
   });
 });
 

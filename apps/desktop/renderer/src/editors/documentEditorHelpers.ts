@@ -32,7 +32,7 @@
  * input. Self-closing tags (e.g. `<hr />`) are matched without the
  * closing slash.
  */
-const TRUSTED_LEADING_TAGS = [
+export const TRUSTED_LEADING_TAGS: readonly string[] = [
   "p",
   "h1",
   "h2",

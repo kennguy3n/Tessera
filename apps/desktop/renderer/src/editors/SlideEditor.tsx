@@ -28,6 +28,9 @@ import {
   moveSlide as moveSlideHelper,
   moveBlock,
   removeBlock as removeBlockHelper,
+  discardUploadTokensForSlide,
+  discardUploadTokensForBlock,
+  uploadTokenKey,
   appendBlock,
   replaceBlock,
   slideWordCount,
@@ -305,6 +308,23 @@ export default function SlideEditor({
       setSlides((prev) => {
         if (prev.length <= 1) return prev;
         if (index < 0 || index >= prev.length) return prev;
+        // Free upload-race tokens for every block in the slide we're
+        // about to drop. The `uploadTokensRef` Map otherwise accumulates
+        // dead `${slideId}|${blockId}` entries for the lifetime of the
+        // editor (Devin Review PR #82 round 7 ANALYSIS_…_0003). The
+        // entries are tiny (a string key + small int) but a long
+        // editing session that adds/removes many slides would let the
+        // Map grow without bound. We delete based on the OUTGOING slide
+        // (read from `prev[index]` not `slides`) so this is safe inside
+        // a `setSlides` updater even if React batches multiple removes.
+        const removed = prev[index];
+        if (removed) {
+          discardUploadTokensForSlide(
+            uploadTokensRef.current,
+            removed.id,
+            removed.blocks,
+          );
+        }
         const updated = prev.filter((_, i) => i !== index);
         // Adjust the active pointer relative to the deletion point so the
         // user stays anchored on roughly the same slide:
@@ -386,6 +406,20 @@ export default function SlideEditor({
         if (!slide) return prev;
         const updatedSlide = removeBlockHelper(slide, blockIndex);
         if (updatedSlide === slide) return prev;
+        // Free the upload-race token for the dropped block so the Map
+        // doesn't accumulate dead entries (Devin Review PR #82 round 7
+        // ANALYSIS_…_0003). Read the block off `prev[slideIndex]` (the
+        // freshest state inside the updater) rather than the outer
+        // `slides` closure so a concurrent remove doesn't free the
+        // wrong key. `removeBlockHelper` returns the SAME slide ref on
+        // out-of-range indices — we already early-return above in that
+        // case, so reaching this point guarantees the helper finds the
+        // outgoing block to discard.
+        discardUploadTokensForBlock(
+          uploadTokensRef.current,
+          slide,
+          blockIndex,
+        );
         const next = [...prev];
         next[slideIndex] = updatedSlide;
         debouncedSave(next);
@@ -524,7 +558,7 @@ export default function SlideEditor({
       blockId: string,
       file: File,
     ) => {
-      const tokenKey = `${slideId}|${blockId}`;
+      const tokenKey = uploadTokenKey(slideId, blockId);
       const nextToken = (uploadTokensRef.current.get(tokenKey) ?? 0) + 1;
       uploadTokensRef.current.set(tokenKey, nextToken);
       try {

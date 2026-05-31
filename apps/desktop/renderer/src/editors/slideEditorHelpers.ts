@@ -613,6 +613,60 @@ export function removeBlock(slide: Slide, index: number): Slide {
 }
 
 /**
+ * Token-key encoding shared by every site that touches the upload
+ * race-guard Map in `SlideEditor.tsx`. Centralising it here means a
+ * future change to the key format (e.g. adding a per-attachment salt)
+ * only touches this one helper plus the helpers below, instead of
+ * three string-template sites scattered through the editor.
+ */
+export function uploadTokenKey(slideId: string, blockId: string): string {
+  return `${slideId}|${blockId}`;
+}
+
+/**
+ * Drop every upload-race token tied to a slide we're about to remove.
+ *
+ * `SlideEditor.tsx` keeps a `Map<"${slideId}|${blockId}", number>` to
+ * disambiguate concurrent `FileReader` reads (the latest token wins;
+ * stale completions are dropped). Without this cleanup the Map grew
+ * for the lifetime of the editor — a long session that added &
+ * deleted many image blocks would let it accumulate dead entries
+ * (Devin Review PR #82 round 7 ANALYSIS_…_0003).
+ *
+ * The helper mutates `tokens` in place and returns `void`; callers
+ * are React refs, not state, so mutation is the natural shape. Any
+ * `Iterable<SlideBlock>` is accepted so the caller can pass either
+ * the live `slide.blocks` array or a synthesised list (e.g. tests).
+ */
+export function discardUploadTokensForSlide(
+  tokens: Map<string, number>,
+  slideId: string,
+  blocks: Iterable<SlideBlock>,
+): void {
+  for (const block of blocks) {
+    tokens.delete(uploadTokenKey(slideId, block.id));
+  }
+}
+
+/**
+ * Drop the upload-race token for a single block we're about to remove.
+ *
+ * Companion to `discardUploadTokensForSlide`. Out-of-range / missing
+ * blocks are a silent no-op so the helper is safe to call inside a
+ * `setSlides` updater whose previous-state lookup may have raced
+ * against another mutation.
+ */
+export function discardUploadTokensForBlock(
+  tokens: Map<string, number>,
+  slide: Slide,
+  blockIndex: number,
+): void {
+  const outgoing = slide.blocks[blockIndex];
+  if (!outgoing) return;
+  tokens.delete(uploadTokenKey(slide.id, outgoing.id));
+}
+
+/**
  * Append a new block to a slide. Returns a new `Slide`. Used by the
  * "+ Add Block" button and by the layout-aware paste path. The new
  * block's `content` defaults to empty so the user immediately sees an

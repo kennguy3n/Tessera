@@ -18,7 +18,6 @@
  * other handler) and clicks invoke directly.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Editor } from "@tiptap/react";
 import {
   filterSlashCommands,
   type SlashCommand,
@@ -26,7 +25,6 @@ import {
 import type { SlashTriggerState } from "../extensions/SlashCommandExtension";
 
 export interface SlashMenuProps {
-  editor: Editor;
   trigger: SlashTriggerState;
   /** Called to dispatch the chosen command. The handler owns the
    *  splice (via `editor.commands.deleteSlashTrigger()`) plus the
@@ -37,22 +35,20 @@ export interface SlashMenuProps {
   onDismiss: () => void;
 }
 
-export function SlashMenu({
-  editor,
-  trigger,
-  onSelect,
-  onDismiss,
-}: SlashMenuProps) {
-  // `editor` is intentionally a prop even though we don't read it
-  // inside this component — keeps the API symmetric with
-  // FindReplacePanel and lets future extensions wire a hover-preview
-  // that lifts text from `editor.state` without prop-drilling refactor.
-  // The `void` discard runs at module-evaluation time so it's actually
-  // executed (the previous version put it AFTER `return` where it
-  // was dead code that the no-unused-vars linter might mis-credit
-  // — Devin Review PR #80 ANALYSIS_…_0001 flagged).
-  void editor;
-
+// `SlashMenu` deliberately does NOT receive an `editor` prop. The popup
+// is presentational: it owns the keyboard cursor + filtered command
+// catalog and delegates EVERY side effect to `onSelect` / `onDismiss`,
+// which are wired in the parent (`DocumentEditor`) where the editor
+// instance already lives. The earlier shape carried an unused `editor`
+// prop with a `void editor` discard "for API symmetry with
+// FindReplacePanel" — but `FindReplacePanel` legitimately calls
+// `editor.chain()` / `editor.state.doc` etc. 40+ times, so the
+// symmetry was illusory. Removing the prop drops the workaround +
+// the dead `@tiptap/react` Editor type import (Devin Review PR #82
+// round 7 ANALYSIS_…_0005). If a future SlashMenu feature genuinely
+// needs editor state (e.g. an inline hover-preview that lifts a
+// snippet from `editor.state`), pass it in then — YAGNI today.
+export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
   const filtered = useMemo(
     () => filterSlashCommands(trigger.query),
     [trigger.query],

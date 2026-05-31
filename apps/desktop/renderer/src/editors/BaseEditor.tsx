@@ -600,21 +600,68 @@ export default function BaseEditor({
   const filteredAndSorted = useMemo(() => {
     let records = [...data.records];
 
+    // Display-string cache — Devin Review PR #82 round 7
+    // ANALYSIS_…_0004. `formatValueForCsv` materialises a formula /
+    // rollup / lookup / auto_number result for one (field, record)
+    // pair. For `formula` that means evaluating the whole expression
+    // (tokenize → parse → walk), which is the expensive case. The
+    // previous shape called it inside the filter loop once per
+    // computed-field filter row, AND twice per comparator step inside
+    // the sort, so a base with N records / M computed filters /
+    // a computed sort key paid O((M + log N) · N) evaluations per
+    // render. With this cache, every (record, field) pair is computed
+    // at most once per render. The cache is sound for the whole
+    // `useMemo` because:
+    //   1. `data.records` / `data.fields` are captured at the top
+    //      and don't mutate mid-render.
+    //   2. We key by `(record.id, field.name)` — both stable strings
+    //      (record ids are unique by contract, field names are
+    //      unique within the schema).
+    //   3. `formatValueForCsv` is a pure function of those four
+    //      arguments, so identical keys map to identical outputs.
+    // Note that we always pass `data.records` (the FULL set) as the
+    // third arg so cross-record references (linked_record / rollup /
+    // lookup) resolve against the unfiltered population — exactly
+    // matching the cell render path, which is the visual the user
+    // is filtering against.
+    const displayCache = new Map<string, Map<string, string>>();
+    const getDisplay = (
+      field: BaseField,
+      record: BaseRecord,
+    ): string => {
+      let perRecord = displayCache.get(record.id);
+      if (perRecord === undefined) {
+        perRecord = new Map<string, string>();
+        displayCache.set(record.id, perRecord);
+      }
+      const cached = perRecord.get(field.name);
+      if (cached !== undefined) return cached;
+      const value = formatValueForCsv(
+        field,
+        record,
+        data.records,
+        data.fields,
+      );
+      perRecord.set(field.name, value);
+      return value;
+    };
+
     // Apply per-field filters via the type-aware matcher.
     // Computed types (formula / rollup / lookup / auto_number)
     // need a rendered display string — their stored value is
     // either a source expression (`formula`) or `null`
     // (`auto_number`), so comparing it directly would always
-    // miss. `formatValueForCsv` already computes the same display
-    // string the cell renders, so threading it through here keeps
-    // the filter, sort, CSV export, and cell render in lock-step.
+    // miss. `getDisplay` returns the same string the cell renders,
+    // memoised across the whole filter+sort pipeline so the second
+    // computed-field filter row (and the sort comparator below) hit
+    // the cache rather than re-evaluating each formula.
     for (const [fieldName, filterVal] of Object.entries(filters)) {
       if (!filterVal.trim()) continue;
       const field = data.fields.find((f) => f.name === fieldName);
       if (!field) continue;
       records = records.filter((r) => {
         const display = isComputedFieldType(field.type)
-          ? formatValueForCsv(field, r, data.records, data.fields)
+          ? getDisplay(field, r)
           : undefined;
         return matchesFilter(field.type, r[fieldName], filterVal, display);
       });
@@ -633,7 +680,7 @@ export default function BaseEditor({
         sortFieldDef !== undefined && isComputedFieldType(sortFieldDef.type);
       const displayFor = (r: BaseRecord): string => {
         if (sortIsComputed && sortFieldDef) {
-          return formatValueForCsv(sortFieldDef, r, data.records, data.fields);
+          return getDisplay(sortFieldDef, r);
         }
         const raw = r[sortField];
         return raw == null ? "" : String(raw);

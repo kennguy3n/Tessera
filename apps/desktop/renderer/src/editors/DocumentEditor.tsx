@@ -359,7 +359,6 @@ export default function DocumentEditor({
         )}
         {slashTrigger.visible && (
           <SlashMenu
-            editor={editor}
             trigger={slashTrigger}
             onSelect={dispatchSlash}
             onDismiss={dismissSlash}
