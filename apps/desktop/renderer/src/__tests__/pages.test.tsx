@@ -165,7 +165,7 @@ describe("HomePage", () => {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route
-            path="/artifacts/:id"
+            path="/artifacts/:id/edit"
             element={<CurrentPath />}
           />
         </Routes>
@@ -177,7 +177,7 @@ describe("HomePage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("current-path")).toHaveTextContent(
-        "/artifacts/art-recent-1",
+        "/artifacts/art-recent-1/edit",
       );
     });
 

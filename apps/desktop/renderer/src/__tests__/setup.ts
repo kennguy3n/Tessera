@@ -1,4 +1,6 @@
 import "@testing-library/jest-dom/vitest";
+import { beforeEach, vi } from "vitest";
+import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 
 // jsdom does not implement SVG layout APIs; mermaid and other diagram
 // libraries call getBBox/getComputedTextLength/getCTM during render. Stub
@@ -288,6 +290,13 @@ const mockApi = {
       // accidentally render the wizard. Wizard-specific tests
       // override this field explicitly.
       onboardingCompleted: true,
+      // Phase 18 Task 16-17: default mock returns empty arrays so
+      // every page-level test starts with a fresh "no pins / no
+      // recents" state. Tests that exercise the command palette or
+      // sidebar Pinned section override these fields with the
+      // specific IDs they want to assert against.
+      pinnedArtifactIds: [],
+      recentArtifactIds: [],
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
@@ -295,6 +304,8 @@ const mockApi = {
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
       onboardingCompleted: true,
+      pinnedArtifactIds: [],
+      recentArtifactIds: [],
     }),
     // Hybrid search config lives on `settings` (not `sources`)
     // because the channel name is `settings:*` and the handler is
@@ -652,6 +663,17 @@ Object.defineProperty(window, "tessera", {
 // instead of crashing with "undefined" — and so tests that want to
 // assert the nonce attribute on the rendered DOM have a known
 // expected value to compare against.
+// Reset the module-level shared `useSettings` store between tests so
+// one test's mutations (pinned IDs, recent IDs, refresh state) do
+// not leak into the next. The store is a singleton by design (see
+// hooks/useSettings.ts header comment for the architectural
+// rationale of the shared state) but that singleton-ness is exactly
+// what bleeds across tests in a fresh-test-per-it suite. PR #87
+// Devin Review ANALYSIS_0001 shared-store refactor companion.
+beforeEach(() => {
+  __resetSettingsStoreForTests();
+});
+
 Object.defineProperty(window, "tesseraCspNonce", {
   value: "test-csp-nonce",
   writable: true,

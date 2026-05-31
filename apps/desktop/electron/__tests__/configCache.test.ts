@@ -210,6 +210,8 @@ describe("config cache", () => {
     expect(Object.isFrozen(cfg.ignorePatterns)).toBe(true);
     expect(Object.isFrozen(cfg.watchPatterns)).toBe(true);
     expect(Object.isFrozen(cfg.lastOpenedArtifacts)).toBe(true);
+    expect(Object.isFrozen(cfg.pinnedArtifactIds)).toBe(true);
+    expect(Object.isFrozen(cfg.recentArtifactIds)).toBe(true);
     expect(Object.isFrozen(cfg.sourcePaths)).toBe(true);
     expect(() => {
       (cfg.ignorePatterns as string[]).push(".cache");

@@ -49,6 +49,7 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import { notifyArtifactsChanged } from "../hooks/useArtifacts";
 import { useCspNonce } from "../utils/cspNonce";
 import {
   type VisionMode,
@@ -185,6 +186,10 @@ export default function VisionPage() {
         "document",
       );
       await window.tessera.artifacts.update(artifact.id, markdown);
+      // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+      // live `useArtifactList()` consumer picks up the newly
+      // created artifact without a remount.
+      notifyArtifactsChanged();
       navigate(`/artifacts/${encodeURIComponent(artifact.id)}/edit`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

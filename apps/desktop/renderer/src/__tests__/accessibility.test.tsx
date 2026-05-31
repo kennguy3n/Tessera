@@ -181,6 +181,11 @@ vi.mock("../hooks/useSettings", () => ({
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
       onboardingCompleted: true,
+      // Phase 18 Tasks 16-17: the Sidebar now reads these fields
+      // off settings. Stubbed empty so the suite continues to focus
+      // on the DOM contract rather than the persistence layer.
+      pinnedArtifactIds: [],
+      recentArtifactIds: [],
     },
     loading: false,
     refresh: vi.fn(),

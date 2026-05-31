@@ -18,6 +18,8 @@ export {
   TASK_PRIORITIES,
   THEMES,
   EXPORT_FORMATS,
+  MAX_RECENT_ARTIFACTS,
+  MAX_PINNED_ARTIFACTS,
 } from "../../../shared/types";
 
 export type {
