@@ -310,6 +310,22 @@ export default function BaseEditor({
     return records;
   }, [data.records, filters, sortField, sortDir]);
 
+  // Pre-built `id → original index` map so the grid row render is
+  // O(1) per row instead of O(n) via `data.records.indexOf(record)`.
+  // Brute-force `indexOf` made the grid render O(n²) in the number of
+  // records — negligible for typical bases, but a clear bottleneck
+  // at scale (10k records => 10^8 ops on every keystroke). Lifting
+  // it into its own memo keyed on `data.records` means we only
+  // rebuild the map when records add/remove/reorder, not on every
+  // filter/sort/edit. Keyed by `record.id` (not by object reference)
+  // so any code path that reconstructs the record object (e.g. JSON
+  // round-trip in tests) still resolves to the original position.
+  const recordIndexById = useMemo(() => {
+    const m = new Map<string, number>();
+    data.records.forEach((r, i) => m.set(r.id, i));
+    return m;
+  }, [data.records]);
+
   // Shared props passed to every non-grid view. The grid view stays
   // inline below because it has filter/sort behavior the others
   // don't need.
@@ -432,7 +448,11 @@ export default function BaseEditor({
           </thead>
           <tbody>
             {filteredAndSorted.map((record, ri) => {
-              const originalIndex = data.records.indexOf(record);
+              // O(1) lookup via the pre-built map; falls back to
+              // -1 if a row somehow leaks through with no id (legacy
+              // hand-edited JSON), which `removeRecord` / `updateCell`
+              // are robust to.
+              const originalIndex = recordIndexById.get(record.id) ?? -1;
               return (
                 <tr key={record.id || originalIndex}>
                   <td className="base-row-num">{ri + 1}</td>
