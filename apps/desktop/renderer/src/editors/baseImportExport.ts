@@ -50,6 +50,7 @@
 import { evaluateBaseFormula, formatFormulaResult } from "./baseFormulaEngine";
 import {
   aggregateValues,
+  buildRecordIndex,
   lookupValues,
   makeRecordId,
   resolveLinkedRecords,
@@ -204,8 +205,17 @@ export function formatValueForCsv(
   record: BaseRecord,
   allRecords: BaseRecord[],
   allFields: BaseField[],
+  recordsById?: ReadonlyMap<string, BaseRecord>,
+  recordIndexById?: ReadonlyMap<string, number>,
 ): string {
   const value = record[field.name];
+  // Per-render record-by-id lookup map. `resolveLinkedRecords`
+  // accepts either form, but threading the pre-built map through
+  // the linked_record / rollup / lookup branches skips an O(N)
+  // `Map(allRecords.map(...))` rebuild on every cell. Callers in
+  // the filter/sort pipeline lift this into a `useMemo` keyed on
+  // `data.records` so the cost is amortised across the grid.
+  const byId = recordsById ?? allRecords;
 
   switch (field.type) {
     case "text":
@@ -267,8 +277,16 @@ export function formatValueForCsv(
 
     case "auto_number": {
       // Mirrors the cell's 1-based display so the CSV row number
-      // matches what the user saw in the grid.
-      const idx = allRecords.indexOf(record);
+      // matches what the user saw in the grid. When the caller
+      // threads a pre-built `id → index` map (filter / sort /
+      // export all do), use it for an O(1) lookup; otherwise fall
+      // back to the O(N) `indexOf` for callers that don't (mostly
+      // unit tests). Devin Review PR #84 ANALYSIS-0004 flagged the
+      // unconditional `indexOf` as the last remaining O(N) branch
+      // after the linked / rollup / lookup branches were lifted
+      // onto `recordsById`.
+      const idx =
+        recordIndexById?.get(record.id) ?? allRecords.indexOf(record);
       return idx >= 0 ? String(idx + 1) : "";
     }
 
@@ -286,7 +304,7 @@ export function formatValueForCsv(
       // hostile to the human reading the export.
       if (!Array.isArray(value)) return "";
       const ids = value.filter((v): v is string => typeof v === "string");
-      const linked = resolveLinkedRecords(ids, allRecords);
+      const linked = resolveLinkedRecords(ids, byId);
       const display = field.linkedDisplayField;
       return linked
         .map((r) =>
@@ -314,14 +332,20 @@ export function formatValueForCsv(
       // cell would show.
       const linkedFieldName = field.linkedField;
       const targetFieldName = field.targetField;
-      const aggregation = field.aggregation ?? "CONCAT";
+      // Default aggregation must match `RollupCell` (`BaseEditor.tsx`)
+      // and the `AddFieldDialog`'s `useState<RollupAggregation>("SUM")`
+      // initial state — otherwise hand-edited JSON (no explicit
+      // `aggregation` key) renders differently in the grid vs. CSV
+      // export / filter pipeline. Devin Review PR #84 ANALYSIS-0004
+      // flagged the prior `"CONCAT"` fallback as a drift bug.
+      const aggregation = field.aggregation ?? "SUM";
       if (!linkedFieldName || !targetFieldName) return "";
       const linkedFieldDef = allFields.find((f) => f.name === linkedFieldName);
       if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
         return "#REF!";
       }
       const ids = record[linkedFieldName];
-      const linkedRecords = resolveLinkedRecords(ids, allRecords);
+      const linkedRecords = resolveLinkedRecords(ids, byId);
       const values = linkedRecords.map((r) => r[targetFieldName]);
       return aggregateValues(values, aggregation);
     }
@@ -335,7 +359,7 @@ export function formatValueForCsv(
         return "#REF!";
       }
       const ids = record[linkedFieldName];
-      const linkedRecords = resolveLinkedRecords(ids, allRecords);
+      const linkedRecords = resolveLinkedRecords(ids, byId);
       return lookupValues(linkedRecords, targetFieldName);
     }
 
@@ -364,11 +388,31 @@ export function formatValueForCsv(
  */
 export function exportBaseCsv(data: BaseContent): string {
   const { fields, records } = data;
+  // Build the records-by-id map ONCE for the whole export instead
+  // of inside every `resolveLinkedRecords` call for every linked /
+  // rollup / lookup cell. With N records and M such columns the
+  // savings compound from N*M map constructions to a single one.
+  const recordsById = buildRecordIndex(records);
+  // Same lift for the `auto_number` branch — the cell's 1-based
+  // display is just `position + 1`, and looking up the position
+  // through this map keeps that branch O(1) per cell instead of
+  // O(N) via `allRecords.indexOf(record)`.
+  const recordIndexById = new Map<string, number>();
+  records.forEach((r, i) => recordIndexById.set(r.id, i));
   const header = fields.map((f) => csvEscapeCell(f.name)).join(",");
   const rows = records.map((record) =>
     fields
       .map((field) =>
-        csvEscapeCell(formatValueForCsv(field, record, records, fields)),
+        csvEscapeCell(
+          formatValueForCsv(
+            field,
+            record,
+            records,
+            fields,
+            recordsById,
+            recordIndexById,
+          ),
+        ),
       )
       .join(","),
   );

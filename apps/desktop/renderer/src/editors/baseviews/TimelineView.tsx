@@ -248,7 +248,16 @@ export default function TimelineView({
             }}
           >
             {unscheduled.map(({ record, index, reason }) => (
-              <li key={index} style={{ padding: "0.125rem 0" }}>
+              // Stable record-id key (see grid view comment). Falls
+              // back to the array index only when a record somehow
+              // lacks an id (defensive; `ensureRecordIds` makes this
+              // unreachable in practice).
+              <li
+                key={
+                  typeof record.id === "string" ? record.id : String(index)
+                }
+                style={{ padding: "0.125rem 0" }}
+              >
                 <strong style={{ color: "inherit" }}>
                   {titleField
                     ? String(record[titleField] ?? "(untitled)")
@@ -380,8 +389,13 @@ function Chart({
           // collapse into a 0px sliver on multi-month zooms.
           const effectiveWidth = Math.max(widthPct, 0.5);
           return (
+            // Stable record-id key so React reconciles each timeline
+            // row by identity (resort / delete / drag keep the same
+            // DOM node mounted).
             <div
-              key={index}
+              key={
+                typeof record.id === "string" ? record.id : String(index)
+              }
               style={{
                 position: "relative",
                 height: "32px",

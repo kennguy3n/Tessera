@@ -16,6 +16,7 @@ import {
   ensureRecordIds,
   parseBaseContent,
   resolveLinkedRecords,
+  buildRecordIndex,
   aggregateValues,
   lookupValues,
   computeAutoNumber,
@@ -251,6 +252,74 @@ describe("resolveLinkedRecords", () => {
 
   it("returns [] when no ids resolve", () => {
     expect(resolveLinkedRecords(["x", "y"], records)).toEqual([]);
+  });
+
+  // Devin Review PR #84 round 3 ANALYSIS-0004 — `resolveLinkedRecords`
+  // must accept either the raw array or a pre-built `ReadonlyMap`. We
+  // discriminate via `Array.isArray` (not `instanceof Map`) so that
+  // any structurally-compatible `ReadonlyMap` impl works, not just
+  // the JS-stdlib `Map`. These tests pin both branches and the
+  // structural-map compatibility contract.
+  it("accepts a pre-built ReadonlyMap and produces the same result as the array form", () => {
+    const byId = buildRecordIndex(records);
+    const fromArray = resolveLinkedRecords(["r3", "r1"], records);
+    const fromMap = resolveLinkedRecords(["r3", "r1"], byId);
+    expect(fromMap.map((r) => r.id)).toEqual(fromArray.map((r) => r.id));
+    expect(fromMap.map((r) => r.id)).toEqual(["r3", "r1"]);
+  });
+
+  it("accepts a structurally-compatible map-like object that is not an instance of Map", () => {
+    // Construct a `get`-only shim that satisfies `resolveLinkedRecords`'s
+    // actual runtime needs *without* being an instance of `Map`. If
+    // the discriminator were `instanceof Map`, this would silently
+    // fall to the array branch and crash inside `buildRecordIndex`
+    // (which iterates the input expecting an array shape). With the
+    // `Array.isArray` discriminator the shim is correctly routed to
+    // the map branch — proving the contract holds for any future
+    // `ReadonlyMap`-shaped value (Immutable.js maps, lru-cache
+    // entries, etc.) and not just the JS-stdlib `Map`.
+    //
+    // The cast is intentional: `ReadonlyMap` has tightened in modern
+    // TS lib to require `MapIterator`-flavoured iteration, but
+    // `resolveLinkedRecords` only ever invokes `.get(id)`, so a
+    // narrower shim with just `get` is sufficient at runtime. The
+    // cast documents this asymmetry (we deliberately ship a partial
+    // shim because the runtime path doesn't touch the rest).
+    const shim = {
+      get: (key: string): BaseRecord | undefined =>
+        records.find((r) => r.id === key),
+    } as unknown as ReadonlyMap<string, BaseRecord>;
+    expect(shim).not.toBeInstanceOf(Map);
+    const out = resolveLinkedRecords(["r2", "r3"], shim);
+    expect(out.map((r) => r.id)).toEqual(["r2", "r3"]);
+  });
+});
+
+describe("buildRecordIndex", () => {
+  // Companion to the `resolveLinkedRecords` tests above — pin the
+  // contract that `buildRecordIndex` is what produces the per-render
+  // `recordsById` map threaded through `CellInputProps`.
+  it("returns a Map keyed by record.id with the original record refs", () => {
+    const records: BaseRecord[] = [
+      { id: "a", Name: "Alice" },
+      { id: "b", Name: "Bob" },
+    ];
+    const byId = buildRecordIndex(records);
+    expect(byId.get("a")).toBe(records[0]);
+    expect(byId.get("b")).toBe(records[1]);
+    expect(byId.get("c")).toBeUndefined();
+  });
+
+  it("skips records whose id is not a string (defensive against hand-edited JSON)", () => {
+    const records = [
+      { id: "a", Name: "Alice" },
+      { id: 42, Name: "Numeric" } as unknown as BaseRecord,
+      { Name: "NoId" } as unknown as BaseRecord,
+      { id: null, Name: "Null" } as unknown as BaseRecord,
+    ];
+    const byId = buildRecordIndex(records);
+    expect(byId.size).toBe(1);
+    expect(byId.get("a")).toBeDefined();
   });
 });
 

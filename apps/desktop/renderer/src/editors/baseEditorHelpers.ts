@@ -239,18 +239,60 @@ export function parseBaseContent(content: string): BaseContent {
 }
 
 /**
+ * Build a `Map<id, BaseRecord>` index used by `resolveLinkedRecords`
+ * to look up records by id in O(1). Built once per render in
+ * `BaseEditor` (memoised on `data.records`) and threaded through
+ * `CellInputProps.recordsById` so the rollup/lookup/formula cells
+ * skip the per-cell `Map(allRecords.map(...))` construction that
+ * Devin Review flagged as O(N·M) per render.
+ *
+ * Skips entries whose `id` is not a string so a hand-edited JSON
+ * with a missing or non-string id can't poison the index.
+ */
+export function buildRecordIndex(
+  allRecords: BaseRecord[],
+): ReadonlyMap<string, BaseRecord> {
+  const byId = new Map<string, BaseRecord>();
+  for (const r of allRecords) {
+    if (typeof r?.id === "string") byId.set(r.id, r);
+  }
+  return byId;
+}
+
+/**
  * Resolve a set of record IDs (the value stored in a `linked_record`
  * cell) back to the corresponding `BaseRecord` objects, in the same
  * order the IDs were given. Unknown IDs are skipped silently — the
  * UI shows a "?" chip for them so the user can clean up dangling
  * references on their next edit.
+ *
+ * The second argument is either the raw `allRecords` array (legacy
+ * form — re-builds the lookup map on every call) OR a pre-built
+ * `ReadonlyMap<string, BaseRecord>` from `buildRecordIndex` (lift
+ * the map into a per-render `useMemo` and pass it through to skip
+ * the rebuild on every cell). Both forms produce identical output.
+ *
+ * We discriminate via `Array.isArray` — NOT `instanceof Map`.
+ * `Array.isArray` is a stable, well-defined runtime check that
+ * narrows on TS's `unknown[]` element type, and crucially it
+ * remains valid even if a future caller passes a different
+ * `ReadonlyMap` implementation (e.g. an Immutable.js Map, a
+ * `WeakMap`-backed structural shim, or a future stdlib type). The
+ * earlier `instanceof Map` check would silently fall to the array
+ * branch and crash on `buildRecordIndex(allRecords as BaseRecord[])`
+ * because the structural `ReadonlyMap` type doesn't carry the
+ * `Map.prototype` chain. Discriminating on the array shape instead
+ * keeps the type contract architecturally honest. (Devin Review
+ * PR #84 round 3 ANALYSIS-0004.)
  */
 export function resolveLinkedRecords(
   ids: unknown,
-  allRecords: BaseRecord[],
+  allRecords: BaseRecord[] | ReadonlyMap<string, BaseRecord>,
 ): BaseRecord[] {
   if (!Array.isArray(ids)) return [];
-  const byId = new Map(allRecords.map((r) => [r.id, r]));
+  const byId: ReadonlyMap<string, BaseRecord> = Array.isArray(allRecords)
+    ? buildRecordIndex(allRecords)
+    : allRecords;
   const out: BaseRecord[] = [];
   for (const id of ids) {
     if (typeof id !== "string") continue;

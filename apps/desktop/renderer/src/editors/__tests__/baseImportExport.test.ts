@@ -203,6 +203,42 @@ describe("formatValueForCsv — per-field-type formatters", () => {
     expect(formatValueForCsv(f, r2, [r1, r2], [])).toBe("2");
   });
 
+  it("auto_number uses pre-built recordIndexById when provided (O(1) lookup)", () => {
+    // The grid filter / sort / export pipelines all thread a
+    // pre-built `id → index` map through `formatValueForCsv` so
+    // the `auto_number` branch is O(1) per cell instead of O(N)
+    // via `allRecords.indexOf(record)`. This test pins the
+    // behavior: when the map IS supplied, its position values
+    // win even if `allRecords` is empty / stale. When it's NOT
+    // supplied, the function falls back to `indexOf` (covered
+    // by the test above).
+    const f: BaseField = { name: "a", type: "auto_number" };
+    const r1: BaseRecord = { id: "r1" };
+    const r2: BaseRecord = { id: "r2" };
+    const recordIndexById = new Map<string, number>([
+      ["r1", 0],
+      ["r2", 1],
+    ]);
+    // Note: empty `allRecords` to prove the map is what was used.
+    expect(
+      formatValueForCsv(f, r1, [], [], undefined, recordIndexById),
+    ).toBe("1");
+    expect(
+      formatValueForCsv(f, r2, [], [], undefined, recordIndexById),
+    ).toBe("2");
+    // Record not in the map → empty string (graceful fallback).
+    expect(
+      formatValueForCsv(
+        f,
+        { id: "missing" },
+        [],
+        [],
+        undefined,
+        recordIndexById,
+      ),
+    ).toBe("");
+  });
+
   it("multi_select / attachment join with '; '", () => {
     const m: BaseField = { name: "tags", type: "multi_select" };
     expect(
