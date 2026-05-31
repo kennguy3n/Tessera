@@ -14,6 +14,7 @@ import {
   makeRecordId,
   resolveLinkedRecords,
   aggregateValues,
+  buildRecordIndex,
   lookupValues,
   computeAutoNumber,
   isReservedFieldName,
@@ -622,6 +623,22 @@ export default function BaseEditor({
     }
   };
 
+  // Pre-built `id -> BaseRecord` map. `resolveLinkedRecords` (called
+  // from `RollupCell`, `LookupCell`, `LinkedRecordCell` and inside
+  // `formatValueForCsv` for the filter / sort / export pipelines)
+  // previously rebuilt `new Map(allRecords.map(r => [r.id, r]))` on
+  // every call — O(N) per linked / rollup / lookup cell per render,
+  // i.e. O(N * M) per render for the whole grid. Lifting that map
+  // into a single per-render `useMemo` keyed on `data.records` and
+  // threading the read-only view through `CellInputProps.recordsById`
+  // makes the resolve step O(1) per cell. The map and the
+  // `recordIndexById` map below share the same dependency array, so
+  // they invalidate together whenever records add / remove / reorder.
+  const recordsById = useMemo(
+    () => buildRecordIndex(data.records),
+    [data.records],
+  );
+
   const filteredAndSorted = useMemo(() => {
     let records = [...data.records];
 
@@ -633,13 +650,20 @@ export default function BaseEditor({
     // miss. `formatValueForCsv` already computes the same display
     // string the cell renders, so threading it through here keeps
     // the filter, sort, CSV export, and cell render in lock-step.
+    //
+    // We thread the memoised `recordsById` map through to
+    // `formatValueForCsv` so the rollup / lookup / linked_record
+    // branches inside the formatter skip the O(N) `Map(allRecords)`
+    // rebuild they would otherwise do on every cell. With many
+    // computed columns active, this turns the filter pass from
+    // O(N^2 * M) into O(N * M).
     for (const [fieldName, filterVal] of Object.entries(filters)) {
       if (!filterVal.trim()) continue;
       const field = data.fields.find((f) => f.name === fieldName);
       if (!field) continue;
       records = records.filter((r) => {
         const display = isComputedFieldType(field.type)
-          ? formatValueForCsv(field, r, data.records, data.fields)
+          ? formatValueForCsv(field, r, data.records, data.fields, recordsById)
           : undefined;
         return matchesFilter(field.type, r[fieldName], filterVal, display);
       });
@@ -652,17 +676,41 @@ export default function BaseEditor({
     // locale-compare keeps "10" after "2" for plain numeric
     // columns and also makes "1", "2", …, "10" sort correctly on
     // computed columns whose display happens to be numeric.
+    //
+    // Sort comparators are called O(N log N) times by the engine,
+    // and each call previously re-evaluated `formatValueForCsv` for
+    // both operands — so a 1000-row table with one computed sort
+    // column does ~10000 formula evaluations per sort. We avoid
+    // that by lifting the display string into a per-record cache
+    // (`Map<record.id, string>`) computed eagerly *before* `sort`
+    // and consulted from the comparator. Cache builds in O(N) and
+    // collapses comparator cost to O(N log N) hash lookups.
     if (sortField) {
       const sortFieldDef = data.fields.find((f) => f.name === sortField);
       const sortIsComputed =
         sortFieldDef !== undefined && isComputedFieldType(sortFieldDef.type);
-      const displayFor = (r: BaseRecord): string => {
-        if (sortIsComputed && sortFieldDef) {
-          return formatValueForCsv(sortFieldDef, r, data.records, data.fields);
+      let displayFor: (r: BaseRecord) => string;
+      if (sortIsComputed && sortFieldDef) {
+        const cache = new Map<string, string>();
+        for (const r of records) {
+          cache.set(
+            r.id,
+            formatValueForCsv(
+              sortFieldDef,
+              r,
+              data.records,
+              data.fields,
+              recordsById,
+            ),
+          );
         }
-        const raw = r[sortField];
-        return raw == null ? "" : String(raw);
-      };
+        displayFor = (r) => cache.get(r.id) ?? "";
+      } else {
+        displayFor = (r) => {
+          const raw = r[sortField];
+          return raw == null ? "" : String(raw);
+        };
+      }
       records.sort((a, b) => {
         const va = displayFor(a);
         const vb = displayFor(b);
@@ -674,7 +722,7 @@ export default function BaseEditor({
     }
 
     return records;
-  }, [data.records, data.fields, filters, sortField, sortDir]);
+  }, [data.records, data.fields, filters, sortField, sortDir, recordsById]);
 
   // See the visibility-scoping commentary higher up — this is the
   // implementation half. `visibleSelectedIds` is the intersection of
@@ -1008,6 +1056,7 @@ export default function BaseEditor({
                         record={record}
                         recordIndex={originalIndex}
                         allRecords={data.records}
+                        recordsById={recordsById}
                         allFields={data.fields}
                         onChange={(val) => updateCell(originalIndex, field.name, val)}
                         onExpand={() =>
@@ -1116,6 +1165,18 @@ interface CellInputProps {
   record: BaseRecord;
   recordIndex: number;
   allRecords: BaseRecord[];
+  /**
+   * Per-render `id -> BaseRecord` index built once in `BaseEditor`
+   * via `useMemo(() => buildRecordIndex(data.records), [data.records])`
+   * and threaded down here. `LinkedRecordCell`, `RollupCell`, and
+   * `LookupCell` pass it to `resolveLinkedRecords` instead of letting
+   * that helper rebuild `new Map(allRecords.map(...))` per call. With
+   * N records and M computed columns this collapses M*O(N) per render
+   * into O(N) one-time per render. The map is wrapped in a
+   * `ReadonlyMap` to make accidental mutation impossible -- cells
+   * downstream only ever `.get(id)` from it.
+   */
+  recordsById: ReadonlyMap<string, BaseRecord>;
   allFields: BaseField[];
   onChange: (val: unknown) => void;
   onExpand?: () => void;
@@ -1523,13 +1584,30 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
-function FormulaCell({ field, record, allFields }: CellInputProps) {
+const FormulaCell = React.memo(function FormulaCell({
+  field,
+  record,
+  allFields,
+}: CellInputProps) {
   // Read-only: computed at render time from the live record values.
   // Pass the current field name so the engine's cycle detector can
   // catch self-references and mutual recursion between formula
   // fields before the JS call stack overflows.
+  //
+  // The compute is memoised so an unrelated render (e.g., another
+  // field's edit, or a parent re-render) doesn't re-evaluate every
+  // formula cell in the grid. We key on the live `record`, the live
+  // `allFields` (formulas may reference siblings whose values feed
+  // into the result), and the formula source string itself. Because
+  // `BaseEditor` rebuilds `data.fields` / a single record only when
+  // they actually change, ref-equality of these inputs is the right
+  // cache key — a no-op render keeps the same refs and skips the
+  // formula engine entirely.
   const src = field.formula ?? "";
-  const result = evaluateBaseFormula(src, allFields, record, field.name);
+  const result = useMemo(
+    () => evaluateBaseFormula(src, allFields, record, field.name),
+    [src, allFields, record, field.name],
+  );
   return (
     <span
       className="base-cell-readonly"
@@ -1539,19 +1617,24 @@ function FormulaCell({ field, record, allFields }: CellInputProps) {
       {formatFormulaResult(result)}
     </span>
   );
-}
+});
 
 function LinkedRecordCell({
   field,
   value,
   record,
   allRecords,
+  recordsById,
   onChange,
 }: CellInputProps) {
   const links: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
-  const linkedRecords = resolveLinkedRecords(links, allRecords);
+  // Resolve via the memoised `recordsById` index instead of letting
+  // `resolveLinkedRecords` rebuild the lookup map per cell. The
+  // helper supports either an array or a `ReadonlyMap` so this is a
+  // drop-in optimisation without altering semantics.
+  const linkedRecords = resolveLinkedRecords(links, recordsById);
   const display = field.linkedDisplayField;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -1668,17 +1751,52 @@ function LinkedRecordCell({
   );
 }
 
-function RollupCell({ field, record, allFields, allRecords }: CellInputProps) {
+const RollupCell = React.memo(function RollupCell({
+  field,
+  record,
+  allFields,
+  recordsById,
+}: CellInputProps) {
   // rollup follows the `linkedField` link from THIS record, then
   // aggregates `targetField` across the linked records.
+  //
+  // Resolution goes through the memoised `recordsById` index so
+  // every rollup cell in the grid shares one map instead of building
+  // its own per render. The aggregate is wrapped in `useMemo` keyed
+  // on the inputs that actually feed into the result — if a parent
+  // re-renders without touching this record or any sibling field
+  // definition, we hit the cache.
   const linkedFieldName = field.linkedField;
   const targetFieldName = field.targetField;
   const aggregation: RollupAggregation = field.aggregation ?? "SUM";
+  const linkedFieldDef = useMemo(
+    () =>
+      linkedFieldName
+        ? allFields.find((f) => f.name === linkedFieldName)
+        : undefined,
+    [allFields, linkedFieldName],
+  );
+  const aggregated = useMemo(() => {
+    if (!linkedFieldName || !targetFieldName) return null;
+    if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
+      return "#REF!";
+    }
+    const ids = record[linkedFieldName];
+    const linkedRecords = resolveLinkedRecords(ids, recordsById);
+    const values = linkedRecords.map((r) => r[targetFieldName]);
+    return aggregateValues(values, aggregation);
+  }, [
+    linkedFieldName,
+    targetFieldName,
+    linkedFieldDef,
+    record,
+    recordsById,
+    aggregation,
+  ]);
   if (!linkedFieldName || !targetFieldName) {
     return <span className="base-cell-readonly">—</span>;
   }
-  const linkedFieldDef = allFields.find((f) => f.name === linkedFieldName);
-  if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
+  if (aggregated === "#REF!") {
     return (
       <span
         className="base-cell-readonly"
@@ -1688,24 +1806,46 @@ function RollupCell({ field, record, allFields, allRecords }: CellInputProps) {
       </span>
     );
   }
-  const ids = record[linkedFieldName];
-  const linkedRecords = resolveLinkedRecords(ids, allRecords);
-  const values = linkedRecords.map((r) => r[targetFieldName]);
-  return (
-    <span className="base-cell-readonly">
-      {aggregateValues(values, aggregation)}
-    </span>
-  );
-}
+  return <span className="base-cell-readonly">{aggregated}</span>;
+});
 
-function LookupCell({ field, record, allFields, allRecords }: CellInputProps) {
+const LookupCell = React.memo(function LookupCell({
+  field,
+  record,
+  allFields,
+  recordsById,
+}: CellInputProps) {
+  // Mirror of `RollupCell` minus the aggregation step — same
+  // memoisation strategy: shared `recordsById` index + `useMemo`
+  // gating compute on the inputs that genuinely participate.
   const linkedFieldName = field.linkedField;
   const targetFieldName = field.targetField;
+  const linkedFieldDef = useMemo(
+    () =>
+      linkedFieldName
+        ? allFields.find((f) => f.name === linkedFieldName)
+        : undefined,
+    [allFields, linkedFieldName],
+  );
+  const looked = useMemo(() => {
+    if (!linkedFieldName || !targetFieldName) return null;
+    if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
+      return "#REF!";
+    }
+    const ids = record[linkedFieldName];
+    const linkedRecords = resolveLinkedRecords(ids, recordsById);
+    return lookupValues(linkedRecords, targetFieldName);
+  }, [
+    linkedFieldName,
+    targetFieldName,
+    linkedFieldDef,
+    record,
+    recordsById,
+  ]);
   if (!linkedFieldName || !targetFieldName) {
     return <span className="base-cell-readonly">—</span>;
   }
-  const linkedFieldDef = allFields.find((f) => f.name === linkedFieldName);
-  if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
+  if (looked === "#REF!") {
     return (
       <span
         className="base-cell-readonly"
@@ -1715,14 +1855,8 @@ function LookupCell({ field, record, allFields, allRecords }: CellInputProps) {
       </span>
     );
   }
-  const ids = record[linkedFieldName];
-  const linkedRecords = resolveLinkedRecords(ids, allRecords);
-  return (
-    <span className="base-cell-readonly">
-      {lookupValues(linkedRecords, targetFieldName)}
-    </span>
-  );
-}
+  return <span className="base-cell-readonly">{looked}</span>;
+});
 
 function AttachmentCell({ value, onChange }: CellInputProps) {
   const paths: string[] = Array.isArray(value)

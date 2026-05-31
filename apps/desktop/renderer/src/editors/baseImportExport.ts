@@ -50,6 +50,7 @@
 import { evaluateBaseFormula, formatFormulaResult } from "./baseFormulaEngine";
 import {
   aggregateValues,
+  buildRecordIndex,
   lookupValues,
   makeRecordId,
   resolveLinkedRecords,
@@ -204,8 +205,16 @@ export function formatValueForCsv(
   record: BaseRecord,
   allRecords: BaseRecord[],
   allFields: BaseField[],
+  recordsById?: ReadonlyMap<string, BaseRecord>,
 ): string {
   const value = record[field.name];
+  // Per-render record-by-id lookup map. `resolveLinkedRecords`
+  // accepts either form, but threading the pre-built map through
+  // the linked_record / rollup / lookup branches skips an O(N)
+  // `Map(allRecords.map(...))` rebuild on every cell. Callers in
+  // the filter/sort pipeline lift this into a `useMemo` keyed on
+  // `data.records` so the cost is amortised across the grid.
+  const byId = recordsById ?? allRecords;
 
   switch (field.type) {
     case "text":
@@ -286,7 +295,7 @@ export function formatValueForCsv(
       // hostile to the human reading the export.
       if (!Array.isArray(value)) return "";
       const ids = value.filter((v): v is string => typeof v === "string");
-      const linked = resolveLinkedRecords(ids, allRecords);
+      const linked = resolveLinkedRecords(ids, byId);
       const display = field.linkedDisplayField;
       return linked
         .map((r) =>
@@ -321,7 +330,7 @@ export function formatValueForCsv(
         return "#REF!";
       }
       const ids = record[linkedFieldName];
-      const linkedRecords = resolveLinkedRecords(ids, allRecords);
+      const linkedRecords = resolveLinkedRecords(ids, byId);
       const values = linkedRecords.map((r) => r[targetFieldName]);
       return aggregateValues(values, aggregation);
     }
@@ -335,7 +344,7 @@ export function formatValueForCsv(
         return "#REF!";
       }
       const ids = record[linkedFieldName];
-      const linkedRecords = resolveLinkedRecords(ids, allRecords);
+      const linkedRecords = resolveLinkedRecords(ids, byId);
       return lookupValues(linkedRecords, targetFieldName);
     }
 
@@ -364,11 +373,18 @@ export function formatValueForCsv(
  */
 export function exportBaseCsv(data: BaseContent): string {
   const { fields, records } = data;
+  // Build the records-by-id map ONCE for the whole export instead
+  // of inside every `resolveLinkedRecords` call for every linked /
+  // rollup / lookup cell. With N records and M such columns the
+  // savings compound from N*M map constructions to a single one.
+  const recordsById = buildRecordIndex(records);
   const header = fields.map((f) => csvEscapeCell(f.name)).join(",");
   const rows = records.map((record) =>
     fields
       .map((field) =>
-        csvEscapeCell(formatValueForCsv(field, record, records, fields)),
+        csvEscapeCell(
+          formatValueForCsv(field, record, records, fields, recordsById),
+        ),
       )
       .join(","),
   );

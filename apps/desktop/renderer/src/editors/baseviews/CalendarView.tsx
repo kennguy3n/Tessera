@@ -305,8 +305,16 @@ function MonthGrid({
                 {d.getDate()}
               </div>
               {recs.slice(0, 3).map(({ record, index }) => (
+                // Key on the stable record id so React preserves the
+                // dragged chip's DOM identity across grid moves
+                // (drag-and-drop, sort, delete). Falls back to the
+                // array index only if a record somehow lacks an id
+                // (defensive; `ensureRecordIds` should make this
+                // unreachable in practice).
                 <div
-                  key={index}
+                  key={
+                    typeof record.id === "string" ? record.id : String(index)
+                  }
                   draggable
                   onDragStart={(e) => {
                     e.stopPropagation();
@@ -416,8 +424,14 @@ function WeekStrip({
                 }}
               >
                 {recs.map(({ record, index }) => (
+                  // Stable record-id key (see comment on the
+                  // truncated list above).
                   <div
-                    key={index}
+                    key={
+                      typeof record.id === "string"
+                        ? record.id
+                        : String(index)
+                    }
                     onClick={(e) => e.stopPropagation()}
                     style={{
                       fontSize: "0.75rem",
@@ -506,8 +520,13 @@ function DayPane({
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
         {recs.map(({ record, index }) => (
+          // Stable record-id key in the day-detail panel too --
+          // keeps each row's React identity stable through sort /
+          // delete / drag.
           <div
-            key={index}
+            key={
+              typeof record.id === "string" ? record.id : String(index)
+            }
             style={{
               background: "var(--color-primary-soft, #ede9fe)",
               color: "var(--color-primary, #7C3AED)",

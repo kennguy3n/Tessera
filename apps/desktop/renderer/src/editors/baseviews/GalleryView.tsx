@@ -79,8 +79,13 @@ export default function GalleryView({
         }}
       >
         {data.records.map((record, index) => (
+          // Key on the stable record id rather than the array index so
+          // React reconciles cards by identity (drag/reorder, sort,
+          // bulk delete all keep each Card mounted) instead of by
+          // position. This matches the grid view's `key={record.id ||
+          // originalIndex}` pattern.
           <Card
-            key={index}
+            key={record.id ?? index}
             record={record}
             recordIndex={index}
             fields={data.fields}

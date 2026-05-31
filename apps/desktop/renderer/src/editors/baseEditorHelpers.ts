@@ -239,18 +239,48 @@ export function parseBaseContent(content: string): BaseContent {
 }
 
 /**
+ * Build a `Map<id, BaseRecord>` index used by `resolveLinkedRecords`
+ * to look up records by id in O(1). Built once per render in
+ * `BaseEditor` (memoised on `data.records`) and threaded through
+ * `CellInputProps.recordsById` so the rollup/lookup/formula cells
+ * skip the per-cell `Map(allRecords.map(...))` construction that
+ * Devin Review flagged as O(N·M) per render.
+ *
+ * Skips entries whose `id` is not a string so a hand-edited JSON
+ * with a missing or non-string id can't poison the index.
+ */
+export function buildRecordIndex(
+  allRecords: BaseRecord[],
+): ReadonlyMap<string, BaseRecord> {
+  const byId = new Map<string, BaseRecord>();
+  for (const r of allRecords) {
+    if (typeof r?.id === "string") byId.set(r.id, r);
+  }
+  return byId;
+}
+
+/**
  * Resolve a set of record IDs (the value stored in a `linked_record`
  * cell) back to the corresponding `BaseRecord` objects, in the same
  * order the IDs were given. Unknown IDs are skipped silently — the
  * UI shows a "?" chip for them so the user can clean up dangling
  * references on their next edit.
+ *
+ * The second argument is either the raw `allRecords` array (legacy
+ * form — re-builds the lookup map on every call) OR a pre-built
+ * `ReadonlyMap<string, BaseRecord>` from `buildRecordIndex` (lift
+ * the map into a per-render `useMemo` and pass it through to skip
+ * the rebuild on every cell). Both forms produce identical output.
  */
 export function resolveLinkedRecords(
   ids: unknown,
-  allRecords: BaseRecord[],
+  allRecords: BaseRecord[] | ReadonlyMap<string, BaseRecord>,
 ): BaseRecord[] {
   if (!Array.isArray(ids)) return [];
-  const byId = new Map(allRecords.map((r) => [r.id, r]));
+  const byId =
+    allRecords instanceof Map
+      ? allRecords
+      : buildRecordIndex(allRecords as BaseRecord[]);
   const out: BaseRecord[] = [];
   for (const id of ids) {
     if (typeof id !== "string") continue;

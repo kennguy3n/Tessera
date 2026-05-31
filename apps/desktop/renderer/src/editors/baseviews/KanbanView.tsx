@@ -188,8 +188,17 @@ export default function KanbanView({
               )}
             </div>
             {recs.map(({ record, index }) => (
+              // Key on the stable record id so React reconciles each
+              // card by identity. Previously we keyed on the array
+              // index, which meant any move between columns (or a
+              // delete) caused React to swap the *content* of two
+              // cards rather than transplanting the card itself --
+              // visible as DOM input focus / drag state being lost on
+              // reorder.
               <KanbanCard
-                key={index}
+                key={
+                  typeof record.id === "string" ? record.id : String(index)
+                }
                 record={record}
                 fields={data.fields}
                 titleField={titleField}
