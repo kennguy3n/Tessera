@@ -11,11 +11,22 @@
  *   - `appLock:attemptUnlock`   (pin: string) -> UnlockResult
  *   - `appLock:attemptBiometric` (reason: string) -> { success: boolean }
  *
- * Rate-limit: `appLock:attemptUnlock` is throttled to 1 / 250ms
- * per process to make brute-force impractical even before the
- * scrypt cost. The exponential-backoff lockout in `appLock.ts`
- * is the load-bearing defence; rate-limiting is defense-in-depth
- * against a renderer compromised into a tight retry loop.
+ * Rate-limit: ALL six channels are throttled to 1 / 250ms per
+ * process. The exponential-backoff lockout in `appLock.ts` is the
+ * load-bearing defence against brute force, but every channel that
+ * calls into the scrypt KDF (setPin / changePin / removePin /
+ * attemptUnlock) or the platform biometric prompt
+ * (attemptBiometric) also enforces a hard requests-per-second cap
+ * so a renderer compromised into a tight loop cannot:
+ *   - chew CPU on scrypt derivations between failed attempts,
+ *   - spam TouchID / Windows Hello prompts at IPC throughput,
+ *   - bypass the lockout backoff by picking the cheaper code path
+ *     (e.g. `setPin` short-circuits before scrypt if a PIN exists,
+ *     but the rate limit still applies so the channel itself
+ *     cannot be used as an oracle).
+ * `appLock:getStatus` is a cheap read with no crypto on the hot
+ * path, so it is intentionally NOT rate-limited — it's polled by
+ * the renderer on app boot and on every settings-page mount.
  */
 import { idempotentHandle } from "./register";
 import { loadConfig, updateConfig } from "../config";
@@ -53,6 +64,18 @@ export function registerAppLockHandlers(): void {
   idempotentHandle(
     "appLock:setPin",
     async (_event, pinRaw: unknown): Promise<void> => {
+      // Rate-limit before any state inspection. The handler
+      // short-circuits with "A PIN is already set" when one
+      // exists, so without a throttle this channel would be a
+      // cheap oracle for hammering scrypt-derivation work the
+      // moment that branch flips (initial setup, post-removal).
+      // Parity with attemptUnlock / attemptBiometric keeps a
+      // compromised renderer from picking the cheapest reachable
+      // crypto channel to side-step the throttle.
+      defaultRateLimiter.consume("appLock:setPin", {
+        tokensPerInterval: 1,
+        intervalMs: 250,
+      });
       if (typeof pinRaw !== "string") {
         throw new Error("PIN payload must be a string");
       }
@@ -77,6 +100,16 @@ export function registerAppLockHandlers(): void {
       oldPinRaw: unknown,
       newPinRaw: unknown,
     ): Promise<void> => {
+      // Rate-limit before any policy validation or scrypt work.
+      // This channel invokes scrypt twice (once via
+      // attemptUnlock(old) and once via setPin(new)) so it's the
+      // most expensive surface — capping at the same 250ms budget
+      // as attemptUnlock keeps a compromised renderer from
+      // amplifying scrypt cost through the rotation channel.
+      defaultRateLimiter.consume("appLock:changePin", {
+        tokensPerInterval: 1,
+        intervalMs: 250,
+      });
       if (typeof oldPinRaw !== "string" || typeof newPinRaw !== "string") {
         throw new Error("PIN payload must be a string");
       }
@@ -102,6 +135,16 @@ export function registerAppLockHandlers(): void {
   idempotentHandle(
     "appLock:removePin",
     async (_event, pinRaw: unknown): Promise<void> => {
+      // Rate-limit before attemptUnlock invokes scrypt. Without
+      // this throttle the removal channel could be used as an
+      // alternative brute-force surface against the same stored
+      // hash that `appLock:attemptUnlock` protects (both verify
+      // the PIN via `attemptUnlock`), bypassing the per-channel
+      // 250ms budget on attemptUnlock by alternating channels.
+      defaultRateLimiter.consume("appLock:removePin", {
+        tokensPerInterval: 1,
+        intervalMs: 250,
+      });
       if (typeof pinRaw !== "string") {
         throw new Error("PIN payload must be a string");
       }

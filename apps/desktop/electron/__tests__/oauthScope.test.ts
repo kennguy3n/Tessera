@@ -219,4 +219,38 @@ describe("OAuth meta-scopes (offline_access et al.)", () => {
     // only filter from the missing-diff computation.
     expect(r.requested).toContain("offline_access");
   });
+
+  // Devin Review round 4 BUG_0001 — the auth-time scope-narrowing
+  // warning in `ipc/connectors/handlers.ts` historically used an
+  // inline `.filter()` that did NOT strip meta-scopes, producing a
+  // false-positive "connector scopes narrowed by user" log on every
+  // successful Jira / Confluence / OneDrive auth. The fix delegates
+  // to `compareScopes`, so this regression test pins the canonical
+  // helper's behaviour for the exact provider-shaped inputs that
+  // produced the false positive in the field.
+  it("compareScopes returns missing=[] for a real Jira token that omits offline_access from the echoed scope set", () => {
+    // Jira always echoes only the `read:*` / `write:*` API scopes,
+    // never `offline_access`, regardless of whether the refresh
+    // token was issued.
+    const r = compareScopes(
+      "jira",
+      ["read:jira-work", "read:jira-user", "offline_access"],
+      ["read:jira-work", "read:jira-user"],
+    );
+    expect(r.missing).toEqual([]);
+    expect(r.fullyGranted).toBe(true);
+  });
+
+  it("compareScopes returns missing=[] for a real OneDrive token that omits offline_access from the echoed scope set", () => {
+    // Microsoft Graph behaves the same way — `offline_access` is
+    // consumed for refresh-token issuance but does not appear in
+    // the response's `scope` field.
+    const r = compareScopes(
+      "onedrive",
+      ["Files.ReadWrite", "offline_access"],
+      ["Files.ReadWrite"],
+    );
+    expect(r.missing).toEqual([]);
+    expect(r.fullyGranted).toBe(true);
+  });
 });

@@ -993,16 +993,35 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // Warn (in the structured log) when the user narrowed
       // consent. The connector card surfaces the same diff in the
       // UI; this log line gives a forensic trail for support.
+      //
+      // Delegate the comparison to `compareScopes` rather than
+      // re-implementing the set-diff inline. `compareScopes` strips
+      // meta-scopes (`offline_access` etc., see `OAUTH_META_SCOPES`
+      // in `oauthScope.ts`) from the *required* side before
+      // computing `missing`. Meta-scopes are OAuth protocol
+      // behaviours (controlling whether a refresh token is issued),
+      // not API permissions, and providers routinely omit them from
+      // the token response's `scope` field even when the refresh
+      // token IS granted — Atlassian (Jira/Confluence) and
+      // Microsoft (OneDrive) both do this. Before this delegation
+      // the inline filter would log a false "scopes narrowed by
+      // user" warning on every successful Jira/Confluence/OneDrive
+      // auth (RFC 6749 § 3.3 only constrains API access scopes,
+      // not meta-scopes). The sync-time `assertScopesGranted` /
+      // inspectScopes paths already used the canonical helpers; this
+      // path now matches.
       if (tokens.grantedScopes !== null) {
-        const missing = requestedScopes.filter(
-          (s) => !tokens.grantedScopes!.includes(s),
+        const cmp = compareScopes(
+          provider,
+          requestedScopes,
+          tokens.grantedScopes,
         );
-        if (missing.length > 0) {
+        if (cmp.missing.length > 0) {
           ctx.log.warn("connector scopes narrowed by user", {
             provider,
-            requested: requestedScopes,
-            granted: tokens.grantedScopes,
-            missing,
+            requested: cmp.requested,
+            granted: cmp.granted,
+            missing: cmp.missing,
           });
         }
       }

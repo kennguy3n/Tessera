@@ -38,8 +38,14 @@
  * When `appLockMode === "biometric"` the unlock UI calls
  * `attemptBiometricUnlock()`, which delegates to:
  *   - macOS: `systemPreferences.promptTouchID` (TouchID).
- *   - Windows: Windows Hello via the `KeyCredentialManager` API
- *     accessed through PowerShell (no native module dependency).
+ *   - Windows: Windows Hello via the `UserConsentVerifier` API
+ *     (`Windows.Security.Credentials.UI` WinRT namespace) accessed
+ *     through PowerShell (no native module dependency).
+ *     `UserConsentVerifier.RequestVerificationAsync` is the
+ *     correct API for a one-shot "prove user presence" prompt;
+ *     `KeyCredentialManager` is a different WinRT surface for
+ *     long-lived asymmetric credentials (FIDO-style), which is
+ *     not what we want for an unlock challenge.
  *   - Linux: not supported; falls through to PIN.
  *
  * The biometric path NEVER replaces the PIN — the PIN is the root
@@ -516,7 +522,13 @@ async function attemptTouchIdUnlock(reason: string): Promise<boolean> {
 const WINDOWS_HELLO_REASON_MAX_LEN = 256;
 
 async function attemptWindowsHelloUnlock(reason: string): Promise<boolean> {
-  // Windows Hello via PowerShell + WinRT KeyCredentialManager API.
+  // Windows Hello via PowerShell + WinRT UserConsentVerifier API
+  // (Windows.Security.Credentials.UI.UserConsentVerifier).
+  // RequestVerificationAsync raises the Hello prompt, returns 0
+  // on Verified, anything else (DeviceBusy / DeviceNotPresent /
+  // DisabledByPolicy / NotConfiguredForUser / RetriesExhausted /
+  // Canceled) is treated as a failed attempt and falls back to
+  // the PIN path.
   // Synchronous spawn is acceptable here because biometric prompts
   // are inherently blocking (the user must respond), and we do not
   // want to ship a native module dependency just for this path.
