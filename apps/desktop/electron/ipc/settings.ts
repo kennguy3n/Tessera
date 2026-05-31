@@ -23,6 +23,12 @@ import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
 import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
+import {
+  enableTelemetry,
+  disableTelemetry,
+} from "../telemetrySink";
+import { hasPinSet, clearPin } from "../appLock";
+import { getLogger } from "../logger";
 import type {
   EmbeddingDownloadProgressInfo,
   EmbeddingModelInfo,
@@ -274,11 +280,35 @@ export function registerSettingsHandlers(): void {
       // to `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` if corrupted) so a fresh
       // install or healed config sees a usable bucket on first render.
       modelIdleTimeoutSecs: config.modelIdleTimeoutSecs,
+      // Phase 19 PR 10 Task 7/9/10: surface the security flags so
+      // the renderer Settings UI can render the corresponding
+      // toggles. The on-disk schema heals all three to safe
+      // defaults if corrupted (`telemetryEnabled: false`,
+      // `appLockMode: "off"`, `enforceUpdateSignature: true`).
+      telemetryEnabled: config.telemetryEnabled,
+      appLockMode: config.appLockMode,
+      enforceUpdateSignature: config.enforceUpdateSignature,
     } as SettingsData;
   });
 
   idempotentHandle("settings:update", async (_event, settings: unknown) => {
     const parsed = SettingsUpdateSchema.parse(settings);
+    // Phase 19 PR 10 Task 10 — enforce the lock-mode/PIN invariant
+    // documented in `shared/types.ts` and `config.ts`: flipping
+    // `appLockMode` to `"pin"` or `"biometric"` without first
+    // setting a PIN would leave the user staring at a lock overlay
+    // they cannot dismiss. Reject at the IPC boundary BEFORE
+    // `updateConfig` so the persisted state stays consistent. The
+    // renderer's Settings UI MUST set up a PIN via `appLock:setPin`
+    // before flipping the mode.
+    if (
+      (parsed.appLockMode === "pin" || parsed.appLockMode === "biometric") &&
+      !hasPinSet()
+    ) {
+      throw new Error(
+        `Cannot set appLockMode to "${parsed.appLockMode}" without a PIN. Call appLock:setPin first.`,
+      );
+    }
     // Return value is read from `loadConfig()` *after* the write so the
     // payload the renderer receives reflects what is actually on disk
     // (including any `.catch()` healing or `.loose()` passthrough that
@@ -287,6 +317,28 @@ export function registerSettingsHandlers(): void {
     // field had been healed, and would be racy against any concurrent
     // writer.
     updateConfig(parsed);
+    // Phase 19 PR 10 Task 10 — when the user explicitly opts OUT
+    // of app lock (mode -> "off"), the stored PIN material is also
+    // removed. This keeps the PIN-lifecycle and mode-lifecycle in
+    // lock-step: "off" means zero retained credentials, not "PIN
+    // still on disk waiting to be re-enabled". The threat model is
+    // explicit in `appLock.ts:46-49` ("switching to `off` does
+    // delete the PIN") and this is the only path that guarantees
+    // it for users who toggle from the Settings UI. The symmetric
+    // `appLock:removePin` handler does the reverse: clears PIN +
+    // forces mode to "off".
+    if (parsed.appLockMode === "off" && hasPinSet()) {
+      try {
+        clearPin();
+      } catch (err) {
+        // best-effort — the mode is already persisted as "off" so
+        // the user will not see the lock; the stored PIN is dead
+        // weight. Log so a support trail exists.
+        getLogger().warn("app_lock.clear_pin_on_off_failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     const persisted = loadConfig();
     // emit one audit row per field the renderer
     // actually sent. The schema marks every field optional, so
@@ -358,6 +410,37 @@ export function registerSettingsHandlers(): void {
         );
       }
     }
+    // Phase 19 PR 10 Task 9 — telemetry toggle. Apply the new
+    // state to the live sink BEFORE auditing so a failed audit
+    // doesn't leave the sink half-enabled. The persisted-config
+    // read above already reflects the new on-disk value, so the
+    // next `loadConfig()` (at startup) would re-init from the
+    // same source of truth.
+    if (parsed.telemetryEnabled !== undefined) {
+      if (parsed.telemetryEnabled) {
+        enableTelemetry();
+      } else {
+        disableTelemetry();
+      }
+      auditSettingsField(
+        "telemetryEnabled",
+        String(parsed.telemetryEnabled),
+      );
+    }
+    // Phase 19 PR 10 Task 10 — app-lock mode change. The actual
+    // PIN / biometric setup happens via dedicated `appLock:*`
+    // handlers; here we only record the user's mode preference.
+    if (parsed.appLockMode !== undefined)
+      auditSettingsField("appLockMode", parsed.appLockMode);
+    // Phase 19 PR 10 Task 7 — updater signature enforcement
+    // toggle. The auto-updater reads this on every download to
+    // decide whether to gate `quitAndInstall` on a successful
+    // Ed25519 verify.
+    if (parsed.enforceUpdateSignature !== undefined)
+      auditSettingsField(
+        "enforceUpdateSignature",
+        String(parsed.enforceUpdateSignature),
+      );
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -367,8 +450,21 @@ export function registerSettingsHandlers(): void {
       pinnedArtifactIds: persisted.pinnedArtifactIds,
       recentArtifactIds: persisted.recentArtifactIds,
       modelIdleTimeoutSecs: persisted.modelIdleTimeoutSecs,
+      telemetryEnabled: persisted.telemetryEnabled,
+      appLockMode: persisted.appLockMode,
+      enforceUpdateSignature: persisted.enforceUpdateSignature,
     } as SettingsData;
   });
+
+  // Note: the `telemetry:*` event-pumping IPCs (getEvents /
+  // getPersistedEvents / recordCounter) live in
+  // `ipc/telemetry.ts` under `registerTelemetryHandlers` so the
+  // domain has a dedicated module like every other IPC area in
+  // the codebase. The `telemetryEnabled` *toggle* still flows
+  // through `settings:update` above because it's a persisted
+  // config field, not an event channel — that's why
+  // `enableTelemetry` / `disableTelemetry` are still imported
+  // from `telemetrySink` here.
 
   idempotentHandle("externalProvider:get", async () => {
     const config = loadConfig();

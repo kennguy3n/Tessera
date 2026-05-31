@@ -1041,7 +1041,56 @@ export interface SettingsData {
    * is effectively "never" and the UI surfaces it as such.
    */
   modelIdleTimeoutSecs: number;
+  /**
+   * Phase 19 PR 10 Task 9 — local telemetry toggle. When `true`, the
+   * main process appends anonymised counters + timings to a local
+   * JSONL sink at `<userData>/telemetry.jsonl`. The sink is
+   * purely local: there is no remote endpoint, no network egress,
+   * and no PII / content / identifier ever recorded. The flag
+   * defaults to `false` (opt-in only) so a fresh install ships with
+   * telemetry disabled, matching Tessera's local-first ethos.
+   *
+   * The renderer surfaces this in Settings under "Privacy". When
+   * the user flips the toggle off, the in-memory buffer is dropped
+   * and the on-disk file is truncated — the toggle is the only
+   * source of truth.
+   */
+  telemetryEnabled: boolean;
+  /**
+   * Phase 19 PR 10 Task 10 — app-lock mode. `"off"` means no lock
+   * is required to open the app. `"pin"` prompts a PIN. `"biometric"`
+   * uses the platform biometric (TouchID on macOS, Windows Hello on
+   * Windows) and falls back to PIN if biometric is unavailable.
+   *
+   * Setup of a PIN is gated behind a separate IPC
+   * (`appLock:setPin`) so flipping the mode to `"pin"` /
+   * `"biometric"` without first setting a PIN is rejected at the
+   * IPC boundary. Defaults to `"off"` so a fresh install does not
+   * surprise the user with a lock prompt.
+   */
+  appLockMode: AppLockMode;
+  /**
+   * Phase 19 PR 10 Task 7 — auto-updater Ed25519 signature
+   * enforcement. When `true` (default), downloaded update artifacts
+   * MUST present a valid Ed25519 signature against the embedded
+   * Tessera-controlled public key before `quitAndInstall` is
+   * allowed to fire. When `false`, the verification step is logged
+   * as skipped — this exists so power users on a self-hosted build
+   * channel with their own signing key can disable the embedded
+   * check while we add a key-pinning UX in a later phase. The
+   * channel is also gated by `app.isPackaged` (dev builds always
+   * skip), so this flag only matters in packaged installs.
+   */
+  enforceUpdateSignature: boolean;
 }
+
+/**
+ * Phase 19 PR 10 Task 10 — valid app-lock modes. Constrained to a
+ * fixed enum so the renderer's lock-mode selector, the IPC schema,
+ * and the persisted config all reference the same tuple.
+ */
+export const APP_LOCK_MODES = ["off", "pin", "biometric"] as const;
+export type AppLockMode = (typeof APP_LOCK_MODES)[number];
 
 /**
  * Phase 18 Task 17: maximum number of artifact IDs retained in
@@ -1098,6 +1147,69 @@ export const MAX_MODEL_IDLE_TIMEOUT_SECS = 24 * 60 * 60;
  * disk.
  */
 export const DEFAULT_MODEL_IDLE_TIMEOUT_SECS = 60;
+
+/**
+ * Phase 19 PR 10 Task 9 — maximum number of in-memory telemetry
+ * events retained before a flush. Bounded so the in-process buffer
+ * cannot grow without bound when the user enables telemetry and
+ * never restarts the app. The flush cadence (60 s) means a
+ * realistic session never approaches this cap, but the bound
+ * defends against a runaway emitter (e.g. a bridge crash loop)
+ * filling memory.
+ */
+export const TELEMETRY_BUFFER_MAX_EVENTS = 1024;
+
+/**
+ * Phase 19 PR 10 Task 9 — interval between telemetry buffer
+ * flushes to the on-disk sink, in milliseconds. Set to 60 seconds
+ * because telemetry events are small (a counter increment or a
+ * timing sample) and a 60-second batch keeps disk IO infrequent
+ * while still flushing on a user-perceivable timescale before
+ * `app.willQuit` fires.
+ */
+export const TELEMETRY_FLUSH_INTERVAL_MS = 60_000;
+
+/**
+ * Phase 19 PR 10 Task 10 — minimum PIN length. Six digits is the
+ * standard minimum for a numeric PIN (matching iOS / Android device
+ * passcodes). Longer PINs and alphanumeric passwords are also
+ * accepted up to 256 characters.
+ */
+export const APP_LOCK_PIN_MIN_LENGTH = 6;
+
+/**
+ * Phase 19 PR 10 Task 10 — maximum PIN length. 256 characters is
+ * an upper bound on what we'll PBKDF2 — long enough for users who
+ * want to use a passphrase, short enough that a malformed payload
+ * cannot stall the derivation step for seconds.
+ */
+export const APP_LOCK_PIN_MAX_LENGTH = 256;
+
+/**
+ * Phase 19 PR 10 Task 10 — failed-attempt lockout threshold. After
+ * this many consecutive incorrect PIN attempts, the app refuses
+ * further attempts for {@link APP_LOCK_BACKOFF_BASE_MS} *
+ * 2^(attempts - threshold) milliseconds. Standard mobile-OS
+ * behaviour uses 5 attempts before backoff kicks in.
+ */
+export const APP_LOCK_LOCKOUT_THRESHOLD = 5;
+
+/**
+ * Phase 19 PR 10 Task 10 — base backoff duration in milliseconds.
+ * After the lockout threshold is reached, each subsequent failed
+ * attempt doubles the wait. Starts at 30 seconds, capped at 1 hour
+ * by {@link APP_LOCK_BACKOFF_MAX_MS}.
+ */
+export const APP_LOCK_BACKOFF_BASE_MS = 30_000;
+
+/**
+ * Phase 19 PR 10 Task 10 — maximum backoff duration in
+ * milliseconds. Caps the exponential growth at 1 hour so a
+ * legitimate user who genuinely forgot their PIN can recover
+ * within a session without leaving the app permanently bricked.
+ * The user can always wipe `<userData>/app-lock.bin` to reset.
+ */
+export const APP_LOCK_BACKOFF_MAX_MS = 60 * 60 * 1000;
 
 // -----------------------------------------------------------------
 // External provider configuration
@@ -2260,6 +2372,41 @@ export interface ConnectorApi {
    * carrying any per-provider hardcoded fallback.
    */
   getAllRedirectUris: () => Promise<Record<string, string>>;
+  /**
+   * Phase 19 PR 10 Task 8 — read-only inspection of the
+   * requested-vs-granted OAuth scope diff for the given provider.
+   *
+   * Returns `null` when the user is not connected (no stored
+   * token). Returns a `ConnectorScopeComparison` describing
+   * requested, granted, and missing scopes when the user IS
+   * connected. The renderer uses this to render a "scopes
+   * narrowed" banner with a Reconnect CTA when `fullyGranted` is
+   * false.
+   *
+   * Cheap and side-effect-free: never touches the network, never
+   * triggers a refresh, never mutates anything. Safe to call on
+   * every connector card mount and on every settings page load.
+   */
+  inspectScopes: (
+    provider: string,
+  ) => Promise<ConnectorScopeComparison | null>;
+}
+
+/**
+ * Phase 19 PR 10 Task 8 — structured diff between the OAuth
+ * scopes Tessera requested for a connector and what the provider
+ * actually granted. See `electron/oauthScope.ts` for the
+ * authoritative implementation; this interface mirrors the shape
+ * sent over IPC.
+ */
+export interface ConnectorScopeComparison {
+  provider: string;
+  requested: string[];
+  granted: string[];
+  /** Subset of `requested` that is NOT in `granted`. */
+  missing: string[];
+  /** `true` iff every requested scope is in granted (no narrowing). */
+  fullyGranted: boolean;
 }
 
 export interface TaskApi {
@@ -2335,7 +2482,77 @@ export interface TesseraApi {
   updates: UpdatesApi;
   kchat: KchatApi;
   audit: AuditApi;
+  /** Phase 19 PR 10 Task 9 — local-only telemetry inspection. */
+  telemetry: TelemetryApi;
+  /** Phase 19 PR 10 Task 10 — PIN / biometric app lock surface. */
+  appLock: AppLockApi;
 }
+
+/**
+ * Phase 19 PR 10 Task 9 — telemetry inspection + single-key
+ * write surface. See `electron/telemetrySink.ts` for the privacy
+ * contract.
+ */
+export interface TelemetryApi {
+  /** Persisted-on-disk + in-memory snapshot, time-ordered. */
+  getEvents: () => Promise<TelemetryEventView[]>;
+  /** Persisted-on-disk slice only. */
+  getPersistedEvents: () => Promise<TelemetryEventView[]>;
+  /**
+   * Record a counter event. Key MUST be in the whitelist
+   * defined by `TELEMETRY_KEYS` in `electron/telemetrySink.ts`;
+   * non-whitelisted keys are silently dropped.
+   */
+  recordCounter: (key: string, increment?: number) => Promise<void>;
+}
+
+/**
+ * Wire shape of a single telemetry event. Mirrors the
+ * `TelemetryEvent` union in `electron/telemetrySink.ts` but uses
+ * the renderer-safe `TelemetryEventView` name so the renderer
+ * does not have to import from the main-process module.
+ */
+export type TelemetryEventView =
+  | { t: number; k: "counter"; key: string; value: number }
+  | { t: number; k: "timing"; key: string; value: number };
+
+/**
+ * Phase 19 PR 10 Task 10 — PIN / biometric app lock IPC surface.
+ * The renderer's `LockOverlay` component drives this; see
+ * `electron/appLock.ts` for the cryptography.
+ */
+export interface AppLockApi {
+  getStatus: () => Promise<AppLockStatus>;
+  setPin: (pin: string) => Promise<void>;
+  changePin: (oldPin: string, newPin: string) => Promise<void>;
+  removePin: (pin: string) => Promise<void>;
+  attemptUnlock: (pin: string) => Promise<AppLockUnlockResult>;
+  attemptBiometric: (
+    reason?: string,
+  ) => Promise<{ success: boolean }>;
+}
+
+/**
+ * Status snapshot returned by `appLock:getStatus`. The renderer
+ * uses `hasPinSet` to decide whether the Settings UI should show
+ * "Set up a PIN" or "Change PIN", and `mode` to decide whether
+ * to render the lock overlay at all.
+ */
+export interface AppLockStatus {
+  hasPinSet: boolean;
+  mode: AppLockMode;
+}
+
+/**
+ * Discriminated union mirroring `UnlockResult` from
+ * `electron/appLock.ts`. The renderer pattern-matches on `kind`
+ * to render the correct overlay state.
+ */
+export type AppLockUnlockResult =
+  | { kind: "success" }
+  | { kind: "failure"; failures: number }
+  | { kind: "locked_out"; nextAttemptAt: number }
+  | { kind: "no_pin_set" };
 
 // --- KChat (Phase 11) -----------------------------------------------------
 //

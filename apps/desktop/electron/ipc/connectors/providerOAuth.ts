@@ -129,6 +129,16 @@ export interface TokenResponse {
   refreshToken: string | null;
   expiresIn: number;
   tokenType: string;
+  /**
+   * Phase 19 PR 10 Task 8 — the scopes the provider ACTUALLY
+   * granted, parsed from the token response's `scope` field. May
+   * be a strict subset of the requested scopes if the user
+   * narrowed consent on the provider's screen. `null` means the
+   * provider did not include a `scope` field at all (e.g. Notion's
+   * integration-token flow); callers should fall back to the
+   * requested scopes in that case.
+   */
+  grantedScopes: string[] | null;
   /** Provider-specific extra payload (e.g. Notion's `workspace_id`, Figma's `user`). */
   extra?: Record<string, unknown>;
 }
@@ -313,6 +323,27 @@ function base64UrlEncode(buf: Buffer): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+/**
+ * Phase 19 PR 10 Task 8 — parse the OAuth `scope` response value
+ * into a normalised list of granted scopes.
+ *
+ * RFC 6749 §3.3 says the value is space-delimited; some providers
+ * (Figma in particular) return comma-delimited; we accept either.
+ *
+ * Returns `null` when the provider omitted the `scope` field
+ * entirely (Notion's integration-token flow does this). Callers
+ * MUST treat `null` as "unknown" (fall back to requested scopes)
+ * rather than "no scopes granted" — those two states are
+ * semantically different.
+ */
+function parseGrantedScopes(value: string | null | undefined): string[] | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return [];
+  return trimmed.split(/[\s,]+/).filter((s) => s.length > 0);
 }
 
 /**
@@ -531,6 +562,7 @@ export async function exchangeAuthorizationCode(
     refresh_token?: string;
     expires_in?: number;
     token_type?: string;
+    scope?: string;
     [k: string]: unknown;
   };
 
@@ -540,10 +572,11 @@ export async function exchangeAuthorizationCode(
     );
   }
 
-  const { access_token, refresh_token, expires_in, token_type, ...extra } = raw;
+  const { access_token, refresh_token, expires_in, token_type, scope, ...extra } = raw;
   return {
     accessToken: access_token,
     refreshToken: refresh_token ?? null,
+    grantedScopes: parseGrantedScopes(scope),
     // Providers that document their access tokens as non-expiring (e.g.
     // Notion's integration tokens) typically omit `expires_in` entirely
     // from the token-exchange response. Defaulting to a normal 1-hour
@@ -639,6 +672,7 @@ export async function refreshProviderToken(
     refresh_token?: string;
     expires_in?: number;
     token_type?: string;
+    scope?: string;
     [k: string]: unknown;
   };
 
@@ -648,10 +682,11 @@ export async function refreshProviderToken(
     );
   }
 
-  const { access_token, refresh_token, expires_in, token_type, ...extra } = raw;
+  const { access_token, refresh_token, expires_in, token_type, scope, ...extra } = raw;
   return {
     accessToken: access_token,
     refreshToken: refresh_token ?? params.refreshToken,
+    grantedScopes: parseGrantedScopes(scope),
     // We bail out at the top of this function when `!supportsRefresh`,
     // so by the time control reaches here `config.supportsRefresh` is
     // always `true` and the non-refreshable-provider branch from

@@ -44,6 +44,7 @@ import {
 
 import type { TesseraBridge } from "../appState";
 import { classifyConnectorError } from "../ipc/connectors/handlers";
+import { MissingScopeError } from "../oauthScope";
 
 function bridgeMock(initial?: {
   lastErrorJson?: string | null;
@@ -343,6 +344,19 @@ describe("classifyConnectorError (mirrors tessera_connectors failure_kind)", () 
   it("classifies RateLimitError (by name) as transient (RateLimited)", () => {
     const err = Object.assign(new Error("429"), { name: "RateLimitError" });
     expect(classifyConnectorError(err)).toBe("transient");
+  });
+  it("classifies MissingScopeError as permanent (re-auth required, do not retry)", () => {
+    // Regression: Devin Review BUG_0001 on PR #89. Without this
+    // branch in `classifyConnectorError`, MissingScopeError fell
+    // through to the default `transient` return, which forced the
+    // source-health badge to wait for 8 transient retries (~4
+    // minutes of 30-second-rate-limited attempts) before
+    // `applyFailureToState` flipped `failedPermanently`. A
+    // narrowed OAuth grant is definitively permanent — only a
+    // re-authentication widens the grant — so it MUST surface
+    // the "re-auth needed" CTA on the first failed sync.
+    const err = new MissingScopeError("github", ["repo"], []);
+    expect(classifyConnectorError(err)).toBe("permanent");
   });
   it.each([
     ["401", "permanent"],

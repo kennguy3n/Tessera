@@ -3,6 +3,7 @@ import * as path from "path";
 import { app } from "electron";
 import { z } from "zod";
 import {
+  APP_LOCK_MODES,
   DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
@@ -10,6 +11,7 @@ import {
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
   THEMES,
+  type AppLockMode,
   type ExportFormat,
   type ExternalProviderType,
   type ExternalProviderTokenUsage,
@@ -104,6 +106,31 @@ export interface AppConfig {
    * list past the documented bound.
    */
   recentArtifactIds: string[];
+  /**
+   * Phase 19 PR 10 Task 9 — opt-in flag for the local telemetry sink.
+   * Defaults to `false` so a fresh install records nothing until the
+   * user explicitly enables it from Settings. See
+   * `SettingsData.telemetryEnabled` in `shared/types.ts` for the
+   * privacy contract — local-only, no PII, no network egress.
+   */
+  telemetryEnabled: boolean;
+  /**
+   * Phase 19 PR 10 Task 10 — app-lock mode. See
+   * `SettingsData.appLockMode` in `shared/types.ts` for the
+   * semantics. Defaults to `"off"` so a fresh install does not
+   * surprise the user with a lock prompt. Switching to `"pin"` /
+   * `"biometric"` requires the user to have set up a PIN via
+   * `appLock:setPin` first; the IPC schema rejects mode changes
+   * that would lock the user out.
+   */
+  appLockMode: AppLockMode;
+  /**
+   * Phase 19 PR 10 Task 7 — auto-updater Ed25519 signature
+   * enforcement. Defaults to `true` so a fresh install enforces
+   * verification by default; the embedded public key lives in
+   * `electron/updateSignature.ts`.
+   */
+  enforceUpdateSignature: boolean;
   /**
    * Persisted hybrid retrieval config. The defaults here mirror
    * `tessera_sources::hybrid::HybridSearchConfig::default()` so a
@@ -218,6 +245,9 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   externalProviderTokenUsage: DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
   autoUpdate: true,
   onboardingCompleted: false,
+  telemetryEnabled: false,
+  appLockMode: "off",
+  enforceUpdateSignature: true,
   hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
 });
@@ -367,6 +397,23 @@ const AppConfigSchema = z
     externalProvider: ExternalProviderConfigOnDiskSchema,
     externalProviderTokenUsage: ExternalProviderTokenUsageOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
+    // Phase 19 PR 10 Task 9 — telemetry toggle. Heals corrupted
+    // values to `false` (opt-in default). The renderer toggle is
+    // the only path to flip this to `true`, and `disableTelemetry`
+    // in `telemetrySink.ts` truncates the on-disk JSONL when the
+    // flag goes false so stale records do not survive a flip.
+    telemetryEnabled: z.boolean().catch(false),
+    // Phase 19 PR 10 Task 10 — app-lock mode. Heals corrupted
+    // values to `"off"` so a mangled config does NOT brick the
+    // user out of the app on next launch. Real mode changes go
+    // through the `appLock:setMode` IPC which validates the user
+    // has set up a PIN before allowing `"pin"` / `"biometric"`.
+    appLockMode: z.enum(APP_LOCK_MODES).catch("off"),
+    // Phase 19 PR 10 Task 7 — auto-updater Ed25519 enforcement.
+    // Heals corrupted values to `true` (secure default). A user
+    // running a self-hosted build channel with their own signing
+    // key can disable via Settings; everyone else stays protected.
+    enforceUpdateSignature: z.boolean().catch(true),
     // Phase 15 Task 19: heal a corrupted on-disk value to `true` so a
     // mangled config does NOT replay the onboarding wizard against an
     // existing install. New installs always start at `false` via
@@ -428,6 +475,21 @@ const AppConfigSchema = z
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
     externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
+    // Phase 19 PR 10 — these three fields are also present in
+    // `DEFAULT_CONFIG` (lines 236-238) and would resolve to the
+    // same values via the spread, but we re-declare them
+    // explicitly here as a security-critical floor. If a future
+    // edit ever drifts `DEFAULT_CONFIG.telemetryEnabled` to `true`
+    // or `DEFAULT_CONFIG.enforceUpdateSignature` to `false`, the
+    // top-level `.catch()` (which fires when the on-disk JSON
+    // fails the whole-schema parse) MUST still hand back a
+    // privacy-safe, signature-enforcing config — anything less
+    // would silently weaken the security posture on the recovery
+    // path. Keep these three lines even though they look
+    // redundant; they are the floor, not a duplicate.
+    telemetryEnabled: false,
+    appLockMode: "off" as const,
+    enforceUpdateSignature: true,
     hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   }));
 

@@ -19,6 +19,7 @@
  */
 import { z } from "zod";
 import {
+  APP_LOCK_MODES,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
   MAX_MODEL_IDLE_TIMEOUT_SECS,
@@ -206,6 +207,21 @@ export const SettingsUpdateSchema = z.object({
     .min(0)
     .max(MAX_MODEL_IDLE_TIMEOUT_SECS)
     .optional(),
+  // Phase 19 PR 10 Task 9 — local telemetry toggle. Pure boolean
+  // toggle; the handler in `ipc/settings.ts` is responsible for
+  // calling `enableTelemetry()` / `disableTelemetry()` on the
+  // singleton sink when this transitions.
+  telemetryEnabled: z.boolean().optional(),
+  // Phase 19 PR 10 Task 10 — app-lock mode. Pure enum here; the
+  // handler enforces "must have set a PIN before switching to
+  // `pin` / `biometric`" so the IPC cannot transition the user
+  // into a state where they cannot unlock the app on next launch.
+  appLockMode: z.enum(APP_LOCK_MODES).optional(),
+  // Phase 19 PR 10 Task 7 — auto-updater Ed25519 enforcement. The
+  // handler logs the transition because flipping this to `false`
+  // is a privileged action that materially reduces install
+  // security.
+  enforceUpdateSignature: z.boolean().optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 

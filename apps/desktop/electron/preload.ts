@@ -321,6 +321,30 @@ const api: TesseraApi = {
     switchEmbeddingModel: (slug: string) =>
       ipcRenderer.invoke("settings:switchEmbeddingModel", { slug }),
   },
+  // Phase 19 PR 10 Task 9 — telemetry inspection surface. No
+  // write API here beyond `recordCounter` because every writeable
+  // key is gated by the whitelist in `electron/telemetrySink.ts`.
+  telemetry: {
+    getEvents: () => ipcRenderer.invoke("telemetry:getEvents"),
+    getPersistedEvents: () =>
+      ipcRenderer.invoke("telemetry:getPersistedEvents"),
+    recordCounter: (key: string, increment?: number) =>
+      ipcRenderer.invoke("telemetry:recordCounter", key, increment ?? 1),
+  },
+  // Phase 19 PR 10 Task 10 — PIN / biometric app lock IPC. See
+  // `electron/ipc/appLock.ts` for the channel contract.
+  appLock: {
+    getStatus: () => ipcRenderer.invoke("appLock:getStatus"),
+    setPin: (pin: string) => ipcRenderer.invoke("appLock:setPin", pin),
+    changePin: (oldPin: string, newPin: string) =>
+      ipcRenderer.invoke("appLock:changePin", oldPin, newPin),
+    removePin: (pin: string) =>
+      ipcRenderer.invoke("appLock:removePin", pin),
+    attemptUnlock: (pin: string) =>
+      ipcRenderer.invoke("appLock:attemptUnlock", pin),
+    attemptBiometric: (reason?: string) =>
+      ipcRenderer.invoke("appLock:attemptBiometric", reason),
+  },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),
     set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
@@ -430,6 +454,15 @@ const api: TesseraApi = {
       ipcRenderer.invoke("connectors:getRedirectUri", provider),
     getAllRedirectUris: () =>
       ipcRenderer.invoke("connectors:getAllRedirectUris"),
+    /**
+     * Phase 19 PR 10 Task 8 — inspect the requested-vs-granted
+     * scope diff for a connector. Returns `null` when the user
+     * isn't connected yet (no stored token). The renderer's
+     * connector card calls this on mount and renders a yellow
+     * "scopes narrowed" banner when `fullyGranted === false`.
+     */
+    inspectScopes: (provider: string) =>
+      ipcRenderer.invoke("connectors:inspectScopes", provider),
   },
   tasks: {
     create: (req) => ipcRenderer.invoke("tasks:create", req),

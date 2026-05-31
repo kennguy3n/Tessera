@@ -24,6 +24,10 @@ export {
 
 export type {
   AddCitationRequest,
+  AppLockApi,
+  AppLockMode,
+  AppLockStatus,
+  AppLockUnlockResult,
   ArtifactApi,
   ArtifactInfo,
   ArtifactVersionInfo,
@@ -104,6 +108,8 @@ export type {
   TaskStatus,
   Theme,
   ThemeInfo,
+  TelemetryApi,
+  TelemetryEventView,
   TemplateApi,
   TemplateInfo,
   TesseraApi,
