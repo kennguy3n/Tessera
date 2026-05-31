@@ -1167,7 +1167,14 @@ export async function initAppState(): Promise<boolean> {
   // again so a value installed after the lazy load completes still
   // takes effect.
   const persistedIdleTimeoutSecs = loadConfig().modelIdleTimeoutSecs;
-  const persistedIdleTimeoutMs = persistedIdleTimeoutSecs * 1000;
+  // Use the same normaliser the runtime path uses
+  // (`applyModelIdleTimeoutToSidecars`) so the boot path cannot pass
+  // a non-floored / negative value through the schema's catch fallback.
+  // See `normalizeModelIdleTimeoutSecsToMs` JSDoc for the
+  // defense-in-depth rationale.
+  const persistedIdleTimeoutMs = normalizeModelIdleTimeoutSecsToMs(
+    persistedIdleTimeoutSecs,
+  );
 
   modelSidecar = new ModelSidecar({
     binaryPath: resolveSidecarBinary(),
@@ -1230,7 +1237,9 @@ export async function initAppState(): Promise<boolean> {
         // is reflected here. The next `applyModelIdleTimeoutToSidecars`
         // call will see the same value and short-circuit the no-op
         // diff via `setIdleUnloadMs`.
-        idleUnloadMs: loadConfig().modelIdleTimeoutSecs * 1000,
+        idleUnloadMs: normalizeModelIdleTimeoutSecsToMs(
+          loadConfig().modelIdleTimeoutSecs,
+        ),
       });
       diffusionSidecarState = "loaded";
       console.log(
@@ -1391,10 +1400,35 @@ export function getDiffusionSidecar(): DiffusionSidecar | null {
  *     diffusion sidecar in a weird state) does not block the
  *     text/vision sidecars from picking up the new window.
  */
+/**
+ * Phase 19 PR 9 Task 5 (round 3): single normaliser for converting
+ * the user-facing `modelIdleTimeoutSecs` setting into the
+ * milliseconds value that every sidecar's `idleUnloadMs` field
+ * stores. Centralising the rounding/clamp in one helper means the
+ * boot path (`initAppState` constructor calls) and the runtime
+ * path (`applyModelIdleTimeoutToSidecars` → `setIdleUnloadMs`)
+ * cannot drift apart — any future schema bypass (e.g. a test that
+ * stubs `loadConfig()` and forgets `.int().min(0)`) still produces
+ * a non-negative integer milliseconds value at the sidecar
+ * boundary.
+ *
+ * The `Math.max(0, …)` floor matches `sidecar.ts:setIdleUnloadMs`,
+ * which clamps incoming values on its own; this helper exists so
+ * the call site cannot construct a sidecar with an out-of-contract
+ * `idleUnloadMs` in the first place (defense-in-depth, not a
+ * functional change against today's schema-validated values).
+ */
+export function normalizeModelIdleTimeoutSecsToMs(
+  idleTimeoutSecs: number,
+): number {
+  if (!Number.isFinite(idleTimeoutSecs)) return 0;
+  return Math.max(0, Math.floor(idleTimeoutSecs)) * 1000;
+}
+
 export function applyModelIdleTimeoutToSidecars(
   idleTimeoutSecs: number,
 ): void {
-  const idleUnloadMs = Math.max(0, Math.floor(idleTimeoutSecs)) * 1000;
+  const idleUnloadMs = normalizeModelIdleTimeoutSecsToMs(idleTimeoutSecs);
   const sidecars: Array<{ name: string; sidecar: { setIdleUnloadMs: (ms: number) => void } | null }> = [
     { name: "text", sidecar: modelSidecar },
     { name: "vision", sidecar: visionSidecar },
