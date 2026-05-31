@@ -61,9 +61,18 @@ export default function ContextMenu({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  // PR #87 Devin Review ANALYSIS_0006: don't initialise activeIndex
+  // to 0 unconditionally — that lands the keyboard focus ring on a
+  // disabled first item (e.g. an "Open" entry that is disabled
+  // when the artifact is already open in the current tab), which
+  // is visually misleading AND requires the user to press
+  // ArrowDown an extra time before Enter does anything. Find the
+  // first enabled item instead.
   useEffect(() => {
-    if (isOpen) setActiveIndex(0);
-  }, [isOpen]);
+    if (!isOpen) return;
+    const firstEnabled = items.findIndex((item) => !item.disabled);
+    setActiveIndex(firstEnabled >= 0 ? firstEnabled : 0);
+  }, [isOpen, items]);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -125,9 +125,28 @@ export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
  * has no `id` param).
  */
 export function useTrackArtifactView(id: string | null | undefined): void {
-  const { trackView } = useRecentlyViewedArtifacts();
+  const { trackView, loading } = useRecentlyViewedArtifacts();
   useEffect(() => {
     if (!id) return;
+    // Gate on `!loading` so the very first `trackView` call after
+    // app launch happens AFTER the initial `settings:get` IPC
+    // resolves. Without this gate the effect would race the IPC:
+    //
+    //   1. Component mounts; `useSettings()` returns the empty
+    //      placeholder snapshot `{ recentArtifactIds: [] }`.
+    //   2. The store's `refresh()` IPC starts but hasn't resolved.
+    //   3. This effect reads `recentIdsRef.current` (still `[]`)
+    //      and writes `[id]` back — silently erasing the user's
+    //      view-history every time the editor mounts on a cold
+    //      load.
+    //
+    // The shared-store refactor (PR #87 Devin Review ANALYSIS_0001)
+    // means a second editor mount in the same session would not
+    // race because the store already has the loaded snapshot, but
+    // the FIRST mount on app launch still hits the race window
+    // unless we gate explicitly on `loading`. PR #87 Devin Review
+    // BUG_0001.
+    if (loading) return;
     void trackView(id);
-  }, [id, trackView]);
+  }, [id, trackView, loading]);
 }

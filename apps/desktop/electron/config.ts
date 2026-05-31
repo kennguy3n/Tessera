@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
+  MAX_PINNED_ARTIFACTS,
+  MAX_RECENT_ARTIFACTS,
   THEMES,
   type ExportFormat,
   type ExternalProviderType,
@@ -326,26 +328,24 @@ const AppConfigSchema = z
     // Phase 18 Task 16: per-install favorites. Same factory-style
     // `.catch(() => [])` as the sibling arrays above so a corrupted
     // value heals to an empty list instead of leaking a frozen
-    // singleton across loads. The 256-entry cap is large enough
-    // that no realistic user runs into it but small enough to keep
-    // the config payload's array fields bounded.
+    // singleton across loads. Cap pulled from `MAX_PINNED_ARTIFACTS`
+    // in `shared/types.ts` (single source of truth shared with the
+    // IPC `SettingsUpdateSchema` and the renderer hook). PR #87
+    // Devin Review ANALYSIS_0007: removed the previous "can't
+    // import across project boundaries" caveat — this file already
+    // imports `EXPORT_FORMATS`, `THEMES`, etc. from
+    // `../shared/types`, so there is no actual obstacle.
     pinnedArtifactIds: z
       .array(z.string().max(1024))
-      .max(256)
+      .max(MAX_PINNED_ARTIFACTS)
       .catch(() => []),
-    // Phase 18 Task 17: view-recency list. Cap matches
-    // `MAX_RECENT_ARTIFACTS` in shared/types.ts — see the doc
-    // comment on that const for the cross-layer agreement
-    // requirement. We can't import the const directly because
-    // `apps/desktop/electron/config.ts` is part of the
-    // `tsconfig.electron.json` project and crossing into
-    // `apps/desktop/shared/types.ts` from a config-validation
-    // module would pull in the renderer-only type surface; keeping
-    // the literal `32` here with a structured cross-reference is
-    // the same trade-off `ignorePatterns.max(10_000)` makes.
+    // Phase 18 Task 17: view-recency list. Cap pulled from
+    // `MAX_RECENT_ARTIFACTS` in `shared/types.ts` (same source of
+    // truth as the IPC `SettingsUpdateSchema` and the renderer
+    // hook).
     recentArtifactIds: z
       .array(z.string().max(1024))
-      .max(32)
+      .max(MAX_RECENT_ARTIFACTS)
       .catch(() => []),
     sourcePaths: z
       .array(z.string().max(4096))

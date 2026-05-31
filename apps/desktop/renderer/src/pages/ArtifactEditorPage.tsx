@@ -11,6 +11,7 @@ import ShareToKchatModal, {
 } from "../components/ShareToKchatModal";
 import { useTrackArtifactView } from "../hooks/useRecentlyViewedArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
+import { notifyArtifactsChanged } from "../hooks/useArtifacts";
 import {
   DocumentEditor,
   SlideEditor,
@@ -498,6 +499,10 @@ export default function ArtifactEditorPage() {
         // Persist the duplicated content as a follow-up update
         // because `artifacts.create` only sets up the metadata.
         await api.artifacts.update(copy.id, artifact.content);
+        // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+        // live `useArtifactList()` consumer picks up the new
+        // artifact without waiting for a remount.
+        notifyArtifactsChanged();
         navigate(`/artifacts/${copy.id}/edit`);
       } catch {
         // Surface failures via the existing exportStatus channel
@@ -513,6 +518,10 @@ export default function ArtifactEditorPage() {
         const api = window.tessera;
         if (!api) return;
         await api.artifacts.remove(id);
+        // PR #87 Devin Review ANALYSIS_0005: broadcast so the
+        // sidebar list / home recents / palette pickers refresh
+        // immediately even before navigation back to Home.
+        notifyArtifactsChanged();
         navigate("/");
       } catch {
         setExportStatus("Delete failed");

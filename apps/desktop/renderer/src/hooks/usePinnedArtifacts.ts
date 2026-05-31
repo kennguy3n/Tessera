@@ -27,16 +27,19 @@
  */
 
 import { useCallback, useMemo, useRef } from "react";
+import { MAX_PINNED_ARTIFACTS } from "../types/ipc";
 import { useSettings, useUpdateSetting } from "./useSettings";
 
 /**
- * Hard cap on persisted pins. Mirrors the
- * `AppConfigSchema.pinnedArtifactIds.max(256)` enforced by the
- * electron config schema and the IPC schema. We trim renderer-side
- * before sending so a "pin everything" stress test degrades to
- * "256 most-recently-pinned" rather than rejecting the write.
+ * Re-export so existing consumers of this hook keep working. The
+ * canonical declaration lives in `shared/types.ts`
+ * ({@link MAX_PINNED_ARTIFACTS}) and is shared with both the IPC
+ * `SettingsUpdateSchema` and the on-disk `AppConfigSchema`. PR #87
+ * Devin Review ANALYSIS_0007: removed the previous "three-way
+ * literal `256` duplicate" and made the renderer hook import the
+ * cap from the same source the schemas use.
  */
-export const MAX_PINNED_ARTIFACTS = 256;
+export { MAX_PINNED_ARTIFACTS };
 
 export interface UsePinnedArtifactsResult {
   /** The current pinned IDs, in the order the user pinned them
@@ -84,9 +87,17 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
   const pinnedIdsRef = useRef(pinnedIds);
   pinnedIdsRef.current = pinnedIds;
 
+  // Set-backed O(1) membership lookup for `isPinned`. The previous
+  // `pinnedIds.includes(id)` was O(n) per call which contradicted
+  // the documented "O(1) lookup" contract — palette + sidebar +
+  // editor + recent-cards each call `isPinned()` once per render
+  // for every pinned candidate, so an O(n) check would scale
+  // poorly on a 256-entry pinned list. PR #87 Devin Review
+  // ANALYSIS_0002.
+  const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
   const isPinned = useCallback(
-    (id: string) => pinnedIds.includes(id),
-    [pinnedIds],
+    (id: string) => pinnedSet.has(id),
+    [pinnedSet],
   );
 
   const writePinned = useCallback(
@@ -96,11 +107,13 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
           ? next.slice(0, MAX_PINNED_ARTIFACTS)
           : next;
       const result = await update({ pinnedArtifactIds: trimmed });
-      // `useSettings` is a separate `useState` instance per consumer
-      // so we explicitly refresh after the write to keep all live
-      // consumers (sidebar pins, palette, editor pin button) in
-      // sync. Without this, a pin in the palette would not reflect
-      // in the sidebar until the next mount.
+      // Broadcast to every live consumer via the shared store.
+      // Since the `useSettings()` refactor moved to a module-level
+      // store (see hooks/useSettings.ts header comment for the
+      // architectural rationale), a single refresh notifies the
+      // sidebar, palette, and editor pin button at once. Before
+      // the refactor each consumer held its own snapshot and the
+      // sidebar would lag behind palette pin toggles until remount.
       await refresh();
       return result.pinnedArtifactIds;
     },

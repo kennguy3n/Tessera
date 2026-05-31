@@ -11,7 +11,7 @@ import ContextMenu, {
   type ContextMenuItem,
 } from "../components/ContextMenu";
 import { useContextMenu } from "../hooks/useContextMenu";
-import { useRecentArtifacts } from "../hooks/useArtifacts";
+import { notifyArtifactsChanged, useRecentArtifacts } from "../hooks/useArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { useSourceList } from "../hooks/useSources";
 import { useSettings } from "../hooks/useSettings";
@@ -314,6 +314,11 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
             artifact.templateId ?? undefined,
           );
           await api.artifacts.update(copy.id, artifact.content);
+          // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+          // live `useArtifactList()` consumer (sidebar, palette,
+          // recents grid) picks up the new artifact without a
+          // remount.
+          notifyArtifactsChanged();
           navigate(`/artifacts/${copy.id}/edit`);
         } catch {
           // best-effort — the home page has no dedicated toast surface
@@ -332,6 +337,12 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
           const api = window.tessera;
           if (!api) return;
           await api.artifacts.remove(artifact.id);
+          // PR #87 Devin Review ANALYSIS_0005: broadcast so the
+          // deleted card disappears from the recents grid
+          // immediately. Without this dispatch the user would see
+          // a stale card until they navigated away and back
+          // (which fires a fresh `useArtifactList()` mount).
+          notifyArtifactsChanged();
         } catch {
           // best-effort — see above
         }

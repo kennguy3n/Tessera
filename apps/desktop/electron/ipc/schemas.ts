@@ -21,6 +21,8 @@ import { z } from "zod";
 import {
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
+  MAX_PINNED_ARTIFACTS,
+  MAX_RECENT_ARTIFACTS,
   TASK_PRIORITIES,
   TASK_STATUSES,
   THEMES,
@@ -167,18 +169,27 @@ export const SettingsUpdateSchema = z.object({
   // `.catch()` because a renderer-side type narrowing failure would
   // be a renderer bug worth surfacing rather than silently coercing.
   onboardingCompleted: z.boolean().optional(),
-  // Phase 18 Task 16: pinned/favorited artifact IDs. Cap mirrors
-  // `AppConfigSchema.pinnedArtifactIds.max(256)` so the IPC
-  // boundary rejects a malformed renderer write before it hits
-  // `updateConfig()`. Element max length matches the artifact ID
-  // bound used everywhere else (`assertId` enforces ≤ 1024).
-  pinnedArtifactIds: z.array(z.string().max(1024)).max(256).optional(),
-  // Phase 18 Task 17: view-recency list. Cap matches
-  // `MAX_RECENT_ARTIFACTS` (32) in `shared/types.ts` — see the doc
-  // comment on that const for the cross-layer agreement
+  // Phase 18 Task 16: pinned/favorited artifact IDs. Cap pulled
+  // from `MAX_PINNED_ARTIFACTS` in `shared/types.ts` (single source
+  // of truth shared with `AppConfigSchema.pinnedArtifactIds.max()`
+  // and the renderer's `usePinnedArtifacts.MAX_PINNED_ARTIFACTS`).
+  // PR #87 Devin Review ANALYSIS_0007: previously a literal `256`
+  // that risked drift across three files. Element max length
+  // matches the artifact ID bound used everywhere else (`assertId`
+  // enforces ≤ 1024).
+  pinnedArtifactIds: z
+    .array(z.string().max(1024))
+    .max(MAX_PINNED_ARTIFACTS)
+    .optional(),
+  // Phase 18 Task 17: view-recency list. Cap pulled from
+  // `MAX_RECENT_ARTIFACTS` in `shared/types.ts` (single source of
+  // truth shared with `AppConfigSchema.recentArtifactIds.max()`).
   // requirement. Element max length matches the artifact ID bound
   // used everywhere else (`assertId` enforces ≤ 1024).
-  recentArtifactIds: z.array(z.string().max(1024)).max(32).optional(),
+  recentArtifactIds: z
+    .array(z.string().max(1024))
+    .max(MAX_RECENT_ARTIFACTS)
+    .optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 

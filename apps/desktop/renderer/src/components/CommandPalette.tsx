@@ -285,6 +285,26 @@ export default function CommandPalette({
     return flat;
   }, [groups]);
 
+  // Precomputed start index per group so the render body can
+  // derive each row's absolute palette index from
+  // `groupStartIndexes[gi] + ri` instead of relying on a
+  // mutating-during-render `let rowCursor = 0; rowCursor++`
+  // counter. PR #87 Devin Review ANALYSIS_0003: the prior
+  // pattern was technically safe (React 18 strict mode double-
+  // invocation produced the same values both passes) but mutating
+  // a render-local outside the JSX tree is unconventional and
+  // hard to reason about. This `useMemo` keeps the derivation
+  // explicit and stable.
+  const groupStartIndexes = useMemo(() => {
+    const starts: number[] = [];
+    let cursor = 0;
+    for (const g of groups) {
+      starts.push(cursor);
+      cursor += g.rows.length;
+    }
+    return starts;
+  }, [groups]);
+
   // Clamp active index whenever the visible list shrinks.
   useEffect(() => {
     if (activeIndex >= flatRows.length) {
@@ -408,7 +428,6 @@ export default function CommandPalette({
 
   if (!isOpen) return null;
 
-  let rowCursor = 0;
   return (
     <div
       className="cmdk-overlay"
@@ -447,12 +466,12 @@ export default function CommandPalette({
           {groups.length === 0 && (
             <li className="cmdk-empty">No matches</li>
           )}
-          {groups.map((group) => (
+          {groups.map((group, gi) => (
             <li key={group.label} className="cmdk-group">
               <div className="cmdk-group-label">{group.label}</div>
               <ul className="cmdk-group-rows">
-                {group.rows.map((row) => {
-                  const idx = rowCursor++;
+                {group.rows.map((row, ri) => {
+                  const idx = groupStartIndexes[gi] + ri;
                   const active = idx === activeIndex;
                   const rowKey =
                     row.kind === "command"

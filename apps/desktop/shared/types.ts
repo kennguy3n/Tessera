@@ -1020,6 +1020,23 @@ export interface SettingsData {
  */
 export const MAX_RECENT_ARTIFACTS = 32;
 
+/**
+ * Phase 18 Task 16: maximum number of artifact IDs retained in
+ * {@link SettingsData.pinnedArtifactIds}. Centralised alongside
+ * {@link MAX_RECENT_ARTIFACTS} so the IPC validation schema, the
+ * on-disk config schema, and the renderer truncation logic all
+ * reference the same source of truth. A mismatch would either
+ * reject a legitimate write at the IPC boundary or silently let
+ * the renderer write past the documented cap.
+ *
+ * PR #87 Devin Review ANALYSIS_0007: removed the previous "can't
+ * import from shared/types because of project boundaries" caveat
+ * — `electron/config.ts` already imports from `../shared/types`,
+ * so there is no actual cross-project obstacle, and three literal
+ * `256` / `32` duplicates risked drift.
+ */
+export const MAX_PINNED_ARTIFACTS = 256;
+
 // -----------------------------------------------------------------
 // External provider configuration
 // -----------------------------------------------------------------
