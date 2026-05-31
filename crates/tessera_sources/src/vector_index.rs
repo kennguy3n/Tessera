@@ -338,6 +338,17 @@ struct MinHeapEntry {
 }
 
 impl PartialEq for MinHeapEntry {
+    // Note the deliberate asymmetry with `Ord` below: `PartialEq`
+    // delegates to IEEE 754 `f32::eq` (so `NaN != NaN`), while `Ord`
+    // treats `NaN` as `Equal`. The convention is that `a == b` should
+    // imply `a.cmp(&b) == Ordering::Equal`, and that holds here for
+    // every non-NaN input. The NaN case is a documented carve-out:
+    // a poisoned score must not corrupt the heap's `cmp`-based
+    // sift-up/sift-down invariant, but two NaN-scored entries are
+    // still observationally distinct rows we don't want to dedupe in
+    // hash sets or equality assertions. `BinaryHeap` only consults
+    // `Ord`, never `PartialEq`, so the asymmetry never escapes the
+    // top-k path.
     fn eq(&self, other: &Self) -> bool {
         self.score == other.score && self.chunk_id == other.chunk_id
     }
