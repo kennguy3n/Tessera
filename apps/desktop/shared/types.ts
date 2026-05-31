@@ -1018,13 +1018,24 @@ export interface SettingsData {
    * 30 min / 1 hour / never) so users don't have to reason about
    * raw second counts.
    *
-   * Defaults to 60 s for the text/vision sidecars (matches the
-   * historical `idleUnloadMs: 60_000` hardcoded in `sidecar.ts`)
-   * and 30 s for diffusion (matches the historical hardcoded
-   * value in `diffusionSidecar.ts`). The persisted setting
-   * overrides BOTH sidecars to the same window — the per-sidecar
-   * defaults only apply if the user has never touched this field
-   * (corrupted on-disk config heals back to the text default).
+   * **Migration note:** historically `sidecar.ts` defaulted to
+   * `idleUnloadMs: 60_000` and `diffusionSidecar.ts` to
+   * `idleUnloadMs: 30_000`. Unifying the field intentionally
+   * collapses those two defaults into a single user-controlled
+   * value — the persisted setting applies to ALL three sidecars
+   * (text, vision, diffusion) so the user has one knob to reason
+   * about instead of three. The defaulted `60` matches the
+   * text/vision historical floor; **diffusion's idle window
+   * therefore doubles from 30 s → 60 s on fresh installs and on
+   * existing installs where the on-disk config lacked this field
+   * (the on-disk schema heals missing/corrupt values to 60 s).**
+   * Users on memory-constrained GPUs (≤ 8 GB) should explicitly
+   * pick the `30 seconds` bucket in `SettingsPage` to restore the
+   * pre-unification diffusion behavior. This trade-off is
+   * documented here because making the user-facing UI a single
+   * select rather than three independent ones is a deliberate
+   * UX simplification — three idle-window dropdowns would be more
+   * precise but materially harder to explain.
    *
    * Bounds: `[0, 24 * 60 * 60]` (24 hours) — anything past 24h
    * is effectively "never" and the UI surfaces it as such.

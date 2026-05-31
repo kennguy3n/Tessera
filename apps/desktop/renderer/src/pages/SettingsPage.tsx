@@ -236,6 +236,30 @@ export default function SettingsPage() {
                 setModelIdleTimeoutSecs(Number(e.target.value))
               }
             >
+              {/*
+               * Phase 19 PR 9 Task 5 follow-up: if the persisted
+               * value isn't in `MODEL_IDLE_TIMEOUT_BUCKETS` (e.g.
+               * the user hand-edited `config.json` to `90`, or a
+               * future build changes the bucket list and a stale
+               * config carries an old value), the `<select>` would
+               * otherwise render blank — `<select>` falls back to
+               * the first option visually but `value` still reports
+               * the unmatched number, so saving snaps it to the
+               * first bucket on the next render. Prepending a
+               * synthetic "Custom" option preserves the user's
+               * explicit choice in the UI and labels it clearly
+               * so they know it didn't come from the bucket list.
+               */}
+              {!MODEL_IDLE_TIMEOUT_BUCKETS.some(
+                (b) => b.value === modelIdleTimeoutSecs,
+              ) && (
+                <option
+                  key="custom"
+                  value={modelIdleTimeoutSecs}
+                >
+                  Custom ({modelIdleTimeoutSecs} seconds)
+                </option>
+              )}
               {MODEL_IDLE_TIMEOUT_BUCKETS.map((bucket) => (
                 <option key={bucket.value} value={bucket.value}>
                   {bucket.label}
@@ -252,7 +276,10 @@ export default function SettingsPage() {
               How long the local text / vision / image-generation
               sidecars stay loaded after the last request. Lower
               values free RAM faster; higher values avoid reload
-              latency on the next call.
+              latency on the next call. On memory-constrained GPUs
+              (≤ 8 GB), the <strong>30 seconds</strong> bucket
+              matches the pre-unification diffusion default and
+              reduces peak GPU VRAM hold time.
             </p>
           </div>
         </Card>
