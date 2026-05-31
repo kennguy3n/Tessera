@@ -735,6 +735,44 @@ describe("replaceBlock", () => {
     };
     expect(replaceBlock(slide, 1, existing)).toBe(slide);
   });
+
+  it("falls back to the existing block's id when the replacement omits one (PR #82 round 3 layer-2 defence)", () => {
+    // The "second layer of defence" Devin Review called out
+    // (ANALYSIS_0005): if a future call site builds a replacement
+    // block by hand and forgets to carry the id forward (e.g. a
+    // toolbar action that constructs a fresh block from a template),
+    // `replaceBlock` still preserves the slot's identity by reading
+    // the existing block's id. Without this fallback the React key
+    // would change on every save and the `<textarea>` would lose
+    // cursor/selection state.
+    const slide: Slide = {
+      id: "test-ms-rb-fallback",
+      title: "T",
+      blocks: [
+        { id: "test-b-rb-keep", type: "text", content: "a" },
+        { id: "test-b-rb-target", type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    // Cast through `unknown` because the public `SlideBlock` type
+    // requires `id`; this test is exercising the runtime contract
+    // for callers that construct a partial block without TS.
+    const replacement = { type: "bullets", content: "new" } as unknown as SlideBlock;
+    const next = replaceBlock(slide, 1, replacement);
+    expect(next).not.toBe(slide);
+    expect(next.blocks[1]).toEqual({
+      id: "test-b-rb-target", // existing id carried forward
+      type: "bullets",
+      content: "new",
+    });
+    // Layer-1 (caller supplies id) still wins when present.
+    const withId = replaceBlock(slide, 1, {
+      id: "test-b-rb-explicit",
+      type: "bullets",
+      content: "new",
+    });
+    expect(withId.blocks[1].id).toBe("test-b-rb-explicit");
+  });
 });
 
 describe("nextBlockForTypeChange", () => {
@@ -906,6 +944,45 @@ describe("nextBlockForTypeChange", () => {
       content: "- one\n- two",
     };
     expect(nextBlockForTypeChange(bulletsBlock, "bullets")).toBe(bulletsBlock);
+  });
+
+  it("preserves block.id across every type transition (PR #82 round 3 spread-invariant)", () => {
+    // Pins the "spread copies id, then named overrides only touch
+    // type/content/alt" contract that Devin Review flagged
+    // (ANALYSIS_0005). Without this regression, a future contributor
+    // could accidentally add `id: newSlideId("block")` after the
+    // spread in `nextBlockForTypeChange` and silently break React's
+    // key stability across type changes (the `<textarea>` would lose
+    // cursor / selection state on every type select).
+    const types: SlideBlock["type"][] = [
+      "text",
+      "bullets",
+      "image",
+      "diagram",
+    ];
+    for (const from of types) {
+      for (const to of types) {
+        if (from === to) continue; // same-type is the ref-stable no-op branch
+        const src: SlideBlock =
+          from === "image"
+            ? {
+                id: `pin-id-${from}-${to}`,
+                type: "image",
+                content: "data:image/png;base64,AAAA",
+                alt: "carry me",
+              }
+            : {
+                id: `pin-id-${from}-${to}`,
+                type: from,
+                content: "anything",
+              };
+        const next = nextBlockForTypeChange(src, to);
+        expect(next.id, `${from} → ${to} must preserve id`).toBe(
+          `pin-id-${from}-${to}`,
+        );
+        expect(next.type).toBe(to);
+      }
+    }
   });
 });
 
