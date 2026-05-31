@@ -3,8 +3,10 @@ import * as path from "path";
 import { app } from "electron";
 import { z } from "zod";
 import {
+  DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
+  MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
   THEMES,
@@ -109,6 +111,16 @@ export interface AppConfig {
    * on disk.
    */
   hybridSearchConfig: HybridSearchConfigPersisted;
+  /**
+   * Phase 19 PR 9 Task 5: idle window in seconds after which the
+   * local sidecars unload model weights. See
+   * `SettingsData.modelIdleTimeoutSecs` in `shared/types.ts` for
+   * the full semantics. Defaults to `DEFAULT_MODEL_IDLE_TIMEOUT_SECS`
+   * (60 s) so the persisted-config behaviour matches the historical
+   * hardcoded `idleUnloadMs: 60_000` literal that lived in
+   * `electron/sidecar.ts` before this field was added.
+   */
+  modelIdleTimeoutSecs: number;
 }
 
 /** Default persisted hybrid config — mirrors Rust default. */
@@ -207,6 +219,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   autoUpdate: true,
   onboardingCompleted: false,
   hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
+  modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -361,6 +374,21 @@ const AppConfigSchema = z
     // corrupted persisted value — in which case the safe assumption
     // is "user has already been here".
     onboardingCompleted: z.boolean().catch(true),
+    // Phase 19 PR 9 Task 5: persisted model idle-unload window. A
+    // corrupted or out-of-range on-disk value heals to the documented
+    // default (60 s) rather than dropping the user into a sidecar
+    // that never unloads (which would silently strand a multi-GB
+    // model in RAM after every call). The upper bound matches
+    // `MAX_MODEL_IDLE_TIMEOUT_SECS` (24 h); anything past that is
+    // effectively "never unload" already, but we cap to keep the
+    // on-disk value bounded and to avoid `setInterval` overflow on
+    // the sidecar side.
+    modelIdleTimeoutSecs: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_MODEL_IDLE_TIMEOUT_SECS)
+      .catch(DEFAULT_MODEL_IDLE_TIMEOUT_SECS),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the

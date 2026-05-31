@@ -20,5 +20,11 @@ pub mod progress;
 pub mod search;
 pub mod source;
 pub mod store;
+// Phase 19 PR 9 Task 2: in-memory IVF-Flat ANN index for hybrid
+// vector search. Built per-model on first query and cached on
+// `SourceStore::vector_index_cache`; invalidated by the
+// embedding-generation counter that the store bumps on every
+// write that could change `load_embeddings_for_model` output.
+pub mod vector_index;
 pub mod vision_extractor;
 pub mod watcher;

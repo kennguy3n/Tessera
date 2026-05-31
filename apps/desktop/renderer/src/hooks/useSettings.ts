@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { DEFAULT_MODEL_IDLE_TIMEOUT_SECS } from "../../../shared/types";
 import {
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
@@ -23,6 +24,14 @@ const DEFAULT_SETTINGS: SettingsData = {
   // hooks that iterate the lists with `.map`/`.includes`.
   pinnedArtifactIds: [],
   recentArtifactIds: [],
+  // Phase 19 PR 9 Task 5: default placeholder for the local-sidecar
+  // idle window. The real value is loaded by `refresh()` on mount;
+  // we surface 60 s here so the SettingsPage <select> binds to a
+  // sensible bucket even during the brief window before the IPC
+  // response lands (matches `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` so a
+  // future change to the default propagates without a renderer
+  // edit).
+  modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

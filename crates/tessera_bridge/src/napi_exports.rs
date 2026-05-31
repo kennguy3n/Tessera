@@ -10,7 +10,9 @@ use tessera_artifacts::tasks::TaskStore;
 use tessera_audit::logger::AuditLogger;
 use tessera_audit::store::AuditStore;
 use tessera_citations::tracker::CitationTracker;
-use tessera_core::open_shared_with_key;
+use tessera_core::{
+    empty_read_pool, open_shared_read_pool_with_key, open_shared_with_key, SharedReadPool,
+};
 use tessera_sources::manager::SourceManager;
 use tessera_sources::progress::EmbeddingProgressTracker;
 
@@ -146,8 +148,43 @@ pub fn init_bridge(
     tessera_core::db::integrity_check_with_retry(&conn)
         .map_err(|e| napi::Error::from_reason(format!("database integrity check failed: {e}")))?;
 
-    let mut source_manager = SourceManager::with_shared_conn(conn.clone(), &[])
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Phase 19 PR 9 Task 4: open a small pool of read-only
+    // connections backing the SourceStore's hot read paths (BM25
+    // FTS5, embedding-row scan, chunk hydration, age lookup).
+    // Pool size 2 is the minimum that exercises the
+    // try_lock-round-robin path; it's small enough that we don't
+    // burn N OS file descriptors on every install but large
+    // enough to keep search latency off the writer mutex when a
+    // writer is mid-transaction (WAL gives readers a snapshot
+    // without blocking the writer).
+    //
+    // For `:memory:` test paths the pool is unconditionally
+    // empty (in-memory DBs can't be shared across connections);
+    // SourceStore transparently falls back to the writer
+    // connection in that case so behaviour is identical.
+    const READ_POOL_SIZE: usize = 2;
+    let read_pool: SharedReadPool = match open_shared_read_pool_with_key(
+        &db_path,
+        key_ref,
+        READ_POOL_SIZE,
+    ) {
+        Ok(pool) => pool,
+        Err(e) => {
+            // Don't fail bridge init if pool open fails — the
+            // writer is the source of truth and SourceStore
+            // falls back to it for reads when the pool is empty.
+            // Log the cause so the user-visible degradation has a
+            // record.
+            eprintln!(
+                "[tessera_bridge] failed to open read pool for {db_path}: {e}; falling back to single-connection reads"
+            );
+            empty_read_pool()
+        }
+    };
+
+    let mut source_manager =
+        SourceManager::with_shared_conn_and_read_pool(conn.clone(), read_pool, &[])
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     // Block C Task 2 (Phase 12): bind the per-source DEK / AEAD
     // facade in the manager to the same master key that protects

@@ -17,6 +17,33 @@ import {
   type ExportFormat,
   type Theme,
 } from "../types/ipc";
+import { MAX_MODEL_IDLE_TIMEOUT_SECS } from "../../../shared/types";
+
+/**
+ * Phase 19 PR 9 Task 5: discrete buckets exposed via the
+ * `<select>` for `modelIdleTimeoutSecs`. Buckets cover the common
+ * range — quick reload (30 s) through a long-running session
+ * (1 hour) — plus a `0` sentinel that disables idle unloading
+ * entirely. The label "Never (keep loaded)" matches the
+ * `MAX_MODEL_IDLE_TIMEOUT_SECS`-bounded "never" semantics in the
+ * IPC + on-disk schemas: the `0` value short-circuits
+ * `startIdleMonitor` so we never even arm the timer.
+ *
+ * Bucket values are sorted ascending (the `0` sentinel is
+ * displayed last so the natural top-to-bottom reading order is
+ * "shorter window → longer window → never").
+ */
+const MODEL_IDLE_TIMEOUT_BUCKETS: ReadonlyArray<{
+  value: number;
+  label: string;
+}> = [
+  { value: 30, label: "30 seconds" },
+  { value: 60, label: "1 minute" },
+  { value: 5 * 60, label: "5 minutes" },
+  { value: 30 * 60, label: "30 minutes" },
+  { value: 60 * 60, label: "1 hour" },
+  { value: 0, label: "Never (keep loaded)" },
+];
 
 const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
@@ -44,6 +71,7 @@ export default function SettingsPage() {
   const watchPatternsId = useId();
   const ignorePatternsId = useId();
   const exportFormatId = useId();
+  const modelIdleTimeoutId = useId();
   const [theme, setTheme] = useState(settings.theme);
   const [defaultExportFormat, setDefaultExportFormat] = useState(
     settings.defaultExportFormat,
@@ -54,15 +82,28 @@ export default function SettingsPage() {
   const [watchPatterns, setWatchPatterns] = useState(
     settings.watchPatterns.join(", "),
   );
+  const [modelIdleTimeoutSecs, setModelIdleTimeoutSecs] = useState<number>(
+    settings.modelIdleTimeoutSecs,
+  );
 
   useEffect(() => {
     setTheme(settings.theme);
     setDefaultExportFormat(settings.defaultExportFormat);
     setIgnorePatterns(settings.ignorePatterns.join(", "));
     setWatchPatterns(settings.watchPatterns.join(", "));
+    setModelIdleTimeoutSecs(settings.modelIdleTimeoutSecs);
   }, [settings]);
 
   const handleSave = async () => {
+    // Phase 19 PR 9 Task 5: cap to MAX_MODEL_IDLE_TIMEOUT_SECS
+    // (24 h) before sending — the IPC schema also enforces this
+    // but we keep the renderer guard as defense-in-depth so a
+    // future bucket value or a manual DOM edit can't poison the
+    // on-disk config with an out-of-range value.
+    const clampedIdleTimeout = Math.max(
+      0,
+      Math.min(MAX_MODEL_IDLE_TIMEOUT_SECS, Math.floor(modelIdleTimeoutSecs)),
+    );
     await update({
       theme,
       defaultExportFormat,
@@ -74,6 +115,7 @@ export default function SettingsPage() {
         .split(",")
         .map((p) => p.trim())
         .filter(Boolean),
+      modelIdleTimeoutSecs: clampedIdleTimeout,
     });
     refresh();
   };
@@ -168,6 +210,77 @@ export default function SettingsPage() {
               onChange={(e) => setIgnorePatterns(e.target.value)}
               placeholder=".git, node_modules, .DS_Store"
             />
+          </div>
+        </Card>
+
+        <Card>
+          <h3 style={{ marginBottom: "var(--spacing-md)" }}>Performance</h3>
+          <div>
+            <label
+              htmlFor={modelIdleTimeoutId}
+              style={{
+                display: "block",
+                fontSize: "var(--font-size-sm)",
+                fontWeight: "var(--font-weight-medium)" as unknown as number,
+                marginBottom: "var(--spacing-xs)",
+                color: "var(--color-text-headline)",
+              }}
+            >
+              Model idle unload
+            </label>
+            <select
+              id={modelIdleTimeoutId}
+              className="input"
+              value={modelIdleTimeoutSecs}
+              onChange={(e) =>
+                setModelIdleTimeoutSecs(Number(e.target.value))
+              }
+            >
+              {/*
+               * Phase 19 PR 9 Task 5 follow-up: if the persisted
+               * value isn't in `MODEL_IDLE_TIMEOUT_BUCKETS` (e.g.
+               * the user hand-edited `config.json` to `90`, or a
+               * future build changes the bucket list and a stale
+               * config carries an old value), the `<select>` would
+               * otherwise render blank — `<select>` falls back to
+               * the first option visually but `value` still reports
+               * the unmatched number, so saving snaps it to the
+               * first bucket on the next render. Prepending a
+               * synthetic "Custom" option preserves the user's
+               * explicit choice in the UI and labels it clearly
+               * so they know it didn't come from the bucket list.
+               */}
+              {!MODEL_IDLE_TIMEOUT_BUCKETS.some(
+                (b) => b.value === modelIdleTimeoutSecs,
+              ) && (
+                <option
+                  key="custom"
+                  value={modelIdleTimeoutSecs}
+                >
+                  Custom ({modelIdleTimeoutSecs} seconds)
+                </option>
+              )}
+              {MODEL_IDLE_TIMEOUT_BUCKETS.map((bucket) => (
+                <option key={bucket.value} value={bucket.value}>
+                  {bucket.label}
+                </option>
+              ))}
+            </select>
+            <p
+              style={{
+                fontSize: "var(--font-size-xs)",
+                color: "var(--color-text-secondary)",
+                marginTop: "var(--spacing-xs)",
+              }}
+            >
+              How long the local text / vision / image-generation
+              sidecars stay loaded after the last request. Lower
+              values free RAM faster; higher values avoid reload
+              latency on the next call. On memory-constrained GPUs
+              (≤ 8 GB), the <strong>30 seconds</strong> bucket
+              matches the pre-unification diffusion default and
+              reduces peak GPU VRAM hold time.
+            </p>
           </div>
         </Card>
 

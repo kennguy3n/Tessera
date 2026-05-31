@@ -2,6 +2,7 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
+import { loadConfig } from "./config";
 // Phase 15 Task 1: `./diffusionSidecar` is loaded dynamically inside
 // `configureSidecars()` so the diffusion module graph (sd-server
 // binary resolution + tar extraction logic + stable-diffusion.cpp
@@ -1151,10 +1152,35 @@ export async function initAppState(): Promise<boolean> {
     return false;
   }
 
+  // Phase 19 PR 9 Task 5: read the persisted `modelIdleTimeoutSecs`
+  // setting once at boot so every freshly-constructed sidecar
+  // (text / vision / diffusion) starts with the user's preferred
+  // idle window instead of the historical hardcoded default
+  // (`idleUnloadMs: 60_000` / `30_000`). The on-disk schema
+  // `.catch(DEFAULT_MODEL_IDLE_TIMEOUT_SECS)` so a corrupted value
+  // heals to 60 s — we never observe an undefined here.
+  //
+  // The renderer can later mutate this via `settings:update`, which
+  // calls back into `applyModelIdleTimeoutToSidecars(...)` to push
+  // the new window to whichever sidecars are already running. The
+  // diffusion sidecar's `.then(...)` block reads the same value
+  // again so a value installed after the lazy load completes still
+  // takes effect.
+  const persistedIdleTimeoutSecs = loadConfig().modelIdleTimeoutSecs;
+  // Use the same normaliser the runtime path uses
+  // (`applyModelIdleTimeoutToSidecars`) so the boot path cannot pass
+  // a non-floored / negative value through the schema's catch fallback.
+  // See `normalizeModelIdleTimeoutSecsToMs` JSDoc for the
+  // defense-in-depth rationale.
+  const persistedIdleTimeoutMs = normalizeModelIdleTimeoutSecsToMs(
+    persistedIdleTimeoutSecs,
+  );
+
   modelSidecar = new ModelSidecar({
     binaryPath: resolveSidecarBinary(),
     port: 8384,
     label: "text",
+    idleUnloadMs: persistedIdleTimeoutMs,
   });
   // Vision sidecar reuses the same llama-server binary but binds a
   // distinct port so it can run concurrently with the text sidecar
@@ -1170,6 +1196,7 @@ export async function initAppState(): Promise<boolean> {
     binaryPath: resolveSidecarBinary(),
     port: 8385,
     label: "vision",
+    idleUnloadMs: persistedIdleTimeoutMs,
   });
 
   // Phase 15 Task 1: defer the `./diffusionSidecar` module load. The
@@ -1203,6 +1230,16 @@ export async function initAppState(): Promise<boolean> {
         ),
         port: 8386,
         label: "diffusion",
+        // Phase 19 PR 9 Task 5: re-read the persisted idle window
+        // when the diffusion sidecar's lazy load settles (rather
+        // than capturing the boot-time `persistedIdleTimeoutMs`)
+        // so a `settings:update` that landed during the lazy load
+        // is reflected here. The next `applyModelIdleTimeoutToSidecars`
+        // call will see the same value and short-circuit the no-op
+        // diff via `setIdleUnloadMs`.
+        idleUnloadMs: normalizeModelIdleTimeoutSecsToMs(
+          loadConfig().modelIdleTimeoutSecs,
+        ),
       });
       diffusionSidecarState = "loaded";
       console.log(
@@ -1330,6 +1367,84 @@ export function getVisionSidecar(): ModelSidecar | null {
  */
 export function getDiffusionSidecar(): DiffusionSidecar | null {
   return diffusionSidecar;
+}
+
+/**
+ * Phase 19 PR 9 Task 5: push the user's idle-unload window in
+ * seconds to every live sidecar. Called from
+ * `electron/ipc/settings.ts` after a successful `settings:update`
+ * that mutates `modelIdleTimeoutSecs` so the new window takes
+ * effect immediately for any currently-running model — no relaunch
+ * required.
+ *
+ * Semantics:
+ *   - `idleTimeoutSecs === 0` disables idle unloading entirely
+ *     ("Keep loaded forever"). `setIdleUnloadMs(0)` is the
+ *     documented sentinel; the sidecar's `startIdleMonitor`
+ *     short-circuits without arming the timer.
+ *   - Positive seconds are multiplied by 1000 and passed straight
+ *     through. The sidecar floors the value and ignores a no-op
+ *     diff (same value as the currently stored one), so calling
+ *     this on every `settings:update` (even ones where the user
+ *     re-saved the same value) is cheap.
+ *   - Each sidecar slot may be `null` at call time:
+ *       - `modelSidecar` / `visionSidecar` are `null` until
+ *         `initAppState()` has constructed them (fallback mode).
+ *       - `diffusionSidecar` is `null` until the lazy-load
+ *         `import("./diffusionSidecar")` resolves. The lazy-load
+ *         constructor reads the persisted value again so a settings
+ *         change that happens during the window between
+ *         `initAppState` and the lazy-load completing is not lost.
+ *   - Errors thrown by any sidecar's `setIdleUnloadMs` are caught
+ *     and logged per-sidecar so a partial failure (e.g. the
+ *     diffusion sidecar in a weird state) does not block the
+ *     text/vision sidecars from picking up the new window.
+ */
+/**
+ * Phase 19 PR 9 Task 5 (round 3): single normaliser for converting
+ * the user-facing `modelIdleTimeoutSecs` setting into the
+ * milliseconds value that every sidecar's `idleUnloadMs` field
+ * stores. Centralising the rounding/clamp in one helper means the
+ * boot path (`initAppState` constructor calls) and the runtime
+ * path (`applyModelIdleTimeoutToSidecars` → `setIdleUnloadMs`)
+ * cannot drift apart — any future schema bypass (e.g. a test that
+ * stubs `loadConfig()` and forgets `.int().min(0)`) still produces
+ * a non-negative integer milliseconds value at the sidecar
+ * boundary.
+ *
+ * The `Math.max(0, …)` floor matches `sidecar.ts:setIdleUnloadMs`,
+ * which clamps incoming values on its own; this helper exists so
+ * the call site cannot construct a sidecar with an out-of-contract
+ * `idleUnloadMs` in the first place (defense-in-depth, not a
+ * functional change against today's schema-validated values).
+ */
+export function normalizeModelIdleTimeoutSecsToMs(
+  idleTimeoutSecs: number,
+): number {
+  if (!Number.isFinite(idleTimeoutSecs)) return 0;
+  return Math.max(0, Math.floor(idleTimeoutSecs)) * 1000;
+}
+
+export function applyModelIdleTimeoutToSidecars(
+  idleTimeoutSecs: number,
+): void {
+  const idleUnloadMs = normalizeModelIdleTimeoutSecsToMs(idleTimeoutSecs);
+  const sidecars: Array<{ name: string; sidecar: { setIdleUnloadMs: (ms: number) => void } | null }> = [
+    { name: "text", sidecar: modelSidecar },
+    { name: "vision", sidecar: visionSidecar },
+    { name: "diffusion", sidecar: diffusionSidecar },
+  ];
+  for (const { name, sidecar } of sidecars) {
+    if (!sidecar) continue;
+    try {
+      sidecar.setIdleUnloadMs(idleUnloadMs);
+    } catch (err) {
+      console.warn(
+        `[Tessera] Failed to apply idle timeout (${idleUnloadMs} ms) to ${name} sidecar:`,
+        err,
+      );
+    }
+  }
 }
 
 /**

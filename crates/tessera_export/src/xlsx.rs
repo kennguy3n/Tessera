@@ -158,7 +158,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
         Some(sheet) => {
             let worksheet = workbook
                 .add_worksheet()
-                .set_name(&sanitize_sheet_name(&artifact.title))
+                .set_name(sanitize_sheet_name(&artifact.title))
                 .expect("worksheet name should be valid after sanitization");
             write_sheet_payload(worksheet, &sheet.columns, &sheet.rows, &header_fmt);
         }
@@ -168,7 +168,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
             // file opens without a warning.
             let worksheet = workbook
                 .add_worksheet()
-                .set_name(&sanitize_sheet_name(&artifact.title))
+                .set_name(sanitize_sheet_name(&artifact.title))
                 .expect("worksheet name should be valid after sanitization");
             worksheet
                 .write_string_with_format(0, 0, &artifact.title, &header_fmt)
@@ -752,9 +752,17 @@ mod tests {
         let names = list_xlsx_entries(&bytes);
         let n_sheets = names
             .iter()
-            .filter(|n| n.starts_with("xl/worksheets/sheet") && n.ends_with(".xml"))
+            .filter(|n| {
+                n.starts_with("xl/worksheets/sheet")
+                    && std::path::Path::new(n.as_str())
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))
+            })
             .count();
-        assert_eq!(n_sheets, 2, "expected 2 worksheets, got {n_sheets}: {names:?}");
+        assert_eq!(
+            n_sheets, 2,
+            "expected 2 worksheets, got {n_sheets}: {names:?}"
+        );
 
         // The cross-sheet VLOOKUP formula must round-trip as a formula
         // (the function name reaches an `<f>` element), not as plain text.
@@ -831,7 +839,11 @@ mod tests {
         // so the final candidate is exactly 31 chars.
         let long = "A".repeat(31);
         let res = dedupe_sheet_name(&long, &[long.clone()]);
-        assert_eq!(res.chars().count(), 31, "result must fit Excel's 31-char limit");
+        assert_eq!(
+            res.chars().count(),
+            31,
+            "result must fit Excel's 31-char limit"
+        );
         assert!(res.ends_with("~2"));
     }
 

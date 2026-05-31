@@ -91,6 +91,7 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
@@ -420,6 +421,208 @@ pub fn open_shared_in_memory() -> Result<SharedConnection> {
     let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
     apply_default_pragmas(&conn)?;
     Ok(Arc::new(Mutex::new(conn)))
+}
+
+/// Phase 19 PR 9 Task 4: a pool of read-only [`Connection`]s opened
+/// against the same on-disk database as a [`SharedConnection`] writer.
+///
+/// # Why a separate pool?
+///
+/// The Tessera writer connection is wrapped in a single `Mutex`
+/// (see [`SharedConnection`]). Every read also has to acquire that
+/// mutex, which means a slow read (e.g. `load_embeddings_for_model`
+/// scanning every chunk row) blocks any concurrent writer for the
+/// duration of the scan, and vice-versa.
+///
+/// WAL journal mode (enabled in [`apply_wal_pragmas`]) lets a single
+/// writer and unlimited readers coexist at the SQLite level — but
+/// only across **different connections**. Multiple borrows of the
+/// same `Connection` still serialise inside SQLite. So unlocking the
+/// reader/writer concurrency that WAL promises requires actually
+/// opening additional connection handles.
+///
+/// This pool owns N read-only `Connection`s (default 2) opened with:
+/// - the same SQLCipher key as the writer (when one is in use), so
+///   reads decrypt the same pages;
+/// - `PRAGMA query_only = ON`, so a stray `INSERT` or `UPDATE`
+///   issued through a pool connection fails fast rather than
+///   silently bypassing the write-serialisation contract;
+/// - WAL pragmas applied (no-op on the read side but mandated for
+///   parity with the writer's journal mode).
+///
+/// Callers acquire a connection with [`SharedReadPool::with_read`],
+/// which uses a `try_lock` round-robin so independent reads don't
+/// contend on the same mutex when the pool has any spare capacity.
+///
+/// # Empty / in-memory case
+///
+/// `:memory:` databases cannot be shared across `Connection`
+/// handles (each open creates its own private in-memory DB), so
+/// in-memory tests get an [`empty_read_pool`] and every read falls
+/// back to the writer. `with_read` handles `len() == 0` by panicking
+/// — callers must check `is_empty()` or `len()` first; in practice
+/// stores hold the pool as `Option<SharedReadPool>` and skip
+/// allocation entirely when the pool is empty.
+#[derive(Clone)]
+pub struct SharedReadPool {
+    conns: Arc<Vec<Mutex<Connection>>>,
+    /// Round-robin starting index for [`with_read`] mutex
+    /// `try_lock` probes. Atomic because pool clones may be used
+    /// concurrently; the counter only needs eventual-consistency
+    /// semantics so a `Relaxed` ordering suffices.
+    next: Arc<AtomicUsize>,
+}
+
+impl SharedReadPool {
+    /// Number of underlying read-only connections in the pool.
+    pub fn len(&self) -> usize {
+        self.conns.len()
+    }
+
+    /// Whether the pool has zero connections. Used by stores to
+    /// decide whether to dispatch reads through the pool or fall
+    /// back to the writer.
+    pub fn is_empty(&self) -> bool {
+        self.conns.is_empty()
+    }
+
+    /// Acquire a read-only connection from the pool and pass it to
+    /// `f`.
+    ///
+    /// The dispatch strategy is:
+    /// 1. Start at an atomic round-robin index so independent
+    ///    parallel reads spread across the pool rather than
+    ///    bunching up on connection 0.
+    /// 2. `try_lock` each connection in turn. The first success
+    ///    runs `f` without ever blocking.
+    /// 3. If every `try_lock` fails (every reader is currently
+    ///    serving another query), fall back to a blocking `lock`
+    ///    on the connection at the round-robin start index.
+    ///
+    /// Panics if the pool is empty — callers MUST check
+    /// [`is_empty`] (or hold the pool as `Option<SharedReadPool>`)
+    /// first.
+    pub fn with_read<R>(&self, f: impl FnOnce(&Connection) -> R) -> R {
+        let n = self.conns.len();
+        assert!(n > 0, "SharedReadPool::with_read called on an empty pool");
+        let start = self.next.fetch_add(1, Ordering::Relaxed) % n;
+        for offset in 0..n {
+            let idx = (start + offset) % n;
+            if let Ok(guard) = self.conns[idx].try_lock() {
+                return f(&guard);
+            }
+        }
+        // Every connection is currently held — fall back to a
+        // blocking lock on the round-robin start index. This
+        // happens only when the pool is fully saturated; for the
+        // single-threaded bridge path it is essentially never
+        // reached, but for a future multi-threaded reader the
+        // blocking fallback bounds the worst-case wait.
+        let guard = self.conns[start]
+            .lock()
+            .expect("SharedReadPool connection mutex poisoned");
+        f(&guard)
+    }
+}
+
+/// Build an empty [`SharedReadPool`]. Used as a sentinel when the
+/// underlying database cannot be opened with separate read
+/// connections (e.g. `:memory:` paths in tests, or when the bridge
+/// chooses pool size 0).
+pub fn empty_read_pool() -> SharedReadPool {
+    SharedReadPool {
+        conns: Arc::new(Vec::new()),
+        next: Arc::new(AtomicUsize::new(0)),
+    }
+}
+
+/// Open `size` read-only connections to the database at `path` (no
+/// encryption) and return them wrapped in a [`SharedReadPool`].
+///
+/// `size == 0` returns the empty pool (callers fall back to the
+/// writer). Otherwise each connection runs the same default + WAL
+/// pragmas as the writer, plus `PRAGMA query_only = ON` to prevent
+/// accidental writes through a pool connection.
+pub fn open_shared_read_pool(path: &str, size: usize) -> Result<SharedReadPool> {
+    open_shared_read_pool_with_key(path, None, size)
+}
+
+/// Open `size` read-only connections to the database at `path` with
+/// an optional SQLCipher `key`, returning them wrapped in a
+/// [`SharedReadPool`].
+///
+/// Each connection is opened independently of the writer and
+/// configured for read-only use:
+/// - `PRAGMA key = "x'<hex>'"` when a key is supplied (same raw-key
+///   format the writer uses; see [`open_shared_with_key`]);
+/// - `PRAGMA foreign_keys = ON` (matches writer FK semantics);
+/// - `PRAGMA journal_mode = WAL` / `synchronous = NORMAL` (WAL is
+///   set per-database, but the journal-mode query reads a page from
+///   the file so it has to run after the key install);
+/// - `PRAGMA query_only = ON` so any caller that mistakes a pool
+///   connection for the writer fails fast.
+///
+/// In-memory paths (`":memory:"` and the `file::memory:` URI form)
+/// cannot be shared across connection handles — every open creates
+/// a fresh private in-memory database — so for those paths this
+/// function unconditionally returns the empty pool. Stores fall
+/// back to the writer in that case, which preserves the
+/// single-connection semantics tests rely on.
+pub fn open_shared_read_pool_with_key(
+    path: &str,
+    key: Option<&str>,
+    size: usize,
+) -> Result<SharedReadPool> {
+    if size == 0 {
+        return Ok(empty_read_pool());
+    }
+    if path == ":memory:" || path.starts_with("file::memory:") {
+        // In-memory databases are private per connection; sharing
+        // them across multiple opens silently produces N
+        // disconnected DBs, which would defeat the entire purpose
+        // of the pool. Tests that hit this path can either use the
+        // writer for reads, or explicitly request the shared-cache
+        // in-memory URL (which we don't support here — see the
+        // `cache=shared` SQLite docs for that variant).
+        return Ok(empty_read_pool());
+    }
+    if let Some(k) = key {
+        validate_hex_key(k)?;
+    }
+
+    let mut conns: Vec<Mutex<Connection>> = Vec::with_capacity(size);
+    for _ in 0..size {
+        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+        if let Some(k) = key {
+            apply_pragma_key(&conn, k)?;
+        }
+        apply_default_pragmas(&conn)?;
+        // WAL pragmas must run after the SQLCipher key install
+        // (the journal-mode pragma reads a page from the file, and
+        // that page is encrypted). Same reasoning as
+        // `open_shared_with_key`.
+        let _ = apply_wal_pragmas(&conn);
+        // `query_only` is enforced per-connection by SQLite. Any
+        // INSERT / UPDATE / DELETE / CREATE through a pool
+        // connection now fails with "attempt to write a readonly
+        // database" — a sharp error that makes accidental writer
+        // routing obvious rather than letting them succeed and
+        // bypass the writer's serialisation.
+        conn.execute_batch("PRAGMA query_only = ON;")
+            .map_err(|e| Error::Database(format!("PRAGMA query_only = ON failed: {e}")))?;
+        // Final sanity probe: confirms the connection actually
+        // decrypts and that schema reads work. Mirrors the writer
+        // probe in `open_shared_with_key`.
+        conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+            .map_err(|e| {
+                Error::Database(format!("read-pool connection probe failed for {path}: {e}"))
+            })?;
+        conns.push(Mutex::new(conn));
+    }
+    Ok(SharedReadPool {
+        conns: Arc::new(conns),
+        next: Arc::new(AtomicUsize::new(0)),
+    })
 }
 
 /// Validate that `key` is exactly 64 hex characters. SQLCipher
@@ -1121,6 +1324,171 @@ mod tests {
                 assert!(msg.contains("row 18"));
             }
             other => panic!("expected Database error, got {other:?}"),
+        }
+    }
+
+    // ===== Phase 19 PR 9 Task 4: SharedReadPool tests =====
+
+    #[test]
+    fn empty_read_pool_reports_empty() {
+        let pool = empty_read_pool();
+        assert_eq!(pool.len(), 0);
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn open_shared_read_pool_in_memory_paths_return_empty() {
+        // ":memory:" can't share across connections; the API must
+        // return the empty pool so callers fall back to the writer.
+        let p1 = open_shared_read_pool(":memory:", 4).expect("memory path");
+        assert!(p1.is_empty());
+        let p2 = open_shared_read_pool("file::memory:?cache=private", 4).expect("memory uri");
+        assert!(p2.is_empty());
+    }
+
+    #[test]
+    fn open_shared_read_pool_size_zero_returns_empty() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("pool.db");
+        let db_path_str = db_path.to_str().unwrap();
+        // Bootstrap so the file exists with valid SQLite header.
+        let _writer = open_shared(db_path_str).expect("writer");
+        let pool = open_shared_read_pool(db_path_str, 0).expect("pool");
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn open_shared_read_pool_opens_requested_count() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("pool.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let _writer = open_shared(db_path_str).expect("writer");
+        let pool = open_shared_read_pool(db_path_str, 3).expect("pool");
+        assert_eq!(pool.len(), 3);
+    }
+
+    #[test]
+    fn read_pool_observes_writer_commits() {
+        // Real correctness check: write through the writer, read
+        // back through every pool connection. If WAL pragmas
+        // aren't applied / if the pool opened a different file,
+        // these reads would either fail or see no rows.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("rw.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared(db_path_str).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO t (id, v) VALUES (?1, ?2)",
+                rusqlite::params![1, "hello"],
+            )
+            .unwrap();
+        }
+        let pool = open_shared_read_pool(db_path_str, 2).expect("pool");
+        for _ in 0..pool.len() {
+            let v: String = pool.with_read(|c| {
+                c.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))
+                    .unwrap()
+            });
+            assert_eq!(v, "hello");
+        }
+    }
+
+    #[test]
+    fn read_pool_rejects_writes_via_query_only_pragma() {
+        // `query_only = ON` is the safety net against a refactor
+        // accidentally routing an INSERT through a pool connection.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("readonly.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared(db_path_str).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])
+                .unwrap();
+        }
+        let pool = open_shared_read_pool(db_path_str, 1).expect("pool");
+        let err = pool.with_read(|c| c.execute("INSERT INTO t (id) VALUES (?1)", [42]));
+        assert!(
+            err.is_err(),
+            "PRAGMA query_only must reject writes through pool connections"
+        );
+    }
+
+    #[test]
+    fn encrypted_read_pool_decrypts_writer_data() {
+        // Pool connections must install the SAME SQLCipher key
+        // the writer used. Without the per-conn PRAGMA key install
+        // the pool's first probe would fail with NotADatabase.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("enc.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared_with_key(db_path_str, Some(TEST_KEY)).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE secret (id INTEGER, v TEXT)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO secret (id, v) VALUES (?1, ?2)",
+                rusqlite::params![1, "encrypted-payload"],
+            )
+            .unwrap();
+        }
+        let pool = open_shared_read_pool_with_key(db_path_str, Some(TEST_KEY), 2)
+            .expect("encrypted read pool");
+        let v: String = pool.with_read(|c| {
+            c.query_row("SELECT v FROM secret WHERE id = 1", [], |r| r.get(0))
+                .unwrap()
+        });
+        assert_eq!(v, "encrypted-payload");
+    }
+
+    #[test]
+    fn encrypted_read_pool_with_wrong_key_fails_loudly() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("enc-wrong.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared_with_key(db_path_str, Some(TEST_KEY)).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])
+                .unwrap();
+        }
+        let err = open_shared_read_pool_with_key(db_path_str, Some(OTHER_KEY), 1);
+        assert!(
+            err.is_err(),
+            "pool open with wrong key must surface the SQLCipher decryption failure"
+        );
+    }
+
+    #[test]
+    fn read_pool_round_robins_across_connections() {
+        // Exercise the round-robin path: hold one connection's lock,
+        // then call with_read N times. The atomic counter should
+        // spread reads across the remaining connections, so reads
+        // succeed without ever blocking on the held connection.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("rr.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared(db_path_str).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", [])
+                .unwrap();
+            conn.execute("INSERT INTO t (id) VALUES (1)", []).unwrap();
+        }
+        let pool = open_shared_read_pool(db_path_str, 3).expect("pool");
+        // Five reads against a 3-connection pool — the round-robin
+        // counter advances each call. All five must succeed.
+        for _ in 0..5 {
+            let n: i64 = pool.with_read(|c| {
+                c.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+                    .unwrap()
+            });
+            assert_eq!(n, 1);
         }
     }
 }

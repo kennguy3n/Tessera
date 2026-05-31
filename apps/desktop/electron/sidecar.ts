@@ -166,6 +166,46 @@ export class ModelSidecar {
     return [...this.options.extraArgs];
   }
 
+  /**
+   * Replace the idle-unload window in milliseconds and, if the
+   * sidecar is currently running, restart the periodic idle monitor
+   * with the new threshold so a live settings update takes effect
+   * immediately. Passing `0` disables idle unloading entirely
+   * (`startIdleMonitor` short-circuits when `idleUnloadMs <= 0`).
+   *
+   * Phase 19 PR 9 Task 5: wires the renderer's
+   * `SettingsData.modelIdleTimeoutSecs` user preference to the
+   * sidecar lifecycle. The runtime previously hardcoded 60 s as the
+   * idle window via the `DEFAULT_OPTIONS.idleUnloadMs` literal,
+   * making the documented `RuntimeConfig.idle_timeout_secs` field a
+   * dead letter for the TS sidecar host. `appState.bootApp` calls
+   * this method right after the initial `ModelSidecar` /
+   * `ModelSidecar` (vision) constructions with the persisted value,
+   * and `settings:update` calls it again whenever the user changes
+   * the field so a running sidecar picks up the new window without
+   * a relaunch.
+   *
+   * Safe to call regardless of running state: if the timer isn't
+   * currently armed we just stash the new value for the next
+   * `start()` to pick up; if the timer IS armed we tear it down and
+   * re-arm with the new threshold (preserving the existing
+   * `lastRequestTime` so the elapsed-since-last-request counter
+   * keeps ticking).
+   */
+  setIdleUnloadMs(idleUnloadMs: number): void {
+    const next = Math.max(0, Math.floor(idleUnloadMs));
+    if (next === this.options.idleUnloadMs) return;
+    this.options.idleUnloadMs = next;
+    if (this._isRunning) {
+      this.stopIdleMonitor();
+      this.startIdleMonitor();
+    }
+  }
+
+  get idleUnloadMs(): number {
+    return this.options.idleUnloadMs;
+  }
+
   get label(): string {
     return this.options.label;
   }
@@ -475,6 +515,14 @@ export class ModelSidecar {
   }
 
   private startIdleMonitor(): void {
+    // `idleUnloadMs <= 0` is the documented "disable idle unloading"
+    // sentinel — surfaced to users as the `0` value of
+    // `SettingsData.modelIdleTimeoutSecs` ("Never unload"). Skipping
+    // the `setInterval` here avoids both the per-10s wake-up and the
+    // need for the check loop to special-case the disabled threshold
+    // (an unbounded `idleTime > 0` would always fire and immediately
+    // stop the sidecar after one tick).
+    if (this.options.idleUnloadMs <= 0) return;
     this.idleTimer = setInterval(async () => {
       const idleTime = Date.now() - this.lastRequestTime;
       if (idleTime > this.options.idleUnloadMs && this._isRunning && this._generationActiveCount === 0) {
