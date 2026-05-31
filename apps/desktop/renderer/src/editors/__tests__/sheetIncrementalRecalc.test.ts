@@ -334,6 +334,53 @@ describe("incrementalRecalc", () => {
     expect(valAt(cache, 0, 1)).toBe(1);
   });
 
+  it("dependent of a deleted cell is re-evaluated, not left stale", () => {
+    // Regression: `graph.remove(key)` wipes `users[key]` BEFORE
+    // `recalcOrder(dirtyKeys)` walks it, so the dependents of a
+    // freshly-deleted cell were silently skipped. Fix snapshots
+    // `usedBy(key)` before the remove call and feeds the snapshot
+    // into `recalcOrder` as additional seeds.
+    //
+    // Scenario: B1 reads A1 + A2 (sums column A). Shrink the sheet
+    // to drop row 1, deleting A2. B1's cache must update from 30
+    // to 10 (since A2 is now blank). Note: the resolver re-caches
+    // the deleted cell as `null` when B1 walks A2 during eval,
+    // so we assert on B1's value (the actual stale-cache bug),
+    // not on A2's cache presence.
+    const initial = sheet([
+      ["10", "=A1+A2"],
+      ["20"],
+    ]);
+    const state = makeIncrementalRecalcState();
+    const before = incrementalRecalc(initial, state);
+    expect(valAt(before, 0, 1)).toBe(30);
+
+    const shrunk: SheetContent = { ...initial, rows: [initial.rows[0]] };
+    const after = incrementalRecalc(shrunk, state);
+    // Without the snapshot+reseed fix, B1 would still report 30.
+    expect(valAt(after, 0, 1)).toBe(10);
+  });
+
+  it("transitive dependents of a deleted cell are also re-evaluated", () => {
+    // Two-deep chain: A2 is referenced by B1, which is referenced
+    // by C1. Delete A2 (shrink to 1 row). Both B1 and C1 must
+    // recompute, even though `usedBy(A2)` only directly names B1.
+    // `recalcOrder` walks B1 → C1 transitively from the extraSeed.
+    const initial = sheet([
+      ["10", "=A1+A2", "=B1*10"],
+      ["20"],
+    ]);
+    const state = makeIncrementalRecalcState();
+    const before = incrementalRecalc(initial, state);
+    expect(valAt(before, 0, 1)).toBe(30);
+    expect(valAt(before, 0, 2)).toBe(300);
+
+    const shrunk: SheetContent = { ...initial, rows: [initial.rows[0]] };
+    const after = incrementalRecalc(shrunk, state);
+    expect(valAt(after, 0, 1)).toBe(10);
+    expect(valAt(after, 0, 2)).toBe(100);
+  });
+
   it("self-reference surfaces #CIRCULAR! and recovers when broken", () => {
     const initial = sheet([
       ["=A1"],

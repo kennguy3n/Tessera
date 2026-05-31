@@ -711,13 +711,39 @@ export function incrementalRecalc(
   // cache entry. The graph update has to land BEFORE we compute the
   // `recalcOrder` below, otherwise a freshly-removed dependency
   // would still appear in `usedBy(target)` and trigger a phantom
-  // recompute.
+  // recompute for a formula that no longer reads the dirty cell.
+  //
+  // BUT — for *deleted* cells, calling `graph.remove(key)` here
+  // also wipes the cell's reverse-index `users[key]` set BEFORE
+  // `recalcOrder` runs. The reverse index is exactly what
+  // `recalcOrder` walks to find downstream formulas, so without a
+  // snapshot the dependents of a deleted cell would silently keep
+  // their stale cached values. The fix is to snapshot every
+  // deleted key's `usedBy` set into `extraSeeds` BEFORE the
+  // `remove` call, then feed those snapshots into `recalcOrder`
+  // alongside `dirtyKeys` so the topo walk still finds them.
+  //
+  // First pass: classify each dirty key as a deletion or a
+  // live edit. We need the full set of deletions before snapshotting
+  // `usedBy` so that an extraSeed that is itself being deleted
+  // (e.g. row 5 dropped — A5 references B5, both deleted) is not
+  // re-added as a phantom live cell.
+  //
   // Track keys that survived the diff (still exist on the new
   // sheet) so we can drive re-evaluation against them after the
   // graph is in sync. Deletions (raw === undefined) skip
   // evaluation entirely — their dependents are picked up via
   // `recalcOrder` below.
   const liveDirtyKeys: string[] = [];
+  const deletedKeys = new Set<string>();
+  const extraSeeds = new Set<string>();
+  for (const key of dirtyKeys) {
+    const { row, col } = parseCellKey(key);
+    const raw = nextRows[row]?.[col];
+    if (raw === undefined) {
+      deletedKeys.add(key);
+    }
+  }
   for (const key of dirtyKeys) {
     const { row, col } = parseCellKey(key);
     const raw = nextRows[row]?.[col];
@@ -749,6 +775,18 @@ export function incrementalRecalc(
       // dangle. Skip evaluation: the resolver would otherwise
       // resurrect the entry as `null` on lookup of an undefined
       // cell, leaving a stale "ghost" in the cache.
+      //
+      // Snapshot `usedBy(key)` BEFORE the remove call so the
+      // dependents flow into `recalcOrder` even after `remove`
+      // wipes the reverse index. Without this snapshot a formula
+      // that references a deleted cell never gets re-evaluated,
+      // and keeps its stale cached value. We skip any user that
+      // is itself being deleted — re-evaluating a no-longer-existent
+      // cell would otherwise resurrect it in the cache as a `null`
+      // ghost (see comment above).
+      for (const user of graph.usedBy(key)) {
+        if (!deletedKeys.has(user)) extraSeeds.add(user);
+      }
       graph.remove(key);
     }
     cache.delete(key);
@@ -758,7 +796,23 @@ export function incrementalRecalc(
   // dirty cell. Invalidate their cache entries too — their values
   // depend on inputs that may have changed. Cells in cycles get
   // tagged for `#CIRCULAR!` here.
-  const { order: dependentOrder, cyclic } = graph.recalcOrder(dirtyKeys);
+  //
+  // Seeds are `dirtyKeys ∪ extraSeeds`: the dirty keys themselves
+  // still need their downstream walked (a formula that read A1
+  // and A1 is now `=B1+1` still has `users[A1]` populated), and
+  // `extraSeeds` covers the deleted-cell case where the reverse
+  // index has been wiped. Using `extraSeeds` as roots (already
+  // one hop downstream of the deleted cell) is fine because
+  // `recalcOrder` walks `usedBy` from the seeds themselves.
+  const allSeeds: Iterable<string> =
+    extraSeeds.size === 0
+      ? dirtyKeys
+      : new Set([...dirtyKeys, ...extraSeeds]);
+  const { order: dependentOrder, cyclic } = graph.recalcOrder(allSeeds);
+  // The `extraSeeds` are dependents themselves (one hop downstream
+  // of the deleted cells), so their cached values must also be
+  // invalidated even if they have no further dependents to walk.
+  for (const key of extraSeeds) cache.delete(key);
   for (const key of dependentOrder) cache.delete(key);
   for (const key of cyclic) cache.delete(key);
 
@@ -773,14 +827,22 @@ export function incrementalRecalc(
   // Re-evaluate dirty cells in dep-graph order. We start with the
   // dirty seeds themselves (they may include literal cells that
   // need a fresh cache entry to feed downstream formulas), then
-  // walk the transitive dependents in topological order so each
-  // cell's inputs are already in the cache by the time we ask the
-  // resolver for its value.
+  // the `extraSeeds` (formula cells whose direct dependency was
+  // deleted — every entry in `users[X]` is by construction a
+  // formula cell, so they need a fresh `#REF!` / blank-input
+  // evaluation), and finally the transitive dependents in
+  // topological order so each cell's inputs are already in the
+  // cache by the time we ask the resolver for its value. The
+  // resolver is recursive so it does not require the
+  // `extraSeeds` themselves to be in topological order — any
+  // intra-`extraSeeds` dependency is satisfied transparently
+  // through the cache.
   const evaluateOne = (key: string): void => {
     const { row, col } = parseCellKey(key);
     resolver.getEvaluated(row, col, activeName);
   };
   for (const key of liveDirtyKeys) evaluateOne(key);
+  for (const key of extraSeeds) evaluateOne(key);
   for (const key of dependentOrder) evaluateOne(key);
   // Cells in cycles always resolve to `#CIRCULAR!` regardless of
   // their formula source — the resolver itself surfaces this via
