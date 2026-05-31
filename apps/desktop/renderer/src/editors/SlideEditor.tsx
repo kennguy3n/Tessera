@@ -612,20 +612,53 @@ export default function SlideEditor({
                 }
               }}
               onDrop={(event) => {
-                if (!draggedSlideId || draggedSlideId === slide.id) return;
+                if (!draggedSlideId || draggedSlideId === slide.id) {
+                  // No active drag, or self-drop — nothing to do.
+                  // The `onDragEnd` handler still fires and clears
+                  // `draggedSlideId`, so leave it alone here.
+                  return;
+                }
                 event.preventDefault();
                 const fromIdx = slides.findIndex(
                   (s) => s.id === draggedSlideId,
                 );
-                if (fromIdx < 0) return;
+                // `setDraggedSlideId(null)` runs on every termination
+                // path (success AND lookup-miss) so the `is-dragging`
+                // visual cue can't stick if a concurrent edit shifts
+                // the source out of the array before drop fires. The
+                // `onDragEnd` handler is a defence in depth, but
+                // dragend doesn't always fire reliably in Chromium's
+                // touch-emulation path — clearing here guarantees the
+                // class is removed at the exact moment the user
+                // released the pointer.
+                if (fromIdx < 0) {
+                  setDraggedSlideId(null);
+                  return;
+                }
                 moveSlide(fromIdx, i);
                 setDraggedSlideId(null);
               }}
               onDragEnd={() => setDraggedSlideId(null)}
             >
+              {/*
+                * `draggable={false}` on every interactive child of the
+                * `draggable` row mirrors the defensive pattern in
+                * `SlideBlockRow` (textarea / input). Native HTML5 drag
+                * inheritance means a `draggable` parent would otherwise
+                * make these buttons drag-able too. In Chromium-on-
+                * desktop the browser disambiguates click vs. drag on
+                * `<button>` correctly, but accessibility tools that
+                * simulate mouse events (and touch-emulation in Chrome
+                * DevTools) can interpret a tap-with-millimetre-jitter
+                * as a drag-start. Opting these children out forces the
+                * row-level drag to only fire from non-button regions
+                * (the empty padding / numbered chip), which is the
+                * intended interaction.
+                */}
               <button
                 type="button"
                 className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
+                draggable={false}
                 // `aria-current="true"` is the WAI-ARIA standard for a
                 // "the currently selected item in a non-page set"
                 // signal. Pairs with the visual `active` class so
@@ -641,6 +674,7 @@ export default function SlideEditor({
                 <button
                   type="button"
                   className="btn-xs"
+                  draggable={false}
                   onClick={() => duplicateSlide(i)}
                   aria-label={`Duplicate slide ${i + 1}`}
                   title="Duplicate slide"
@@ -650,6 +684,7 @@ export default function SlideEditor({
                 <button
                   type="button"
                   className="btn-xs danger"
+                  draggable={false}
                   onClick={() => removeSlide(i)}
                   disabled={slides.length <= 1}
                   aria-label={`Delete slide ${i + 1}`}
@@ -944,7 +979,18 @@ export default function SlideEditor({
                     const fromIdx = activeSlide.blocks.findIndex(
                       (b) => b.id === draggedBlockId,
                     );
-                    if (fromIdx < 0) return;
+                    // Clear on every termination path (success AND
+                    // lookup-miss) so the `is-dragging` class can't
+                    // stick if the source block is removed mid-drag
+                    // (e.g. the active slide changes via find-panel
+                    // jump or version restore between dragstart and
+                    // drop). `onDragEnd` is a defence in depth but
+                    // doesn't always fire reliably in Chromium's
+                    // touch-emulation path.
+                    if (fromIdx < 0) {
+                      setDraggedBlockId(null);
+                      return;
+                    }
                     onBlockMove(activeIndex, fromIdx, targetIdx);
                     setDraggedBlockId(null);
                   }}

@@ -121,6 +121,34 @@ export function backfillSlideIds(slides: readonly Slide[]): Slide[] {
       blocks: nextBlocks ?? slide.blocks,
     });
   }
+  // ## Invariant — the `slides as Slide[]` cast is only safe under
+  // the lazy-clone contract above:
+  //
+  //   * If ANY slide OR ANY block needed an id, `nextSlides` was
+  //     initialised AND every subsequent slide was pushed onto it
+  //     (either as-is or freshly cloned). The early-return at the
+  //     top of the loop (`if (!needsNewId && !nextBlocks) { if
+  //     (nextSlides) nextSlides.push(slide); continue; }`) is what
+  //     keeps that contract: once we've started cloning, we MUST
+  //     keep pushing — we never branch back to "leave the rest of
+  //     the input alone".
+  //   * If NO slide and NO block needed an id, `nextSlides` is
+  //     still null. The caller's input was already fully migrated
+  //     and we just hand the original reference back. The cast
+  //     drops the `readonly` modifier — sound because callers
+  //     (every internal caller in `slideEditorHelpers` / state
+  //     setters in `SlideEditor`) already hold the array as
+  //     mutable; `readonly` only appears at this function's
+  //     parameter type to advertise that *we* don't mutate.
+  //
+  // A future refactor that mutated a slide in place (e.g. assigned
+  // `slide.id = newSlideId(...)` directly instead of cloning) would
+  // silently violate the invariant: `nextSlides` would stay null,
+  // we'd `return slides as Slide[]`, and the lying-by-omission
+  // mutation would leak through to the caller's previous-state
+  // reference (breaking React's setState-with-prev-equality
+  // short-circuit). If you need to add a new migration path, clone
+  // — never mutate.
   return nextSlides ?? (slides as Slide[]);
 }
 
