@@ -8,6 +8,8 @@ import {
   buildSlideFromLayout,
   duplicateSlideAt,
   moveBlock,
+  moveSlide,
+  backfillSlideIds,
   removeBlock,
   appendBlock,
   replaceBlock,
@@ -601,6 +603,183 @@ describe("moveBlock", () => {
     };
     moveBlock(slide, 0, 1);
     expect(slide.blocks.map((b) => b.content)).toEqual(["a", "b"]);
+  });
+});
+
+describe("moveSlide", () => {
+  // Devin Review PR #82 round 5 ANALYSIS_0002 — `moveSlide` lacks
+  // dedicated unit tests. The helper has non-trivial logic
+  // (bounds checking, splice-based reorder, reference-stable
+  // no-op contract) that SlideEditor.tsx relies on; pin it.
+  const sampleSlides = (): Slide[] => [
+    { id: "slide-a", title: "A", blocks: [], notes: "" },
+    { id: "slide-b", title: "B", blocks: [], notes: "" },
+    { id: "slide-c", title: "C", blocks: [], notes: "" },
+    { id: "slide-d", title: "D", blocks: [], notes: "" },
+  ];
+
+  it("moves a slide to a later position", () => {
+    const next = moveSlide(sampleSlides(), 0, 2);
+    expect(next.map((s) => s.id)).toEqual([
+      "slide-b",
+      "slide-c",
+      "slide-a",
+      "slide-d",
+    ]);
+  });
+
+  it("moves a slide to an earlier position", () => {
+    const next = moveSlide(sampleSlides(), 3, 0);
+    expect(next.map((s) => s.id)).toEqual([
+      "slide-d",
+      "slide-a",
+      "slide-b",
+      "slide-c",
+    ]);
+  });
+
+  it("returns the same reference when from === to (no-op for setState)", () => {
+    const slides = sampleSlides();
+    expect(moveSlide(slides, 1, 1)).toBe(slides);
+  });
+
+  it("returns the same reference for out-of-range from index", () => {
+    const slides = sampleSlides();
+    expect(moveSlide(slides, -1, 0)).toBe(slides);
+    expect(moveSlide(slides, 99, 0)).toBe(slides);
+  });
+
+  it("returns the same reference for out-of-range to index", () => {
+    const slides = sampleSlides();
+    expect(moveSlide(slides, 0, -1)).toBe(slides);
+    expect(moveSlide(slides, 0, 99)).toBe(slides);
+  });
+
+  it("does not mutate the input array", () => {
+    const slides = sampleSlides();
+    moveSlide(slides, 0, 3);
+    expect(slides.map((s) => s.id)).toEqual([
+      "slide-a",
+      "slide-b",
+      "slide-c",
+      "slide-d",
+    ]);
+  });
+
+  it("preserves slide object identity for slides that don't move", () => {
+    const slides = sampleSlides();
+    const next = moveSlide(slides, 0, 1);
+    // slide-c and slide-d aren't involved in the swap so their
+    // object references should pass through unchanged.
+    expect(next[2]).toBe(slides[2]);
+    expect(next[3]).toBe(slides[3]);
+  });
+});
+
+describe("backfillSlideIds", () => {
+  // Devin Review PR #82 round 5 ANALYSIS_0002 — companion to the
+  // `moveSlide` pin. `backfillSlideIds` is exercised indirectly
+  // through `parseSlideContent`, but the migration / lazy-clone
+  // contract is worth pinning directly so future refactors
+  // can't silently break the "already-migrated decks return the
+  // input reference" optimisation that React relies on.
+
+  it("returns the input reference when every slide and block already has an id", () => {
+    const slides: Slide[] = [
+      {
+        id: "slide-a",
+        title: "A",
+        blocks: [{ id: "block-1", type: "text", content: "hello" }],
+        notes: "",
+      },
+      {
+        id: "slide-b",
+        title: "B",
+        blocks: [],
+        notes: "",
+      },
+    ];
+    expect(backfillSlideIds(slides)).toBe(slides);
+  });
+
+  it("mints ids for slides missing them while preserving slides that already have one", () => {
+    const slides = [
+      { id: "slide-a", title: "A", blocks: [], notes: "" },
+      { id: "", title: "B", blocks: [], notes: "" },
+      { id: "slide-c", title: "C", blocks: [], notes: "" },
+    ] as unknown as Slide[];
+    const next = backfillSlideIds(slides);
+    expect(next).not.toBe(slides);
+    expect(next[0].id).toBe("slide-a");
+    expect(next[1].id).toMatch(/^slide-/);
+    expect(next[1].id).not.toBe("");
+    expect(next[2].id).toBe("slide-c");
+    // Slides that already had ids should pass through unchanged.
+    expect(next[0]).toBe(slides[0]);
+    expect(next[2]).toBe(slides[2]);
+  });
+
+  it("mints ids for blocks missing them while preserving blocks that already have one", () => {
+    const slides = [
+      {
+        id: "slide-a",
+        title: "A",
+        blocks: [
+          { id: "block-1", type: "text", content: "a" },
+          { id: "", type: "text", content: "b" },
+          { id: "block-3", type: "text", content: "c" },
+        ],
+        notes: "",
+      },
+    ] as unknown as Slide[];
+    const next = backfillSlideIds(slides);
+    expect(next).not.toBe(slides);
+    expect(next[0].blocks[0].id).toBe("block-1");
+    expect(next[0].blocks[1].id).toMatch(/^block-/);
+    expect(next[0].blocks[1].id).not.toBe("");
+    expect(next[0].blocks[2].id).toBe("block-3");
+    // Blocks that already had ids should pass through unchanged.
+    expect(next[0].blocks[0]).toBe(slides[0].blocks[0]);
+    expect(next[0].blocks[2]).toBe(slides[0].blocks[2]);
+  });
+
+  it("does not mutate the input array or input slides", () => {
+    const slides = [
+      { id: "", title: "A", blocks: [], notes: "" },
+    ] as unknown as Slide[];
+    const inputCopyId = slides[0].id;
+    backfillSlideIds(slides);
+    // The original slide must still have its empty id — the
+    // function returns a new array with the migrated slide,
+    // it does not mutate the source.
+    expect(slides[0].id).toBe(inputCopyId);
+  });
+
+  it("backfills nested blocks even when the parent slide has an id", () => {
+    // The lazy-clone contract has to handle the case where the
+    // outer array doesn't need to clone but an inner block does
+    // — verify the slide is still cloned (because its `.blocks`
+    // changed) but the outer `nextSlides` array clones only as
+    // needed.
+    const slides = [
+      { id: "slide-ok", title: "OK", blocks: [], notes: "" },
+      {
+        id: "slide-mixed",
+        title: "Mixed",
+        blocks: [{ id: "", type: "text", content: "needs id" }],
+        notes: "",
+      },
+    ] as unknown as Slide[];
+    const next = backfillSlideIds(slides);
+    expect(next).not.toBe(slides);
+    expect(next[0]).toBe(slides[0]);
+    expect(next[1]).not.toBe(slides[1]);
+    expect(next[1].blocks[0].id).toMatch(/^block-/);
+  });
+
+  it("returns the input reference when given an empty array", () => {
+    const slides: Slide[] = [];
+    expect(backfillSlideIds(slides)).toBe(slides);
   });
 });
 
