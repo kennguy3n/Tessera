@@ -776,12 +776,30 @@ export default function SheetEditor({
           }
         }
         if (edits.length === 0) return prev;
+        // Widen the column header array when a rightward fill
+        // extends past the current right edge. Without this the
+        // newly-filled cells would land in `rows[r]` past
+        // `columns.length`, and the grid renderer (which iterates
+        // `sheet.columns.map(...)`) would silently drop them — data
+        // written, nothing displayed. Devin Review PR #86
+        // ANALYSIS-0003 (pre-existing latent bug). `down`/`up`/`left`
+        // never grow `columns`, so they skip this branch.
+        let columns = prev.columns;
+        if (direction === "right") {
+          const maxTargetCol = c2 + length;
+          if (maxTargetCol >= prev.columns.length) {
+            columns = [...prev.columns];
+            while (columns.length <= maxTargetCol) {
+              columns.push(columnLabel(columns.length));
+            }
+          }
+        }
         const newRows = updateCellsInRows(
           prev.rows,
-          prev.columns.length,
+          columns.length,
           edits,
         );
-        const updated = { ...prev, rows: newRows };
+        const updated = { ...prev, columns, rows: newRows };
         debouncedSave(updated);
         return updated;
       });
