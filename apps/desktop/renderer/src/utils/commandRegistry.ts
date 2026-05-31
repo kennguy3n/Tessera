@@ -141,6 +141,13 @@ export const KNOWN_CALLBACK_IDS = [
   "openShortcutsHelp",
   "toggleSidebar",
   "toggleTheme",
+  // Phase 18 Task 19 follow-up: react-router-side `navigate(-1)`
+  // back-navigation. Lives as a callback (not a navigate-kind
+  // command) because the target is a relative history pop, not a
+  // concrete `to` string — the router cannot encode "the previous
+  // page" as a path. Both the keyboard runner and the palette
+  // resolve this id to `navigate(-1)` via their respective scopes.
+  "goBack",
 ] as const;
 export type KnownCallbackId = (typeof KNOWN_CALLBACK_IDS)[number];
 
@@ -365,7 +372,11 @@ export function buildCommandRegistry(): readonly Command[] {
       chord: { mod: true, key: "[" },
       keywords: ["back", "history"],
       kind: "callback",
-      callbackId: "openCommandPalette",
+      // Bound to `goBack` (not `openCommandPalette`) so the runner +
+      // palette both call `navigate(-1)` for actual
+      // browser-style back navigation. Devin Review PR #87
+      // BUG_0001 follow-up.
+      callbackId: "goBack",
     },
   ];
   return [...sidebar, ...rest];

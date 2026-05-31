@@ -26,7 +26,7 @@
  * confusing "nothing happened" UX).
  */
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useSettings, useUpdateSetting } from "./useSettings";
 
 /**
@@ -75,6 +75,15 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
   const { update, error } = useUpdateSetting();
   const pinnedIds = settings.pinnedArtifactIds;
 
+  // Latest-value ref so `togglePin` / `setPinned` / `prunePinned`
+  // can read the current list without listing `pinnedIds` in their
+  // dep arrays. Mirrors the pattern in `useRecentlyViewedArtifacts`
+  // — keeps the callbacks stable across writes so child effects
+  // don't re-run every pin/unpin. PR #87 Devin Review ANALYSIS_0002
+  // companion fix.
+  const pinnedIdsRef = useRef(pinnedIds);
+  pinnedIdsRef.current = pinnedIds;
+
   const isPinned = useCallback(
     (id: string) => pinnedIds.includes(id),
     [pinnedIds],
@@ -100,35 +109,35 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
 
   const togglePin = useCallback(
     async (id: string) => {
-      const current = pinnedIds;
+      const current = pinnedIdsRef.current;
       const next = current.includes(id)
         ? current.filter((x) => x !== id)
         : [id, ...current];
       return writePinned(next);
     },
-    [pinnedIds, writePinned],
+    [writePinned],
   );
 
   const setPinned = useCallback(
     async (id: string, pinned: boolean) => {
-      const current = pinnedIds;
+      const current = pinnedIdsRef.current;
       const has = current.includes(id);
       if (pinned === has) return current;
       const next = pinned ? [id, ...current] : current.filter((x) => x !== id);
       return writePinned(next);
     },
-    [pinnedIds, writePinned],
+    [writePinned],
   );
 
   const prunePinned = useCallback(
     async (idsToRemove: ReadonlySet<string>) => {
       if (idsToRemove.size === 0) return;
-      const current = pinnedIds;
+      const current = pinnedIdsRef.current;
       const next = current.filter((x) => !idsToRemove.has(x));
       if (next.length === current.length) return;
       await writePinned(next);
     },
-    [pinnedIds, writePinned],
+    [writePinned],
   );
 
   return useMemo(

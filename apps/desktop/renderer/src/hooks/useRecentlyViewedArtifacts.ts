@@ -28,7 +28,7 @@
  *     which surprises the user.
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { MAX_RECENT_ARTIFACTS } from "../types/ipc";
 import { useSettings, useUpdateSetting } from "./useSettings";
 
@@ -59,6 +59,15 @@ export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
   const { update, error } = useUpdateSetting();
   const recentIds = settings.recentArtifactIds;
 
+  // Latest-value ref so `trackView` / `pruneRecents` can read the
+  // current list without listing `recentIds` in their dep arrays.
+  // Without this, every tracked view invalidated `trackView`, which
+  // re-ran `useTrackArtifactView`'s effect with the same `id` (a
+  // no-op short-circuit on `current[0] === id`) wasting a render
+  // pass per artifact open. PR #87 Devin Review ANALYSIS_0002.
+  const recentIdsRef = useRef(recentIds);
+  recentIdsRef.current = recentIds;
+
   const writeRecents = useCallback(
     async (next: string[]): Promise<ReadonlyArray<string>> => {
       const trimmed =
@@ -79,24 +88,24 @@ export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
 
   const trackView = useCallback(
     async (id: string) => {
-      const current = recentIds;
+      const current = recentIdsRef.current;
       if (current[0] === id) return current;
       const filtered = current.filter((x) => x !== id);
       const next = [id, ...filtered];
       return writeRecents(next);
     },
-    [recentIds, writeRecents],
+    [writeRecents],
   );
 
   const pruneRecents = useCallback(
     async (idsToRemove: ReadonlySet<string>) => {
       if (idsToRemove.size === 0) return;
-      const current = recentIds;
+      const current = recentIdsRef.current;
       const next = current.filter((x) => !idsToRemove.has(x));
       if (next.length === current.length) return;
       await writeRecents(next);
     },
-    [recentIds, writeRecents],
+    [writeRecents],
   );
 
   return useMemo(

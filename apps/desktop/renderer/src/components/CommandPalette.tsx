@@ -83,7 +83,7 @@ export default function CommandPalette({
 }: CommandPaletteProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
-  const { artifacts } = useArtifactList();
+  const { artifacts, loading: artifactsLoading } = useArtifactList();
   const { pinnedIds, prunePinned } = usePinnedArtifacts();
   const { recentIds, pruneRecents } = useRecentlyViewedArtifacts();
   const { settings } = useSettings();
@@ -103,11 +103,19 @@ export default function CommandPalette({
   }, [artifacts]);
 
   // Prune stale pinned/recent IDs lazily when the palette opens
-  // and the artifact list has loaded. Without this, a user who
-  // deletes a pinned artifact elsewhere would see a "ghost" row
-  // in the palette until they manually unpinned it.
+  // AND the artifact list has finished loading. Without this, a
+  // user who deletes a pinned artifact elsewhere would see a
+  // "ghost" row in the palette until they manually unpinned it.
+  //
+  // Gate on `!artifactsLoading` (not `artifacts.length > 0`)
+  // because if every artifact has been deleted the list is
+  // legitimately empty and EVERY pinned/recent id is stale — we
+  // still want to prune in that case. Earlier code guarded on
+  // `artifacts.length === 0` and silently skipped the prune,
+  // leaving the user with a palette full of dead ids. PR #87
+  // Devin Review ANALYSIS_0005.
   useEffect(() => {
-    if (!isOpen || artifacts.length === 0) return;
+    if (!isOpen || artifactsLoading) return;
     const stalePins = new Set<string>();
     for (const id of pinnedIds) {
       if (!artifactById.has(id)) stalePins.add(id);
@@ -120,7 +128,7 @@ export default function CommandPalette({
     if (staleRecents.size > 0) void pruneRecents(staleRecents);
   }, [
     isOpen,
-    artifacts.length,
+    artifactsLoading,
     artifactById,
     pinnedIds,
     recentIds,
@@ -235,9 +243,14 @@ export default function CommandPalette({
       kind: "command",
       command: m.item,
     }));
+    // Hoist the pinned/recent Sets above the .map so we don't pay
+    // O(N) construction cost per row (PR #87 Devin Review
+    // ANALYSIS_0003). pinnedIds is capped at 256, recentIds at
+    // MAX_RECENT_ARTIFACTS=32, so the Sets cost <O(300) once
+    // instead of <O(300 * MAX_RESULTS) inside the loop.
+    const pinnedSet = new Set(pinnedIds);
+    const recentSet = new Set(recentIds);
     const artifactRows: PaletteRow[] = artifactMatches.map((m) => {
-      const pinnedSet = new Set(pinnedIds);
-      const recentSet = new Set(recentIds);
       const tag = pinnedSet.has(m.item.id)
         ? "pinned"
         : recentSet.has(m.item.id)
@@ -314,10 +327,27 @@ export default function CommandPalette({
             window.dispatchEvent(new CustomEvent("tessera:toggle-sidebar"));
             return;
           case "toggleTheme": {
-            const next = settings.theme === "dark" ? "light" : "dark";
+            // Three-state cycle: system -> dark -> light -> system.
+            // See `useKeyboardShortcuts.toggleTheme` for the rationale;
+            // we keep the two runners in lockstep so the chord and the
+            // palette behave identically (PR #87 Devin Review
+            // ANALYSIS_0004).
+            const next =
+              settings.theme === "system"
+                ? "dark"
+                : settings.theme === "dark"
+                  ? "light"
+                  : "system";
             void updateSetting({ theme: next });
             return;
           }
+          case "goBack":
+            // react-router back navigation, matching the keyboard
+            // runner (BUG_0001). `navigate(-1)` not
+            // `window.history.back()` so the router's own history
+            // stack stays in phase with the location bar.
+            navigate(-1);
+            return;
           default:
             return;
         }

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { Star } from "lucide-react";
 import { SIDEBAR_ITEMS, SIDEBAR_SHORTCUT_HINTS } from "../navigation";
@@ -5,6 +6,7 @@ import KchatSidebarSection from "./KchatSidebarSection";
 import { useCspNonce } from "../utils/cspNonce";
 import { useArtifactList } from "../hooks/useArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
+import type { ArtifactInfo } from "../types/ipc";
 
 interface SidebarProps {
   /**
@@ -29,9 +31,25 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
   // the command palette. Pruning of stale IDs (artifacts deleted
   // elsewhere) happens lazily in the command palette's join, so
   // here we filter defensively against the live list.
-  const pinnedArtifacts = pinnedIds
-    .map((id) => artifacts.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => a !== undefined);
+  //
+  // Build the artifact-by-id Map once per artifacts change, then
+  // look pins up by Map.get instead of artifacts.find. Without the
+  // Map this was O(pinnedIds.length * artifacts.length) per render
+  // — negligible at small N, but scales poorly past a few hundred
+  // artifacts. Mirrors the same pattern in `CommandPalette`. PR
+  // #87 Devin Review ANALYSIS_0006.
+  const artifactById = useMemo(() => {
+    const map = new Map<string, ArtifactInfo>();
+    for (const a of artifacts) map.set(a.id, a);
+    return map;
+  }, [artifacts]);
+  const pinnedArtifacts = useMemo(
+    () =>
+      pinnedIds
+        .map((id) => artifactById.get(id))
+        .filter((a): a is ArtifactInfo => a !== undefined),
+    [pinnedIds, artifactById],
+  );
 
   return (
     <nav

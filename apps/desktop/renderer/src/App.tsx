@@ -25,6 +25,15 @@ export default function App() {
     open: false,
     mode: "full",
   });
+  // Lazy-mount the palette: the `CommandPalette` component runs
+  // several IPC-backed hooks (`useArtifactList`, `usePinnedArtifacts`,
+  // `useRecentlyViewedArtifacts`) whose fetches we don't want to pay
+  // for users who never press Cmd+K (e.g. a session spent entirely on
+  // one artifact). We flip this once the user opens the palette and
+  // keep it mounted from then on so subsequent opens are instant
+  // (the hooks stay warm and just observe state changes). Devin
+  // Review PR #87 ANALYSIS_0001.
+  const [paletteHasMounted, setPaletteHasMounted] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -40,6 +49,7 @@ export default function App() {
           ? (e.detail as { mode?: "full" | "quickSwitcher" })
           : undefined;
       setPalette({ open: true, mode: detail?.mode ?? "full" });
+      setPaletteHasMounted(true);
     };
     const openShortcuts = () => setShortcutsOpen(true);
     const toggleSidebar = () => setSidebarCollapsed((v) => !v);
@@ -75,11 +85,13 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
-      <CommandPalette
-        isOpen={palette.open}
-        mode={palette.mode}
-        onClose={closePalette}
-      />
+      {paletteHasMounted && (
+        <CommandPalette
+          isOpen={palette.open}
+          mode={palette.mode}
+          onClose={closePalette}
+        />
+      )}
       <KeyboardShortcutsHelp
         isOpen={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}

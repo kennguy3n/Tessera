@@ -344,7 +344,12 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
       <div {...menu.triggerProps}>
         <Card
           data-testid={`recent-artifact-${artifact.id}`}
-          onClick={() => navigate(`/artifacts/${artifact.id}`)}
+          // /artifacts/:id isn't a registered route (router only knows
+          // /artifacts/:id/edit and /artifacts/:id/preview); navigating
+          // there caused a silent fallback to "/" (PR #87 Devin Review
+          // BUG_0002). Send the user straight to the editor, matching
+          // what the CommandPalette does for recent items.
+          onClick={() => navigate(`/artifacts/${artifact.id}/edit`)}
         >
           <div className="card-title">{artifact.title}</div>
           <div className="card-description">

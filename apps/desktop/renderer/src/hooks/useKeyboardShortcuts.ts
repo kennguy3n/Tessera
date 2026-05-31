@@ -134,10 +134,28 @@ export function useKeyboardShortcuts() {
             window.dispatchEvent(new CustomEvent("tessera:toggle-sidebar"));
             return;
           case "toggleTheme": {
-            const next = settings.theme === "dark" ? "light" : "dark";
+            // Three-state cycle so the toggle is meaningful for users who
+            // start on "system" (PR #87 Devin Review ANALYSIS_0004).
+            //   system -> dark -> light -> system -> ...
+            // Users on "system" who pop into "dark" via this shortcut can
+            // get back to "system" by toggling once more from "light".
+            const next =
+              settings.theme === "system"
+                ? "dark"
+                : settings.theme === "dark"
+                  ? "light"
+                  : "system";
             void updateSetting({ theme: next });
             return;
           }
+          case "goBack":
+            // Phase 18 Task 19 follow-up: react-router back navigation.
+            // We use `navigate(-1)` (not `window.history.back()`) so the
+            // router stays in sync with its own history stack — mixing the
+            // two stacks would leave the location bar and the rendered
+            // page out of phase on fast-back chains.
+            navigate(-1);
+            return;
           default:
             return;
         }
