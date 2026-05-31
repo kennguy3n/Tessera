@@ -12,6 +12,7 @@ import {
   extractFieldRefs,
   evaluateBaseFormula,
   formatFormulaResult,
+  renameFieldInFormula,
 } from "../baseFormulaEngine";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
 
@@ -63,6 +64,86 @@ describe("extractFieldRefs", () => {
     expect(extractFieldRefs('"{NotAField}" + {RealField}')).toEqual([
       "RealField",
     ]);
+  });
+
+  it("keeps a brace-pair that begins inside a quoted string but the embedded quote is doubled per RFC-4180", () => {
+    // The formula tokenizer uses Excel/RFC-4180 escape semantics:
+    // an embedded `"` inside `"…"` is written as `""`. The first
+    // `""` is a doubled-quote escape (the literal stays open), so
+    // `{Fake}` is still inside the string and `{Real}` outside is
+    // the only real reference. The scanner stays aligned with the
+    // evaluator on what counts as "inside a literal".
+    expect(
+      extractFieldRefs('"open ""{Fake}"" still open" + {Real}'),
+    ).toEqual(["Real"]);
+  });
+
+  it("treats a backslash as a literal character (formula engine has no backslash escapes)", () => {
+    // `\\"` is *not* an escape for the formula engine — the `"`
+    // after the backslash closes the literal. This documents that
+    // the scanner intentionally diverges from C-style string
+    // semantics and stays in lock-step with the underlying
+    // tokenizer (`formulaEngine/tokenizer.ts`).
+    expect(
+      extractFieldRefs('"open \\" + {ClosedRef} + "reopen"'),
+    ).toEqual(["ClosedRef"]);
+  });
+});
+
+describe("renameFieldInFormula", () => {
+  // The helper is the single source of truth for `{oldName}` →
+  // `{newName}` rewriting. It is shared between `rewriteFieldRefs`,
+  // `extractFieldRefs`, and `BaseEditor.renameField` so the rules
+  // never drift between scanners. Each test below pins one rule.
+
+  it("replaces every occurrence of the referenced field name", () => {
+    expect(renameFieldInFormula("{Price} + {Price}", "Price", "Cost")).toBe(
+      "{Cost} + {Cost}",
+    );
+  });
+
+  it("leaves unrelated references untouched", () => {
+    expect(
+      renameFieldInFormula("{Price} + {Quantity}", "Price", "Cost"),
+    ).toBe("{Cost} + {Quantity}");
+  });
+
+  it("never touches a `{oldName}` inside a single-quoted string literal", () => {
+    expect(renameFieldInFormula("'{Price}' + {Price}", "Price", "Cost")).toBe(
+      "'{Price}' + {Cost}",
+    );
+  });
+
+  it("never touches a `{oldName}` inside a double-quoted string literal", () => {
+    expect(renameFieldInFormula('"{Price}" + {Price}', "Price", "Cost")).toBe(
+      '"{Price}" + {Cost}',
+    );
+  });
+
+  it("handles doubled-quote escapes inside a string literal — the `{Price}` between the doubled quotes stays inside the string", () => {
+    // RFC-4180 / Excel doubled-quote escape: `""` inside `"…"` is
+    // an embedded `"` and the literal stays open. The first
+    // `{Price}` is inside the literal and must be left alone; the
+    // second is real code and must be renamed. All three rewrite
+    // paths (extract / rewrite / rename) share the same scanner so
+    // they cannot disagree.
+    const src = '"prefix ""{Price}"" suffix" + {Price}';
+    expect(renameFieldInFormula(src, "Price", "Cost")).toBe(
+      '"prefix ""{Price}"" suffix" + {Cost}',
+    );
+  });
+
+  it("leaves an unmatched opening `{` alone (no closer means no reference)", () => {
+    expect(renameFieldInFormula("{Price", "Price", "Cost")).toBe("{Price");
+  });
+
+  it("is a no-op when the source has no references to oldName", () => {
+    expect(renameFieldInFormula("1 + 2", "Price", "Cost")).toBe("1 + 2");
+  });
+
+  it("passes undefined / empty source through unchanged", () => {
+    expect(renameFieldInFormula(undefined, "Price", "Cost")).toBeUndefined();
+    expect(renameFieldInFormula("", "Price", "Cost")).toBe("");
   });
 });
 

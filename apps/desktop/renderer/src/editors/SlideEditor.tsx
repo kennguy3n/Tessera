@@ -1,4 +1,12 @@
-import { useState, useCallback, useRef, useEffect, useId } from "react";
+import {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useId,
+  useMemo,
+  type ChangeEvent,
+} from "react";
 import {
   renderMermaid,
   MermaidEnvironmentError,
@@ -14,13 +22,32 @@ import {
   extractFrontmatterTheme,
   parseSlideContent,
   setFrontmatterTheme,
+  buildSlideFromLayout,
+  buildBlock,
+  duplicateSlideAt,
+  moveSlide as moveSlideHelper,
+  moveBlock,
+  removeBlock as removeBlockHelper,
+  discardUploadTokensForSlide,
+  discardUploadTokensForBlock,
+  uploadTokenKey,
+  appendBlock,
+  replaceBlock,
+  slideWordCount,
+  deckWordCount,
+  findInSlides,
+  fileToDataUrl,
+  nextBlockForTypeChange,
   type ParsedSlideContent,
+  type SlideFindMatch,
 } from "./slideEditorHelpers";
 import type {
   MarpModeState,
   Slide,
+  SlideBlock,
   SlideBlockType,
   SlideContent,
+  SlideLayout,
 } from "./slideEditorTypes";
 
 export type {
@@ -71,6 +98,29 @@ function SpeakerNotesField({
   );
 }
 
+/**
+ * Human-readable label for each layout choice in the Add Slide menu.
+ * Kept here (rather than in `slideEditorTypes.ts`) so the helpers
+ * module stays display-string-free — those types are consumed by
+ * non-UI callers (e.g. the future export pipeline) and shouldn't ship
+ * a hard dependency on English labels.
+ */
+const LAYOUT_LABELS: Record<SlideLayout, string> = {
+  blank: "Blank",
+  title: "Title only",
+  titleContent: "Title + content",
+  twoColumn: "Two columns",
+  imageCaption: "Image + caption",
+};
+
+const LAYOUT_ORDER: SlideLayout[] = [
+  "blank",
+  "title",
+  "titleContent",
+  "twoColumn",
+  "imageCaption",
+];
+
 export default function SlideEditor({
   content,
   onSave,
@@ -94,6 +144,17 @@ export default function SlideEditor({
   const [marpTheme, setMarpTheme] = useState<MarpRenderOptions["theme"]>(
     () => initial.marpTheme ?? "default",
   );
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [findPanelOpen, setFindPanelOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findActiveIndex, setFindActiveIndex] = useState(0);
+  // Drag-and-drop reorder state. We track IDs (not indices) so the
+  // dragged item survives a setState that re-renders the list with a
+  // different array order — the source's index could change between
+  // dragStart and drop, but its id can't.
+  const [draggedSlideId, setDraggedSlideId] = useState<string | null>(null);
+  const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
@@ -115,6 +176,42 @@ export default function SlideEditor({
       theme: marpTheme,
     };
   }, [marpMode, marpSource, marpTheme]);
+
+  // Refs for the "+ Add Slide" trigger button and its layout-picker
+  // popover. The click-outside effect below uses these to discriminate
+  // "click inside the menu / on the toggle button" (which it must
+  // ignore, since the toggle and the menu items handle their own
+  // state) from "click outside" (which should dismiss the popover).
+  const layoutMenuRef = useRef<HTMLDivElement | null>(null);
+  const layoutButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Close the layout picker when the user clicks anywhere outside it.
+  // We listen on `mousedown` (not `click`) so the dismiss happens
+  // before any focused control inside the popover loses focus on
+  // another input, matching the dismiss model used by other native
+  // popovers (the menu button itself toggles state via its own
+  // onClick, so we deliberately skip events originating from the
+  // button to avoid the "open → outside-handler-closes → button
+  // onClick-reopens" double-toggle).
+  useEffect(() => {
+    if (!layoutMenuOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (layoutMenuRef.current?.contains(target)) return;
+      if (layoutButtonRef.current?.contains(target)) return;
+      setLayoutMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLayoutMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [layoutMenuOpen]);
 
   const debouncedSave = useCallback(
     (updatedSlides: Slide[], marpState?: MarpModeState) => {
@@ -145,14 +242,44 @@ export default function SlideEditor({
     };
   }, []);
 
-  // Sync external content prop changes (e.g., version restore)
+  // Sync external content prop changes (e.g., version restore).
+  //
+  // A version restore is a hard swap of the deck — every per-slide /
+  // per-block piece of in-flight state attached to the *old* deck has
+  // to be torn down or it ends up pointing at slides / blocks that no
+  // longer exist:
+  //
+  //   * `activeIndex` is clamped against the new deck length, mirroring
+  //     the careful index-management `removeSlide` already does. Without
+  //     this, restoring an older version with fewer slides leaves the
+  //     canvas blank (the JSX guards on `activeSlide &&` so we don't
+  //     crash, but the user has to manually click a thumbnail to recover).
+  //     Devin Review PR #82 (ANALYSIS_…_0001) flagged the asymmetry with
+  //     `removeSlide`.
+  //   * `draggedSlideId` / `draggedBlockId` cleared so an in-flight drag
+  //     started before the restore can't fall through to `onDrop` with a
+  //     dead source id (the source slide / block has been swapped out
+  //     from under the drag).
+  //   * `uploadTokensRef` cleared because every entry is keyed by
+  //     `(slideId|blockId)` and those ids no longer resolve to anything
+  //     in the new deck. Leaving stale tokens means a late-resolving
+  //     `fileToDataUrl` from before the restore would see a
+  //     `currentToken !== ownToken` mismatch (good, it bails) but the
+  //     entry itself would persist forever — same leak the round 7 fix
+  //     closed for block deletion, just at the deck level.
   useEffect(() => {
     if (content !== lastSavedRef.current) {
       const parsed = parseSlideContent(content);
       setSlides(parsed.slides);
+      setActiveIndex((prev) =>
+        Math.min(prev, Math.max(0, parsed.slides.length - 1)),
+      );
       setMarpMode(parsed.marpMode);
       setMarpSource(parsed.marpSource);
       setMarpTheme(parsed.marpTheme ?? "default");
+      setDraggedSlideId(null);
+      setDraggedBlockId(null);
+      uploadTokensRef.current.clear();
       lastSavedRef.current = content;
     }
   }, [content]);
@@ -169,75 +296,496 @@ export default function SlideEditor({
     [debouncedSave],
   );
 
-  const addSlide = useCallback(() => {
-    setSlides((prev) => {
-      const updated = [
-        ...prev,
-        { title: "New Slide", blocks: [{ type: "text" as const, content: "" }], notes: "" },
-      ];
-      setActiveIndex(updated.length - 1);
-      debouncedSave(updated);
-      return updated;
-    });
-  }, [debouncedSave]);
+  /**
+   * Add a new slide using the given layout. The new slide is inserted
+   * at the end of the deck and becomes the active slide; this matches
+   * the prior single-button "+ Add Slide" behaviour for users who don't
+   * care about layout, while letting power-users pre-populate the
+   * block skeleton in one click.
+   */
+  const addSlide = useCallback(
+    (layout: SlideLayout) => {
+      setSlides((prev) => {
+        const updated = [...prev, buildSlideFromLayout(layout)];
+        setActiveIndex(updated.length - 1);
+        debouncedSave(updated);
+        return updated;
+      });
+      setLayoutMenuOpen(false);
+    },
+    [debouncedSave],
+  );
+
+  const duplicateSlide = useCallback(
+    (index: number) => {
+      setSlides((prev) => {
+        const { slides: next, insertedAt } = duplicateSlideAt(prev, index);
+        // `duplicateSlideAt` returns the input array unchanged + `-1` on an
+        // out-of-range index. Bail out of the setState so React doesn't
+        // commit an identical reference (which would still trigger
+        // child reconciliation if we let the new array escape).
+        if (insertedAt < 0) return prev;
+        setActiveIndex(insertedAt);
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
 
   const removeSlide = useCallback(
     (index: number) => {
       setSlides((prev) => {
         if (prev.length <= 1) return prev;
+        if (index < 0 || index >= prev.length) return prev;
+        // Free upload-race tokens for every block in the slide we're
+        // about to drop. The `uploadTokensRef` Map otherwise accumulates
+        // dead `${slideId}|${blockId}` entries for the lifetime of the
+        // editor (Devin Review PR #82 round 7 ANALYSIS_…_0003). The
+        // entries are tiny (a string key + small int) but a long
+        // editing session that adds/removes many slides would let the
+        // Map grow without bound. We delete based on the OUTGOING slide
+        // (read from `prev[index]` not `slides`) so this is safe inside
+        // a `setSlides` updater even if React batches multiple removes.
+        const removed = prev[index];
+        if (removed) {
+          discardUploadTokensForSlide(
+            uploadTokensRef.current,
+            removed.id,
+            removed.blocks,
+          );
+        }
         const updated = prev.filter((_, i) => i !== index);
-        const newIndex = Math.min(activeIndex, updated.length - 1);
-        setActiveIndex(newIndex);
+        // Adjust the active pointer relative to the deletion point so the
+        // user stays anchored on roughly the same slide:
+        //   • deleting *before* active → all surviving slides shift left
+        //     by one, so the active index must decrement to track the
+        //     same content.
+        //   • deleting *at* active → keep the index but clamp to the new
+        //     last slide so we never point past the end (this leaves the
+        //     focus on what was the next slide; if we deleted the last
+        //     slide, we fall back to the new last slide).
+        //   • deleting *after* active → the active slide is untouched and
+        //     stays at its original index.
+        setActiveIndex((current) => {
+          let next: number;
+          if (index < current) {
+            next = current - 1;
+          } else if (index === current) {
+            next = Math.min(current, updated.length - 1);
+          } else {
+            next = current;
+          }
+          return Math.max(0, Math.min(next, updated.length - 1));
+        });
         debouncedSave(updated);
         return updated;
       });
     },
-    [activeIndex, debouncedSave],
+    [debouncedSave],
   );
 
   const moveSlide = useCallback(
     (from: number, to: number) => {
-      if (to < 0 || to >= slides.length) return;
       setSlides((prev) => {
-        const updated = [...prev];
-        const [moved] = updated.splice(from, 1);
-        updated.splice(to, 0, moved);
+        const updated = moveSlideHelper(prev, from, to);
+        // `moveSlideHelper` is reference-stable on out-of-range / same-
+        // position moves, so React skips the re-render entirely when
+        // the user drag-drops a slide back onto itself.
+        if (updated === prev) return prev;
+        // Keep the active pointer anchored to the moved slide so the
+        // canvas continues to render what the user just dragged.
+        // `setActiveIndex` receives the *new* index because the helper
+        // already placed the moved slide at `to` in the next array.
         setActiveIndex(to);
         debouncedSave(updated);
         return updated;
       });
     },
-    [slides.length, debouncedSave],
+    [debouncedSave],
+  );
+
+  // ───── Block-level mutators (delegate to helpers) ─────────────────
+  //
+  // Each one is a one-liner over the corresponding helper from
+  // `slideEditorHelpers.ts`. The helpers return reference-stable
+  // results on no-op inputs (out-of-range indices, identical from/to,
+  // …) so we don't need to special-case those here — React's setState
+  // does the identity check itself.
+
+  const onBlockMove = useCallback(
+    (slideIndex: number, from: number, to: number) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = moveBlock(slide, from, to);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const onBlockRemove = useCallback(
+    (slideIndex: number, blockIndex: number) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = removeBlockHelper(slide, blockIndex);
+        if (updatedSlide === slide) return prev;
+        // Free the upload-race token for the dropped block so the Map
+        // doesn't accumulate dead entries (Devin Review PR #82 round 7
+        // ANALYSIS_…_0003). Read the block off `prev[slideIndex]` (the
+        // freshest state inside the updater) rather than the outer
+        // `slides` closure so a concurrent remove doesn't free the
+        // wrong key. `removeBlockHelper` returns the SAME slide ref on
+        // out-of-range indices — we already early-return above in that
+        // case, so reaching this point guarantees the helper finds the
+        // outgoing block to discard.
+        discardUploadTokensForBlock(
+          uploadTokensRef.current,
+          slide,
+          blockIndex,
+        );
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const onBlockAppend = useCallback(
+    (slideIndex: number, block: SlideBlock) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = appendBlock(slide, block);
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const onBlockReplace = useCallback(
+    (slideIndex: number, blockIndex: number, block: SlideBlock) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = replaceBlock(slide, blockIndex, block);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // ───── Find panel ─────────────────────────────────────────────────
+  //
+  // Recompute matches every time the query / case-sensitivity / slide
+  // data changes. The match list is memoised so re-renders that don't
+  // touch any of the four inputs (e.g. block-content edits on a
+  // different slide than the active match) don't trigger a re-walk.
+
+  const findMatches = useMemo<SlideFindMatch[]>(
+    () => findInSlides(slides, findQuery, { caseSensitive: findCaseSensitive }),
+    [slides, findQuery, findCaseSensitive],
+  );
+
+  // Clamp the active match index against the live match count so the
+  // status line never shows "5 of 3". We do this inline (rather than in
+  // an effect) so the render synchronously sees the clamped value —
+  // following the same pattern PR 6 used for the slash-menu highlight.
+  const effectiveFindIndex =
+    findMatches.length === 0
+      ? 0
+      : Math.max(0, Math.min(findActiveIndex, findMatches.length - 1));
+
+  // Sync the React state when the inline clamp produced a different
+  // value. We only write when the values actually differ to avoid a
+  // setState loop.
+  useEffect(() => {
+    if (effectiveFindIndex !== findActiveIndex) {
+      setFindActiveIndex(effectiveFindIndex);
+    }
+  }, [effectiveFindIndex, findActiveIndex]);
+
+  // Jump the active-slide pointer to whichever slide the active match
+  // lives on so the user sees the matched content immediately.
+  useEffect(() => {
+    if (findMatches.length === 0) return;
+    const match = findMatches[effectiveFindIndex];
+    if (match && match.slideIndex !== activeIndex) {
+      setActiveIndex(match.slideIndex);
+    }
+    // We deliberately omit `activeIndex` from the deps so we don't
+    // re-jump when the user manually clicks a different thumbnail
+    // while the find panel is open — only an explicit Next / Prev
+    // (which changes `effectiveFindIndex`) should reseat the view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveFindIndex, findMatches]);
+
+  const navigateFind = useCallback(
+    (direction: "next" | "previous") => {
+      if (findMatches.length === 0) return;
+      setFindActiveIndex((prev) => {
+        const len = findMatches.length;
+        if (direction === "next") return (prev + 1) % len;
+        return (prev - 1 + len) % len;
+      });
+    },
+    [findMatches.length],
+  );
+
+  // ───── Image-block upload ─────────────────────────────────────────
+  //
+  // `fileToDataUrl` returns a promise; on resolution we replace the
+  // block in-place with the data URL. On rejection (the FileReader
+  // failing — extremely rare for browser uploads but possible for a
+  // race-condition during a tab close) we log to the console rather
+  // than surfacing an error to the user, because the block is still
+  // in a valid empty state.
+  //
+  // Concurrent-upload race: the user can pick file A, then immediately
+  // pick file B before A's FileReader completes. Without coordination,
+  // whichever read finishes LAST wins — regardless of which was picked
+  // last (FileReader resolution order is not deterministic across
+  // sizes; a large A picked first then a small B could resolve in B-A
+  // order, but the opposite is also possible). We solve this with a
+  // per-block sequence counter: every upload bumps the counter for
+  // its (slideId, blockId) key and captures the post-bump value
+  // as its token. After awaiting, the resolver checks whether the
+  // counter has advanced past its token — if so, a newer upload has
+  // started, and the stale result is discarded silently.
+  //
+  // The key uses `slide.id` AND `block.id` (both stable across drag-
+  // reorders) rather than positional indices, because PR 8 introduces
+  // drag-and-drop reorder at BOTH the slide and block levels. If the
+  // user picks a file then drags either the containing slide or the
+  // block to a new position before the FileReader resolves, an
+  // index-based key would (a) misroute the result onto whichever
+  // slide/block now occupies the old index — silent corruption —
+  // and (b) silently lose the upload if no image block sits at that
+  // (slideIndex, blockIndex) coordinate anymore. Keying off the
+  // stable IDs makes the upload follow the target block through any
+  // reorder, and the `findIndex` lookups inside the setSlides updater
+  // resolve the live positions against React's latest state.
+  const uploadTokensRef = useRef<Map<string, number>>(new Map());
+
+  const onImageUpload = useCallback(
+    async (
+      slideId: string,
+      blockId: string,
+      file: File,
+    ) => {
+      const tokenKey = uploadTokenKey(slideId, blockId);
+      const nextToken = (uploadTokensRef.current.get(tokenKey) ?? 0) + 1;
+      uploadTokensRef.current.set(tokenKey, nextToken);
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        // Race guard: if another upload to the same block has started
+        // after this one began, drop the stale result so the newer
+        // upload's URL is the one that lands in the block.
+        if (uploadTokensRef.current.get(tokenKey) !== nextToken) return;
+        setSlides((prev) => {
+          // Resolve slide-then-block by id against the freshest state
+          // React hands us, so a drag-reorder at either level between
+          // dragstart and FileReader resolution still routes the data
+          // URL onto the originally targeted block. If either entity
+          // no longer exists (user removed the slide / block mid-
+          // upload), bail out cleanly.
+          const slideIndex = prev.findIndex((s) => s.id === slideId);
+          if (slideIndex < 0) return prev;
+          const slide = prev[slideIndex];
+          const blockIndex = slide.blocks.findIndex((b) => b.id === blockId);
+          if (blockIndex < 0) return prev;
+          const block = slide.blocks[blockIndex];
+          if (block.type !== "image") return prev;
+          const updatedSlide = replaceBlock(slide, blockIndex, {
+            id: block.id,
+            type: "image",
+            content: dataUrl,
+            alt: block.alt ?? "",
+          });
+          if (updatedSlide === slide) return prev;
+          const next = [...prev];
+          next[slideIndex] = updatedSlide;
+          debouncedSave(next);
+          return next;
+        });
+      } catch (err) {
+        // Surface the failure in the dev console; the block stays in
+        // its previous (probably empty) state so the user can retry.
+        // Only log if this is still the latest upload for the block
+        // — a stale rejection is just noise.
+        if (uploadTokensRef.current.get(tokenKey) === nextToken) {
+          console.warn("Failed to read image file:", err);
+        }
+      }
+    },
+    [debouncedSave],
   );
 
   const activeSlide = slides[activeIndex];
+  const activeWordCount = activeSlide ? slideWordCount(activeSlide) : 0;
+  const totalWordCount = useMemo(() => deckWordCount(slides), [slides]);
 
   return (
     <div className="slide-editor">
       <div className="slide-editor-sidebar">
         <div className="slide-thumbnails">
           {slides.map((slide, i) => (
-            <button
-              key={i}
-              type="button"
-              className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
-              // `aria-current="true"` is the WAI-ARIA standard for a
-              // "the currently selected item in a non-page set"
-              // signal. Pairs with the visual `active` class so
-              // assistive tech announces the active slide alongside
-              // sighted users' visual highlight.
-              aria-current={i === activeIndex ? "true" : undefined}
-              onClick={() => setActiveIndex(i)}
+            <div
+              // Stable key driven off `slide.id` (not `i`). Indices
+              // would force React to destroy + remount the entire row
+              // tree on every reorder, defeating the no-op-stable
+              // contract of `moveSlide` and tearing down the layout
+              // menu / aria-live state inside it.
+              key={slide.id}
+              className={`slide-thumb-row ${
+                draggedSlideId === slide.id ? "is-dragging" : ""
+              }`}
+              draggable
+              onDragStart={(event) => {
+                setDraggedSlideId(slide.id);
+                // Setting dataTransfer keeps the drag-image alive in
+                // Chromium-based renderers — without `setData` the
+                // browser cancels the drag immediately.
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", slide.id);
+              }}
+              onDragOver={(event) => {
+                // Default browser behaviour is "this drop target
+                // doesn't accept anything"; we must preventDefault to
+                // declare the row as a valid drop target so the
+                // browser fires `onDrop` instead of swallowing the
+                // release.
+                if (draggedSlideId && draggedSlideId !== slide.id) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }
+              }}
+              onDrop={(event) => {
+                if (!draggedSlideId || draggedSlideId === slide.id) {
+                  // No active drag, or self-drop — nothing to do.
+                  // The `onDragEnd` handler still fires and clears
+                  // `draggedSlideId`, so leave it alone here.
+                  return;
+                }
+                event.preventDefault();
+                const fromIdx = slides.findIndex(
+                  (s) => s.id === draggedSlideId,
+                );
+                // `setDraggedSlideId(null)` runs on every termination
+                // path (success AND lookup-miss) so the `is-dragging`
+                // visual cue can't stick if a concurrent edit shifts
+                // the source out of the array before drop fires. The
+                // `onDragEnd` handler is a defence in depth, but
+                // dragend doesn't always fire reliably in Chromium's
+                // touch-emulation path — clearing here guarantees the
+                // class is removed at the exact moment the user
+                // released the pointer.
+                if (fromIdx < 0) {
+                  setDraggedSlideId(null);
+                  return;
+                }
+                moveSlide(fromIdx, i);
+                setDraggedSlideId(null);
+              }}
+              onDragEnd={() => setDraggedSlideId(null)}
             >
-              <span className="slide-thumb-number">{i + 1}</span>
-              <span className="slide-thumb-title">{slide.title || "Untitled"}</span>
-            </button>
+              {/*
+                * `draggable={false}` on every interactive child of the
+                * `draggable` row mirrors the defensive pattern in
+                * `SlideBlockRow` (textarea / input). Native HTML5 drag
+                * inheritance means a `draggable` parent would otherwise
+                * make these buttons drag-able too. In Chromium-on-
+                * desktop the browser disambiguates click vs. drag on
+                * `<button>` correctly, but accessibility tools that
+                * simulate mouse events (and touch-emulation in Chrome
+                * DevTools) can interpret a tap-with-millimetre-jitter
+                * as a drag-start. Opting these children out forces the
+                * row-level drag to only fire from non-button regions
+                * (the empty padding / numbered chip), which is the
+                * intended interaction.
+                */}
+              <button
+                type="button"
+                className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
+                draggable={false}
+                // `aria-current="true"` is the WAI-ARIA standard for a
+                // "the currently selected item in a non-page set"
+                // signal. Pairs with the visual `active` class so
+                // assistive tech announces the active slide alongside
+                // sighted users' visual highlight.
+                aria-current={i === activeIndex ? "true" : undefined}
+                onClick={() => setActiveIndex(i)}
+              >
+                <span className="slide-thumb-number">{i + 1}</span>
+                <span className="slide-thumb-title">{slide.title || "Untitled"}</span>
+              </button>
+              <div className="slide-thumb-actions">
+                <button
+                  type="button"
+                  className="btn-xs"
+                  draggable={false}
+                  onClick={() => duplicateSlide(i)}
+                  aria-label={`Duplicate slide ${i + 1}`}
+                  title="Duplicate slide"
+                >
+                  ⎘
+                </button>
+                <button
+                  type="button"
+                  className="btn-xs danger"
+                  draggable={false}
+                  onClick={() => removeSlide(i)}
+                  disabled={slides.length <= 1}
+                  aria-label={`Delete slide ${i + 1}`}
+                  title="Delete slide"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
           ))}
         </div>
         <div className="slide-sidebar-actions">
-          <button type="button" className="btn-sm" onClick={addSlide}>
+          <button
+            ref={layoutButtonRef}
+            type="button"
+            className="btn-sm"
+            onClick={() => setLayoutMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={layoutMenuOpen}
+          >
             + Add Slide
           </button>
+          {layoutMenuOpen && (
+            <div ref={layoutMenuRef} className="slide-layout-menu" role="menu">
+              {LAYOUT_ORDER.map((layout) => (
+                <button
+                  key={layout}
+                  type="button"
+                  role="menuitem"
+                  className="slide-layout-menu-item"
+                  onClick={() => addSlide(layout)}
+                >
+                  {LAYOUT_LABELS[layout]}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -262,6 +810,12 @@ export default function SlideEditor({
           >
             Next
           </button>
+          <span
+            className="slide-word-count"
+            title="Words on this slide / total in deck"
+          >
+            Words: {activeWordCount} / {totalWordCount}
+          </span>
           <button
             type="button"
             className="btn-sm danger"
@@ -276,6 +830,15 @@ export default function SlideEditor({
             onClick={() => setShowNotes(!showNotes)}
           >
             Notes
+          </button>
+          <button
+            type="button"
+            className={`btn-sm ${findPanelOpen ? "active" : ""}`}
+            onClick={() => setFindPanelOpen((open) => !open)}
+            aria-label="Find in slides"
+            title="Find in slides (Cmd/Ctrl+F)"
+          >
+            Find
           </button>
           <button
             type="button"
@@ -296,6 +859,72 @@ export default function SlideEditor({
             Marp Mode
           </button>
         </div>
+
+        {findPanelOpen && (
+          <div className="slide-find-panel" role="search">
+            <input
+              type="text"
+              className="slide-find-input"
+              value={findQuery}
+              onChange={(e) => {
+                setFindQuery(e.target.value);
+                // Reset to the first match when the query changes so
+                // the user lands on the first hit rather than at a
+                // stale index that may now overshoot the new match
+                // count (the clamp would correct it, but starting from
+                // 0 matches typical find-bar UX).
+                setFindActiveIndex(0);
+              }}
+              placeholder="Find in slides..."
+              aria-label="Find query"
+              autoFocus
+            />
+            <label className="slide-find-toggle">
+              <input
+                type="checkbox"
+                checked={findCaseSensitive}
+                onChange={(e) => setFindCaseSensitive(e.target.checked)}
+              />
+              Case
+            </label>
+            <span className="slide-find-status">
+              {findMatches.length === 0
+                ? findQuery
+                  ? "No matches"
+                  : "Type to search"
+                : `${effectiveFindIndex + 1} of ${findMatches.length}`}
+            </span>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => navigateFind("previous")}
+              disabled={findMatches.length === 0}
+              aria-label="Previous match"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => navigateFind("next")}
+              disabled={findMatches.length === 0}
+              aria-label="Next match"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => {
+                setFindPanelOpen(false);
+                setFindQuery("");
+              }}
+              aria-label="Close find panel"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {marpMode && (
           <div className="marp-mode">
@@ -366,60 +995,80 @@ export default function SlideEditor({
             />
             <div className="slide-blocks">
               {activeSlide.blocks.map((block, bi) => (
-                <div key={bi} className="slide-block">
-                  <select
-                    value={block.type}
-                    onChange={(e) => {
-                      const newBlocks = [...activeSlide.blocks];
-                      const nextType = e.target.value as SlideBlockType;
-                      newBlocks[bi] = {
-                        ...newBlocks[bi],
-                        type: nextType,
-                        content:
-                          nextType === "diagram" && !newBlocks[bi].content
-                            ? DEFAULT_DIAGRAM_DSL
-                            : newBlocks[bi].content,
-                      };
-                      updateSlide(activeIndex, { blocks: newBlocks });
-                    }}
-                  >
-                    <option value="text">Text</option>
-                    <option value="bullets">Bullets</option>
-                    <option value="diagram">Diagram</option>
-                  </select>
-                  <textarea
-                    className="slide-block-content"
-                    value={block.content}
-                    onChange={(e) => {
-                      const newBlocks = [...activeSlide.blocks];
-                      newBlocks[bi] = { ...newBlocks[bi], content: e.target.value };
-                      updateSlide(activeIndex, { blocks: newBlocks });
-                    }}
-                    placeholder={
-                      block.type === "bullets"
-                        ? "One bullet point per line..."
-                        : block.type === "diagram"
-                          ? "Mermaid diagram DSL..."
-                          : "Enter text content..."
+                <SlideBlockRow
+                  // Stable key driven off `block.id` (not `bi`) so a
+                  // drag-reorder preserves component identity — the
+                  // `<textarea>` keeps its cursor / selection state
+                  // across the reorder, instead of being unmounted
+                  // and re-created with a fresh DOM node.
+                  key={block.id}
+                  block={block}
+                  blockIndex={bi}
+                  totalBlocks={activeSlide.blocks.length}
+                  onTypeChange={(nextType) => {
+                    onBlockReplace(
+                      activeIndex,
+                      bi,
+                      nextBlockForTypeChange(block, nextType),
+                    );
+                  }}
+                  onContentChange={(nextContent) => {
+                    onBlockReplace(activeIndex, bi, {
+                      ...block,
+                      content: nextContent,
+                    });
+                  }}
+                  onAltChange={(nextAlt) => {
+                    onBlockReplace(activeIndex, bi, {
+                      ...block,
+                      alt: nextAlt,
+                    });
+                  }}
+                  onImageFile={(file) => {
+                    // Pass `activeSlide.id` and `block.id` (not
+                    // `activeIndex` / `bi`) so that an in-flight upload
+                    // still lands on the right block after a drag-
+                    // reorder shifts positions at either the slide or
+                    // block level.
+                    onImageUpload(activeSlide.id, block.id, file);
+                  }}
+                  onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
+                  onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
+                  onRemove={() => onBlockRemove(activeIndex, bi)}
+                  draggedBlockId={draggedBlockId}
+                  onDragStartBlock={setDraggedBlockId}
+                  onDragEndBlock={() => setDraggedBlockId(null)}
+                  onDropBlock={(targetIdx) => {
+                    if (!draggedBlockId) return;
+                    const fromIdx = activeSlide.blocks.findIndex(
+                      (b) => b.id === draggedBlockId,
+                    );
+                    // Clear on every termination path (success AND
+                    // lookup-miss) so the `is-dragging` class can't
+                    // stick if the source block is removed mid-drag
+                    // (e.g. the active slide changes via find-panel
+                    // jump or version restore between dragstart and
+                    // drop). `onDragEnd` is a defence in depth but
+                    // doesn't always fire reliably in Chromium's
+                    // touch-emulation path.
+                    if (fromIdx < 0) {
+                      setDraggedBlockId(null);
+                      return;
                     }
-                    rows={block.type === "diagram" ? 8 : 4}
-                    spellCheck={block.type !== "diagram"}
-                  />
-                  {block.type === "diagram" && (
-                    <MermaidPreview dsl={block.content} />
-                  )}
-                </div>
+                    onBlockMove(activeIndex, fromIdx, targetIdx);
+                    setDraggedBlockId(null);
+                  }}
+                />
               ))}
               <button
                 type="button"
                 className="btn-sm"
-                onClick={() => {
-                  const newBlocks = [
-                    ...activeSlide.blocks,
-                    { type: "text" as const, content: "" },
-                  ];
-                  updateSlide(activeIndex, { blocks: newBlocks });
-                }}
+                onClick={() =>
+                  onBlockAppend(
+                    activeIndex,
+                    buildBlock({ type: "text", content: "" }),
+                  )
+                }
               >
                 + Add Block
               </button>
@@ -438,8 +1087,225 @@ export default function SlideEditor({
   );
 }
 
-const DEFAULT_DIAGRAM_DSL = `flowchart LR
-  Source --> Process --> Output`;
+interface SlideBlockRowProps {
+  block: SlideBlock;
+  blockIndex: number;
+  totalBlocks: number;
+  onTypeChange: (next: SlideBlockType) => void;
+  onContentChange: (next: string) => void;
+  onAltChange: (next: string) => void;
+  onImageFile: (file: File) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onRemove: () => void;
+  /**
+   * Drag-and-drop coordination — the parent owns the "currently
+   * dragged block id" so multiple SlideBlockRow siblings can
+   * coordinate without each maintaining its own copy of the
+   * cross-row drag state.
+   */
+  draggedBlockId: string | null;
+  onDragStartBlock: (id: string) => void;
+  onDragEndBlock: () => void;
+  onDropBlock: (targetIndex: number) => void;
+}
+
+/**
+ * Per-block editor row. Pulled out into a separate component so the
+ * per-block hooks (`useId` for the alt-text label) don't have to live
+ * inside the `.map(...)` body — calling hooks inside a `.map` callback
+ * works in practice but is fragile (the React docs warn against it
+ * because reordering the map breaks the hook call order). Owning a
+ * component per block lets us also memoise file-input id generation
+ * cheaply.
+ */
+function SlideBlockRow({
+  block,
+  blockIndex,
+  totalBlocks,
+  onTypeChange,
+  onContentChange,
+  onAltChange,
+  onImageFile,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+  draggedBlockId,
+  onDragStartBlock,
+  onDragEndBlock,
+  onDropBlock,
+}: SlideBlockRowProps) {
+  const altId = useId();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onImageFile(file);
+    // Reset the input so picking the same file twice still fires
+    // `onChange` — browsers suppress the change event when the
+    // selection matches the previous one.
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const isDragging = draggedBlockId === block.id;
+  const isDropTargetCandidate =
+    draggedBlockId !== null && draggedBlockId !== block.id;
+
+  return (
+    <div
+      className={`slide-block ${isDragging ? "is-dragging" : ""}`}
+      // Block-level drag-and-drop. We attach to the outer wrapper so
+      // the whole block "card" is the drag handle / drop target, not
+      // just one button inside it. The `<textarea>` and `<input>`
+      // children still let the user click into them normally because
+      // the browser only initiates a drag when the user grabs a
+      // non-text-input region (the toolbar / preview gutter).
+      draggable
+      onDragStart={(event) => {
+        onDragStartBlock(block.id);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", block.id);
+      }}
+      onDragOver={(event) => {
+        if (isDropTargetCandidate) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }
+      }}
+      onDrop={(event) => {
+        if (!isDropTargetCandidate) return;
+        event.preventDefault();
+        onDropBlock(blockIndex);
+      }}
+      onDragEnd={onDragEndBlock}
+    >
+      <div className="slide-block-toolbar">
+        {/*
+         * `draggable={false}` on every interactive child of the
+         * toolbar so the parent `.slide-block` wrapper's `draggable`
+         * can't be triggered by accessibility tools, touch-emulation,
+         * or millimetre-jitter taps that the browser would otherwise
+         * interpret as a drag-start. Mirrors the existing defensive
+         * pattern on the textarea / file-input / alt-text input
+         * further down in this component, and the slide-thumbnail-row
+         * buttons in the parent component (Devin Review PR #82
+         * ANALYSIS-0002 — extends round 6's slide-row fix to the
+         * block-row toolbar that was missed in that pass).
+         */}
+        <select
+          value={block.type}
+          onChange={(e) => onTypeChange(e.target.value as SlideBlockType)}
+          aria-label={`Block ${blockIndex + 1} type`}
+          draggable={false}
+        >
+          <option value="text">Text</option>
+          <option value="bullets">Bullets</option>
+          <option value="diagram">Diagram</option>
+          <option value="image">Image</option>
+        </select>
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={onMoveUp}
+          disabled={blockIndex === 0}
+          aria-label={`Move block ${blockIndex + 1} up`}
+          title="Move block up"
+          draggable={false}
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={onMoveDown}
+          disabled={blockIndex === totalBlocks - 1}
+          aria-label={`Move block ${blockIndex + 1} down`}
+          title="Move block down"
+          draggable={false}
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          className="btn-xs danger"
+          onClick={onRemove}
+          aria-label={`Remove block ${blockIndex + 1}`}
+          title="Remove block"
+          draggable={false}
+        >
+          ×
+        </button>
+      </div>
+
+      {block.type === "image" ? (
+        <div className="slide-block-image">
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*"
+            onChange={handleFileChange}
+            // Defensive: the parent `.slide-block` wrapper has
+            // `draggable`, and some Chromium versions can initiate
+            // the parent's drag if the user grabs the file-input's
+            // border/padding instead of the button face. Setting
+            // `draggable={false}` on the input prevents that escape.
+            draggable={false}
+          />
+          {block.content && (
+            <img
+              src={block.content}
+              alt={block.alt ?? ""}
+              className="slide-block-image-preview"
+            />
+          )}
+          <label htmlFor={altId} className="slide-block-alt-label">
+            Alt text
+          </label>
+          <input
+            id={altId}
+            type="text"
+            className="slide-block-alt-input"
+            value={block.alt ?? ""}
+            onChange={(e) => onAltChange(e.target.value)}
+            placeholder="Describe the image for screen readers..."
+            // See note on file input above — keep drag-grab confined
+            // to the toolbar / preview gutter, not the alt-text
+            // entry, so reorder can't be triggered by mis-clicks
+            // while typing alt text.
+            draggable={false}
+          />
+        </div>
+      ) : (
+        <>
+          <textarea
+            className="slide-block-content"
+            value={block.content}
+            onChange={(e) => onContentChange(e.target.value)}
+            // Defensive: prevent the parent `.slide-block` wrapper's
+            // `draggable` from intercepting drag-starts that begin
+            // in the textarea's padding/border area. The browser
+            // normally allows text-selection inside `<textarea>` to
+            // win over a parent's drag, but Chromium edge cases can
+            // initiate the parent drag when the grab point misses
+            // the text-content layer (e.g. a click in the scrollbar
+            // gutter on a wrap-wrapped line).
+            draggable={false}
+            placeholder={
+              block.type === "bullets"
+                ? "One bullet point per line..."
+                : block.type === "diagram"
+                  ? "Mermaid diagram DSL..."
+                  : "Enter text content..."
+            }
+            rows={block.type === "diagram" ? 8 : 4}
+            spellCheck={block.type !== "diagram"}
+          />
+          {block.type === "diagram" && <MermaidPreview dsl={block.content} />}
+        </>
+      )}
+    </div>
+  );
+}
 
 function MermaidPreview({ dsl }: { dsl: string }) {
   const [svg, setSvg] = useState<string>("");
@@ -542,4 +1408,3 @@ function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
   }
   return <div ref={hostRef} className="marp-preview" />;
 }
-

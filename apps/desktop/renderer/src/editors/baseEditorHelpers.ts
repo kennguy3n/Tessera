@@ -24,8 +24,10 @@ import type {
   BaseContent,
   BaseField,
   BaseRecord,
+  FieldType,
   RollupAggregation,
 } from "./baseEditorTypes";
+import type { BaseViewConfig } from "./baseviews/types";
 
 /**
  * Names the user must not assign to a field. `id` is the stable
@@ -156,6 +158,53 @@ export function sanitizeBaseField(field: BaseField): BaseField {
         out.percentPrecision = clamped;
       }
     }
+  }
+  return out ?? field;
+}
+
+/**
+ * Apply a `oldName` → `newName` rename across every field-name pointer
+ * a single `BaseField` can hold: `linkedField`, `targetField`,
+ * `linkedDisplayField`, plus the field's own `name`. The `formula`
+ * source is left untouched here — callers should re-run
+ * `renameFieldInFormula` separately because the formula scanner is
+ * defined alongside the rest of the formula machinery and we do not
+ * want a runtime dependency from this module into the formula engine.
+ *
+ * The pointer rewrite applies **to every field**, including the one
+ * being renamed. A self-referential pointer is unusual but not
+ * impossible (e.g., a hand-edited JSON payload, or a future refactor
+ * where a rollup targets its own field), and the rename contract is
+ * meant to be atomic — every `*FieldName` pointer that used to spell
+ * `oldName` must read `newName` after this call, with no leftover
+ * reference. Returns the same `field` reference (by identity) when
+ * nothing changed, so React can skip re-renders downstream.
+ *
+ * Exported so unit tests can pin the cross-pointer contract without
+ * standing up the full `BaseEditor` render pipeline (which the prior
+ * integration-test attempt found brittle).
+ */
+export function applyFieldRename(
+  field: BaseField,
+  oldName: string,
+  newName: string,
+): BaseField {
+  let out: BaseField | null = null;
+  if (field.linkedField === oldName) {
+    out = out ?? { ...field };
+    out.linkedField = newName;
+  }
+  if (field.targetField === oldName) {
+    out = out ?? { ...field };
+    out.targetField = newName;
+  }
+  if (field.linkedDisplayField === oldName) {
+    out = out ?? { ...field };
+    out.linkedDisplayField = newName;
+  }
+  if (field.name === oldName) {
+    out = out ?? { ...field };
+    out.name = newName;
   }
   return out ?? field;
 }
@@ -359,4 +408,393 @@ export function findRecordsLinkingTo(
     }
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Per-field-type filter matcher
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Field types whose **stored** value is either `null` or a raw
+ * source string — the value the user sees comes from a render-time
+ * computation against other fields / the record's position in the
+ * grid.
+ *
+ *   - `formula` / `rollup` / `lookup` — derive from other fields.
+ *   - `auto_number` — derives from the record's index in
+ *     `data.records`; the stored value is always `null` (see
+ *     `getDefaultValue` in `BaseEditor.tsx`).
+ *
+ * Filter + sort paths in the grid view must compute the display
+ * string for these types before comparing — comparing the *stored*
+ * value would hit `null` for every row on `auto_number`, and the
+ * formula *source* (rather than its evaluated result) for the
+ * other three.  Centralising the predicate here keeps the four
+ * type names from drifting between callers (a Devin Review
+ * finding on PR #79 caught the filter path having only three of
+ * the four).
+ */
+export function isComputedFieldType(type: FieldType): boolean {
+  return (
+    type === "formula" ||
+    type === "rollup" ||
+    type === "lookup" ||
+    type === "auto_number"
+  );
+}
+
+/**
+ * The user-facing filter for the grid is a single text input per
+ * column. We want that input to feel right for the underlying field
+ * type without forcing the user to learn a query DSL:
+ *
+ *   - **Numeric** types (`number`, `currency`, `rating`, `duration`):
+ *     support comparison operators `>`, `>=`, `<`, `<=`, `=`
+ *     (e.g. `>10`, `<=5`). A bare numeric input is treated as
+ *     `equals`. A non-numeric input falls back to substring on the
+ *     rendered string so the column doesn't become un-filterable.
+ *     **Null / undefined stored values never match a numeric filter**
+ *     (so "0" or ">=0" on an empty cell hides the row rather than
+ *     reporting a false positive — `Number(null) === 0` would
+ *     otherwise lie).
+ *   - **Percent**: stored as a fraction (`0.5` = 50%) but the user
+ *     thinks in display percentages. The filter operand is rescaled
+ *     so `>10` means ">10%", matching what the placeholder hints at.
+ *   - **Checkbox**: matches `true` / `false` (case-insensitive), or
+ *     `1` / `0`.
+ *   - **Multi-valued** types (`multi_select`, `attachment`,
+ *     `linked_record`): the filter matches if ANY element of the
+ *     stored array contains the search term (case-insensitive).
+ *   - **Date**: substring on the ISO string the cell stores.
+ *   - **Text-like**, **select**: case-insensitive substring on the
+ *     stored string.
+ *   - **Computed** types (`formula`, `rollup`, `lookup`,
+ *     `auto_number`): callers compute the **display string** for
+ *     the record (typically via `formatValueForCsv`) and pass it as
+ *     `displayValue`. Numeric comparison operators (`>`, `<=`,
+ *     etc.) then parse that display string as a number; everything
+ *     else falls back to case-insensitive substring on the same
+ *     string.  This makes `auto_number > 5` behave the way the
+ *     placeholder text (`e.g. >10`) promises, because the matcher
+ *     no longer sees `null` / `0` for every row. **Empty display
+ *     strings never match a numeric filter** — same `Number("")===0`
+ *     guard as the stored-value branch.
+ *
+ * Empty filter strings always match, so a half-typed filter on one
+ * column doesn't accidentally hide every row.
+ */
+/**
+ * Float-safe equality for filter `=` comparisons.
+ *
+ * Strict `===` is the fast path everywhere else in the codebase, but
+ * the percent filter has a unique footgun: the stored value is a
+ * fraction (`0.333`) and the user types a display percentage (`33.3`),
+ * which we rescale via `n / 100`. `33.3 / 100` evaluates to
+ * `0.33300000000000002` in IEEE-754, so `0.333 === 33.3 / 100` is
+ * `false` and the user's `=33.3` filter would silently match zero rows
+ * — confusing because the value clearly *is* 33.3% in the grid.
+ *
+ * We use a relative epsilon of `1e-9 * max(|a|, |b|, 1)`. The `1`
+ * floor in the `max(…)` means the *minimum* tolerance is `1e-9` (never
+ * narrower), so two values that differ by less than ~1 ppb still
+ * compare equal even when both are near zero. Above magnitude 1 the
+ * tolerance scales with the operands so a single multiply / divide's
+ * rounding error never makes equality lie at any magnitude.
+ *
+ * `1e-9` is small enough that any two values the user would consider
+ * visually distinct still compare unequal (the percent filter renders
+ * at most ~6 digits of precision; rating / duration / currency at most
+ * 2), while large enough to collapse a single multiply/divide's
+ * rounding error. Percent / number / currency / rating / duration all
+ * share this comparator so behaviour is consistent across types.
+ *
+ * Devin Review on PR #79 round 8 (ANALYSIS_…_0001) flagged the strict
+ * equality as a likely user-visible bug on common percentages like
+ * 33.3% / 16.7% / 12.5% (the last is exact but the first two are not).
+ * Round 9 (ANALYSIS_…_0003) flagged the docstring saying "1e-12
+ * absolute floor near zero" while the code actually used a 1e-9 floor
+ * via the `Math.max(…, 1)` term — fixed to match the implementation.
+ */
+export function numbersApproxEqual(a: number, b: number): boolean {
+  if (a === b) return true;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1);
+  return Math.abs(a - b) <= 1e-9 * scale;
+}
+
+export function matchesFilter(
+  fieldType: FieldType,
+  value: unknown,
+  filter: string,
+  displayValue?: string,
+): boolean {
+  const f = filter.trim();
+  if (f === "") return true;
+
+  // Computed types: caller passes the rendered string. Numeric
+  // comparison operators against an `auto_number` column should
+  // behave the same as on a plain numeric column (the placeholder
+  // text encourages `>5` etc.), so we run the operator-prefix
+  // parser against the display string first and fall back to
+  // substring matching for non-numeric inputs / non-numeric
+  // displays.
+  if (isComputedFieldType(fieldType)) {
+    const target = displayValue ?? "";
+    // `Number("")` is `0`, which would make every empty-display row
+    // match `"0"` / `">=0"` / `"<1"` etc. Treat an empty display
+    // string as "no value here" and short-circuit before any
+    // numeric comparison can produce a false positive. The substring
+    // fall-through below would also lie on a literal empty filter
+    // input, but `f === ""` is already filtered out above so this
+    // only fires when the user typed something. The companion
+    // `target.trim() === ""` covers `" "`-only display strings
+    // emitted by formatters that pad with a non-breaking space.
+    const targetEmpty = target.trim() === "";
+    const m = f.match(/^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (m) {
+      if (targetEmpty) return false;
+      const op = m[1];
+      const operand = Number(m[2]);
+      const n = Number(target);
+      if (Number.isFinite(n) && Number.isFinite(operand)) {
+        switch (op) {
+          case ">":
+            return n > operand;
+          case ">=":
+            return n >= operand;
+          case "<":
+            return n < operand;
+          case "<=":
+            return n <= operand;
+          case "=":
+            return numbersApproxEqual(n, operand);
+        }
+      }
+      // Operator parse hit, but the displayed value isn't numeric —
+      // a `>10` on a formula returning `"hello"` should hide the
+      // row, not silently fall back to substring matching.
+      return false;
+    }
+    if (targetEmpty) return false;
+    const bare = Number(f);
+    if (Number.isFinite(bare)) {
+      const n = Number(target);
+      if (Number.isFinite(n)) return numbersApproxEqual(n, bare);
+    }
+    return target.toLowerCase().includes(f.toLowerCase());
+  }
+
+  // Multi-valued types: match if ANY element contains the filter.
+  if (
+    fieldType === "multi_select" ||
+    fieldType === "attachment" ||
+    fieldType === "linked_record"
+  ) {
+    if (!Array.isArray(value)) return false;
+    const needle = f.toLowerCase();
+    return value.some(
+      (v) => typeof v === "string" && v.toLowerCase().includes(needle),
+    );
+  }
+
+  // Checkbox: literal true/false/1/0.
+  if (fieldType === "checkbox") {
+    const lower = f.toLowerCase();
+    const truthy = lower === "true" || lower === "1" || lower === "yes";
+    const falsy = lower === "false" || lower === "0" || lower === "no";
+    if (!truthy && !falsy) return false;
+    return Boolean(value) === truthy;
+  }
+
+  // Numeric types: support operator prefixes.
+  // `auto_number` is intentionally excluded — it's a computed
+  // type and handled by the `isComputedFieldType` branch above.
+  // Its stored value is always `null`, so reading
+  // `Number(value)` here would compare `0` to whatever the user
+  // typed and hide every row, which was the bug Devin Review
+  // flagged on PR #79 (BUG_pr-review-job-…-0001).
+  const numericTypes: FieldType[] = [
+    "number",
+    "currency",
+    "percent",
+    "rating",
+    "duration",
+  ];
+  if (numericTypes.includes(fieldType)) {
+    // An empty cell (`null`/`undefined`/`""`) should never match a
+    // numeric filter — `Number(null) === 0` and `Number("") === 0`
+    // both lie, so without this guard the filter `"0"` (or `">=0"`,
+    // `"<1"`, etc.) would highlight every empty row. The old filter
+    // code that this matcher replaced had an explicit `if (val ==
+    // null) return false;` and the unit tests only happened to
+    // cover `> 0` (which returns `false` for the wrong reason —
+    // `0 > 0` is false). Devin Review caught this on PR #79
+    // (BUG_pr-review-job-b04adfa7…-0001).
+    if (value === null || value === undefined || value === "") return false;
+    // For `percent` the stored value is a fraction (`0.5` = 50%) but
+    // the user thinks (and sees) in display percentages. Rescale the
+    // user's operand so `>10` means ">10%" — matching what the
+    // type-aware filter placeholder (`"e.g. >10"`) advertises. Devin
+    // Review flagged this on PR #79 (ANALYSIS_pr-review-job-b04…-0006).
+    const scaleOperand = (n: number): number =>
+      fieldType === "percent" ? n / 100 : n;
+    // For `percent` columns *also* accept a trailing `%` on the
+    // user's operand — the displayed value carries one (`50%`), so
+    // it's the most natural thing for a user to type. Without this
+    // the regex below misses `>50%` and `Number("50%") = NaN` flips
+    // the filter into substring mode against `"0.5"`, which silently
+    // returns nothing. Devin Review PR #79 round 10
+    // (ANALYSIS_…_0004) flagged the silent fall-through. Stripping
+    // is gated on `fieldType === "percent"` so `>10%` against a
+    // plain `number` column still falls through to substring
+    // (preserving the explicit type contract).
+    const normalisedFilter =
+      fieldType === "percent" ? f.replace(/%\s*$/, "").trim() : f;
+    // Stripping a trailing `%` can leave an empty operand if the user
+    // typed just `%` with nothing else. Without this guard,
+    // `Number("") === 0` would silently turn the filter into `= 0%`
+    // and match every zero-valued row — a confusing footgun on what
+    // is obviously a half-typed filter. Treat empty-after-strip as
+    // "no numeric intent" and fall through to the substring branch
+    // (which won't match `%` against a fraction render like `"0.5"`).
+    // Devin Review PR #79 round 11 (ANALYSIS_…_0004) flagged this.
+    if (normalisedFilter === "") return false;
+    // Match `>=`, `<=`, `>`, `<`, `=` then a number.
+    const m = normalisedFilter.match(
+      /^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/,
+    );
+    if (m) {
+      const op = m[1];
+      const operand = scaleOperand(Number(m[2]));
+      const n = Number(value);
+      if (!Number.isFinite(n) || !Number.isFinite(operand)) return false;
+      switch (op) {
+        case ">":
+          return n > operand;
+        case ">=":
+          return n >= operand;
+        case "<":
+          return n < operand;
+        case "<=":
+          return n <= operand;
+        case "=":
+          return numbersApproxEqual(n, operand);
+      }
+    }
+    // Bare numeric → equals (with percent rescaling).
+    const bare = Number(normalisedFilter);
+    if (Number.isFinite(bare)) {
+      const n = Number(value);
+      return Number.isFinite(n) && numbersApproxEqual(n, scaleOperand(bare));
+    }
+    // Non-numeric filter on a numeric column: fall back to substring
+    // on the rendered string so users can still find a value.
+    return String(value ?? "")
+      .toLowerCase()
+      .includes(f.toLowerCase());
+  }
+
+  // Everything else (text, long_text, email, phone, url, date,
+  // select): case-insensitive substring on the stored string.
+  if (value == null) return false;
+  return String(value).toLowerCase().includes(f.toLowerCase());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// View-state stale-pointer cleanup
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The six `BaseViewConfig` keys that store a field-name pointer. Kept
+ * here (next to `pruneViewStateAgainstFields`) so the list is
+ * enumerated **once** across the codebase — `BaseEditor.renameField`
+ * and `BaseEditor.dropStaleViewState` both consume this constant
+ * instead of redeclaring it inline, so adding a new field-name
+ * pointer in `BaseViewConfig` (e.g. a "color by" field) only needs to
+ * be added here once and both call sites pick it up.
+ *
+ * Devin Review on PR #79 flagged the duplication between rename and
+ * import paths.
+ */
+export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<keyof BaseViewConfig> = [
+  "kanbanGroupField",
+  "calendarDateField",
+  "timelineStartField",
+  "timelineEndField",
+  "galleryCoverField",
+  "titleField",
+];
+
+/**
+ * After replacing the entire Base content via import (or any other
+ * schema-changing operation), drop sort / filter / view-config state
+ * that points at fields that no longer exist.
+ *
+ * Returns a tuple of `[nextSortField, nextFilters, nextViewConfig]`.
+ * Each entry preserves referential equality with its input when
+ * nothing changed, so React `setX(prev => helperReturn[i])` calls
+ * don't trigger unnecessary re-renders.
+ *
+ * Without this:
+ *   - the grid header would still show a typed-in filter on a column
+ *     that no longer exists and the sort indicator would point at
+ *     nothing;
+ *   - Kanban / Calendar / Timeline / Gallery would silently render
+ *     empty because they call
+ *     `fields.find((f) => f.name === config.kanbanGroupField)` and
+ *     miss when the imported schema dropped that field.
+ *
+ * `filteredAndSorted` already tolerates the stale state (missing
+ * fields are skipped), but the UI looks broken until the user
+ * manually clears each one. Devin Review on PR #79 flagged this in
+ * two rounds — sort+filter in round 3, viewConfig in round 4 — so
+ * we own the entire cleanup in one helper now.
+ */
+export function pruneViewStateAgainstFields(
+  fields: BaseField[],
+  prev: {
+    sortField: string | null;
+    filters: Record<string, string>;
+    viewConfig: BaseViewConfig;
+  },
+): {
+  sortField: string | null;
+  filters: Record<string, string>;
+  viewConfig: BaseViewConfig;
+} {
+  const names = new Set(fields.map((f) => f.name));
+
+  // Sort pointer.
+  const nextSort =
+    prev.sortField !== null && !names.has(prev.sortField)
+      ? null
+      : prev.sortField;
+
+  // Filter map: keep entries whose key still exists.
+  let filtersDirty = false;
+  const nextFilters: Record<string, string> = {};
+  for (const [k, v] of Object.entries(prev.filters)) {
+    if (names.has(k)) {
+      nextFilters[k] = v;
+    } else {
+      filtersDirty = true;
+    }
+  }
+
+  // View-config: null out every pointer whose target was dropped.
+  let viewDirty = false;
+  const nextView: BaseViewConfig = { ...prev.viewConfig };
+  for (const k of VIEW_CONFIG_FIELD_POINTERS) {
+    const ref = prev.viewConfig[k];
+    if (ref !== null && !names.has(ref)) {
+      nextView[k] = null;
+      viewDirty = true;
+    }
+  }
+
+  return {
+    sortField: nextSort,
+    filters: filtersDirty ? nextFilters : prev.filters,
+    viewConfig: viewDirty ? nextView : prev.viewConfig,
+  };
 }

@@ -797,6 +797,60 @@ describe("BaseEditor — dropdown click-outside behavior", () => {
   });
 });
 
+describe("BaseEditor — bulk-delete scoped to visible records", () => {
+  it("bulk-delete only removes records that are visible in the filtered view; hidden selections are preserved", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Tag", type: "text" }],
+      records: [
+        { id: "r1", Tag: "alpha" },
+        { id: "r2", Tag: "alpha" },
+        { id: "r3", Tag: "beta" },
+        { id: "r4", Tag: "beta" },
+      ],
+    });
+    // Select every record via the header "Select all visible
+    // records" checkbox while the view is unfiltered.
+    const selectAll = screen.getByRole("checkbox", {
+      name: "Select all visible records",
+    });
+    fireEvent.click(selectAll);
+    // Bulk-delete button now shows the full count (4 visible).
+    expect(
+      screen.getByRole("button", { name: /Delete 4 selected/ }),
+    ).toBeInTheDocument();
+
+    // Apply a filter that hides r3 + r4 (only `alpha` rows remain
+    // visible). The bulk-delete button must rescope to 2.
+    const tagFilter = screen.getByPlaceholderText("Filter…");
+    fireEvent.change(tagFilter, { target: { value: "alpha" } });
+    expect(
+      screen.getByRole("button", { name: /Delete 2 selected/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Delete 4 selected/ }),
+    ).toBeNull();
+
+    // Trigger the bulk delete. Only the two visible (`alpha`) rows
+    // should be removed; the two hidden (`beta`) rows must survive.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Delete 2 selected/ }),
+    );
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records).toHaveLength(2);
+    expect(records.map((r) => r.id).sort()).toEqual(["r3", "r4"]);
+    expect(records.every((r) => r.Tag === "beta")).toBe(true);
+
+    // Clear the filter — the hidden `beta` selections should still
+    // be highlighted, and the bulk-delete button should show 2 again
+    // (the original beta selections, now back in view).
+    fireEvent.change(tagFilter, { target: { value: "" } });
+    expect(
+      screen.getByRole("button", { name: /Delete 2 selected/ }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("BaseEditor — expanded modal auto-closes when target record is deleted", () => {
   it("clears `expandedCell` after the record currently being edited is removed", async () => {
     renderEditor({
