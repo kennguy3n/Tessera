@@ -26,10 +26,6 @@ import * as secretsVault from "../secretsVault";
 import {
   enableTelemetry,
   disableTelemetry,
-  getEventsSnapshot,
-  readPersistedEvents,
-  recordCounter,
-  type TelemetryEvent,
 } from "../telemetrySink";
 import { hasPinSet, clearPin } from "../appLock";
 import { getLogger } from "../logger";
@@ -460,39 +456,15 @@ export function registerSettingsHandlers(): void {
     } as SettingsData;
   });
 
-  // Phase 19 PR 10 Task 9 — read-only telemetry inspection. The
-  // renderer's "audit my telemetry" panel calls this so the user
-  // can see exactly what's been recorded. No write surface here —
-  // adding raw-event support would defeat the whitelisted-key
-  // privacy guarantee documented in `telemetrySink.ts`.
-  idempotentHandle(
-    "telemetry:getEvents",
-    async (): Promise<TelemetryEvent[]> => {
-      return getEventsSnapshot();
-    },
-  );
-
-  idempotentHandle(
-    "telemetry:getPersistedEvents",
-    async (): Promise<TelemetryEvent[]> => {
-      return readPersistedEvents();
-    },
-  );
-
-  // Phase 19 PR 10 Task 9 — single-write surface for the renderer
-  // to record a whitelisted event. The schema validation in
-  // `telemetry:record` rejects non-whitelisted keys at the IPC
-  // boundary; `recordCounter` itself ALSO validates so a
-  // compromised renderer / preload can't bypass the whitelist by
-  // calling the IPC directly with a forged key. Defense in depth.
-  idempotentHandle(
-    "telemetry:recordCounter",
-    async (_event, keyRaw: unknown, incrementRaw: unknown): Promise<void> => {
-      if (typeof keyRaw !== "string") return;
-      const increment = typeof incrementRaw === "number" ? incrementRaw : 1;
-      recordCounter(keyRaw, increment);
-    },
-  );
+  // Note: the `telemetry:*` event-pumping IPCs (getEvents /
+  // getPersistedEvents / recordCounter) live in
+  // `ipc/telemetry.ts` under `registerTelemetryHandlers` so the
+  // domain has a dedicated module like every other IPC area in
+  // the codebase. The `telemetryEnabled` *toggle* still flows
+  // through `settings:update` above because it's a persisted
+  // config field, not an event channel — that's why
+  // `enableTelemetry` / `disableTelemetry` are still imported
+  // from `telemetrySink` here.
 
   idempotentHandle("externalProvider:get", async () => {
     const config = loadConfig();

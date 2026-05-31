@@ -22,6 +22,7 @@ import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
 import { registerSourcesHandlers } from "./sources";
 import { registerTasksHandlers } from "./tasks";
+import { registerTelemetryHandlers } from "./telemetry";
 import { registerTemplatesHandlers } from "./templates";
 import { registerVisionHandlers } from "./vision";
 
@@ -41,6 +42,12 @@ export function registerAllIpcHandlers(): void {
   registerDialogHandlers();
   registerKchatHandlers();
   registerAuditHandlers();
+  // Phase 19 PR 10 Task 9 — local-only telemetry event-pumping
+  // IPCs. The `telemetryEnabled` toggle itself lives in
+  // `settings:update`; this only registers the event-recording
+  // and event-inspection channels so the audit panel and the
+  // record-counter callsites have somewhere to dispatch to.
+  registerTelemetryHandlers();
   // Phase 19 PR 10 Task 10 — PIN / biometric app-lock IPC. Wired
   // last so the lock surface is available after all stateful
   // handlers; ordering is only cosmetic since registration is

@@ -251,6 +251,18 @@ export function classifyConnectorError(err: unknown): FailureKind {
     if ((err as { name?: string }).name === "RateLimitError") {
       return "transient";
     }
+    // MissingScopeError is permanent — the user explicitly narrowed
+    // the OAuth grant during the consent flow (or the refresh
+    // response narrowed it), so the only way to recover is to
+    // re-authenticate and widen the grant. Retrying through the
+    // 8-attempt transient backoff (~4 minutes total) before the
+    // "needs re-auth" CTA finally surfaces is the wrong UX: the
+    // first failed sync after a scope narrowing should immediately
+    // flip the source-health badge to permanent so the renderer
+    // can prompt re-auth on the spot.
+    if (err instanceof MissingScopeError) {
+      return "permanent";
+    }
   }
   // Pattern-match plain `Error` messages thrown by per-connector
   // HTTP wrappers. The shape is stable across connectors:

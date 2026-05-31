@@ -356,10 +356,18 @@ function isValidEvent(value: unknown): value is TelemetryEvent {
 }
 
 /**
- * Return the current snapshot of in-memory + on-disk events,
- * deduplicated. Used by tests and by the renderer audit panel.
- * The on-disk slice always precedes the in-memory slice in time
- * order (because in-memory events have not yet been flushed).
+ * Return the current snapshot of in-memory + on-disk events.
+ * Used by tests and by the renderer audit panel. The on-disk
+ * slice always precedes the in-memory slice in time order
+ * (because in-memory events have not yet been flushed).
+ *
+ * **Disjointness invariant (no deduplication needed):** the flush
+ * lifecycle in `flushAsync` and `flushSync` splices events out of
+ * `state.buffer` *before* writing them to disk, so the on-disk
+ * slice and the in-memory slice are structurally disjoint —
+ * concatenating them cannot produce a duplicate. We therefore
+ * skip an explicit dedup pass; correctness is enforced by the
+ * flush implementation, not by post-hoc filtering here.
  */
 export function getEventsSnapshot(): TelemetryEvent[] {
   return [...readPersistedEvents(), ...state.buffer];
