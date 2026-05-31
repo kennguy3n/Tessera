@@ -5,8 +5,19 @@ import {
   escapeHtmlComment,
   extractFrontmatterTheme,
   setFrontmatterTheme,
+  buildSlideFromLayout,
+  duplicateSlideAt,
+  moveBlock,
+  removeBlock,
+  appendBlock,
+  replaceBlock,
+  slideWordCount,
+  deckWordCount,
+  findInSlides,
+  nextBlockForTypeChange,
+  DEFAULT_DIAGRAM_DSL,
 } from "../editors/slideEditorHelpers";
-import { type SlideContent } from "../editors/SlideEditor";
+import type { Slide, SlideBlock, SlideContent } from "../editors/slideEditorTypes";
 
 describe("parseSlideContent", () => {
   it("returns the empty-default shape for empty input", () => {
@@ -93,6 +104,78 @@ describe("slidesToMarpMarkdown", () => {
     expect(out).toContain("- gamma");
     expect(out).toContain("```mermaid\ngraph TD; A-->B\n```");
     expect(out).toContain("<!-- Slide presenter notes -->");
+  });
+
+  it("renders image blocks as Markdown image syntax (not raw data URLs)", () => {
+    // Regression test for BUG_0001 (Devin Review on PR #81):
+    //
+    // Before this fix, image blocks fell through to the catch-all
+    // `else { parts.push(content); }` branch in `renderSlideAsMarp`,
+    // so an image block's data URL was emitted as a bare paragraph in
+    // the Marp source. The PPTX export pipeline (Marp CLI) then
+    // rendered it as visible text instead of an `<img>` element, and
+    // the data URL leaked into the slide body. Rendering the block as
+    // `![alt](<url>)` (CommonMark angle-bracket link-destination form)
+    // lets Marp emit a real image and is robust to URLs containing
+    // characters that would otherwise terminate the `()` group (e.g.
+    // `(`, `)`, spaces — common in Wikipedia / Mediawiki URLs).
+    // Brackets in alt text are stripped because the `[...]` group has
+    // no angle-bracket escape hatch.
+    const out = slidesToMarpMarkdown([
+      {
+        title: "Cover",
+        blocks: [
+          {
+            type: "image",
+            content: "data:image/png;base64,iVBORw0KGgo=",
+            alt: "Company logo [v2]",
+          },
+          { type: "image", content: "https://example.com/x.png" },
+        ],
+        notes: "",
+      },
+    ]);
+    expect(out).toContain(
+      "![Company logo v2](<data:image/png;base64,iVBORw0KGgo=>)",
+    );
+    expect(out).toContain("![](<https://example.com/x.png>)");
+    // The raw data URL must never appear outside the image-syntax
+    // angle-bracket / parentheses (i.e. no standalone paragraph dump).
+    expect(out).not.toMatch(/^data:image\//m);
+  });
+
+  it("renders image URLs containing parens via CommonMark angle-bracket form", () => {
+    // Regression test for ANALYSIS_0001 (Devin Review on PR #81
+    // round 2): Wikipedia / Mediawiki / SharePoint URLs commonly
+    // contain unescaped `(` and `)` characters (e.g.
+    // `C_(programming_language).png`). Emitting these inside the
+    // CommonMark `()` link-destination group truncates the URL at the
+    // first `)`. Switching to the angle-bracket form `<url>` accepts
+    // any character except `<`, `>`, or newline — none of which can
+    // appear in a valid HTTP URL — so paren-bearing URLs survive the
+    // export pipeline intact.
+    const out = slidesToMarpMarkdown([
+      {
+        title: "Refs",
+        blocks: [
+          {
+            type: "image",
+            content: "https://example.com/C_(lang).png",
+            alt: "C",
+          },
+          {
+            type: "image",
+            content: "https://example.com/path with spaces.png",
+            alt: "",
+          },
+        ],
+        notes: "",
+      },
+    ]);
+    expect(out).toContain("![C](<https://example.com/C_(lang).png>)");
+    expect(out).toContain(
+      "![](<https://example.com/path with spaces.png>)",
+    );
   });
 
   it("skips empty blocks and slides without titles cleanly", () => {
@@ -322,5 +405,576 @@ describe("setFrontmatterTheme", () => {
     // closing `---` of the frontmatter).
     const separators = (out.match(/^---$/gm) ?? []).length;
     expect(separators).toBe(3); // open, close, between-slides
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 18 PR 7 — slide UX helpers
+// ─────────────────────────────────────────────────────────────────────
+
+function slideOf(title: string, content: string, notes = ""): Slide {
+  return { title, blocks: [{ type: "text", content }], notes };
+}
+
+describe("buildSlideFromLayout", () => {
+  it("returns a single empty text block for the blank layout", () => {
+    const s = buildSlideFromLayout("blank");
+    expect(s.title).toBe("");
+    expect(s.blocks).toEqual([{ type: "text", content: "" }]);
+    expect(s.notes).toBe("");
+  });
+
+  it("returns no blocks for the title layout", () => {
+    const s = buildSlideFromLayout("title");
+    expect(s.title).toBe("New Slide");
+    expect(s.blocks).toEqual([]);
+  });
+
+  it("returns one text block for the titleContent layout", () => {
+    const s = buildSlideFromLayout("titleContent");
+    expect(s.title).toBe("New Slide");
+    expect(s.blocks).toEqual([{ type: "text", content: "" }]);
+  });
+
+  it("returns two text blocks for the twoColumn layout", () => {
+    const s = buildSlideFromLayout("twoColumn");
+    expect(s.blocks).toHaveLength(2);
+    expect(s.blocks.every((b) => b.type === "text")).toBe(true);
+  });
+
+  it("returns an image+caption pair for the imageCaption layout", () => {
+    const s = buildSlideFromLayout("imageCaption");
+    expect(s.blocks).toHaveLength(2);
+    expect(s.blocks[0]).toEqual({ type: "image", content: "", alt: "" });
+    expect(s.blocks[1]).toEqual({ type: "text", content: "" });
+  });
+
+  it("returns a fresh object each call so multiple inserts don't alias", () => {
+    const a = buildSlideFromLayout("titleContent");
+    const b = buildSlideFromLayout("titleContent");
+    expect(a).not.toBe(b);
+    expect(a.blocks).not.toBe(b.blocks);
+    a.blocks[0].content = "mutated";
+    expect(b.blocks[0].content).toBe("");
+  });
+});
+
+describe("duplicateSlideAt", () => {
+  it("inserts a deep clone immediately after the source slide", () => {
+    const a = slideOf("A", "alpha");
+    const b = slideOf("B", "beta");
+    const result = duplicateSlideAt([a, b], 0);
+    expect(result.insertedAt).toBe(1);
+    expect(result.slides).toHaveLength(3);
+    expect(result.slides[0]).toBe(a);
+    expect(result.slides[1]).not.toBe(a);
+    expect(result.slides[1].title).toBe("A");
+    expect(result.slides[2]).toBe(b);
+  });
+
+  it("deep-clones blocks so post-duplicate edits don't reach across", () => {
+    const original = slideOf("A", "alpha");
+    const result = duplicateSlideAt([original], 0);
+    result.slides[1].blocks[0].content = "changed";
+    expect(original.blocks[0].content).toBe("alpha");
+  });
+
+  it("is a no-op for an out-of-range index and reports insertedAt=-1", () => {
+    const slides = [slideOf("A", "alpha")];
+    const result = duplicateSlideAt(slides, 5);
+    expect(result.insertedAt).toBe(-1);
+    expect(result.slides).toBe(slides);
+  });
+
+  it("is a no-op for a negative index", () => {
+    const slides = [slideOf("A", "alpha")];
+    const result = duplicateSlideAt(slides, -1);
+    expect(result.insertedAt).toBe(-1);
+    expect(result.slides).toBe(slides);
+  });
+
+  it("appends at the end when duplicating the last slide", () => {
+    const a = slideOf("A", "alpha");
+    const b = slideOf("B", "beta");
+    const result = duplicateSlideAt([a, b], 1);
+    expect(result.insertedAt).toBe(2);
+    expect(result.slides).toHaveLength(3);
+    expect(result.slides[2].title).toBe("B");
+  });
+});
+
+describe("moveBlock", () => {
+  it("moves a block to a later position", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+        { type: "text", content: "c" },
+      ],
+      notes: "",
+    };
+    const next = moveBlock(slide, 0, 2);
+    expect(next.blocks.map((b) => b.content)).toEqual(["b", "c", "a"]);
+  });
+
+  it("moves a block to an earlier position", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+        { type: "text", content: "c" },
+      ],
+      notes: "",
+    };
+    const next = moveBlock(slide, 2, 0);
+    expect(next.blocks.map((b) => b.content)).toEqual(["c", "a", "b"]);
+  });
+
+  it("returns the same reference when from === to (no-op for setState)", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(moveBlock(slide, 0, 0)).toBe(slide);
+  });
+
+  it("returns the same reference for out-of-range indices", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(moveBlock(slide, -1, 0)).toBe(slide);
+    expect(moveBlock(slide, 0, 5)).toBe(slide);
+  });
+
+  it("does not mutate the input array", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    moveBlock(slide, 0, 1);
+    expect(slide.blocks.map((b) => b.content)).toEqual(["a", "b"]);
+  });
+});
+
+describe("removeBlock", () => {
+  it("removes the block at the given index", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    expect(removeBlock(slide, 0).blocks).toEqual([{ type: "text", content: "b" }]);
+  });
+
+  it("allows the slide to end up with zero blocks", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "only" }],
+      notes: "",
+    };
+    expect(removeBlock(slide, 0).blocks).toEqual([]);
+  });
+
+  it("returns the same reference for out-of-range indices", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(removeBlock(slide, -1)).toBe(slide);
+    expect(removeBlock(slide, 5)).toBe(slide);
+  });
+});
+
+describe("appendBlock", () => {
+  it("appends a block to the end", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    const next = appendBlock(slide, { type: "bullets", content: "b" });
+    expect(next.blocks).toEqual([
+      { type: "text", content: "a" },
+      { type: "bullets", content: "b" },
+    ]);
+  });
+
+  it("works on an empty slide", () => {
+    const slide: Slide = { title: "T", blocks: [], notes: "" };
+    expect(appendBlock(slide, { type: "text", content: "x" }).blocks).toEqual([
+      { type: "text", content: "x" },
+    ]);
+  });
+
+  it("does not mutate the input blocks array", () => {
+    const slide: Slide = { title: "T", blocks: [], notes: "" };
+    const originalBlocksRef = slide.blocks;
+    appendBlock(slide, { type: "text", content: "x" });
+    expect(slide.blocks).toBe(originalBlocksRef);
+    expect(slide.blocks).toEqual([]);
+  });
+});
+
+describe("replaceBlock", () => {
+  it("replaces the block at the given index", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    const next = replaceBlock(slide, 1, { type: "bullets", content: "new" });
+    expect(next.blocks).toEqual([
+      { type: "text", content: "a" },
+      { type: "bullets", content: "new" },
+    ]);
+  });
+
+  it("returns the same reference for out-of-range indices", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(replaceBlock(slide, 5, { type: "text", content: "x" })).toBe(slide);
+    expect(replaceBlock(slide, -1, { type: "text", content: "x" })).toBe(slide);
+  });
+
+  it("returns the same reference when the replacement is === the existing block", () => {
+    // Pins the second short-circuit branch. Without this guard, the
+    // `nextBlockForTypeChange` same-type optimisation (which returns
+    // the input block unchanged when `block.type === nextType`)
+    // would be defeated end-to-end: `replaceBlock` would still build
+    // a fresh array and a fresh `Slide`, the parent component's
+    // `if (updatedSlide === slide) return prev` short-circuit would
+    // miss, and `debouncedSave` would fire on a no-op type-select.
+    const existing: SlideBlock = { type: "text", content: "keep me" };
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "bullets", content: "- a" },
+        existing,
+        { type: "text", content: "z" },
+      ],
+      notes: "",
+    };
+    expect(replaceBlock(slide, 1, existing)).toBe(slide);
+  });
+});
+
+describe("nextBlockForTypeChange", () => {
+  // The type-select dropdown handler in `SlideEditor.tsx` delegates to
+  // this pure helper. Tests pin the keep / seed / clear matrix so the
+  // dropdown stays well-behaved when block types cross the `image`
+  // boundary (BUG_0001 on PR #81 round 2) and when entering `diagram`
+  // for the first time.
+
+  it("clears content when switching FROM an image block (BUG_0001)", () => {
+    // Regression: previously, switching FROM image → text|bullets|diagram
+    // preserved `block.content`, which for an image block is a
+    // multi-megabyte `data:image/...;base64,...` URL written by
+    // `fileToDataUrl`. The new editor surface for those types is a
+    // `<textarea>`, so the URL was being pasted into the textarea
+    // (janking the renderer) instead of being cleared.
+    const imageBlock: SlideBlock = {
+      type: "image",
+      content: "data:image/png;base64,AAAA",
+      alt: "Logo",
+    };
+    expect(nextBlockForTypeChange(imageBlock, "text")).toEqual({
+      type: "text",
+      content: "",
+      alt: undefined,
+    });
+    expect(nextBlockForTypeChange(imageBlock, "bullets")).toEqual({
+      type: "bullets",
+      content: "",
+      alt: undefined,
+    });
+    // Switching image → diagram seeds the DSL starter because the
+    // post-clear content is empty (the diagram-seed branch wins over
+    // the image-clear branch when content would otherwise be `""`).
+    expect(nextBlockForTypeChange(imageBlock, "diagram")).toEqual({
+      type: "diagram",
+      content: DEFAULT_DIAGRAM_DSL,
+      alt: undefined,
+    });
+  });
+
+  it("clears content when switching INTO an image block", () => {
+    const textBlock: SlideBlock = { type: "text", content: "hello" };
+    expect(nextBlockForTypeChange(textBlock, "image")).toEqual({
+      type: "image",
+      content: "",
+      alt: "",
+    });
+    const bulletsBlock: SlideBlock = {
+      type: "bullets",
+      content: "- one\n- two",
+    };
+    expect(nextBlockForTypeChange(bulletsBlock, "image")).toEqual({
+      type: "image",
+      content: "",
+      alt: "",
+    });
+    // Preserves a pre-existing alt when switching back to image.
+    const wasImageEmpty: SlideBlock = {
+      type: "text",
+      content: "x",
+      alt: "previous alt",
+    };
+    expect(nextBlockForTypeChange(wasImageEmpty, "image")).toEqual({
+      type: "image",
+      content: "",
+      alt: "previous alt",
+    });
+  });
+
+  it("seeds the diagram starter DSL only when content is empty", () => {
+    const emptyText: SlideBlock = { type: "text", content: "" };
+    expect(nextBlockForTypeChange(emptyText, "diagram").content).toBe(
+      DEFAULT_DIAGRAM_DSL,
+    );
+    // Existing content survives the text → diagram switch — the user
+    // may have typed mermaid DSL inside a text block before realising
+    // diagrams have a dedicated type, and reseeding would clobber
+    // their work.
+    const existingText: SlideBlock = {
+      type: "text",
+      content: "graph TD; A-->B",
+    };
+    expect(nextBlockForTypeChange(existingText, "diagram").content).toBe(
+      "graph TD; A-->B",
+    );
+  });
+
+  it("keeps content untouched on text ↔ bullets toggles", () => {
+    // A common authoring workflow: write an outline as bullets, then
+    // switch to text to flow it into prose, then back. The content
+    // must round-trip verbatim so the user doesn't lose work.
+    const bullets: SlideBlock = { type: "bullets", content: "- a\n- b" };
+    const toText = nextBlockForTypeChange(bullets, "text");
+    expect(toText).toEqual({ type: "text", content: "- a\n- b", alt: undefined });
+    const back = nextBlockForTypeChange(toText, "bullets");
+    expect(back).toEqual({
+      type: "bullets",
+      content: "- a\n- b",
+      alt: undefined,
+    });
+  });
+
+  it("strips alt on non-image types and defaults alt to '' on image", () => {
+    const imageBlock: SlideBlock = {
+      type: "image",
+      content: "data:image/png;base64,AAA",
+      alt: "logo",
+    };
+    expect(nextBlockForTypeChange(imageBlock, "bullets").alt).toBe(undefined);
+    const textWithoutAlt: SlideBlock = { type: "text", content: "x" };
+    expect(nextBlockForTypeChange(textWithoutAlt, "image").alt).toBe("");
+  });
+
+  it("returns the input reference unchanged when the type does not change", () => {
+    // Pins the no-op contract: same-type re-selection is a no-op so
+    // callers using `===` short-circuit a re-render (matches the
+    // contract of `moveBlock` / `removeBlock` / `replaceBlock`). The
+    // image-self case is the safety-critical one — without the
+    // early-return, image→image would land in the boundary-clear
+    // branch and destroy the uploaded data URL.
+    const imageBlock: SlideBlock = {
+      type: "image",
+      content: "data:image/png;base64,KEEPME",
+      alt: "logo",
+    };
+    expect(nextBlockForTypeChange(imageBlock, "image")).toBe(imageBlock);
+    const textBlock: SlideBlock = { type: "text", content: "hello" };
+    expect(nextBlockForTypeChange(textBlock, "text")).toBe(textBlock);
+    const diagramBlock: SlideBlock = {
+      type: "diagram",
+      content: "graph TD; A-->B",
+    };
+    expect(nextBlockForTypeChange(diagramBlock, "diagram")).toBe(diagramBlock);
+    const bulletsBlock: SlideBlock = {
+      type: "bullets",
+      content: "- one\n- two",
+    };
+    expect(nextBlockForTypeChange(bulletsBlock, "bullets")).toBe(bulletsBlock);
+  });
+});
+
+describe("slideWordCount", () => {
+  it("sums words across title, blocks, and notes", () => {
+    const slide: Slide = {
+      title: "Hello world",
+      blocks: [
+        { type: "text", content: "foo bar baz" },
+        { type: "bullets", content: "one two" },
+      ],
+      notes: "speaker note here",
+    };
+    // title=2 + text=3 + bullets=2 + notes=3 = 10
+    expect(slideWordCount(slide)).toBe(10);
+  });
+
+  it("collapses runs of whitespace (does not over-count)", () => {
+    const slide: Slide = {
+      title: "foo  bar   baz",
+      blocks: [],
+      notes: "",
+    };
+    expect(slideWordCount(slide)).toBe(3);
+  });
+
+  it("counts image-block alt text, not the data URL", () => {
+    const slide: Slide = {
+      title: "",
+      blocks: [
+        {
+          type: "image",
+          content: "data:image/png;base64,iVBORw0KGgo=",
+          alt: "Architecture diagram showing flow",
+        },
+      ],
+      notes: "",
+    };
+    // alt = 4 words. content (data URL) MUST contribute 0.
+    expect(slideWordCount(slide)).toBe(4);
+  });
+
+  it("returns 0 for an empty slide", () => {
+    expect(
+      slideWordCount({ title: "", blocks: [], notes: "" }),
+    ).toBe(0);
+  });
+});
+
+describe("deckWordCount", () => {
+  it("sums slideWordCount across the deck", () => {
+    const a = slideOf("A B", "one two three");
+    const b = slideOf("X", "", "speaker note");
+    // a: title=2 + content=3 = 5; b: title=1 + notes=2 = 3 → total 8.
+    expect(deckWordCount([a, b])).toBe(8);
+  });
+
+  it("returns 0 for an empty deck", () => {
+    expect(deckWordCount([])).toBe(0);
+  });
+});
+
+describe("findInSlides", () => {
+  it("returns no matches for an empty query (avoids exponential blowup)", () => {
+    const slide = slideOf("Hello", "world");
+    expect(findInSlides([slide], "")).toEqual([]);
+  });
+
+  it("finds matches in title, blocks, and notes in deck order", () => {
+    const slides: Slide[] = [
+      {
+        title: "foo bar",
+        blocks: [
+          { type: "text", content: "foo block" },
+          { type: "bullets", content: "another foo here" },
+        ],
+        notes: "final foo in notes",
+      },
+      slideOf("second slide foo", "unrelated"),
+    ];
+    const matches = findInSlides(slides, "foo");
+    expect(matches).toHaveLength(5);
+    // First match is in slide 0 title.
+    expect(matches[0]).toMatchObject({ slideIndex: 0, location: "title" });
+    expect(matches[1]).toMatchObject({
+      slideIndex: 0,
+      location: { kind: "block", blockIndex: 0 },
+    });
+    expect(matches[2]).toMatchObject({
+      slideIndex: 0,
+      location: { kind: "block", blockIndex: 1 },
+    });
+    expect(matches[3]).toMatchObject({ slideIndex: 0, location: "notes" });
+    expect(matches[4]).toMatchObject({ slideIndex: 1, location: "title" });
+  });
+
+  it("is case-insensitive by default", () => {
+    const slide = slideOf("Hello", "world");
+    const matches = findInSlides([slide], "HELLO");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].length).toBe(5);
+  });
+
+  it("honors caseSensitive: true", () => {
+    const slide = slideOf("Hello", "world");
+    expect(findInSlides([slide], "HELLO", { caseSensitive: true })).toEqual([]);
+    expect(
+      findInSlides([slide], "Hello", { caseSensitive: true }),
+    ).toHaveLength(1);
+  });
+
+  it("walks forward by needle.length so it never matches overlapping occurrences", () => {
+    // Find/replace UX convention: matches do NOT overlap. 'aaa' inside
+    // 'aaaaa' should produce exactly one match starting at 0 — the
+    // remaining 'aa' is too short for another non-overlapping hit.
+    // (An overlapping walk would have reported offsets [0, 1, 2] which
+    // is never what a user wants from a find dialog.)
+    const slide = slideOf("", "aaaaa");
+    const matches = findInSlides([slide], "aaa");
+    expect(matches.map((m) => m.offset)).toEqual([0]);
+  });
+
+  it("finds two non-overlapping matches when the haystack is long enough", () => {
+    // 'aaa' inside 'aaaaaa' (6 chars) has room for two non-overlapping
+    // hits at offsets 0 and 3.
+    const slide = slideOf("", "aaaaaa");
+    const matches = findInSlides([slide], "aaa");
+    expect(matches.map((m) => m.offset)).toEqual([0, 3]);
+  });
+
+  it("searches image-block alt text, not the data URL", () => {
+    const slide: Slide = {
+      title: "",
+      blocks: [
+        {
+          type: "image",
+          content: "data:image/png;base64,iVBORw0KGgo=",
+          alt: "architecture diagram",
+        },
+      ],
+      notes: "",
+    };
+    // Match against alt — should hit
+    expect(findInSlides([slide], "architecture")).toHaveLength(1);
+    // Match against data URL substring — should NOT hit
+    expect(findInSlides([slide], "base64")).toEqual([]);
+  });
+
+  it("returns multiple matches in a single field", () => {
+    const slide = slideOf("foo and foo and foo", "");
+    const matches = findInSlides([slide], "foo");
+    expect(matches).toHaveLength(3);
+    expect(matches.map((m) => m.offset)).toEqual([0, 8, 16]);
+    expect(matches.every((m) => m.location === "title")).toBe(true);
+  });
+
+  it("reports correct offset and length", () => {
+    const slide = slideOf("", "xxx hello xxx");
+    const matches = findInSlides([slide], "hello");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].offset).toBe(4);
+    expect(matches[0].length).toBe(5);
   });
 });

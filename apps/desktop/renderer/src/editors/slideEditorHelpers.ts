@@ -13,7 +13,12 @@
  */
 import type { MarpRenderOptions } from "../services/marpRenderer";
 import { yamlSingleQuote } from "../utils/yaml";
-import type { Slide, SlideContent } from "./slideEditorTypes";
+import type {
+  Slide,
+  SlideBlock,
+  SlideContent,
+  SlideLayout,
+} from "./slideEditorTypes";
 
 export interface ParsedSlideContent {
   slides: Slide[];
@@ -101,6 +106,30 @@ function renderSlideAsMarp(slide: Slide): string {
       if (lines.length > 0) parts.push(lines.join("\n"));
     } else if (block.type === "diagram") {
       parts.push("```mermaid\n" + content + "\n```");
+    } else if (block.type === "image") {
+      // Render as Markdown image so Marp emits a real <img>.
+      // `content` is the source URL (typically an inlined data:image/…
+      // URL written by `fileToDataUrl`); `alt` falls back to empty when
+      // unset, matching the HTML <img alt=""> convention for decorative
+      // images. We intentionally do not strip the data URL even though
+      // it can be large — the round-trip back through `parseSlideContent`
+      // depends on it being present, and Marp handles base64 data URLs
+      // natively.
+      //
+      // We use CommonMark's angle-bracket link-destination form
+      // (`<url>`) unconditionally so URLs containing characters that
+      // would otherwise terminate the `()` group — most notably `(`
+      // and `)`, but also spaces — round-trip correctly. Per
+      // CommonMark §6.4, the angle-bracket form accepts any character
+      // except an unescaped `<`, `>`, or newline. None of those can
+      // appear in a valid `data:image/…` URL (base64 uses
+      // `A-Za-z0-9+/=` only) or in any valid HTTP(S) URL (`<` / `>` /
+      // newline must be percent-encoded), so the angle-bracket form
+      // is safe for every URL we're ever asked to emit. Brackets in
+      // alt text are still stripped because the `[...]` group has no
+      // angle-bracket escape hatch.
+      const alt = (block.alt ?? "").replace(/[[\]]/g, "");
+      parts.push(`![${alt}](<${content}>)`);
     } else {
       parts.push(content);
     }
@@ -263,4 +292,420 @@ export function applyMarpToShadow(
     shadow.appendChild(deck);
   }
   deck.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 18 PR 7 — UX helpers (block & slide mutations, layouts, find)
+//
+// Every helper below is PURE: takes a `Slide[]` (or `Slide`) plus
+// arguments and returns a fresh structure. Callers feed the result
+// into `setSlides(...)` — none of these helpers mutates its inputs.
+// Keeping the mutation logic out of the component file lets the unit
+// tests exercise the algorithms without booting a TipTap stack and
+// keeps the `SlideEditor.tsx` callback bodies one-liners.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Return a freshly-constructed `Slide` populated with the block skeleton
+ * for the given layout. The layout name only governs the initial block
+ * composition — the user may add, remove, reorder, or retype any block
+ * after insertion, and the layout itself is NOT persisted on the
+ * `Slide` (see the JSDoc on `SlideLayout` for why).
+ *
+ * Pure: returns a new object on every call so callers can splice it
+ * into `slides` without sharing references with a future slide. Notes
+ * default to empty — the layout doesn't pre-fill them because that
+ * would clutter the speaker-notes panel with sample text on every
+ * insertion.
+ */
+export function buildSlideFromLayout(layout: SlideLayout): Slide {
+  switch (layout) {
+    case "blank":
+      return { title: "", blocks: [{ type: "text", content: "" }], notes: "" };
+    case "title":
+      return {
+        title: "New Slide",
+        blocks: [],
+        notes: "",
+      };
+    case "titleContent":
+      return {
+        title: "New Slide",
+        blocks: [{ type: "text", content: "" }],
+        notes: "",
+      };
+    case "twoColumn":
+      return {
+        title: "New Slide",
+        blocks: [
+          { type: "text", content: "" },
+          { type: "text", content: "" },
+        ],
+        notes: "",
+      };
+    case "imageCaption":
+      return {
+        title: "New Slide",
+        blocks: [
+          { type: "image", content: "", alt: "" },
+          { type: "text", content: "" },
+        ],
+        notes: "",
+      };
+  }
+}
+
+/**
+ * Insert a duplicate of the slide at `index` immediately after it.
+ * The duplicate is a deep clone — every block object is recreated so a
+ * subsequent edit to either copy doesn't reach across via a shared
+ * reference. Returns the new slide array plus the index of the inserted
+ * copy so the caller can move focus / set `activeIndex` correctly.
+ *
+ * If `index` is out of range, returns the input array unchanged plus
+ * `-1` (no-op). Callers may rely on referential equality of the array
+ * to detect this case without a separate boolean.
+ */
+export function duplicateSlideAt(
+  slides: Slide[],
+  index: number,
+): { slides: Slide[]; insertedAt: number } {
+  if (index < 0 || index >= slides.length) {
+    return { slides, insertedAt: -1 };
+  }
+  const original = slides[index];
+  const copy: Slide = {
+    title: original.title,
+    notes: original.notes,
+    blocks: original.blocks.map((b) => ({ ...b })),
+  };
+  const next = [
+    ...slides.slice(0, index + 1),
+    copy,
+    ...slides.slice(index + 1),
+  ];
+  return { slides: next, insertedAt: index + 1 };
+}
+
+/**
+ * Move the block at `from` to position `to` within the active slide's
+ * block list. Returns a new `Slide` (the input is not mutated). If
+ * either index is out of range, returns the slide unchanged so the
+ * caller's setState reuses the previous reference (preventing a
+ * redundant re-render).
+ */
+export function moveBlock(slide: Slide, from: number, to: number): Slide {
+  if (
+    from < 0 ||
+    from >= slide.blocks.length ||
+    to < 0 ||
+    to >= slide.blocks.length ||
+    from === to
+  ) {
+    return slide;
+  }
+  const next = [...slide.blocks];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return { ...slide, blocks: next };
+}
+
+/**
+ * Remove the block at `index`. Returns a new `Slide`. Out-of-range
+ * removes are a no-op (reference-preserving — same rationale as
+ * `moveBlock`). Removing the last block is allowed; the slide may
+ * legitimately end up with zero blocks (the "title-only" layout).
+ */
+export function removeBlock(slide: Slide, index: number): Slide {
+  if (index < 0 || index >= slide.blocks.length) return slide;
+  return {
+    ...slide,
+    blocks: slide.blocks.filter((_, i) => i !== index),
+  };
+}
+
+/**
+ * Append a new block to a slide. Returns a new `Slide`. Used by the
+ * "+ Add Block" button and by the layout-aware paste path. The new
+ * block's `content` defaults to empty so the user immediately sees an
+ * input to type into; for diagram blocks the caller is expected to
+ * seed the default Mermaid DSL itself (the helper has no access to
+ * that DSL string).
+ */
+export function appendBlock(slide: Slide, block: SlideBlock): Slide {
+  return { ...slide, blocks: [...slide.blocks, block] };
+}
+
+/**
+ * Replace the block at `index` with `block`. Returns a new `Slide`.
+ *
+ * Two no-op short-circuits keep the reference-stable contract that
+ * `moveBlock` / `removeBlock` follow:
+ *   - Out-of-range `index` → return input slide reference unchanged.
+ *   - `block` is referentially identical to the block already at
+ *     `index` → return input slide reference unchanged. This is what
+ *     preserves the `nextBlockForTypeChange` same-type optimisation
+ *     end-to-end: that helper returns the input block unchanged when
+ *     `block.type === nextType`, and without this identity check
+ *     `replaceBlock` would still build a fresh array and a fresh
+ *     `Slide`, defeating the optimisation and firing a redundant
+ *     `debouncedSave`.
+ *
+ * Used by the per-block type select and the per-block content
+ * textarea so the existing `updateSlide` call site can stay a
+ * one-liner.
+ */
+export function replaceBlock(
+  slide: Slide,
+  index: number,
+  block: SlideBlock,
+): Slide {
+  if (index < 0 || index >= slide.blocks.length) return slide;
+  if (slide.blocks[index] === block) return slide;
+  const next = [...slide.blocks];
+  next[index] = block;
+  return { ...slide, blocks: next };
+}
+
+/**
+ * Default `mermaid` source seeded into a new diagram block so the
+ * Marp preview shows a meaningful figure the moment the user picks
+ * the `diagram` type. Kept in the helpers module so the same string
+ * is shared by `SlideEditor` (the type-change handler) and by
+ * `nextBlockForTypeChange` (the pure helper that drives the
+ * keep/seed/clear decision for the `content` field).
+ */
+export const DEFAULT_DIAGRAM_DSL = `flowchart LR
+  Source --> Process --> Output`;
+
+/**
+ * Pure transition function for the type-select dropdown: returns the
+ * `SlideBlock` value that should replace `block` when the user picks
+ * `nextType` from the type picker.
+ *
+ * The `content` field is reset to `""` whenever the block crosses
+ * the `image` boundary in either direction:
+ *
+ *   - **Switching INTO an image block** (`nextType === "image"`):
+ *     reset so the file-input UI starts from a clean slate. The
+ *     previous content is almost certainly prose or a mermaid DSL,
+ *     not an image source URL, so leaving it would only confuse the
+ *     image-preview surface.
+ *
+ *   - **Switching OUT of an image block** (`block.type === "image"`):
+ *     reset because an image block's `content` is a potentially
+ *     multi-megabyte `data:image/...;base64,...` URL written by
+ *     `fileToDataUrl`. The new editor surface for `text` / `bullets`
+ *     / `diagram` is a `<textarea>` and pasting a multi-MB data URL
+ *     into a textarea janks the renderer and is never the user's
+ *     intent (an image's URL is not the same kind of thing as prose
+ *     or a mermaid DSL).
+ *
+ * If the user picks `diagram` and the current content is empty, we
+ * seed the well-known starter DSL so the Marp preview shows
+ * something meaningful immediately. Otherwise content is kept
+ * verbatim so toggling `text` ↔ `bullets` is non-destructive (a
+ * common workflow when rewriting an outline as prose or vice versa).
+ *
+ * The `alt` field is only meaningful for image blocks, so it's set
+ * to `undefined` whenever the new type is not `image` (this also
+ * frees the saved JSON of a dead `alt` field on non-image blocks).
+ */
+export function nextBlockForTypeChange(
+  block: SlideBlock,
+  nextType: SlideBlock["type"],
+): SlideBlock {
+  // Same-type re-selection is a no-op: return the input reference
+  // unchanged so callers using `===` short-circuit a re-render (same
+  // contract as `moveBlock` / `removeBlock` / `replaceBlock`). This
+  // also makes the image→image case safe-by-construction — without
+  // this guard, an image→image call would land in the boundary-clear
+  // branch below and destroy the uploaded data URL. The UI's
+  // `<select onChange>` doesn't fire on same-value re-selection, but
+  // a programmatic caller (e.g. a future copy/paste-as path or a
+  // bulk-edit dialog) could trigger it, and the helper's contract
+  // should not depend on UI quirks.
+  if (block.type === nextType) return block;
+  const wasImage = block.type === "image";
+  const becomesImage = nextType === "image";
+  // Step 1 — clear when the block crosses the `image` boundary in
+  // either direction (see doc-comment above for why a data URL must
+  // not survive into a `<textarea>`, and why prose must not survive
+  // into the image-source field).
+  const carried = wasImage || becomesImage ? "" : block.content;
+  // Step 2 — seed the diagram starter only when the new type is
+  // `diagram` AND we have no carried content. The order matters: if
+  // a user does image → diagram, step 1 clears the data URL and
+  // step 2 then seeds the starter DSL, so the diagram preview shows
+  // something meaningful instead of staying blank. A user with
+  // prose already typed (text → diagram with existing content)
+  // keeps their work — `carried` is non-empty so step 2 is a no-op.
+  const content =
+    nextType === "diagram" && !carried ? DEFAULT_DIAGRAM_DSL : carried;
+  return {
+    ...block,
+    type: nextType,
+    content,
+    alt: becomesImage ? (block.alt ?? "") : undefined,
+  };
+}
+
+/**
+ * Total word count for a single slide — counts title, every block's
+ * content, and notes. Used by the toolbar word counter. The split
+ * regex (`/\s+/`) collapses runs of whitespace so `"foo  bar"` counts
+ * as 2, not 3 (the empty string between the two spaces would
+ * otherwise pad the count).
+ *
+ * Image blocks contribute their `alt` text (if any) plus 0 for the
+ * data URL — the URL itself isn't human-readable content. Diagram
+ * blocks contribute their DSL token count, which approximates the
+ * "information density" of the diagram.
+ */
+export function slideWordCount(slide: Slide): number {
+  const fragments: string[] = [slide.title, slide.notes];
+  for (const block of slide.blocks) {
+    if (block.type === "image") {
+      fragments.push(block.alt ?? "");
+    } else {
+      fragments.push(block.content);
+    }
+  }
+  return fragments
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .reduce((acc, s) => acc + s.split(/\s+/).length, 0);
+}
+
+/**
+ * Total word count across every slide in the deck. Used in the
+ * SlideEditor toolbar header alongside the slide counter so the user
+ * has a quick "how much content is in this deck" signal.
+ */
+export function deckWordCount(slides: Slide[]): number {
+  return slides.reduce((acc, slide) => acc + slideWordCount(slide), 0);
+}
+
+/**
+ * A single match returned by `findInSlides`. The `location` field
+ * identifies WHERE in the slide the match lives so the Find panel can
+ * (eventually) jump the user to the specific block; for now the panel
+ * only jumps to the slide index, but encoding the location lets us
+ * add per-block jumping later without changing the data shape.
+ */
+export interface SlideFindMatch {
+  slideIndex: number;
+  /** Which field on the slide contained the match. */
+  location: "title" | "notes" | { kind: "block"; blockIndex: number };
+  /** Lowercased substring index of the match within the source field. */
+  offset: number;
+  /** Length of the matched substring (== query length for case-sensitive). */
+  length: number;
+}
+
+export interface SlideFindOptions {
+  caseSensitive?: boolean;
+}
+
+/**
+ * Find every occurrence of `query` across the deck. Returns matches in
+ * deck order: by `slideIndex`, then within a slide by field order
+ * (title → blocks in array order → notes), then by `offset` within a
+ * field.
+ *
+ * An empty query yields no matches (returning every position would be
+ * meaningless and would blow up the result array). Case-insensitivity
+ * is implemented by lowercasing both sides before `indexOf` —
+ * Unicode-sensitive folding is left for a future PR (every Latin
+ * locale Tessera ships templates for is correctly handled by the
+ * basic ASCII lowercase pass).
+ */
+export function findInSlides(
+  slides: Slide[],
+  query: string,
+  options: SlideFindOptions = {},
+): SlideFindMatch[] {
+  if (!query) return [];
+  const caseSensitive = options.caseSensitive === true;
+  const needle = caseSensitive ? query : query.toLowerCase();
+  const results: SlideFindMatch[] = [];
+
+  function findAllOccurrences(haystackRaw: string): number[] {
+    if (!haystackRaw) return [];
+    const haystack = caseSensitive ? haystackRaw : haystackRaw.toLowerCase();
+    const offsets: number[] = [];
+    let from = 0;
+    while (from <= haystack.length - needle.length) {
+      const idx = haystack.indexOf(needle, from);
+      if (idx === -1) break;
+      offsets.push(idx);
+      from = idx + needle.length;
+    }
+    return offsets;
+  }
+
+  for (let s = 0; s < slides.length; s += 1) {
+    const slide = slides[s];
+    for (const offset of findAllOccurrences(slide.title)) {
+      results.push({
+        slideIndex: s,
+        location: "title",
+        offset,
+        length: needle.length,
+      });
+    }
+    for (let b = 0; b < slide.blocks.length; b += 1) {
+      const block = slide.blocks[b];
+      // Image blocks search their alt text, not the data URL — data
+      // URLs aren't human-readable content and matching against them
+      // would surface useless results (e.g. "img" matching the MIME
+      // type prefix of every base64 image in the deck).
+      const source = block.type === "image" ? (block.alt ?? "") : block.content;
+      for (const offset of findAllOccurrences(source)) {
+        results.push({
+          slideIndex: s,
+          location: { kind: "block", blockIndex: b },
+          offset,
+          length: needle.length,
+        });
+      }
+    }
+    for (const offset of findAllOccurrences(slide.notes)) {
+      results.push({
+        slideIndex: s,
+        location: "notes",
+        offset,
+        length: needle.length,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Convert a `File` (from a `<input type="file">` or a drag-drop event)
+ * to a base64 `data:` URL. Used by the image-block upload path so the
+ * resulting URL can be inlined into the slide JSON. Returns a promise
+ * that rejects if the file cannot be read.
+ *
+ * NOTE: this is `FileReader`-based to stay browser-only — no Node
+ * `Buffer` imports — because the SlideEditor is a renderer-side
+ * component and must work in the existing jsdom test harness without
+ * a node:fs polyfill.
+ */
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Image read returned non-string result"));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Image read failed"));
+    reader.readAsDataURL(file);
+  });
 }
