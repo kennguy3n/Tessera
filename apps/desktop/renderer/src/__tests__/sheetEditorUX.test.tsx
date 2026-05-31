@@ -287,4 +287,65 @@ describe("SheetEditor UX — Task 20 auto-fill", () => {
     expect(within(cellAt(3, 0)).getByText("4")).toBeInTheDocument();
     expect(within(cellAt(4, 0)).getByText("5")).toBeInTheDocument();
   });
+
+  it("rightward drag past the last column widens the column header so filled cells render", () => {
+    // Devin Review PR #86 ANALYSIS-0003 (pre-existing latent bug):
+    // before this fix, fill-right past `sheet.columns.length` wrote
+    // the filled values into `rows[r]` past the column header bound.
+    // The grid renderer iterates `sheet.columns.map(...)` to lay out
+    // the row, so the trailing cells silently disappeared from the
+    // UI even though the data was technically present in the row
+    // array. This test pins that the column header now grows to
+    // cover the fill range, so the filled cells actually render.
+    const onSave = vi.fn();
+    render(
+      <SheetEditor
+        content={makeContent({
+          columns: ["A", "B", "C"],
+          rows: [["1", "2", "", ""]],
+        })}
+        onSave={onSave}
+        autoSaveMs={0}
+      />,
+    );
+    fireEvent.click(cellAt(0, 0));
+    fireEvent.click(cellAt(0, 1), { shiftKey: true });
+    const handle = screen.getByTestId("sheet-fill-handle-0-1");
+    fireEvent.mouseDown(handle, { clientX: 0, clientY: 0 });
+    // Hover beyond column C (cells D and E don't exist yet — we
+    // synthesize the hover target via cellAt(0, 4) which the new
+    // post-fill state must have widened to render).
+    const realFn = document.elementFromPoint;
+    // The fill engine needs an elementFromPoint hit at the hovered
+    // (x, y). We mock it to return the next existing column header
+    // (C) since the new ones don't exist DOM-side yet — the engine
+    // uses indexFromHover() which keys off data-testid on cells. We
+    // simulate hovering to grid column 4 by reusing a stable cell.
+    document.elementFromPoint = vi.fn().mockImplementation(() => {
+      // Return a synthetic node carrying `data-col="4"` so the
+      // fill engine routes the targetCol calculation correctly.
+      const node = document.createElement("td");
+      node.setAttribute("data-row", "0");
+      node.setAttribute("data-col", "4");
+      return node;
+    });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 0 });
+    fireEvent.mouseUp(window);
+    document.elementFromPoint = realFn;
+    // Inspect the table header — columns must have grown to at
+    // least 5 entries (A..E) so the filled cells render in the
+    // grid rather than silently dropping off the right edge.
+    const headerCells = screen
+      .getByRole("table")
+      .querySelectorAll<HTMLTableCellElement>("thead th");
+    // Header has one corner cell + one per column. Post-fill we
+    // expect at least 6 (corner + A..E).
+    expect(headerCells.length).toBeGreaterThanOrEqual(6);
+    // And the filled cells [3, 4, 5] must actually render in the
+    // new columns — proving the data round-trips end-to-end
+    // (column widening + row writes) and isn't silently dropped.
+    expect(within(cellAt(0, 2)).getByText("3")).toBeInTheDocument();
+    expect(within(cellAt(0, 3)).getByText("4")).toBeInTheDocument();
+    expect(within(cellAt(0, 4)).getByText("5")).toBeInTheDocument();
+  });
 });

@@ -15,6 +15,7 @@
 import type { SheetTab } from "./sheetEditorTypes";
 import type { Selection } from "./sheetSelection";
 import { normalizeRange } from "./sheetSelection";
+import { updateCellsInRows, type CellEdit } from "./sheetEditorHelpers";
 
 /**
  * Serialise the primary range of `selection` as TSV. Extras
@@ -130,31 +131,43 @@ export function applyTSVAt(
   if (tsv.length === 0) return sheet;
   const neededCols =
     anchorCol + Math.max(...tsv.map((r) => r.length), 0);
-  const neededRows = anchorRow + tsv.length;
-  // Widen columns.
-  const columns = [...sheet.columns];
-  while (columns.length < neededCols) {
-    columns.push(
-      options.columnLabelFor
-        ? options.columnLabelFor(columns.length)
-        : String(columns.length + 1),
-    );
+  // Widen the column header array if the paste extends past the
+  // current right edge. Default labels match the Excel-style A..Z,
+  // AA, AB... sequence the renderer also uses for unlabelled cols.
+  const columns =
+    neededCols > sheet.columns.length ? [...sheet.columns] : sheet.columns;
+  if (columns !== sheet.columns) {
+    while (columns.length < neededCols) {
+      columns.push(
+        options.columnLabelFor
+          ? options.columnLabelFor(columns.length)
+          : String(columns.length + 1),
+      );
+    }
   }
-  // Clone rows and widen each to the new column count.
-  const rows: string[][] = sheet.rows.map((row) => {
-    const next = [...row];
-    while (next.length < columns.length) next.push("");
-    return next;
-  });
-  while (rows.length < neededRows) {
-    rows.push(new Array(columns.length).fill(""));
-  }
-  // Apply the paste at the anchor.
+  // Build the paste edit batch — one entry per cell in `tsv`. The
+  // edits collectively touch rows `[anchorRow, anchorRow + tsv.length)`
+  // only; rows outside that range will keep their reference identity
+  // when handed to `updateCellsInRows`, which preserves the
+  // `incrementalRecalc` row-skip optimisation also relied on by
+  // `updateCell` / Delete / fill-series.
+  const edits: CellEdit[] = [];
   for (let r = 0; r < tsv.length; r++) {
     const srcRow = tsv[r];
     for (let c = 0; c < srcRow.length; c++) {
-      rows[anchorRow + r][anchorCol + c] = srcRow[c];
+      edits.push({
+        row: anchorRow + r,
+        col: anchorCol + c,
+        value: srcRow[c],
+      });
     }
   }
+  // `updateCellsInRows` clones only the rows that hold an edit and
+  // auto-extends rows past the current end, so the row-count growth
+  // (`anchorRow + tsv.length` past `sheet.rows.length`) is handled
+  // there with `new Array(columnCount).fill("")` — matching the
+  // pre-refactor behaviour. We pass `columns.length` (post-widening)
+  // so any newly-pushed rows match the widened column count.
+  const rows = updateCellsInRows(sheet.rows, columns.length, edits);
   return { ...sheet, columns, rows };
 }

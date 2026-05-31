@@ -26,6 +26,8 @@ import { describe, expect, it } from "vitest";
 import {
   incrementalRecalc,
   makeIncrementalRecalcState,
+  updateCellInRows,
+  updateCellsInRows,
 } from "../sheetEditorHelpers";
 import { cellKey, isFormulaError } from "../formulaEngine";
 import type { SheetContent } from "../sheetEditorTypes";
@@ -392,5 +394,203 @@ describe("incrementalRecalc", () => {
     const fixed = setCell(initial, 0, 0, "5");
     const after = incrementalRecalc(fixed, state);
     expect(valAt(after, 0, 0)).toBe(5);
+  });
+});
+
+describe("updateCellInRows (row-reference preservation)", () => {
+  // The whole point of this helper is to feed `incrementalRecalc`
+  // the shape it expects: a *new* top-level array (so React sees a
+  // fresh `rows` ref and commits a render) where the edited row is
+  // freshly cloned AND every other row is the same reference that
+  // was passed in. If the helper accidentally regresses to a
+  // full-deep clone (the pre-fix shape was
+  // `prev.rows.map((r) => [...r])`), `incrementalRecalc`'s
+  // O(1) `prevRow === nextRow` short-circuit silently breaks and
+  // the dirty diff balloons to O(rows × cols) per keystroke.
+  // Devin Review PR #83 ANALYSIS-0002.
+
+  it("preserves the original reference for every row except the edited one", () => {
+    const r0 = ["1", "2", "3"];
+    const r1 = ["4", "5", "6"];
+    const r2 = ["7", "8", "9"];
+    const rows: string[][] = [r0, r1, r2];
+
+    const next = updateCellInRows(rows, 3, 1, 0, "X");
+
+    // Edited row is a fresh array …
+    expect(next[1]).not.toBe(r1);
+    // … but the other two rows survive by reference.
+    expect(next[0]).toBe(r0);
+    expect(next[2]).toBe(r2);
+    // The actual edit landed in the right cell.
+    expect(next[1][0]).toBe("X");
+    // Sibling cells in the edited row are still correct.
+    expect(next[1][1]).toBe("5");
+    expect(next[1][2]).toBe("6");
+  });
+
+  it("returns a new top-level rows array (React-friendly setSheet)", () => {
+    const rows: string[][] = [
+      ["a", "b"],
+      ["c", "d"],
+    ];
+    const next = updateCellInRows(rows, 2, 0, 1, "Z");
+    // setState requires a new array ref to commit a render.
+    expect(next).not.toBe(rows);
+    // And the edit landed.
+    expect(next[0][1]).toBe("Z");
+    expect(next[1]).toBe(rows[1]);
+  });
+
+  it("appends blank rows when the edit lands past the current end", () => {
+    // SheetEditor lets the user edit row 4 of an empty 2-row
+    // sheet; the helper must auto-extend with blank rows so the
+    // intermediate rows aren't `undefined`.
+    const rows: string[][] = [
+      ["1", "2", "3"],
+      ["4", "5", "6"],
+    ];
+    const next = updateCellInRows(rows, 3, 3, 1, "new");
+
+    expect(next.length).toBe(4);
+    // Original two rows preserved by reference.
+    expect(next[0]).toBe(rows[0]);
+    expect(next[1]).toBe(rows[1]);
+    // Auto-extended row at index 2 is blank with the right width.
+    expect(next[2]).toEqual(["", "", ""]);
+    // The edited row at index 3 carries the new value.
+    expect(next[3][1]).toBe("new");
+  });
+
+  it("extends the target row when the edited column is past the row's end", () => {
+    // The same auto-extend behavior applies horizontally: editing
+    // a cell past the row's current width pads the row out.
+    const r0: string[] = ["a"];
+    const rows: string[][] = [r0];
+    const next = updateCellInRows(rows, 3, 0, 2, "Q");
+
+    // Edited row is a fresh array (not r0).
+    expect(next[0]).not.toBe(r0);
+    expect(next[0]).toEqual(["a", "", "Q"]);
+  });
+
+  it("feeds incrementalRecalc the row-skip optimisation correctly", () => {
+    // End-to-end pinning: a single-cell edit on row 1 must NOT
+    // cause `incrementalRecalc` to descend into rows 0 or 2's
+    // cells. We can't observe the inner loop directly, but we
+    // CAN assert the cache state is correctly updated for the
+    // edited row and unchanged for the others.
+    const initial = sheet([
+      ["1", "=A1*2"],
+      ["10", "=A2*2"],
+      ["100", "=A3*2"],
+    ]);
+    const state = makeIncrementalRecalcState();
+    const before = incrementalRecalc(initial, state);
+    expect(valAt(before, 0, 1)).toBe(2);
+    expect(valAt(before, 1, 1)).toBe(20);
+    expect(valAt(before, 2, 1)).toBe(200);
+
+    // Edit A2 from "10" to "50" using the helper. Row 0 and row 2
+    // must survive by reference; only row 1 should be a fresh array.
+    const editedRows = updateCellInRows(initial.rows, 2, 1, 0, "50");
+    expect(editedRows[0]).toBe(initial.rows[0]);
+    expect(editedRows[2]).toBe(initial.rows[2]);
+
+    const next: SheetContent = { ...initial, rows: editedRows };
+    const after = incrementalRecalc(next, state);
+    // Edited cell + its dependent recompute.
+    expect(valAt(after, 1, 0)).toBe(50);
+    expect(valAt(after, 1, 1)).toBe(100);
+    // Untouched rows' formulas stay at their previous values.
+    expect(valAt(after, 0, 1)).toBe(2);
+    expect(valAt(after, 2, 1)).toBe(200);
+  });
+});
+
+describe("updateCellsInRows (multi-edit row-reference preservation)", () => {
+  // Same row-ref preservation contract as `updateCellInRows`, but for
+  // bulk-edit paths (Delete/Backspace clears + fill-series). Each row
+  // that holds at least one edit gets cloned exactly once; everything
+  // else survives by reference.
+
+  it("clones each touched row exactly once when multiple edits land on the same row", () => {
+    const rows = [
+      ["1", "2", "3"],
+      ["4", "5", "6"],
+    ];
+    const next = updateCellsInRows(rows, 3, [
+      { row: 0, col: 0, value: "X" },
+      { row: 0, col: 1, value: "Y" },
+      { row: 0, col: 2, value: "Z" },
+    ]);
+    // Edited row is a fresh array …
+    expect(next[0]).not.toBe(rows[0]);
+    // … but the un-touched row survives by reference.
+    expect(next[1]).toBe(rows[1]);
+    // All three edits land on the same cloned row.
+    expect(next[0]).toEqual(["X", "Y", "Z"]);
+  });
+
+  it("preserves reference identity for every row not in the edit set", () => {
+    // Sparse edit pattern: edit row 0 and row 3, leave rows 1, 2, 4 alone.
+    const rows = [
+      ["a", "b"],
+      ["c", "d"],
+      ["e", "f"],
+      ["g", "h"],
+      ["i", "j"],
+    ];
+    const next = updateCellsInRows(rows, 2, [
+      { row: 0, col: 1, value: "B" },
+      { row: 3, col: 0, value: "G" },
+    ]);
+    // The two edited rows are fresh.
+    expect(next[0]).not.toBe(rows[0]);
+    expect(next[3]).not.toBe(rows[3]);
+    // The three untouched rows are the same reference.
+    expect(next[1]).toBe(rows[1]);
+    expect(next[2]).toBe(rows[2]);
+    expect(next[4]).toBe(rows[4]);
+    // Edits landed correctly.
+    expect(next[0]).toEqual(["a", "B"]);
+    expect(next[3]).toEqual(["G", "h"]);
+  });
+
+  it("preserves every row by reference when given an empty edits list", () => {
+    // No edits → the helper still mints a fresh top-level array
+    // (slice is cheap, and a consistent return shape simplifies the
+    // caller). Every row is the same reference. SheetEditor's
+    // Delete handler additionally short-circuits with
+    // `if (edits.length === 0) return prev` to avoid even the slice
+    // cost when no in-bounds cells were targeted.
+    const rows = [
+      ["1", "2"],
+      ["3", "4"],
+    ];
+    const next = updateCellsInRows(rows, 2, []);
+    expect(next[0]).toBe(rows[0]);
+    expect(next[1]).toBe(rows[1]);
+    expect(next.length).toBe(rows.length);
+  });
+
+  it("auto-extends rows/cols past current bounds (fill-series scenario)", () => {
+    // Vertical fill from a 2-row source down into rows 2 and 3 of a
+    // 2-row sheet — matches the actual fill-series shape.
+    const rows = [
+      ["1"],
+      ["2"],
+    ];
+    const next = updateCellsInRows(rows, 1, [
+      { row: 2, col: 0, value: "3" },
+      { row: 3, col: 0, value: "4" },
+    ]);
+    expect(next.length).toBe(4);
+    // Original two rows survive by reference.
+    expect(next[0]).toBe(rows[0]);
+    expect(next[1]).toBe(rows[1]);
+    // Auto-extended rows are fresh arrays with the new values.
+    expect(next[2]).toEqual(["3"]);
+    expect(next[3]).toEqual(["4"]);
   });
 });
