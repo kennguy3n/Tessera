@@ -84,6 +84,23 @@ export interface AppConfig {
    */
   onboardingCompleted: boolean;
   /**
+   * Phase 18 Task 16: persisted favorites set. See
+   * `SettingsData.pinnedArtifactIds` in `shared/types.ts` for the
+   * full semantics. Cap of 256 entries is enforced by
+   * `AppConfigSchema` so a corrupt on-disk array can't blow up the
+   * config payload — the IPC `SettingsUpdateSchema` repeats the
+   * cap for writes.
+   */
+  pinnedArtifactIds: string[];
+  /**
+   * Phase 18 Task 17: view-recency list, capped at
+   * {@link SettingsData.MAX_RECENT_ARTIFACTS}. Trimmed on every
+   * renderer-side push via `useTrackArtifactView`; the IPC layer
+   * re-enforces the cap so a malformed renderer can't grow the
+   * list past the documented bound.
+   */
+  recentArtifactIds: string[];
+  /**
    * Persisted hybrid retrieval config. The defaults here mirror
    * `tessera_sources::hybrid::HybridSearchConfig::default()` so a
    * fresh install behaves identically with or without this field
@@ -180,6 +197,8 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
     "**/*.json",
   ]) as readonly string[] as string[],
   lastOpenedArtifacts: Object.freeze([]) as readonly string[] as string[],
+  pinnedArtifactIds: Object.freeze([]) as readonly string[] as string[],
+  recentArtifactIds: Object.freeze([]) as readonly string[] as string[],
   sourcePaths: Object.freeze([]) as readonly string[] as string[],
   externalProvider: DEFAULT_EXTERNAL_PROVIDER,
   externalProviderTokenUsage: DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
@@ -303,6 +322,30 @@ const AppConfigSchema = z
     lastOpenedArtifacts: z
       .array(z.string().max(1024))
       .max(1024)
+      .catch(() => []),
+    // Phase 18 Task 16: per-install favorites. Same factory-style
+    // `.catch(() => [])` as the sibling arrays above so a corrupted
+    // value heals to an empty list instead of leaking a frozen
+    // singleton across loads. The 256-entry cap is large enough
+    // that no realistic user runs into it but small enough to keep
+    // the config payload's array fields bounded.
+    pinnedArtifactIds: z
+      .array(z.string().max(1024))
+      .max(256)
+      .catch(() => []),
+    // Phase 18 Task 17: view-recency list. Cap matches
+    // `MAX_RECENT_ARTIFACTS` in shared/types.ts — see the doc
+    // comment on that const for the cross-layer agreement
+    // requirement. We can't import the const directly because
+    // `apps/desktop/electron/config.ts` is part of the
+    // `tsconfig.electron.json` project and crossing into
+    // `apps/desktop/shared/types.ts` from a config-validation
+    // module would pull in the renderer-only type surface; keeping
+    // the literal `32` here with a structured cross-reference is
+    // the same trade-off `ignorePatterns.max(10_000)` makes.
+    recentArtifactIds: z
+      .array(z.string().max(1024))
+      .max(32)
       .catch(() => []),
     sourcePaths: z
       .array(z.string().max(4096))

@@ -7,10 +7,15 @@ import Button from "../components/Button";
 import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
 import OnboardingWizard from "../components/OnboardingWizard";
+import ContextMenu, {
+  type ContextMenuItem,
+} from "../components/ContextMenu";
+import { useContextMenu } from "../hooks/useContextMenu";
 import { useRecentArtifacts } from "../hooks/useArtifacts";
+import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { useSourceList } from "../hooks/useSources";
 import { useSettings } from "../hooks/useSettings";
-import type { SourceInfo } from "../types/ipc";
+import type { ArtifactInfo, SourceInfo } from "../types/ipc";
 
 /**
  * Canonical list of source statuses surfaced by
@@ -258,28 +263,102 @@ export default function HomePage() {
             }}
           >
             {recent.map((artifact) => (
-              <Card
-                key={artifact.id}
-                // recent-artifact cards become
-                // navigable shortcuts to the artifact detail page.
-                // The `Card` component already wires role="button",
-                // `tabIndex`, focus styles, and Enter/Space
-                // activation when an `onClick` is provided, so the
-                // accessibility surface comes for free without
-                // having to re-implement it inline.
-                data-testid={`recent-artifact-${artifact.id}`}
-                onClick={() => navigate(`/artifacts/${artifact.id}`)}
-              >
-                <div className="card-title">{artifact.title}</div>
-                <div className="card-description">
-                  {artifact.artifactType} &middot; v{artifact.version} &middot;{" "}
-                  {new Date(artifact.updatedAt).toLocaleDateString()}
-                </div>
-              </Card>
+              <RecentArtifactCard key={artifact.id} artifact={artifact} />
             ))}
           </div>
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * Phase 18 Task 20: artifact card with right-click context menu.
+ *
+ * Wraps a `Card` so the user can right-click to pin/unpin,
+ * duplicate, or delete the artifact without leaving the home page.
+ * The actions go through the same custom-event channels the
+ * keyboard shortcuts and command palette use, except for "pin"
+ * which is handled inline because no editor needs to be mounted to
+ * toggle a setting field.
+ */
+function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
+  const navigate = useNavigate();
+  const { isPinned, togglePin } = usePinnedArtifacts();
+  const menu = useContextMenu();
+
+  const items: ContextMenuItem[] = [
+    {
+      id: "open",
+      label: "Open",
+      onSelect: () => navigate(`/artifacts/${artifact.id}/edit`),
+    },
+    {
+      id: "pin",
+      label: isPinned(artifact.id) ? "Unpin" : "Pin",
+      onSelect: () => {
+        void togglePin(artifact.id);
+      },
+    },
+    {
+      id: "duplicate",
+      label: "Duplicate",
+      separatorAbove: true,
+      onSelect: async () => {
+        try {
+          const api = window.tessera;
+          if (!api) return;
+          const copy = await api.artifacts.create(
+            `${artifact.title} (copy)`,
+            artifact.artifactType,
+            artifact.templateId ?? undefined,
+          );
+          await api.artifacts.update(copy.id, artifact.content);
+          navigate(`/artifacts/${copy.id}/edit`);
+        } catch {
+          // best-effort — the home page has no dedicated toast surface
+        }
+      },
+    },
+    {
+      id: "delete",
+      label: "Delete",
+      destructive: true,
+      separatorAbove: true,
+      onSelect: async () => {
+        if (!window.confirm("Delete this artifact? This cannot be undone."))
+          return;
+        try {
+          const api = window.tessera;
+          if (!api) return;
+          await api.artifacts.remove(artifact.id);
+        } catch {
+          // best-effort — see above
+        }
+      },
+    },
+  ];
+
+  return (
+    <>
+      <div {...menu.triggerProps}>
+        <Card
+          data-testid={`recent-artifact-${artifact.id}`}
+          onClick={() => navigate(`/artifacts/${artifact.id}`)}
+        >
+          <div className="card-title">{artifact.title}</div>
+          <div className="card-description">
+            {artifact.artifactType} &middot; v{artifact.version} &middot;{" "}
+            {new Date(artifact.updatedAt).toLocaleDateString()}
+          </div>
+        </Card>
+      </div>
+      <ContextMenu
+        isOpen={menu.isOpen}
+        position={menu.position}
+        items={items}
+        onClose={menu.close}
+      />
+    </>
   );
 }

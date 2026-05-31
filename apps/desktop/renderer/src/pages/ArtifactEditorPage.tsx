@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import Breadcrumb from "../components/Breadcrumb";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import PinButton from "../components/PinButton";
 import StopGenerationButton from "../components/StopGenerationButton";
 import ShareToKchatModal, {
   type KchatShareFormat,
 } from "../components/ShareToKchatModal";
+import { useTrackArtifactView } from "../hooks/useRecentlyViewedArtifacts";
+import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import {
   DocumentEditor,
   SlideEditor,
@@ -124,6 +128,13 @@ export default function ArtifactEditorPage() {
   useEffect(() => {
     loadArtifact();
   }, [loadArtifact]);
+
+  // Phase 18 Task 17: record this artifact's view in the recents
+  // list as soon as the editor mounts. `useTrackArtifactView`
+  // dedupes-and-promotes so a remount or re-render does not
+  // generate write storms.
+  useTrackArtifactView(id);
+  const { isPinned, togglePin } = usePinnedArtifacts();
 
   // Probe KChat connection state on mount so the toolbar can
   // conditionally render the "Share to KChat" button. Polling on a
@@ -449,6 +460,89 @@ export default function ArtifactEditorPage() {
     }
   }, [id, artifact?.title]);
 
+  // Phase 18 Task 14 + 19 + 20: wire global custom events to the
+  // editor's own state. The keyboard-shortcut runner and the
+  // command palette dispatch these events without coupling to
+  // this component, so any save/export/share/pin/duplicate/delete
+  // shortcut fired from anywhere in the app routes here as long
+  // as this page is mounted.
+  useEffect(() => {
+    if (!id) return;
+    const onSave = () => {
+      const content = draftContentRef.current ?? artifact?.content ?? "";
+      void handleSave(content);
+    };
+    const onExport = () => {
+      const formats = artifact
+        ? availableExportFormats(artifact.artifactType)
+        : [];
+      const fmt = formats[0];
+      if (fmt) void handleExport(fmt);
+    };
+    const onTogglePin = () => {
+      void togglePin(id);
+    };
+    const onShare = () => {
+      if (kchatConnected) setShareOpen(true);
+    };
+    const onDuplicate = async () => {
+      if (!artifact) return;
+      try {
+        const api = window.tessera;
+        if (!api) return;
+        const copy = await api.artifacts.create(
+          `${artifact.title} (copy)`,
+          artifact.artifactType,
+          artifact.templateId ?? undefined,
+        );
+        // Persist the duplicated content as a follow-up update
+        // because `artifacts.create` only sets up the metadata.
+        await api.artifacts.update(copy.id, artifact.content);
+        navigate(`/artifacts/${copy.id}/edit`);
+      } catch {
+        // Surface failures via the existing exportStatus channel
+        // — there is no dedicated toast surface on this page yet.
+        setExportStatus("Duplicate failed");
+        setTimeout(() => setExportStatus(null), 3000);
+      }
+    };
+    const onDelete = async () => {
+      if (!id) return;
+      if (!window.confirm("Delete this artifact? This cannot be undone.")) return;
+      try {
+        const api = window.tessera;
+        if (!api) return;
+        await api.artifacts.remove(id);
+        navigate("/");
+      } catch {
+        setExportStatus("Delete failed");
+        setTimeout(() => setExportStatus(null), 3000);
+      }
+    };
+    window.addEventListener("tessera:save", onSave);
+    window.addEventListener("tessera:export", onExport);
+    window.addEventListener("tessera:toggle-pin", onTogglePin);
+    window.addEventListener("tessera:share", onShare);
+    window.addEventListener("tessera:duplicate", onDuplicate);
+    window.addEventListener("tessera:delete", onDelete);
+    return () => {
+      window.removeEventListener("tessera:save", onSave);
+      window.removeEventListener("tessera:export", onExport);
+      window.removeEventListener("tessera:toggle-pin", onTogglePin);
+      window.removeEventListener("tessera:share", onShare);
+      window.removeEventListener("tessera:duplicate", onDuplicate);
+      window.removeEventListener("tessera:delete", onDelete);
+    };
+  }, [
+    id,
+    artifact,
+    handleSave,
+    handleExport,
+    togglePin,
+    navigate,
+    kchatConnected,
+  ]);
+
   if (loading) {
     return (
       <div>
@@ -476,11 +570,23 @@ export default function ArtifactEditorPage() {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <Breadcrumb
+        items={[
+          { label: "Home", to: "/" },
+          {
+            label:
+              artifact.title.length > 0 ? artifact.title : "(untitled)",
+          },
+        ]}
+      />
       <PageHeader
         title={artifact.title}
-        description={`${artifact.artifactType} — v${artifact.version}`}
+        description={`${artifact.artifactType} — v${artifact.version}${
+          isPinned(artifact.id) ? " — Pinned" : ""
+        }`}
         actions={
           <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
+            <PinButton artifactId={artifact.id} withLabel />
             <StopGenerationButton />
             <select
               aria-label="Export artifact"

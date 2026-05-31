@@ -1,26 +1,54 @@
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { SIDEBAR_NAV_BY_KEY } from "../navigation";
-
 /**
- * Tessera's global keyboard shortcuts.
+ * Tessera's global keyboard shortcut runner.
  *
- * Registered once at the app root by `App.tsx`. Each shortcut is
- * implemented as a single keydown handler that consults
+ * Registered once at the app root by `App.tsx`. The handler walks
+ * `COMMAND_REGISTRY` (the single source of truth shared with the
+ * Cmd+K palette and the shortcuts-help dialog) and dispatches the
+ * first matching command. This guarantees a chord can never be
+ * bound to one action in the palette and a different action by a
+ * keydown listener — they read from the same list.
+ *
+ * Each shortcut is implemented as one keydown handler that consults
  * `e.metaKey || e.ctrlKey` so both macOS (Cmd) and Linux/Windows
  * (Ctrl) work. We intentionally skip shortcuts when the user is
  * typing inside a textbox / contenteditable so we don't shadow
  * native browser shortcuts like Ctrl+A inside an editor — except
- * Escape and `Ctrl/Cmd+S`, which we still capture so users can
- * force-save from the editor and dismiss modals from anywhere.
+ * Escape, Cmd+S, Cmd+E, Cmd+K (palette), and Cmd+/ (help), which
+ * we still capture from anywhere so users can save, export, open
+ * the palette, or open the help dialog from inside an editor.
  *
- * The 1–N sidebar shortcuts map directly to the sidebar items in
- * `Sidebar.tsx`, in their display order. Both the map below and
- * `SIDEBAR_SHORTCUT_HINTS` are derived from the single source of
- * truth in `../navigation.ts`, so reordering / inserting / removing
- * a sidebar entry can never desync the shortcuts from the visible
- * order.
+ * The runner is intentionally renderer-only — all bindings are
+ * derived from the registry, so adding a new shortcut is a one-
+ * entry change in `commandRegistry.ts`. No edits here are
+ * required.
  */
+
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  type Command,
+  chordMatchesEvent,
+  COMMAND_REGISTRY,
+  findChordCollisions,
+} from "../utils/commandRegistry";
+import { useSettings, useUpdateSetting } from "./useSettings";
+
+/**
+ * Set of chords that fire even when the focused element is a
+ * typing target (input / textarea / contenteditable). These are
+ * the "meta" shortcuts the user expects to work from anywhere —
+ * Save, Export, Escape, palette opens, help. Everything else is
+ * suppressed so we never shadow native browser typing behaviour.
+ */
+const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
+  "action:save",
+  "action:export",
+  "palette:open",
+  "palette:openShiftP",
+  "palette:quickSwitcher",
+  "help:shortcuts",
+  "view:toggleSidebar",
+]);
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -30,67 +58,95 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return false;
 }
 
+// Module-load self-check: throws if two commands share a chord.
+// Documented in `findChordCollisions`. Caught here (not at first
+// keydown) so a broken registry surfaces during dev / test rather
+// than via a silent dispatch-to-the-wrong-action bug.
+{
+  const collisions = findChordCollisions(COMMAND_REGISTRY);
+  if (collisions.length > 0) {
+    const detail = collisions
+      .map((c) => `${c.chord}: ${c.ids.join(", ")}`)
+      .join("; ");
+    throw new Error(`Duplicate keyboard chord(s) in registry: ${detail}`);
+  }
+}
+
 export function useKeyboardShortcuts() {
   const navigate = useNavigate();
+  const { settings } = useSettings();
+  const { update: updateSetting } = useUpdateSetting();
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-
-      // Escape: close modals / dialogs. The Modal component owns
-      // its own document-level handler, so here we only emit a
-      // global "tessera:escape" event so any other consumer (e.g.
-      // search bar, command palette) can hook in.
-      if (e.key === "Escape" && !mod) {
+      // Escape is a global signal — modals own their own keydown
+      // listener but we still emit a tessera:escape event so far-
+      // away listeners (search bars, the command palette) can
+      // hook into it without coupling.
+      if (e.key === "Escape" && !(e.metaKey || e.ctrlKey)) {
         window.dispatchEvent(new CustomEvent("tessera:escape"));
         return;
       }
 
-      if (!mod) return;
+      const typing = isTypingTarget(e.target);
 
-      // Allow Ctrl/Cmd+S to fire from anywhere — including editor
-      // textareas — so users can force-save. Same for E (export).
-      switch (e.key.toLowerCase()) {
-        case "n":
-          if (isTypingTarget(e.target)) return;
-          e.preventDefault();
-          navigate("/create");
-          return;
-        case "s":
-          e.preventDefault();
-          window.dispatchEvent(new CustomEvent("tessera:save"));
-          return;
-        case "e":
-          e.preventDefault();
-          window.dispatchEvent(new CustomEvent("tessera:export"));
-          return;
-        case "f":
-          if (isTypingTarget(e.target)) return;
-          e.preventDefault();
-          window.dispatchEvent(new CustomEvent("tessera:focus-search"));
-          return;
-        case ",":
-          if (isTypingTarget(e.target)) return;
-          e.preventDefault();
-          navigate("/settings");
-          return;
-        default:
-          break;
+      // Walk the registry and dispatch the first matching command.
+      let matched: Command | null = null;
+      for (const cmd of COMMAND_REGISTRY) {
+        if (!cmd.chord) continue;
+        if (!chordMatchesEvent(cmd.chord, e)) continue;
+        if (typing && !TYPING_OVERRIDE_COMMAND_IDS.has(cmd.id)) continue;
+        matched = cmd;
+        break;
       }
+      if (!matched) return;
 
-      // Sidebar Ctrl/Cmd+1..N — derived from the navigation
-      // source of truth so the binding always matches the visual
-      // order in the sidebar.
-      if (SIDEBAR_NAV_BY_KEY[e.key]) {
-        if (isTypingTarget(e.target)) return;
-        e.preventDefault();
-        navigate(SIDEBAR_NAV_BY_KEY[e.key]);
+      e.preventDefault();
+
+      if (matched.kind === "navigate") {
+        navigate(matched.to);
+        return;
+      }
+      if (matched.kind === "dispatch") {
+        window.dispatchEvent(new CustomEvent(matched.event));
+        return;
+      }
+      if (matched.kind === "callback") {
+        switch (matched.callbackId) {
+          case "openCommandPalette":
+            window.dispatchEvent(
+              new CustomEvent("tessera:open-palette", {
+                detail: { mode: "full" },
+              }),
+            );
+            return;
+          case "openQuickSwitcher":
+            window.dispatchEvent(
+              new CustomEvent("tessera:open-palette", {
+                detail: { mode: "quickSwitcher" },
+              }),
+            );
+            return;
+          case "openShortcutsHelp":
+            window.dispatchEvent(new CustomEvent("tessera:open-shortcuts"));
+            return;
+          case "toggleSidebar":
+            window.dispatchEvent(new CustomEvent("tessera:toggle-sidebar"));
+            return;
+          case "toggleTheme": {
+            const next = settings.theme === "dark" ? "light" : "dark";
+            void updateSetting({ theme: next });
+            return;
+          }
+          default:
+            return;
+        }
       }
     };
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [navigate]);
+  }, [navigate, settings.theme, updateSetting]);
 }
 
 /**

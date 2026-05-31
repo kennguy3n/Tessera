@@ -288,6 +288,13 @@ const mockApi = {
       // accidentally render the wizard. Wizard-specific tests
       // override this field explicitly.
       onboardingCompleted: true,
+      // Phase 18 Task 16-17: default mock returns empty arrays so
+      // every page-level test starts with a fresh "no pins / no
+      // recents" state. Tests that exercise the command palette or
+      // sidebar Pinned section override these fields with the
+      // specific IDs they want to assert against.
+      pinnedArtifactIds: [],
+      recentArtifactIds: [],
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
@@ -295,6 +302,8 @@ const mockApi = {
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
       onboardingCompleted: true,
+      pinnedArtifactIds: [],
+      recentArtifactIds: [],
     }),
     // Hybrid search config lives on `settings` (not `sources`)
     // because the channel name is `settings:*` and the handler is

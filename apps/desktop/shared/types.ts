@@ -960,7 +960,65 @@ export interface SettingsData {
    * on `HomePage` for that case.
    */
   onboardingCompleted: boolean;
+  /**
+   * Phase 18 Task 16: artifact IDs the user has pinned ("favorited")
+   * from the command palette, the artifact editor header, or the
+   * right-click context menu on the home page. Order matters — the
+   * sidebar and command palette render them in the order the user
+   * pinned them, with the most recently pinned first.
+   *
+   * Stored in `SettingsData` (not on the artifact row itself) for
+   * two reasons:
+   *
+   *   1. Pinning is a per-install user preference, not an artifact
+   *      attribute — exporting / sharing an artifact should not
+   *      smuggle the original user's pinned state. Keeping it in
+   *      settings means it travels with the user, not the data.
+   *   2. The toggle path is renderer-driven and lossless: a single
+   *      `settings:update({ pinnedArtifactIds: [...] })` round-trip
+   *      replaces the whole list, with no risk of partial writes
+   *      desynchronising a pinned-set from an artifact row.
+   *
+   * Stale entries (IDs whose artifact has been deleted) are pruned
+   * lazily by the renderer when it joins `pinnedArtifactIds`
+   * against the live artifact list — there is no IPC needed at
+   * delete time.
+   */
+  pinnedArtifactIds: string[];
+  /**
+   * Phase 18 Task 17: artifact IDs in user-recency order (most
+   * recently *viewed* first), capped at 32 entries. Recorded every
+   * time the artifact editor mounts for a given ID, deduped so a
+   * given artifact appears at most once. The command palette's
+   * "Recent" group reads from this list — distinct from
+   * `useRecentArtifacts` which sorts by `updatedAt` and surfaces
+   * recently *edited* artifacts.
+   *
+   * The view-history vs. edit-history distinction matters because
+   * a user often wants to re-open an artifact they just inspected
+   * (e.g. comparing two reports side-by-side) without having
+   * touched its content. The 32-item cap is generous enough that
+   * realistic browsing sessions never spill it but small enough
+   * that the value stays cheap to serialise alongside the rest of
+   * `SettingsData`.
+   *
+   * Stale entries are pruned lazily by the renderer at join time
+   * against the live artifact list, same policy as
+   * `pinnedArtifactIds`.
+   */
+  recentArtifactIds: string[];
 }
+
+/**
+ * Phase 18 Task 17: maximum number of artifact IDs retained in
+ * {@link SettingsData.recentArtifactIds}. Centralised here (not in
+ * the renderer hook) because both the IPC validation schema
+ * `SettingsUpdateSchema.recentArtifactIds.max()` and the renderer
+ * `useTrackArtifactView` truncation logic must agree — a mismatch
+ * would either reject a legitimate write at the IPC boundary or
+ * silently let the renderer write past the documented cap.
+ */
+export const MAX_RECENT_ARTIFACTS = 32;
 
 // -----------------------------------------------------------------
 // External provider configuration

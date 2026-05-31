@@ -259,6 +259,15 @@ export function registerSettingsHandlers(): void {
       // the renderer so `OnboardingWizard` can decide whether to
       // mount itself.
       onboardingCompleted: config.onboardingCompleted,
+      // Phase 18 Task 16-17: persisted favorites + view-recency.
+      // The renderer fans these out to the command palette, the
+      // sidebar Pinned section, and the editor PinButton via
+      // `usePinnedArtifacts` / `useRecentlyViewedArtifacts`. Empty
+      // arrays are surfaced explicitly (vs. `undefined`) so the
+      // renderer's `?? []` paths can be removed and the shape is
+      // unambiguous in tests.
+      pinnedArtifactIds: config.pinnedArtifactIds,
+      recentArtifactIds: config.recentArtifactIds,
     } as SettingsData;
   });
 
@@ -299,12 +308,30 @@ export function registerSettingsHandlers(): void {
         "onboardingCompleted",
         String(parsed.onboardingCompleted),
       );
+    // Phase 18 Task 16-17: log delta-by-length for the same reason
+    // ignorePatterns / watchPatterns are logged by length — the
+    // IDs themselves aren't useful in an audit, but the
+    // "user added/removed a pin" or "user viewed 5 new artifacts
+    // since last write" event is. The cap is bounded (256 / 32)
+    // so this is always one short string per write.
+    if (parsed.pinnedArtifactIds !== undefined)
+      auditSettingsField(
+        "pinnedArtifactIds",
+        `${parsed.pinnedArtifactIds.length} pin(s)`,
+      );
+    if (parsed.recentArtifactIds !== undefined)
+      auditSettingsField(
+        "recentArtifactIds",
+        `${parsed.recentArtifactIds.length} entry(ies)`,
+      );
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
       ignorePatterns: persisted.ignorePatterns,
       watchPatterns: persisted.watchPatterns,
       onboardingCompleted: persisted.onboardingCompleted,
+      pinnedArtifactIds: persisted.pinnedArtifactIds,
+      recentArtifactIds: persisted.recentArtifactIds,
     } as SettingsData;
   });
 

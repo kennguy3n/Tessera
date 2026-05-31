@@ -11,6 +11,14 @@ const DEFAULT_SETTINGS: SettingsData = {
   // wizard on a previously-onboarded user. The real value is loaded
   // by `refresh()` on mount and overwrites this within a tick.
   onboardingCompleted: true,
+  // Phase 18 Task 16-17: empty arrays as the placeholder so the
+  // command palette and the sidebar Pinned section render an
+  // empty (rather than undefined-guarded) state during the brief
+  // window before `refresh()` resolves. Avoids one class of
+  // "Cannot read properties of undefined" footguns for downstream
+  // hooks that iterate the lists with `.map`/`.includes`.
+  pinnedArtifactIds: [],
+  recentArtifactIds: [],
 };
 
 export function useSettings() {

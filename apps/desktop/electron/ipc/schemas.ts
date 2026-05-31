@@ -167,6 +167,18 @@ export const SettingsUpdateSchema = z.object({
   // `.catch()` because a renderer-side type narrowing failure would
   // be a renderer bug worth surfacing rather than silently coercing.
   onboardingCompleted: z.boolean().optional(),
+  // Phase 18 Task 16: pinned/favorited artifact IDs. Cap mirrors
+  // `AppConfigSchema.pinnedArtifactIds.max(256)` so the IPC
+  // boundary rejects a malformed renderer write before it hits
+  // `updateConfig()`. Element max length matches the artifact ID
+  // bound used everywhere else (`assertId` enforces ≤ 1024).
+  pinnedArtifactIds: z.array(z.string().max(1024)).max(256).optional(),
+  // Phase 18 Task 17: view-recency list. Cap matches
+  // `MAX_RECENT_ARTIFACTS` (32) in `shared/types.ts` — see the doc
+  // comment on that const for the cross-layer agreement
+  // requirement. Element max length matches the artifact ID bound
+  // used everywhere else (`assertId` enforces ≤ 1024).
+  recentArtifactIds: z.array(z.string().max(1024)).max(32).optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 
