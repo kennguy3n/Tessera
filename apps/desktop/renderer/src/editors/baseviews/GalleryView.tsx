@@ -82,10 +82,14 @@ export default function GalleryView({
           // Key on the stable record id rather than the array index so
           // React reconciles cards by identity (drag/reorder, sort,
           // bulk delete all keep each Card mounted) instead of by
-          // position. This matches the grid view's `key={record.id ||
-          // originalIndex}` pattern.
+          // position. Pattern matches `KanbanView` / `CalendarView` /
+          // `TimelineView`: a `typeof` guard so a record reconstructed
+          // without a real id (legacy JSON, test fixture) falls back
+          // to a stringified index rather than coercing a non-string
+          // value into the key (Devin Review PR #84 round 2
+          // ANALYSIS-0003).
           <Card
-            key={record.id ?? index}
+            key={typeof record.id === "string" ? record.id : String(index)}
             record={record}
             recordIndex={index}
             fields={data.fields}

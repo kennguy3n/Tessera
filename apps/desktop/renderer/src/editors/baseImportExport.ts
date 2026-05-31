@@ -206,6 +206,7 @@ export function formatValueForCsv(
   allRecords: BaseRecord[],
   allFields: BaseField[],
   recordsById?: ReadonlyMap<string, BaseRecord>,
+  recordIndexById?: ReadonlyMap<string, number>,
 ): string {
   const value = record[field.name];
   // Per-render record-by-id lookup map. `resolveLinkedRecords`
@@ -276,8 +277,16 @@ export function formatValueForCsv(
 
     case "auto_number": {
       // Mirrors the cell's 1-based display so the CSV row number
-      // matches what the user saw in the grid.
-      const idx = allRecords.indexOf(record);
+      // matches what the user saw in the grid. When the caller
+      // threads a pre-built `id → index` map (filter / sort /
+      // export all do), use it for an O(1) lookup; otherwise fall
+      // back to the O(N) `indexOf` for callers that don't (mostly
+      // unit tests). Devin Review PR #84 ANALYSIS-0004 flagged the
+      // unconditional `indexOf` as the last remaining O(N) branch
+      // after the linked / rollup / lookup branches were lifted
+      // onto `recordsById`.
+      const idx =
+        recordIndexById?.get(record.id) ?? allRecords.indexOf(record);
       return idx >= 0 ? String(idx + 1) : "";
     }
 
@@ -384,12 +393,25 @@ export function exportBaseCsv(data: BaseContent): string {
   // rollup / lookup cell. With N records and M such columns the
   // savings compound from N*M map constructions to a single one.
   const recordsById = buildRecordIndex(records);
+  // Same lift for the `auto_number` branch — the cell's 1-based
+  // display is just `position + 1`, and looking up the position
+  // through this map keeps that branch O(1) per cell instead of
+  // O(N) via `allRecords.indexOf(record)`.
+  const recordIndexById = new Map<string, number>();
+  records.forEach((r, i) => recordIndexById.set(r.id, i));
   const header = fields.map((f) => csvEscapeCell(f.name)).join(",");
   const rows = records.map((record) =>
     fields
       .map((field) =>
         csvEscapeCell(
-          formatValueForCsv(field, record, records, fields, recordsById),
+          formatValueForCsv(
+            field,
+            record,
+            records,
+            fields,
+            recordsById,
+            recordIndexById,
+          ),
         ),
       )
       .join(","),
