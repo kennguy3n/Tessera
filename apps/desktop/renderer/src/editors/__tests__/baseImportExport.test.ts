@@ -31,6 +31,7 @@ import {
   parseJsonToBase,
 } from "../baseImportExport";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
+import { sanitizeBaseField } from "../baseEditorHelpers";
 
 describe("csvEscapeCell — RFC-4180 quoting", () => {
   it("returns empty input unchanged", () => {
@@ -898,6 +899,31 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     // sanitisation actually unblocks the export path.
     const csv = exportBaseCsv(result);
     expect(csv).toContain("50.");
+  });
+
+  it("runs inferred bare-array fields through sanitizeBaseField too — invariant pin (ANALYSIS-0006)", () => {
+    // The canonical-shape path already routes every field through
+    // `sanitizeBaseField`; the bare-array path previously emitted
+    // raw `{ name, type: "text" }` literals. For `text` this is a
+    // no-op today, but the asymmetry is a latent footgun if a
+    // future inference pass starts picking up `percent` /
+    // `currency` / `duration` from numeric columns — those types
+    // *do* carry sanitisable state (`percentPrecision`, etc.).
+    // Pin the invariant explicitly so any later inference work
+    // inherits the defensive contract for free: every field
+    // `parseJsonToBase` returns must be a fixed point under
+    // `sanitizeBaseField`.
+    const json = JSON.stringify([
+      { Name: "Alice", Score: 10 },
+      { Name: "Bob", Score: 20 },
+    ]);
+    const result = parseJsonToBase(json);
+    for (const field of result.fields) {
+      // `sanitizeBaseField` returns the same reference (by identity)
+      // when nothing needed changing — so a fully-sanitised field
+      // is a fixed point.
+      expect(sanitizeBaseField(field)).toBe(field);
+    }
   });
 });
 

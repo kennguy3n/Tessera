@@ -810,7 +810,16 @@ export function parseJsonToBase(jsonText: string): BaseContent {
         if (RESERVED_FIELD_NAMES.has(key)) continue;
         if (seen.has(key)) continue;
         seen.add(key);
-        fields.push({ name: key, type: "text" });
+        // Run inferred fields through the same sanitiser the canonical
+        // path uses. For `type: "text"` this is currently a no-op, but
+        // it locks in the invariant that *every* field returned by
+        // `parseJsonToBase` has gone through the same defensive pass —
+        // so a future inference pass that picks up `type: "number"`
+        // / `type: "percent"` / etc. cannot accidentally ship a field
+        // with an out-of-range `percentPrecision`, missing
+        // `currencyCode`, or other unsanitised state. Devin Review
+        // PR #79 (ANALYSIS_…_0006) flagged the asymmetry.
+        fields.push(sanitizeBaseField({ name: key, type: "text" }));
       }
     }
     const records: BaseRecord[] = cleanRows.map((row) => {

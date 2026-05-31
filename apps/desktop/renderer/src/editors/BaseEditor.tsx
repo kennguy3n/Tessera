@@ -2550,7 +2550,15 @@ function ImportDialog({
     if (!file) return;
     file
       .text()
-      .then((body) => setText(body))
+      .then((body) => {
+        setText(body);
+        // Programmatic `setText` does not fire the textarea's onChange
+        // (controlled-input updates only clear the error on real user input),
+        // so the symmetric clear has to live here. Otherwise a stale error
+        // from a prior failed Import sticks under the textarea even though
+        // the new file loaded cleanly. Devin Review PR #79 (BUG_…_0001).
+        setError(null);
+      })
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       );
