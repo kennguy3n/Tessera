@@ -1,4 +1,6 @@
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rusqlite::params;
@@ -11,6 +13,7 @@ use tessera_core::{
 
 use crate::chunker::Chunk;
 use crate::source::Source;
+use crate::vector_index::{IvfIndex, IVF_BRUTE_FORCE_THRESHOLD};
 
 fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(s)
@@ -53,6 +56,60 @@ pub struct SourceStore {
     /// instances sharing a connection will simply each pay a
     /// 30 s-amortised scan, never collide.
     non_ascii_cache: Mutex<Option<(Instant, (u64, u64))>>,
+    /// Phase 19 PR 9 Task 2: monotonic generation counter for the
+    /// set of rows that [`Self::load_embeddings_for_model`] would
+    /// return. Bumped on writes that can change that set —
+    /// embedding upserts, chunk deletes (which cascade to embedding
+    /// rows), and source-status transitions to/from
+    /// [`SourceStatus::AccessRevoked`] (which gate the join).
+    /// Compared against the per-entry generation in
+    /// [`Self::vector_index_cache`] on every search; a mismatch
+    /// invalidates the cached [`IvfIndex`] and forces a rebuild on
+    /// the next call to [`Self::vector_search_path_for_model`].
+    embedding_generation: AtomicU64,
+    /// Phase 19 PR 9 Task 2: per-`model_id` cache of built
+    /// [`IvfIndex`]es keyed by the generation counter at build
+    /// time. `Arc` so multiple in-flight searches share the same
+    /// instance without copying the centroid table. Entries that
+    /// fall below [`IVF_BRUTE_FORCE_THRESHOLD`] rows are stored as
+    /// `VectorIndexCacheEntry::BruteForce` so subsequent calls
+    /// don't re-pay the k-means build cost only to discard it.
+    vector_index_cache: Mutex<HashMap<String, VectorIndexCacheEntry>>,
+}
+
+/// One slot of [`SourceStore::vector_index_cache`]. `generation`
+/// matches the [`SourceStore::embedding_generation`] value at
+/// which the entry was built; the entry is invalid (and the
+/// caller must rebuild) once the live counter advances past it.
+#[derive(Debug, Clone)]
+struct VectorIndexCacheEntry {
+    generation: u64,
+    path: CachedVectorSearchPath,
+}
+
+/// Either a built [`IvfIndex`] or a raw embedding-row buffer to
+/// brute-force. The brute-force buffer is also cached so
+/// `vector_search_path_for_model` doesn't re-hit SQLite on every
+/// query for small corpora.
+#[derive(Debug, Clone)]
+enum CachedVectorSearchPath {
+    Ivf(Arc<IvfIndex>),
+    BruteForce(Arc<Vec<ChunkEmbeddingRow>>),
+}
+
+/// Public projection of [`CachedVectorSearchPath`] that
+/// [`hybrid_search`] consumes. Borrowing semantics let the caller
+/// score against the cached embedding rows without cloning.
+#[derive(Debug, Clone)]
+pub enum VectorSearchPath {
+    /// Use the IVF-Flat ANN index to retrieve approximate
+    /// top-k. O(√N) probe of `√K` cells.
+    Ivf(Arc<IvfIndex>),
+    /// Brute-force linear scan over every embedding row. Used
+    /// when the corpus is below [`IVF_BRUTE_FORCE_THRESHOLD`] —
+    /// the constant-factor cost of IVF (centroid scan + cell
+    /// probe + heap maintenance) only pays off above ~1K rows.
+    BruteForce(Arc<Vec<ChunkEmbeddingRow>>),
 }
 
 impl SourceStore {
@@ -99,6 +156,8 @@ impl SourceStore {
             conn,
             read_pool,
             non_ascii_cache: Mutex::new(None),
+            embedding_generation: AtomicU64::new(0),
+            vector_index_cache: Mutex::new(HashMap::new()),
         };
         store.init_schema()?;
         Ok(store)
@@ -622,6 +681,12 @@ impl SourceStore {
         conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
             .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Phase 19 PR 9 Task 2: removing a source cascades through
+        // chunks_ad_embeddings, so the cached IVF index for any
+        // model_id may now point at deleted chunk rows. Bump so the
+        // next search rebuilds against the post-delete row set.
+        drop(conn);
+        self.bump_embedding_generation();
         Ok(())
     }
 
@@ -817,6 +882,15 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         }
+        // Phase 19 PR 9 Task 2: source-status transitions to/from
+        // `AccessRevoked` change the join predicate in
+        // `load_embeddings_for_model`. Bump unconditionally — every
+        // status write potentially crosses the boundary, and the
+        // amortised cost of a missed-cache rebuild is dwarfed by
+        // the risk of returning revoked-source vectors in search
+        // results (or vice versa).
+        drop(conn);
+        self.bump_embedding_generation();
         Ok(())
     }
 
@@ -1336,6 +1410,13 @@ impl SourceStore {
 
             txn.commit().map_err(|e| Error::Database(e.to_string()))?;
 
+            // Phase 19 PR 9 Task 2: the DELETE FROM chunks above
+            // cascaded into `chunk_embeddings` via the
+            // `chunks_ad_embeddings` trigger. The hybrid-search
+            // cache cannot tell from the embedding-row generation
+            // alone that a cryptoshred just landed, so bump
+            // explicitly. Done inside the closure (after commit)
+            // so we only bump on the success path.
             Ok(())
         })();
 
@@ -1362,6 +1443,14 @@ impl SourceStore {
         // there's no point rebuilding the file when the rows weren't
         // deleted in the first place, and running VACUUM against a
         // poisoned connection would mask the original error.
+        // Phase 19 PR 9 Task 2: bump on the success path only.
+        // Done here (after the scrub closure returns) because we
+        // need to read `scrub_result` outside the closure scope and
+        // we must NOT bump if the transaction rolled back.
+        if scrub_result.is_ok() && chunks_to_drop > 0 {
+            self.bump_embedding_generation();
+        }
+
         let (vacuum_succeeded, vacuum_error) =
             if scrub_result.is_ok() && (chunks_to_drop > 0 || files_to_drop > 0) {
                 match conn.execute_batch("VACUUM;") {
@@ -1994,6 +2083,14 @@ impl SourceStore {
         // multilingual-hint cache after a chunk-set mutation.
         drop(conn);
         self.invalidate_non_ascii_cache();
+        // Phase 19 PR 9 Task 2: the `chunks_ad_embeddings` trigger
+        // cascades the chunk delete into `chunk_embeddings`, which
+        // changes the row set `load_embeddings_for_model` returns.
+        // Bump only when something was actually deleted to avoid
+        // gratuitously invalidating the cache on no-op calls.
+        if deleted > 0 {
+            self.bump_embedding_generation();
+        }
         Ok(u32::try_from(deleted).unwrap_or(u32::MAX))
     }
 
@@ -2685,7 +2782,111 @@ impl SourceStore {
             params![chunk_id, model_id, dim as i64, vec_bytes],
         )
         .map_err(|e| Error::Database(e.to_string()))?;
+        // Phase 19 PR 9 Task 2: a new / replaced embedding row
+        // changes the set `load_embeddings_for_model` returns —
+        // invalidate any cached IVF index for any model so the
+        // next search rebuilds against the fresh row set. Drop the
+        // writer lock first so the bump can't deadlock against the
+        // cache lock under another thread.
+        drop(conn);
+        self.bump_embedding_generation();
         Ok(())
+    }
+
+    /// Phase 19 PR 9 Task 2: bump the embedding-generation counter
+    /// so the next call to [`Self::vector_search_path_for_model`]
+    /// observes a generation mismatch and rebuilds the cached
+    /// [`IvfIndex`] / brute-force row buffer.
+    ///
+    /// Called from every write path that can change the set of
+    /// rows [`Self::load_embeddings_for_model`] returns:
+    /// embedding upserts, chunk deletions (which cascade to
+    /// `chunk_embeddings`), source-status transitions, and
+    /// AccessRevoked toggles.
+    pub fn bump_embedding_generation(&self) {
+        self.embedding_generation.fetch_add(1, Ordering::Release);
+    }
+
+    /// Phase 19 PR 9 Task 2: return the cached vector search
+    /// strategy for `model_id`, building (and caching) a new
+    /// [`IvfIndex`] on miss / staleness.
+    ///
+    /// `query_dim` is the dimensionality of the query vector —
+    /// rows whose stored vector has a different length are excluded
+    /// from the index (so the IVF result is observationally
+    /// compatible with the brute-force [`rank_chunks_by_cosine`]
+    /// path that also filters on dim).
+    ///
+    /// Below [`IVF_BRUTE_FORCE_THRESHOLD`] rows we don't pay the
+    /// k-means build cost; the cache holds the loaded row buffer
+    /// directly so subsequent calls also skip the SQL round-trip.
+    /// Above the threshold we build and cache the IVF index; the
+    /// query path then probes ⌈√K⌉ cells out of K = ⌈√N⌉.
+    ///
+    /// Mutex contention: this holds `vector_index_cache` for the
+    /// duration of the SQL load + k-means build on a miss. The
+    /// build is amortised across thousands of queries (cache hits
+    /// are lock-only), and the per-`model_id` partitioning means
+    /// different providers don't serialise against each other.
+    /// Defensive: if the load returns zero rows the empty buffer
+    /// is still cached so we don't re-hit SQLite on every query for
+    /// fresh installs.
+    pub fn vector_search_path_for_model(
+        &self,
+        model_id: &str,
+        query_dim: usize,
+    ) -> Result<VectorSearchPath> {
+        let current_gen = self.embedding_generation.load(Ordering::Acquire);
+        {
+            // Fast path: cache hit at the current generation.
+            let cache = self
+                .vector_index_cache
+                .lock()
+                .expect("vector_index_cache mutex poisoned");
+            if let Some(entry) = cache.get(model_id) {
+                if entry.generation == current_gen {
+                    return Ok(match &entry.path {
+                        CachedVectorSearchPath::Ivf(idx) => VectorSearchPath::Ivf(Arc::clone(idx)),
+                        CachedVectorSearchPath::BruteForce(rows) => {
+                            VectorSearchPath::BruteForce(Arc::clone(rows))
+                        }
+                    });
+                }
+            }
+            // Drop the lock before doing I/O / k-means.
+        }
+
+        // Slow path: load embeddings (full table scan, dispatches
+        // through the read pool) and build the index.
+        let rows = self.load_embeddings_for_model(model_id)?;
+        let build_gen = self.embedding_generation.load(Ordering::Acquire);
+        let path = if rows.len() < IVF_BRUTE_FORCE_THRESHOLD || query_dim == 0 {
+            // Below threshold OR query has unknown dim — keep raw
+            // rows so the caller can run the existing brute-force
+            // cosine scan unchanged.
+            CachedVectorSearchPath::BruteForce(Arc::new(rows))
+        } else {
+            let idx = IvfIndex::build(&rows, model_id, query_dim);
+            CachedVectorSearchPath::Ivf(Arc::new(idx))
+        };
+
+        // Re-acquire the lock, install the entry (overwriting any
+        // stale generation), and return a clone.
+        let mut cache = self
+            .vector_index_cache
+            .lock()
+            .expect("vector_index_cache mutex poisoned");
+        cache.insert(
+            model_id.to_string(),
+            VectorIndexCacheEntry {
+                generation: build_gen,
+                path: path.clone(),
+            },
+        );
+        Ok(match path {
+            CachedVectorSearchPath::Ivf(idx) => VectorSearchPath::Ivf(idx),
+            CachedVectorSearchPath::BruteForce(rows) => VectorSearchPath::BruteForce(rows),
+        })
     }
 
     /// Load every embedding stored for a given model. Used by hybrid
@@ -3497,6 +3698,291 @@ mod tests {
              but got {} row(s)",
             rows_after.len(),
         );
+    }
+
+    /// Phase 19 PR 9 Task 2: small-corpus path returns the cached
+    /// brute-force row buffer (not an `IvfIndex`). Verifies the
+    /// threshold short-circuit so we don't pay k-means build cost
+    /// on tiny corpora where the brute-force scan is already
+    /// faster.
+    #[test]
+    fn vector_search_path_under_threshold_returns_brute_force() {
+        use crate::store::VectorSearchPath;
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/vsp-small".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/vsp-small/a.txt", "h", "2026-01-01")
+            .unwrap();
+        let ids = store
+            .insert_chunks_returning_ids(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/vsp-small/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "alpha".to_string(),
+                    hash: "h1".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        let vec_bytes = crate::embedding::encode_vec(&[1.0f32, 0.0, 0.0]);
+        store
+            .upsert_chunk_embedding(ids[0], "test-model", 3, &vec_bytes)
+            .unwrap();
+
+        let path = store
+            .vector_search_path_for_model("test-model", 3)
+            .unwrap();
+        match path {
+            VectorSearchPath::BruteForce(rows) => {
+                assert_eq!(rows.len(), 1, "tiny corpus must brute-force");
+                assert_eq!(rows[0].chunk_id, ids[0]);
+            }
+            VectorSearchPath::Ivf(_) => panic!("expected BruteForce path below threshold"),
+        }
+    }
+
+    /// Phase 19 PR 9 Task 2: the cache returns the same `Arc` on
+    /// back-to-back calls at the same generation. Pins the
+    /// "build once, reuse forever" contract that makes IVF
+    /// amortised — without it the k-means build would re-run on
+    /// every query.
+    #[test]
+    fn vector_search_path_caches_across_calls_at_same_generation() {
+        use crate::store::VectorSearchPath;
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/vsp-cache".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/vsp-cache/a.txt", "h", "2026-01-01")
+            .unwrap();
+        let chunks: Vec<_> = (0..5)
+            .map(|i| crate::chunker::Chunk {
+                source_path: "/tmp/vsp-cache/a.txt".to_string(),
+                chunk_index: i,
+                byte_offset: i,
+                content: format!("c{i}"),
+                hash: format!("h{i}"),
+                extraction_method: None,
+                extraction_model_id: None,
+            })
+            .collect();
+        let ids = store.insert_chunks_returning_ids(file_id, &chunks).unwrap();
+        for (i, &id) in ids.iter().enumerate() {
+            let vec_bytes = crate::embedding::encode_vec(&[i as f32, 0.0, 0.0]);
+            store
+                .upsert_chunk_embedding(id, "test-model", 3, &vec_bytes)
+                .unwrap();
+        }
+
+        let p1 = store
+            .vector_search_path_for_model("test-model", 3)
+            .unwrap();
+        let p2 = store
+            .vector_search_path_for_model("test-model", 3)
+            .unwrap();
+        // Cached path must share `Arc` storage with the previous
+        // return value — `Arc::strong_count` would be > 1 because
+        // both `p1` and the cache slot hold references.
+        match (p1, p2) {
+            (VectorSearchPath::BruteForce(a), VectorSearchPath::BruteForce(b)) => {
+                assert!(
+                    Arc::ptr_eq(&a, &b),
+                    "cache must hand out the same Arc on consecutive calls"
+                );
+            }
+            _ => panic!("expected BruteForce on both reads"),
+        }
+    }
+
+    /// Phase 19 PR 9 Task 2: an embedding-row upsert must
+    /// invalidate the cache so the NEXT search observes the new
+    /// row. Pins the bump in `upsert_chunk_embedding`.
+    #[test]
+    fn vector_search_path_invalidates_on_embedding_upsert() {
+        use crate::store::VectorSearchPath;
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/vsp-inv".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/vsp-inv/a.txt", "h", "2026-01-01")
+            .unwrap();
+        let ids = store
+            .insert_chunks_returning_ids(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/vsp-inv/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "first".to_string(),
+                    hash: "h1".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        let v1_bytes = crate::embedding::encode_vec(&[1.0f32, 0.0]);
+        store
+            .upsert_chunk_embedding(ids[0], "test-model", 2, &v1_bytes)
+            .unwrap();
+
+        // Warm the cache.
+        let warm = store
+            .vector_search_path_for_model("test-model", 2)
+            .unwrap();
+        let warm_rows = match warm {
+            VectorSearchPath::BruteForce(rows) => rows,
+            VectorSearchPath::Ivf(_) => panic!("small corpus expected to brute-force"),
+        };
+        assert_eq!(warm_rows.len(), 1);
+
+        // Add a second chunk + embedding. The cache MUST observe
+        // the bump and rebuild.
+        let new_ids = store
+            .insert_chunks_returning_ids(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/vsp-inv/a.txt".to_string(),
+                    chunk_index: 1,
+                    byte_offset: 1,
+                    content: "second".to_string(),
+                    hash: "h2".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        let v2_bytes = crate::embedding::encode_vec(&[0.0f32, 1.0]);
+        store
+            .upsert_chunk_embedding(new_ids[0], "test-model", 2, &v2_bytes)
+            .unwrap();
+
+        let after = store
+            .vector_search_path_for_model("test-model", 2)
+            .unwrap();
+        let after_rows = match after {
+            VectorSearchPath::BruteForce(rows) => rows,
+            VectorSearchPath::Ivf(_) => panic!("small corpus expected to brute-force"),
+        };
+        assert_eq!(
+            after_rows.len(),
+            2,
+            "cache must rebuild after embedding upsert"
+        );
+    }
+
+    /// Phase 19 PR 9 Task 2: a source-status transition into
+    /// AccessRevoked must invalidate the cache so the revoked
+    /// rows drop out on the next search. Pins the bump in
+    /// `update_source_status`.
+    #[test]
+    fn vector_search_path_invalidates_on_source_status_change() {
+        use crate::store::VectorSearchPath;
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/vsp-acl".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/vsp-acl/a.txt", "h", "2026-01-01")
+            .unwrap();
+        let ids = store
+            .insert_chunks_returning_ids(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/vsp-acl/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "x".to_string(),
+                    hash: "hx".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        let vb = crate::embedding::encode_vec(&[1.0f32, 0.0]);
+        store
+            .upsert_chunk_embedding(ids[0], "test-model", 2, &vb)
+            .unwrap();
+
+        // Warm the cache.
+        let warm = store
+            .vector_search_path_for_model("test-model", 2)
+            .unwrap();
+        match warm {
+            VectorSearchPath::BruteForce(rows) => assert_eq!(rows.len(), 1),
+            VectorSearchPath::Ivf(_) => panic!("expected BruteForce on small corpus"),
+        }
+
+        // Revoke. Cache must observe the bump and the next call
+        // must reload from SQL with the AccessRevoked filter
+        // dropping the row.
+        store
+            .update_source_status(&source.id, SourceStatus::AccessRevoked, None)
+            .unwrap();
+        let after = store
+            .vector_search_path_for_model("test-model", 2)
+            .unwrap();
+        match after {
+            VectorSearchPath::BruteForce(rows) => assert!(
+                rows.is_empty(),
+                "revoked-source rows must drop out after status change"
+            ),
+            VectorSearchPath::Ivf(_) => {
+                panic!("expected BruteForce on small (revoked → 0) corpus")
+            }
+        }
+    }
+
+    /// Phase 19 PR 9 Task 2: when the corpus exceeds
+    /// `IVF_BRUTE_FORCE_THRESHOLD` rows the cache hands out an
+    /// `IvfIndex`, not a row buffer. Smoke test — recall vs
+    /// brute-force is exercised by the vector_index unit tests.
+    #[test]
+    fn vector_search_path_above_threshold_returns_ivf() {
+        use crate::store::VectorSearchPath;
+        use crate::vector_index::IVF_BRUTE_FORCE_THRESHOLD;
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/vsp-big".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/vsp-big/a.txt", "h", "2026-01-01")
+            .unwrap();
+        // Insert IVF_BRUTE_FORCE_THRESHOLD + 1 chunks so the
+        // threshold check definitely fires. The chunks themselves
+        // are simple — different per-chunk content gives unique
+        // hashes which `insert_chunks_returning_ids` requires.
+        let n = IVF_BRUTE_FORCE_THRESHOLD + 1;
+        let chunks: Vec<_> = (0..n)
+            .map(|i| crate::chunker::Chunk {
+                source_path: "/tmp/vsp-big/a.txt".to_string(),
+                chunk_index: i,
+                byte_offset: i,
+                content: format!("c{i}"),
+                hash: format!("h{i}"),
+                extraction_method: None,
+                extraction_model_id: None,
+            })
+            .collect();
+        let ids = store.insert_chunks_returning_ids(file_id, &chunks).unwrap();
+        for (i, &id) in ids.iter().enumerate() {
+            let v = vec![(i as f32) / (n as f32), 0.5, 0.5];
+            let vb = crate::embedding::encode_vec(&v);
+            store
+                .upsert_chunk_embedding(id, "test-model", 3, &vb)
+                .unwrap();
+        }
+
+        let path = store
+            .vector_search_path_for_model("test-model", 3)
+            .unwrap();
+        match path {
+            VectorSearchPath::Ivf(idx) => assert_eq!(idx.len(), n, "IVF must hold all rows"),
+            VectorSearchPath::BruteForce(_) => {
+                panic!("corpus above threshold must build IvfIndex, got BruteForce")
+            }
+        }
     }
 
     /// Block B Task 4 (Phase 11): low-level regression for

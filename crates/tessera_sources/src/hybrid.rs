@@ -68,7 +68,7 @@
 //! et al. recommend and is what Elasticsearch defaults to).
 
 use crate::embedding::{cosine_similarity, EmbeddingProvider};
-use crate::store::{ChunkEmbeddingRow, SourceStore};
+use crate::store::{ChunkEmbeddingRow, SourceStore, VectorSearchPath};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tessera_core::error::{Error, Result};
@@ -493,8 +493,35 @@ pub fn hybrid_search(
     let vector: Vec<RankedCandidate> = if vector_active {
         let p = provider.expect("vector_active implies provider is Some");
         let query_vec = p.embed(query)?;
-        let rows = store.load_embeddings_for_model(p.model_id())?;
-        rank_chunks_by_cosine(&rows, &query_vec, p.model_id(), pool)
+        // Phase 19 PR 9 Task 2: route through the cached search
+        // path. Below `IVF_BRUTE_FORCE_THRESHOLD` rows the cache
+        // hands us the raw `ChunkEmbeddingRow` buffer and we run
+        // the brute-force cosine scan unchanged (preserving exact
+        // historical rank order on small corpora). Above the
+        // threshold the cache hands us a built `IvfIndex` that
+        // probes `⌈√K⌉` of `K` cells and runs in ~O(√N) instead of
+        // O(N).
+        //
+        // The IVF result is observationally compatible with the
+        // brute-force result on the contract surface that matters
+        // for fusion: chunk ids (with `chunk_id` ascending as the
+        // tiebreaker) and dense rank ordering. RRF only uses
+        // rank, not raw cosine score, so the ANN approximation is
+        // absorbed at the rank-fusion stage.
+        match store.vector_search_path_for_model(p.model_id(), query_vec.len())? {
+            VectorSearchPath::BruteForce(rows) => {
+                rank_chunks_by_cosine(&rows, &query_vec, p.model_id(), pool)
+            }
+            VectorSearchPath::Ivf(index) => index
+                .top_k_cosine(&query_vec, pool)
+                .into_iter()
+                .enumerate()
+                .map(|(rank, hit)| RankedCandidate {
+                    chunk_id: hit.chunk_id,
+                    rank,
+                })
+                .collect(),
+        }
     } else {
         Vec::new()
     };
