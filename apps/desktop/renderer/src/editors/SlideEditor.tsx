@@ -6,6 +6,7 @@ import {
   useId,
   useMemo,
   type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
   renderMermaid,
@@ -33,8 +34,7 @@ import {
   uploadTokenKey,
   appendBlock,
   replaceBlock,
-  slideWordCount,
-  deckWordCount,
+  computeDeckWordCounts,
   findInSlides,
   fileToDataUrl,
   nextBlockForTypeChange,
@@ -212,6 +212,44 @@ export default function SlideEditor({
       document.removeEventListener("keydown", onKey);
     };
   }, [layoutMenuOpen]);
+
+  // Global Ctrl+PageUp / Ctrl+PageDown — navigate to the previous /
+  // next slide regardless of which control inside the editor has
+  // focus. Matches Google Slides / LibreOffice Impress / Keynote and
+  // mirrors the document-editor's `Ctrl+F` find shortcut wiring
+  // (DocumentEditor.tsx: same global-listener pattern).
+  //
+  // Behaviour notes:
+  //   * `PageUp` / `PageDown` aren't text-editing keys in any
+  //     browser-shipped textarea / input, so swallowing them with
+  //     `preventDefault()` doesn't conflict with native edit gestures.
+  //   * Cmd is treated identically to Ctrl so macOS users get the
+  //     same shortcut without a separate code path. The browser
+  //     itself doesn't reserve `Cmd+PageUp/Dn` on macOS (it's not a
+  //     tab-switch chord like `Cmd+Opt+Arrow`), so there's no
+  //     accelerator collision.
+  //   * The listener is attached ONCE for the component lifetime
+  //     and reads the latest `navigateBy` via a ref. This avoids
+  //     detaching / re-attaching the document-level listener every
+  //     time `slides.length` changes (which is every keystroke
+  //     that adds/removes a slide). The `navigateByRef` is updated
+  //     inline below `navigateBy`'s declaration so the listener
+  //     always sees the freshest closure without being recreated.
+  const navigateByRef = useRef<(delta: number) => void>(() => {});
+  useEffect(() => {
+    const onNavKey = (event: KeyboardEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      if (event.key === "PageUp") {
+        event.preventDefault();
+        navigateByRef.current(-1);
+      } else if (event.key === "PageDown") {
+        event.preventDefault();
+        navigateByRef.current(1);
+      }
+    };
+    document.addEventListener("keydown", onNavKey);
+    return () => document.removeEventListener("keydown", onNavKey);
+  }, []);
 
   const debouncedSave = useCallback(
     (updatedSlides: Slide[], marpState?: MarpModeState) => {
@@ -403,6 +441,143 @@ export default function SlideEditor({
       });
     },
     [debouncedSave],
+  );
+
+  // Pure navigation — change which slide is active without touching
+  // the deck order. Phase 19 PR 11 introduces this as the canonical
+  // "navigate by N slides" primitive, shared by:
+  //
+  //   * the toolbar Prev / Next buttons,
+  //   * the `Ctrl+PageUp` / `Ctrl+PageDown` global keyboard shortcuts,
+  //   * the sidebar Arrow-Up / Arrow-Down handler.
+  //
+  // Uses the functional `setActiveIndex` form so the closure doesn't
+  // capture a stale `activeIndex`, and reads `slides.length` from the
+  // dep array so a rapid sequence of navigates during a deck-size
+  // change clamps against the current length, not a captured one.
+  // Clamping (rather than wrapping or no-oping past the edge) matches
+  // LibreOffice Impress and Google Slides behaviour: holding the key
+  // at the last slide is a no-op, not a wrap-to-first.
+  const navigateBy = useCallback(
+    (delta: number) => {
+      setActiveIndex((current) => {
+        if (slides.length === 0) return current;
+        const next = current + delta;
+        return Math.max(0, Math.min(slides.length - 1, next));
+      });
+    },
+    [slides.length],
+  );
+  // Keep `navigateByRef` pointed at the latest `navigateBy` closure
+  // so the global Ctrl+PageUp/Down listener (attached once at mount)
+  // always invokes the current implementation. `navigateBy` itself
+  // changes identity whenever `slides.length` does — without the ref
+  // dance, we'd be detaching and re-attaching a document-level
+  // keydown listener on every deck-size change.
+  navigateByRef.current = navigateBy;
+
+  // Same primitive as `navigateBy` but for absolute targets (Home,
+  // End, sidebar click). The thumb buttons themselves still wire
+  // `onClick={() => setActiveIndex(i)}` directly because they pass a
+  // known-valid index from the render `slides.map(...)`; this helper
+  // is the public form that can be called with anything (e.g.
+  // `goToSlide(slides.length - 1)` for End, which would be a stale
+  // value if the deck shrank between keydown and the setState fire).
+  const goToSlide = useCallback(
+    (target: number) => {
+      setActiveIndex(() => {
+        if (slides.length === 0) return 0;
+        return Math.max(0, Math.min(slides.length - 1, target));
+      });
+    },
+    [slides.length],
+  );
+
+  // Refs to each `.slide-thumb` <button>, keyed by `slide.id`. Used by
+  // the sidebar arrow-key handler to programmatically focus the newly
+  // active thumb so the focus ring follows the user's selection.
+  //
+  // Keying by `slide.id` (not array index) is important: when a
+  // reorder happens, the thumb's index changes but its id (and DOM
+  // element identity, because the React key is also `slide.id`) is
+  // stable. The handler can therefore look up "the thumb the active
+  // slide *is now*" without caring about reorder.
+  //
+  // We delete from the map on unmount (the ref callback receives
+  // `null` when React detaches the element) so removed slides don't
+  // leave dangling DOM references after the slide is deleted from
+  // the deck.
+  const thumbRefs = useRef<Map<string, HTMLButtonElement | null>>(
+    new Map(),
+  );
+
+  // Ref-callback factory bound to a specific `slide.id`. Stable
+  // across renders for the same id (so React doesn't see a new ref
+  // function every render and detach/re-attach the DOM node). We
+  // memoise the factory itself via `useCallback`; the per-id
+  // closure is recreated on each call but React's ref-callback
+  // protocol only cares about reference-stability for the SAME id,
+  // which this gives.
+  const setThumbRef = useCallback(
+    (id: string) => (node: HTMLButtonElement | null) => {
+      if (node) {
+        thumbRefs.current.set(id, node);
+      } else {
+        thumbRefs.current.delete(id);
+      }
+    },
+    [],
+  );
+
+  // Arrow-key navigation handler attached to each thumb's <button>.
+  // Mirrors the standard listbox-pattern keyboard contract:
+  //
+  //   ArrowUp   → navigate to previous slide
+  //   ArrowDown → navigate to next slide
+  //   Home      → jump to first slide
+  //   End       → jump to last slide
+  //
+  // Phase 19 PR 11: this is the third entry point into the shared
+  // `navigateBy` / `goToSlide` navigation primitives, alongside the
+  // toolbar Prev/Next buttons and the global Ctrl+PageUp/Dn
+  // shortcut. Matches the WAI-ARIA "listbox" authoring practice for
+  // a vertically-oriented set of options.
+  //
+  // After updating the active index we programmatically focus the
+  // target thumb so the focus ring follows the selection. The
+  // target thumb is already mounted (only the `active` class
+  // changes between renders, not the element identity), so the
+  // focus call works synchronously without waiting for React to
+  // re-render.
+  const handleThumbKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>, slideIndex: number) => {
+      let targetIndex: number | null = null;
+      if (event.key === "ArrowUp") {
+        targetIndex = Math.max(0, slideIndex - 1);
+      } else if (event.key === "ArrowDown") {
+        targetIndex = Math.min(slides.length - 1, slideIndex + 1);
+      } else if (event.key === "Home") {
+        targetIndex = 0;
+      } else if (event.key === "End") {
+        targetIndex = slides.length - 1;
+      } else {
+        return;
+      }
+      // Always preventDefault on the keys we handle, even on edge no-ops
+      // (e.g. ArrowUp at index 0). Otherwise the browser would scroll
+      // the sidebar container in response to the arrow key, which
+      // produces a confusing "the keypress did SOMETHING but not what
+      // I expected" feel.
+      event.preventDefault();
+      if (targetIndex === slideIndex) return;
+      goToSlide(targetIndex);
+      const target = slides[targetIndex];
+      if (target) {
+        const node = thumbRefs.current.get(target.id);
+        node?.focus();
+      }
+    },
+    [goToSlide, slides],
   );
 
   // ───── Block-level mutators (delegate to helpers) ─────────────────
@@ -637,8 +812,33 @@ export default function SlideEditor({
   );
 
   const activeSlide = slides[activeIndex];
-  const activeWordCount = activeSlide ? slideWordCount(activeSlide) : 0;
-  const totalWordCount = useMemo(() => deckWordCount(slides), [slides]);
+  // Per-slide word-count cache, sized to the deck.
+  //
+  // Phase 19 PR 11 perf: the toolbar reads `<active> / <total>` on every
+  // render. A single keystroke on a 50-slide deck used to walk every
+  // slide twice — once inline for `activeWordCount`, once via the
+  // `useMemo` on `deckWordCount(slides)` — because the immutable
+  // update yields a new `slides` reference even when only the active
+  // slide actually changed.
+  //
+  // `wordCountCacheRef` survives the component lifetime in a `WeakMap`
+  // (no manual cleanup; abandoned Slide objects garbage-collect
+  // normally because the cache only weakly references them). Every
+  // slide whose object identity didn't change between renders hits the
+  // cache in O(1), so a one-slide edit costs `O(W_active_slide)`
+  // instead of `O(N * W)`.
+  //
+  // The cache pattern mirrors `BaseEditor`'s `resolveLinkedRecords`
+  // map (PR #84) and the `SheetEditor` incremental-recalc cache
+  // (PR #83) — the third Phase 19 perf win, this time for the slide
+  // surface.
+  const wordCountCacheRef = useRef<WeakMap<Slide, number>>(new WeakMap());
+  const wordCounts = useMemo(
+    () => computeDeckWordCounts(slides, wordCountCacheRef.current),
+    [slides],
+  );
+  const activeWordCount = wordCounts.perSlide[activeIndex] ?? 0;
+  const totalWordCount = wordCounts.total;
 
   return (
     <div className="slide-editor">
@@ -720,6 +920,7 @@ export default function SlideEditor({
                 * intended interaction.
                 */}
               <button
+                ref={setThumbRef(slide.id)}
                 type="button"
                 className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
                 draggable={false}
@@ -730,6 +931,7 @@ export default function SlideEditor({
                 // sighted users' visual highlight.
                 aria-current={i === activeIndex ? "true" : undefined}
                 onClick={() => setActiveIndex(i)}
+                onKeyDown={(event) => handleThumbKeyDown(event, i)}
               >
                 <span className="slide-thumb-number">{i + 1}</span>
                 <span className="slide-thumb-title">{slide.title || "Untitled"}</span>
@@ -791,13 +993,35 @@ export default function SlideEditor({
 
       <div className="slide-editor-main">
         <div className="slide-editor-toolbar">
+          {/*
+           * Phase 19 PR 11: the toolbar has TWO distinct pairs of
+           * arrow buttons that used to be conflated:
+           *
+           *   1. Navigation (Prev / Next) — change which slide is
+           *      active without touching deck order. Mirror of
+           *      `Ctrl+PageUp` / `Ctrl+PageDown` (global) and the
+           *      sidebar's `Arrow ↑` / `Arrow ↓` handler.
+           *
+           *   2. Reorder (Move ↑ / Move ↓) — shift the active slide
+           *      one position earlier / later in the deck. Mirror of
+           *      drag-and-drop reorder introduced in PR 82.
+           *
+           * Before this PR the toolbar had only the reorder pair but
+           * labelled them "Prev / Next", which collides with the
+           * standard slide-deck navigation convention (Impress /
+           * Slides / Keynote all use Prev / Next to mean "navigate").
+           * Both pairs now ship side-by-side with unambiguous labels
+           * and aria-labels.
+           */}
           <button
             type="button"
             className="btn-sm"
-            onClick={() => moveSlide(activeIndex, activeIndex - 1)}
+            onClick={() => navigateBy(-1)}
             disabled={activeIndex === 0}
+            aria-label="Previous slide"
+            title="Previous slide (Ctrl+PageUp)"
           >
-            Prev
+            ← Prev
           </button>
           <span>
             Slide {activeIndex + 1} / {slides.length}
@@ -805,10 +1029,32 @@ export default function SlideEditor({
           <button
             type="button"
             className="btn-sm"
+            onClick={() => navigateBy(1)}
+            disabled={activeIndex === slides.length - 1}
+            aria-label="Next slide"
+            title="Next slide (Ctrl+PageDown)"
+          >
+            Next →
+          </button>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={() => moveSlide(activeIndex, activeIndex - 1)}
+            disabled={activeIndex === 0}
+            aria-label="Move slide up"
+            title="Move this slide one position earlier"
+          >
+            ↑ Move
+          </button>
+          <button
+            type="button"
+            className="btn-sm"
             onClick={() => moveSlide(activeIndex, activeIndex + 1)}
             disabled={activeIndex === slides.length - 1}
+            aria-label="Move slide down"
+            title="Move this slide one position later"
           >
-            Next
+            ↓ Move
           </button>
           <span
             className="slide-word-count"
