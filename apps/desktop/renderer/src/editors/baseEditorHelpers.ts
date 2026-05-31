@@ -63,10 +63,11 @@ export function makeRecordId(): string {
 }
 
 /**
- * Mutate-free pass that guarantees every record carries a stable `id`.
- * Records that already have an id keep theirs (round-trip safety);
- * legacy records loaded from artifacts that pre-date PR 4 are
- * assigned one on first parse so linked_record can reference them.
+ * Mutate-free pass that guarantees every record carries a stable AND
+ * UNIQUE `id`. Records that already have a unique id keep theirs
+ * (round-trip safety); legacy records loaded from artifacts that
+ * pre-date PR 4 are assigned one on first parse so linked_record
+ * can reference them.
  *
  * Defensive: hand-edited JSON can carry `[null, 42, "oops"]`-style
  * arrays even after `parseBaseContent` has coerced the *outer* value
@@ -74,10 +75,28 @@ export function makeRecordId(): string {
  * primitive or null has no fields to preserve and would crash the
  * spread on the next line — and re-key every survivor so callers can
  * treat the return value as `BaseRecord[]` without further checks.
+ *
+ * Duplicate-id de-duplication: hand-edited JSON can also carry two
+ * records both claiming `id: "abc"`. Downstream consumers
+ * (`recordIndexById`, `linked_record` resolution, `removeRecord`'s
+ * id-keyed lookup) all use a `Map<id, …>` keyed on id — last write
+ * wins, which silently masks the earlier record. Editing the first
+ * visible duplicate would therefore mutate the second one. The fix
+ * is structural: re-mint a fresh id for every record after the first
+ * occurrence of a given id, so the in-memory data model never has
+ * id collisions even if the file did. The original (good) record
+ * keeps its id; subsequent collisions get a new random id (which
+ * `linked_record` references against the OLD duplicate are still
+ * dangling, but that's now visible to the user via the existing
+ * "unknown link" graceful-degrade path instead of being aliased
+ * onto the wrong row). Collision with a brand-new makeRecordId() is
+ * astronomically unlikely (64 bits of randomness), and we still
+ * guard against it by re-checking `seen` after mint.
  */
 export function ensureRecordIds(records: unknown[]): BaseRecord[] {
   let changed = false;
   const out: BaseRecord[] = [];
+  const seen = new Set<string>();
   for (const r of records) {
     if (typeof r !== "object" || r === null || Array.isArray(r)) {
       // Drop primitives, null, and arrays — none can be turned into a
@@ -86,12 +105,20 @@ export function ensureRecordIds(records: unknown[]): BaseRecord[] {
       continue;
     }
     const rec = r as BaseRecord;
-    if (typeof rec.id === "string" && rec.id) {
+    if (typeof rec.id === "string" && rec.id && !seen.has(rec.id)) {
+      seen.add(rec.id);
       out.push(rec);
       continue;
     }
+    // Either no id, empty id, or a duplicate of an id we've already
+    // emitted — mint a fresh one. Loop on `seen.has` to guard the
+    // (astronomically unlikely) case that `makeRecordId` collides
+    // with an id we've already used.
     changed = true;
-    out.push({ ...rec, id: makeRecordId() });
+    let nextId = makeRecordId();
+    while (seen.has(nextId)) nextId = makeRecordId();
+    seen.add(nextId);
+    out.push({ ...rec, id: nextId });
   }
   // Preserve referential identity when the input was already
   // well-formed — keeps `useState` initializers stable across HMR.

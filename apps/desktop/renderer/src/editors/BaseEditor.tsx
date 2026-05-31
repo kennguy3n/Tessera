@@ -456,25 +456,36 @@ export default function BaseEditor({
               return (
                 <tr key={record.id || originalIndex}>
                   <td className="base-row-num">{ri + 1}</td>
-                  {data.fields.map((field) => (
-                    <td key={field.name} className="base-cell">
-                      <CellInput
-                        field={field}
-                        value={record[field.name]}
-                        record={record}
-                        recordIndex={originalIndex}
-                        allRecords={data.records}
-                        allFields={data.fields}
-                        onChange={(val) => updateCell(originalIndex, field.name, val)}
-                        onExpand={() =>
-                          setExpandedCell({
-                            recordId: record.id,
-                            fieldName: field.name,
-                          })
-                        }
-                      />
-                    </td>
-                  ))}
+                  {data.fields.map((field) => {
+                    // Match by the same (recordId, fieldName) tuple
+                    // the modal itself uses — so when the user opens
+                    // the modal on cell X, the inline cell X locks
+                    // and inline cells everywhere else stay editable.
+                    const isExpanded =
+                      expandedCell !== null &&
+                      expandedCell.recordId === record.id &&
+                      expandedCell.fieldName === field.name;
+                    return (
+                      <td key={field.name} className="base-cell">
+                        <CellInput
+                          field={field}
+                          value={record[field.name]}
+                          record={record}
+                          recordIndex={originalIndex}
+                          allRecords={data.records}
+                          allFields={data.fields}
+                          onChange={(val) => updateCell(originalIndex, field.name, val)}
+                          onExpand={() =>
+                            setExpandedCell({
+                              recordId: record.id,
+                              fieldName: field.name,
+                            })
+                          }
+                          isExpanded={isExpanded}
+                        />
+                      </td>
+                    );
+                  })}
                   <td className="base-actions-cell">
                     <button
                       type="button"
@@ -575,6 +586,14 @@ interface CellInputProps {
   allFields: BaseField[];
   onChange: (val: unknown) => void;
   onExpand?: () => void;
+  // True when the LongTextModal is currently mounted over THIS cell's
+  // (recordId, fieldName) pair. Threaded through CellInput so each
+  // per-type variant can decide how to render concurrently with the
+  // modal — at the moment only LongTextCell honours it (disables its
+  // inline textarea + Expand button so the modal's `draft` is the
+  // sole edit surface and can't be overwritten by an inline edit
+  // committed while the user types in the modal).
+  isExpanded?: boolean;
 }
 
 function CellInput(props: CellInputProps) {
@@ -1272,21 +1291,41 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function LongTextCell({ value, onChange, onExpand }: CellInputProps) {
+function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps) {
+  // When the LongTextModal is open over this cell, lock the inline
+  // surface. The modal's `draft` state is initialized once from
+  // `value` on mount and only flushes to the record on Save — so if
+  // the user typed into the inline textarea while the modal was open
+  // and then hit Save, the modal would overwrite the inline edit
+  // with stale text. Disabling the inline surface eliminates the
+  // ambiguity: while the modal is up, there is exactly one edit
+  // surface, and it's the one the user explicitly chose by clicking
+  // Expand. Mirrors Airtable's behaviour.
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.25rem" }}>
+    <div
+      style={{ display: "flex", alignItems: "flex-start", gap: "0.25rem" }}
+      data-expanded={isExpanded ? "true" : undefined}
+    >
       <textarea
         className="base-cell-input base-cell-longtext"
         value={value != null ? String(value) : ""}
         onChange={(e) => onChange(e.target.value)}
         rows={2}
-        style={{ flex: 1, resize: "vertical", minHeight: "1.5rem" }}
+        disabled={isExpanded}
+        style={{
+          flex: 1,
+          resize: "vertical",
+          minHeight: "1.5rem",
+          opacity: isExpanded ? 0.5 : undefined,
+        }}
+        title={isExpanded ? "Edit in the expanded modal" : undefined}
       />
       <button
         type="button"
         className="btn-sm"
-        title="Expand"
+        title={isExpanded ? "Already open" : "Expand"}
         onClick={onExpand}
+        disabled={isExpanded}
         style={{ fontSize: "0.75rem", padding: "0 0.3rem" }}
       >
         ⤢

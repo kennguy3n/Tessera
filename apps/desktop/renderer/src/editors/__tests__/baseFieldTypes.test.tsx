@@ -245,6 +245,53 @@ describe("BaseEditor — long_text field", () => {
     const records = lastSavedRecords(onSave);
     expect(records[0].Notes).toBe("edited");
   });
+
+  it("locks the inline textarea + Expand button while the modal is open over the same cell", () => {
+    // Devin Review round-7 finding ANALYSIS_0006 — LongTextModal's
+    // `draft` initializes once from `value` on mount and only flushes
+    // on Save. If the user typed into the inline textarea WHILE the
+    // modal was open and then hit Save, the modal would overwrite the
+    // inline edit with stale text. Disabling the inline surface
+    // eliminates the ambiguity: while the modal is up, the modal is
+    // the sole edit surface, matching Airtable's behaviour.
+    const { container } = renderEditor({
+      fields: [
+        { name: "Notes", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Notes: "initial", Other: "untouched" }],
+    });
+    const inlineTextarea = container.querySelector(
+      "textarea.base-cell-longtext",
+    ) as HTMLTextAreaElement;
+    const expandButton = screen.getByTitle("Expand");
+    // Precondition — both editable before the modal opens.
+    expect(inlineTextarea.disabled).toBe(false);
+    expect(expandButton).not.toBeDisabled();
+
+    fireEvent.click(expandButton);
+
+    // Modal mounted — same inline textarea is now disabled + dimmed,
+    // and the Expand button is also disabled so a second click can't
+    // re-mount a new modal on top of the first.
+    expect(inlineTextarea.disabled).toBe(true);
+    expect(inlineTextarea).toHaveAttribute(
+      "title",
+      "Edit in the expanded modal",
+    );
+    const stillExpandButton = screen.getByTitle("Already open");
+    expect(stillExpandButton).toBeDisabled();
+    // The cell wrapper carries a `data-expanded="true"` flag the
+    // styling layer can hook into without needing class plumbing.
+    const cellWrapper = inlineTextarea.closest('[data-expanded="true"]');
+    expect(cellWrapper).not.toBeNull();
+
+    // Cells in OTHER records / OTHER fields stay editable — the lock
+    // is scoped to the exact (recordId, fieldName) pair.
+    const otherInput = screen.getByDisplayValue("untouched") as
+      HTMLInputElement;
+    expect(otherInput.disabled).toBe(false);
+  });
 });
 
 describe("BaseEditor — email field", () => {
