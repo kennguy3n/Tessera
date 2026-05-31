@@ -445,6 +445,17 @@ async function attemptTouchIdUnlock(reason: string): Promise<boolean> {
   }
 }
 
+/**
+ * Maximum length of the biometric prompt's reason string. PowerShell's
+ * command-line tail is bounded by Windows' `CreateProcess` 32 KiB cap
+ * minus the rest of the argv we pass; clamping the renderer-controlled
+ * portion to 256 chars keeps a compromised renderer from forcing a
+ * `ENAMETOOLONG`-class spawn failure with a multi-MB string. The
+ * prompt itself only shows ~120 chars in the Windows Hello dialog, so
+ * 256 is more than enough headroom for a localised one-liner.
+ */
+const WINDOWS_HELLO_REASON_MAX_LEN = 256;
+
 async function attemptWindowsHelloUnlock(reason: string): Promise<boolean> {
   // Windows Hello via PowerShell + WinRT KeyCredentialManager API.
   // Synchronous spawn is acceptable here because biometric prompts
@@ -454,6 +465,18 @@ async function attemptWindowsHelloUnlock(reason: string): Promise<boolean> {
   // The script returns exit code 0 on success, 1 on user cancel /
   // mismatch / API unavailable. We never write the reason string
   // to disk; it goes via stdin as a single-line argument.
+  //
+  // Defense-in-depth: clamp the renderer-provided `reason` to a
+  // sane max length. The argv-positional pattern (`$args[0]`) is
+  // already safe from code injection because PowerShell does not
+  // re-parse positional args as script — but a multi-MB string
+  // could blow `CreateProcess`'s 32 KiB argv ceiling and crash the
+  // spawn before the user ever sees the prompt. Clamp here so a
+  // compromised renderer can't DoS the biometric path.
+  const safeReason =
+    reason.length > WINDOWS_HELLO_REASON_MAX_LEN
+      ? reason.slice(0, WINDOWS_HELLO_REASON_MAX_LEN)
+      : reason;
   const psCommand = [
     "[Windows.Security.Credentials.UI.UserConsentVerifier, ",
     "Windows.Security.Credentials.UI, ",
@@ -470,7 +493,7 @@ async function attemptWindowsHelloUnlock(reason: string): Promise<boolean> {
       "-NonInteractive",
       "-Command",
       psCommand,
-      reason,
+      safeReason,
     ]);
     return child.status === 0;
   } catch (err) {

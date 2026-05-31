@@ -77,6 +77,27 @@ export interface ConnectorStatusInfo {
   offline?: boolean;
 }
 
+/**
+ * Phase 19 PR 10 Task 8 — explicit allowlist of providers whose
+ * OAuth config legitimately uses `scope: ""`.
+ *
+ * Notion's "internal integration" token is bound to a workspace at
+ * install time (the user selects which pages the integration can
+ * access via the consent screen), and the OAuth response does NOT
+ * include a `scope` field. Every other supported provider returns
+ * a non-empty scope set, so an empty `scope` config for any
+ * non-Notion provider is a misconfiguration that would silently
+ * disable scope-narrowing checks. `runConnectorSync` logs a
+ * structured warning on every sync for such providers so the gap
+ * is loud rather than silent.
+ *
+ * Adding a new scope-less provider here should be paired with a
+ * code-review note explaining WHY the provider is exempt (e.g.
+ * "ProviderX uses an admin-installed app with workspace-bound
+ * permissions; the OAuth token has no per-request scope dimension").
+ */
+const SCOPELESS_PROVIDERS = new Set<ProviderId>(["notion"]);
+
 interface BridgeHooks {
   addLocalFile(localPath: string): { id: string; path: string };
   reindexSource(sourceId: string): void;
@@ -731,7 +752,20 @@ export async function runConnectorSync(
   // user will re-authorize and immediately want to retry).
   const oauthConfig = getProviderOAuthConfig(provider);
   const requestedScopes = getRequestedScopes(oauthConfig);
-  if (requestedScopes.length > 0) {
+  if (requestedScopes.length === 0) {
+    // Only Notion's OAuth flow legitimately returns a scope-less
+    // integration token (workspace-bound permission granted at
+    // install time). Any other provider with `scope: ""` is a
+    // misconfiguration that would silently bypass scope governance,
+    // so emit a structured warning on every sync — visible enough
+    // that an operator will notice before a security-relevant
+    // provider ships with the wrong default.
+    if (!SCOPELESS_PROVIDERS.has(provider)) {
+      ctx.log.warn("connector has empty scope config; scope check skipped", {
+        provider,
+      });
+    }
+  } else {
     const storedTokens = ctx.tokenVault.getTokens(provider);
     const grantedScopes = storedTokens?.scopes ?? [];
     try {
@@ -923,9 +957,17 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // `scope` field entirely (e.g. Notion integration tokens) we
       // fall back to the requested scopes so we still have a record
       // of what the connector is meant to be allowed to do.
-      const requestedScopes = config.scope
-        .split(/\s+/)
-        .filter(Boolean);
+      //
+      // Use the canonical `getRequestedScopes(config)` helper so the
+      // parse semantics here match every other call site
+      // (`runConnectorSync` line 733, `connectors:inspectScopes`
+      // line 1079, `parseGrantedScopes` in providerOAuth.ts:346).
+      // The helper splits on `/[\s,]+/` so comma-delimited scopes
+      // (Figma) are handled the same way at auth time, sync time,
+      // and inspection time. An inline `.split(/\s+/)` here would
+      // store the whole comma-joined string as a single scope and
+      // every sync would flag false missing-scope errors.
+      const requestedScopes = getRequestedScopes(config);
       const persistedScopes =
         tokens.grantedScopes ?? requestedScopes;
       ctx.tokenVault.storeTokens(provider, {

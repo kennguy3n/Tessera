@@ -475,6 +475,18 @@ const AppConfigSchema = z
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
     externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
+    // Phase 19 PR 10 — these three fields are also present in
+    // `DEFAULT_CONFIG` (lines 236-238) and would resolve to the
+    // same values via the spread, but we re-declare them
+    // explicitly here as a security-critical floor. If a future
+    // edit ever drifts `DEFAULT_CONFIG.telemetryEnabled` to `true`
+    // or `DEFAULT_CONFIG.enforceUpdateSignature` to `false`, the
+    // top-level `.catch()` (which fires when the on-disk JSON
+    // fails the whole-schema parse) MUST still hand back a
+    // privacy-safe, signature-enforcing config — anything less
+    // would silently weaken the security posture on the recovery
+    // path. Keep these three lines even though they look
+    // redundant; they are the floor, not a duplicate.
     telemetryEnabled: false,
     appLockMode: "off" as const,
     enforceUpdateSignature: true,

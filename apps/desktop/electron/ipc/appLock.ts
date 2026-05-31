@@ -18,7 +18,7 @@
  * against a renderer compromised into a tight retry loop.
  */
 import { idempotentHandle } from "./register";
-import { loadConfig } from "../config";
+import { loadConfig, updateConfig } from "../config";
 import {
   attemptBiometricUnlock,
   attemptUnlock,
@@ -113,6 +113,28 @@ export function registerAppLockHandlers(): void {
         );
       }
       clearPin();
+      // Phase 19 PR 10 Task 10 — keep `appLockMode` and PIN
+      // material lifecycle-coupled. Removing the PIN MUST drop the
+      // mode back to `"off"`, otherwise the next launch would see
+      // `appLockMode === "pin"` with no stored PIN and trip the
+      // `no_pin_set` UnlockResult path, leaving the user staring
+      // at a forced PIN-setup flow the IPC layer was supposed to
+      // make impossible. The symmetric path lives in
+      // `settings:update`: switching mode to `"off"` calls
+      // `clearPin()` so neither lifecycle can drift from the other.
+      try {
+        const config = loadConfig();
+        if (config.appLockMode !== "off") {
+          updateConfig({ appLockMode: "off" });
+        }
+      } catch (err) {
+        // best-effort — the PIN is already gone, so worst case the
+        // next launch trips `no_pin_set`. Log so a support trail
+        // exists.
+        getLogger().warn("app_lock.mode_reset_on_remove_failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
   );
 

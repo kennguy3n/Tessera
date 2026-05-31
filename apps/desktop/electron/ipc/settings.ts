@@ -31,6 +31,8 @@ import {
   recordCounter,
   type TelemetryEvent,
 } from "../telemetrySink";
+import { hasPinSet, clearPin } from "../appLock";
+import { getLogger } from "../logger";
 import type {
   EmbeddingDownloadProgressInfo,
   EmbeddingModelInfo,
@@ -295,6 +297,22 @@ export function registerSettingsHandlers(): void {
 
   idempotentHandle("settings:update", async (_event, settings: unknown) => {
     const parsed = SettingsUpdateSchema.parse(settings);
+    // Phase 19 PR 10 Task 10 — enforce the lock-mode/PIN invariant
+    // documented in `shared/types.ts` and `config.ts`: flipping
+    // `appLockMode` to `"pin"` or `"biometric"` without first
+    // setting a PIN would leave the user staring at a lock overlay
+    // they cannot dismiss. Reject at the IPC boundary BEFORE
+    // `updateConfig` so the persisted state stays consistent. The
+    // renderer's Settings UI MUST set up a PIN via `appLock:setPin`
+    // before flipping the mode.
+    if (
+      (parsed.appLockMode === "pin" || parsed.appLockMode === "biometric") &&
+      !hasPinSet()
+    ) {
+      throw new Error(
+        `Cannot set appLockMode to "${parsed.appLockMode}" without a PIN. Call appLock:setPin first.`,
+      );
+    }
     // Return value is read from `loadConfig()` *after* the write so the
     // payload the renderer receives reflects what is actually on disk
     // (including any `.catch()` healing or `.loose()` passthrough that
@@ -303,6 +321,28 @@ export function registerSettingsHandlers(): void {
     // field had been healed, and would be racy against any concurrent
     // writer.
     updateConfig(parsed);
+    // Phase 19 PR 10 Task 10 — when the user explicitly opts OUT
+    // of app lock (mode -> "off"), the stored PIN material is also
+    // removed. This keeps the PIN-lifecycle and mode-lifecycle in
+    // lock-step: "off" means zero retained credentials, not "PIN
+    // still on disk waiting to be re-enabled". The threat model is
+    // explicit in `appLock.ts:46-49` ("switching to `off` does
+    // delete the PIN") and this is the only path that guarantees
+    // it for users who toggle from the Settings UI. The symmetric
+    // `appLock:removePin` handler does the reverse: clears PIN +
+    // forces mode to "off".
+    if (parsed.appLockMode === "off" && hasPinSet()) {
+      try {
+        clearPin();
+      } catch (err) {
+        // best-effort — the mode is already persisted as "off" so
+        // the user will not see the lock; the stored PIN is dead
+        // weight. Log so a support trail exists.
+        getLogger().warn("app_lock.clear_pin_on_off_failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     const persisted = loadConfig();
     // emit one audit row per field the renderer
     // actually sent. The schema marks every field optional, so
