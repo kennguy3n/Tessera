@@ -151,9 +151,15 @@ export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
     if (items.length > 0) groups.push({ category, items });
   }
 
-  // Flat index lookup: index of the command in `filtered` (preserves
-  // the filterSlashCommands ranking) → highlight.
-  let runningIndex = -1;
+  // Flat index lookup: each rendered item recomputes its `flatIndex`
+  // via `filtered.indexOf(cmd)` so the keyboard `highlight` (which is a
+  // flat index into `filtered`) lines up with the click / hover targets
+  // even though the JSX is grouped by category. No running counter is
+  // needed — `filtered.indexOf` is O(N) but N is the visible command
+  // count (~20 at most), so the visual grouping pays for itself in
+  // readability. Earlier drafts carried a `runningIndex` accumulator
+  // here that was written but never read — Devin Review PR #82
+  // ANALYSIS_…_0002 flagged the dead variable.
 
   return (
     <div
@@ -172,7 +178,6 @@ export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
             <div className="slash-menu-group-label">{group.category}</div>
             {group.items.map((cmd) => {
               const flatIndex = filtered.indexOf(cmd);
-              if (flatIndex > runningIndex) runningIndex = flatIndex;
               const active = flatIndex === highlight;
               return (
                 <button
