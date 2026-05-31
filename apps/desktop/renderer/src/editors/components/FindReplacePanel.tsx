@@ -1,0 +1,423 @@
+/**
+ * Phase 18 PR 6 — find-and-replace panel.
+ *
+ * Floating panel anchored to the document editor. Renders:
+ *   - Find input (live-updates matches and highlights as the user types)
+ *   - Replace input (only enabled when ≥1 match exists)
+ *   - Prev / Next match navigation (j/k or Enter cycles)
+ *   - "1 of 17" match counter (or "No matches")
+ *   - Case-sensitive / whole-word / regex toggles
+ *   - Replace / Replace All buttons (only enabled when matches exist)
+ *   - Close button + Esc handler
+ *
+ * The matching is delegated to `findAllMatches` so the panel and the
+ * `FindReplaceExtension` decoration plugin agree on what counts as a
+ * match. Replace operations dispatch ProseMirror transactions via the
+ * extension's storage-position-map for accurate splicing.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
+import type { Editor } from "@tiptap/react";
+import {
+  findAllMatches,
+  pickActiveMatch,
+  type FindMatch,
+} from "../documentEditorHelpers";
+import {
+  buildDocText,
+  matchToDocRange,
+  DEFAULT_FIND_OPTIONS,
+} from "../extensions/FindReplaceExtension";
+
+export interface FindReplacePanelProps {
+  editor: Editor;
+  /** Called when the user dismisses the panel (Esc or close button). */
+  onClose: () => void;
+}
+
+export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
+  const [query, setQuery] = useState("");
+  const [replacement, setReplacement] = useState("");
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [regex, setRegex] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  // Mirror of `activeIndex` read inside `recompute` so the callback
+  // does NOT depend on the state variable directly. If it did,
+  // every `navigate()` (which calls `setActiveIndex(…)`) would
+  // recreate `recompute`, retrigger the `useEffect([recompute])`
+  // below, and double-dispatch the highlight command — wasted work
+  // on every Prev / Next click. Devin Review PR #80 (BUG_…_0003)
+  // flagged the redundant loop.
+  const activeIndexRef = useRef(activeIndex);
+  activeIndexRef.current = activeIndex;
+  const findInputRef = useRef<HTMLInputElement>(null);
+
+  const opts = useMemo(
+    () => ({ caseSensitive, wholeWord, regex }),
+    [caseSensitive, wholeWord, regex],
+  );
+
+  // Recompute matches whenever the query, opts, or doc text changes.
+  // We use a `useState` mirror of the matches so children re-render
+  // when navigation moves the active index.
+  const [matches, setMatches] = useState<FindMatch[]>([]);
+
+  const recompute = useCallback(() => {
+    // CRITICAL: do NOT call `editor.chain().focus(…)` here. The find
+    // input is what owns DOM focus while this panel is mounted, and
+    // `view.focus()` would yank focus to the editor on every
+    // keystroke (because this callback fires from a `useEffect([
+    // recompute])` keyed on `query`/`opts`). `applyFindHighlight`
+    // and `clearFindHighlight` only dispatch meta transactions to
+    // update the decoration plugin's state — ProseMirror does NOT
+    // require editor focus to apply a meta-only transaction. Devin
+    // Review PR #80 (BUG_…_0002 + ANALYSIS_…_0006) flagged this as
+    // making the find input unusable.
+    if (!query) {
+      setMatches([]);
+      setActiveIndex(-1);
+      editor.chain().clearFindHighlight().run();
+      return;
+    }
+    const snapshot = buildDocText(editor.state.doc);
+    const next = findAllMatches(snapshot.text, query, opts);
+    setMatches(next);
+    // Read the *current* activeIndex via the ref so this callback's
+    // identity doesn't change when navigation moves the index (see
+    // `activeIndexRef` declaration above).
+    const nextActive =
+      next.length === 0
+        ? -1
+        : Math.max(0, Math.min(activeIndexRef.current, next.length - 1));
+    setActiveIndex(nextActive);
+    editor.chain().applyFindHighlight(query, opts, nextActive).run();
+  }, [editor, query, opts]);
+
+  // Run on mount + on every query/opts change.
+  useEffect(() => {
+    recompute();
+  }, [recompute]);
+
+  // Re-run when the doc changes mid-search so the count, the active
+  // match index, and the decoration plugin's highlight descriptor all
+  // stay aligned. Previously this handler only refreshed the React
+  // `matches` mirror, which could leave the status line showing
+  // "5 of 3" until the next navigate (e.g. a paragraph delete shrinks
+  // the match set below `activeIndex`) and could leave the
+  // `find-match-active` class painted on the wrong decoration (or no
+  // decoration at all if `activeIndex` was now out of bounds). Devin
+  // Review PR #80 round 2 (ANALYSIS_…_0003) flagged the cosmetic gap.
+  // We now clamp `activeIndex` and re-dispatch `applyFindHighlight`
+  // so the decoration plugin reseats its descriptor against the new
+  // doc — the plugin's own `else if (tr.docChanged && next.highlight)`
+  // branch already rebuilds decorations on doc change, but with the
+  // OLD `activeIndex`; re-pushing the meta makes the active-vs-passive
+  // class assignment authoritative even when the active match moved.
+  useEffect(() => {
+    if (!query) return;
+    const handler = () => {
+      const snapshot = buildDocText(editor.state.doc);
+      const next = findAllMatches(snapshot.text, query, opts);
+      setMatches(next);
+      const nextActive =
+        next.length === 0
+          ? -1
+          : Math.max(0, Math.min(activeIndexRef.current, next.length - 1));
+      const indexChanged = nextActive !== activeIndexRef.current;
+      if (indexChanged) {
+        setActiveIndex(nextActive);
+      }
+      // Only republish the highlight descriptor when the clamped
+      // active index actually moved. When it didn't, the decoration
+      // plugin's own `(tr.docChanged && prev.highlight)` branch has
+      // already rebuilt decorations against the new doc using the
+      // same (query, opts, activeIndex) carried on `prev.highlight`,
+      // and a re-dispatch here would force a SECOND rebuild that
+      // produces an identical DecorationSet — wasted work on every
+      // keystroke in long documents with many matches. Devin Review
+      // PR #80 round 3 (ANALYSIS_…_0003) flagged the doubled cost;
+      // skipping when the index is unchanged halves the rebuild
+      // budget in the common typing case while still reseating the
+      // descriptor whenever the active match genuinely moved.
+      if (indexChanged) {
+        editor.chain().applyFindHighlight(query, opts, nextActive).run();
+      }
+    };
+    editor.on("update", handler);
+    return () => {
+      editor.off("update", handler);
+    };
+  }, [editor, query, opts]);
+
+  // Focus the find input on mount so the user can start typing.
+  useEffect(() => {
+    findInputRef.current?.focus();
+  }, []);
+
+  // Clear highlights when the panel unmounts.
+  useEffect(() => {
+    return () => {
+      editor.chain().clearFindHighlight().run();
+    };
+  }, [editor]);
+
+  const navigate = useCallback(
+    (direction: "next" | "previous") => {
+      // Rebuild the snapshot AND rerun the matcher inside `navigate`
+      // so the position map, the match indices, and the caret
+      // translation all come from the same doc revision. The
+      // `matches` state mirror is updated by `recompute` and the
+      // `editor.on("update")` handler, but those run on a different
+      // cadence — a doc edit between recompute and a navigate click
+      // would leave `matches` with stale indices that don't align
+      // with the live position map. Reading them fresh here keeps
+      // navigation deterministic. Devin Review PR #80
+      // (ANALYSIS_…_0005) flagged the cross-snapshot race.
+      const snapshot = buildDocText(editor.state.doc);
+      const freshMatches = query
+        ? findAllMatches(snapshot.text, query, opts)
+        : [];
+      if (freshMatches.length === 0) {
+        setMatches([]);
+        setActiveIndex(-1);
+        return;
+      }
+      // Keep the panel's mirror in lock-step if the doc-update path
+      // hasn't caught up yet — prevents the "1 of 17" counter from
+      // momentarily showing a stale number after a navigation that
+      // followed a quick edit.
+      setMatches(freshMatches);
+      const caret = editor.state.selection.from;
+      let textCaret = 0;
+      for (let i = 0; i < snapshot.positions.length; i += 1) {
+        if (snapshot.positions[i] >= caret) {
+          textCaret = i;
+          break;
+        }
+        textCaret = i + 1;
+      }
+      const nextIdx = pickActiveMatch(freshMatches, textCaret, direction);
+      setActiveIndex(nextIdx);
+      editor.chain().applyFindHighlight(query, opts, nextIdx).run();
+      // Scroll the match into view by setting the editor selection.
+      const range = matchToDocRange(snapshot, freshMatches[nextIdx]);
+      if (range) {
+        editor.chain().setTextSelection(range).scrollIntoView().run();
+      }
+    },
+    [editor, query, opts],
+  );
+
+  const doReplace = useCallback(() => {
+    // Rebuild snapshot + matches from the live doc (same reasoning
+    // as `navigate`: the closure-captured `matches`/`activeIndex`
+    // could be from an earlier doc revision).
+    const snapshot = buildDocText(editor.state.doc);
+    const freshMatches = query
+      ? findAllMatches(snapshot.text, query, opts)
+      : [];
+    const idx = activeIndexRef.current;
+    if (idx < 0 || idx >= freshMatches.length) return;
+    const range = matchToDocRange(snapshot, freshMatches[idx]);
+    if (!range) return;
+    // Drop the `.focus(…)` chain that was here: see the comment on
+    // `recompute` above. The replace command doesn't require editor
+    // focus, and pulling focus mid-replace would yank the caret out
+    // of the Replace input on every click. Devin Review PR #80
+    // (BUG_…_0002).
+    //
+    // Use `tr.insertText`, NOT `insertContentAt`. `insertContentAt`
+    // parses its string argument as HTML — so a replacement of
+    // `<b>foo</b>` would create bold text and a replacement starting
+    // with an unknown tag like `<unknowntag>` would silently insert
+    // *nothing* (the user's literal-text intent is lost, and the
+    // matched range is still deleted — data loss). The pure-string
+    // helpers `replaceOne` / `replaceAll` in `documentEditorHelpers.ts`
+    // already do literal splicing, so keeping the editor side in
+    // lock-step matches every standard find/replace implementation
+    // (Google Docs, VS Code). Devin Review PR #80 round 4 (BUG_…_0001).
+    //
+    // Also drop the trailing `setTimeout(() => recompute(), 0)`:
+    // `editor.on("update")` fires synchronously when the transaction
+    // lands and its handler already refreshes matches + republishes
+    // the highlight descriptor. The setTimeout was running the same
+    // `buildDocText` + `findAllMatches` pass a second time for no
+    // observable benefit. Devin Review PR #80 round 4
+    // (ANALYSIS_…_0002).
+    editor
+      .chain()
+      .command(({ tr }) => {
+        tr.insertText(replacement, range.from, range.to);
+        return true;
+      })
+      .run();
+  }, [editor, query, opts, replacement]);
+
+  const doReplaceAll = useCallback(() => {
+    const snapshot = buildDocText(editor.state.doc);
+    const freshMatches = query
+      ? findAllMatches(snapshot.text, query, opts)
+      : [];
+    if (freshMatches.length === 0) return;
+    // Walk in reverse so each splice keeps the earlier indices valid.
+    // No `.focus(…)` here either — same focus-theft rationale.
+    //
+    // Same `tr.insertText` swap + same `setTimeout` drop as `doReplace`
+    // above — Devin Review PR #80 round 4 (BUG_…_0001 +
+    // ANALYSIS_…_0002). Batching all splices into a single chain lets
+    // ProseMirror collapse them into one transaction so the
+    // `editor.on("update")` handler fires exactly once for the whole
+    // batch.
+    const chain = editor.chain();
+    for (let i = freshMatches.length - 1; i >= 0; i -= 1) {
+      const range = matchToDocRange(snapshot, freshMatches[i]);
+      if (!range) continue;
+      chain.command(({ tr }) => {
+        tr.insertText(replacement, range.from, range.to);
+        return true;
+      });
+    }
+    chain.run();
+  }, [editor, query, opts, replacement]);
+
+  const onFindKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        navigate(e.shiftKey ? "previous" : "next");
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    },
+    [navigate, onClose],
+  );
+
+  const status =
+    query === ""
+      ? ""
+      : matches.length === 0
+        ? "No matches"
+        : `${activeIndex + 1} of ${matches.length}`;
+
+  return (
+    <div
+      className="find-replace-panel"
+      role="dialog"
+      aria-label="Find and replace"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+    >
+      <div className="find-replace-row">
+        <input
+          ref={findInputRef}
+          type="text"
+          className="find-replace-input"
+          value={query}
+          placeholder="Find"
+          aria-label="Find"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onFindKeyDown}
+        />
+        <span className="find-replace-status" aria-live="polite">
+          {status}
+        </span>
+        <button
+          type="button"
+          className="find-replace-btn"
+          onClick={() => navigate("previous")}
+          disabled={matches.length === 0}
+          title="Previous match (Shift+Enter)"
+          aria-label="Previous match"
+        >
+          ‹
+        </button>
+        <button
+          type="button"
+          className="find-replace-btn"
+          onClick={() => navigate("next")}
+          disabled={matches.length === 0}
+          title="Next match (Enter)"
+          aria-label="Next match"
+        >
+          ›
+        </button>
+        <button
+          type="button"
+          className="find-replace-btn"
+          onClick={onClose}
+          title="Close (Esc)"
+          aria-label="Close find panel"
+        >
+          ×
+        </button>
+      </div>
+      <div className="find-replace-row">
+        <input
+          type="text"
+          className="find-replace-input"
+          value={replacement}
+          placeholder="Replace"
+          aria-label="Replace with"
+          onChange={(e) => setReplacement(e.target.value)}
+        />
+        <button
+          type="button"
+          className="find-replace-btn"
+          onClick={doReplace}
+          disabled={matches.length === 0 || activeIndex < 0}
+        >
+          Replace
+        </button>
+        <button
+          type="button"
+          className="find-replace-btn"
+          onClick={doReplaceAll}
+          disabled={matches.length === 0}
+        >
+          Replace all
+        </button>
+      </div>
+      <div className="find-replace-row find-replace-options">
+        <label className="find-replace-toggle">
+          <input
+            type="checkbox"
+            checked={caseSensitive}
+            onChange={(e) => setCaseSensitive(e.target.checked)}
+          />
+          Aa
+        </label>
+        <label className="find-replace-toggle">
+          <input
+            type="checkbox"
+            checked={wholeWord}
+            onChange={(e) => setWholeWord(e.target.checked)}
+          />
+          W
+        </label>
+        <label className="find-replace-toggle">
+          <input
+            type="checkbox"
+            checked={regex}
+            onChange={(e) => setRegex(e.target.checked)}
+          />
+          .*
+        </label>
+      </div>
+    </div>
+  );
+}
+
+export { DEFAULT_FIND_OPTIONS };
