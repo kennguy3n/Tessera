@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tessera_core::error::{Error, Result};
-use tessera_core::{SharedConnection, SourceId, SourceStatus};
+use tessera_core::{SharedConnection, SharedReadPool, SourceId, SourceStatus};
 
 use crate::chunker::Chunk;
 use crate::embedding::{EmbeddingProvider, HashTrickEmbedding};
@@ -540,7 +540,30 @@ impl SourceManager {
     /// Build a manager backed by a [`SharedConnection`] that is also
     /// used by other stores. Used by the napi bridge.
     pub fn with_shared_conn(conn: SharedConnection, ignore_patterns: &[String]) -> Result<Self> {
-        let store = SourceStore::with_shared_conn(conn)?;
+        // Defaults to the empty pool ⇒ every SourceStore read
+        // falls back to the writer mutex. Production callers
+        // upgrade via [`Self::with_shared_conn_and_read_pool`]
+        // once they have an on-disk database open.
+        Self::with_shared_conn_and_read_pool(conn, tessera_core::empty_read_pool(), ignore_patterns)
+    }
+
+    /// Phase 19 PR 9 Task 4: variant of [`Self::with_shared_conn`]
+    /// that wires a [`SharedReadPool`] into the underlying
+    /// [`SourceStore`].
+    ///
+    /// The bridge calls this with a pool of N read-only
+    /// connections to the same on-disk DB so hot reads (FTS5
+    /// BM25, embedding-row scan, chunk hydration, age lookup)
+    /// don't compete with writers for the single writer mutex.
+    /// For in-memory tests, pass [`tessera_core::empty_read_pool`]
+    /// — every read transparently falls back to the writer
+    /// connection, preserving the legacy behaviour.
+    pub fn with_shared_conn_and_read_pool(
+        conn: SharedConnection,
+        read_pool: SharedReadPool,
+        ignore_patterns: &[String],
+    ) -> Result<Self> {
+        let store = SourceStore::with_shared_conn_and_read_pool(conn, read_pool)?;
         let (indexer, embedder, hybrid_config) = build_default_hybrid_pipeline(ignore_patterns);
         Ok(Self {
             store,

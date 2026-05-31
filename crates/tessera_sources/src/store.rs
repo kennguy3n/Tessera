@@ -2,9 +2,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use rusqlite::params;
+use rusqlite::Connection;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
-    open_shared, open_shared_in_memory, SharedConnection, SourceId, SourceStatus, SourceType,
+    empty_read_pool, open_shared, open_shared_in_memory, SharedConnection, SharedReadPool,
+    SourceId, SourceStatus, SourceType,
 };
 
 use crate::chunker::Chunk;
@@ -33,6 +35,17 @@ const NON_ASCII_CACHE_TTL: Duration = Duration::from_secs(30);
 
 pub struct SourceStore {
     conn: SharedConnection,
+    /// Phase 19 PR 9 Task 4: optional pool of read-only connections
+    /// used for hot read paths (FTS5 BM25, embedding-row scan,
+    /// chunk hydration, age lookup). Empty pool ⇒ every read falls
+    /// back to the writer connection (preserving the legacy
+    /// single-mutex behaviour). When the pool has at least one
+    /// connection, the four hot reads dispatch through
+    /// [`Self::with_read`], which uses a `try_lock` round-robin so
+    /// independent reads don't contend on the writer mutex.
+    /// Cheap to clone — [`SharedReadPool`] is internally
+    /// `Arc<Vec<Mutex<Connection>>>`.
+    read_pool: SharedReadPool,
     /// Memoized result of the last `count_non_ascii_chunks` SQL
     /// scan + the `Instant` at which it was computed. `None` until
     /// the first call. Per-instance, not per-connection — the
@@ -54,12 +67,71 @@ impl SourceStore {
     /// Build a store on top of a [`SharedConnection`] that is already
     /// shared with other stores. Used by the napi bridge.
     pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
+        // Defaults to the empty pool — every read falls back to the
+        // writer connection, identical to the pre-Phase-19 behaviour.
+        // The bridge upgrades to a populated pool via
+        // `with_shared_conn_and_read_pool` once the on-disk DB is
+        // open (it can't share connections for in-memory DBs).
+        Self::with_shared_conn_and_read_pool(conn, empty_read_pool())
+    }
+
+    /// Phase 19 PR 9 Task 4: build a store with an explicit
+    /// [`SharedReadPool`] for hot read dispatch.
+    ///
+    /// Production code at the bridge layer wires this with a pool
+    /// of N read-only connections to the same on-disk database
+    /// file (typically `N = 2`, surfaced via
+    /// [`tessera_core::open_shared_read_pool_with_key`]). In-memory
+    /// tests pass [`tessera_core::empty_read_pool`] (or just call
+    /// the legacy [`with_shared_conn`] constructor, which does the
+    /// same thing); every read then falls back to the writer
+    /// connection.
+    ///
+    /// The pool is cloned so two stores sharing the same writer
+    /// (rare — currently only the manager) also share the same
+    /// pool, preserving the "all reads of a given DB go through
+    /// the same N reader connections" invariant.
+    pub fn with_shared_conn_and_read_pool(
+        conn: SharedConnection,
+        read_pool: SharedReadPool,
+    ) -> Result<Self> {
         let store = Self {
             conn,
+            read_pool,
             non_ascii_cache: Mutex::new(None),
         };
         store.init_schema()?;
         Ok(store)
+    }
+
+    /// Read-only dispatch: pick a pool connection if any are
+    /// available, otherwise fall back to the writer connection.
+    ///
+    /// Hot read paths use this to release the writer-mutex for
+    /// long-running scans (`load_embeddings_for_model` is the
+    /// canonical example — it walks every embedding row for a
+    /// given model_id). When a writer is in the middle of a long
+    /// transaction the pool reader still sees the pre-commit
+    /// snapshot (WAL semantics), so search latency doesn't track
+    /// writer latency.
+    ///
+    /// The closure receives a `&Connection` rather than a guard,
+    /// so the lock is dropped at the closure's return — callers
+    /// can't accidentally hold the connection across an unrelated
+    /// operation.
+    ///
+    /// Empty pool ⇒ this is observationally identical to
+    /// `self.conn.lock().expect(...)` followed by `f(&conn)`. Both
+    /// branches return the same type, so callers can write the
+    /// read body once and let the pool wiring decide where the
+    /// query actually runs.
+    fn with_read<R>(&self, f: impl FnOnce(&Connection) -> R) -> R {
+        if self.read_pool.is_empty() {
+            let guard = self.conn.lock().expect("connection mutex poisoned");
+            f(&guard)
+        } else {
+            self.read_pool.with_read(f)
+        }
     }
 
     fn init_schema(&self) -> Result<()> {
@@ -2345,59 +2417,65 @@ impl SourceStore {
     }
 
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-        // Block B Task 3 (Phase 11): retrieval-side ACL filter.
-        // The `JOIN sources s` + `WHERE s.status != ?3` clause
-        // excludes chunks whose source row has been transitioned
-        // to `SourceStatus::AccessRevoked` (the principal lost
-        // KChat-channel membership, or the channel was archived
-        // / deleted). Filtering BEFORE the LIMIT means revoked
-        // chunks don't consume top-k slots — the FTS5 engine
-        // still scores them but they're stripped before sorting
-        // truncates to `limit`. The status comparison uses the
-        // exact serde-JSON-stringified form (`SourceStatus::as_stored_json`)
-        // so a future variant rename cannot drift this predicate
-        // from the persistence layer.
-        let mut stmt = conn
-            .prepare(
-                "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
-                        f.source_id, rank
-                 FROM chunks_fts fts
-                 JOIN chunks c ON c.id = fts.rowid
-                 JOIN indexed_files f ON f.id = c.indexed_file_id
-                 JOIN sources s ON s.id = f.source_id
-                 WHERE chunks_fts MATCH ?1
-                   AND s.status != ?3
-                 ORDER BY rank
-                 LIMIT ?2",
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
+        // Phase 19 PR 9 Task 4: hot read path → dispatch through
+        // the read pool when one is configured. WAL mode lets us
+        // run this BM25 scan against a snapshot while a writer
+        // continues ingesting; the writer mutex is never held by
+        // this scan.
+        self.with_read(|conn| {
+            // Block B Task 3 (Phase 11): retrieval-side ACL filter.
+            // The `JOIN sources s` + `WHERE s.status != ?3` clause
+            // excludes chunks whose source row has been transitioned
+            // to `SourceStatus::AccessRevoked` (the principal lost
+            // KChat-channel membership, or the channel was archived
+            // / deleted). Filtering BEFORE the LIMIT means revoked
+            // chunks don't consume top-k slots — the FTS5 engine
+            // still scores them but they're stripped before sorting
+            // truncates to `limit`. The status comparison uses the
+            // exact serde-JSON-stringified form (`SourceStatus::as_stored_json`)
+            // so a future variant rename cannot drift this predicate
+            // from the persistence layer.
+            let mut stmt = conn
+                .prepare(
+                    "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
+                            f.source_id, rank
+                     FROM chunks_fts fts
+                     JOIN chunks c ON c.id = fts.rowid
+                     JOIN indexed_files f ON f.id = c.indexed_file_id
+                     JOIN sources s ON s.id = f.source_id
+                     WHERE chunks_fts MATCH ?1
+                       AND s.status != ?3
+                     ORDER BY rank
+                     LIMIT ?2",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
 
-        let results = stmt
-            .query_map(
-                params![
-                    query,
-                    limit as i64,
-                    SourceStatus::AccessRevoked.as_stored_json(),
-                ],
-                |row| {
-                    Ok(SearchHit {
-                        chunk_id: row.get::<_, i64>(0)?,
-                        content: row.get(1)?,
-                        hash: row.get(2)?,
-                        chunk_index: row.get::<_, i64>(3)? as usize,
-                        byte_offset: row.get::<_, i64>(4)? as usize,
-                        source_path: row.get(5)?,
-                        source_id: row.get(6)?,
-                        relevance: -row.get::<_, f64>(7)?,
-                    })
-                },
-            )
-            .map_err(|e| Error::Database(e.to_string()))?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            let results = stmt
+                .query_map(
+                    params![
+                        query,
+                        limit as i64,
+                        SourceStatus::AccessRevoked.as_stored_json(),
+                    ],
+                    |row| {
+                        Ok(SearchHit {
+                            chunk_id: row.get::<_, i64>(0)?,
+                            content: row.get(1)?,
+                            hash: row.get(2)?,
+                            chunk_index: row.get::<_, i64>(3)? as usize,
+                            byte_offset: row.get::<_, i64>(4)? as usize,
+                            source_path: row.get(5)?,
+                            source_id: row.get(6)?,
+                            relevance: -row.get::<_, f64>(7)?,
+                        })
+                    },
+                )
+                .map_err(|e| Error::Database(e.to_string()))?
+                .filter_map(std::result::Result::ok)
+                .collect();
 
-        Ok(results)
+            Ok(results)
+        })
     }
 
     /// Look up the contents of a set of chunks by id, preserving the
@@ -2421,7 +2499,19 @@ impl SourceStore {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Phase 19 PR 9 Task 4: dispatched through the read pool.
+        // `fetch_chunks_by_ids` is called once per hybrid search
+        // to hydrate the final ranked list. Routing it through
+        // the pool means a long writer transaction doesn't add
+        // latency to interactive search.
+        self.with_read(|conn| self.fetch_chunks_by_ids_inner(conn, ids))
+    }
+
+    fn fetch_chunks_by_ids_inner(
+        &self,
+        conn: &Connection,
+        ids: &[i64],
+    ) -> Result<Vec<SearchHit>> {
         let placeholders = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(",");
@@ -2615,38 +2705,46 @@ impl SourceStore {
     /// information leakage via timing / size-of-result-set side
     /// channels.
     pub fn load_embeddings_for_model(&self, model_id: &str) -> Result<Vec<ChunkEmbeddingRow>> {
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-        let mut stmt = conn
-            .prepare(
-                "SELECT ce.chunk_id, ce.model_id, ce.vec
-                 FROM chunk_embeddings ce
-                 JOIN chunks c       ON c.id = ce.chunk_id
-                 JOIN indexed_files f ON f.id = c.indexed_file_id
-                 JOIN sources s      ON s.id = f.source_id
-                 WHERE ce.model_id = ?1
-                   AND s.status != ?2",
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let rows = stmt
-            .query_map(
-                params![model_id, SourceStatus::AccessRevoked.as_stored_json()],
-                |row| {
-                    let chunk_id: i64 = row.get(0)?;
-                    let model_id: String = row.get(1)?;
-                    let bytes: Vec<u8> = row.get(2)?;
-                    let vector = crate::embedding::decode_vec(&bytes).unwrap_or_default();
-                    Ok(ChunkEmbeddingRow {
-                        chunk_id,
-                        model_id,
-                        vector,
-                    })
-                },
-            )
-            .map_err(|e| Error::Database(e.to_string()))?
-            .filter_map(std::result::Result::ok)
-            .filter(|r| !r.vector.is_empty())
-            .collect();
-        Ok(rows)
+        // Phase 19 PR 9 Task 4: this is the most expensive read
+        // on the hybrid-search path — a full scan of
+        // `chunk_embeddings` for a model_id. Dispatching it
+        // through the read pool releases the writer mutex for
+        // the duration of the scan; in WAL mode the pool
+        // connection sees a consistent snapshot even if a writer
+        // is committing new embeddings concurrently.
+        self.with_read(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT ce.chunk_id, ce.model_id, ce.vec
+                     FROM chunk_embeddings ce
+                     JOIN chunks c       ON c.id = ce.chunk_id
+                     JOIN indexed_files f ON f.id = c.indexed_file_id
+                     JOIN sources s      ON s.id = f.source_id
+                     WHERE ce.model_id = ?1
+                       AND s.status != ?2",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(
+                    params![model_id, SourceStatus::AccessRevoked.as_stored_json()],
+                    |row| {
+                        let chunk_id: i64 = row.get(0)?;
+                        let model_id: String = row.get(1)?;
+                        let bytes: Vec<u8> = row.get(2)?;
+                        let vector = crate::embedding::decode_vec(&bytes).unwrap_or_default();
+                        Ok(ChunkEmbeddingRow {
+                            chunk_id,
+                            model_id,
+                            vector,
+                        })
+                    },
+                )
+                .map_err(|e| Error::Database(e.to_string()))?
+                .filter_map(std::result::Result::ok)
+                .filter(|r| !r.vector.is_empty())
+                .collect();
+            Ok(rows)
+        })
     }
 
     /// Find chunks that don't yet have an embedding for the given
@@ -2794,38 +2892,42 @@ impl SourceStore {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-        let placeholders = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT c.id, f.last_modified
-             FROM chunks c
-             JOIN indexed_files f ON f.id = c.indexed_file_id
-             WHERE c.id IN ({placeholders})"
-        );
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let id_params: Vec<rusqlite::types::Value> = ids
-            .iter()
-            .map(|&i| rusqlite::types::Value::Integer(i))
-            .collect();
-        let now = chrono::Utc::now();
-        let mut ages = std::collections::HashMap::new();
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
-                let id: i64 = row.get(0)?;
-                let last_mod: String = row.get(1)?;
-                Ok((id, last_mod))
-            })
-            .map_err(|e| Error::Database(e.to_string()))?;
-        for r in rows.flatten() {
-            let age_secs =
-                parse_datetime_opt(&r.1).map_or(0.0, |dt| (now - dt).num_seconds().max(0) as f64);
-            ages.insert(r.0, age_secs);
-        }
-        Ok(ages)
+        // Phase 19 PR 9 Task 4: small fan-out read (one row per
+        // candidate id) but called once per hybrid search;
+        // routing through the pool keeps it off the writer path.
+        self.with_read(|conn| {
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT c.id, f.last_modified
+                 FROM chunks c
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 WHERE c.id IN ({placeholders})"
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| Error::Database(e.to_string()))?;
+            let id_params: Vec<rusqlite::types::Value> = ids
+                .iter()
+                .map(|&i| rusqlite::types::Value::Integer(i))
+                .collect();
+            let now = chrono::Utc::now();
+            let mut ages = std::collections::HashMap::new();
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
+                    let id: i64 = row.get(0)?;
+                    let last_mod: String = row.get(1)?;
+                    Ok((id, last_mod))
+                })
+                .map_err(|e| Error::Database(e.to_string()))?;
+            for r in rows.flatten() {
+                let age_secs = parse_datetime_opt(&r.1)
+                    .map_or(0.0, |dt| (now - dt).num_seconds().max(0) as f64);
+                ages.insert(r.0, age_secs);
+            }
+            Ok(ages)
+        })
     }
 
     pub fn file_count_for_source(&self, source_id: &SourceId) -> Result<u64> {
