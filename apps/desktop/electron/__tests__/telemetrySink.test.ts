@@ -258,6 +258,49 @@ describe("disable contract — erase on opt-out", () => {
   });
 });
 
+describe("flushAsync — re-enqueue cap enforcement", () => {
+  it("trims the buffer back to TELEMETRY_BUFFER_MAX_EVENTS after a re-enqueue", async () => {
+    // Drive `flushAsync` into the catch + re-enqueue branch by
+    // pointing the sink directory at a non-existent path. That
+    // surfaces `ENOENT` (not one of the drop-on-fail codes:
+    // ENOSPC/EACCES/EPERM), so the catch branch re-prepends the
+    // failed events. The re-enqueue path must enforce the
+    // `TELEMETRY_BUFFER_MAX_EVENTS` cap — otherwise a persistent
+    // retriable I/O error would let pushed events accumulate
+    // without bound across cycles.
+    hoisted.userData.value = path.join(tmpDir, "does", "not", "exist");
+    enableTelemetry();
+
+    const { TELEMETRY_BUFFER_MAX_EVENTS } = await import(
+      "../../shared/types"
+    );
+
+    // Fill the in-memory buffer up to the cap (recordCounter itself
+    // applies the cap on push via shift()), then flush — flush will
+    // fail with ENOENT and re-enqueue the events at the head.
+    for (let i = 0; i < TELEMETRY_BUFFER_MAX_EVENTS; i += 1) {
+      recordCounter("artifact.save");
+    }
+    expect(getEventsSnapshot().length).toBe(TELEMETRY_BUFFER_MAX_EVENTS);
+    await flushAsync();
+    // After the failed flush + re-enqueue we should still be at
+    // the cap, not above it.
+    expect(getEventsSnapshot().length).toBeLessThanOrEqual(
+      TELEMETRY_BUFFER_MAX_EVENTS,
+    );
+
+    // Push more events on top to grow past the cap, then flush —
+    // again the re-enqueue must hold the cap.
+    for (let i = 0; i < 100; i += 1) {
+      recordCounter("artifact.save");
+    }
+    await flushAsync();
+    expect(getEventsSnapshot().length).toBeLessThanOrEqual(
+      TELEMETRY_BUFFER_MAX_EVENTS,
+    );
+  });
+});
+
 describe("getEventsSnapshot — disk + memory ordering", () => {
   it("returns disk events before in-memory events", async () => {
     enableTelemetry();

@@ -156,3 +156,67 @@ describe("compareScopes", () => {
     expect(r.granted).not.toBe(granted);
   });
 });
+
+describe("OAuth meta-scopes (offline_access et al.)", () => {
+  // Regression coverage for the Atlassian/Microsoft false-positive
+  // problem: the token response often omits `offline_access` from
+  // its echoed `scope` field even when the refresh token was
+  // actually issued. Treating it as a required API scope would
+  // surface a permanent MissingScopeError on every Jira /
+  // Confluence / OneDrive sync.
+  it("assertScopesGranted ignores offline_access when only the API scopes were echoed back", () => {
+    expect(() =>
+      assertScopesGranted(
+        "jira",
+        ["read:jira-work", "read:jira-user", "offline_access"],
+        ["read:jira-work", "read:jira-user"],
+      ),
+    ).not.toThrow();
+  });
+
+  it("assertScopesGranted still throws for a real missing API scope even when offline_access is filtered", () => {
+    let err: unknown = null;
+    try {
+      assertScopesGranted(
+        "jira",
+        ["read:jira-work", "read:jira-user", "offline_access"],
+        ["read:jira-work"],
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MissingScopeError);
+    const me = err as MissingScopeError;
+    expect(me.missing).toEqual(["read:jira-user"]);
+    // offline_access must never appear in the missing list because
+    // it is a meta-scope, not an API permission.
+    expect(me.missing).not.toContain("offline_access");
+  });
+
+  it("assertScopesGranted does not throw when offline_access is the ONLY requested-but-missing scope", () => {
+    // Pathological: a config that only asks for offline_access
+    // (no API scopes) should never throw at scope-assertion time —
+    // refresh failure is a separate concern surfaced by the refresh
+    // call itself.
+    expect(() =>
+      assertScopesGranted("onedrive", ["offline_access"], []),
+    ).not.toThrow();
+  });
+
+  it("compareScopes filters offline_access from missing but preserves it in the requested record", () => {
+    const r = compareScopes(
+      "confluence",
+      [
+        "read:confluence-content.summary",
+        "read:confluence-content.all",
+        "offline_access",
+      ],
+      ["read:confluence-content.summary", "read:confluence-content.all"],
+    );
+    expect(r.fullyGranted).toBe(true);
+    expect(r.missing).toEqual([]);
+    // The renderer should still see the full requested list — we
+    // only filter from the missing-diff computation.
+    expect(r.requested).toContain("offline_access");
+  });
+});

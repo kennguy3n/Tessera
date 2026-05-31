@@ -283,6 +283,22 @@ export async function flushAsync(): Promise<void> {
     const e = err as NodeJS.ErrnoException;
     if (e.code !== "ENOSPC" && e.code !== "EACCES" && e.code !== "EPERM") {
       state.buffer.unshift(...events);
+      // Re-enforce the buffer cap after re-enqueue. Without this,
+      // a persistent retriable error (e.g. parent dir temporarily
+      // renamed, file handle held by another process) would let
+      // each flush cycle re-prepend the failed batch while new
+      // events continue to push at the tail — the buffer would grow
+      // without bound across cycles, violating the documented
+      // `TELEMETRY_BUFFER_MAX_EVENTS` invariant that `pushEvent`
+      // enforces. Drop from the head (oldest) to match `pushEvent`'s
+      // policy of preferring recent events; the re-enqueued events
+      // are by definition older than any subsequently pushed ones,
+      // so they live at the head and are the first to go when the
+      // cap is exceeded.
+      if (state.buffer.length > TELEMETRY_BUFFER_MAX_EVENTS) {
+        const dropCount = state.buffer.length - TELEMETRY_BUFFER_MAX_EVENTS;
+        state.buffer.splice(0, dropCount);
+      }
     }
     getLogger().warn("telemetry.flush_failed", {
       err: err instanceof Error ? err.message : String(err),

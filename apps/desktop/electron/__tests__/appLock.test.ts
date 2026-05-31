@@ -57,6 +57,7 @@ import {
   setPin,
   validatePinPolicy,
   _setAppLockPathForTests,
+  _setPinWithCustomScryptForTests,
 } from "../appLock";
 import {
   APP_LOCK_BACKOFF_BASE_MS,
@@ -222,6 +223,61 @@ describe("backoff lockout", () => {
       expect(first).toBeGreaterThan(APP_LOCK_BACKOFF_BASE_MS - 1000);
     },
   );
+});
+
+describe("scrypt params — forward-compat verification", () => {
+  // Regression for the "scrypt params unused" Devin Review finding:
+  // a PIN written under a different parameter set than the current
+  // module constants must still verify, because `attemptUnlock`
+  // reads the params back from the persisted `PinRecord.scrypt`
+  // snapshot rather than the module-level `SCRYPT_*` constants.
+  // This is the forward-compatibility hook the schema reserves so
+  // a future constants bump (`SCRYPT_N = 1 << 16`, etc.) does NOT
+  // brick the PINs of users who set theirs under the prior set.
+  it(
+    "attemptUnlock verifies against the stored scrypt params, not the current module constants",
+    { timeout: 30_000 },
+    async () => {
+      // Use the cheapest scrypt that crypto.scrypt accepts so the
+      // test stays under a few hundred ms even on slow CI: N=1024,
+      // r=1, p=1, keyLen=32. These are intentionally weaker than
+      // the current `CURRENT_SCRYPT_PARAMS` (N=2^14, r=8, p=1,
+      // keyLen=64) — the point is to prove verification uses the
+      // *stored* params, not the *current* ones.
+      const legacyParams = { N: 1024, r: 1, p: 1, keyLen: 32 };
+      await _setPinWithCustomScryptForTests("abc123", legacyParams);
+      expect(hasPinSet()).toBe(true);
+
+      // Verification must succeed even though `legacyParams` differs
+      // from the module-level current scrypt constants. If
+      // `deriveHash` were still reading the module constants (the
+      // pre-fix behaviour) the derived hash would differ from the
+      // stored one and `attemptUnlock` would fall through to
+      // `kind === "failure"`.
+      const ok = await attemptUnlock("abc123");
+      expect(ok.kind).toBe("success");
+
+      // A wrong PIN still fails, ruling out a degenerate
+      // "everything verifies" regression.
+      const bad = await attemptUnlock("wrong1");
+      expect(bad.kind).toBe("failure");
+    },
+  );
+
+  it("setPin persists the current scrypt params alongside the hash", async () => {
+    // After `setPin`, the on-disk record must contain a `scrypt`
+    // sub-object with the four numeric fields the verifier reads.
+    // Without this, the verify path would fail validation
+    // (`isValidPersisted`) and the user would get spurious
+    // `no_pin_set` results.
+    await setPin("abc123");
+    // We don't expose the raw PinRecord, but a successful unlock
+    // round-trips through `readPersisted` + the scrypt validator,
+    // so kind=success proves the stored record passes
+    // `isValidPersisted` with all four numeric scrypt sub-fields.
+    const r = await attemptUnlock("abc123");
+    expect(r.kind).toBe("success");
+  });
 });
 
 describe("clearPin", () => {

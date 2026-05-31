@@ -203,6 +203,20 @@ function isValidPersisted(value: unknown): value is PersistedAppLock {
     if (typeof pin.hash !== "string") return false;
     if (typeof pin.createdAt !== "number") return false;
     if (typeof pin.scrypt !== "object" || pin.scrypt === null) return false;
+    // Validate the scrypt sub-fields too — `deriveHash` reads N/r/p/keyLen
+    // back from this record during verification (forward-compat), so a
+    // tampered blob with a missing or non-numeric `scrypt.N` must be
+    // rejected before it reaches `crypto.scrypt` (which would throw a
+    // hard-to-diagnose ERR_INVALID_ARG_TYPE).
+    const sp = pin.scrypt as Record<string, unknown>;
+    if (
+      typeof sp.N !== "number" ||
+      typeof sp.r !== "number" ||
+      typeof sp.p !== "number" ||
+      typeof sp.keyLen !== "number"
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -220,19 +234,51 @@ function writePersisted(state: PersistedAppLock): void {
   fs.renameSync(tmp, fp);
 }
 
+export interface ScryptParams {
+  N: number;
+  r: number;
+  p: number;
+  keyLen: number;
+}
+
 /**
- * Compute the scrypt hash of `pin` with the given salt. Async
- * because scrypt is CPU-intensive (~50ms on a typical laptop with
- * N=2^14); blocking the event loop would freeze the UI during the
- * unlock prompt.
+ * Current scrypt parameter set used when *setting* a fresh PIN.
+ * Verification uses whatever set is recorded inside the stored
+ * `PinRecord.scrypt` field, so historical PINs continue to verify
+ * after a constants bump.
  */
-function deriveHash(pin: string, salt: Buffer): Promise<Buffer> {
+const CURRENT_SCRYPT_PARAMS: ScryptParams = {
+  N: SCRYPT_N,
+  r: SCRYPT_R,
+  p: SCRYPT_P,
+  keyLen: SCRYPT_KEY_LEN,
+};
+
+/**
+ * Compute the scrypt hash of `pin` with the given salt and scrypt
+ * parameters. Async because scrypt is CPU-intensive (~50ms on a
+ * typical laptop with N=2^14); blocking the event loop would
+ * freeze the UI during the unlock prompt.
+ *
+ * The `params` argument is threaded explicitly (rather than read
+ * from the module-level `SCRYPT_*` constants) so verification can
+ * use the parameters recorded on the stored `PinRecord` and a
+ * future constants bump (`SCRYPT_N = 1 << 16`, say) does not break
+ * verification of PINs that were set under the old parameters.
+ * `setPin` always derives with `CURRENT_SCRYPT_PARAMS`; verification
+ * derives with `persisted.pin.scrypt`.
+ */
+function deriveHash(
+  pin: string,
+  salt: Buffer,
+  params: ScryptParams,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     crypto.scrypt(
       pin,
       salt,
-      SCRYPT_KEY_LEN,
-      { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM },
+      params.keyLen,
+      { N: params.N, r: params.r, p: params.p, maxmem: SCRYPT_MAXMEM },
       (err, derived) => {
         if (err) reject(err);
         else resolve(derived);
@@ -259,11 +305,18 @@ export function hasPinSet(): boolean {
 export async function setPin(pin: string): Promise<void> {
   validatePinPolicy(pin);
   const salt = crypto.randomBytes(32);
-  const hash = await deriveHash(pin, salt);
+  const hash = await deriveHash(pin, salt, CURRENT_SCRYPT_PARAMS);
   const persisted = readPersisted();
   persisted.pin = {
     version: 1,
-    scrypt: { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, keyLen: SCRYPT_KEY_LEN },
+    // Snapshot the current scrypt params alongside the hash.
+    // `attemptUnlock` reads these back on verify so a future
+    // constants bump (e.g. `SCRYPT_N = 1 << 16`) does not
+    // invalidate the PINs of users on the prior parameter set —
+    // they keep working until the user changes their PIN, at
+    // which point this snapshot gets refreshed to the new
+    // `CURRENT_SCRYPT_PARAMS`.
+    scrypt: { ...CURRENT_SCRYPT_PARAMS },
     salt: salt.toString("base64"),
     hash: hash.toString("base64"),
     createdAt: Date.now(),
@@ -336,7 +389,13 @@ export async function attemptUnlock(pin: string): Promise<UnlockResult> {
   const expected = Buffer.from(persisted.pin.hash, "base64");
   let derived: Buffer;
   try {
-    derived = await deriveHash(pin, salt);
+    // Derive against the params recorded on the *stored* PinRecord
+    // (not the module-level `SCRYPT_*` constants). This is the
+    // forward-compatibility hook the schema reserves: bumping
+    // `SCRYPT_N` will not invalidate PINs that were written under
+    // the previous N — they re-verify against the snapshot below
+    // until the user resets their PIN.
+    derived = await deriveHash(pin, salt, persisted.pin.scrypt);
   } catch (err) {
     getLogger().warn("app_lock.derive_failed", {
       err: err instanceof Error ? err.message : String(err),
@@ -502,6 +561,37 @@ async function attemptWindowsHelloUnlock(reason: string): Promise<boolean> {
     });
     return false;
   }
+}
+
+/**
+ * Test-only: set a PIN derived against an explicit scrypt parameter
+ * set, then snapshot those parameters into the persisted record.
+ * This lets the forward-compat regression test simulate a future
+ * constants bump: write a PIN under "old" params, then verify
+ * `attemptUnlock` re-derives with those old params (read from the
+ * stored record) rather than the module-level current constants.
+ *
+ * Not exported through any IPC handler and not exposed to the
+ * renderer — strictly for the unit-test harness in
+ * `electron/__tests__/appLock.test.ts`.
+ */
+export async function _setPinWithCustomScryptForTests(
+  pin: string,
+  params: ScryptParams,
+): Promise<void> {
+  validatePinPolicy(pin);
+  const salt = crypto.randomBytes(32);
+  const hash = await deriveHash(pin, salt, params);
+  const persisted = readPersisted();
+  persisted.pin = {
+    version: 1,
+    scrypt: { ...params },
+    salt: salt.toString("base64"),
+    hash: hash.toString("base64"),
+    createdAt: Date.now(),
+  };
+  persisted.attempt = emptyAttempt();
+  writePersisted(persisted);
 }
 
 /**

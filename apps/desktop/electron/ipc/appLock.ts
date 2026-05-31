@@ -183,6 +183,35 @@ export function registerAppLockHandlers(): void {
       _event,
       reasonRaw: unknown,
     ): Promise<{ success: boolean }> => {
+      // Rate-limit parity with `appLock:attemptUnlock`. The biometric
+      // path is the user's *other* unlock channel; a renderer
+      // compromised into a tight loop could otherwise spam
+      // TouchID / Windows Hello prompts (or the platform-fallback
+      // PowerShell process, on Windows) at the IPC's raw async
+      // throughput. The 250ms / token budget here matches the PIN
+      // path, so a compromised renderer cannot pick the biometric
+      // channel to side-step the throttle.
+      //
+      // Failing closed (returning `{ success: false }`) rather than
+      // throwing keeps the renderer's existing biometric error
+      // handling path responsible for the UX (no separate "rate
+      // limited" code path needed). A user mashing the unlock
+      // button would have to wait 250ms between presses — well
+      // under one human click cadence.
+      try {
+        defaultRateLimiter.consume("appLock:attemptBiometric", {
+          tokensPerInterval: 1,
+          intervalMs: 250,
+        });
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          getLogger().warn("app_lock.biometric_rate_limited", {
+            retryAfterMs: err.retryAfterMs,
+          });
+          return { success: false };
+        }
+        throw err;
+      }
       const reason =
         typeof reasonRaw === "string" && reasonRaw.length > 0
           ? reasonRaw

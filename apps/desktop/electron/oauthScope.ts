@@ -90,6 +90,39 @@ export function parseScopeString(value: string | null | undefined): string[] {
 }
 
 /**
+ * OAuth 2.0 / OIDC *meta-scopes* — scopes that control protocol
+ * behaviour rather than granting access to a resource API:
+ *
+ *   - `offline_access` (RFC 6749 §3.3 / OIDC Core §11) controls
+ *     whether a refresh token is issued. It is NOT an API
+ *     permission, and several providers (notably Atlassian
+ *     `auth.atlassian.com` and Microsoft Identity Platform v2.0)
+ *     do NOT echo it back in the token response's `scope` field
+ *     even when it was requested and a refresh token was actually
+ *     issued. Treating it as a required scope here would cause
+ *     `assertScopesGranted` to throw `MissingScopeError` after
+ *     every Jira / Confluence / OneDrive sync and surface a
+ *     bogus re-auth banner to the user even though the integration
+ *     is fully working.
+ *
+ * We strip meta-scopes from the *required* set at the comparison
+ * boundary (`assertScopesGranted`, `compareScopes`). They remain
+ * in `getRequestedScopes(config)` because they ARE part of the
+ * authorization request — we just don't validate the provider
+ * echoed them back. If the refresh token is genuinely missing,
+ * the refresh-token call will fail elsewhere and surface its own
+ * error to the user — that is the right place to detect a real
+ * `offline_access` problem, not at scope-assertion time.
+ */
+export const OAUTH_META_SCOPES: ReadonlySet<string> = new Set([
+  "offline_access",
+]);
+
+function withoutMetaScopes(scopes: readonly string[]): string[] {
+  return scopes.filter((s) => !OAUTH_META_SCOPES.has(s));
+}
+
+/**
  * Compute the difference between requested and granted scopes.
  * Returns the set of scopes that were requested but NOT granted —
  * i.e. the user narrowed consent. Empty array means "full grant".
@@ -98,6 +131,11 @@ export function parseScopeString(value: string | null | undefined): string[] {
  * implicitly grant `openid` even if the caller didn't ask for it;
  * that is the provider's prerogative and not a security issue from
  * the caller's perspective).
+ *
+ * Pure set-diff primitive — does NOT strip meta-scopes. Callers
+ * that compare requested vs granted to decide whether to throw or
+ * warn the user (`assertScopesGranted`, `compareScopes`) strip
+ * meta-scopes themselves before calling this helper.
  */
 export function computeMissingScopes(
   requested: readonly string[],
@@ -115,13 +153,21 @@ export function computeMissingScopes(
  * Use this at the connector-sync entry point so a sync call against
  * a narrowed token surfaces a precise error instead of producing
  * unexplained 403s deep in the API client.
+ *
+ * Meta-scopes (`offline_access` etc., see `OAUTH_META_SCOPES`) are
+ * stripped from `required` before the comparison — they are
+ * protocol-behaviour scopes, not API permissions, and providers
+ * frequently omit them from the token response's `scope` field
+ * even when granted, so requiring them here would surface false
+ * `MissingScopeError`s on every working integration.
  */
 export function assertScopesGranted(
   provider: string,
   required: readonly string[],
   granted: readonly string[],
 ): void {
-  const missing = computeMissingScopes(required, granted);
+  const apiRequired = withoutMetaScopes(required);
+  const missing = computeMissingScopes(apiRequired, granted);
   if (missing.length > 0) {
     throw new MissingScopeError(provider, missing, [...granted]);
   }
@@ -165,7 +211,15 @@ export function compareScopes(
   requested: readonly string[],
   granted: readonly string[],
 ): ScopeComparison {
-  const missing = computeMissingScopes(requested, granted);
+  // Strip meta-scopes (`offline_access` etc.) from the *required*
+  // set before computing missing — see `OAUTH_META_SCOPES` JSDoc
+  // for why. We DO keep the full `requested` array in the returned
+  // record so the renderer can show the user the complete list of
+  // scopes the integration asked for, but the `missing` /
+  // `fullyGranted` fields reflect only the API permissions the
+  // provider is expected to echo back.
+  const apiRequired = withoutMetaScopes(requested);
+  const missing = computeMissingScopes(apiRequired, granted);
   return {
     provider,
     requested: [...requested],
