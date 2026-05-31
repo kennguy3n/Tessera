@@ -615,9 +615,7 @@ pub fn open_shared_read_pool_with_key(
         // probe in `open_shared_with_key`.
         conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
             .map_err(|e| {
-                Error::Database(format!(
-                    "read-pool connection probe failed for {path}: {e}"
-                ))
+                Error::Database(format!("read-pool connection probe failed for {path}: {e}"))
             })?;
         conns.push(Mutex::new(conn));
     }
@@ -1383,8 +1381,11 @@ mod tests {
             let conn = writer.lock().unwrap();
             conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])
                 .unwrap();
-            conn.execute("INSERT INTO t (id, v) VALUES (?1, ?2)", rusqlite::params![1, "hello"])
-                .unwrap();
+            conn.execute(
+                "INSERT INTO t (id, v) VALUES (?1, ?2)",
+                rusqlite::params![1, "hello"],
+            )
+            .unwrap();
         }
         let pool = open_shared_read_pool(db_path_str, 2).expect("pool");
         for _ in 0..pool.len() {

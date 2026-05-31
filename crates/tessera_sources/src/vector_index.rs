@@ -263,8 +263,7 @@ impl IvfIndex {
                 (c, dot(centroid, &normalised_query))
             })
             .collect();
-        centroid_scores
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        centroid_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let probe_count = self.nprobe.min(centroid_scores.len());
 
         // Walk the probed cells, pushing (score, chunk_id) into a
@@ -344,12 +343,22 @@ impl Ord for MinHeapEntry {
         // Smaller score == greater in heap order. NaN treated as
         // equal so a poisoned score does not corrupt the heap
         // invariant.
+        //
+        // Tiebreaker on equal scores: HIGHER chunk_id == greater. The
+        // brute-force path `rank_chunks_by_cosine` sorts (score desc,
+        // chunk_id asc) and `take(k)`, so it keeps the LOWER chunk_ids
+        // when scores tie. To match that here we want the worst-kept
+        // entry (the one `peek()`/`pop()` returns first) to be the
+        // entry with the HIGHEST chunk_id, so a candidate with a lower
+        // chunk_id can evict it. Reversed direction (`other.cmp(&self)`)
+        // would invert that and silently keep different rows from
+        // brute force when ties span the k boundary.
         match other
             .score
             .partial_cmp(&self.score)
             .unwrap_or(std::cmp::Ordering::Equal)
         {
-            std::cmp::Ordering::Equal => other.chunk_id.cmp(&self.chunk_id),
+            std::cmp::Ordering::Equal => self.chunk_id.cmp(&other.chunk_id),
             ord => ord,
         }
     }
@@ -734,10 +743,7 @@ mod tests {
             .collect();
         let brute_hits = brute_force_top_k(&rows, "m", &query, 10);
 
-        let overlap = ivf_hits
-            .iter()
-            .filter(|id| brute_hits.contains(id))
-            .count();
+        let overlap = ivf_hits.iter().filter(|id| brute_hits.contains(id)).count();
         assert!(
             overlap >= 7,
             "IVF recall@10 too low: overlap={overlap}, ivf={ivf_hits:?}, brute={brute_hits:?}"
@@ -789,14 +795,36 @@ mod tests {
     }
 
     #[test]
+    fn tied_scores_evict_high_chunk_ids_when_k_lt_n() {
+        // Regression: Devin Review BUG_0001 on the IVF index. When all
+        // candidates have equal scores and `k < n`, the bounded heap
+        // must evict entries with the HIGHEST chunk_id so the result
+        // matches brute force's (score desc, chunk_id asc) → take(k)
+        // contract. A previous tiebreaker direction silently kept the
+        // wrong rows for ties spanning the k boundary.
+        let rows = vec![
+            row(1, "m", vec![1.0, 0.0]),
+            row(2, "m", vec![1.0, 0.0]),
+            row(3, "m", vec![1.0, 0.0]),
+            row(4, "m", vec![1.0, 0.0]),
+            row(5, "m", vec![1.0, 0.0]),
+        ];
+        let idx = IvfIndex::build(&rows, "m", 2);
+        let hits = idx.top_k_cosine(&[1.0, 0.0], 2);
+        let ids: Vec<i64> = hits.iter().map(|h| h.chunk_id).collect();
+        assert_eq!(
+            ids,
+            vec![1, 2],
+            "expected lowest two chunk_ids when ties span the k boundary"
+        );
+    }
+
+    #[test]
     fn zero_query_vector_is_handled_without_nan() {
         // Cosine against a zero vector is 0.0 per the
         // `cosine_similarity` contract. The IVF path must not
         // produce NaN scores or panic.
-        let rows = vec![
-            row(1, "m", vec![1.0, 0.0]),
-            row(2, "m", vec![0.0, 1.0]),
-        ];
+        let rows = vec![row(1, "m", vec![1.0, 0.0]), row(2, "m", vec![0.0, 1.0])];
         let idx = IvfIndex::build(&rows, "m", 2);
         let hits = idx.top_k_cosine(&[0.0, 0.0], 2);
         for h in &hits {
@@ -809,10 +837,7 @@ mod tests {
         // A stored zero vector cannot have a non-zero cosine
         // against anything. It still has to make it through the
         // assign/update loop without poisoning a centroid.
-        let rows = vec![
-            row(1, "m", vec![0.0, 0.0]),
-            row(2, "m", vec![1.0, 0.0]),
-        ];
+        let rows = vec![row(1, "m", vec![0.0, 0.0]), row(2, "m", vec![1.0, 0.0])];
         let idx = IvfIndex::build(&rows, "m", 2);
         let hits = idx.top_k_cosine(&[1.0, 0.0], 2);
         // The non-zero, query-aligned vector must rank first.

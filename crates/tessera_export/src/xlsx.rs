@@ -754,7 +754,10 @@ mod tests {
             .iter()
             .filter(|n| n.starts_with("xl/worksheets/sheet") && n.ends_with(".xml"))
             .count();
-        assert_eq!(n_sheets, 2, "expected 2 worksheets, got {n_sheets}: {names:?}");
+        assert_eq!(
+            n_sheets, 2,
+            "expected 2 worksheets, got {n_sheets}: {names:?}"
+        );
 
         // The cross-sheet VLOOKUP formula must round-trip as a formula
         // (the function name reaches an `<f>` element), not as plain text.
@@ -831,7 +834,11 @@ mod tests {
         // so the final candidate is exactly 31 chars.
         let long = "A".repeat(31);
         let res = dedupe_sheet_name(&long, &[long.clone()]);
-        assert_eq!(res.chars().count(), 31, "result must fit Excel's 31-char limit");
+        assert_eq!(
+            res.chars().count(),
+            31,
+            "result must fit Excel's 31-char limit"
+        );
         assert!(res.ends_with("~2"));
     }
 

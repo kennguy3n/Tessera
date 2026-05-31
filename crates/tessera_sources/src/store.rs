@@ -2601,14 +2601,10 @@ impl SourceStore {
         // to hydrate the final ranked list. Routing it through
         // the pool means a long writer transaction doesn't add
         // latency to interactive search.
-        self.with_read(|conn| self.fetch_chunks_by_ids_inner(conn, ids))
+        self.with_read(|conn| Self::fetch_chunks_by_ids_inner(conn, ids))
     }
 
-    fn fetch_chunks_by_ids_inner(
-        &self,
-        conn: &Connection,
-        ids: &[i64],
-    ) -> Result<Vec<SearchHit>> {
+    fn fetch_chunks_by_ids_inner(conn: &Connection, ids: &[i64]) -> Result<Vec<SearchHit>> {
         let placeholders = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(",");
@@ -3733,9 +3729,7 @@ mod tests {
             .upsert_chunk_embedding(ids[0], "test-model", 3, &vec_bytes)
             .unwrap();
 
-        let path = store
-            .vector_search_path_for_model("test-model", 3)
-            .unwrap();
+        let path = store.vector_search_path_for_model("test-model", 3).unwrap();
         match path {
             VectorSearchPath::BruteForce(rows) => {
                 assert_eq!(rows.len(), 1, "tiny corpus must brute-force");
@@ -3778,12 +3772,8 @@ mod tests {
                 .unwrap();
         }
 
-        let p1 = store
-            .vector_search_path_for_model("test-model", 3)
-            .unwrap();
-        let p2 = store
-            .vector_search_path_for_model("test-model", 3)
-            .unwrap();
+        let p1 = store.vector_search_path_for_model("test-model", 3).unwrap();
+        let p2 = store.vector_search_path_for_model("test-model", 3).unwrap();
         // Cached path must share `Arc` storage with the previous
         // return value — `Arc::strong_count` would be > 1 because
         // both `p1` and the cache slot hold references.
@@ -3830,9 +3820,7 @@ mod tests {
             .unwrap();
 
         // Warm the cache.
-        let warm = store
-            .vector_search_path_for_model("test-model", 2)
-            .unwrap();
+        let warm = store.vector_search_path_for_model("test-model", 2).unwrap();
         let warm_rows = match warm {
             VectorSearchPath::BruteForce(rows) => rows,
             VectorSearchPath::Ivf(_) => panic!("small corpus expected to brute-force"),
@@ -3860,9 +3848,7 @@ mod tests {
             .upsert_chunk_embedding(new_ids[0], "test-model", 2, &v2_bytes)
             .unwrap();
 
-        let after = store
-            .vector_search_path_for_model("test-model", 2)
-            .unwrap();
+        let after = store.vector_search_path_for_model("test-model", 2).unwrap();
         let after_rows = match after {
             VectorSearchPath::BruteForce(rows) => rows,
             VectorSearchPath::Ivf(_) => panic!("small corpus expected to brute-force"),
@@ -3907,9 +3893,7 @@ mod tests {
             .unwrap();
 
         // Warm the cache.
-        let warm = store
-            .vector_search_path_for_model("test-model", 2)
-            .unwrap();
+        let warm = store.vector_search_path_for_model("test-model", 2).unwrap();
         match warm {
             VectorSearchPath::BruteForce(rows) => assert_eq!(rows.len(), 1),
             VectorSearchPath::Ivf(_) => panic!("expected BruteForce on small corpus"),
@@ -3921,9 +3905,7 @@ mod tests {
         store
             .update_source_status(&source.id, SourceStatus::AccessRevoked, None)
             .unwrap();
-        let after = store
-            .vector_search_path_for_model("test-model", 2)
-            .unwrap();
+        let after = store.vector_search_path_for_model("test-model", 2).unwrap();
         match after {
             VectorSearchPath::BruteForce(rows) => assert!(
                 rows.is_empty(),
@@ -3974,9 +3956,7 @@ mod tests {
                 .unwrap();
         }
 
-        let path = store
-            .vector_search_path_for_model("test-model", 3)
-            .unwrap();
+        let path = store.vector_search_path_for_model("test-model", 3).unwrap();
         match path {
             VectorSearchPath::Ivf(idx) => assert_eq!(idx.len(), n, "IVF must hold all rows"),
             VectorSearchPath::BruteForce(_) => {
