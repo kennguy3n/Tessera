@@ -6,6 +6,7 @@ import {
   makeIncrementalRecalcState,
   parseCSVLines,
   parseSheetContent,
+  updateCellInRows,
   type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
 import { cellKey, isFormulaError } from "./formulaEngine";
@@ -144,14 +145,22 @@ export default function SheetEditor({
   const updateCell = useCallback(
     (rowIdx: number, colIdx: number, value: string) => {
       setSheet((prev) => {
-        const newRows = prev.rows.map((r) => [...r]);
-        while (newRows.length <= rowIdx) {
-          newRows.push(new Array(prev.columns.length).fill(""));
-        }
-        while (newRows[rowIdx].length <= colIdx) {
-          newRows[rowIdx].push("");
-        }
-        newRows[rowIdx][colIdx] = value;
+        // `updateCellInRows` preserves every untouched row's reference
+        // identity. The previous shape (`prev.rows.map((r) => [...r])`)
+        // cloned EVERY row on every single-cell edit, defeating
+        // `incrementalRecalc`'s O(1) `prevRow === nextRow` short-circuit
+        // and forcing the dirty diff into O(rows × cols) cell-by-cell
+        // comparison even for a one-character keystroke. With the
+        // helper, only the edited row is freshly allocated; the rest
+        // survive by reference, so the diff cost stays at O(cols of
+        // edited row) per keystroke. Devin Review PR #83 ANALYSIS-0002.
+        const newRows = updateCellInRows(
+          prev.rows,
+          prev.columns.length,
+          rowIdx,
+          colIdx,
+          value,
+        );
         const updated = { ...prev, rows: newRows };
         debouncedSave(updated);
         return updated;

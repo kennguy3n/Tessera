@@ -614,6 +614,56 @@ export function makeIncrementalRecalcState(): IncrementalRecalcState {
 }
 
 /**
+ * Apply a single-cell edit to a `rows` array while preserving the
+ * reference identity of every row that was NOT touched. Returns a new
+ * top-level array (so React's `setSheet` sees a fresh `rows` ref and
+ * commits a render) where the target row is a freshly-cloned array
+ * with the new value written at `colIdx`, and every other row is the
+ * same reference that was passed in.
+ *
+ * Why this matters: {@link incrementalRecalc} short-circuits unchanged
+ * rows with an O(1) `prevRow === nextRow` check (see the main diff
+ * loop). The naive shape — `rows.map((r) => [...r])` — clones every
+ * row on every edit, defeating that skip and forcing the diff into
+ * O(rows × cols) cell-by-cell comparison even for a single-cell
+ * keystroke. With this helper, the diff cost stays at
+ * O(cols_of_edited_row) per keystroke.
+ *
+ * Also handles row + column extension:
+ *  - If `rowIdx` is past the end of `rows`, blank rows are appended
+ *    (each padded to `columnCount`) until index `rowIdx` exists.
+ *  - If `colIdx` is past the end of the target row, the target row is
+ *    extended with empty strings so the new value fits.
+ *
+ * The target row's clone is shallow — cells are strings (primitives),
+ * so identity is value identity. Newly-appended rows are fresh arrays
+ * full of `""`; they have no pre-existing reference to preserve.
+ */
+export function updateCellInRows(
+  rows: ReadonlyArray<ReadonlyArray<string>>,
+  columnCount: number,
+  rowIdx: number,
+  colIdx: number,
+  value: string,
+): string[][] {
+  // `slice()` preserves every existing row's array reference in the
+  // new top-level array. Only the target row is replaced below.
+  const newRows: string[][] = (rows as ReadonlyArray<string[]>).slice();
+  while (newRows.length <= rowIdx) {
+    newRows.push(new Array(columnCount).fill(""));
+  }
+  // Clone ONLY the target row before mutation. Every other entry in
+  // `newRows` is still a reference into the original `rows`.
+  const targetRow = newRows[rowIdx].slice();
+  while (targetRow.length <= colIdx) {
+    targetRow.push("");
+  }
+  targetRow[colIdx] = value;
+  newRows[rowIdx] = targetRow;
+  return newRows;
+}
+
+/**
  * Recompute every formula cell that's transitively affected by the
  * cells whose raw text changed between `state.lastRows` and
  * `sheet.rows`. The first render (`state.lastRows === null`)
@@ -677,10 +727,18 @@ export function incrementalRecalc(
     }
   } else {
     // Reference equality on rows is enough to skip whole rows that
-    // didn't change — SheetEditor allocates a new row array only on
-    // edits to that row. We still descend cell-by-cell when row
-    // refs differ because a single-cell edit produces a new row
-    // array with most cells reference-equal to the previous values.
+    // didn't change — SheetEditor's `updateCellInRows` allocates a new
+    // row array only for the edited row. We still descend cell-by-cell
+    // when row refs differ because a single-cell edit produces a new
+    // row array with most cells reference-equal to the previous values.
+    //
+    // The `maxR = max(prevRows.length, nextRows.length)` upper bound
+    // covers row deletions naturally: for `r >= nextRows.length`,
+    // `nextRow` is `undefined`, so `prev !== next` fires for every
+    // defined cell in the dropped row, sending its key into
+    // `dirtyKeys`. The classification pass below routes those keys
+    // (`raw === undefined`) through the deletion branch so the graph
+    // and cache entries are cleaned up.
     const maxR = Math.max(prevRows.length, nextRows.length);
     for (let r = 0; r < maxR; r++) {
       const prevRow = prevRows[r];
@@ -691,18 +749,6 @@ export function incrementalRecalc(
         const prev = prevRow?.[c];
         const next = nextRow?.[c];
         if (prev !== next) dirtyKeys.add(cellKey(r, c, activeName));
-      }
-    }
-    // Cells beyond the new sheet's row count are deletions: drop
-    // them from the graph + cache so dangling `usedBy` entries
-    // never linger.
-    for (let r = nextRows.length; r < prevRows.length; r++) {
-      const prevRow = prevRows[r];
-      if (!prevRow) continue;
-      for (let c = 0; c < prevRow.length; c++) {
-        if (prevRow[c] !== undefined && prevRow[c] !== "") {
-          dirtyKeys.add(cellKey(r, c, activeName));
-        }
       }
     }
   }
