@@ -12,6 +12,7 @@ import {
   extractFieldRefs,
   evaluateBaseFormula,
   formatFormulaResult,
+  renameFieldInFormula,
 } from "../baseFormulaEngine";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
 
@@ -63,6 +64,110 @@ describe("extractFieldRefs", () => {
     expect(extractFieldRefs('"{NotAField}" + {RealField}')).toEqual([
       "RealField",
     ]);
+  });
+
+  it("keeps a brace-pair that begins inside a quoted string but the embedded quote is doubled per RFC-4180", () => {
+    // The formula tokenizer uses Excel/RFC-4180 escape semantics:
+    // an embedded `"` inside `"…"` is written as `""`. The first
+    // `""` is a doubled-quote escape (the literal stays open), so
+    // `{Fake}` is still inside the string and `{Real}` outside is
+    // the only real reference. The scanner stays aligned with the
+    // evaluator on what counts as "inside a literal".
+    expect(
+      extractFieldRefs('"open ""{Fake}"" still open" + {Real}'),
+    ).toEqual(["Real"]);
+  });
+
+  it("treats a backslash as a literal character (formula engine has no backslash escapes)", () => {
+    // `\\"` is *not* an escape for the formula engine — the `"`
+    // after the backslash closes the literal. This documents that
+    // the scanner intentionally diverges from C-style string
+    // semantics and stays in lock-step with the underlying
+    // tokenizer (`formulaEngine/tokenizer.ts`).
+    expect(
+      extractFieldRefs('"open \\" + {ClosedRef} + "reopen"'),
+    ).toEqual(["ClosedRef"]);
+  });
+});
+
+describe("renameFieldInFormula", () => {
+  // The helper is the single source of truth for `{oldName}` →
+  // `{newName}` rewriting. It is shared between `rewriteFieldRefs`,
+  // `extractFieldRefs`, and `BaseEditor.renameField` so the rules
+  // never drift between scanners. Each test below pins one rule.
+
+  it("replaces every occurrence of the referenced field name", () => {
+    expect(renameFieldInFormula("{Price} + {Price}", "Price", "Cost")).toBe(
+      "{Cost} + {Cost}",
+    );
+  });
+
+  it("leaves unrelated references untouched", () => {
+    expect(
+      renameFieldInFormula("{Price} + {Quantity}", "Price", "Cost"),
+    ).toBe("{Cost} + {Quantity}");
+  });
+
+  it("never touches a `{oldName}` inside a single-quoted string literal", () => {
+    expect(renameFieldInFormula("'{Price}' + {Price}", "Price", "Cost")).toBe(
+      "'{Price}' + {Cost}",
+    );
+  });
+
+  it("never touches a `{oldName}` inside a double-quoted string literal", () => {
+    expect(renameFieldInFormula('"{Price}" + {Price}', "Price", "Cost")).toBe(
+      '"{Price}" + {Cost}',
+    );
+  });
+
+  it("handles doubled-quote escapes inside a string literal — the `{Price}` between the doubled quotes stays inside the string", () => {
+    // RFC-4180 / Excel doubled-quote escape: `""` inside `"…"` is
+    // an embedded `"` and the literal stays open. The first
+    // `{Price}` is inside the literal and must be left alone; the
+    // second is real code and must be renamed. All three rewrite
+    // paths (extract / rewrite / rename) share the same scanner so
+    // they cannot disagree.
+    const src = '"prefix ""{Price}"" suffix" + {Price}';
+    expect(renameFieldInFormula(src, "Price", "Cost")).toBe(
+      '"prefix ""{Price}"" suffix" + {Cost}',
+    );
+  });
+
+  it("leaves an unmatched opening `{` alone (no closer means no reference)", () => {
+    expect(renameFieldInFormula("{Price", "Price", "Cost")).toBe("{Price");
+  });
+
+  it("is a no-op when the source has no references to oldName", () => {
+    expect(renameFieldInFormula("1 + 2", "Price", "Cost")).toBe("1 + 2");
+  });
+
+  it("passes undefined / empty source through unchanged", () => {
+    expect(renameFieldInFormula(undefined, "Price", "Cost")).toBeUndefined();
+    expect(renameFieldInFormula("", "Price", "Cost")).toBe("");
+  });
+
+  it("returns content-identical output when the source has no `{oldName}` token", () => {
+    // JS string primitives are compared by value, so `BaseEditor.renameField`'s
+    // `rewritten === renamed.formula` short-circuit at BaseEditor.tsx:390
+    // already works at the string-equality level — the bot's claim on PR #79
+    // round 14 (ANALYSIS_…_0001) that it "never evaluates to true" was
+    // incorrect for primitives. What the previous implementation *did* waste
+    // was the inner loop's string concatenation on every call, even when no
+    // `{oldName}` token was present. Returning `source` verbatim from the
+    // helper skips that allocation entirely and matches the contract the
+    // call-site comment ("preserves referential identity when nothing
+    // changed") was already promising. This test pins the value-equality
+    // half of the contract; the perf half is unobservable at the JS level
+    // (string identity is not user-distinguishable from value equality),
+    // but the new `changed` flag inside the helper still does the right
+    // thing on the inside.
+    const src = "{Quantity} * 2";
+    expect(renameFieldInFormula(src, "Price", "Cost")).toBe(src);
+    // String-literal-only sources (`{Price}` inside `'…'`) must round-trip
+    // identically — the scanner classifies the `{Price}` as text, so no
+    // rewrite happens and the contract is the same.
+    const literalOnly = "'{Price}' + {Quantity}";
+    expect(renameFieldInFormula(literalOnly, "Price", "Cost")).toBe(literalOnly);
   });
 });
 

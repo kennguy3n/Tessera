@@ -57,6 +57,102 @@ function columnLetter(col: number): string {
 }
 
 /**
+ * Token emitted by {@link walkFormulaSource}.
+ *
+ * `text` — verbatim character(s) the caller should pass through.
+ * `ref`  — a `{FieldName}` reference. `raw` is the full original
+ *          token including the braces; `name` is the field name
+ *          inside the braces (so callers don't all re-substring).
+ */
+type FormulaToken =
+  | { kind: "text"; text: string }
+  | { kind: "ref"; raw: string; name: string };
+
+/**
+ * Walk a base-formula source and yield a stream of {@link FormulaToken}s,
+ * correctly skipping `{` and `}` that appear *inside* single- or
+ * double-quoted string literals.
+ *
+ * String-literal semantics intentionally mirror the underlying formula
+ * tokenizer (`formulaEngine/tokenizer.ts`): a string is opened by `"`
+ * or `'`, and an embedded delimiter is escaped by **doubling it**
+ * (RFC-4180 / Excel convention, e.g. `"a""b"` is the four-char string
+ * `a"b`). Backslash is a literal character — the formula engine does
+ * **not** treat `\"` as an escape, so this scanner does not either.
+ * Keeping the two scanners aligned is what guarantees that
+ * `extractFieldRefs`, `rewriteFieldRefs`, `renameFieldInFormula`, and
+ * the evaluator/dep-graph all agree on the same notion of "inside a
+ * string literal" — otherwise a rename of `{Price}` could rewrite a
+ * literal the evaluator was actually reading as code, or vice versa.
+ *
+ * Centralising the scan in one helper keeps `rewriteFieldRefs`,
+ * `extractFieldRefs`, and `BaseEditor.renameField`'s in-place formula
+ * rewrite from drifting — historically they each had their own
+ * scanner with subtly different rules.
+ */
+function walkFormulaSource(source: string): FormulaToken[] {
+  const tokens: FormulaToken[] = [];
+  let buf = "";
+  const flush = (): void => {
+    if (buf.length > 0) {
+      tokens.push({ kind: "text", text: buf });
+      buf = "";
+    }
+  };
+
+  let i = 0;
+  let inStr: '"' | "'" | null = null;
+  while (i < source.length) {
+    const ch = source[i];
+    if (inStr) {
+      buf += ch;
+      if (ch === inStr) {
+        // RFC-4180 doubled-quote escape: a literal `"` inside a
+        // `"…"` string is written `""` (and similarly `''` for
+        // single-quoted sheet names). Consume both characters so
+        // the literal stays open.
+        if (source[i + 1] === inStr) {
+          buf += source[i + 1];
+          i += 2;
+          continue;
+        }
+        inStr = null;
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inStr = ch;
+      buf += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "{") {
+      const close = source.indexOf("}", i + 1);
+      if (close < 0) {
+        // Unclosed brace — pass through verbatim. The evaluator will
+        // surface the error itself; this scanner is intentionally
+        // lossless.
+        buf += source.slice(i);
+        break;
+      }
+      flush();
+      tokens.push({
+        kind: "ref",
+        raw: source.slice(i, close + 1),
+        name: source.slice(i + 1, close),
+      });
+      i = close + 1;
+      continue;
+    }
+    buf += ch;
+    i += 1;
+  }
+  flush();
+  return tokens;
+}
+
+/**
  * Re-write `{FieldName}` references in `source` into synthetic cell
  * references. Returns the rewritten formula plus the field-index map
  * used (callers like `extractFieldRefs` reuse the same map).
@@ -72,46 +168,13 @@ export function rewriteFieldRefs(
   fields.forEach((f, i) => indexByName.set(f.name, i));
 
   let out = "";
-  let i = 0;
-  while (i < source.length) {
-    const c = source[i];
-
-    // Skip over string literals so a `}` inside a quoted string
-    // never closes a field reference.
-    if (c === '"' || c === "'") {
-      const quote = c;
-      out += c;
-      i++;
-      while (i < source.length) {
-        const ch = source[i];
-        out += ch;
-        i++;
-        if (ch === quote) break;
-      }
+  for (const tok of walkFormulaSource(source)) {
+    if (tok.kind === "text") {
+      out += tok.text;
       continue;
     }
-
-    if (c === "{") {
-      const close = source.indexOf("}", i + 1);
-      if (close === -1) {
-        // Unclosed brace — pass through verbatim, evaluator will error.
-        out += source.slice(i);
-        break;
-      }
-      const name = source.slice(i + 1, close);
-      const idx = indexByName.get(name);
-      if (idx === undefined) {
-        // Preserve original so the user sees the bad name in errors.
-        out += source.slice(i, close + 1);
-      } else {
-        out += `${columnLetter(idx)}1`;
-      }
-      i = close + 1;
-      continue;
-    }
-
-    out += c;
-    i++;
+    const idx = indexByName.get(tok.name);
+    out += idx === undefined ? tok.raw : `${columnLetter(idx)}1`;
   }
   return { rewritten: out, indexByName };
 }
@@ -125,30 +188,53 @@ export function rewriteFieldRefs(
 export function extractFieldRefs(source: string): string[] {
   const refs: string[] = [];
   const seen = new Set<string>();
-  let i = 0;
-  while (i < source.length) {
-    const c = source[i];
-    if (c === '"' || c === "'") {
-      const quote = c;
-      i++;
-      while (i < source.length && source[i] !== quote) i++;
-      i++;
-      continue;
-    }
-    if (c === "{") {
-      const close = source.indexOf("}", i + 1);
-      if (close === -1) break;
-      const name = source.slice(i + 1, close);
-      if (!seen.has(name)) {
-        seen.add(name);
-        refs.push(name);
-      }
-      i = close + 1;
-      continue;
-    }
-    i++;
+  for (const tok of walkFormulaSource(source)) {
+    if (tok.kind !== "ref") continue;
+    if (seen.has(tok.name)) continue;
+    seen.add(tok.name);
+    refs.push(tok.name);
   }
   return refs;
+}
+
+/**
+ * Rewrite every `{oldName}` reference in `source` to `{newName}`,
+ * preserving everything else verbatim. Used by
+ * `BaseEditor.renameField` to keep formula sources in lock-step with
+ * field renames without forking yet another scanner.
+ *
+ * When `source` doesn't contain a single `{oldName}` reference the
+ * function returns the **original `source` reference**, not a freshly
+ * concatenated equivalent string. `BaseEditor.renameField`'s
+ * `rewritten === renamed.formula` short-circuit relies on that
+ * reference equality to skip allocating a new field object for every
+ * field that has a formula source but doesn't actually reference the
+ * renamed column — otherwise renaming any one field re-builds every
+ * formula field's object on the way through. Devin Review PR #79
+ * round 14 (ANALYSIS_…_0001) flagged the always-concatenate path as
+ * dead-code-ing the intended optimisation.
+ */
+export function renameFieldInFormula(
+  source: string | undefined,
+  oldName: string,
+  newName: string,
+): string | undefined {
+  if (!source) return source;
+  let out = "";
+  let changed = false;
+  for (const tok of walkFormulaSource(source)) {
+    if (tok.kind === "text") {
+      out += tok.text;
+      continue;
+    }
+    if (tok.name === oldName) {
+      out += `{${newName}}`;
+      changed = true;
+    } else {
+      out += tok.raw;
+    }
+  }
+  return changed ? out : source;
 }
 
 /**

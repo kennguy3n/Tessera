@@ -797,6 +797,60 @@ describe("BaseEditor — dropdown click-outside behavior", () => {
   });
 });
 
+describe("BaseEditor — bulk-delete scoped to visible records", () => {
+  it("bulk-delete only removes records that are visible in the filtered view; hidden selections are preserved", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Tag", type: "text" }],
+      records: [
+        { id: "r1", Tag: "alpha" },
+        { id: "r2", Tag: "alpha" },
+        { id: "r3", Tag: "beta" },
+        { id: "r4", Tag: "beta" },
+      ],
+    });
+    // Select every record via the header "Select all visible
+    // records" checkbox while the view is unfiltered.
+    const selectAll = screen.getByRole("checkbox", {
+      name: "Select all visible records",
+    });
+    fireEvent.click(selectAll);
+    // Bulk-delete button now shows the full count (4 visible).
+    expect(
+      screen.getByRole("button", { name: /Delete 4 selected/ }),
+    ).toBeInTheDocument();
+
+    // Apply a filter that hides r3 + r4 (only `alpha` rows remain
+    // visible). The bulk-delete button must rescope to 2.
+    const tagFilter = screen.getByPlaceholderText("Filter…");
+    fireEvent.change(tagFilter, { target: { value: "alpha" } });
+    expect(
+      screen.getByRole("button", { name: /Delete 2 selected/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Delete 4 selected/ }),
+    ).toBeNull();
+
+    // Trigger the bulk delete. Only the two visible (`alpha`) rows
+    // should be removed; the two hidden (`beta`) rows must survive.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Delete 2 selected/ }),
+    );
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records).toHaveLength(2);
+    expect(records.map((r) => r.id).sort()).toEqual(["r3", "r4"]);
+    expect(records.every((r) => r.Tag === "beta")).toBe(true);
+
+    // Clear the filter — the hidden `beta` selections should still
+    // be highlighted, and the bulk-delete button should show 2 again
+    // (the original beta selections, now back in view).
+    fireEvent.change(tagFilter, { target: { value: "" } });
+    expect(
+      screen.getByRole("button", { name: /Delete 2 selected/ }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("BaseEditor — expanded modal auto-closes when target record is deleted", () => {
   it("clears `expandedCell` after the record currently being edited is removed", async () => {
     renderEditor({
@@ -816,6 +870,35 @@ describe("BaseEditor — expanded modal auto-closes when target record is delete
     // cleared to null.
     const delButtons = screen.getAllByRole("button", { name: "Del" });
     fireEvent.click(delButtons[0]);
+    await flushSave();
+    expect(screen.queryByRole("dialog", { name: /Edit Body/ })).toBeNull();
+  });
+
+  it("clears `expandedCell` when the field itself is removed while the modal is open (PR #79 round 13 fix)", async () => {
+    // Round 13 (ANALYSIS_0004): the cleanup effect previously only
+    // checked the target record. If the user opened a long-text
+    // modal and then removed the field via the column-header ×, the
+    // modal stayed open displaying `undefined` and any committed
+    // edit silently re-added the field key to the record — partially
+    // undoing the field removal.
+    renderEditor({
+      fields: [
+        { name: "Body", type: "long_text" },
+        { name: "Other", type: "text" },
+      ],
+      records: [{ id: "r1", Body: "first", Other: "keep" }],
+    });
+    // Open the long-text modal on the Body cell.
+    const expandButtons = screen.getAllByTitle("Expand");
+    fireEvent.click(expandButtons[0]);
+    expect(screen.getByRole("dialog", { name: /Edit Body/ })).toBeInTheDocument();
+    // Now remove the Body field via the column-header × button.
+    // `title="Remove field"` is the same control wired to
+    // `removeField` that powers the in-grid delete.
+    const removeButtons = screen.getAllByTitle("Remove field");
+    // First column is `id` which has no remove button — the first
+    // matching button is the one for `Body`.
+    fireEvent.click(removeButtons[0]);
     await flushSave();
     expect(screen.queryByRole("dialog", { name: /Edit Body/ })).toBeNull();
   });
