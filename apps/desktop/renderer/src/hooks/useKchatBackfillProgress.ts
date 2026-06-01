@@ -57,7 +57,7 @@ import type { KchatBackfillProgressView } from "../types/ipc";
  * transient blip we want to keep polling and self-heal without
  * flickering the UI from a valid snapshot into a synthetic error.
  *
- * Devin Review pass 3 on d7290e0 (ANALYSIS_0004): pre-fix we
+ * Devin Review pass 3 on d7290e0: pre-fix we
  * swallowed every transport error indefinitely, which meant a
  * permanently-broken preload bridge would pin the UI in a
  * "Loading backfill state…" placeholder forever — indistinguishable
@@ -119,7 +119,7 @@ export function useKchatBackfillProgress(
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    // Devin Review pass 3 on d7290e0 (ANALYSIS_0004): per-effect
+    // Devin Review pass 3 on d7290e0: per-effect
     // counter of consecutive transport-level failures. Lives in the
     // effect closure (NOT a ref) because a `channelId` change tears
     // down the effect and starts a fresh counter — we don't want a

@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10b Task 6 — tests for the keychain ACL policy.
+ * Tests for the keychain ACL policy.
  *
  * These tests exercise the real `keychainAcl.ts` module against a
  * stubbed `safeStorage` (Electron's `safeStorage` cannot run in a

@@ -13,7 +13,7 @@ import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
-// Phase 13 Theme 2 (Task 11 review-pass fix, ANALYSIS_0005 on
+// (Task 11 review-pass fix, on
 // f7c8dd1): import from the shared utility module instead of from
 // `./SourceDetailPage`. The two pages are siblings; routing list
 // pages through detail-page imports creates a structurally

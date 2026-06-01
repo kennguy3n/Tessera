@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 10 — lifecycle coupling between `appLockMode`
+ * lifecycle coupling between `appLockMode`
  * (persisted config) and PIN material (in the encrypted vault).
  *
  * Three contracts under test:

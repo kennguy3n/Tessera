@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 18 — clipboard serialization for the sheet editor.
+ * clipboard serialization for the sheet editor.
  *
  * Excel and Google Sheets both move cells via tab-separated values
  * (TSV) on the system clipboard. Producing and consuming TSV here

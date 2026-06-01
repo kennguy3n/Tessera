@@ -1,5 +1,5 @@
 /**
- * Renderer test suite for `KchatSettingsCard.tsx`. Phase 14.
+ * Renderer test suite for `KchatSettingsCard.tsx`.
  *
  * The card has a single connection mode (Personal Access Token).
  * When the Tessera `.kcz` extension installed in KChat Desktop
@@ -107,7 +107,7 @@ describe("KchatSettingsCard", () => {
   });
 
   it("does not poll desktopBridgeStatus when the feature is disabled", async () => {
-    // Phase 14 Round 6 Devin Review ANALYSIS_0004: the bridge-status
+    // the bridge-status
     // poll previously fired even when `kchat.isAvailable()` returned
     // false (and the component rendered null), creating IPC traffic
     // with no visible consumer. The fix gates the polling effect on

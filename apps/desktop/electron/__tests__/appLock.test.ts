@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 10 — PIN/biometric app lock unit tests.
+ * PIN/biometric app lock unit tests.
  *
  * Covers PIN policy validation, scrypt round-trip via
  * setPin/attemptUnlock, exponential backoff lockout, clearPin,

@@ -385,7 +385,7 @@ describe("KchatClient.uploadFile retry semantics (seventh-pass invariant)", () =
   // `POST /api/v4/files` is non-idempotent: the KChat server may
   // persist the file and crash before sending us the response, in
   // which case a retry would produce a duplicate file in the
-  // channel. The seventh-pass fix (Devin Review ANALYSIS_0005)
+  // channel. The seventh-pass fix
   // constrains uploadFile's retry-set to 408/429 only — transport-
   // layer codes where the server is documented to NOT have processed
   // the request. 5xx responses must surface to the caller on the
@@ -718,7 +718,7 @@ describe("KchatClient.scrubMessage", () => {
 });
 
 describe("KchatClient.connectionState error-field scrubbing (sixth-pass invariant)", () => {
-  // Sixth-pass Devin Review (ANALYSIS_0004) flagged that the
+  // Sixth-pass Devin Review flagged that the
   // `kchat:status` IPC handler returned `svc.getState()` without
   // running it through `scrubMessage`, so a state.error containing
   // a token would cross the renderer boundary unscrubbed. The fix
@@ -939,7 +939,7 @@ describe("KchatClient server-id validation at deserialisation boundary", () => {
   });
 
   // -------------------------------------------------------------
-  // Phase 13 Theme 2 Task 11: `listChannelFiles` now also
+  // `listChannelFiles` now also
   // validates `fi.user_id` at the deserialisation boundary
   // because the renderer-facing file preview surfaces the
   // uploader (post-sanitisation) and feeds the id through the
@@ -950,7 +950,7 @@ describe("KchatClient server-id validation at deserialisation boundary", () => {
   // would throw a generic shape error mid-batch, suppressing the
   // valid rows' enrichment.
   // -------------------------------------------------------------
-  it("listChannelFiles rejects files with a malformed user_id (Phase 13 Theme 2 Task 11)", async () => {
+  it("listChannelFiles rejects files with a malformed user_id", async () => {
     const filesResp = ok([
       {
         // Valid file id (26-char lowercase alphanumeric).
@@ -974,7 +974,7 @@ describe("KchatClient server-id validation at deserialisation boundary", () => {
     ).rejects.toThrow(/fileInfo\.user_id.*not a valid KChat object id/);
   });
 
-  it("getFileInfo rejects a malformed user_id (Phase 13 Theme 2 Task 11)", async () => {
+  it("getFileInfo rejects a malformed user_id", async () => {
     const fileResp = ok({
       // Valid file id (the validator the request URL went
       // through enforces this at the caller boundary too).
@@ -1999,7 +1999,7 @@ describe("KchatClient.connectWebSocket — URL derivation", () => {
 });
 
 /**
- * Block C Task 1 (Phase 12): REST surface for chat-post
+ * REST surface for chat-post
  * ingestion. `getPost` fetches a single envelope (used by the
  * `post_edited` recovery path), `getPostsForChannel` paginates
  * (used by the future Block C Task 4 backfill watermark loop).
@@ -2222,9 +2222,9 @@ describe("KchatClient.getPostsForChannel", () => {
 });
 
 // =====================================================================
-// Phase 13 Theme 2 Task 9: name-enrichment endpoints
+// name-enrichment endpoints
 // =====================================================================
-describe("KchatClient.getUsersByIds (Phase 13 Theme 2 Task 9)", () => {
+describe("KchatClient.getUsersByIds", () => {
   function fresh() {
     return new RateLimiter();
   }
@@ -2314,7 +2314,7 @@ describe("KchatClient.getUsersByIds (Phase 13 Theme 2 Task 9)", () => {
   });
 });
 
-describe("KchatClient.getChannel (Phase 13 Theme 2 Task 9)", () => {
+describe("KchatClient.getChannel", () => {
   function fresh() {
     return new RateLimiter();
   }

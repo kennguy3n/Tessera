@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — find-and-replace panel.
+ * find-and-replace panel.
  *
  * Floating panel anchored to the document editor. Renders:
  *   - Find input (live-updates matches and highlights as the user types)

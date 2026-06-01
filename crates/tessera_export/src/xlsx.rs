@@ -30,14 +30,14 @@ struct SheetContent {
     columns: Vec<String>,
     #[serde(default)]
     rows: Vec<Vec<String>>,
-    /// Phase 15 Task 14: workbook-level named ranges mirrored from the TS
+    /// workbook-level named ranges mirrored from the TS
     /// `SheetContent.namedRanges` field. We use `camelCase` to match the JS
     /// JSON shape since `serde_json::from_str` is case-sensitive. The list
     /// may be absent (older artifacts) or empty (new artifacts without
     /// named ranges); both cases are treated as "no named ranges".
     #[serde(default, rename = "namedRanges")]
     named_ranges: Vec<NamedRange>,
-    /// Phase 16 Task 13: multi-sheet support. When the artifact contains
+    /// multi-sheet support. When the artifact contains
     /// `sheets[]`, each entry becomes its own XLSX worksheet. The legacy
     /// `columns`/`rows` fields above remain populated for the active tab
     /// (the TS `fromWorkbook` helper guarantees that invariant) so older
@@ -117,7 +117,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
         .unwrap_or_default();
 
     match parsed {
-        // Phase 16 Task 13/15 — multi-sheet artifact. Emit one worksheet
+        // multi-sheet artifact. Emit one worksheet
         // per tab so cross-sheet refs (`Sheet2!A1`) inside formula cells
         // resolve correctly on open in Excel / Numbers / LibreOffice.
         Some(sheet) if sheet.sheets.as_ref().is_some_and(|s| !s.is_empty()) => {
@@ -176,7 +176,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
         }
     }
 
-    // Phase 15 Task 14: workbook-level defined names. Each entry becomes
+    // workbook-level defined names. Each entry becomes
     // a `<definedName>` in xl/workbook.xml. Invalid names (e.g. starting
     // with a digit, containing spaces) are silently skipped — Excel would
     // reject the file otherwise and we don't want a single malformed name
@@ -279,7 +279,7 @@ fn is_valid_defined_name(name: &str) -> bool {
     // 7-letter column, which doesn't exist) and Excel itself happily
     // accepts them as defined names.
     //
-    // Devin Review PR #70 ANALYSIS_0002: tighten the check so we only
+    // Devin Review PR #70: tighten the check so we only
     // reject names that actually collide with the Excel address space:
     //   * column part: 1-3 ASCII letters, AND
     //   * the resulting column index is <= 16384 (XFD), AND
@@ -494,7 +494,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Phase 15 Task 14: formula preservation + named-range support tests.
+    // formula preservation + named-range support tests.
     // ---------------------------------------------------------------------
 
     /// Verifies that the four formula categories the Sheet editor supports
@@ -540,7 +540,7 @@ mod tests {
     fn is_valid_defined_name_accepts_excel_legal_names() {
         // Legal names — leading letter or underscore, alphanumerics +
         // underscores + dots, not a cell reference.
-        // Devin Review PR #70 ANALYSIS_0002: the tightened cell-ref
+        // Devin Review PR #70: the tightened cell-ref
         // heuristic now correctly accepts `Revenue1`, `Phase2`,
         // `Tier3`, `Quarter1990`, and `XFE1` (alpha part is 3 chars
         // but the resulting column index 16385 is past the Excel
@@ -704,7 +704,7 @@ mod tests {
         );
     }
 
-    /// Phase 16 Task 15 — when an artifact carries a `sheets[]` array,
+    /// when an artifact carries a `sheets[]` array,
     /// each tab must become its own worksheet inside the workbook so
     /// cross-sheet references (e.g. `Sheet2!A1`) inside formula cells
     /// resolve correctly on open. We also verify that a VLOOKUP across

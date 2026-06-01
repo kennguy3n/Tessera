@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 24 — unit tests for the line-level LCS diff used by
+ * unit tests for the line-level LCS diff used by
  * `VersionHistory`'s Compare view. Tests cover:
  *
  *   1. identity (same content → no add/remove rows)

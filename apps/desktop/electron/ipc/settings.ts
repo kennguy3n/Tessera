@@ -50,7 +50,7 @@ import {
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 
 /**
- * Phase 19 Task 1: resolve the per-user `userData` directory the
+ * resolve the per-user `userData` directory the
  * bridge stores ONNX models under (`{userData}/models/onnx/<slug>/`).
  *
  * Centralised here so the three embedding-model IPC handlers stay in
@@ -70,7 +70,7 @@ function userDataDir(): string {
 }
 
 /**
- * Phase 19 Task 1: audit shim for embedding-model lifecycle events.
+ * audit shim for embedding-model lifecycle events.
  * We surface model downloads and switches as their own audit field
  * (`embeddingModel.{download|switch}`) so an operator can answer
  * "when did the user enable the multilingual model?" with a single
@@ -261,11 +261,11 @@ export function registerSettingsHandlers(): void {
       defaultExportFormat: config.defaultExportFormat,
       ignorePatterns: config.ignorePatterns,
       watchPatterns: config.watchPatterns,
-      // Phase 15 Task 19: surface the first-run onboarding flag to
+      // surface the first-run onboarding flag to
       // the renderer so `OnboardingWizard` can decide whether to
       // mount itself.
       onboardingCompleted: config.onboardingCompleted,
-      // Phase 18 Task 16-17: persisted favorites + view-recency.
+      // Persisted favorites + view-recency.
       // The renderer fans these out to the command palette, the
       // sidebar Pinned section, and the editor PinButton via
       // `usePinnedArtifacts` / `useRecentlyViewedArtifacts`. Empty
@@ -274,13 +274,13 @@ export function registerSettingsHandlers(): void {
       // unambiguous in tests.
       pinnedArtifactIds: config.pinnedArtifactIds,
       recentArtifactIds: config.recentArtifactIds,
-      // Phase 19 PR 9 Task 5: surface the persisted model idle-unload
+      // surface the persisted model idle-unload
       // window so `SettingsPage` can hydrate the select. The value is
       // already validated by the on-disk schema (`.catch(...)`-healed
       // to `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` if corrupted) so a fresh
       // install or healed config sees a usable bucket on first render.
       modelIdleTimeoutSecs: config.modelIdleTimeoutSecs,
-      // Phase 19 PR 10 Task 7/9/10: surface the security flags so
+      // Task 7/9/10: surface the security flags so
       // the renderer Settings UI can render the corresponding
       // toggles. The on-disk schema heals all three to safe
       // defaults if corrupted (`telemetryEnabled: false`,
@@ -294,7 +294,7 @@ export function registerSettingsHandlers(): void {
 
   idempotentHandle("settings:update", async (_event, settings: unknown) => {
     const parsed = SettingsUpdateSchema.parse(settings);
-    // Phase 19 PR 10 Task 10 — enforce the lock-mode/PIN invariant
+    // enforce the lock-mode/PIN invariant
     // documented in `shared/types.ts` and `config.ts`: flipping
     // `appLockMode` to `"pin"` or `"biometric"` without first
     // setting a PIN would leave the user staring at a lock overlay
@@ -318,7 +318,7 @@ export function registerSettingsHandlers(): void {
     // field had been healed, and would be racy against any concurrent
     // writer.
     updateConfig(parsed);
-    // Phase 19 PR 10 Task 10 — when the user explicitly opts OUT
+    // when the user explicitly opts OUT
     // of app lock (mode -> "off"), the stored PIN material is also
     // removed. This keeps the PIN-lifecycle and mode-lifecycle in
     // lock-step: "off" means zero retained credentials, not "PIN
@@ -367,7 +367,7 @@ export function registerSettingsHandlers(): void {
         "onboardingCompleted",
         String(parsed.onboardingCompleted),
       );
-    // Phase 18 Task 16-17: log delta-by-length for the same reason
+    // Log delta-by-length for the same reason
     // ignorePatterns / watchPatterns are logged by length — the
     // IDs themselves aren't useful in an audit, but the
     // "user added/removed a pin" or "user viewed 5 new artifacts
@@ -388,7 +388,7 @@ export function registerSettingsHandlers(): void {
         "modelIdleTimeoutSecs",
         String(parsed.modelIdleTimeoutSecs),
       );
-      // Phase 19 PR 9 Task 5: push the new window to every live
+      // push the new window to every live
       // sidecar so the change takes effect immediately, even if the
       // user has a model loaded mid-session. Imported here rather
       // than statically at the top so test files that mock
@@ -411,7 +411,7 @@ export function registerSettingsHandlers(): void {
         );
       }
     }
-    // Phase 19 PR 10 Task 9 — telemetry toggle. Apply the new
+    // telemetry toggle. Apply the new
     // state to the live sink BEFORE auditing so a failed audit
     // doesn't leave the sink half-enabled. The persisted-config
     // read above already reflects the new on-disk value, so the
@@ -428,12 +428,12 @@ export function registerSettingsHandlers(): void {
         String(parsed.telemetryEnabled),
       );
     }
-    // Phase 19 PR 10 Task 10 — app-lock mode change. The actual
+    // app-lock mode change. The actual
     // PIN / biometric setup happens via dedicated `appLock:*`
     // handlers; here we only record the user's mode preference.
     if (parsed.appLockMode !== undefined)
       auditSettingsField("appLockMode", parsed.appLockMode);
-    // Phase 19 PR 10 Task 7 — updater signature enforcement
+    // updater signature enforcement
     // toggle. The auto-updater reads this on every download to
     // decide whether to gate `quitAndInstall` on a successful
     // Ed25519 verify.
@@ -442,11 +442,11 @@ export function registerSettingsHandlers(): void {
         "enforceUpdateSignature",
         String(parsed.enforceUpdateSignature),
       );
-    // Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement
-    // toggle. The next call to `vaultCrypto.encryptForVault` reads
-    // this via `loadConfig()` to decide whether to refuse writes
-    // under `basic_text`. Flipping to `false` on Linux materially
-    // weakens at-rest protection, hence the audit-log entry.
+    // Per-app keychain ACL enforcement toggle. The next call to
+    // `vaultCrypto.encryptForVault` reads this via `loadConfig()` to
+    // decide whether to refuse writes under `basic_text`. Flipping to
+    // `false` on Linux materially weakens at-rest protection, hence
+    // the audit-log entry.
     if (parsed.enforceKeychainAcl !== undefined)
       auditSettingsField(
         "enforceKeychainAcl",
@@ -815,7 +815,7 @@ export function registerSettingsHandlers(): void {
   );
 
   // =====================================================================
-  // Phase 19 Task 1: ONNX embedding-model lifecycle.
+  // ONNX embedding-model lifecycle.
   //
   // Three channels mirror the bridge exports defined in
   // `crates/tessera_bridge/src/napi_exports.rs`:

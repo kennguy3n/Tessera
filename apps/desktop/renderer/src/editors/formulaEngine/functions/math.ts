@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 5 — math / aggregation functions.
+ * math / aggregation functions.
  *
  * Each function follows Excel/Google-Sheets semantics:
  *

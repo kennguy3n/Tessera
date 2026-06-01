@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 10: persisted failure queue for artifact exports.
+ * persisted failure queue for artifact exports.
  *
  * Exports can fail for a variety of recoverable + non-recoverable
  * reasons:
@@ -82,12 +82,11 @@ export interface FailedExportEntry {
   format: string;
   /**
    * Original destination path. ALWAYS a non-empty absolute path:
-   * `enqueueFailedExport` rejects empty / non-absolute inputs at the
-   * write boundary (Devin Review PR #69 ANALYSIS_0003) and
-   * `listFailedExports` silently drops entries on disk that no
-   * longer match (defense in depth against a tampered queue file).
-   * The retry handler and the safe-export allowlist both rely on
-   * this invariant.
+   * `enqueueFailedExport` rejects empty / non-absolute inputs at
+   * the write boundary, and `listFailedExports` silently drops
+   * entries on disk that no longer match (defense in depth against
+   * a tampered queue file). The retry handler and the safe-export
+   * allowlist both rely on this invariant.
    */
   filePath: string;
   /** Human-readable failure reason from the original exporter throw. */
@@ -130,8 +129,8 @@ function filePathFor(): string {
 let writeChain: Promise<unknown> = Promise.resolve();
 
 function serializeWrites<T>(fn: () => Promise<T>): Promise<T> {
-  // Devin Review ANALYSIS-0003: only one callback on `.then()`.
-  // `writeChain` is set to `next.catch(() => undefined)` immediately
+  // Only one callback on `.then()`. `writeChain` is set to
+  // `next.catch(() => undefined)` immediately
   // after every call, so it can never reach a rejected state — the
   // two-arg form `then(onFulfilled, onRejected)` would have been
   // dead code (the rejection branch is unreachable). Keeping the
@@ -188,7 +187,7 @@ export async function listFailedExports(): Promise<FailedExportEntry[]> {
   // worst case ("renderer doesn't see one failed export") is far
   // better than the failure mode ("settings page crashes").
   //
-  // Defense-in-depth (Devin Review PR #69, store.rs:423 follow-up):
+  // Defense-in-depth :
   // also require `filePath` to be a non-empty ABSOLUTE path. The
   // queue is only ever written with an already-resolved absolute
   // destination (see `enqueue` callers), so any entry on disk with
@@ -267,7 +266,7 @@ export async function enqueueFailedExport(args: {
   filePath: string;
   errorMessage: string;
 }): Promise<FailedExportEntry> {
-  // Devin Review PR #69 ANALYSIS_0003: validate the inputs at the
+  // Devin Review PR #69: validate the inputs at the
   // write boundary, not just at the read boundary. The on-disk
   // queue file is the source of truth for what the renderer
   // surfaces as "retry this", and `listFailedExports` already

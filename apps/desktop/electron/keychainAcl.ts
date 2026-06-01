@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10b Task 6 — per-app keychain ACL.
+ * Per-app keychain ACL.
  *
  * Threat model
  * ------------
@@ -33,8 +33,8 @@
  *    (`captureBackendAtBoot`) and exposes it via `getBootBackend()`.
  * 2. Emits a `keychain.backend.<name>` telemetry counter so an
  *    operator can audit fleet-wide which backend each install lands
- *    on. The local-only telemetry sink (Phase 19 PR 10 Task 9) is the
- *    only consumer — no values leave the device.
+ *    on. The local-only telemetry sink is the only consumer — no
+ *    values leave the device.
  * 3. Logs the backend at INFO and any future backend transitions at
  *    WARN. A backend transition mid-session (e.g. kwallet was up at
  *    boot, then the daemon died and the next call reports basic_text)
@@ -307,9 +307,9 @@ export function captureBackendAtBoot(): KeychainBackendDescriptor {
     platform: bootBackend.platform,
   });
   // Telemetry: one counter per backend variant. The local-only sink
-  // (Phase 19 PR 10 Task 9) records this when telemetry is opted in;
-  // otherwise it is a no-op. Useful for fleet-wide audit ("how many
-  // installs are running on basic_text?") without leaking user data.
+  // records this when telemetry is opted in; otherwise it is a no-op.
+  // Useful for fleet-wide audit ("how many installs are running on
+  // basic_text?") without leaking user data.
   recordCounter(`keychain.backend.${bootBackend.name}`);
   return bootBackend;
 }

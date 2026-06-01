@@ -115,7 +115,7 @@ describe("isSafeExportPath", () => {
 });
 
 // ----------------------------------------------------------------
-// Phase 13 Theme 3 Task 18: deny-list carves out KChat cache dirs
+// deny-list carves out KChat cache dirs
 // ----------------------------------------------------------------
 
 const KCHAT_CACHE = path.join(HOME, ".tessera", "kchat-channels");

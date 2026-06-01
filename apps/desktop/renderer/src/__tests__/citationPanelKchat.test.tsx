@@ -1,5 +1,5 @@
 /**
- * Block D Task 1 (Phase 14): renderer-level coverage of the
+ * renderer-level coverage of the
  * CitationPanel's KChat-post integration.
  *
  * Scope of these tests (a thin layer over the existing setup mock):
@@ -70,7 +70,7 @@ function kchatHit(over: Partial<KchatPostSearchHit> = {}): KchatPostSearchHit {
     editedAtMs: 0,
     permalink:
       "https://kchat.example.com/_redirect/pl/post-abc",
-    // Phase 13 Theme 2 Task 9: enriched fields. Defaults
+    // enriched fields. Defaults
     // include realistic username + channel display name so the
     // baseline test renders the human-readable form; individual
     // tests override to `null` to exercise the raw-id fallback.
@@ -95,7 +95,7 @@ beforeEach(() => {
   (
     window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
   ).mockResolvedValue([] as KchatPostSearchHit[]);
-  // Phase 13 Theme 2 Task 9: clear call-count history on the
+  // clear call-count history on the
   // mutating citation methods so `toHaveBeenCalledTimes(1)`
   // assertions in individual tests start from a clean slate.
   // The shared `setup.ts` does not reset between tests, so call
@@ -145,7 +145,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     });
   });
 
-  it("renders the KChat badge, channel display name, username, and permalink anchor for KChat hits (Phase 13 Theme 2 Task 9)", async () => {
+  it("renders the KChat badge, channel display name, username, and permalink anchor for KChat hits", async () => {
     (
       window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
     ).mockResolvedValue([kchatHit()]);
@@ -158,7 +158,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
 
     await screen.findByText("KChat");
-    // Phase 13 Theme 2 Task 9: resolved sender username + channel
+    // resolved sender username + channel
     // display name take precedence over the raw object ids. The
     // `@`/`#` sigils are part of the rendered string so the user
     // recognises the row as a KChat citation at a glance.
@@ -184,7 +184,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     expect(permalink).toHaveAttribute("rel", expect.stringContaining("noopener"));
   });
 
-  it("falls back to raw object ids when the IPC handler did not resolve names (offline / not visible) (Phase 13 Theme 2 Task 9)", async () => {
+  it("falls back to raw object ids when the IPC handler did not resolve names (offline / not visible)", async () => {
     (
       window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
     ).mockResolvedValue([
@@ -245,7 +245,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     });
     const arg = (window.tessera.citations.add as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
-    // Phase 13 Theme 2 Task 9: the saved sourceTitle prefers the
+    // the saved sourceTitle prefers the
     // resolved channel display name so the stored citation reads
     // "Eng - General" in the artifact's saved citation list. The
     // sourceUri stays as the URN form (kchat://channel/<id>/post/<id>)
@@ -261,7 +261,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     });
   });
 
-  it("dispatches a kchat_post AddCitationRequest with channelId as title when channelDisplayName is null (offline fallback) (Phase 13 Theme 2 Task 9)", async () => {
+  it("dispatches a kchat_post AddCitationRequest with channelId as title when channelDisplayName is null (offline fallback)", async () => {
     (
       window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
     ).mockResolvedValue([
@@ -324,7 +324,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     expect(buttons[2]).not.toHaveAttribute("data-source-kind", "kchat_post");
   });
 
-  it("renders stored KChat-post citations with the KChat badge and channel title (Phase 13 Theme 2 Task 9)", async () => {
+  it("renders stored KChat-post citations with the KChat badge and channel title", async () => {
     // Mount the panel with a pre-existing kchat_post citation
     // and a pre-existing local_file citation. The kchat_post row
     // gets the KChat badge + `#`-prefixed title; the local_file

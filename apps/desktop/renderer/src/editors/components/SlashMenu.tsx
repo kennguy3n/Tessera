@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — slash-command popup.
+ * slash-command popup.
  *
  * Renders a positioned list of `SLASH_COMMANDS` filtered by the live
  * query that the `SlashCommandExtension` publishes. Keyboard contract
@@ -44,10 +44,10 @@ export interface SlashMenuProps {
 // FindReplacePanel" — but `FindReplacePanel` legitimately calls
 // `editor.chain()` / `editor.state.doc` etc. 40+ times, so the
 // symmetry was illusory. Removing the prop drops the workaround +
-// the dead `@tiptap/react` Editor type import (Devin Review PR #82
-// round 7 ANALYSIS_…_0005). If a future SlashMenu feature genuinely
-// needs editor state (e.g. an inline hover-preview that lifts a
-// snippet from `editor.state`), pass it in then — YAGNI today.
+// the dead `@tiptap/react` Editor type import. If a future SlashMenu
+// feature genuinely needs editor state (e.g. an inline hover-preview
+// that lifts a snippet from `editor.state`), pass it in then — YAGNI
+// today.
 export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
   const filtered = useMemo(
     () => filterSlashCommands(trigger.query),

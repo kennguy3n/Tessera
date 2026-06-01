@@ -11,7 +11,7 @@ import type {
 } from "../types/ipc";
 
 /**
- * Block D Task 1 (Phase 14): renderer-side merged-evidence row.
+ * renderer-side merged-evidence row.
  * The citation dialogs render file hits and KChat-post hits in a
  * single list so the user picks among ALL retrieved evidence
  * regardless of source kind. We keep the union discriminator
@@ -233,7 +233,7 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
         <ul className="citation-list" aria-label="Citation list">
           {citations.map((citation) => {
             const status = freshness[citation.citationId] ?? "fresh";
-            // Phase 13 Theme 2 Task 9: post-sourced citations
+            // post-sourced citations
             // render with the KChat badge + channel display title
             // instead of a file path. The discriminator is
             // `sourceType === "kchat_post"` (set by
@@ -344,7 +344,7 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
 }
 
 /**
- * Block D Task 1 (Phase 14): render a single evidence row. Files
+ * render a single evidence row. Files
  * render as before (path + excerpt + relevance). KChat posts
  * render with a `KChat` badge, the sender/timestamp metadata,
  * the excerpt, the relevance, and a permalink anchor when the
@@ -378,7 +378,7 @@ function EvidenceRowButton({
   }
   const hit = row.hit;
   const timestamp = formatKchatTimestamp(hit.createdAtMs);
-  // Phase 13 Theme 2 Task 9: fall back to the raw object id when
+  // fall back to the raw object id when
   // the IPC handler couldn't resolve the display string (offline,
   // user removed from the channel, etc.). The row still renders
   // — the spec is "icon + sender + channel" with graceful
@@ -444,8 +444,8 @@ function EvidenceRowButton({
  *     and round-trips across re-connects to the same workspace,
  *     where the permalink would break if the user re-connects
  *     to a renamed server URL). Title is the channel display
- *     name when the IPC handler resolved it (Phase 13 Theme 2
- *     Task 9), falling back to the raw channel id when offline
+ *     name when the IPC handler resolved it, falling back to the
+ *     raw channel id when offline
  *     so the stored citation remains retrievable end-to-end.
  *     Persisting the resolved name (rather than re-resolving on
  *     every render) means the artifact stays attributable even
@@ -470,7 +470,7 @@ function buildCitationFields(row: EvidenceRow): {
     };
   }
   const hit = row.hit;
-  // Phase 13 Theme 2 Task 9: prefer the resolved channel display
+  // prefer the resolved channel display
   // name as the stored sourceTitle so a saved citation reads
   // "#general" rather than "channel-xyz" in the artifact's
   // citation list. Fallback path is the raw channelId — that

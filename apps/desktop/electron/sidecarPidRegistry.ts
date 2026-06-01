@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 9: orphaned-sidecar reaper + PID-file registry.
+ * orphaned-sidecar reaper + PID-file registry.
  *
  * Two failure modes this protects against:
  *

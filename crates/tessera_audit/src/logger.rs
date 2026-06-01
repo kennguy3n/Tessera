@@ -269,8 +269,7 @@ impl AuditLogger {
     }
 
     /// Record that the Node-side `KchatEventForwarder` refreshed
-    /// a KChat channel's ACL roster against the substrate (Block
-    /// B Task 3, Phase 11).
+    /// a KChat channel's ACL roster against the substrate.
     ///
     /// `channel_id` is the originating WS-event channel id (NOT
     /// the cache_dir — operators correlate against KChat-server
@@ -298,7 +297,7 @@ impl AuditLogger {
     }
 
     /// Record that a KChat-channel source was transitioned to
-    /// `SourceStatus::AccessRevoked` (Block B Task 3, Phase 11).
+    /// `SourceStatus::AccessRevoked`.
     /// `reason` is a free-form short code identifying the
     /// triggering event: `principal_removed` (an explicit
     /// `user_removed` for the principal), `channel_archived`
@@ -314,8 +313,7 @@ impl AuditLogger {
     }
 
     /// Record that a KChat-channel source's indexed evidence was
-    /// scrubbed inline as part of a revoke transition (Block B
-    /// Task 4, Phase 11). Emitted by the Node-side forwarder /
+    /// scrubbed inline as part of a revoke transition. Emitted by the Node-side forwarder /
     /// IPC handler immediately after the bridge revoke call
     /// returns a `Revoked` outcome, so operators see both the
     /// `KchatChannelAccessRevoked` row (status transition) and
@@ -388,7 +386,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 1 (Phase 12): record a KChat post-body ingest
+    /// record a KChat post-body ingest
     /// outcome. Used by the Node-side `KchatEventForwarder` after
     /// the bridge returns the outcome of an `ingest_kchat_post` or
     /// `edit_kchat_post` call. `outcome` is one of
@@ -416,7 +414,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 1 (Phase 12): record a KChat post-body edit
+    /// record a KChat post-body edit
     /// outcome (re-ingest under the same post_id). Same field
     /// catalogue as [`Self::log_kchat_post_ingested`] but routed
     /// to the `KchatPostEdited` variant so operators can grep
@@ -437,7 +435,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 1 (Phase 12): record a KChat post-body delete
+    /// record a KChat post-body delete
     /// outcome. `outcome` is one of
     /// `deleted`/`not_found`/`unlinked`/`access_revoked`;
     /// `chunks_dropped` carries the number of AEAD-sealed chunk
@@ -459,7 +457,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 4 (Phase 13): record the start (or resume) of
+    /// record the start (or resume) of
     /// a KChat channel historical-backfill walk. `resume_from` is
     /// the persisted `before=` cursor that the walk will use on
     /// its first REST page; `None` means the walk is starting at
@@ -480,7 +478,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 4 (Phase 13): record one page of the backfill
+    /// record one page of the backfill
     /// walk. Page numbers are 1-based. `oldest_post_id` is the
     /// cursor the substrate persisted after the page (None when
     /// the page was empty or all-revoked).
@@ -508,7 +506,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 4 (Phase 13): record successful completion of
+    /// record successful completion of
     /// a backfill walk (server returned `prev_post_id == null`).
     pub fn log_kchat_backfill_completed(
         &self,
@@ -529,7 +527,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block C Task 4 (Phase 13): record an aborted backfill walk.
+    /// record an aborted backfill walk.
     /// `reason` is one of `access_revoked` / `safety_cap` /
     /// `unlinked` / `error` (machine-readable, grep-friendly).
     pub fn log_kchat_backfill_aborted(
@@ -550,7 +548,7 @@ impl AuditLogger {
         )
     }
 
-    /// Block D Task 1 (Phase 14): record a KChat-post FTS5 search.
+    /// record a KChat-post FTS5 search.
     ///
     /// `query_hash` is a hex-encoded cryptographic hash of the
     /// normalised query, truncated by the caller (the IPC
@@ -668,7 +666,7 @@ impl AuditLogger {
         self.store.recent_events(limit, offset)
     }
 
-    /// Phase 15 Task 12: thin pass-through to
+    /// thin pass-through to
     /// [`AuditStore::rotate`]. The bridge invokes this from a
     /// scheduled background task and via the `audit:rotate` IPC
     /// surface so Settings can offer a "rotate now" button.
@@ -679,7 +677,7 @@ impl AuditLogger {
         self.store.rotate(archive_dir)
     }
 
-    /// Phase 15 Task 12: thin pass-through to
+    /// thin pass-through to
     /// [`AuditStore::list_archives`]. The `audit:getArchives` IPC
     /// fans this out to the renderer.
     pub fn list_archives(archive_dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
@@ -887,7 +885,7 @@ mod tests {
         assert!(channel_created.details.contains("file="));
     }
 
-    /// Block B Task 4 (Phase 11): pin the
+    /// pin the
     /// `log_kchat_source_cryptoshredded` helper's row shape so
     /// operator grep queries (`grep "chunks_dropped="`) and the
     /// renderer's audit-activity filter stay aligned. Two rows:
@@ -1034,7 +1032,7 @@ mod tests {
             .contains("vacuum_error=database or disk is full"));
     }
 
-    /// Block D Task 1 (Phase 14): `log_kchat_post_search_executed`
+    /// `log_kchat_post_search_executed`
     /// must route to the `KchatPostSearchExecuted` variant AND
     /// fold every operator-visible field into the details payload
     /// in the documented `field=value` shape so the same audit-row

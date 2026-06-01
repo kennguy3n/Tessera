@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 9 — `sidecarPidRegistry.ts` regression suite.
+ * `sidecarPidRegistry.ts` regression suite.
  *
  * The reaper is a high-blast-radius primitive: it issues SIGKILL to
  * PIDs read from a file on disk. A regression here could kill the

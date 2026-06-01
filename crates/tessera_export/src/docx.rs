@@ -18,7 +18,7 @@ use tessera_citations::citation::Citation;
 
 use crate::mermaid;
 
-/// Phase 15 Task 13: parse a single markdown table row of the form
+/// parse a single markdown table row of the form
 /// `| col1 | col2 | col3 |` into the individual cell strings. Returns
 /// `None` when the line is not a well-formed table row (no leading/
 /// trailing pipe, or zero cells once trimmed). Leading and trailing
@@ -26,7 +26,7 @@ use crate::mermaid;
 /// happens to contain `|` for a table row.
 fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
     let trimmed = line.trim();
-    // Devin Review PR #70 BUG_0001: a lone `|` (which `.trim()` could
+    // Devin Review PR #70: a lone `|` (which `.trim()` could
     // produce from a line like `  |  `) passes the leading/trailing
     // pipe gate but causes `&trimmed[1..0]` — a `start > end` slice
     // that panics. Reject anything shorter than `||` (two pipes
@@ -47,13 +47,13 @@ fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
     Some(cells)
 }
 
-/// Phase 15 Task 13: detect the markdown table separator row
+/// detect the markdown table separator row
 /// `| --- | :---: | ---: |`. The dashes must be length >= 3 (per
 /// CommonMark §4.10) and may have alignment colons on either or both
 /// sides. Returns true when every cell in `cells` matches the
 /// separator pattern.
 ///
-/// Devin Review PR #70 follow-up ANALYSIS_0002: the previous
+/// Devin Review PR #70 follow-up: the previous
 /// implementation accepted any number of dashes >= 1, so a genuine
 /// table data row like `| - | - |` (e.g. two cells each holding a
 /// literal hyphen as a bullet placeholder) was silently consumed as a
@@ -61,7 +61,7 @@ fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
 /// requires a minimum of three dashes for a valid table separator;
 /// matching that contract eliminates the false positive.
 ///
-/// Devin Review PR #70 follow-up ANALYSIS_0005: CommonMark §4.10
+/// Devin Review PR #70 follow-up: CommonMark §4.10
 /// allows at most ONE colon on each side of the dash run (left = align
 /// left, right = align right, both = center). The previous
 /// `trim_matches(':')` stripped any number of colons, so pathological
@@ -97,7 +97,7 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
         let content_for_docx =
             mermaid::replace_blocks(&artifact.content, mermaid::to_pdf_placeholder);
         let mut in_code_block = false;
-        // Phase 15 Task 13: accumulate consecutive markdown-table rows
+        // accumulate consecutive markdown-table rows
         // and flush them together as a single `Table` element once we
         // either hit a non-table line or fall out of the loop. The
         // buffer holds the parsed cells per row; the separator row
@@ -130,7 +130,7 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
         };
         for raw_line in content_for_docx.lines() {
             let line = raw_line;
-            // Devin Review PR #70 BUG_0002: previously we attempted
+            // Devin Review PR #70: previously we attempted
             // table-row detection BEFORE consulting `in_code_block`,
             // which silently consumed pipe-delimited lines inside a
             // fenced code block (e.g. shell aliases or markdown source
@@ -249,7 +249,7 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
                     .add_run(Run::new().add_text(line)),
             );
         }
-        // Phase 15 Task 13: flush any trailing table (content ended on
+        // flush any trailing table (content ended on
         // a table without a following blank/prose line).
         docx = flush_table(docx, &mut table_buf);
     }
@@ -441,7 +441,7 @@ mod tests {
         assert!(bytes.len() > 100);
     }
 
-    /// Devin Review PR #70 BUG_0001 regression: a content line that is
+    /// Devin Review PR #70 regression: a content line that is
     /// just `|` (or `  |  ` after `.trim()`) used to panic at
     /// `&trimmed[1..0]` inside `parse_md_table_row`, taking down the
     /// entire DOCX export. We verify the parser now returns `None` for
@@ -461,7 +461,7 @@ mod tests {
         assert_is_zip(&bytes);
     }
 
-    /// Devin Review PR #70 BUG_0002 regression: pipe-delimited lines
+    /// Devin Review PR #70 regression: pipe-delimited lines
     /// inside a fenced code block must be rendered as code (in the
     /// Consolas font) and NOT extracted into a Word table. Before the
     /// fix, `| A | B |` inside ` ```bash ` would be silently consumed
@@ -492,7 +492,7 @@ mod tests {
         }
     }
 
-    /// Devin Review PR #70 follow-up ANALYSIS_0002 regression:
+    /// Devin Review PR #70 follow-up regression:
     /// `is_md_table_separator` must require >= 3 dashes per
     /// CommonMark §4.10, so a data row like `| - | - |` (literal
     /// hyphens) is preserved as a row instead of being silently
@@ -541,7 +541,7 @@ mod tests {
         }
     }
 
-    /// Devin Review PR #70 follow-up ANALYSIS_0005 regression:
+    /// Devin Review PR #70 follow-up regression:
     /// CommonMark §4.10 permits at most one colon on each side of
     /// the dash run. The previous `trim_matches(':')` implementation
     /// accepted any number, so spec-illegal shapes like `::---::`

@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 21 — coverage for the toast notification system.
+ * coverage for the toast notification system.
  *
  * Asserts the behaviour matrix the task spec requires:
  *  - max 3 visible toasts (excess queues + promotes on dismiss)
@@ -58,7 +58,7 @@ function visibleToastTexts(): string[] {
   );
 }
 
-describe("ToastProvider (Phase 15 Task 21)", () => {
+describe("ToastProvider", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });

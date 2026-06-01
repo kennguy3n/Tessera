@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 8 — OAuth scope governance unit tests.
+ * OAuth scope governance unit tests.
  *
  * Covers `parseScopeString`, `computeMissingScopes`,
  * `assertScopesGranted`, `MissingScopeError`, and `compareScopes`.
@@ -220,7 +220,7 @@ describe("OAuth meta-scopes (offline_access et al.)", () => {
     expect(r.requested).toContain("offline_access");
   });
 
-  // Devin Review round 4 BUG_0001 — the auth-time scope-narrowing
+  // Devin Review round 4 — the auth-time scope-narrowing
   // warning in `ipc/connectors/handlers.ts` historically used an
   // inline `.filter()` that did NOT strip meta-scopes, producing a
   // false-positive "connector scopes narrowed by user" log on every

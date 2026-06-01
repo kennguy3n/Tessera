@@ -130,7 +130,7 @@ export default function ArtifactEditorPage() {
     loadArtifact();
   }, [loadArtifact]);
 
-  // Phase 18 Task 17: record this artifact's view in the recents
+  // record this artifact's view in the recents
   // list as soon as the editor mounts. `useTrackArtifactView`
   // dedupes-and-promotes so a remount or re-render does not
   // generate write storms.
@@ -461,11 +461,11 @@ export default function ArtifactEditorPage() {
     }
   }, [id, artifact?.title]);
 
-  // Phase 18 Task 14 + 19 + 20: wire global custom events to the
-  // editor's own state. The keyboard-shortcut runner and the
-  // command palette dispatch these events without coupling to
-  // this component, so any save/export/share/pin/duplicate/delete
-  // shortcut fired from anywhere in the app routes here as long
+  // Wire global custom events to the editor's own state. The
+  // keyboard-shortcut runner and the command palette dispatch
+  // these events without coupling to this component, so any
+  // save / export / share / pin / duplicate / delete shortcut
+  // fired from anywhere in the app routes here as long
   // as this page is mounted.
   useEffect(() => {
     if (!id) return;
@@ -499,7 +499,7 @@ export default function ArtifactEditorPage() {
         // Persist the duplicated content as a follow-up update
         // because `artifacts.create` only sets up the metadata.
         await api.artifacts.update(copy.id, artifact.content);
-        // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+        // PR #87: broadcast so every
         // live `useArtifactList()` consumer picks up the new
         // artifact without waiting for a remount.
         notifyArtifactsChanged();
@@ -518,7 +518,7 @@ export default function ArtifactEditorPage() {
         const api = window.tessera;
         if (!api) return;
         await api.artifacts.remove(id);
-        // PR #87 Devin Review ANALYSIS_0005: broadcast so the
+        // PR #87: broadcast so the
         // sidebar list / home recents / palette pickers refresh
         // immediately even before navigation back to Home.
         notifyArtifactsChanged();

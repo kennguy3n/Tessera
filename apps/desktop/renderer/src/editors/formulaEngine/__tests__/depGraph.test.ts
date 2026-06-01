@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 4 — dependency graph tests.
+ * dependency graph tests.
  *
  * Covers: reference extraction (single cell, range, nested
  * function), graph mutation (add / replace / remove), topological

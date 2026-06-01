@@ -70,7 +70,7 @@ const mockApi = {
       lastIndexed: new Date().toISOString(),
       fileCount: 0,
     }),
-    // Phase 15 Task 6: empty-but-well-shaped default for
+    // empty-but-well-shaped default for
     // `sources.batchReindex`. Tests that exercise the bulk
     // re-index path override this with `vi.fn().mockResolvedValue({
     // total, succeeded, failed, results })` to drive the specific
@@ -113,7 +113,7 @@ const mockApi = {
       modelId: null,
       lastError: null,
     }),
-    // Phase 15 Task 22: empty-but-well-shaped default for
+    // empty-but-well-shaped default for
     // `sources:healthReport`. SettingsPage now renders
     // `<SourceHealthDashboard />` which fires this on mount, so
     // every test that mounts SettingsPage needs a callable mock
@@ -147,18 +147,18 @@ const mockApi = {
     get: vi.fn(),
     remove: vi.fn(),
     exportArtifact: vi.fn(),
-    // Phase 15 Task 6: empty-but-well-shaped default for
+    // empty-but-well-shaped default for
     // `artifacts.batchExport`. Tests that exercise bulk export
     // override this with the expected per-item outcomes.
     batchExport: vi
       .fn()
       .mockResolvedValue({ total: 0, succeeded: 0, failed: 0, results: [] }),
-    // Phase 15 Task 8 (artifact auto-save recovery): default no
+    // default no
     // recovery journal present and discard-as-noop. Tests that
     // exercise the recovery flow override these per-case.
     checkRecovery: vi.fn().mockResolvedValue(null),
     discardRecovery: vi.fn().mockResolvedValue(undefined),
-    // Phase 15 Task 10 (failed-export queue): default empty queue
+    // default empty queue
     // and retry/discard as noops. Tests exercising the queue UI
     // override these per-case with realistic outcomes.
     failedExports: vi.fn().mockResolvedValue([]),
@@ -285,15 +285,15 @@ const mockApi = {
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
-      // Phase 15 Task 19: default mock treats the test environment as
+      // default mock treats the test environment as
       // "already-onboarded" so existing page-level tests don't
       // accidentally render the wizard. Wizard-specific tests
       // override this field explicitly.
       onboardingCompleted: true,
-      // Phase 18 Task 16-17: default mock returns empty arrays so
-      // every page-level test starts with a fresh "no pins / no
-      // recents" state. Tests that exercise the command palette or
-      // sidebar Pinned section override these fields with the
+      // Default mock returns empty arrays so every page-level test
+      // starts with a fresh "no pins / no recents" state. Tests
+      // that exercise the command palette or sidebar Pinned
+      // section override these fields with the
       // specific IDs they want to assert against.
       pinnedArtifactIds: [],
       recentArtifactIds: [],
@@ -327,7 +327,7 @@ const mockApi = {
       recencyHalflifeSecs: 30 * 24 * 60 * 60,
       candidatePoolSize: 0,
     }),
-    // Phase 19 Task 1: ONNX embedding-model picker IPC. Test
+    // ONNX embedding-model picker IPC. Test
     // doubles return the "idle, no models installed, HashTrick
     // active" baseline so every Settings page test renders the
     // card without throwing. Specific tests override these via
@@ -574,7 +574,7 @@ const mockApi = {
     addChannelSource: vi
       .fn()
       .mockResolvedValue({ sourceId: "src-kchat-1", cacheDir: "/tmp/kchat" }),
-    // Block C Task 4 (Phase 13): historical-backfill IPC. Default
+    // historical-backfill IPC. Default
     // resolves with a clean "completed in zero pages" outcome so
     // components that touch the backfill surface (e.g. the
     // `KchatSettingsCard` action menu) render without standing
@@ -588,7 +588,7 @@ const mockApi = {
       totalPostsUnchanged: 0,
       totalPostsSkippedRevoked: 0,
     }),
-    // Block D Task 1 (Phase 14): KChat post-body retrieval IPC.
+    // KChat post-body retrieval IPC.
     // Default returns an empty hit list so dialogs that fan out
     // a query into both `sources.search` and `kchat.searchPosts`
     // render the file results without an unexpected KChat row.
@@ -596,12 +596,12 @@ const mockApi = {
     // per-case (e.g. the citation panel + replace dialog
     // rendering tests in `citationPanelKchat.test.tsx`).
     searchPosts: vi.fn().mockResolvedValue([]),
-    // Phase 13 Theme 2 Task 13: thread-context retrieval. Default
+    // thread-context retrieval. Default
     // returns an empty array so components that call this during
     // rendering (e.g. an auto-expand-thread affordance) don't
     // throw. Tests that exercise the expand-thread path override.
     fetchThreadContext: vi.fn().mockResolvedValue([]),
-    // Phase 14 Task 4: `.kcz`-extension localhost API surface.
+    // `.kcz`-extension localhost API surface.
     // Default snapshot says the server is running but the
     // extension has never checked in, so the Settings card +
     // sidebar render the "not detected" state. Tests exercising
@@ -618,7 +618,7 @@ const mockApi = {
     openDesktopExtensions: vi
       .fn()
       .mockResolvedValue({ opened: true, url: "kchat://" }),
-    // Phase 13 Task 10: KChat channel backfill progress IPC.
+    // KChat channel backfill progress IPC.
     // Default returns the `idle` discriminator so the
     // SourceDetailPage's KChat backfill card renders the
     // pre-walk placeholder; tests that need to drive a specific
@@ -644,7 +644,7 @@ const mockApi = {
   },
   audit: {
     listRecent: vi.fn().mockResolvedValue([]),
-    // Phase 15 Task 12 (audit log rotation): default empty
+    // default empty
     // archive list + rotate-as-noop. The Settings page's audit
     // archive section overrides these per-case.
     getArchives: vi.fn().mockResolvedValue([]),
@@ -657,7 +657,7 @@ Object.defineProperty(window, "tessera", {
   writable: true,
 });
 
-// Phase 15 Task 25 — preload exposes a per-session CSP nonce on
+// preload exposes a per-session CSP nonce on
 // `window.tesseraCspNonce`. Provide a deterministic test value so
 // component-local `<style nonce={…}>` blocks render the attribute
 // instead of crashing with "undefined" — and so tests that want to
@@ -669,7 +669,7 @@ Object.defineProperty(window, "tessera", {
 // hooks/useSettings.ts header comment for the architectural
 // rationale of the shared state) but that singleton-ness is exactly
 // what bleeds across tests in a fresh-test-per-it suite. PR #87
-// Devin Review ANALYSIS_0001 shared-store refactor companion.
+// shared-store refactor companion.
 beforeEach(() => {
   __resetSettingsStoreForTests();
 });

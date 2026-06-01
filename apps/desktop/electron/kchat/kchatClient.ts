@@ -53,8 +53,9 @@ export const DEFAULT_KCHAT_SERVER = "https://kchat.com";
  * a 500/502/503/504 on a non-idempotent POST can produce duplicate
  * server-side effects (a second file in the channel, a second message
  * in the timeline) because the server may have processed the first
- * request and crashed before sending the response — see seventh-pass
- * Devin Review ANALYSIS_0005.
+ * request and crashed before sending the response — the client has
+ * no way to distinguish a pre-write crash (safe to retry) from a
+ * post-write crash (would duplicate). Opt-in is intentional.
  */
 const RETRYABLE_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504]);
 
@@ -261,8 +262,7 @@ const KCHAT_OBJECT_ID_RE = /^[a-z0-9]{20,32}$/;
 
 /**
  * Non-throwing variant of {@link assertCallerObjectId} for the
- * enrichment layer (Phase 13 Theme 2 Task 9, Devin Review pass 2
- * on bef2fa0, ANALYSIS_0002).
+ * enrichment layer.
  *
  * The bulk-enrichment path in `kchat:searchPosts` calls
  * `getUsersByIds` with a list of ids whose validity it cannot
@@ -335,7 +335,7 @@ export function assertKchatServerObjectId(
  * that bypass the IPC layer (background polling, internal tests,
  * batch sync workers) so the URL-path-segment guarantees the
  * client relies on are enforced AT the client boundary, not
- * upstream-of-it (fourteenth-pass Devin Review ANALYSIS_0004).
+ * upstream-of-it
  *
  * Throws a plain `Error` rather than a `KchatRequestError` —
  * server-response validation failures and caller-input failures
@@ -374,7 +374,7 @@ function escapeRegExp(value: string): string {
  * {@link KchatClient.getPostsForChannel} so the validation rules
  * stay consistent across the two endpoints.
  *
- * Block C Task 1 (Phase 12).
+ * Block C Task 1.
  */
 function normalisePost(raw: Record<string, unknown>): KchatPostInfo {
   const id = typeof raw.id === "string" ? raw.id : null;
@@ -626,9 +626,9 @@ export class KchatClient {
   /**
    * Fan a synthetic `KchatWebSocketEvent` out to every registered
    * `wsListeners`. Currently only the native WebSocket dispatch
-   * path uses this hook; the Phase 13 extension-bridge path that
+   * path uses this hook; the extension-bridge path that
    * fanned translated events through this method was removed in
-   * Phase 14 (KChat Desktop and Tessera are now independent KChat
+   * (KChat Desktop and Tessera are now independent KChat
    * clients).
    *
    * Listener errors are swallowed individually so a faulty listener
@@ -762,8 +762,7 @@ export class KchatClient {
    * endpoint, all of which interpolate the id into a URL path.
    */
   async listChannels(teamId: string): Promise<KchatChannel[]> {
-    // Defense-in-depth caller-input validation (fourteenth-pass
-    // Devin Review ANALYSIS_0004): the IPC layer already validates
+    // Defense-in-depth caller-input validation: the IPC layer already validates
     // renderer-supplied ids with `assertKchatId`, but a future
     // internal caller (scheduled sync, batch worker) that bypasses
     // IPC would otherwise interpolate an unchecked string into the
@@ -811,7 +810,7 @@ export class KchatClient {
   }
 
   /**
-   * Bulk-resolve KChat user records by id (Phase 13 Theme 2 Task 9).
+   * Bulk-resolve KChat user records by id.
    *
    * Uses the Mattermost-compatible `POST /api/v4/users/ids`
    * endpoint, which accepts a JSON array of user ids and returns
@@ -850,7 +849,7 @@ export class KchatClient {
   }
 
   /**
-   * Fetch a single channel by id (Phase 13 Theme 2 Task 9).
+   * Fetch a single channel by id.
    *
    * Uses `GET /api/v4/channels/{id}`. Unlike `listChannels`, this
    * works across teams — the auth check is "is the authenticated
@@ -885,7 +884,7 @@ export class KchatClient {
    * tracing/debug helper that logs the file path) still cannot
    * embed a malicious id.
    *
-   * **Phase 13 Theme 2 Task 11**: `fi.user_id` is also validated
+   * `fi.user_id` is also validated
    * here because the renderer-facing file preview now surfaces
    * the uploader (post-sanitisation) and feeds the id through the
    * shared `getUsersByIds` enrichment path. Validating at the
@@ -937,7 +936,7 @@ export class KchatClient {
       `/api/v4/files/${fileId}/info`,
     );
     assertKchatServerObjectId(fi.id, "fileInfo.id");
-    // Phase 13 Theme 2 Task 11: symmetry with `listChannelFiles`
+    // symmetry with `listChannelFiles`
     // — a WS-driven `file_added` event uses this path to resolve
     // the file's metadata before downloading bytes, so a
     // substrate-compromised payload must not be able to slip a
@@ -1343,7 +1342,7 @@ export class KchatClient {
     // catch, `emitStatusError`, websocket error handlers, a future
     // request-layer error) inherits the redaction without having
     // to remember to call `scrubMessage` at every call site.
-    // Sixth-pass Devin Review (ANALYSIS_0004) flagged the
+    // Sixth-pass Devin Review flagged the
     // `kchat:status` handler as the one IPC surface that bypassed
     // `toIpcError` (and therefore `scrubMessage`); the fix lives
     // here rather than in the handler so it cannot be re-introduced
@@ -1627,8 +1626,7 @@ export class KchatClient {
     // "GET with declared JSON body but Content-Length: 0") and
     // either rewrite the request or drop it. Sending the header
     // only on body-carrying methods removes the foot-gun without
-    // affecting any current call site (fourteenth-pass Devin
-    // Review ANALYSIS_0006).
+    // affecting any current call site
     const headers: Record<string, string> =
       body === undefined ? {} : { "Content-Type": "application/json" };
     const resp = await this.rawRequest(method, endpoint, {

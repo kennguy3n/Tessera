@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 26 — OAuth refresh race-condition regression suite.
+ * OAuth refresh race-condition regression suite.
  *
  * Two concurrent `getValidAccessToken` callers for the same provider
  * MUST collapse onto a single in-flight refresh exchange:
@@ -109,7 +109,7 @@ function makeCtx(initial: Partial<Record<string, StoredTokens>>): MockCtx {
   };
 }
 
-describe("OAuth refresh race-condition guard (Phase 15 Task 26)", () => {
+describe("OAuth refresh race-condition guard", () => {
   beforeEach(() => {
     refreshMock.mockReset();
     __resetOAuthRefreshRegistryForTests();
@@ -178,7 +178,7 @@ describe("OAuth refresh race-condition guard (Phase 15 Task 26)", () => {
     expect(t1).toBe(t2);
 
     // Exactly one network call AND exactly one vault write — the
-    // load-bearing race-guard properties Phase 15 Task 26 enforces.
+    // load-bearing race-guard properties enforces.
     expect(refreshMock).toHaveBeenCalledTimes(1);
     expect(m.storeWrites).toBe(1);
   });

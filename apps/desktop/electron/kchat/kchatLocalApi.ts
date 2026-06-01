@@ -1,7 +1,7 @@
 /**
  * Tessera ↔ KChat Desktop extension localhost API.
  *
- * Phase 14 Task 2. Replaces the Phase 13 socket bridge (now removed)
+ * Replaces the socket bridge (now removed)
  * with a minimal HTTP-over-loopback surface the `.kcz` extension
  * installed in KChat Desktop talks to. The wire format is identical
  * to the one declared in `extensions/tessera-kchat/src/types.ts`;
@@ -168,8 +168,7 @@ export interface ShareArtifactResponse {
  * as "the host rejected this request on policy grounds; do not retry".
  *
  * The split between `invalid_request` (400) and `payload_too_large`
- * (413) is similarly load-bearing per Phase 14 Round 10 Devin Review
- * ANALYSIS_0002: every code maps to exactly one HTTP status so the
+ * (413) is similarly load-bearing: every code maps to exactly one HTTP status so the
  * mapping in this jsdoc, the `TesseraLocalApiError` mirror in
  * `extensions/tessera-kchat/src/types.ts`, and the actual `throw`
  * sites all agree. A 413 paired with `invalid_request` (the previous
@@ -224,7 +223,7 @@ export interface LocalApiServerOptions {
   /** Inject a clock (tests). Default `Date.now`. */
   nowMsForTesting?: () => number;
   /**
-   * Phase 15 Task 28 — sliding-window rate limiter overrides.
+   * sliding-window rate limiter overrides.
    *
    * Production uses the defaults (100 req / 60s, per remote IP).
    * Tests override `limit` / `windowMs` so a 101-request burst can
@@ -293,7 +292,7 @@ export class KchatLocalApiServer {
   /** Injected clock for tests; defaults to `Date.now`. */
   private readonly nowMs: () => number;
   /**
-   * Phase 15 Task 28 — per-IP sliding-window rate limiter. Runs
+   * per-IP sliding-window rate limiter. Runs
    * BEFORE host-header validation and bearer auth so a bad actor
    * cannot drain the rate budget by spamming malformed requests
    * (which return 4xx earlier without ever reaching the handler).
@@ -384,8 +383,8 @@ export class KchatLocalApiServer {
         // call here when `dispatch()` already responded is a
         // no-op. The error message is sanitised so a non-
         // `LocalApiError` can never leak implementation details
-        // (file paths, stack fragments) over the wire — see
-        // ANALYSIS_0005 + the `respondError()` sanitiser below.
+        // (file paths, stack fragments) over the wire — the
+        // `respondError()` sanitiser below enforces this.
         respondError(
           res,
           err instanceof LocalApiError
@@ -425,8 +424,7 @@ export class KchatLocalApiServer {
       // branch below performs: `server.close()` releases the kernel
       // event-loop handle that `listen()` opened. Without this
       // call, the throw would orphan the listening socket for the
-      // rest of the process lifetime (Phase 14 Round 13 Devin
-      // Review ANALYSIS_0007).
+      // rest of the process lifetime
       server.close();
       throw new Error("KchatLocalApiServer failed to bind");
     }
@@ -457,7 +455,7 @@ export class KchatLocalApiServer {
     try {
       this.fsWriter.writeAtomic(this.portFileAbsPath, portFileContents);
     } catch (err) {
-      // Phase 14 Round 8 Devin Review BUG_0001: if the port-file
+      // if the port-file
       // write fails (disk full, EACCES on the userData directory,
       // EROFS, etc.) the HTTP server is already bound to a
       // kernel-assigned port. Without this rollback, `start()`
@@ -509,7 +507,7 @@ export class KchatLocalApiServer {
       if (!req.url) {
         throw new LocalApiError(400, "invalid_request", "missing URL");
       }
-      // Phase 15 Task 28 — sliding-window rate limit, BEFORE host /
+      // sliding-window rate limit, BEFORE host /
       // bearer checks. We key by the connection's remote address; on
       // a properly bound 127.0.0.1 server this is always
       // "127.0.0.1" / "::ffff:127.0.0.1", but keying by IP keeps the
@@ -559,7 +557,7 @@ export class KchatLocalApiServer {
       }
       throw new LocalApiError(404, "not_found", "route not found");
     } catch (err) {
-      // Phase 14 Round 7 Devin Review ANALYSIS_0005: a non-
+      // a non-
       // `LocalApiError` thrown from a handler (e.g. an unexpected
       // `TypeError` from inside `handlers.ingestChannel`) used to
       // be propagated to the wire verbatim via `err.message` —
@@ -676,7 +674,7 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
         : Buffer.from(chunk as Uint8Array);
     total += buf.length;
     if (total > MAX_BODY_BYTES) {
-      // Phase 14 Round 10 Devin Review ANALYSIS_0002: the code paired
+      // the code paired
       // with the 413 status is `payload_too_large`, not
       // `invalid_request`. See the `LocalApiErrorCode` jsdoc above
       // for the canonical code↔status mapping and why this matters
@@ -802,7 +800,7 @@ function respond(
 }
 
 /**
- * Phase 15 Task 28 — emit a 429 response with `Retry-After` set to
+ * emit a 429 response with `Retry-After` set to
  * the limiter's recommended back-off (seconds, integer per RFC
  * 7231). Body uses the standard `LocalApiError` wire shape so the
  * .kcz extension can pattern-match the `code` field without parsing
@@ -856,7 +854,7 @@ function respondRateLimited(
  * operators can diagnose the failure from the Electron log
  * pipeline. Surfacing it directly would leak implementation
  * details (file paths, stack fragments) past the loopback bearer-
- * token boundary; see ANALYSIS_0005.
+ * token boundary.
  */
 function respondError(
   res: ServerResponse,
@@ -873,7 +871,7 @@ function respondError(
     console.error("[kchatLocalApi] internal handler error:", internalErr);
   }
   if (res.headersSent) {
-    // Phase 14 Round 7 Devin Review ANALYSIS_0004: the outer
+    // the outer
     // `dispatch().catch()` wrapper in `start()` calls this as a
     // last-line-of-defence after the inner try/catch already
     // emitted a response. If headers are already sent, a second

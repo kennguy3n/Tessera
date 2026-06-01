@@ -82,8 +82,7 @@ pub enum AuditEventType {
     /// audit log itself.
     KchatFileEventReceived,
     /// The Node-side `KchatEventForwarder` refreshed a KChat
-    /// channel's ACL roster against the substrate (Block B Task 3,
-    /// Phase 11). Details carry the originating channel id, the
+    /// channel's ACL roster against the substrate. Details carry the originating channel id, the
     /// number of members in the refreshed roster, the boolean
     /// `principal_present` projection (was the locally-authenticated
     /// principal in the roster), and the projection outcome
@@ -104,8 +103,7 @@ pub enum AuditEventType {
     KchatChannelAccessRevoked,
     /// A KChat-channel source's indexed evidence (chunks +
     /// indexed_files + their FTS5 / embedding rows) was scrubbed
-    /// inline as part of a revoke transition (Block B Task 4,
-    /// Phase 11). Details carry the channel id, the reason
+    /// inline as part of a revoke transition. Details carry the channel id, the reason
     /// (`channel_archived` / `channel_deleted` /
     /// `principal_missing_from_roster` / explicit operator
     /// revoke), and the counts of chunks + files scrubbed. This
@@ -113,7 +111,7 @@ pub enum AuditEventType {
     /// step succeeded — the prior `KchatChannelAccessRevoked` row
     /// only records the status transition.
     KchatSourceCryptoshredded,
-    /// Block C Task 1 (Phase 12): a KChat post body was ingested
+    /// a KChat post body was ingested
     /// into the substrate. Details carry the channel id, the
     /// post id, the number of chunks AEAD-sealed under the
     /// per-source DEK, and the bookkeeping outcome
@@ -122,12 +120,12 @@ pub enum AuditEventType {
     /// observability fields the operator needs to confirm the
     /// ingest pipeline is running.
     KchatPostIngested,
-    /// Block C Task 1 (Phase 12): an existing KChat post was
+    /// an existing KChat post was
     /// re-indexed after a `post_edited` event. Details mirror
     /// `KchatPostIngested` (same outcome catalogue: the re-index
     /// drops the previous chunks and indexes the new body).
     KchatPostEdited,
-    /// Block C Task 1 (Phase 12): a KChat post was removed from
+    /// a KChat post was removed from
     /// the substrate after a `post_deleted` event. Details carry
     /// the channel id, the post id, the chunk count that was
     /// dropped, and the outcome (`deleted` / `not_found` /
@@ -135,14 +133,14 @@ pub enum AuditEventType {
     /// deleted on per-post delete — it is only retired on the
     /// source-level revoke / cryptoshred path.
     KchatPostDeleted,
-    /// Block C Task 4 (Phase 13): an orchestrator-driven
+    /// an orchestrator-driven
     /// historical-backfill walk started (or resumed) for a KChat
     /// channel. Details include `resume_from=<post_id>` or
     /// `(fresh)` when the walk begins at the newest post. Pairs
     /// 1:1 with [`KchatBackfillCompleted`] or
     /// [`KchatBackfillAborted`] on the same `(channel,source)`.
     KchatBackfillStarted,
-    /// Block C Task 4 (Phase 13): one page of the historical
+    /// one page of the historical
     /// backfill walk was processed. Details carry the 1-based
     /// page number, per-page substrate counters
     /// (`posts_ingested`, `posts_unchanged`,
@@ -151,14 +149,14 @@ pub enum AuditEventType {
     /// page). Operators can grep these rows to reconstruct the
     /// progression of a long-running walk.
     KchatBackfillPageIngested,
-    /// Block C Task 4 (Phase 13): the backfill walk finished
+    /// the backfill walk finished
     /// successfully — the KChat REST server returned
     /// `prev_post_id == null`, signalling no posts older than
     /// the cursor exist. Details carry the cumulative
     /// `pages_walked`, `total_posts_ingested`, and
     /// `total_posts_unchanged` (the dedupe count).
     KchatBackfillCompleted,
-    /// Block C Task 4 (Phase 13): the backfill walk stopped
+    /// the backfill walk stopped
     /// early. Details carry a machine-readable `reason` tag:
     /// `access_revoked` (source flipped to revoked mid-walk),
     /// `safety_cap` (per-channel cumulative cap hit),
@@ -167,7 +165,7 @@ pub enum AuditEventType {
     /// at the last successfully-acknowledged post id so a
     /// later retrigger resumes from there.
     KchatBackfillAborted,
-    /// Block D Task 1 (Phase 14): a KChat-post FTS5 retrieval
+    /// a KChat-post FTS5 retrieval
     /// was executed. Details carry:
     ///
     /// - `query_hash=<16-hex>`: a 16-hex-character truncation
@@ -195,8 +193,7 @@ impl AuditEventType {
     /// Return the canonical snake_case identifier for this variant,
     /// matching the `#[serde(rename_all = "snake_case")]` JSON form
     /// but without the JSON-string round-trip + quote-trim that the
-    /// napi bridge previously used (fourteenth-pass Devin Review
-    /// ANALYSIS_0007). Centralising the mapping here also gives a
+    /// napi bridge previously used. Centralising the mapping here also gives a
     /// single place to look when adding a new variant.
     pub fn as_snake_case(&self) -> &'static str {
         match self {

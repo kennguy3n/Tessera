@@ -1,6 +1,6 @@
 /**
  * End-to-end integration test for `kchat:shareArtifact` with the
- * evidence-pack option (Phase 13 Theme 2 Task 12).
+ * evidence-pack option.
  *
  * The existing `kchat:shareArtifact` test coverage in
  * `kchatIpc.test.ts` mocks `KchatClient` directly — every test in
@@ -107,8 +107,7 @@ vi.mock("electron", () => ({
     fromWebContents: () => null,
   },
   // `shell.openExternal` is loaded at module-import time by
-  // `electron/ipc/kchat.ts` (Phase 14 Round 13 ANALYSIS_0001 —
-  // top-level import). This test never invokes the
+  // `electron/ipc/kchat.ts` (top-level import). This test never invokes the
   // `kchat:openInDesktop` / `kchat:openDesktopExtensions` handlers,
   // but the symbol must exist or `import` resolution fails before
   // any tests run.
@@ -230,7 +229,7 @@ interface UploadServer {
 }
 
 /**
- * Phase 13 Theme 2 Task 12 — Devin Review pass 4 ANALYSIS_0005:
+ * Devin Review pass 4:
  * the integration test spawns real `http.Server` instances on
  * `127.0.0.1:0`. The normal cleanup path (`afterEach`) is the
  * authoritative close, but if a test times out / hangs before
@@ -315,7 +314,7 @@ async function startUploadServer(): Promise<UploadServer> {
  */
 function extractBoundary(contentType: string | undefined): string | null {
   if (!contentType) return null;
-  // Phase 13 Theme 2 Task 13 — Devin Review pass 2 ANALYSIS_0005:
+  // Devin Review pass 2:
   // position-independent so a future `KchatClient.uploadFile` that
   // appends additional Content-Type parameters (e.g. `charset`)
   // does not silently fail the test with a confusing "boundary is
@@ -437,7 +436,7 @@ afterEach(async () => {
   liveClient = null;
 });
 
-// Devin Review pass 4 ANALYSIS_0005: belt-and-suspenders for the
+// Devin Review pass 4: belt-and-suspenders for the
 // case where a hung test prevents `afterEach` from running. Closes
 // every `http.Server` still in `LIVE_SERVERS` at file teardown so
 // the worker process exits with no orphaned sockets, AND registers
@@ -610,8 +609,8 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
   it("audits evidenceShared=false when the primary succeeds but the pack upload fails over the wire", async () => {
     // Re-stand the server with a route that fails the SECOND
     // request only. This exercises the partial-failure invariant
-    // (Sixth-pass Devin Review ANALYSIS_0007) over the real
-    // network stack: a 500 on the pack upload must not cancel the
+    // over the real network stack: a 500 on the pack upload must
+    // not cancel the
     // primary's audit row but must re-throw so the renderer
     // learns of the divergence.
     if (!server) throw new Error("test setup did not start the server");
@@ -755,7 +754,7 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
       // `if (wantEvidence)` branch is reached only on primary
       // success). The audit row is NOT emitted because the
       // channel is unchanged — emitting it would create a
-      // phantom record (Sixth-pass Devin Review ANALYSIS_0007).
+      // phantom record.
       expect(bridgeMock.bridgeLogKchatArtifactShared).not.toHaveBeenCalled();
       expect(bridgeMock.bridgeEvidencePackBytes).not.toHaveBeenCalled();
     } finally {

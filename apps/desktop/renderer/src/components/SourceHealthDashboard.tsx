@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 22 — Source Health dashboard for the Settings page.
+ * Source Health dashboard for the Settings page.
  *
  * Renders a single Card containing one row per indexed source, with
  * (a) a traffic-light health badge (healthy / warning / error),
@@ -149,7 +149,7 @@ export default function SourceHealthDashboard({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    // Devin Review PR #70 follow-up ANALYSIS_0002 (BUG): resolve the
+    // Devin Review PR #70 follow-up (BUG): resolve the
     // bridge reference INSIDE the refresh callback rather than at
     // component-render time. Previously the resolution lived above
     // (`const sources = api ?? window.tessera?.sources`) and was
@@ -174,7 +174,7 @@ export default function SourceHealthDashboard({
     // identity never changes for the lifetime of the renderer.
     const sources = api ?? window.tessera?.sources;
     if (!sources) {
-      // Devin Review PR #70 follow-up ANALYSIS_0004: the bridge can
+      // Devin Review PR #70 follow-up: the bridge can
       // legitimately be unavailable (transient renderer<->main
       // initialisation window, or `SettingsPage` mounted from a test
       // that didn't override `api`). Previously the early-return left
@@ -198,7 +198,7 @@ export default function SourceHealthDashboard({
       setLoading(false);
       return;
     }
-    // Devin Review PR #70 ANALYSIS_0002: clear the previous error
+    // Devin Review PR #70: clear the previous error
     // at the START of a refresh attempt, not just on success.
     // Otherwise the user simultaneously sees the old error banner,
     // the dimmed-stale table, AND the "Refreshing…" button text —
@@ -211,7 +211,7 @@ export default function SourceHealthDashboard({
     // appearance during a slow successful retry.
     //
     // The stale-table semantics (the regression-test fix from
-    // ANALYSIS_0002 round one) are unchanged: `isStale` is still
+    // round one) are unchanged: `isStale` is still
     // derived from `error !== null && report !== null`, so the
     // dimmed-and-aria-described table only appears after a refresh
     // has actually failed — not during the in-flight retry.
@@ -231,7 +231,7 @@ export default function SourceHealthDashboard({
     refresh();
   }, [refresh]);
 
-  // Devin Review PR #70 ANALYSIS_0002: when `error` is set AND a
+  // Devin Review PR #70: when `error` is set AND a
   // prior `report` exists, the dashboard previously rendered both
   // the error banner AND the table side-by-side with no indication
   // that the table data was stale. The architecturally correct fix

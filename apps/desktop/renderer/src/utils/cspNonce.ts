@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 25 — renderer-side accessor for the per-session CSP
+ * renderer-side accessor for the per-session CSP
  * nonce. Components that emit an inline `<style>{…}</style>` block
  * read this and pass it as the `nonce` attribute:
  *

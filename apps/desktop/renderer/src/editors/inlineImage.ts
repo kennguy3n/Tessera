@@ -16,9 +16,8 @@
 // multi-megabyte data URL.
 //
 // Before this module existed, both editors hand-rolled their own
-// `fileToDataUrl` (Devin Review PR #82 ANALYSIS_…_0001) and the slide
-// editor's copy had no size cap at all (Devin Review PR #82
-// BUG_…_0001). Centralising the helper here keeps the size cap and
+// `fileToDataUrl` and the slide
+// editor's copy had no size cap at all Centralising the helper here keeps the size cap and
 // the FileReader plumbing in one place so a future fix (e.g.
 // recognising an empty `readAsDataURL` result on certain MIME types)
 // only needs to land once.

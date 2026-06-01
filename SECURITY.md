@@ -65,11 +65,11 @@ Tessera is built around these security principles:
 
 ### Local-first data sovereignty
 
-All user data is stored locally on the user's machine by default. No data leaves the device unless the user explicitly connects a remote source or enables an external provider. There is no cloud backend, no telemetry, and no analytics.
+All user data is stored locally on the user's machine by default. No data leaves the device unless the user explicitly connects a remote source or enables an external provider. There is no cloud backend and no remote analytics. Tessera ships a **local-only** telemetry sink that is **off by default** and never opens a socket — when on, events are buffered in memory and flushed to a single on-disk JSONL file, and disabling truncates the file.
 
 ### Encrypted local storage
 
-All indexed content is stored in SQLCipher-encrypted databases. Encryption keys are derived per-scope and never leave the device. The knowledge substrate uses XChaCha20-Poly1305 AEAD for content encryption and BLAKE3 for content hashing.
+All indexed content is stored in SQLCipher-encrypted databases. Encryption keys are derived per-scope and never leave the device. The knowledge substrate uses XChaCha20-Poly1305 AEAD for content encryption and BLAKE3 for content hashing. KChat post bodies are additionally protected by column-level AES-256-GCM with a per-source DEK; disconnecting a KChat source destroys the DEK and renders previously stored chunks unrecoverable.
 
 ### Safe renderer boundary
 
@@ -92,8 +92,11 @@ The Electron renderer (React UI) operates in a sandboxed context with:
 
 ### Token and credential handling
 
-- OAuth tokens for remote connectors are stored in the OS keychain (macOS Keychain, Windows Credential Manager), never in plaintext files or the renderer.
+- OAuth tokens for remote connectors are stored in the OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret / GNOME Keyring / KWallet) via Electron's `safeStorage`, never in plaintext files or the renderer.
+- A **per-app keychain ACL** policy classifies the active `safeStorage` backend into a trust tier (`enforced-by-os` for macOS Keychain with a Code-Signing-pinned bundle ID; `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet; `none` for Linux `basic_text` fallback, which is XOR with a hardcoded key — *not* real encryption). When the active backend is `basic_text`, the policy refuses to encrypt secrets by default.
+- On headless Linux or any environment without a reachable keyring, Tessera falls back to a **password vault** that derives a 256-bit key from a user passphrase via PBKDF2-SHA256 (600 000 iterations) and wraps the DB key + OAuth tokens + API keys with AES-256-GCM.
 - Tokens are never exposed to the renderer process.
+- **OAuth scope governance**: granted scopes are inspected on every connector sync. If the consent screen has been narrowed since the last grant, the renderer receives a precise list of missing scopes and a re-auth CTA instead of opaque 403s.
 - Disconnect flows revoke tokens and delete local index data.
 
 ### Audit trail
@@ -105,6 +108,16 @@ All security-relevant actions are logged to an append-only audit trail:
 - Artifact creation and export
 - Settings changes
 - Model runtime start/stop
+
+The audit log rotates at 100 K rows to compressed `audit-archive-<ts>.jsonl.gz` archives, surfaced through `audit:getArchives`.
+
+### App-lock (PIN + biometric)
+
+Optional. When enabled, Tessera requires a PIN to unlock the app at startup. The PIN is hashed with scrypt (`N = 2^14`, per-PIN salt, key length 64) and stored vault-encrypted at rest, with the scrypt parameters stored alongside so a future parameter bump doesn't lock anyone out. Failed attempts trigger exponential backoff (30 s → 1 h cap). Biometric unlock dispatches to TouchID (macOS) or Windows Hello (WinRT `UserConsentVerifier`). Every app-lock IPC channel shares a token-bucket rate limiter so a compromised renderer can't side-step throttling by alternating channels.
+
+### Auto-updater signature verification
+
+Update artifacts are verified against a hardcoded `UPDATER_TRUST_ANCHORS` array of Ed25519 public keys before `electron-updater` is allowed to call `quitAndInstall`. Multi-anchor support lets a new pubkey ship alongside the old one for an overlap window during key rotation. The release tool `release-tool/signUpdateArtifact.ts` signs artifacts server-side.
 
 ---
 
@@ -118,6 +131,10 @@ All security-relevant actions are logged to an append-only audit trail:
 - Token leakage (OAuth tokens exposed outside the OS keychain).
 - Arbitrary code execution through crafted files (e.g., malicious PDF, DOCX).
 - Model sidecar escaping loopback (accepting connections from outside localhost).
+- Loopback KChat HTTP API auth bypass (Host-header SSRF, bearer-token forgery, body-cap bypass).
+- Auto-updater signature bypass (installing an artifact whose signature does not verify against any `UPDATER_TRUST_ANCHORS` entry).
+- App-lock bypass (unlocking the app without the correct PIN or biometric verification).
+- Telemetry exfiltration (the telemetry sink opening a socket or shipping data off-device).
 - Audit log tampering.
 
 ### Out of scope

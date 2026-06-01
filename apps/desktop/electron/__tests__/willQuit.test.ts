@@ -58,7 +58,7 @@ vi.mock("electron", () => ({
     getLocale: () => "en-US",
     setAppUserModelId: vi.fn(),
     requestSingleInstanceLock: vi.fn().mockReturnValue(true),
-    // Phase 14 — `main.ts` registers the `tessera://` deeplink
+    // `main.ts` registers the `tessera://` deeplink
     // scheme before `whenReady` resolves. The will-quit tests
     // never exercise the deeplink path (they hold `whenReady`
     // pending), but the scheme registration runs during module
@@ -148,7 +148,7 @@ vi.mock("../config", () => ({
 vi.mock("../appState", () => ({
   initAppState: vi.fn(),
   stopAllSidecars: vi.fn().mockResolvedValue(undefined),
-  // Phase 14 Task 3 fix — `main.ts` now calls
+  // `main.ts` now calls
   // `attachKchatDeeplinkBridge()` at module top-level (so macOS
   // cold-start `open-url` events aren't lost). The stub must be a
   // callable vi.fn so module load completes; the will-quit tests
@@ -206,12 +206,12 @@ function makeEvent() {
 }
 
 /**
- * Phase 14 Round 4 Devin Review polish: `handleWillQuit` now takes
- * `stopKchatLocalApi` and `detachKchatDeeplinkBridge` via the same
- * dep-injection seam as `stopScheduler` / `stopAllSidecars` /
- * `quit`. Tests that don't specifically care about these two
- * steps (the bulk of the existing suite) get no-op spies so the
- * outer `try/finally` ordering remains the only thing under test.
+ * `handleWillQuit` now takes `stopKchatLocalApi` and
+ * `detachKchatDeeplinkBridge` via the same dep-injection seam as
+ * `stopScheduler` / `stopAllSidecars` / `quit`. Tests that don't
+ * specifically care about these two steps (the bulk of the
+ * existing suite) get no-op spies so the outer `try/finally`
+ * ordering remains the only thing under test.
  * Tests that DO care about the ordering of the new steps build
  * their own deps inline so they can observe the call order.
  */
@@ -256,10 +256,10 @@ describe("handleWillQuit", () => {
     expect(order).toEqual(["stopScheduler", "stopAllSidecars", "quit"]);
   });
 
-  // Phase 14 Round 4 Devin Review polish: now that the
-  // kchat-localhost-API shutdown and the deeplink detach run
-  // through the dep-injection seam (rather than as direct module
-  // imports), pin the full ordering: scheduler → sidecars →
+  // Now that the kchat-localhost-API shutdown and the deeplink
+  // detach run through the dep-injection seam (rather than as
+  // direct module imports), pin the full ordering:
+  // scheduler → sidecars →
   // kchatLocalApi → detachDeeplink → quit. Sidecars must drain
   // before the local API server stops because the .kcz extension
   // inside KChat Desktop should be told "Tessera is gone" (via the

@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 9 — vitest coverage for `functions/text.ts`.
+ * vitest coverage for `functions/text.ts`.
  *
  * Each function has at least two cases: a happy path plus an edge
  * case (boundary, error, optional arg). Tests evaluate full

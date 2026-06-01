@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 24 — line-level LCS diff for artifact version
+ * line-level LCS diff for artifact version
  * comparison.
  *
  * No external diff library: keep the bundle small by reimplementing
@@ -35,8 +35,7 @@
  * `VersionHistory` displays a banner explaining the degradation so
  * the user knows the diff is approximate.
  *
- * Future optimisation paths (deferred — see Devin Review PR #70
- * ANALYSIS_0004):
+ * Future optimisation paths (deferred):
  *
  *  - Hirschberg's algorithm reduces memory to O(min(m, n)) by
  *    recursively splitting the problem and keeping only two DP

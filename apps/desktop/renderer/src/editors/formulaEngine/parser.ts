@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 2 — recursive-descent parser.
+ * recursive-descent parser.
  *
  * Consumes the token stream from `tokenize()` and produces a typed AST.
  * The grammar matches the precedence/associativity ladder Excel and
@@ -53,7 +53,7 @@ export type UnaryOp = "+" | "-" | "%";
 
 /**
  * AST node shape. `cell` and `range` carry an optional `sheet`
- * naming a sibling worksheet (Phase 16 Task 13 multi-sheet). When
+ * naming a sibling worksheet . When
  * absent, the reference targets the active sheet — backward
  * compatible with all pre-multi-sheet formulas.
  */

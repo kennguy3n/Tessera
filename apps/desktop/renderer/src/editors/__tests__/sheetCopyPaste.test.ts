@@ -129,7 +129,7 @@ describe("sheetCopyPaste", () => {
       // 0, 3, 4 are outside the paste range and must survive by
       // reference, matching the contract `incrementalRecalc`'s
       // row-skip O(1) `prevRow === nextRow` short-circuit relies on.
-      // PR #86 Devin Review ANALYSIS-0002 — paste was the last of the
+      // PR #86 — paste was the last of the
       // four mutation paths (updateCell, Delete, fill-series, paste)
       // still using the naive clone-all shape.
       const tall: SheetTab = {

@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 1 — tokenizer tests.
+ * tokenizer tests.
  *
  * 30+ explicit cases pinning the documented grammar:
  *   - numbers (integer, decimal, leading-dot, scientific notation,

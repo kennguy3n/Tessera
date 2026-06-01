@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 1 — formula tokenizer.
+ * formula tokenizer.
  *
  * Streaming scanner over the source string. Produces the tokens the
  * parser consumes:
@@ -10,7 +10,7 @@
  *                    doubled-quote escapes)
  *   BOOLEAN        — `TRUE` / `FALSE` (case-insensitive)
  *   CELL_REF       — `A1`, `$A$1`, `A$1`, `$A1` (absolute markers
- *                    captured for fill-down arithmetic in Phase 16
+ *                    captured for fill-down arithmetic in
  *                    PR 3, but otherwise treated identically by the
  *                    evaluator)
  *   RANGE          — `A1:B5` (parser combines a CELL_REF + ':' +
@@ -52,7 +52,7 @@ export type TokenType =
   | "CELL_REF"
   | "FUNCTION_NAME"
   | "IDENTIFIER"
-  /** `'Sheet With Spaces'` quoted sheet-name segment (Phase 16 Task 13). */
+  /** `'Sheet With Spaces'` quoted sheet-name segment. */
   | "SHEET_QUOTED"
   /** `!` separator between sheet name and cell reference. */
   | "BANG"

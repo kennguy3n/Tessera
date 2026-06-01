@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 19 — OnboardingWizard tests.
+ * OnboardingWizard tests.
  *
  * Coverage:
  *   1. Renders step 1 (Add source) on mount.
@@ -111,7 +111,7 @@ describe("OnboardingWizard", () => {
     });
   });
 
-  // Devin Review PR #70 BUG_0001: the previous `persisting`
+  // Devin Review PR #70: the previous `persisting`
   // useState guard captured a stale `false` value across React
   // closures, so a second dismiss path entering before the IPC
   // resolved would slip through and fire `settings.update` +

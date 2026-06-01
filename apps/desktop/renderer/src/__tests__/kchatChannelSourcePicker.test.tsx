@@ -140,7 +140,7 @@ describe("KchatChannelSourcePicker", () => {
   });
 
   // ------------------------------------------------------------------
-  // Phase 13 Theme 2 Task 11 — file preview metadata.
+  // file preview metadata.
   //
   // The picker previously showed just `name (mime · size)`. The
   // task wires the IPC-enriched `uploaderUsername` + the existing
@@ -156,7 +156,7 @@ describe("KchatChannelSourcePicker", () => {
   //   4.  A zero / negative `create_at` renders an "unknown date"
   //       fallback instead of `Jan 1, 1970`.
   // ------------------------------------------------------------------
-  describe("Phase 13 Theme 2 Task 11 — file preview metadata", () => {
+  describe("file preview metadata", () => {
     it("renders enriched uploaderUsername on the meta row", async () => {
       const api = makeApi();
       wrap(<KchatChannelSourcePicker isOpen onClose={() => {}} api={api} />);

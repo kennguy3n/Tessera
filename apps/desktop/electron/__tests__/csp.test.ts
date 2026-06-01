@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 25 — Content-Security-Policy regression tests.
+ * Content-Security-Policy regression tests.
  *
  * Locks the structural invariants of the CSP header so a regression
  * that re-introduces `'unsafe-inline'` or `'unsafe-eval'`, drops one
@@ -96,7 +96,7 @@ describe("CSP — buildCsp (production mode)", () => {
   });
 
   it("permits 'unsafe-inline' on style-src-attr (React idiom)", () => {
-    // The Phase 15 Task 25 architectural choice: `style="…"`
+    // The architectural choice: `style="…"`
     // attributes (which React emits liberally) need 'unsafe-inline'
     // on style-src-attr because they accept JS object values and
     // are not externally writable. The split between style-src-elem

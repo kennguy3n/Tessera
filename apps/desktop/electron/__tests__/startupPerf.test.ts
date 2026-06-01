@@ -1,19 +1,18 @@
 /**
  * Cold-start performance regression tests.
  *
- * Phase 15 Task 1.
  *
  * The cold-start budget is "window visible in <2s on cold start
  * without model load". We can't enforce a wall-clock budget in CI
  * (machine variance dominates), so we enforce the structural
  * invariants the budget depends on:
  *
- *   1. The heavy modules listed in the Phase 15 plan
+ *   1. The heavy modules listed in the plan
  *      (`marpExport.ts`, `typstExport.ts`, `diffusionSidecar.ts`,
  *      `autoUpdater.ts`) are NOT statically imported from `main.ts`
  *      or `ipc/index.ts`. A reviewer or refactor that re-introduces
  *      a static import fails this test immediately, giving the
- *      reviewer the same signal the original Phase 15 commit
+ *      reviewer the same signal the original commit
  *      established.
  *
  *   2. The `startupPerf` module exposes the marker API the boot
@@ -78,7 +77,7 @@ function hasStaticImport(source: string, modulePath: string): boolean {
   return pattern.test(source);
 }
 
-describe("startup performance — Phase 15 Task 1", () => {
+describe("startup performance", () => {
   beforeEach(() => {
     _resetStartupPerfForTests();
     enableStartupPerf();

@@ -1,5 +1,5 @@
 /**
- * Phase 16 PR 1 — SheetEditor formula-engine integration test.
+ * SheetEditor formula-engine integration test.
  *
  * Mounts the real `SheetEditor` component (no mocking of the
  * engine itself) and exercises the live edit / formula / formula

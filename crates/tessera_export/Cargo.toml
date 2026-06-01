@@ -25,7 +25,7 @@ comemo = { version = "0.4", optional = true }
 ecow = { version = "0.2", optional = true }
 
 [features]
-# Phase 15 Task 15: `typst` is on by default so the production PDF
+# `typst` is on by default so the production PDF
 # pipeline can embed Mermaid diagrams as SVG. Callers that need the
 # minimal hand-rolled PDF (no Typst, no diagrams, no system fonts)
 # can opt out via `default-features = false` and explicitly enable
@@ -39,11 +39,11 @@ typst = ["dep:typst", "dep:typst-pdf", "dep:typst-svg", "dep:typst-assets", "dep
 [dev-dependencies]
 tempfile = { workspace = true }
 blake3 = { workspace = true }
-# Phase 15 Task 13: streaming OOXML parser for the DOCX regression
+# Streaming OOXML parser for the DOCX regression
 # suite (validates required `<w:p>`, `<w:tbl>`, `<w:tr>`, `<w:tc>`,
 # `<w:body>` elements in exported documents).
 quick-xml = { workspace = true }
-# Phase 15 Task 13: parse deterministic UUID literals for fixed
+# Parse deterministic UUID literals for fixed
 # citation source ids in the DOCX golden-fixture suite (the production
 # `SourceId::new` allocates a random v4 each call, which would break
 # byte stability across runs).

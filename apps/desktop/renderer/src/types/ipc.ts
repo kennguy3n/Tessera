@@ -126,7 +126,7 @@ declare global {
   interface Window {
     tessera: TesseraApi;
     /**
-     * Phase 15 Task 25 — per-session CSP nonce exposed by
+     * per-session CSP nonce exposed by
      * `preload.ts`. Components that emit a `<style>{…}</style>`
      * block read this and pass it as the `nonce` attribute so the
      * strict `style-src-elem 'self' 'nonce-X'` directive accepts

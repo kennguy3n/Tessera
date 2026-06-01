@@ -82,7 +82,7 @@ export function registerArtifactsHandlers(): void {
       if (!bridge) {
         throw new Error("Native bridge not available");
       }
-      // Phase 15 Task 8: write the recovery sidecar BEFORE the bridge
+      // write the recovery sidecar BEFORE the bridge
       // call so a crash inside the N-API boundary still leaves a
       // restorable copy on disk. The sidecar is removed AFTER the
       // bridge call returns successfully; if recovery-write itself
@@ -124,7 +124,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  // Phase 15 Task 8: recovery-check entrypoint. Called by the
+  // recovery-check entrypoint. Called by the
   // renderer when an artifact is opened, to decide whether to show
   // the "Restore unsaved changes from <time>?" prompt. Returns the
   // recovery envelope if there's a sidecar newer than the DB row's
@@ -175,7 +175,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  // Phase 15 Task 8: explicit-discard entrypoint. Renderer calls
+  // explicit-discard entrypoint. Renderer calls
   // this when the user clicks "Discard" on the restore prompt.
   // Idempotent (the underlying `clearRecovery` swallows `ENOENT`),
   // so a duplicate click is harmless.
@@ -239,7 +239,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  // Phase 15 Task 6: bulk export entrypoint. Bulk export is a real
+  // bulk export entrypoint. Bulk export is a real
   // workflow (the user picks a project's worth of slide decks and
   // exports them to PDF) and the per-artifact `artifacts:export`
   // channel was the obvious choke point — every artifact paid one
@@ -356,7 +356,7 @@ export function registerArtifactsHandlers(): void {
       // Make sure the parent directory exists before the Rust bridge
       // writes.
       await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
-      // Phase 15 Task 10: wrap the bridge call so any failure
+      // wrap the bridge call so any failure
       // (Typst syntax error, disk full, permission denied during
       // the actual write) is enqueued into the failed-export
       // queue. The user can then inspect / one-click-retry from
@@ -388,7 +388,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  // Phase 15 Task 10: list the persisted failed-export queue. Read-
+  // list the persisted failed-export queue. Read-
   // only; the renderer's Settings page polls this to render the
   // "Failed exports" card. Snapshot read — no consistency concerns
   // because the atomic-rename writer guarantees we see a
@@ -397,7 +397,7 @@ export function registerArtifactsHandlers(): void {
     return listFailedExports();
   });
 
-  // Phase 15 Task 10: one-click retry of a previously failed export.
+  // one-click retry of a previously failed export.
   // Pulls the original arguments from the queue and re-runs them
   // through the bridge. Two outcomes:
   //   * success → dequeues the entry and returns the resolved path.
@@ -421,13 +421,13 @@ export function registerArtifactsHandlers(): void {
     // path could redirect the write — checking again is cheap and
     // closes the gap structurally.
     //
-    // Defense-in-depth (Devin Review PR #69 BUG_0003): we ALSO
-    // reject any non-absolute or empty path here. In normal
-    // operation the queue is only populated from `resolvedPath`
-    // (always absolute), but a tampered `failed-exports.json` on
-    // disk could supply a relative path such as `../sensitive/file`
-    // that would otherwise resolve against cwd and slip past the
-    // allowlist check (which exits early on non-absolute inputs).
+    // Defense-in-depth: we ALSO reject any non-absolute or empty
+    // path here. In normal operation the queue is only populated
+    // from `resolvedPath` (always absolute), but a tampered
+    // `failed-exports.json` on disk could supply a relative path
+    // such as `../sensitive/file` that would otherwise resolve
+    // against cwd and slip past the allowlist check (which exits
+    // early on non-absolute inputs).
     // We treat a non-absolute filePath as untrusted and refuse the
     // retry rather than letting the bridge resolve it.
     if (!entry.filePath || !path.isAbsolute(entry.filePath)) {
@@ -462,7 +462,7 @@ export function registerArtifactsHandlers(): void {
     }
   });
 
-  // Phase 15 Task 10: explicit-discard for a failed-export entry.
+  // explicit-discard for a failed-export entry.
   // Used when the user clicks "Dismiss" instead of "Retry" — e.g.
   // because the artifact has since been deleted and retry is no
   // longer meaningful.

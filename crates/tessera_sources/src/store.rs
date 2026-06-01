@@ -38,7 +38,7 @@ const NON_ASCII_CACHE_TTL: Duration = Duration::from_secs(30);
 
 pub struct SourceStore {
     conn: SharedConnection,
-    /// Phase 19 PR 9 Task 4: optional pool of read-only connections
+    /// optional pool of read-only connections
     /// used for hot read paths (FTS5 BM25, embedding-row scan,
     /// chunk hydration, age lookup). Empty pool ⇒ every read falls
     /// back to the writer connection (preserving the legacy
@@ -56,7 +56,7 @@ pub struct SourceStore {
     /// instances sharing a connection will simply each pay a
     /// 30 s-amortised scan, never collide.
     non_ascii_cache: Mutex<Option<(Instant, (u64, u64))>>,
-    /// Phase 19 PR 9 Task 2: monotonic generation counter for the
+    /// monotonic generation counter for the
     /// set of rows that [`Self::load_embeddings_for_model`] would
     /// return. Bumped on writes that can change that set —
     /// embedding upserts, chunk deletes (which cascade to embedding
@@ -67,7 +67,7 @@ pub struct SourceStore {
     /// invalidates the cached [`IvfIndex`] and forces a rebuild on
     /// the next call to [`Self::vector_search_path_for_model`].
     embedding_generation: AtomicU64,
-    /// Phase 19 PR 9 Task 2: per-`model_id` cache of built
+    /// per-`model_id` cache of built
     /// [`IvfIndex`]es keyed by the generation counter at build
     /// time. `Arc` so multiple in-flight searches share the same
     /// instance without copying the centroid table. Entries that
@@ -132,7 +132,7 @@ impl SourceStore {
         Self::with_shared_conn_and_read_pool(conn, empty_read_pool())
     }
 
-    /// Phase 19 PR 9 Task 4: build a store with an explicit
+    /// build a store with an explicit
     /// [`SharedReadPool`] for hot read dispatch.
     ///
     /// Production code at the bridge layer wires this with a pool
@@ -288,7 +288,7 @@ impl SourceStore {
                 DELETE FROM chunk_embeddings WHERE chunk_id = old.id;
             END;
 
-            -- Block B Task 3 (Phase 11): per-channel ACL projection.
+            -- Block B Task 3: per-channel ACL projection.
             -- The Node-side `KchatEventForwarder` calls
             -- `bridge_refresh_kchat_acl` after every membership
             -- change event (`user_added`, `user_removed`,
@@ -327,7 +327,7 @@ impl SourceStore {
             CREATE INDEX IF NOT EXISTS idx_kchat_source_acl_member
                 ON kchat_source_acl(member_user_id);
 
-            -- Block C Task 2 (Phase 12): per-source data-encryption-key
+            -- Block C Task 2: per-source data-encryption-key
             -- (DEK) lifecycle table. One row per KChat-channel source
             -- that has ever ingested a chat-post body chunk. The
             -- wrapped DEK is generated lazily on the first
@@ -355,7 +355,7 @@ impl SourceStore {
                 FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
             );
 
-            -- Block C Task 1 (Phase 12): per-post bookkeeping. Maps
+            -- Block C Task 1: per-post bookkeeping. Maps
             -- the KChat-server-issued post_id to the local
             -- `indexed_files` row that holds its chunks, so a
             -- `post_edited` or `post_deleted` event can locate the
@@ -430,7 +430,7 @@ impl SourceStore {
                 .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
         }
 
-        // Block C Task 2 (Phase 12) chunks AEAD migration. Three new
+        // Block C Task 2 chunks AEAD migration. Three new
         // columns, all NULLable, all backwards-compatible with the
         // existing file-sourced rows:
         //
@@ -469,7 +469,7 @@ impl SourceStore {
                 .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
         }
 
-        // Block C Task 4 (Phase 13) backfill cursor migration. Two
+        // Block C Task 4 backfill cursor migration. Two
         // columns on `sources`:
         //
         // - `kchat_backfill_oldest_post_id` — the oldest KChat post
@@ -505,7 +505,7 @@ impl SourceStore {
         for (column, ty) in [
             ("kchat_backfill_oldest_post_id", "TEXT"),
             ("kchat_backfill_completed_at", "TEXT"),
-            // Phase 15 Task 11: connector sync error resilience.
+            // connector sync error resilience.
             // Three nullable / defaulted columns added in the same
             // idempotent migration loop so older databases pick
             // them up on first open without a separate migration
@@ -563,8 +563,7 @@ impl SourceStore {
         // Composite index on (source_type, path) so the idempotent
         // KChat-channel registration in `SourceManager::add_kchat_channel`
         // can locate an existing row in O(log n) instead of scanning
-        // every row in the table (tenth-pass Devin Review
-        // ANALYSIS_0004). The hot path is `find_source_by_type_and_path`,
+        // every row in the table. The hot path is `find_source_by_type_and_path`,
         // called once per channel sync; with hundreds of mixed-connector
         // sources the previous `list_sources()` linear scan was the
         // dominant cost on each re-sync. `source_type` is the leading
@@ -578,7 +577,7 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Phase 15 Task 3: covering index on `(hash, indexed_file_id)`
+        // covering index on `(hash, indexed_file_id)`
         // so the hybrid-search post-fusion fetch can resolve a chunk
         // row without touching the main `chunks` table. The hot
         // path in `SearchEngine::search_with_mode` selects
@@ -609,7 +608,7 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Phase 15 Task 3: ask SQLite to run its cost-model
+        // ask SQLite to run its cost-model
         // optimiser on the schema after every migration. `PRAGMA
         // optimize` consults `sqlite_stat1` / `sqlite_stat4` and,
         // when stats are stale, runs `ANALYZE` on the tables that
@@ -681,7 +680,7 @@ impl SourceStore {
         conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
             .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Phase 19 PR 9 Task 2: removing a source cascades through
+        // removing a source cascades through
         // chunks_ad_embeddings, so the cached IVF index for any
         // model_id may now point at deleted chunk rows. Bump so the
         // next search rebuilds against the post-delete row set.
@@ -791,7 +790,7 @@ impl SourceStore {
     /// `SourceManager::add_kchat_channel` to make channel
     /// registration idempotent on the cache-directory path in O(log n)
     /// rather than scanning the entire sources table on every re-sync
-    /// (tenth-pass Devin Review ANALYSIS_0004).
+    ///
     ///
     /// `source_type` is stored as its JSON discriminant in the
     /// `sources.source_type` column (e.g. `"\"Kchat\""`), so the SQL
@@ -882,7 +881,7 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         }
-        // Phase 19 PR 9 Task 2: source-status transitions to/from
+        // source-status transitions to/from
         // `AccessRevoked` change the join predicate in
         // `load_embeddings_for_model`. Bump unconditionally — every
         // status write potentially crosses the boundary, and the
@@ -894,7 +893,7 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Phase 15 Task 11: persisted sync-failure state for a single
+    /// persisted sync-failure state for a single
     /// source row.
     ///
     /// Returned tuple is `(last_sync_error_json, retry_count,
@@ -921,7 +920,7 @@ impl SourceStore {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
         match row {
-            // Devin Review PR #69 ANALYSIS_0008: defense-in-depth
+            // Devin Review PR #69: defense-in-depth
             // against a tampered `sources.db` where someone has
             // manually written a negative or out-of-range value into
             // `retry_count`. `record_sync_failure` only ever writes a
@@ -943,7 +942,7 @@ impl SourceStore {
         }
     }
 
-    /// Phase 15 Task 11: stamp a failed sync attempt onto the
+    /// stamp a failed sync attempt onto the
     /// source row. The connectors layer constructs the JSON
     /// payload via `PersistedSyncError` + `serde_json::to_string`
     /// and passes it here as an opaque string.
@@ -985,7 +984,7 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Phase 15 Task 11: clear sync-failure state on a successful
+    /// clear sync-failure state on a successful
     /// sync. Resets `last_sync_error` to NULL, `retry_count` to 0,
     /// and `failed_permanently` to 0 — proving the source is back
     /// online means the user should not have to dismiss a stale
@@ -1020,7 +1019,7 @@ impl SourceStore {
     /// accumulate rows. `set_at` carries the wall-clock for
     /// debug / audit.
     ///
-    /// Block B Task 3 (Phase 11).
+    /// Block B Task 3.
     pub fn set_kchat_principal(&self, user_id: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
@@ -1179,7 +1178,7 @@ impl SourceStore {
     /// Cryptoshreds (inline destroys) every chunk + indexed_file row
     /// belonging to a single source, then defensively scrubs the
     /// SQLite freelist pages those rows occupied. Used by Block B
-    /// Task 4 (Phase 11) on the KChat `AccessRevoked` transition.
+    /// Task 4 on the KChat `AccessRevoked` transition.
     ///
     /// Phase ordering (load-bearing for the defence-in-depth
     /// guarantee):
@@ -1263,7 +1262,7 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Block C Task 2 (Phase 12): count the per-post bookkeeping
+        // count the per-post bookkeeping
         // rows and the wrapped-DEK row that the scrub will also drop.
         // Surfacing both counts on the audit row gives operators a
         // straight observability signal that the DEK destruction
@@ -1364,7 +1363,7 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
-            // Block C Task 2 (Phase 12): drop the wrapped-DEK row
+            // drop the wrapped-DEK row
             // INSIDE the same transaction so a crash between the
             // chunk-scrub and the DEK-row deletion cannot leave a
             // wrapped DEK pointing at chunk rows that no longer
@@ -1387,7 +1386,7 @@ impl SourceStore {
             // `AccessRevoked` (or will, in the same overall
             // operation).
             //
-            // Block C Task 4 (Phase 13): also clear the backfill
+            // also clear the backfill
             // cursor + completion sentinel. If the user later
             // re-grants access to this channel, the backfill walk
             // MUST start from the newest post again — the previous
@@ -1410,7 +1409,7 @@ impl SourceStore {
 
             txn.commit().map_err(|e| Error::Database(e.to_string()))?;
 
-            // Phase 19 PR 9 Task 2: the DELETE FROM chunks above
+            // the DELETE FROM chunks above
             // cascaded into `chunk_embeddings` via the
             // `chunks_ad_embeddings` trigger. The hybrid-search
             // cache cannot tell from the embedding-row generation
@@ -1421,7 +1420,7 @@ impl SourceStore {
         })();
 
         // Phase 5 — VACUUM (cannot run inside a transaction). Moved
-        // OUT of the scrub_result closure (fifth-pass Devin Review
+        // OUT of the scrub_result closure
         // fix, ANALYSIS_pr-review-job-ef3c7d6c..._0001): a VACUUM
         // failure after the DELETE + UPDATE transaction commits is
         // NOT a scrub failure. The row-level deletes already ran
@@ -1443,7 +1442,7 @@ impl SourceStore {
         // there's no point rebuilding the file when the rows weren't
         // deleted in the first place, and running VACUUM against a
         // poisoned connection would mask the original error.
-        // Phase 19 PR 9 Task 2: bump on the success path only.
+        // bump on the success path only.
         // Done here (after the scrub closure returns) because we
         // need to read `scrub_result` outside the closure scope and
         // we must NOT bump if the transaction rolled back.
@@ -1482,8 +1481,7 @@ impl SourceStore {
         // process lifetime, silently degrading every steady-state
         // chunk insert.
         //
-        // Diagnostic-ordering invariant (Block B Task 4 third-pass
-        // Devin Review ANALYSIS_0001): the reset diagnostic MUST be
+        // Diagnostic-ordering invariant the reset diagnostic MUST be
         // emitted before the scrub error is propagated, otherwise
         // the rare scrub-failed + reset-failed double-failure case
         // would silently lose the reset diagnostic — the operator
@@ -1632,7 +1630,7 @@ impl SourceStore {
         Ok(ids)
     }
 
-    // ---- Block C Tasks 1 + 2 (Phase 12) — KChat post storage ----
+    // ---- Block C Tasks 1 + 2 — KChat post storage ----
     //
     // The following methods implement the per-post bookkeeping +
     // chunk storage that lets the WS forwarder dispatch
@@ -1720,7 +1718,7 @@ impl SourceStore {
         Ok(row)
     }
 
-    /// Phase 13 Theme 2 Task 13: look up the citation-metadata of
+    /// look up the citation-metadata of
     /// a `kchat_posts` row by `(source_id, post_id)`.
     ///
     /// Returns `(channel_id, root_id, created_at_ms)` so the
@@ -1765,7 +1763,7 @@ impl SourceStore {
         Ok(row)
     }
 
-    /// Phase 13 Theme 2 Task 13: fetch up to `max_context` rows
+    /// fetch up to `max_context` rows
     /// of thread context for a search hit whose `root_id` resolves
     /// to `root_post_id`.
     ///
@@ -1836,8 +1834,8 @@ impl SourceStore {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare(
-                // Phase 13 Theme 2 Task 13 — Devin Review pass 1
-                // ANALYSIS_0001 (5860a94): the CTE's ordering relies on
+                // Devin Review pass 1
+                // (5860a94): the CTE's ordering relies on
                 // SQLite casting the boolean `(post_id = ?2)` to 1/0,
                 // so `... DESC, created_at_ms DESC` pulls the root row
                 // (boolean 1) ahead of every sibling reply (boolean 0)
@@ -2083,7 +2081,7 @@ impl SourceStore {
         // multilingual-hint cache after a chunk-set mutation.
         drop(conn);
         self.invalidate_non_ascii_cache();
-        // Phase 19 PR 9 Task 2: the `chunks_ad_embeddings` trigger
+        // the `chunks_ad_embeddings` trigger
         // cascades the chunk delete into `chunk_embeddings`, which
         // changes the row set `load_embeddings_for_model` returns.
         // Bump only when something was actually deleted to avoid
@@ -2135,7 +2133,7 @@ impl SourceStore {
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    /// Phase 19 Task 1: corpus-wide non-ASCII chunk ratio for the
+    /// corpus-wide non-ASCII chunk ratio for the
     /// "you should consider the multilingual embedder" hint in the
     /// Settings page.
     ///
@@ -2213,7 +2211,7 @@ impl SourceStore {
         *cache = None;
     }
 
-    /// Block C Task 4 (Phase 13): read the persisted backfill state
+    /// read the persisted backfill state
     /// for a source.
     ///
     /// Returns `Ok(None)` when the source row does not exist.
@@ -2333,7 +2331,7 @@ impl SourceStore {
         }
     }
 
-    /// Block D Task 1 (Phase 14) test helper: overwrite the
+    /// Block D Task 1 test helper: overwrite the
     /// plaintext `content` column of every chat_post chunk in the
     /// store with the given string WITHOUT re-sealing the
     /// `content_aead` ciphertext. Used by
@@ -2357,7 +2355,7 @@ impl SourceStore {
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
-    /// Phase 13 Theme 2 Task 13: variant of
+    /// variant of
     /// [`Self::tamper_chunk_content_for_test`] that targets a
     /// single `kchat_posts` row by `(source_id, post_id)`.
     ///
@@ -2514,13 +2512,13 @@ impl SourceStore {
     }
 
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
-        // Phase 19 PR 9 Task 4: hot read path → dispatch through
+        // hot read path → dispatch through
         // the read pool when one is configured. WAL mode lets us
         // run this BM25 scan against a snapshot while a writer
         // continues ingesting; the writer mutex is never held by
         // this scan.
         self.with_read(|conn| {
-            // Block B Task 3 (Phase 11): retrieval-side ACL filter.
+            // retrieval-side ACL filter.
             // The `JOIN sources s` + `WHERE s.status != ?3` clause
             // excludes chunks whose source row has been transitioned
             // to `SourceStatus::AccessRevoked` (the principal lost
@@ -2580,7 +2578,7 @@ impl SourceStore {
     /// the final ranked list with chunk text + source metadata after
     /// fusion has determined the order.
     ///
-    /// Block B Task 3 (Phase 11) defence-in-depth: the BM25 path
+    /// Block B Task 3 defence-in-depth: the BM25 path
     /// (`search_fts`) and the embedding-load path
     /// (`load_embeddings_for_model`) already filter
     /// `SourceStatus::AccessRevoked` chunks out before they reach
@@ -2596,7 +2594,7 @@ impl SourceStore {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        // Phase 19 PR 9 Task 4: dispatched through the read pool.
+        // dispatched through the read pool.
         // `fetch_chunks_by_ids` is called once per hybrid search
         // to hydrate the final ranked list. Routing it through
         // the pool means a long writer transaction doesn't add
@@ -2654,7 +2652,7 @@ impl SourceStore {
         Ok(ordered)
     }
 
-    /// Block D Task 1 (Phase 14): KChat-post-only BM25 search.
+    /// KChat-post-only BM25 search.
     ///
     /// Runs an FTS5 MATCH against the same `chunks_fts` virtual
     /// table that the generic [`SourceStore::search_fts`] uses,
@@ -2778,7 +2776,7 @@ impl SourceStore {
             params![chunk_id, model_id, dim as i64, vec_bytes],
         )
         .map_err(|e| Error::Database(e.to_string()))?;
-        // Phase 19 PR 9 Task 2: a new / replaced embedding row
+        // a new / replaced embedding row
         // changes the set `load_embeddings_for_model` returns —
         // invalidate any cached IVF index for any model so the
         // next search rebuilds against the fresh row set. Drop the
@@ -2789,7 +2787,7 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Phase 19 PR 9 Task 2: bump the embedding-generation counter
+    /// bump the embedding-generation counter
     /// so the next call to [`Self::vector_search_path_for_model`]
     /// observes a generation mismatch and rebuilds the cached
     /// [`IvfIndex`] / brute-force row buffer.
@@ -2803,7 +2801,7 @@ impl SourceStore {
         self.embedding_generation.fetch_add(1, Ordering::Release);
     }
 
-    /// Phase 19 PR 9 Task 2: return the cached vector search
+    /// return the cached vector search
     /// strategy for `model_id`, building (and caching) a new
     /// [`IvfIndex`] on miss / staleness.
     ///
@@ -2891,7 +2889,7 @@ impl SourceStore {
     /// can be replaced with an sqlite-vec / sqlite-vss native index;
     /// the trait surface stays the same.
     ///
-    /// Block B Task 3 (Phase 11): the join through
+    /// the join through
     /// `indexed_files → sources` and the `s.status != ?` filter
     /// keep embedding rows from `AccessRevoked` sources out of the
     /// candidate pool entirely, so the vector-cosine path matches
@@ -2902,7 +2900,7 @@ impl SourceStore {
     /// information leakage via timing / size-of-result-set side
     /// channels.
     pub fn load_embeddings_for_model(&self, model_id: &str) -> Result<Vec<ChunkEmbeddingRow>> {
-        // Phase 19 PR 9 Task 4: this is the most expensive read
+        // this is the most expensive read
         // on the hybrid-search path — a full scan of
         // `chunk_embeddings` for a model_id. Dispatching it
         // through the read pool releases the writer mutex for
@@ -3089,7 +3087,7 @@ impl SourceStore {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        // Phase 19 PR 9 Task 4: small fan-out read (one row per
+        // small fan-out read (one row per
         // candidate id) but called once per hybrid search;
         // routing through the pool keeps it off the writer path.
         self.with_read(|conn| {
@@ -3218,7 +3216,7 @@ pub struct SearchHit {
     pub relevance: f64,
 }
 
-/// Block D Task 1 (Phase 14): one raw chunk-hit row produced by
+/// one raw chunk-hit row produced by
 /// [`SourceStore::search_kchat_posts_fts`].
 ///
 /// This is intentionally a substrate-internal shape, not a
@@ -3270,7 +3268,7 @@ pub struct KchatPostSearchHitRow {
     pub bm25_score: f64,
 }
 
-/// Phase 13 Theme 2 Task 13: one raw row produced by
+/// one raw row produced by
 /// [`SourceStore::fetch_kchat_thread_context_rows`].
 ///
 /// Substrate-internal shape — the manager layer
@@ -3320,7 +3318,7 @@ pub struct IndexedFile {
 
 /// One row of the cached ACL roster for a KChat-backed source.
 ///
-/// Block B Task 3 (Phase 11): the substrate persists the
+/// the substrate persists the
 /// authoritative member list returned by
 /// `GET /channels/{id}/members` so retrieval-side filters can
 /// answer "is the locally-authenticated principal still a member
@@ -3345,7 +3343,7 @@ pub struct KchatAclRow {
 }
 
 /// Counters returned by
-/// [`SourceStore::cryptoshred_kchat_source_evidence`] (Block B Task 4).
+/// [`SourceStore::cryptoshred_kchat_source_evidence`] .
 ///
 /// Surfaced through the bridge so the Node-side audit row
 /// (`KchatSourceCryptoshredded`) records how much evidence was
@@ -3377,7 +3375,7 @@ pub struct KchatSourceCryptoshredOutcome {
     pub chunks_dropped: u32,
     /// Number of rows deleted from the `indexed_files` table.
     pub files_dropped: u32,
-    /// Block C Task 2 (Phase 12): number of rows deleted from
+    /// number of rows deleted from
     /// `kchat_posts` (the per-post bookkeeping table that maps
     /// post_id → indexed_file_id). An audit operator who sees
     /// `chunks_dropped > 0` AND `posts_dropped == 0` knows the
@@ -3385,7 +3383,7 @@ pub struct KchatSourceCryptoshredOutcome {
     /// chunks); the reverse means a misconfigured source somehow
     /// had post bookkeeping without chunks (would indicate bug).
     pub posts_dropped: u32,
-    /// Block C Task 2 (Phase 12): `true` when the wrapped-DEK row
+    /// `true` when the wrapped-DEK row
     /// existed and was deleted (i.e. the per-source AEAD key was
     /// destroyed). `false` when the source never ingested a chat
     /// post and therefore had no DEK to drop. The Node-side audit
@@ -3421,7 +3419,7 @@ mod tests {
         assert_eq!(sources[0].path, "/tmp/test");
     }
 
-    // Tenth-pass Devin Review ANALYSIS_0004: indexed equality lookup
+    // Tenth-pass: indexed equality lookup
     // by (source_type, path). Used by SourceManager::add_kchat_channel
     // for idempotent channel registration.
     #[test]
@@ -3524,7 +3522,7 @@ mod tests {
         assert!(results[0].content.contains("productivity"));
     }
 
-    /// Block B Task 3 (Phase 11) retrieval-side ACL enforcement.
+    /// Block B Task 3 retrieval-side ACL enforcement.
     ///
     /// `search_fts` joins through `indexed_files` to `sources` and
     /// rejects chunks whose source's `status` matches the
@@ -3696,7 +3694,7 @@ mod tests {
         );
     }
 
-    /// Phase 19 PR 9 Task 2: small-corpus path returns the cached
+    /// small-corpus path returns the cached
     /// brute-force row buffer (not an `IvfIndex`). Verifies the
     /// threshold short-circuit so we don't pay k-means build cost
     /// on tiny corpora where the brute-force scan is already
@@ -3739,7 +3737,7 @@ mod tests {
         }
     }
 
-    /// Phase 19 PR 9 Task 2: the cache returns the same `Arc` on
+    /// the cache returns the same `Arc` on
     /// back-to-back calls at the same generation. Pins the
     /// "build once, reuse forever" contract that makes IVF
     /// amortised — without it the k-means build would re-run on
@@ -3788,7 +3786,7 @@ mod tests {
         }
     }
 
-    /// Phase 19 PR 9 Task 2: an embedding-row upsert must
+    /// an embedding-row upsert must
     /// invalidate the cache so the NEXT search observes the new
     /// row. Pins the bump in `upsert_chunk_embedding`.
     #[test]
@@ -3860,7 +3858,7 @@ mod tests {
         );
     }
 
-    /// Phase 19 PR 9 Task 2: a source-status transition into
+    /// a source-status transition into
     /// AccessRevoked must invalidate the cache so the revoked
     /// rows drop out on the next search. Pins the bump in
     /// `update_source_status`.
@@ -3917,7 +3915,7 @@ mod tests {
         }
     }
 
-    /// Phase 19 PR 9 Task 2: when the corpus exceeds
+    /// when the corpus exceeds
     /// `IVF_BRUTE_FORCE_THRESHOLD` rows the cache hands out an
     /// `IvfIndex`, not a row buffer. Smoke test — recall vs
     /// brute-force is exercised by the vector_index unit tests.
@@ -3965,7 +3963,7 @@ mod tests {
         }
     }
 
-    /// Block B Task 4 (Phase 11): low-level regression for
+    /// low-level regression for
     /// `cryptoshred_kchat_source_evidence`. The store-level test
     /// proves the DELETE-then-VACUUM path scrubs all three
     /// retrieval surfaces (chunks, chunks_fts, chunk_embeddings)
@@ -4046,7 +4044,7 @@ mod tests {
             KchatSourceCryptoshredOutcome {
                 chunks_dropped: 2,
                 files_dropped: 2,
-                // Block C Task 2 (Phase 12): no chat-post evidence
+                // no chat-post evidence
                 // existed for this source, so no posts/DEK rows
                 // were dropped.
                 posts_dropped: 0,
@@ -4075,7 +4073,7 @@ mod tests {
         assert_eq!(refreshed.last_indexed, None);
     }
 
-    /// Block B Task 4 second-pass Devin Review BUG_0001 regression:
+    /// Block B Task 4 second-pass regression:
     /// `secure_delete` is connection-scoped, and the
     /// `SharedConnection` is reused by every store in the process.
     /// If `cryptoshred_kchat_source_evidence` leaves `secure_delete`
@@ -4563,7 +4561,7 @@ mod tests {
         );
     }
 
-    // -- Phase 15 Task 11 sync-failure persistence tests --------------------
+    // -- sync-failure persistence tests --------------------
     //
     // The connectors crate doesn't depend on tessera_sources (and
     // tessera_sources doesn't depend on tessera_connectors — would
@@ -4705,7 +4703,7 @@ mod tests {
 
     #[test]
     fn count_non_ascii_chunks_is_memoized_and_invalidates_on_insert() {
-        // Phase 19 Task 1 — Devin Review FLAG: the multilingual hint
+        // Devin Review FLAG: the multilingual hint
         // poll runs at 1 s and the underlying SQL is a GLOB scan that
         // cannot use an index. We memoize for NON_ASCII_CACHE_TTL and
         // invalidate the cache from chunk-mutation paths so the hint

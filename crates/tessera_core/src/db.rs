@@ -123,7 +123,7 @@ fn apply_default_pragmas(conn: &Connection) -> Result<()> {
         .map_err(|e| Error::Database(e.to_string()))
 }
 
-/// Phase 15 Task 7: switch the database journal to WAL mode and tune
+/// switch the database journal to WAL mode and tune
 /// fsync to `NORMAL`.
 ///
 /// WAL (`PRAGMA journal_mode = WAL`) is the only journal mode that
@@ -167,7 +167,7 @@ fn apply_wal_pragmas(conn: &Connection) -> Result<String> {
     Ok(mode)
 }
 
-/// Phase 15 Task 7: run `PRAGMA integrity_check` and return `Ok` only
+/// run `PRAGMA integrity_check` and return `Ok` only
 /// when SQLite reports `ok`. Any other row content is surfaced as a
 /// structured `Error::Database` so the bridge can present a crisp
 /// "your database is corrupt — restore from backup" message to the
@@ -199,7 +199,7 @@ fn run_integrity_check(conn: &Connection) -> Result<()> {
     )))
 }
 
-/// Phase 15 Task 7: run a WAL checkpoint in `TRUNCATE` mode so the
+/// run a WAL checkpoint in `TRUNCATE` mode so the
 /// `*.db-wal` file is shrunk to zero bytes and every committed frame
 /// is folded back into the main database file.
 ///
@@ -238,16 +238,16 @@ pub fn wal_checkpoint_truncate(conn: &SharedConnection) -> Result<(i64, i64, i64
         .map_err(|e| Error::Database(format!("wal_checkpoint(TRUNCATE) failed: {e}")))
 }
 
-/// Phase 15 Task 7: run `PRAGMA integrity_check` against a
-/// [`SharedConnection`], retrying once after a `wal_checkpoint(TRUNCATE)`
-/// if the first attempt reports corruption.
+/// Run `PRAGMA integrity_check` against a [`SharedConnection`],
+/// retrying once after a `wal_checkpoint(TRUNCATE)` if the first
+/// attempt reports corruption.
 ///
 /// The recovery path is exactly what SQLite recommends for the rare
 /// case where a malformed WAL frame is the culprit: a TRUNCATE
 /// checkpoint forces the WAL to flush, then a second
 /// `integrity_check` runs against the now-quiet main file. If that
 /// still reports corruption, the failure is bubbled up so the
-/// bridge can surface it to the renderer (see Task 7 in `PHASES.md`).
+/// bridge can surface it to the renderer.
 ///
 /// Called once at bridge init time, before any store-level
 /// `init_schema` runs, so a corrupt DB is detected before the user's
@@ -324,12 +324,11 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
     let Some(key) = key else {
         let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
         apply_default_pragmas(&conn)?;
-        // Phase 15 Task 7: WAL pragmas go after the open + FK pragma
+        // WAL pragmas go after the open + FK pragma
         // and before the sqlite_master probe so the probe runs under
         // the same journal mode as production reads/writes.
         //
-        // The `let _ =` discard is LOAD-BEARING (Devin Review PR #69
-        // ANALYSIS_0008): on an encrypted DB opened without a key,
+        // The `let _ =` discard is LOAD-BEARING: on an encrypted DB opened without a key,
         // the WAL pragma itself reads a page from the file to
         // discover the existing journal mode. That page is
         // encrypted, so the pragma fails with `NotADatabase` /
@@ -359,7 +358,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
     let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
     apply_pragma_key(&conn, key)?;
     apply_default_pragmas(&conn)?;
-    // Phase 15 Task 7: SQLCipher requires the PRAGMA key to be
+    // SQLCipher requires the PRAGMA key to be
     // installed before WAL switches journal mode — the journal-mode
     // pragma reads a page from the file to discover the existing
     // mode, and that page is encrypted. So WAL pragmas run AFTER
@@ -387,7 +386,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
                 let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
                 apply_pragma_key(&conn, key)?;
                 apply_default_pragmas(&conn)?;
-                // Phase 15 Task 7: WAL pragmas on the post-migration
+                // WAL pragmas on the post-migration
                 // connection too — keeps every entry into this
                 // function returning a connection in the same
                 // journal-mode regime.
@@ -423,7 +422,7 @@ pub fn open_shared_in_memory() -> Result<SharedConnection> {
     Ok(Arc::new(Mutex::new(conn)))
 }
 
-/// Phase 19 PR 9 Task 4: a pool of read-only [`Connection`]s opened
+/// a pool of read-only [`Connection`]s opened
 /// against the same on-disk database as a [`SharedConnection`] writer.
 ///
 /// # Why a separate pool?
@@ -1078,7 +1077,7 @@ mod tests {
         );
     }
 
-    /// Phase 15 Task 7: on-disk opens (plain + keyed) must land in WAL
+    /// on-disk opens (plain + keyed) must land in WAL
     /// journal mode. Pinning the mode by name rather than by side-
     /// effect because a future refactor that silently regressed to
     /// DELETE mode would also cause Tessera to lose the crash-safety
@@ -1210,7 +1209,7 @@ mod tests {
         integrity_check_with_retry(&db).expect("healthy db should pass integrity_check");
     }
 
-    /// Phase 15 Task 7: simulate a mid-write crash by writing
+    /// simulate a mid-write crash by writing
     /// committed and uncommitted data, dropping the connection
     /// without an explicit close, and verifying the DB is readable
     /// on the next open. This is the core crash-safety guarantee
@@ -1327,7 +1326,7 @@ mod tests {
         }
     }
 
-    // ===== Phase 19 PR 9 Task 4: SharedReadPool tests =====
+    // ===== SharedReadPool tests =====
 
     #[test]
     fn empty_read_pool_reports_empty() {

@@ -11,12 +11,12 @@ const DEFAULT_SETTINGS: SettingsData = {
   defaultExportFormat: "markdown",
   ignorePatterns: [".git", "node_modules", ".DS_Store"],
   watchPatterns: ["**/*.md", "**/*.txt", "**/*.csv", "**/*.json"],
-  // Phase 15 Task 19: default to `true` for the in-memory placeholder
+  // default to `true` for the in-memory placeholder
   // so a slow IPC response never causes a flash of the onboarding
   // wizard on a previously-onboarded user. The real value is loaded
   // by `refresh()` on mount and overwrites this within a tick.
   onboardingCompleted: true,
-  // Phase 18 Task 16-17: empty arrays as the placeholder so the
+  // Empty arrays as the placeholder so the
   // command palette and the sidebar Pinned section render an
   // empty (rather than undefined-guarded) state during the brief
   // window before `refresh()` resolves. Avoids one class of
@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS: SettingsData = {
   // hooks that iterate the lists with `.map`/`.includes`.
   pinnedArtifactIds: [],
   recentArtifactIds: [],
-  // Phase 19 PR 9 Task 5: default placeholder for the local-sidecar
+  // default placeholder for the local-sidecar
   // idle window. The real value is loaded by `refresh()` on mount;
   // we surface 60 s here so the SettingsPage <select> binds to a
   // sensible bucket even during the brief window before the IPC
@@ -32,24 +32,23 @@ const DEFAULT_SETTINGS: SettingsData = {
   // future change to the default propagates without a renderer
   // edit).
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
-  // Phase 19 PR 10 Task 9 — telemetry defaults OFF (opt-in).
+  // telemetry defaults OFF (opt-in).
   // The renderer placeholder mirrors the main-process default in
   // `electron/config.ts:DEFAULT_CONFIG` so a slow IPC response
   // never causes a flash of "telemetry on" in the Privacy settings
   // panel for a previously-opted-out user.
   telemetryEnabled: false,
-  // Phase 19 PR 10 Task 10 — app-lock defaults to "off" so the
+  // app-lock defaults to "off" so the
   // lock overlay never blocks first-run users; user opts in from
   // Settings → Security.
   appLockMode: "off",
-  // Phase 19 PR 10 Task 7 — auto-updater signature enforcement
+  // auto-updater signature enforcement
   // defaults to ON; the Settings UI surfaces a checkbox that
   // toggles this so power users on dev builds can disable it.
   enforceUpdateSignature: true,
-  // Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement
-  // defaults to ON; the Settings UI surfaces a checkbox that
-  // toggles this so Linux users without a secret-store daemon
-  // can flip it off after weighing the trade-off.
+  // per-app keychain ACL enforcement defaults to ON; the Settings UI
+  // surfaces a checkbox that toggles this so Linux users without a
+  // secret-store daemon can flip it off after weighing the trade-off.
   enforceKeychainAcl: true,
 };
 
@@ -71,7 +70,7 @@ type Listener = (state: SettingsStoreState) => void;
 /**
  * Module-level shared store for the renderer's settings snapshot.
  *
- * PR #87 Devin Review ANALYSIS_0001 + BUG_0001 architectural root
+ * PR #87 + architectural root
  * fix. The previous implementation gave every `useSettings()`
  * caller its own `useState`+`useEffect` pair. That had two
  * compounding bugs:

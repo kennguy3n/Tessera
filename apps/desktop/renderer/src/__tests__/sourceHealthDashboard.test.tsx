@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 22 — SourceHealthDashboard component tests.
+ * SourceHealthDashboard component tests.
  *
  * Exercises the renderer-side rendering of the `sources:healthReport`
  * IPC envelope: the three traffic-light health classes (healthy /
@@ -185,7 +185,7 @@ describe("SourceHealthDashboard", () => {
     });
   });
 
-  // Devin Review PR #70 ANALYSIS_0002 regression: when a successful
+  // Devin Review PR #70 regression: when a successful
   // initial load is followed by a failed refresh, the table is kept
   // (graceful degradation) but the user must be told the data is
   // stale via (1) updated banner copy citing the freshness, (2)
@@ -235,7 +235,7 @@ describe("SourceHealthDashboard", () => {
     );
   });
 
-  // Devin Review PR #70 follow-up ANALYSIS_0004 regression: when the
+  // Devin Review PR #70 follow-up regression: when the
   // bridge is unavailable (transient renderer<->main init window, or
   // `SettingsPage` mounted from a test that didn't override `api`),
   // the card body used to render completely empty — header + Refresh
@@ -277,7 +277,7 @@ describe("SourceHealthDashboard", () => {
   });
 
   /**
-   * Devin Review PR #70 follow-up ANALYSIS_0002 (BUG).
+   * Devin Review PR #70 follow-up (BUG).
    *
    * Scenario: `window.tessera` is undefined when the component first
    * mounts (renderer<->preload init race), but becomes defined a

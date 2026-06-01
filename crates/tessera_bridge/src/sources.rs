@@ -51,7 +51,7 @@ pub struct IndexedFileInfo {
     pub chunk_count: i32,
 }
 
-/// Block D Task 1 (Phase 14): JS-facing pass-through of
+/// JS-facing pass-through of
 /// [`tessera_sources::manager::KchatPostSearchHit`].
 ///
 /// Returned by `bridge_search_kchat_posts`. Differs from
@@ -164,7 +164,7 @@ impl From<&KchatPostSearchHit> for KchatPostSearchHitInfo {
     }
 }
 
-/// Phase 13 Theme 2 Task 13: napi-shaped pass-through of
+/// napi-shaped pass-through of
 /// [`tessera_sources::manager::KchatThreadContextMessage`].
 ///
 /// Returned by `bridge_fetch_kchat_thread_context`. Each element
@@ -328,7 +328,7 @@ pub struct KchatAclMemberInfo {
 /// this verbatim in the `KchatAclRefreshed` audit row so an
 /// operator can see exactly which projection rule fired.
 ///
-/// Block B Task 4 (Phase 11): when `outcome == "revoked"`, the
+/// when `outcome == "revoked"`, the
 /// inline cryptoshred ran and `chunks_dropped` / `files_dropped`
 /// report how many rows the substrate scrubbed. For every other
 /// outcome the counts are zero (no shred happened).
@@ -356,11 +356,11 @@ pub struct KchatAclRefreshOutcomeInfo {
     /// cryptoshred on the revoke path. Zero on all non-revoke
     /// outcomes.
     pub files_dropped: u32,
-    /// Block C Task 2 (Phase 12): count of `kchat_posts` rows
+    /// count of `kchat_posts` rows
     /// scrubbed alongside the file/chunk rows. Zero on all
     /// non-revoke outcomes.
     pub posts_dropped: u32,
-    /// Block C Task 2 (Phase 12): `true` when the per-source
+    /// `true` when the per-source
     /// wrapped-DEK row existed and was deleted as part of the
     /// shred. Paired with the in-memory `forget_dek` call the
     /// manager issues on revoke. Always `false` on non-revoke
@@ -381,7 +381,7 @@ pub struct KchatAclRefreshOutcomeInfo {
 /// `outcome` is the snake_case form of the manager's
 /// `KchatRevokeOutcome`: `revoked` / `already_revoked` / `unlinked`.
 ///
-/// Block B Task 4 (Phase 11): both `revoked` and `already_revoked`
+/// both `revoked` and `already_revoked`
 /// outcomes report the cryptoshred counts — a fresh revoke scrubs
 /// the live evidence, and a re-revoke runs the (idempotent) shred
 /// again so a previously soft-revoked source still gets its
@@ -400,10 +400,10 @@ pub struct KchatRevokeOutcomeInfo {
     pub chunks_dropped: u32,
     /// Count of indexed_files rows scrubbed by the inline cryptoshred.
     pub files_dropped: u32,
-    /// Block C Task 2 (Phase 12): see
+    /// see
     /// [`KchatAclRefreshOutcomeInfo::posts_dropped`].
     pub posts_dropped: u32,
-    /// Block C Task 2 (Phase 12): see
+    /// see
     /// [`KchatAclRefreshOutcomeInfo::dek_dropped`].
     pub dek_dropped: bool,
     /// Fifth-pass Devin Review fix: see
@@ -414,8 +414,7 @@ pub struct KchatRevokeOutcomeInfo {
     pub vacuum_error: Option<String>,
 }
 
-/// Refresh a KChat channel's ACL roster + project status (Block B
-/// Task 3, Phase 11). See `SourceManager::refresh_kchat_acl` for
+/// Refresh a KChat channel's ACL roster + project status. See `SourceManager::refresh_kchat_acl` for
 /// the full semantics. The Node-side `KchatEventForwarder` calls
 /// this after every membership-change event.
 pub fn refresh_kchat_acl(
@@ -494,8 +493,7 @@ pub fn refresh_kchat_acl(
     })
 }
 
-/// Explicitly revoke a KChat-channel source (Block B Task 3,
-/// Phase 11). Used for `channel_archived` / `channel_deleted` /
+/// Explicitly revoke a KChat-channel source. Used for `channel_archived` / `channel_deleted` /
 /// self-`user_removed` events where there is no roster to fetch.
 pub fn revoke_kchat_source(
     manager: &SourceManager,
@@ -560,7 +558,7 @@ pub fn revoke_kchat_source(
 }
 
 /// Set the locally-authenticated KChat principal user id on the
-/// substrate (Block B Task 3, Phase 11). Called by the Node-side
+/// substrate. Called by the Node-side
 /// `kchat:connect` IPC handler after `/users/me` returns.
 pub fn set_kchat_principal(manager: &SourceManager, user_id: &str) -> BridgeResult<()> {
     manager
@@ -586,7 +584,7 @@ pub fn remove_source(manager: &SourceManager, source_id: &str) -> BridgeResult<(
         .map_err(BridgeError::Core)
 }
 
-// -- Phase 15 Task 11: sync-failure state pass-throughs -----------------
+// -- sync-failure state pass-throughs -----------------
 //
 // Three thin helpers the napi bridge wraps in `#[napi]` exports
 // so the TS-side `runConnectorSync` can record and read the
@@ -595,7 +593,7 @@ pub fn remove_source(manager: &SourceManager, source_id: &str) -> BridgeResult<(
 // authority on how errors are classified — we just durably
 // persist the resulting state in SQLite.
 
-/// Phase 15 Task 11: read the persisted `(last_sync_error,
+/// read the persisted `(last_sync_error,
 /// retry_count, failed_permanently)` tuple for one source row.
 pub fn get_source_sync_failure_state(
     manager: &SourceManager,
@@ -608,7 +606,7 @@ pub fn get_source_sync_failure_state(
         .map_err(BridgeError::Core)
 }
 
-/// Phase 15 Task 11: atomic write of all three failure-state
+/// atomic write of all three failure-state
 /// columns. The TS caller passes the JSON-serialised
 /// `PersistedSyncError` plus the policy-computed retry count and
 /// permanent flag.
@@ -631,7 +629,7 @@ pub fn record_source_sync_failure(
         .map_err(BridgeError::Core)
 }
 
-/// Phase 15 Task 11: clear the failure-state columns. Called from
+/// clear the failure-state columns. Called from
 /// TS after a successful connector sync — the live "sync OK"
 /// signal must clear any sticky "permanently failed" badge so the
 /// user does not have to manually dismiss it after re-authorising.
@@ -652,7 +650,7 @@ pub fn search_sources(
     Ok(results.iter().map(SearchHitInfo::from).collect())
 }
 
-/// Block D Task 1 (Phase 14): bridge counterpart of
+/// bridge counterpart of
 /// [`SourceManager::search_kchat_posts`]. Returns AEAD-verified
 /// KChat post-body chunks ranked by BM25 + reciprocal rank.
 ///
@@ -678,7 +676,7 @@ pub fn search_kchat_posts(
     Ok(results.iter().map(KchatPostSearchHitInfo::from).collect())
 }
 
-/// Phase 13 Theme 2 Task 13: bridge counterpart of
+/// bridge counterpart of
 /// [`SourceManager::fetch_kchat_thread_context`]. Returns the
 /// AEAD-verified parent messages of `post_id` (up to 3: the
 /// thread root + up to 2 most-recent earlier-replies) ordered
@@ -1031,7 +1029,7 @@ pub fn update_hybrid_search_config(
 }
 
 // =====================================================================
-// Phase 19 Task 1: ONNX embedding model management.
+// ONNX embedding model management.
 //
 // Three IPC-shaped helpers wrap the [`tessera_sources::model_registry`]
 // + [`tessera_sources::onnx_embedder`] layers so the renderer can
@@ -1123,7 +1121,7 @@ pub struct EmbeddingModelStatusInfo {
     /// banner without a second IPC; reports `status="idle"` when
     /// no download is in flight.
     pub download: DownloadProgressInfo,
-    /// Phase 19 Task 1: number of currently-indexed chunks whose
+    /// number of currently-indexed chunks whose
     /// content contains at least one non-ASCII byte. The Settings
     /// UI uses `non_ascii_chunks / total_chunks > 0.10` to render
     /// a "your corpus looks multilingual — consider the XLM-R
@@ -1134,7 +1132,7 @@ pub struct EmbeddingModelStatusInfo {
     /// practice but `napi-derive` lacks BigInt support and we
     /// want the field shape to be stable.
     pub non_ascii_chunks: f64,
-    /// Phase 19 Task 1: total indexed chunks across all sources.
+    /// total indexed chunks across all sources.
     /// Companion to `non_ascii_chunks` — the renderer needs the
     /// denominator to compute the ratio and also surfaces the
     /// absolute counts ("128 of 1,400 chunks contain non-Latin
@@ -1223,7 +1221,7 @@ impl DownloadProgressTracker {
     /// Push a `(bytes_downloaded, bytes_total)` update from the
     /// registry's streaming callback.
     ///
-    /// Since Phase 19 Task 1's cumulative-progress refactor, the
+    /// Since the cumulative-progress refactor, the
     /// registry's `download_model` wrapper always supplies a fixed,
     /// non-zero `combined_total` derived from the registry hints
     /// (model + tokenizer sizes), so `bytes_total > 0` always holds
@@ -1300,7 +1298,7 @@ pub fn get_embedding_model_status(
         .iter()
         .map(|info| EmbeddingModelInfo::from_info(info, &models_root))
         .collect();
-    // Phase 19 Task 1: pull the non-ASCII chunk stats inside the
+    // pull the non-ASCII chunk stats inside the
     // same call so the renderer doesn't need a second IPC just to
     // decide whether to render the multilingual hint. The cost is
     // two index-only `COUNT(*)` scans against the chunks table —
@@ -1366,7 +1364,7 @@ pub fn switch_embedding_model(
     slug: &str,
 ) -> BridgeResult<EmbeddingModelInfo> {
     let models_root = models_root_for(user_data_dir);
-    // Phase 19 Task 1: the slug `"hash-trick"` is a reserved pseudo-
+    // the slug `"hash-trick"` is a reserved pseudo-
     // slug that reverts the active embedder to the bundled offline
     // HashTrick provider. It never appears in `SHIPPED_MODELS` (it
     // has no `.onnx` file to download), but the IPC layer and the
@@ -1411,7 +1409,7 @@ pub fn switch_embedding_model(
     Ok(EmbeddingModelInfo::from_info(info, &models_root))
 }
 
-/// Phase 19 Task 1: reserved pseudo-slug for the bundled offline
+/// reserved pseudo-slug for the bundled offline
 /// HashTrick embedder. Exposed as a `pub const` so the napi
 /// exports layer + tests can reference the canonical string
 /// without a magic literal scattered through the codebase.
@@ -1727,7 +1725,7 @@ mod tests {
         assert!((returned - want_halflife).abs() < 1.0);
     }
 
-    /// Block D Task 1 (Phase 14): the bridge `search_kchat_posts`
+    /// the bridge `search_kchat_posts`
     /// wrapper must round-trip the substrate's
     /// [`KchatPostSearchHit`] into the napi-shaped
     /// [`KchatPostSearchHitInfo`] preserving every metadata field
@@ -1771,7 +1769,7 @@ mod tests {
         assert!(h.relevance > 0.0 && h.relevance <= 1.0);
     }
 
-    /// Block D Task 1 (Phase 14): empty result set must round-trip
+    /// empty result set must round-trip
     /// as an empty `Vec` — NOT as an error. The renderer's
     /// CitationPanel relies on this to render "no chat results"
     /// alongside file results without branching on error vs.

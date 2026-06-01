@@ -1,5 +1,5 @@
 /**
- * Phase 16 PR 3 — SheetEditor UX integration tests.
+ * SheetEditor UX integration tests.
  *
  * Covers Tasks 16-20 in a single file because they share fixture
  * setup (mounted editor + grid traversal helper). Each describe()
@@ -289,7 +289,7 @@ describe("SheetEditor UX — Task 20 auto-fill", () => {
   });
 
   it("rightward drag past the last column widens the column header so filled cells render", () => {
-    // Devin Review PR #86 ANALYSIS-0003 (pre-existing latent bug):
+    // Devin Review PR #86 (pre-existing latent bug):
     // before this fix, fill-right past `sheet.columns.length` wrote
     // the filled values into `rows[r]` past the column header bound.
     // The grid renderer iterates `sheet.columns.map(...)` to lay out

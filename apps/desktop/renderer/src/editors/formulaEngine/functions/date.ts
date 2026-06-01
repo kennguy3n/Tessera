@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 11 — date functions.
+ * date functions.
  *
  * Tessera uses the same date serial-number system as Excel and Google
  * Sheets: the origin is **1899-12-30 UTC** (so `0` is the Lotus 1-2-3

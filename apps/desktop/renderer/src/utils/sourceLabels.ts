@@ -6,7 +6,7 @@
  * search, sidebar quick-pick) can import the same canonical
  * implementation without creating a cross-page module dependency.
  *
- * Phase 13 Theme 2 (Task 11 review-pass fix, ANALYSIS_0005 on
+ * (Task 11 review-pass fix, on
  * f7c8dd1): the helpers below used to live in `SourceDetailPage.tsx`
  * and `SourcesPage.tsx` imported them via `./SourceDetailPage`,
  * which (a) implicitly pulled the SourceDetailPage React component
@@ -43,11 +43,11 @@ import type { SourceInfo } from "../types/ipc";
  *
  * Splits on BOTH `/` and `\` so the helper works on Windows where
  * `path.join(...)` in the main process produces backslash-separated
- * paths like `C:\Users\user\.tessera\kchat-channels\<id>` (Devin
- * Review on 869295e, BUG_0001). A POSIX-only split would yield a
- * single segment containing the full Windows path string, which
- * then fails the IPC's `assertKchatId` regex and the renderer would
- * silently never render a progress card on Windows.
+ * paths like `C:\Users\user\.tessera\kchat-channels\<id>`. A
+ * POSIX-only split would yield a single segment containing the
+ * full Windows path string, which then fails the IPC's
+ * `assertKchatId` regex and the renderer would silently never
+ * render a progress card on Windows.
  *
  * We intentionally do NOT re-validate the 26-char object-id shape
  * here. The IPC handler at `kchat:backfillProgress` re-validates
@@ -71,7 +71,7 @@ export function extractKchatChannelIdFromSource(
  * the Source Information card (and any other surface that displays
  * the type) shows something coherent for every known kind.
  *
- * Phase 13 Task 10 fix (Devin Review on 869295e, ANALYSIS_0003): the
+ * fix the
  * pre-Task-10 page only rendered local sources, so the card used a
  * binary `local_folder ? "Local Folder" : "Local File"` ternary.
  * Task 10 lit up the page for KChat sources too, which made the
@@ -99,7 +99,7 @@ export function formatSourceTypeLabel(sourceType: string): string {
       // bubble up as `""` and cascade into malformed downstream
       // surfaces (e.g. `sourceTypeIcon("")` previously returned
       // `ariaLabel: " source"` with a leading space — see
-      // ANALYSIS_0005 on PR #55). Returning a stable "Unknown"
+      // on PR #55). Returning a stable "Unknown"
       // sentinel keeps every consumer well-formed and matches
       // the convention used for KChat sender/channel raw-id
       // fallback in `CitationPanel`.
@@ -132,7 +132,7 @@ export function formatSourceTypeLabel(sourceType: string): string {
  *     aria-label={ariaLabel}>` and pair it with `aria-hidden="true"`
  *     on any inner glyph nodes if the structure demands it.
  *
- * Phase 13 Theme 5 Task 27: previously `SourcesPage` rendered every
+ * previously `SourcesPage` rendered every
  * source row with the same plain text title regardless of kind, so
  * a user scanning a long list could not distinguish a `local_folder`
  * source from a `kchat` channel without reading the description
@@ -180,7 +180,7 @@ export function sourceTypeIcon(sourceType: string): {
       // siblings. Normalise to sentence case here so a future
       // variant ariaLabel matches the convention without us
       // having to remember to land a new case branch above.
-      // Per Devin Review PR #55 ANALYSIS_0006.
+      // Per Devin Review PR #55.
       const label = formatSourceTypeLabel(sourceType);
       const sentenceCase = label
         .split(" ")

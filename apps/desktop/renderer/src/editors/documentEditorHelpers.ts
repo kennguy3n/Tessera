@@ -6,7 +6,7 @@
  * (which depends on DOM globals not available under jsdom in CI).
  *
  * Every helper here implements the real algorithm — no stubs, no
- * "TODO real implementation" markers. The Phase 18 PR 6 document
+ * "TODO real implementation" markers. The document
  * editor surface (tables, task lists, syntax-highlight code blocks,
  * find/replace, slash menu, image upload, char/word count) depends
  * on these helpers behaving identically whether they're called from
@@ -18,12 +18,11 @@
 // Re-exported here under the historical names so existing imports
 // (`import { fileToDataUrl, MAX_IMAGE_BYTES } from
 // "./documentEditorHelpers"`) keep working without a churn-y rename
-// across DocumentEditor.tsx and its tests. Devin Review PR #82
-// ANALYSIS_…_0001 / BUG_…_0001 flagged the duplicate implementation
-// and the missing size cap on the slide-editor copy; centralising
-// here fixes both in one place. Re-exports live at the file top
-// with the imports per CONTRIBUTING.md (Devin Review PR #82
-// ANALYSIS_…_0005).
+// across DocumentEditor.tsx and its tests. An earlier audit flagged
+// the duplicate implementation and the missing size cap on the
+// slide-editor copy; centralising here fixes both in one place.
+// Re-exports live at the file top with the imports per
+// CONTRIBUTING.md.
 export {
   MAX_INLINE_IMAGE_BYTES as MAX_IMAGE_BYTES,
   fileToDataUrl,

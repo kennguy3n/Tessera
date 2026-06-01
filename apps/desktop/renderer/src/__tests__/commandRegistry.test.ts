@@ -3,10 +3,10 @@
  * future edits to `commandRegistry.ts` can't silently regress the
  * three things the bot caught in round 1.
  *
- * - BUG_0001: every `kind: "callback"` entry must reference a
+ * -: every `kind: "callback"` entry must reference a
  *   callback id that lives in `KNOWN_CALLBACK_IDS`. Specifically
  *   `artifact:goBack` must NOT resolve to `openCommandPalette`.
- * - ANALYSIS_0004: the `view:toggleTheme` chord must exist exactly
+ * -: the `view:toggleTheme` chord must exist exactly
  *   once and be bound to the `toggleTheme` callback so the
  *   keyboard runner + palette both implement the 3-way cycle.
  * - Registry-wide: `findChordCollisions` must return zero (the
@@ -41,7 +41,7 @@ describe("commandRegistry", () => {
     expect(KNOWN_CALLBACK_IDS).toContain("goBack");
   });
 
-  it("artifact:goBack is bound to goBack (regression for PR #87 BUG_0001)", () => {
+  it("artifact:goBack is bound to goBack", () => {
     const goBack = COMMAND_REGISTRY.find((c) => c.id === "artifact:goBack");
     expect(goBack).toBeDefined();
     expect(goBack?.kind).toBe("callback");

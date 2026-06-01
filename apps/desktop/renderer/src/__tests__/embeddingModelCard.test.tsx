@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import EmbeddingModelCard from "../components/EmbeddingModelCard";
 
 /**
- * Phase 19 Task 1: renderer-side tests for the embedding-model
+ * renderer-side tests for the embedding-model
  * picker. The component is purely a thin wrapper over four IPC
  * endpoints (`settings:getEmbeddingModelStatus`,
  * `settings:getEmbeddingDownloadProgress`,

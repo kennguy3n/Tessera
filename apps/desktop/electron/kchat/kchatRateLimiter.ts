@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 28 — sliding-window rate limiter for the loopback
+ * sliding-window rate limiter for the loopback
  * KChat extension API.
  *
  * Why a separate limiter from the IPC `rateLimiter.ts`:
@@ -46,7 +46,7 @@
 
 /**
  * Default 100 requests per 60 seconds — the limit specified in the
- * Phase 15 task description. Exposed so callers can override
+ * task description. Exposed so callers can override
  * for tests or future tuning.
  */
 export const DEFAULT_LOOPBACK_LIMIT = 100;

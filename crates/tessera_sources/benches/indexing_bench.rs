@@ -1,4 +1,4 @@
-//! Phase 15 Task 2 — indexing throughput benchmarks.
+//! indexing throughput benchmarks.
 //!
 //! Three workload profiles cover the three regimes the indexer
 //! actually hits in production:

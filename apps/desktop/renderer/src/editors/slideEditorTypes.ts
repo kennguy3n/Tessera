@@ -18,7 +18,7 @@ export interface SlideBlock {
    *
    * Persisted in the saved JSON so a deck round-trips through disk
    * without React losing component identity. Legacy decks written
-   * before Phase 18 PR 8 don't have block IDs; `parseSlideContent`
+   * before don't have block IDs; `parseSlideContent`
    * backfills them on load so the rest of the editor never sees a
    * block without an ID.
    */

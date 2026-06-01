@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 12 — statistical functions.
+ * statistical functions.
  *
  *   MEDIAN(a, b, …)       Middle value (mean of the two middles when
  *                         the count is even). Strings/blanks in

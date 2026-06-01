@@ -14,7 +14,7 @@ import {
   logStartupPerfTable,
 } from "./startupPerf";
 // `./autoUpdater` is loaded dynamically inside `whenReady()` (see
-// `initAutoUpdater()` call site). Phase 15 Task 1: it pulls in
+// `initAutoUpdater()` call site). Task 1: it pulls in
 // `electron-updater` (which itself imports `js-yaml` + `xml2js` +
 // http transport), is a no-op in dev (`app.isPackaged === false`),
 // and is never needed on the critical-path window-show. Deferring
@@ -55,7 +55,7 @@ import {
 // user-data directory is known.
 registerAssetProtocolScheme();
 
-// Phase 14 Task 3: register `tessera://` as the default protocol
+// register `tessera://` as the default protocol
 // handler for this app binary at module load — Electron requires
 // `setAsDefaultProtocolClient` to run before `app.whenReady`.
 //
@@ -79,7 +79,7 @@ if (process.defaultApp && process.argv.length >= 2) {
   registerProtocolClient(app);
 }
 
-// Phase 14 Task 3: attach the `tessera://` deeplink listeners at
+// attach the `tessera://` deeplink listeners at
 // module top-level — BEFORE `app.whenReady()` resolves. macOS Cocoa
 // fires `open-url` very early on cold-start launches triggered by
 // a `tessera://` click (the OS launches Tessera *because of* the
@@ -99,7 +99,7 @@ if (process.defaultApp && process.argv.length >= 2) {
 // consumer registration.
 attachKchatDeeplinkBridge();
 
-// Phase 14 Task 3: claim the single-instance lock so the
+// claim the single-instance lock so the
 // Windows/Linux `second-instance` path can pluck `tessera://`
 // URLs out of the spawned process's argv. Without this, a
 // second launch would silently start a new Electron process
@@ -114,7 +114,7 @@ if (!acquiredSingleInstanceLock) {
   // pattern — `whenReady` never resolves in this process.
   app.quit();
 } else {
-  // Phase 14 Round 14 Devin Review BUG_0001: scan THIS process's
+  // scan THIS process's
   // own argv for a `tessera://` URL. On Windows + Linux, when the
   // user clicks a deeplink and Tessera is NOT already running, the
   // OS launches Tessera with the URL appended to `process.argv` —
@@ -642,7 +642,7 @@ app.whenReady().then(async () => {
   // `maybeInitPasswordVault()` has cached the vault key. See the
   // call site below for the full sequencing rationale.
 
-  // Phase 15 Task 9: reap any sidecar processes left orphaned by a
+  // reap any sidecar processes left orphaned by a
   // hard-crash of the prior Tessera launch BEFORE we attempt to
   // spawn our own sidecars in `initAppState`. The reaper is
   // safe-by-default (it cross-checks PID + binary basename before
@@ -748,7 +748,7 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
-  // Phase 14 Task 2: start the localhost API server the .kcz
+  // start the localhost API server the .kcz
   // extension installed in KChat Desktop talks to. Runs AFTER
   // `registerIpcHandlers()` because the handlers populate the
   // sources / ingest / share-artifact slots inside `appState.ts`
@@ -767,14 +767,14 @@ app.whenReady().then(async () => {
       message: err instanceof Error ? err.message : String(err),
     });
   }
-  // Phase 19 PR 10b Task 6 — snapshot the active safeStorage backend
-  // and emit one boot-time log entry + `keychain.backend.<name>`
-  // telemetry counter. Runs AFTER `app.whenReady` (so
-  // `safeStorage.isEncryptionAvailable()` returns truthful values on
-  // Linux) and BEFORE `maybeInitPasswordVault()` so the password
-  // vault prompt and any subsequent vault writes already have the
-  // boot backend recorded for forensic visibility. Idempotent — a
-  // second call returns the cached snapshot.
+  // Snapshot the active safeStorage backend and emit one boot-time
+  // log entry + `keychain.backend.<name>` telemetry counter. Runs
+  // AFTER `app.whenReady` (so `safeStorage.isEncryptionAvailable()`
+  // returns truthful values on Linux) and BEFORE
+  // `maybeInitPasswordVault()` so the password vault prompt and any
+  // subsequent vault writes already have the boot backend recorded
+  // for forensic visibility. Idempotent — a second call returns the
+  // cached snapshot.
   try {
     const { captureBackendAtBoot } = await import("./keychainAcl");
     captureBackendAtBoot();
@@ -825,7 +825,7 @@ app.whenReady().then(async () => {
   // false) and silently disabled when the user has unchecked
   // "Automatically check for updates" in Settings.
   //
-  // Phase 15 Task 1: dynamic `import()` so the `electron-updater`
+  // dynamic `import()` so the `electron-updater`
   // module graph (~600 KB of YAML + XML + HTTP transport code) does
   // not load on the cold-start critical path. We `void` the promise
   // so the boot sequence does not block on the update check; any
@@ -844,7 +844,7 @@ app.whenReady().then(async () => {
       initAutoUpdater();
     })
     .catch((err: unknown) => {
-      // Devin Review BUG ANALYSIS_0002 (PR #69): if the dynamic
+      // Devin Review BUG (PR #69): if the dynamic
       // import rejects we previously logged the error and returned,
       // which left the `updates:*` IPC channels unregistered for
       // the whole session. The renderer's "Check for updates"
@@ -1013,8 +1013,8 @@ export async function handleWillQuit(
   deps: {
     stopScheduler: () => Promise<void>;
     stopAllSidecars: () => Promise<void>;
-    // Phase 14 Round 4 Devin Review polish: take the kchat
-    // localhost-API shutdown and the deeplink-bridge detach via
+    // Take the kchat localhost-API shutdown and the
+    // deeplink-bridge detach via
     // dep-injection so this function follows the same testability
     // pattern as the existing scheduler / sidecar drains. The
     // production caller passes the real implementations; the
@@ -1023,7 +1023,7 @@ export async function handleWillQuit(
     stopKchatLocalApi: () => Promise<void>;
     detachKchatDeeplinkBridge: () => void;
     /**
-     * Phase 15 Task 7: graceful database checkpoint, run after the
+     * graceful database checkpoint, run after the
      * scheduler and every sidecar have been drained so no further
      * writes can land in the WAL between our checkpoint and process
      * exit. Optional so existing willQuit tests don't have to wire
@@ -1084,7 +1084,7 @@ export async function handleWillQuit(
       console.error("[tessera] sidecar shutdown failed:", e);
     }
     try {
-      // Phase 14 Task 2: stop the localhost API server and remove
+      // stop the localhost API server and remove
       // the port-file so a future Tessera launch on a different
       // port doesn't have to race a stale discovery file.
       await deps.stopKchatLocalApi();
@@ -1092,7 +1092,7 @@ export async function handleWillQuit(
       console.error("[tessera] kchatLocalApi shutdown failed:", e);
     }
     try {
-      // Phase 14 Task 3: detach the deeplink listeners so a
+      // detach the deeplink listeners so a
       // re-launched main process (test harness) does not stack
       // duplicates.
       deps.detachKchatDeeplinkBridge();
@@ -1100,7 +1100,7 @@ export async function handleWillQuit(
       console.error("[tessera] kchatDeeplink detach failed:", e);
     }
     try {
-      // Phase 15 Task 7: run `PRAGMA wal_checkpoint(TRUNCATE)` LAST,
+      // run `PRAGMA wal_checkpoint(TRUNCATE)` LAST,
       // after the scheduler and every sidecar have been drained, so
       // no further writes can land in the WAL between our checkpoint
       // and the process exit. This keeps the on-disk file self-
@@ -1138,7 +1138,7 @@ app.on("will-quit", (event) => {
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
     disposeBridge: () => {
-      // Phase 15 Task 7: graceful DB checkpoint, called last so the
+      // graceful DB checkpoint, called last so the
       // WAL is folded into the main file before the process exits.
       // `getBridge()` returns `null` if `init_bridge` never ran
       // successfully (early boot crash, headless test environment),

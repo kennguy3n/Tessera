@@ -164,7 +164,7 @@ export class EncryptionUnavailableError extends Error {
  * across launches.
  */
 export function generateDbKey(): string {
-  // Phase 15 Task 27 — the raw 32-byte OS-RNG buffer IS the
+  // the raw 32-byte OS-RNG buffer IS the
   // SQLCipher key in its highest-density form. We convert to hex
   // (the on-wire / on-disk encoding) immediately and zero the raw
   // buffer in a finally so the pooled slab cannot leak the bytes

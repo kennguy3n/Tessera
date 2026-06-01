@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — slash-command trigger extension.
+ * slash-command trigger extension.
  *
  * Detects the user typing `/<query>` at the start of an empty
  * paragraph (the standard Notion / Coda / Linear convention) and
@@ -294,8 +294,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
       // state owner is the source of truth for visibility — React
       // setting its local `slashTrigger` to closed isn't sufficient
       // because the plugin will republish `visible: true` on the
-      // next keystroke (see Devin Review PR #80 round 2,
-      // ANALYSIS_…_0001).
+      // next keystroke.
       dismissSlashMenu:
         () =>
         ({ tr, dispatch }) => {

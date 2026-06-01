@@ -132,7 +132,7 @@ describe("KchatSidebarSection", () => {
     // false and the component renders `null`. The 10s status-probe
     // interval must NOT continue firing in that state — otherwise
     // the page would burn an IPC call every tick for its entire
-    // lifetime. Regression pin for Devin Review ANALYSIS_0005
+    // lifetime. Regression pin for
     // (fifth pass).
     const status = vi.fn().mockResolvedValue({ state: "disconnected" });
     const api = makeApi({
@@ -328,7 +328,7 @@ describe("KchatSidebarSection", () => {
   });
 });
 
-// Eleventh-pass Devin Review ANALYSIS_0004: the unread-count poll
+// Eleventh-pass: the unread-count poll
 // must NOT overlap itself when `listChannelFiles` runs slow. With
 // the old `setInterval` form, two cycles would stack against the
 // global `kchat:request` rate-limit budget if a poll took longer
@@ -409,7 +409,7 @@ describe("KchatSidebarSection — unread poll does not overlap when slow (eleven
   });
 });
 
-// Twelfth-pass Devin Review ANALYSIS_0006: when the sidebar is
+// Twelfth-pass: when the sidebar is
 // unmounted while a poll cycle is mid-flight, the in-flight
 // `listChannelFiles` Promise still resolves, and the awaiting
 // `pollUnread` continues running through to `setUnread`. React 18
@@ -483,7 +483,7 @@ describe("KchatSidebarSection — unread poll short-circuits on unmount (twelfth
   });
 });
 
-// Phase 11 Block B Task 1: live WebSocket push of `file_added`
+// Block B Task 1: live WebSocket push of `file_added`
 // events from the main process drives the unread badge without
 // waiting for the 30 s reconciliation poll. The renderer
 // subscribes via `kchat.onEvent(...)`; the main-process

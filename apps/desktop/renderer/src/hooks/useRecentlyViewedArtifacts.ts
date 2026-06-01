@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 17: recently-viewed artifact tracking.
+ * recently-viewed artifact tracking.
  *
  * Records the IDs of artifacts the user has opened in the editor,
  * in view-recency order (most recent first). Distinct from
@@ -64,7 +64,7 @@ export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
   // Without this, every tracked view invalidated `trackView`, which
   // re-ran `useTrackArtifactView`'s effect with the same `id` (a
   // no-op short-circuit on `current[0] === id`) wasting a render
-  // pass per artifact open. PR #87 Devin Review ANALYSIS_0002.
+  // pass per artifact open. PR #87.
   const recentIdsRef = useRef(recentIds);
   recentIdsRef.current = recentIds;
 
@@ -81,7 +81,7 @@ export function useRecentlyViewedArtifacts(): UseRecentlyViewedArtifactsResult {
       // `useSettings.ts:219`. A follow-up `refresh()` would fire a
       // redundant `settings:get` IPC for no benefit. Mirrors the
       // `usePinnedArtifacts.writePinned` fix. PR #87 Devin Review
-      // ANALYSIS_0001 round 3.
+      // round 3.
       return result.recentArtifactIds;
     },
     [update],
@@ -141,12 +141,11 @@ export function useTrackArtifactView(id: string | null | undefined): void {
     //      view-history every time the editor mounts on a cold
     //      load.
     //
-    // The shared-store refactor (PR #87 Devin Review ANALYSIS_0001)
+    // The shared-store refactor (PR #87
     // means a second editor mount in the same session would not
     // race because the store already has the loaded snapshot, but
     // the FIRST mount on app launch still hits the race window
     // unless we gate explicitly on `loading`. PR #87 Devin Review
-    // BUG_0001.
     if (loading) return;
     void trackView(id);
   }, [id, trackView, loading]);

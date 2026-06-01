@@ -1,4 +1,4 @@
-//! Phase 15 Task 15: PDF export with embedded Mermaid SVG diagrams.
+//! PDF export with embedded Mermaid SVG diagrams.
 //!
 //! The minimal `export_pdf` path falls back to a one-line text
 //! placeholder (`[Diagram: flowchart — see HTML export ...]`) because

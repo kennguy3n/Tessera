@@ -4,7 +4,7 @@ use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
 use crate::mermaid;
-// Devin Review PR #70 ANALYSIS_0004: the typst submodule is only
+// Devin Review PR #70: the typst submodule is only
 // available when the `typst` feature is enabled, but the import is
 // still legitimately top-of-file (matches the existing pattern used
 // by `crate::exporter`'s feature-gated imports). Moving the
@@ -254,7 +254,7 @@ fn pdf_escape(s: &str) -> String {
         .replace(')', "\\)")
 }
 
-/// Phase 15 Task 15: PDF export with Mermaid diagrams rendered as
+/// PDF export with Mermaid diagrams rendered as
 /// embedded SVG via the Typst pipeline.
 ///
 /// Architecture:
@@ -404,7 +404,7 @@ fn typst_escape(s: &str) -> String {
     // the input still needs to be escaped to `\/` again.
     let mut prev_emitted_slash = false;
     for ch in s.chars() {
-        // Devin Review PR #70 follow-up BUG_0001: neutralise Typst
+        // Devin Review PR #70 follow-up: neutralise Typst
         // comment introducers (`//` line, `/*` block) so that
         // file:// / http:// URIs and `/* ... */` prose in artifact
         // titles can't crash the Typst compile with "unclosed
@@ -421,7 +421,7 @@ fn typst_escape(s: &str) -> String {
             continue;
         }
         match ch {
-            // Devin Review PR #70 BUG_0003: backtick (`) was missing
+            // Devin Review PR #70: backtick (`) was missing
             // from the escape set. Typst uses `` ` `` to delimit raw
             // / code text, so an artifact body containing inline
             // markdown code spans (extremely common: `` `foo` ``) or a
@@ -433,7 +433,7 @@ fn typst_escape(s: &str) -> String {
             // the backtick to the escape set so inline code survives
             // the Typst pipeline.
             //
-            // Devin Review PR #70 follow-up BUG_0004: curly braces
+            // Devin Review PR #70 follow-up: curly braces
             // (`{` / `}`) were also missing from the escape set. Typst
             // treats `{...}` as code-mode brackets — an artifact body
             // containing JSON examples, mustache-style placeholders
@@ -541,7 +541,7 @@ mod tests {
         assert!(pdf_str.contains("Outro"));
     }
 
-    /// Devin Review PR #70 BUG_0003 regression: `typst_escape` must
+    /// Devin Review PR #70 regression: `typst_escape` must
     /// backslash-escape every character that Typst recognises as a
     /// markup sigil, INCLUDING the backtick used to delimit raw / code
     /// text. Inline markdown code spans (`` `foo` ``) are extremely
@@ -569,7 +569,7 @@ mod tests {
         assert!(escaped.contains("heading"));
     }
 
-    /// Devin Review PR #70 follow-up BUG_0004 regression: curly-brace
+    /// Devin Review PR #70 follow-up regression: curly-brace
     /// payloads (JSON examples, mustache-style placeholders, set
     /// notation) used to leak through `typst_escape` unescaped and
     /// caused Typst to enter code mode, failing compilation and
@@ -597,7 +597,7 @@ mod tests {
         assert!(template_escaped.contains("\\{\\{name\\}\\}"));
     }
 
-    /// Devin Review PR #70 follow-up BUG_0001 — unit test for the
+    /// Devin Review PR #70 follow-up — unit test for the
     /// real root cause. The reviewer reported missing `[N]` brackets
     /// in citation entries and proposed escaping the brackets; that
     /// diagnosis is empirically wrong (see comment in `typst_escape`).
@@ -641,7 +641,7 @@ mod tests {
         );
     }
 
-    /// Devin Review PR #70 follow-up BUG_0001 — end-to-end regression.
+    /// Devin Review PR #70 follow-up — end-to-end regression.
     /// Before this fix, `export_pdf_with_svgs` for ANY artifact with a
     /// citation whose `source_uri` contained `//` (i.e. every real
     /// file:// or http:// URI) would silently fall through to the

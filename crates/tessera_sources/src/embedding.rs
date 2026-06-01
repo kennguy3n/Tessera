@@ -254,7 +254,7 @@ impl EmbeddingProvider for HashTrickEmbedding {
             .collect::<Vec<_>>()
             .join(" ");
 
-        // Phase 15 Task 3: keep the n-gram windowing zero-alloc.
+        // keep the n-gram windowing zero-alloc.
         //
         // The previous code did `let ngram: String = chars[i..i + n].iter().collect()`
         // for every window — a fresh heap allocation per n-gram

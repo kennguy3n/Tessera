@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 20: reusable right-click context menu component.
+ * reusable right-click context menu component.
  *
  * Pair this with the `useContextMenu` hook (in
  * `hooks/useContextMenu.ts`): the hook owns open/close state and
@@ -61,7 +61,7 @@ export default function ContextMenu({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // PR #87 Devin Review ANALYSIS_0006: don't initialise activeIndex
+  // PR #87: don't initialise activeIndex
   // to 0 unconditionally — that lands the keyboard focus ring on a
   // disabled first item (e.g. an "Open" entry that is disabled
   // when the artifact is already open in the current tab), which
@@ -233,5 +233,3 @@ export default function ContextMenu({
     </div>
   );
 }
-
-

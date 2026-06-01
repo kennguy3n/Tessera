@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tessera_core::error::{Error, Result};
 
-/// Phase 15 Task 5: default coalescing window for
+/// default coalescing window for
 /// [`FileWatcher::recv_coalesced_batch`]. 500 ms is the window the
 /// task spec calls for and matches the empirical median save burst
 /// produced by VS Code (atomic save: temp-write → fsync → rename →
@@ -76,7 +76,7 @@ impl FileWatcher {
         self.receiver.recv_timeout(timeout).ok()
     }
 
-    /// Phase 15 Task 5: collect every event the watcher emits for
+    /// collect every event the watcher emits for
     /// `window` after the *first* event arrives, then return the
     /// per-path coalesced batch.
     ///
@@ -122,7 +122,7 @@ impl FileWatcher {
     }
 }
 
-/// Phase 15 Task 5: collapse a sequence of [`FileEvent`]s into one
+/// collapse a sequence of [`FileEvent`]s into one
 /// event per path using **last-event-wins** semantics — the final
 /// event observed for a given path within the coalescing window is
 /// the one returned.
@@ -260,7 +260,7 @@ mod tests {
         // The trailing event is `Modified` — the file exists with
         // new content. Last-event-wins gives us that, where a
         // static `Created > Modified` rule would emit a stale
-        // `Created` (Devin Review BUG_0002).
+        // `Created`.
         let raw = vec![
             FileEvent::Modified(p("/a.txt")),
             FileEvent::Created(p("/a.txt")),
@@ -349,7 +349,7 @@ mod tests {
         // must collapse them all into a single emitted batch
         // containing exactly one event for that path.
         //
-        // This is the Phase 15 Task 5 regression spec verbatim.
+        // This is the regression spec verbatim.
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("hot.txt");
         std::fs::write(&file_path, "initial").unwrap();

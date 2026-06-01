@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 9 — IPC handlers for the local-only
+ * IPC handlers for the local-only
  * telemetry sink. See `electron/telemetrySink.ts` for the
  * underlying privacy contract (opt-in, never socket, whitelisted
  * keys, append-only JSONL on disk).

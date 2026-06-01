@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 27 — zero-on-free helpers for sensitive buffers.
+ * zero-on-free helpers for sensitive buffers.
  *
  * Node.js Buffers are pooled and reused; once a sensitive value (a
  * decrypted secret, a freshly-derived encryption key, a hex-encoded

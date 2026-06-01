@@ -1,9 +1,8 @@
 /**
  * Recent-activity / audit-trail card shown in Settings.
  *
- * Reads from `audit:listRecent` (the new IPC channel introduced in
- * Phase 11 Task 6) and renders the latest 100 events newest-first
- * with an event-type filter. The "KChat" filter shortcut
+ * Reads from `audit:listRecent` and renders the latest 100 events
+ * newest-first with an event-type filter. The "KChat" filter shortcut
  * concentrates the renderer view on the snake_case `kchat_*`
  * event-type variants on the wire — i.e. `kchat_connected`,
  * `kchat_disconnected`, `kchat_artifact_shared`,

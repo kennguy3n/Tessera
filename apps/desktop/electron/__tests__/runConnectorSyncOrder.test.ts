@@ -349,7 +349,7 @@ describe("runConnectorSync — audit emission site", () => {
 });
 
 // =====================================================================
-// Devin Review PR #69 follow-up BUG_0001 regression.
+// Devin Review PR #69 follow-up regression.
 //
 // Before the fix, `runConnectorSync`'s token-refresh catch block
 // (`getValidAccessToken` failure path, lines 586-604) did not call
@@ -369,7 +369,7 @@ describe("runConnectorSync — audit emission site", () => {
 // branch), so BOTH the offline-degrade path AND the hard-throw path
 // record state. These tests pin the symmetry.
 // =====================================================================
-describe("runConnectorSync — token refresh failure-state recording (BUG_0001)", () => {
+describe("runConnectorSync — token refresh failure-state recording", () => {
   /**
    * Build a bridge mock that records every
    * `bridgeRecordSourceSyncFailure(sourceId, json, retry, permanent)`

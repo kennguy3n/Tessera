@@ -493,7 +493,7 @@ pub fn hybrid_search(
     let vector: Vec<RankedCandidate> = if vector_active {
         let p = provider.expect("vector_active implies provider is Some");
         let query_vec = p.embed(query)?;
-        // Phase 19 PR 9 Task 2: route through the cached search
+        // route through the cached search
         // path. Below `IVF_BRUTE_FORCE_THRESHOLD` rows the cache
         // hands us the raw `ChunkEmbeddingRow` buffer and we run
         // the brute-force cosine scan unchanged (preserving exact

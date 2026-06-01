@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 19 — first-run onboarding wizard.
+ * first-run onboarding wizard.
  *
  * Shows a 3-step modal to fresh installs: (1) "Add your first source"
  * with an inline folder picker CTA, (2) "Pick a template" surfacing
@@ -116,8 +116,8 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(0);
-  // Re-entrancy guard MUST be a ref, not a useState value (Devin
-  // Review PR #70 BUG_0001). The risk is a fast Escape press while
+  // Re-entrancy guard MUST be a ref, not a useState value
+  // Review PR #70. The risk is a fast Escape press while
   // a Finish click's `await api.settings.update(...)` is still
   // resolving: the Modal's Escape handler closes over the
   // `dismiss` reference captured when the modal opened, which in

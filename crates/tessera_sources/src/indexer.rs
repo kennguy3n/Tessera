@@ -439,8 +439,7 @@ impl Indexer {
         // chart).
         let mut vlm_passes_complete = true;
 
-        // PDF-preload failure case (Devin Review pass-12 finding on
-        // `indexer.rs:378-407`): when `ext == "pdf"` and the indexer-level
+        // PDF-preload failure case when `ext == "pdf"` and the indexer-level
         // `load_pdf_document` failed, `pdf_doc` is `None`. The
         // `extract_text(path)?` fallback above can still succeed
         // (it calls `Document::load` a SECOND time internally and
@@ -660,7 +659,7 @@ impl Indexer {
         //     failures uniformly regardless of which call site
         //     fires.
         //
-        // Devin Review pass-N 🐛 BUG-0001 finding identified the
+        // Devin Review pass-N 🐛 finding identified the
         // asymmetry between this branch's `?` and the outer
         // handler's `if let Err`, and the resulting permanent-
         // data-loss path when both fail. This is the corrected

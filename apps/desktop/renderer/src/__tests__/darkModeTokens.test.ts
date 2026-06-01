@@ -131,7 +131,7 @@ function collectDeclaredTokenValues(
 // MUST be overridden in the dark scope. Declared at describe-level
 // so the must-override test (below) and the KChat-surface
 // dark-mode-safe-tokens test (further below) can share the same
-// single source of truth — Devin Review (PR #55, ANALYSIS_0004)
+// single source of truth — Devin Review (PR #55,
 // flagged that duplicating this list inside the KChat test would
 // silently diverge if a future patch added a token to one list
 // but not the other.
@@ -168,11 +168,10 @@ const REQUIRED_DARK_OVERRIDES: readonly string[] = [
   // override, the badge silently reverts to orange-700 which is
   // unreadable on dark grey.
   "--color-priority-high",
-  // Warning surface tokens (Phase 13 Theme 5 Task 29 / Devin
-  // Review PR #55 ANALYSIS_0003). The pre-existing `.badge-warning`
+  // Warning surface tokens. The pre-existing `.badge-warning`
   // surface used bare hex literals that didn't flip; we point
   // it at these tokens now and pin the dark override here.
-  // Pass-5 ANALYSIS_0002 dropped a speculative `-subtle` variant
+  // Pass-5 dropped a speculative `-subtle` variant
   // that had no consumer — we only pin tokens that actually
   // ship a consumer, so a future patch that adds an unused
   // token fails the must-override test at the same time as the
@@ -187,7 +186,7 @@ const REQUIRED_DARK_OVERRIDES: readonly string[] = [
   // --color-text-link DOES have a dark override in both the
   // `[data-theme="dark"]` scope (tokens.css:138) and the
   // `@media (prefers-color-scheme: dark)` scope (tokens.css:175).
-  // Per Devin Review PR #55 ANALYSIS_0002 it belongs in the
+  // Per Devin Review PR #55 it belongs in the
   // must-override list — earlier shape mistakenly classified it
   // as "theme-agnostic". Moving it here keeps the test name
   // accurate (token IS overridden in dark, so it MUST stay
@@ -347,9 +346,9 @@ describe("dark-mode CSS variable enforcement", () => {
     ).toEqual([]);
   });
 
-  it("KChat citation surface classes are styled with theme tokens (Phase 13 Theme 5 Task 29)", () => {
+  it("KChat citation surface classes are styled with theme tokens", () => {
     // The KChat-specific class names below ship with markup in
-    // `CitationPanel.tsx` (Phase 13 Themes 1–4) but lived without
+    // `CitationPanel.tsx`  but lived without
     // any CSS rules until Theme 5 — meaning the surface rendered
     // as undecorated inline text in BOTH light and dark themes.
     // This test pins three invariants of the Theme 5 patch:
@@ -412,7 +411,7 @@ describe("dark-mode CSS variable enforcement", () => {
     // does NOT also match `.citation-source-badge-kchat` (the
     // `[^{]*` segment would otherwise consume the `-kchat ` suffix
     // and the rule body would be misattributed to the base class).
-    // Per Devin Review PR #55 ANALYSIS_0001. The lookahead also
+    // Per Devin Review PR #55. The lookahead also
     // tolerates pseudo-classes (`.citation-hit-kchat-permalink:hover`)
     // because the `[^{]*` after the lookahead happily consumes
     // them.
@@ -436,7 +435,7 @@ describe("dark-mode CSS variable enforcement", () => {
         // `-left:`. Without these alternatives, a future regression
         // that replaces `border-left: 3px solid var(--color-primary)`
         // with `border-left: 3px solid #7c3aed` would silently pass
-        // this check. Per Devin Review PR #55 ANALYSIS_0001.
+        // this check. Per Devin Review PR #55.
         const bareRe =
           /(?:background-color|background|color|border-left|border-right|border-top|border-bottom|border-color|border|outline-color|outline|fill|stroke)\s*:\s*([^;}]*)/g;
         let mm: RegExpExecArray | null;
@@ -477,7 +476,6 @@ describe("dark-mode CSS variable enforcement", () => {
     // one source of truth: a future patch that adds a token to
     // either list automatically extends the dark-mode-safe surface
     // here, with no manual sync. Per Devin Review (PR #55,
-    // ANALYSIS_0004).
     const SAFE_TOKENS = new Set<string>([
       ...REQUIRED_DARK_OVERRIDES,
       ...THEME_AGNOSTIC_ACCENT_TOKENS,
@@ -488,7 +486,7 @@ describe("dark-mode CSS variable enforcement", () => {
     // references, or a non-safe token added to the modifier rule
     // would be misattributed to the base class. Per Devin Review
     // PR #55 BUG_pr-review-job-6ef624e58fa8479f8ed64e27537debce_0001
-    // (a follow-up to Pass-3 ANALYSIS_0001 which fixed the (ii)
+    // (a follow-up to Pass-3 which fixed the (ii)
     // sub-test regex but missed this one).
     const unknownTokens: string[] = [];
     for (const cls of KCHAT_SURFACE_CLASSES) {

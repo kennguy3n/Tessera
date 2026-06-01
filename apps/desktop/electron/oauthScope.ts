@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 8 — OAuth scope governance.
+ * OAuth scope governance.
  *
  * Goal: surface a real discrepancy between the scopes Tessera asks
  * for at authorization time and the scopes the provider actually

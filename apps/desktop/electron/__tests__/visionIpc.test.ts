@@ -233,7 +233,7 @@ describe("vision IPC handlers", () => {
     });
 
     it("returns false when mmproj path is populated but the file no longer exists on disk", async () => {
-      // Regression guard for Devin Review BUG_0001: vision-GGUF
+      // Regression guard for: vision-GGUF
       // installs are two-file (main weights + mmproj projector) but
       // `getInstalledModel` only stat-checks the main weights. If
       // the mmproj is deleted, quarantined by AV, or wiped by a
@@ -307,7 +307,7 @@ describe("vision IPC handlers", () => {
     });
 
     it("rejects when waitForReady times out so the IPC caller sees an actionable error instead of a silent ECONNREFUSED on the next describe call", async () => {
-      // Regression test for Devin Review ANALYSIS_0005: spawn()
+      // Regression test for: spawn()
       // succeeds but the HTTP listener never binds (slow disk,
       // OOM during model load, sigchld lost). Production code
       // must surface this as a structured error rather than
@@ -371,7 +371,7 @@ describe("vision IPC handlers", () => {
 
     it("rejects with structured error when mmproj path is set but file is gone from disk", async () => {
       // Symmetrical defence-in-depth to the `vision:isAvailable`
-      // stat (Devin Review BUG_0001). If the renderer somehow
+      // stat. If the renderer somehow
       // calls `vision:describe` despite the probe returning false
       // (e.g. stale UI state, race with a delete), the handler
       // surfaces a structured message rather than letting

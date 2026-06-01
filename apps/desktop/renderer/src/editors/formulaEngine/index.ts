@@ -1,5 +1,5 @@
 /**
- * Phase 16 — formula-engine public facade.
+ * formula-engine public facade.
  *
  * Single import location for everything outside the engine that
  * wants to evaluate or analyse formulas. The internal modules
@@ -112,5 +112,3 @@ export function extendRegistry(
   }
   return next;
 }
-
-

@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 28 — sliding-window rate limiter on the loopback
+ * sliding-window rate limiter on the loopback
  * KChat extension API.
  *
  * The pure limiter (`LoopbackRateLimiter`) and its HTTP integration
@@ -262,7 +262,7 @@ describe("KchatLocalApiServer — loopback rate limit integration", () => {
     // A spammer hammering the loopback with bad bearer tokens
     // would still consume the rate budget if auth ran first — and
     // worse, the legitimate caller (sharing the IP) would be
-    // locked out by the spammer's failed-auth volume. Phase 15
+    // locked out by the spammer's failed-auth volume.
     // Task 28 specifies the limiter runs BEFORE auth. Verify by
     // exhausting the budget with auth'd requests, then asserting
     // an UN-auth'd request now also gets 429 (not 401) — the

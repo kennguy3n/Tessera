@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 19: keyboard-shortcuts cheatsheet modal.
+ * keyboard-shortcuts cheatsheet modal.
  *
  * Renders every entry in `COMMAND_REGISTRY` that has a chord,
  * grouped by category. The list is generated from the same

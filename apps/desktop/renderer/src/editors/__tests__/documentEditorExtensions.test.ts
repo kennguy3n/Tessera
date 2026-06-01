@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — integration tests for the DocumentEditor's TipTap
+ * integration tests for the DocumentEditor's TipTap
  * extensions + helpers.
  *
  * Unlike `documentEditorHelpers.test.ts` (which pins the pure
@@ -156,7 +156,7 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     expect(bogus).toBeNull();
   });
 
-  it("returns null on a zero-width match instead of producing NaN positions (BUG_0001)", () => {
+  it("returns null on a zero-width match instead of producing NaN positions", () => {
     // Regex anchors like `^`, `$`, `\b`, and zero-width lookaheads
     // produce matches where `end === start`. The previous
     // implementation calculated `toEndIndex = end - 1` which for
@@ -178,7 +178,7 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     expect(Number.isFinite(single!.to)).toBe(true);
   });
 
-  it("returns null when a match would span a block boundary instead of producing an unrenderable cross-block decoration (ANALYSIS_0003)", () => {
+  it("returns null when a match would span a block boundary instead of producing an unrenderable cross-block decoration", () => {
     // `buildDocText` emits a synthesized `\n` between adjacent block
     // nodes so cross-block searches don't false-match. The `\n` and
     // the first char of the next block end up mapped to the same PM
@@ -208,8 +208,8 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     expect(insideBlock).not.toBeNull();
   });
 
-  it("returns null when the synthesized `\\n` is the FINAL character of the match (BUG_0001 off-by-one round 2)", () => {
-    // Round 1 added the cross-block guard but the loop bound was
+  it("returns null when the synthesized `\\n` is the FINAL character of the match off-by-one", () => {
+    // added the cross-block guard but the loop bound was
     // `i < toEndIndex` — toEndIndex = end - 1 is itself the LAST
     // character of the match, so a match that ends exactly on the
     // synthesized newline (e.g. /a\n/ matching the boundary between
@@ -218,7 +218,7 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     // paragraph 1 to a position that PM treats as the open token of
     // paragraph 2 — PM logs "RangeError: Position N out of range" or
     // silently renders the highlight onto an unrelated block.
-    // Devin Review PR #80 round 2 (BUG_0001) flagged the case.
+    // Devin Review PR #80 round 2 flagged the case.
     const editor = makeEditor({
       initialContent: "<p>Alpha</p><p>Beta</p>",
     });
@@ -372,8 +372,8 @@ describe("SlashCommandExtension — trigger state lifecycle", () => {
     expect(last.visible).toBe(false);
   });
 
-  it("dismissSlashMenu latches `suppressed` so the menu stays hidden on subsequent keystrokes (ANALYSIS_0001 round 2)", () => {
-    // Round 1 closed the menu by clearing React state in the
+  it("dismissSlashMenu latches `suppressed` so the menu stays hidden on subsequent keystrokes", () => {
+    // closed the menu by clearing React state in the
     // DocumentEditor's `dismissSlash` callback, but the PM plugin
     // still observed a paragraph starting with `/` on the very next
     // transaction and republished `visible: true` — the popup

@@ -348,7 +348,7 @@ describe("GalleryView", () => {
   });
 });
 
-describe("BaseEditor.removeField — drops stale view state (BUG-0003)", () => {
+describe("BaseEditor.removeField — drops stale view state", () => {
   // PR #79 round 7 finding: `removeField` updated `data.fields` /
   // `data.records` but never called `dropStaleViewState`. If the user
   // sorted by a column and then deleted it (via the column-header `x`

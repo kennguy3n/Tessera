@@ -186,7 +186,7 @@ export default function VisionPage() {
         "document",
       );
       await window.tessera.artifacts.update(artifact.id, markdown);
-      // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+      // PR #87: broadcast so every
       // live `useArtifactList()` consumer picks up the newly
       // created artifact without a remount.
       notifyArtifactsChanged();

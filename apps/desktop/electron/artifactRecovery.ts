@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 8: artifact auto-save recovery journal.
+ * artifact auto-save recovery journal.
  *
  * Two failure modes this protects against:
  *
@@ -22,7 +22,7 @@
  *
  * Why a separate sidecar rather than a WAL inside the DB:
  *
- *   * The DB itself is protected by SQLite WAL (Phase 15 Task 7).
+ * * The DB itself is protected by SQLite WAL.
  *     A second WAL layer wouldn't add coverage — both layers live in
  *     the same database file and a crash that takes out one usually
  *     takes out the other.

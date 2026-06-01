@@ -21,8 +21,7 @@
  *     otherwise pass the sanitizer but get 403'd at render time. The
  *     module-level docstring was tightened from the earlier "starts
  *     with `tessera-asset://`" wording in the same pass that
- *     tightened the code check (Devin Review PR #38
- *     `BUG_pr-review-job-07d6d965…_0001`) — keeping both in sync is
+ *     tightened the code check — keeping both in sync is
  *     load-bearing because a reader who skims the module header
  *     should not underestimate the strictness of the validation.
  *     See the function-level docstring on `sanitizeHeroImage` for
@@ -105,8 +104,7 @@ export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   // `r.assetUrl` must START with the prefix AND have at least one
   // path character after it. The earlier-pass check accepted the
   // bare directory-root URL `tessera-asset://generated-images/`
-  // (Devin Review PR #38 pass-N 📝 finding
-  // `ANALYSIS_pr-review-job-4d834ff9…_0003`) because
+  //  because
   // `startsWith(prefix)` is true for the exact-prefix string. The
   // main-process protocol handler at `assetProtocol.ts:241-244`
   // returns 403 for that exact URL (no directory listing under

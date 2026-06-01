@@ -1,6 +1,6 @@
 /**
- * Phase 18 Task 14 + 19: declarative registry of every global
- * Cmd+K command + its associated keyboard shortcut.
+ * Declarative registry of every global Cmd+K command + its
+ * associated keyboard shortcut.
  *
  * Why declarative?
  *
@@ -141,7 +141,7 @@ export const KNOWN_CALLBACK_IDS = [
   "openShortcutsHelp",
   "toggleSidebar",
   "toggleTheme",
-  // Phase 18 Task 19 follow-up: react-router-side `navigate(-1)`
+  // follow-up: react-router-side `navigate(-1)`
   // back-navigation. Lives as a callback (not a navigate-kind
   // command) because the target is a relative history pop, not a
   // concrete `to` string — the router cannot encode "the previous
@@ -375,7 +375,7 @@ export function buildCommandRegistry(): readonly Command[] {
       // Bound to `goBack` (not `openCommandPalette`) so the runner +
       // palette both call `navigate(-1)` for actual
       // browser-style back navigation. Devin Review PR #87
-      // BUG_0001 follow-up.
+      // follow-up.
       callbackId: "goBack",
     },
   ];

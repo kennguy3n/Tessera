@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 3 — evaluator tests.
+ * evaluator tests.
  *
  * 30+ end-to-end cases asserting that
  *   parse → evaluate(against mock grid) → expected `FormulaValue`.
@@ -238,7 +238,7 @@ describe("evaluator — defaultContext sanity", () => {
     const ctx = defaultContext(resolver);
     expect(ctx.functions.has("SUM")).toBe(true);
     expect(ctx.functions.has("IF")).toBe(true);
-    // Phase 16 PR 2 (Tasks 9–12) added text/lookup/date/stats fns —
+    // (Tasks 9–12) added text/lookup/date/stats fns —
     // assert one representative member from each new group.
     expect(ctx.functions.has("VLOOKUP")).toBe(true);
     expect(ctx.functions.has("CONCATENATE")).toBe(true);

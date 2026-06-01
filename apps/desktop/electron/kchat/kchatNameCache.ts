@@ -3,9 +3,8 @@
  * channel) to their human-readable display strings (username /
  * channel display name).
  *
- * Originally lived inline in `apps/desktop/electron/ipc/kchat.ts`
- * (Phase 13 Theme 2 Task 9). Devin Review pass 4 on PR #52
- * (ANALYSIS_0003) and pass 4 on PR #53 (ANALYSIS_0003) flagged
+ * Originally lived inline in `apps/desktop/electron/ipc/kchat.ts`. Devin Review pass 4 on PR #52
+ * and pass 4 on PR #53 flagged
  * that exporting the test-only `_resetKchatNameCachesForTest`
  * from production-IPC code was a structural smell — the LRU
  * contract was mixed with IPC + status-listener concerns and
@@ -57,8 +56,7 @@ export class KchatNameCache {
   }
 
   set(id: string, name: string): void {
-    // ANALYSIS_0004 (Devin Review pass 1 on fafc5f6, PR #52):
-    // reject empty-string display names at the boundary. The
+    // Reject empty-string display names at the boundary. The
     // renderer uses nullish coalescing (`?? rawId`) for fallback;
     // an empty string would be cached as a positive value and
     // surface as `#` / `@` with no text. Mattermost server-side

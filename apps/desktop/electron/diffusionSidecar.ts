@@ -207,7 +207,7 @@ export class DiffusionSidecar {
    * unloading entirely (`startIdleMonitor` short-circuits when
    * `idleUnloadMs <= 0`).
    *
-   * Phase 19 PR 9 Task 5: wired from `SettingsData.modelIdleTimeoutSecs`
+   * wired from `SettingsData.modelIdleTimeoutSecs`
    * via `appState.applyModelIdleTimeoutToSidecars`. The diffusion
    * idle window defaults to 30 s rather than the text sidecar's
    * 60 s, but both sidecars now respect the user's preferred
@@ -289,7 +289,7 @@ export class DiffusionSidecar {
         } catch {
           // ESRCH on Linux/macOS = already exited; harmless.
         }
-        // Phase 15 Task 9: synchronous PID-file cleanup mirrors
+        // synchronous PID-file cleanup mirrors
         // ModelSidecar's exit-handler path. See sidecar.ts for
         // the contract.
         try {
@@ -302,7 +302,7 @@ export class DiffusionSidecar {
       this.crashCleanupHandler = handler;
     }
 
-    // Phase 15 Task 9: register the spawned PID under
+    // register the spawned PID under
     // `<userData>/tessera-sidecar-pids/<label>.pid` so the next
     // cold launch's `reapOrphanedSidecars` can clean us up if the
     // parent crashes hard. Same contract as ModelSidecar.start();
@@ -327,7 +327,7 @@ export class DiffusionSidecar {
       this.stopHealthCheck();
       this.stopIdleMonitor();
       this.clearCrashCleanup();
-      // Phase 15 Task 9: drop the PID-registry entry now that
+      // drop the PID-registry entry now that
       // the child has reaped itself.
       try {
         clearPidFileSync(this.options.label);

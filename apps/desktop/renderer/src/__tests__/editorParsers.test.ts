@@ -247,7 +247,7 @@ describe("evaluateFormula", () => {
   });
 
   // The following cases pin the documented behaviour of the real
-  // tokenizer → parser → evaluator pipeline (Phase 16 PR 1). The
+  // tokenizer → parser → evaluator pipeline. The
   // earlier regex-based evaluator returned the broader `#ERR`
   // sentinel for every failure mode; the new engine emits the
   // specific Excel-compatible error codes so the formula bar can

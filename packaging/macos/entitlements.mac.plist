@@ -13,7 +13,7 @@
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
     <!--
-        Phase 19 PR 10b Task 6 — per-app keychain ACL.
+        Per-app keychain ACL.
 
         `keychain-access-groups` pins the Keychain Services access group
         Tessera writes safeStorage-encrypted items into. The entry MUST

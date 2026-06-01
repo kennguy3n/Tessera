@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 7 — logic functions.
+ * logic functions.
  *
  *   IF(cond, true_value, false_value?)   ternary; only the chosen
  *                                        branch is evaluated (lazy).

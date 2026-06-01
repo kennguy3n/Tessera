@@ -103,7 +103,7 @@ export function registerSourcesHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  // Phase 15 Task 6: bulk re-index entrypoint. Replaces the
+  // bulk re-index entrypoint. Replaces the
   // renderer-side `Promise.all(ids.map(id => invoke('sources:reindex', id)))`
   // pattern with a single round-trip — for a 50-source workspace
   // that's a 50× reduction in IPC handshake overhead, and (more
@@ -196,7 +196,7 @@ export function registerSourcesHandlers(): void {
     };
   });
 
-  // Phase 15 Task 22: per-source health summary for the Settings page
+  // per-source health summary for the Settings page
   // dashboard. Aggregates last-sync time, sync status traffic-light
   // (healthy / warning / error), indexed chunk count, and an on-disk
   // storage estimate. The handler runs as a single IPC round-trip so
@@ -226,8 +226,7 @@ export function registerSourcesHandlers(): void {
     // remaining microtask yield was per-call dead weight — every
     // other handler in this file imports its deps statically, so
     // hoisting `fs` to the top normalises the style with no
-    // observable behaviour change. (Devin Review PR #70
-    // ANALYSIS_0007.)
+    // observable behaviour change.
     const sources = bridge.bridgeListSources();
     const items = await Promise.all(
       sources.map(async (src) => {

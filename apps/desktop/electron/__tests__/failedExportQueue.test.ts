@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 10 — `failedExportQueue.ts` regression suite.
+ * `failedExportQueue.ts` regression suite.
  *
  * The queue's value proposition is "no failed export is ever
  * silently lost." Every test below pins one of the failure modes
@@ -62,7 +62,7 @@ describe("failedExportQueue: fresh install", () => {
 });
 
 describe("failedExportQueue: write-side path validation", () => {
-  // Devin Review PR #69 ANALYSIS_0003: regression coverage for the
+  // Devin Review PR #69: regression coverage for the
   // write-time absolute-path guard in `enqueueFailedExport`. Before
   // the guard, a relative path would land on disk and then silently
   // disappear from the renderer on the next `listFailedExports`

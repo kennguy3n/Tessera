@@ -20,7 +20,7 @@ import {
 import { MAX_MODEL_IDLE_TIMEOUT_SECS } from "../../../shared/types";
 
 /**
- * Phase 19 PR 9 Task 5: discrete buckets exposed via the
+ * discrete buckets exposed via the
  * `<select>` for `modelIdleTimeoutSecs`. Buckets cover the common
  * range — quick reload (30 s) through a long-running session
  * (1 hour) — plus a `0` sentinel that disables idle unloading
@@ -95,7 +95,7 @@ export default function SettingsPage() {
   }, [settings]);
 
   const handleSave = async () => {
-    // Phase 19 PR 9 Task 5: cap to MAX_MODEL_IDLE_TIMEOUT_SECS
+    // cap to MAX_MODEL_IDLE_TIMEOUT_SECS
     // (24 h) before sending — the IPC schema also enforces this
     // but we keep the renderer guard as defense-in-depth so a
     // future bucket value or a manual DOM edit can't poison the
@@ -237,7 +237,7 @@ export default function SettingsPage() {
               }
             >
               {/*
-               * Phase 19 PR 9 Task 5 follow-up: if the persisted
+               * follow-up: if the persisted
                * value isn't in `MODEL_IDLE_TIMEOUT_BUCKETS` (e.g.
                * the user hand-edited `config.json` to `90`, or a
                * future build changes the bucket list and a stale

@@ -1,7 +1,7 @@
 pub mod chunker;
 pub mod embedding;
 pub mod extractor;
-// Phase 19 Task 1: ONNX-backed semantic embedding provider + the
+// ONNX-backed semantic embedding provider + the
 // model registry that supplies its weights. Both live in
 // `tessera_sources` because the ONNX session is consumed in-process
 // by the indexer and search engine, not by an out-of-process
@@ -20,7 +20,7 @@ pub mod progress;
 pub mod search;
 pub mod source;
 pub mod store;
-// Phase 19 PR 9 Task 2: in-memory IVF-Flat ANN index for hybrid
+// in-memory IVF-Flat ANN index for hybrid
 // vector search. Built per-model on first query and cached on
 // `SourceStore::vector_index_cache`; invalidated by the
 // embedding-generation counter that the store bumps on every

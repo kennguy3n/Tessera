@@ -22,14 +22,13 @@ import type {
 
 // Inline-image upload path: re-export the shared helper from
 // `./inlineImage` rather than maintaining a second copy. The previous
-// hand-rolled implementation had no size cap (Devin Review PR #82
-// BUG_…_0001), which let a user inline a multi-MB image into the slide
-// JSON and slow down every subsequent debounced save. Routing through
-// the shared helper inherits the 5 MiB cap and the human-readable
-// rejection message used by the document editor, keeping both editors
-// in lock-step (Devin Review PR #82 ANALYSIS_…_0001). Re-exports are
+// hand-rolled implementation had no size cap, which let a user inline
+// a multi-MB image into the slide JSON and slow down every subsequent
+// debounced save. Routing through the shared helper inherits the 5
+// MiB cap and the human-readable rejection message used by the
+// document editor, keeping both editors in lock-step. Re-exports are
 // grouped with the regular imports at the file top per CONTRIBUTING.md
-// (Devin Review PR #82 ANALYSIS_…_0005).
+//
 export { MAX_INLINE_IMAGE_BYTES, fileToDataUrl } from "./inlineImage";
 
 export interface ParsedSlideContent {
@@ -77,7 +76,7 @@ export function newSlideId(prefix: "slide" | "block" = "slide"): string {
  * short-circuit a re-render.
  *
  * Used by `parseSlideContent` to backfill IDs on legacy decks saved
- * before Phase 18 PR 8 (which had no `Slide.id` / `SlideBlock.id`
+ * before (which had no `Slide.id` / `SlideBlock.id`
  * field). Exported because the tests verify the migration and the
  * SlideEditor's content-sync effect uses it directly.
  */
@@ -434,7 +433,7 @@ export function applyMarpToShadow(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 18 PR 7 — UX helpers (block & slide mutations, layouts, find)
+// UX helpers (block & slide mutations, layouts, find)
 //
 // Every helper below is PURE: takes a `Slide[]` (or `Slide`) plus
 // arguments and returns a fresh structure. Callers feed the result
@@ -643,7 +642,7 @@ export function uploadTokenKey(slideId: string, blockId: string): string {
  * stale completions are dropped). Without this cleanup the Map grew
  * for the lifetime of the editor — a long session that added &
  * deleted many image blocks would let it accumulate dead entries
- * (Devin Review PR #82 round 7 ANALYSIS_…_0003).
+ * indefinitely.
  *
  * The helper mutates `tokens` in place and returns `void`; callers
  * are React refs, not state, so mutation is the natural shape. Any
@@ -868,7 +867,7 @@ export function deckWordCount(slides: Slide[]): number {
  * Per-slide and deck-total word counts in one O(N + W) pass, where
  * `N` is the number of slides and `W` the total content length.
  *
- * Phase 19 PR 11 perf: the SlideEditor toolbar shows
+ * perf: the SlideEditor toolbar shows
  * `Words: <active> / <total>` on every render. Before this helper
  * existed, the active count was computed inline (a fresh
  * `slideWordCount(activeSlide)` per render) AND `deckWordCount(slides)`

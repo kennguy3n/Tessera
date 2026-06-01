@@ -379,12 +379,12 @@ export default function SlideEditor({
         // Free upload-race tokens for every block in the slide we're
         // about to drop. The `uploadTokensRef` Map otherwise accumulates
         // dead `${slideId}|${blockId}` entries for the lifetime of the
-        // editor (Devin Review PR #82 round 7 ANALYSIS_…_0003). The
-        // entries are tiny (a string key + small int) but a long
-        // editing session that adds/removes many slides would let the
-        // Map grow without bound. We delete based on the OUTGOING slide
-        // (read from `prev[index]` not `slides`) so this is safe inside
-        // a `setSlides` updater even if React batches multiple removes.
+        // editor. The entries are tiny (a string key + small int) but a
+        // long editing session that adds/removes many slides would let
+        // the Map grow without bound. We delete based on the OUTGOING
+        // slide (read from `prev[index]` not `slides`) so this is safe
+        // inside a `setSlides` updater even if React batches multiple
+        // removes.
         const removed = prev[index];
         if (removed) {
           discardUploadTokensForSlide(
@@ -444,7 +444,7 @@ export default function SlideEditor({
   );
 
   // Pure navigation — change which slide is active without touching
-  // the deck order. Phase 19 PR 11 introduces this as the canonical
+  // the deck order. introduces this as the canonical
   // "navigate by N slides" primitive, shared by:
   //
   //   * the toolbar Prev / Next buttons,
@@ -564,7 +564,7 @@ export default function SlideEditor({
   //   Home      → jump to first slide
   //   End       → jump to last slide
   //
-  // Phase 19 PR 11: this is the third entry point into the shared
+  // this is the third entry point into the shared
   // `navigateBy` / `goToSlide` navigation primitives, alongside the
   // toolbar Prev/Next buttons and the global Ctrl+PageUp/Dn
   // shortcut. Matches the WAI-ARIA "listbox" authoring practice for
@@ -639,14 +639,14 @@ export default function SlideEditor({
         const updatedSlide = removeBlockHelper(slide, blockIndex);
         if (updatedSlide === slide) return prev;
         // Free the upload-race token for the dropped block so the Map
-        // doesn't accumulate dead entries (Devin Review PR #82 round 7
-        // ANALYSIS_…_0003). Read the block off `prev[slideIndex]` (the
-        // freshest state inside the updater) rather than the outer
-        // `slides` closure so a concurrent remove doesn't free the
-        // wrong key. `removeBlockHelper` returns the SAME slide ref on
-        // out-of-range indices — we already early-return above in that
-        // case, so reaching this point guarantees the helper finds the
-        // outgoing block to discard.
+        // doesn't accumulate dead entries. Read the block off
+        // `prev[slideIndex]` (the freshest state inside the updater)
+        // rather than the outer `slides` closure so a concurrent
+        // remove doesn't free the wrong key. `removeBlockHelper`
+        // returns the SAME slide ref on out-of-range indices — we
+        // already early-return above in that case, so reaching this
+        // point guarantees the helper finds the outgoing block to
+        // discard.
         discardUploadTokensForBlock(
           uploadTokensRef.current,
           slide,
@@ -841,7 +841,7 @@ export default function SlideEditor({
   const activeSlide = slides[activeIndex];
   // Per-slide word-count cache, sized to the deck.
   //
-  // Phase 19 PR 11 perf: the toolbar reads `<active> / <total>` on every
+  // perf: the toolbar reads `<active> / <total>` on every
   // render. A single keystroke on a 50-slide deck used to walk every
   // slide twice — once inline for `activeWordCount`, once via the
   // `useMemo` on `deckWordCount(slides)` — because the immutable
@@ -857,7 +857,7 @@ export default function SlideEditor({
   //
   // The cache pattern mirrors `BaseEditor`'s `resolveLinkedRecords`
   // map (PR #84) and the `SheetEditor` incremental-recalc cache
-  // (PR #83) — the third Phase 19 perf win, this time for the slide
+  // (PR #83) — the third perf win, this time for the slide
   // surface.
   const wordCountCacheRef = useRef<WeakMap<Slide, number>>(new WeakMap());
   const wordCounts = useMemo(
@@ -1021,7 +1021,7 @@ export default function SlideEditor({
       <div className="slide-editor-main">
         <div className="slide-editor-toolbar">
           {/*
-           * Phase 19 PR 11: the toolbar has TWO distinct pairs of
+           * the toolbar has TWO distinct pairs of
            * arrow buttons that used to be conflated:
            *
            *   1. Navigation (Prev / Next) — change which slide is
@@ -1461,9 +1461,7 @@ function SlideBlockRow({
          * interpret as a drag-start. Mirrors the existing defensive
          * pattern on the textarea / file-input / alt-text input
          * further down in this component, and the slide-thumbnail-row
-         * buttons in the parent component (Devin Review PR #82
-         * ANALYSIS-0002 — extends round 6's slide-row fix to the
-         * block-row toolbar that was missed in that pass).
+         * buttons in the parent component.
          */}
         <select
           value={block.type}

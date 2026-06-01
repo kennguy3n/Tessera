@@ -123,7 +123,7 @@ export async function writeManifest(
 }
 
 /**
- * Block B Task 4 (Phase 11): filesystem-side scrub of a revoked
+ * filesystem-side scrub of a revoked
  * KChat channel's on-disk artifacts.
  *
  * The substrate-side cryptoshred (`bridgeRevokeKchatSource` /
@@ -154,10 +154,9 @@ export async function writeManifest(
  * and an operator pursuing a hardened workflow can always re-run
  * the revoke (which re-invokes this helper).
  *
- * Observability (third-pass Devin Review fix on PR #46): the
- * helper now returns a {@link SecureDeleteResult} so the caller
- * can record the per-path outcome on the `KchatSourceCryptoshredded`
- * audit row. The substrate-side counts captured the database scrub;
+ * Observability: the helper returns a {@link SecureDeleteResult}
+ * so the caller can record the per-path outcome on the
+ * `KchatSourceCryptoshredded` audit row. The substrate-side counts captured the database scrub;
  * the new `fsScrubSucceeded` / `fsScrubError` audit fields capture
  * the filesystem scrub. An operator grep-ing the audit log for
  * `fs_scrub_succeeded=false` now finds the channels whose on-disk

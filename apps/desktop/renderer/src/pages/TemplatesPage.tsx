@@ -53,7 +53,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 /**
- * Phase 15 Task 20 follow-up: Lucide icon set replaces the emoji
+ * follow-up: Lucide icon set replaces the emoji
  * sprinkle. Components are 14px-aligned so they render the same on
  * every desktop OS (emoji had three different glyphs across Linux /
  * macOS / Windows for the same code point).
@@ -66,7 +66,7 @@ const TYPE_ICONS: Record<string, typeof FileText> = {
 };
 
 /**
- * Phase 15 Task 23 — keyboard-navigable template gallery.
+ * keyboard-navigable template gallery.
  *
  * The gallery is rendered as a single ARIA `listbox` (across all
  * category sections) with arrow-key navigation, Enter to select, and
@@ -138,7 +138,7 @@ export default function TemplatesPage() {
     return groups;
   }, [filtered]);
 
-  // Devin Review PR #70 ANALYSIS_0005: compute the flat array AND
+  // Devin Review PR #70: compute the flat array AND
   // a `template -> flat index` Map in the same memo. The render
   // path previously used `flatItems.indexOf(tmpl)` per card,
   // which is O(n) per call and O(n²) over the whole gallery. At

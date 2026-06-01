@@ -1,5 +1,5 @@
 /**
- * Phase 14 Round 11 Devin Review ANALYSIS_0002 — regression
+ * regression
  * coverage for the concurrency-safe `startKchatLocalApiServer()`
  * lifecycle helper in `appState.ts`.
  *
@@ -292,11 +292,11 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
     },
   );
 
-  // Phase 14 Round 12 Devin Review BUG_0001 regression: a
+  // regression: a
   // `stopKchatLocalApiServer()` call that lands while a
   // `startKchatLocalApiServer()` IIFE is still in flight MUST
   // wait for the IIFE to settle and then stop the resulting
-  // server. The earlier Round 11 fix only cleared the
+  // server. The earlier fix only cleared the
   // pending-promise slot, which is necessary but not sufficient
   // — the IIFE keeps executing in the background, ends up
   // writing `kchatLocalApiServer = server`, and would leak the
@@ -367,14 +367,12 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
     },
   );
 
-  // Phase 14 Round 12 Devin Review BUG_0001 regression #2:
-  // stop-during-in-flight-start where the start REJECTS must
-  // not throw out of `stopKchatLocalApiServer`. The IIFE's
-  // failure path (BUG_0001 rollback in
-  // `KchatLocalApiServer.start()`, Round 8) is responsible for
-  // tearing down its own socket; `stop()` simply needs to
-  // swallow the rejection, observe a null server slot, and
-  // return cleanly.
+  // Regression: stop-during-in-flight-start where the start
+  // REJECTS must not throw out of `stopKchatLocalApiServer`.
+  // The IIFE's rollback path inside
+  // `KchatLocalApiServer.start()` is responsible for tearing
+  // down its own socket; `stop()` simply needs to swallow the
+  // rejection, observe a null server slot, and return cleanly.
   it(
     "stop-during-in-flight-start where start rejects swallows the rejection and returns cleanly",
     async () => {
@@ -405,7 +403,7 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
       await Promise.resolve();
 
       // Drive the in-flight start to a rejection. This
-      // simulates the BUG_0001 rollback path in
+      // simulates the rollback path in
       // `KchatLocalApiServer.start()` where the port-file
       // write throws after the socket is bound — that path
       // closes its own socket before rethrowing, so the
@@ -437,7 +435,7 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
     },
   );
 
-  // Phase 14 Round 15 Devin Review ANALYSIS_0001 regression: a
+  // regression: a
   // `startKchatLocalApiServer()` call that lands while a
   // `stopKchatLocalApiServer()` is in flight (specifically, while
   // the stop's IIFE is parked on `await pending` waiting for the
@@ -546,7 +544,7 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
     },
   );
 
-  // Phase 14 Round 15 Devin Review ANALYSIS_0001 regression #2:
+  // regression #2:
   // two `stopKchatLocalApiServer()` calls landing on the same
   // running server must serialise: the second stop waits for the
   // first to complete and observes an already-stopped slot, so

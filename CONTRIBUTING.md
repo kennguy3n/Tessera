@@ -22,9 +22,9 @@ Thank you for your interest in contributing to Tessera! This guide covers everyt
 sudo apt install build-essential pkg-config libssl-dev
 
 # Electron native dependencies (required for `npm run build:native` and
-# for the packaged AppImage / .deb to launch under X11/Wayland). Maps to
-# the Phase 15 PR 1 Linux smoke-test container and to the runtime
-# requirements documented in `README.md` "Quick start".
+# for the packaged AppImage / .deb to launch under X11/Wayland). Matches
+# the Linux smoke-test container and the runtime requirements documented
+# in `README.md` "Quick start".
 sudo apt install \
   libsecret-1-dev libgtk-3-dev libnss3-dev libasound2-dev \
   libxss1 libxtst6 xdg-utils
@@ -33,8 +33,8 @@ sudo apt install \
 Other Linux distributions (Fedora, Arch, etc.) carry the same libraries
 under different package names — install the equivalents from your
 distro's package manager. The Linux smoke-test harness
-(`scripts/smoke-test-linux.sh`, added in Phase 15) builds and verifies
-against `ubuntu:22.04` as the reference target.
+(`scripts/smoke-test-linux.sh`) builds and verifies against
+`ubuntu:22.04` as the reference target.
 
 **macOS:**
 

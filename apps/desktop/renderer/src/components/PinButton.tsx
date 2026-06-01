@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 16: pin / favorite toggle button.
+ * pin / favorite toggle button.
  *
  * Renders a star icon that reflects the artifact's pinned state.
  * Clicking flips the state via `usePinnedArtifacts.togglePin` and

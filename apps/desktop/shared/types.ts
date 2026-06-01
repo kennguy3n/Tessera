@@ -84,7 +84,7 @@ export interface BackfillEmbeddingsResult {
 }
 
 /**
- * Phase 19 Task 1: per-model catalogue entry returned by
+ * per-model catalogue entry returned by
  * `settings:getEmbeddingModelStatus`. Mirrors
  * `tessera_bridge::sources::EmbeddingModelInfo`. The Settings page
  * uses this to render the three-way embedding-tier picker:
@@ -115,7 +115,7 @@ export interface EmbeddingModelInfo {
 }
 
 /**
- * Phase 19 Task 1: status of an in-flight ONNX model download.
+ * status of an in-flight ONNX model download.
  * Mirrors `tessera_bridge::sources::DownloadProgressInfo`. Polled
  * on a timer by the Settings page to render the progress bar.
  */
@@ -132,7 +132,7 @@ export interface EmbeddingDownloadProgressInfo {
 }
 
 /**
- * Phase 19 Task 1: combined catalogue + per-model state + active
+ * combined catalogue + per-model state + active
  * download state returned by `settings:getEmbeddingModelStatus`.
  * Single round trip so the Settings page renders in one frame.
  */
@@ -144,7 +144,7 @@ export interface EmbeddingModelStatusInfo {
   /** Current download state (idle when no download is in flight). */
   download: EmbeddingDownloadProgressInfo;
   /**
-   * Phase 19 Task 1: number of currently-indexed chunks whose
+   * number of currently-indexed chunks whose
    * content contains at least one non-ASCII byte. The Settings
    * UI shows a "consider the XLM-R model" hint when
    * `nonAsciiChunks / totalChunks > 0.10` (and `totalChunks` is
@@ -269,7 +269,7 @@ export interface KchatFileIndexOutcomeInfo {
  * the human-readable display name / email / nickname (the audit
  * + retrieval-filter paths only need the opaque KChat user id).
  *
- * Block B Task 3 (Phase 11).
+ * Block B Task 3.
  */
 export interface KchatAclMemberInfo {
   userId: string;
@@ -311,7 +311,7 @@ export interface KchatAclMemberInfo {
  * `granted` / `regranted`, `false` otherwise — and is the
  * boolean flag the audit row records for operator dashboards.
  *
- * Block B Task 4 (Phase 11): when `outcome === "revoked"`, the
+ * when `outcome === "revoked"`, the
  * inline cryptoshred ran and `chunksDropped` / `filesDropped`
  * report how many evidence rows the substrate scrubbed. For
  * every other outcome the counts are zero (no shred happened).
@@ -332,12 +332,12 @@ export interface KchatAclRefreshOutcomeInfo {
    *  inline cryptoshred on the revoke path; 0 on every non-revoke
    *  outcome. */
   filesDropped: number;
-  /** Block C Task 2 (Phase 12): count of `kchat_posts` rows
+  /** Block C Task 2: count of `kchat_posts` rows
    *  scrubbed by the inline cryptoshred on the revoke path; 0 on
    *  every non-revoke outcome AND on file-only sources where no
    *  chat-post evidence ever existed. */
   postsDropped: number;
-  /** Block C Task 2 (Phase 12): `true` when the per-source DEK
+  /** Block C Task 2: `true` when the per-source DEK
    *  row was dropped on the revoke path. `false` on every
    *  non-revoke outcome AND on revokes where the source never
    *  ingested any chat-post evidence (no DEK was ever derived).
@@ -377,21 +377,21 @@ export interface KchatAclRefreshOutcomeInfo {
  */
 export interface KchatRevokeOutcomeInfo {
   outcome: "revoked" | "already_revoked" | "unlinked";
-  /** Block B Task 4 (Phase 11): count of chunk rows scrubbed by
+  /** Block B Task 4: count of chunk rows scrubbed by
    *  the inline cryptoshred. Both `revoked` and `already_revoked`
    *  outcomes run the (idempotent) shred so a re-revoke can serve
    *  as a one-time backfill for sources soft-revoked under the
    *  Task 3 build. `unlinked` is always zero. */
   chunksDropped: number;
-  /** Block B Task 4 (Phase 11): count of indexed_files rows
+  /** Block B Task 4: count of indexed_files rows
    *  scrubbed by the inline cryptoshred. Same semantics as
    *  `chunksDropped`. */
   filesDropped: number;
-  /** Block C Task 2 (Phase 12): count of `kchat_posts` rows
+  /** Block C Task 2: count of `kchat_posts` rows
    *  scrubbed by the inline cryptoshred. Same semantics as
    *  `chunksDropped`. `unlinked` outcomes are always zero. */
   postsDropped: number;
-  /** Block C Task 2 (Phase 12): `true` when the per-source DEK
+  /** Block C Task 2: `true` when the per-source DEK
    *  row was dropped on this revoke. `false` when no DEK ever
    *  existed for this source (file-only ingest) OR on `unlinked`
    *  outcomes. See {@link KchatAclRefreshOutcomeInfo.dekDropped}
@@ -413,7 +413,7 @@ export interface KchatRevokeOutcomeInfo {
  * after `withChannelSyncLock` serialises the work, then hands
  * it across the bridge.
  *
- * Block C Task 1 (Phase 12).
+ * Block C Task 1.
  */
 export interface KchatPostIngestInputInfo {
   cacheDir: string;
@@ -445,7 +445,7 @@ export interface KchatPostIngestInputInfo {
  * `sourceId` is populated for `ingested` / `unchanged` so the
  * Node-side audit pair can correlate without an extra lookup.
  *
- * Block C Task 1 (Phase 12).
+ * Block C Task 1.
  */
 export interface KchatPostIngestOutcomeInfo {
   outcome: "ingested" | "unchanged" | "unlinked" | "access_revoked";
@@ -469,7 +469,7 @@ export interface KchatPostIngestOutcomeInfo {
  *   - `"access_revoked"` — source row exists but is in
  *     `AccessRevoked`; defensive no-op.
  *
- * Block C Task 1 (Phase 12).
+ * Block C Task 1.
  */
 export interface KchatPostDeleteOutcomeInfo {
   outcome: "deleted" | "not_found" | "unlinked" | "access_revoked";
@@ -478,7 +478,7 @@ export interface KchatPostDeleteOutcomeInfo {
 }
 
 /**
- * Block C Task 4 (Phase 13): persisted backfill state for a
+ * persisted backfill state for a
  * KChat channel. The orchestrator's
  * `runBackfillKchatChannel` uses this to decide whether to start
  * a fresh walk, resume from a cursor, skip an already-completed
@@ -508,7 +508,7 @@ export interface KchatBackfillStateInfo {
 }
 
 /**
- * Block C Task 4 (Phase 13): outcome of a single backfill page
+ * outcome of a single backfill page
  * ingest. The orchestrator calls
  * `bridgeIngestKchatBackfillPage(...)` once per
  * `getPostsForChannel(...)` response.
@@ -532,7 +532,7 @@ export interface KchatBackfillIngestOutcomeInfo {
 }
 
 /**
- * Block C Task 4 (Phase 13): outcome of
+ * outcome of
  * `bridgeMarkKchatBackfillComplete`. Set when the orchestrator
  * observes `prevPostId === null` on the REST response.
  *
@@ -549,7 +549,7 @@ export interface KchatBackfillCompletionOutcomeInfo {
 }
 
 /**
- * Block C Task 4 (Phase 13): aggregate result of one
+ * aggregate result of one
  * orchestrator-driven backfill walk
  * (`runBackfillKchatChannel(channelId)`). Surfaced to the
  * renderer via the `sources:backfillKchatChannel` IPC handler so
@@ -625,7 +625,7 @@ export interface SearchHitInfo {
 }
 
 /**
- * Block D Task 1 (Phase 14): renderer-facing KChat-post search
+ * renderer-facing KChat-post search
  * hit. Mirrors {@link SearchHit} for the fields the renderer's
  * existing evidence-search UI already consumes, plus the
  * KChat-specific metadata block (channel, post, sender,
@@ -662,7 +662,7 @@ export interface KchatPostSearchHit {
    * permalink, or `null` when the user is disconnected from KChat. */
   permalink: string | null;
   /**
-   * Phase 13 Theme 2 Task 9: human-readable sender username,
+   * human-readable sender username,
    * resolved by the IPC handler from `senderUserId` via the KChat
    * `POST /users/ids` bulk endpoint and cached at the IPC layer.
    *
@@ -674,7 +674,7 @@ export interface KchatPostSearchHit {
    */
   senderUsername: string | null;
   /**
-   * Phase 13 Theme 2 Task 9: human-readable channel display name,
+   * human-readable channel display name,
    * resolved by the IPC handler from `channelId` via the KChat
    * `GET /channels/{id}` endpoint and cached at the IPC layer.
    *
@@ -688,7 +688,7 @@ export interface KchatPostSearchHit {
 }
 
 /**
- * Block D Task 1 (Phase 14): bridge-side KChat-post search hit.
+ * bridge-side KChat-post search hit.
  * This is the raw shape the Rust N-API returns. The renderer
  * never sees this — the `kchat:searchPosts` IPC handler maps it
  * to {@link KchatPostSearchHit} (renaming fields to camelCase
@@ -717,7 +717,7 @@ export interface KchatPostSearchHitInfo {
 }
 
 /**
- * Phase 13 Theme 2 Task 13: bridge-side single message in a KChat
+ * bridge-side single message in a KChat
  * thread context lookup. One element of the array returned by
  * `bridgeFetchKchatThreadContext` — the IPC layer maps these to
  * {@link KchatThreadContextMessage} (enriching with `senderUsername`
@@ -737,7 +737,7 @@ export interface KchatThreadContextMessageInfo {
 }
 
 /**
- * Phase 13 Theme 2 Task 13: renderer-facing thread-context message.
+ * renderer-facing thread-context message.
  * One element of the chronologically-ordered transcript returned
  * by `window.kchat.fetchThreadContext(...)`. The IPC layer
  * enriches each row with the sender username / channel display
@@ -942,7 +942,7 @@ export interface SettingsData {
   ignorePatterns: string[];
   watchPatterns: string[];
   /**
-   * Phase 15 Task 19: tracks whether the first-run `OnboardingWizard`
+   * tracks whether the first-run `OnboardingWizard`
    * has been completed (or explicitly dismissed) for this install.
    * The wizard inspects this flag, the source list, and the artifact
    * list on mount: it only shows when ALL three conditions hold
@@ -961,7 +961,7 @@ export interface SettingsData {
    */
   onboardingCompleted: boolean;
   /**
-   * Phase 18 Task 16: artifact IDs the user has pinned ("favorited")
+   * artifact IDs the user has pinned ("favorited")
    * from the command palette, the artifact editor header, or the
    * right-click context menu on the home page. Order matters — the
    * sidebar and command palette render them in the order the user
@@ -986,7 +986,7 @@ export interface SettingsData {
    */
   pinnedArtifactIds: string[];
   /**
-   * Phase 18 Task 17: artifact IDs in user-recency order (most
+   * artifact IDs in user-recency order (most
    * recently *viewed* first), capped at 32 entries. Recorded every
    * time the artifact editor mounts for a given ID, deduped so a
    * given artifact appears at most once. The command palette's
@@ -1008,7 +1008,7 @@ export interface SettingsData {
    */
   recentArtifactIds: string[];
   /**
-   * Phase 19 PR 9 Task 5: idle window in seconds after which the
+   * idle window in seconds after which the
    * local llama-server / vision / diffusion sidecars unload their
    * model weights to release RAM / VRAM. `0` disables idle unloading
    * entirely ("Keep loaded forever" — useful on workstations with
@@ -1042,7 +1042,7 @@ export interface SettingsData {
    */
   modelIdleTimeoutSecs: number;
   /**
-   * Phase 19 PR 10 Task 9 — local telemetry toggle. When `true`, the
+   * local telemetry toggle. When `true`, the
    * main process appends anonymised counters + timings to a local
    * JSONL sink at `<userData>/telemetry.jsonl`. The sink is
    * purely local: there is no remote endpoint, no network egress,
@@ -1057,7 +1057,7 @@ export interface SettingsData {
    */
   telemetryEnabled: boolean;
   /**
-   * Phase 19 PR 10 Task 10 — app-lock mode. `"off"` means no lock
+   * app-lock mode. `"off"` means no lock
    * is required to open the app. `"pin"` prompts a PIN. `"biometric"`
    * uses the platform biometric (TouchID on macOS, Windows Hello on
    * Windows) and falls back to PIN if biometric is unavailable.
@@ -1070,7 +1070,7 @@ export interface SettingsData {
    */
   appLockMode: AppLockMode;
   /**
-   * Phase 19 PR 10 Task 7 — auto-updater Ed25519 signature
+   * auto-updater Ed25519 signature
    * enforcement. When `true` (default), downloaded update artifacts
    * MUST present a valid Ed25519 signature against the embedded
    * Tessera-controlled public key before `quitAndInstall` is
@@ -1083,8 +1083,8 @@ export interface SettingsData {
    */
   enforceUpdateSignature: boolean;
   /**
-   * Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement. When
-   * `true`, `vaultCrypto.encryptForVault` refuses to write secrets
+   * Per-app keychain ACL enforcement. When `true`,
+   * `vaultCrypto.encryptForVault` refuses to write secrets
    * under Electron's `basic_text` fallback (Linux-only,
    * XOR-with-hardcoded-key — NOT real encryption). On macOS / Windows
    * the OS-backed backend is always available, so this flag is a
@@ -1109,7 +1109,7 @@ export interface SettingsData {
 }
 
 /**
- * Phase 19 PR 10 Task 10 — valid app-lock modes. Constrained to a
+ * valid app-lock modes. Constrained to a
  * fixed enum so the renderer's lock-mode selector, the IPC schema,
  * and the persisted config all reference the same tuple.
  */
@@ -1117,7 +1117,7 @@ export const APP_LOCK_MODES = ["off", "pin", "biometric"] as const;
 export type AppLockMode = (typeof APP_LOCK_MODES)[number];
 
 /**
- * Phase 18 Task 17: maximum number of artifact IDs retained in
+ * maximum number of artifact IDs retained in
  * {@link SettingsData.recentArtifactIds}. Centralised here (not in
  * the renderer hook) because both the IPC validation schema
  * `SettingsUpdateSchema.recentArtifactIds.max()` and the renderer
@@ -1128,7 +1128,7 @@ export type AppLockMode = (typeof APP_LOCK_MODES)[number];
 export const MAX_RECENT_ARTIFACTS = 32;
 
 /**
- * Phase 18 Task 16: maximum number of artifact IDs retained in
+ * maximum number of artifact IDs retained in
  * {@link SettingsData.pinnedArtifactIds}. Centralised alongside
  * {@link MAX_RECENT_ARTIFACTS} so the IPC validation schema, the
  * on-disk config schema, and the renderer truncation logic all
@@ -1136,7 +1136,7 @@ export const MAX_RECENT_ARTIFACTS = 32;
  * reject a legitimate write at the IPC boundary or silently let
  * the renderer write past the documented cap.
  *
- * PR #87 Devin Review ANALYSIS_0007: removed the previous "can't
+ * PR #87: removed the previous "can't
  * import from shared/types because of project boundaries" caveat
  * — `electron/config.ts` already imports from `../shared/types`,
  * so there is no actual cross-project obstacle, and three literal
@@ -1145,7 +1145,7 @@ export const MAX_RECENT_ARTIFACTS = 32;
 export const MAX_PINNED_ARTIFACTS = 256;
 
 /**
- * Phase 19 PR 9 Task 5: hard upper bound on `modelIdleTimeoutSecs`.
+ * hard upper bound on `modelIdleTimeoutSecs`.
  * 24 hours is well past any reasonable interactive session — beyond
  * this the field is effectively the same as `0` (never unload) but
  * we keep the explicit cap to bound the on-disk value and to keep
@@ -1160,7 +1160,7 @@ export const MAX_PINNED_ARTIFACTS = 256;
 export const MAX_MODEL_IDLE_TIMEOUT_SECS = 24 * 60 * 60;
 
 /**
- * Phase 19 PR 9 Task 5: default idle window in seconds for the
+ * default idle window in seconds for the
  * local text/vision sidecar host. Matches the historical
  * `idleUnloadMs: 60_000` literal that lived in
  * `electron/sidecar.ts` DEFAULT_OPTIONS before the field was made
@@ -1173,7 +1173,7 @@ export const MAX_MODEL_IDLE_TIMEOUT_SECS = 24 * 60 * 60;
 export const DEFAULT_MODEL_IDLE_TIMEOUT_SECS = 60;
 
 /**
- * Phase 19 PR 10 Task 9 — maximum number of in-memory telemetry
+ * maximum number of in-memory telemetry
  * events retained before a flush. Bounded so the in-process buffer
  * cannot grow without bound when the user enables telemetry and
  * never restarts the app. The flush cadence (60 s) means a
@@ -1184,7 +1184,7 @@ export const DEFAULT_MODEL_IDLE_TIMEOUT_SECS = 60;
 export const TELEMETRY_BUFFER_MAX_EVENTS = 1024;
 
 /**
- * Phase 19 PR 10 Task 9 — interval between telemetry buffer
+ * interval between telemetry buffer
  * flushes to the on-disk sink, in milliseconds. Set to 60 seconds
  * because telemetry events are small (a counter increment or a
  * timing sample) and a 60-second batch keeps disk IO infrequent
@@ -1194,7 +1194,7 @@ export const TELEMETRY_BUFFER_MAX_EVENTS = 1024;
 export const TELEMETRY_FLUSH_INTERVAL_MS = 60_000;
 
 /**
- * Phase 19 PR 10 Task 10 — minimum PIN length. Six digits is the
+ * minimum PIN length. Six digits is the
  * standard minimum for a numeric PIN (matching iOS / Android device
  * passcodes). Longer PINs and alphanumeric passwords are also
  * accepted up to 256 characters.
@@ -1202,7 +1202,7 @@ export const TELEMETRY_FLUSH_INTERVAL_MS = 60_000;
 export const APP_LOCK_PIN_MIN_LENGTH = 6;
 
 /**
- * Phase 19 PR 10 Task 10 — maximum PIN length. 256 characters is
+ * maximum PIN length. 256 characters is
  * an upper bound on what we'll PBKDF2 — long enough for users who
  * want to use a passphrase, short enough that a malformed payload
  * cannot stall the derivation step for seconds.
@@ -1210,7 +1210,7 @@ export const APP_LOCK_PIN_MIN_LENGTH = 6;
 export const APP_LOCK_PIN_MAX_LENGTH = 256;
 
 /**
- * Phase 19 PR 10 Task 10 — failed-attempt lockout threshold. After
+ * failed-attempt lockout threshold. After
  * this many consecutive incorrect PIN attempts, the app refuses
  * further attempts for {@link APP_LOCK_BACKOFF_BASE_MS} *
  * 2^(attempts - threshold) milliseconds. Standard mobile-OS
@@ -1219,7 +1219,7 @@ export const APP_LOCK_PIN_MAX_LENGTH = 256;
 export const APP_LOCK_LOCKOUT_THRESHOLD = 5;
 
 /**
- * Phase 19 PR 10 Task 10 — base backoff duration in milliseconds.
+ * base backoff duration in milliseconds.
  * After the lockout threshold is reached, each subsequent failed
  * attempt doubles the wait. Starts at 30 seconds, capped at 1 hour
  * by {@link APP_LOCK_BACKOFF_MAX_MS}.
@@ -1227,7 +1227,7 @@ export const APP_LOCK_LOCKOUT_THRESHOLD = 5;
 export const APP_LOCK_BACKOFF_BASE_MS = 30_000;
 
 /**
- * Phase 19 PR 10 Task 10 — maximum backoff duration in
+ * maximum backoff duration in
  * milliseconds. Caps the exponential growth at 1 hour so a
  * legitimate user who genuinely forgot their PIN can recover
  * within a session without leaving the app permanently bricked.
@@ -1819,7 +1819,7 @@ export interface UpdateStatusInfo {
 // -----------------------------------------------------------------
 
 // -----------------------------------------------------------------
-// Phase 15 Task 6 — IPC batch operation envelope shared between
+// IPC batch operation envelope shared between
 // the main process (`electron/ipc/batch.ts`), the preload bridge,
 // and the renderer-side callers. Lives in `shared/types.ts` (not
 // in `electron/ipc/batch.ts`) because the renderer cannot import
@@ -1880,7 +1880,7 @@ export interface SourceApi {
   getDetail: (id: string) => Promise<SourceDetailInfo>;
   reindex: (id: string) => Promise<SourceInfo>;
   /**
-   * Phase 15 Task 6: re-index up to {@link BATCH_MAX_ITEMS} sources
+   * re-index up to {@link BATCH_MAX_ITEMS} sources
    * in a single IPC round-trip. Replaces the
    * `Promise.all(ids.map(id => sources.reindex(id)))` pattern so a
    * 50-source workspace pays one rate-limiter token and one IPC
@@ -1904,7 +1904,7 @@ export interface SourceApi {
   /** Lightweight poll for the active backfill pass. */
   getEmbeddingProgress: () => Promise<EmbeddingProgressInfo>;
   /**
-   * Phase 15 Task 22 — per-source health snapshot for the Settings
+   * per-source health snapshot for the Settings
    * page Source Health dashboard. One round-trip aggregates last
    * sync time, sync-status traffic-light, indexed chunk count, and
    * on-disk storage estimate across every source.
@@ -1913,7 +1913,7 @@ export interface SourceApi {
 }
 
 /**
- * Phase 15 Task 22 — wire shape for `sources:healthReport`.
+ * wire shape for `sources:healthReport`.
  *
  * `health` is a derived traffic-light over the underlying
  * `SourceStatus` enum plus the on-disk staleness check:
@@ -1963,7 +1963,7 @@ export interface ArtifactApi {
     contentOverride?: string | null,
   ) => Promise<ExportResult>;
   /**
-   * Phase 15 Task 6: export up to {@link BATCH_MAX_ITEMS} artifacts
+   * export up to {@link BATCH_MAX_ITEMS} artifacts
    * to the same `format` in a single IPC round-trip. Intended for
    * "Export selected" workflows in the Artifacts page where the
    * user has checked N rows and clicked "Export as PDF".
@@ -2006,7 +2006,7 @@ export interface ArtifactApi {
   exportMarp: (req: MarpExportRequest) => Promise<string | null>;
   exportTypst: (req: TypstExportRequest) => Promise<TypstExportResult>;
   /**
-   * Phase 15 Task 8: artifact auto-save recovery probe. Called when
+   * artifact auto-save recovery probe. Called when
    * an artifact is opened to decide whether to surface a "Restore
    * unsaved changes from <time>?" prompt.
    *
@@ -2018,20 +2018,20 @@ export interface ArtifactApi {
    */
   checkRecovery: (id: string) => Promise<ArtifactRecoveryEnvelope | null>;
   /**
-   * Phase 15 Task 8: explicit-discard for the auto-save recovery
+   * explicit-discard for the auto-save recovery
    * sidecar. Invoked when the user clicks "Discard" on the restore
    * prompt. Idempotent — calling for an artifact with no sidecar
    * is a successful no-op.
    */
   discardRecovery: (id: string) => Promise<boolean>;
   /**
-   * Phase 15 Task 10: list pending failed exports persisted under
+   * list pending failed exports persisted under
    * `<userData>/failed-exports.json`. Powers the Settings page's
    * "Failed exports" card.
    */
   failedExports: () => Promise<FailedExportEntry[]>;
   /**
-   * Phase 15 Task 10: one-click retry of a previously failed
+   * one-click retry of a previously failed
    * export. Resolves to the destination path on success, `null` if
    * the entry has already been removed (race with another retry
    * or with `discardFailedExport`), and rejects with the
@@ -2040,7 +2040,7 @@ export interface ArtifactApi {
    */
   retryExport: (exportId: string) => Promise<string | null>;
   /**
-   * Phase 15 Task 10: discard a failed-export entry without
+   * discard a failed-export entry without
    * retrying. Used when the user clicks "Dismiss" — the artifact
    * has been deleted or they no longer want the export.
    */
@@ -2048,7 +2048,7 @@ export interface ArtifactApi {
 }
 
 /**
- * Phase 15 Task 10: persisted shape of one failed export entry.
+ * persisted shape of one failed export entry.
  * Identical to the on-disk envelope in
  * `apps/desktop/electron/failedExportQueue.ts:FailedExportEntry` —
  * lifted to `shared/types.ts` so the renderer's Settings UI can
@@ -2077,7 +2077,7 @@ export interface FailedExportEntry {
 }
 
 /**
- * Phase 15 Task 8: shape returned by `artifacts:checkRecovery`. A
+ * shape returned by `artifacts:checkRecovery`. A
  * non-null value means the main-process side observed a recovery
  * sidecar strictly newer than the DB row's `updatedAt`, so the
  * renderer should surface the restore prompt with `timestamp` (epoch
@@ -2135,7 +2135,7 @@ export interface SettingsApi {
     update: HybridSearchConfigUpdate,
   ) => Promise<HybridSearchConfigInfo>;
   /**
-   * Phase 19 Task 1: snapshot of every shipped ONNX embedding
+   * snapshot of every shipped ONNX embedding
    * model + per-model install state + the active embedder's
    * `modelId` + the in-flight download state, in one round trip.
    * Polled on a 1 s timer by the embedding-model card so the UI
@@ -2144,13 +2144,13 @@ export interface SettingsApi {
    */
   getEmbeddingModelStatus: () => Promise<EmbeddingModelStatusInfo>;
   /**
-   * Phase 19 Task 1: lightweight progress poll for in-flight model
+   * lightweight progress poll for in-flight model
    * downloads. Returns the latest tracker snapshot — cheap enough
    * to call at 500 ms cadence so the progress bar feels live.
    */
   getEmbeddingDownloadProgress: () => Promise<EmbeddingDownloadProgressInfo>;
   /**
-   * Phase 19 Task 1: trigger a model download. Resolves with the
+   * trigger a model download. Resolves with the
    * model's catalogue entry (with `installed: true`) on success;
    * rejects with the download error on network / checksum failure.
    * Idempotent — calling on an already-installed model returns
@@ -2158,7 +2158,7 @@ export interface SettingsApi {
    */
   downloadEmbeddingModel: (slug: string) => Promise<EmbeddingModelInfo>;
   /**
-   * Phase 19 Task 1: activate a downloaded model and fire a
+   * activate a downloaded model and fire a
    * fire-and-forget background backfill so existing chunks get
    * the new model's vectors. Returns the freshly-activated
    * model's catalogue entry. Rate-limited at 1 call / 1 s.
@@ -2397,7 +2397,7 @@ export interface ConnectorApi {
    */
   getAllRedirectUris: () => Promise<Record<string, string>>;
   /**
-   * Phase 19 PR 10 Task 8 — read-only inspection of the
+   * read-only inspection of the
    * requested-vs-granted OAuth scope diff for the given provider.
    *
    * Returns `null` when the user is not connected (no stored
@@ -2417,7 +2417,7 @@ export interface ConnectorApi {
 }
 
 /**
- * Phase 19 PR 10 Task 8 — structured diff between the OAuth
+ * structured diff between the OAuth
  * scopes Tessera requested for a connector and what the provider
  * actually granted. See `electron/oauthScope.ts` for the
  * authoritative implementation; this interface mirrors the shape
@@ -2506,14 +2506,14 @@ export interface TesseraApi {
   updates: UpdatesApi;
   kchat: KchatApi;
   audit: AuditApi;
-  /** Phase 19 PR 10 Task 9 — local-only telemetry inspection. */
+  /** Local-only telemetry inspection. */
   telemetry: TelemetryApi;
-  /** Phase 19 PR 10 Task 10 — PIN / biometric app lock surface. */
+  /** PIN / biometric app lock surface. */
   appLock: AppLockApi;
 }
 
 /**
- * Phase 19 PR 10 Task 9 — telemetry inspection + single-key
+ * telemetry inspection + single-key
  * write surface. See `electron/telemetrySink.ts` for the privacy
  * contract.
  */
@@ -2541,7 +2541,7 @@ export type TelemetryEventView =
   | { t: number; k: "timing"; key: string; value: number };
 
 /**
- * Phase 19 PR 10 Task 10 — PIN / biometric app lock IPC surface.
+ * PIN / biometric app lock IPC surface.
  * The renderer's `LockOverlay` component drives this; see
  * `electron/appLock.ts` for the cryptography.
  */
@@ -2578,7 +2578,7 @@ export type AppLockUnlockResult =
   | { kind: "locked_out"; nextAttemptAt: number }
   | { kind: "no_pin_set" };
 
-// --- KChat (Phase 11) -----------------------------------------------------
+// --- KChat -----------------------------------------------------
 //
 // The KChat REST + WebSocket integration. Everything here is renderer-safe:
 // the personal access token never crosses the IPC boundary.
@@ -2624,8 +2624,7 @@ export interface KchatFileView {
   id: string;
   /**
    * Uploader's KChat user id. Surfaced to the renderer so the
-   * "channel files" preview can show *who* uploaded each file
-   * (Phase 13 Theme 2 Task 11). The id is validated against the
+   * "channel files" preview can show *who* uploaded each file. The id is validated against the
    * KChat object-id shape at the client/deserialisation boundary
    * inside `KchatClient.listChannelFiles`, so the renderer can
    * trust it as opaque-but-shape-valid.
@@ -2637,7 +2636,7 @@ export interface KchatFileView {
   extension: string;
   create_at: number;
   /**
-   * Resolved uploader username (Phase 13 Theme 2 Task 11). The
+   * Resolved uploader username. The
    * IPC layer enriches this field via the existing module-level
    * `KCHAT_USERNAME_CACHE` + `getUsersByIds()` path the citation
    * enrichment uses. `null` when the enrichment couldn't resolve
@@ -2684,7 +2683,7 @@ export interface KchatConnectionStateView {
 export type KchatConnectedUserView = KchatConnectionUserView;
 
 /**
- * Phase 14 — renderer-facing detection result for the Tessera
+ * renderer-facing detection result for the Tessera
  * .kcz extension installed in KChat Desktop. The Settings card
  * uses this to decide whether to show the "KChat Desktop
  * detected" affordance. Detection is purely passive: Tessera's
@@ -2717,7 +2716,7 @@ export interface KchatDesktopBridgeStatusView {
 }
 
 /**
- * Phase 13 Task 10 — renderer-facing projection of an in-flight
+ * renderer-facing projection of an in-flight
  * channel backfill. The `SourceDetailPage` polls
  * `kchat:backfillProgress` for the linked channel id and renders
  * a progress bar derived from `postsIngested` / `totalPosts`. The
@@ -2766,7 +2765,7 @@ export interface KchatBackfillProgressView {
  * narrow with an `if`/`switch` over the event name they care
  * about and treat unrecognised values as no-ops.
  *
- * Phase 11 Block B Task 1 introduces this view; the Block A
+ * Block B Task 1 introduces this view; the Block A
  * sidebar polled `kchat:listChannelFiles` every 30 s, which is
  * still kept as a reconciliation fallback for the
  * mid-disconnect window.
@@ -2829,7 +2828,7 @@ export interface KchatApi {
     channelName: string,
   ) => Promise<{ sourceId: string; cacheDir: string }>;
   /**
-   * Block C Task 4 (Phase 13): trigger the historical-backfill
+   * trigger the historical-backfill
    * walk for an already-linked KChat channel. The walk paginates
    * the REST history endpoint backwards from the persisted
    * cursor (or from the newest post on a fresh run) until either
@@ -2849,7 +2848,7 @@ export interface KchatApi {
    */
   backfillChannel: (channelId: string) => Promise<KchatBackfillRunOutcome>;
   /**
-   * Block D Task 1 (Phase 14): KChat post-body retrieval. Returns
+   * KChat post-body retrieval. Returns
    * AEAD-verified hits, ranked, with a composed permalink (or
    * `null` when the user is disconnected). The handler enforces
    * a 10/s sustained + 20-burst rate limit (`kchat:searchPosts`)
@@ -2859,7 +2858,7 @@ export interface KchatApi {
    */
   searchPosts: (query: string, limit: number) => Promise<KchatPostSearchHit[]>;
   /**
-   * Phase 13 Theme 2 Task 13: fetch up to 3 thread-context
+   * fetch up to 3 thread-context
    * messages for a search hit whose `rootId` is non-null. Returns
    * a chronologically-ordered transcript (oldest first) of:
    *
@@ -2884,7 +2883,7 @@ export interface KchatApi {
     postId: string,
   ) => Promise<KchatThreadContextMessage[]>;
   /**
-   * Phase 14 Task 6: open a KChat conversation in KChat Desktop
+   * open a KChat conversation in KChat Desktop
    * via the OS-level `kchat://` URL scheme. The renderer calls
    * this from the per-channel "Open in KChat Desktop" action;
    * Tessera's main process invokes `shell.openExternal()` so the
@@ -2896,7 +2895,7 @@ export interface KchatApi {
     channelId: string,
   ) => Promise<{ opened: boolean; url: string }>;
   /**
-   * Phase 14 Task 4: open the KChat Desktop extension-management
+   * open the KChat Desktop extension-management
    * settings page (`kchat://app/settings/extensions`) via the OS
    * URL handler. No-arg by design: the deeplink is fixed so the
    * renderer cannot smuggle arbitrary URLs across the IPC
@@ -2904,7 +2903,7 @@ export interface KchatApi {
    */
   openDesktopExtensions: () => Promise<{ opened: boolean; url: string }>;
   /**
-   * Phase 14 Task 4: read Tessera's own snapshot of whether the
+   * read Tessera's own snapshot of whether the
    * KChat Desktop side of the integration is currently reachable.
    * The renderer polls this from the Settings card to render the
    * "KChat Desktop detected" indicator. Returns `null` when the
@@ -2913,7 +2912,7 @@ export interface KchatApi {
    */
   desktopBridgeStatus: () => Promise<KchatDesktopBridgeStatusView | null>;
   /**
-   * Phase 13 Task 10: KChat channel backfill progress. Polled by
+   * KChat channel backfill progress. Polled by
    * `SourceDetailPage` while a backfill is active; the IPC
    * handler returns the current watermark and a status
    * discriminator the renderer maps to a progress bar.
@@ -2962,7 +2961,7 @@ export interface KchatApi {
   onEvent: (cb: (event: KchatWebSocketEventPayload) => void) => () => void;
 }
 
-// --- Audit (Phase 11 Task 6) ----------------------------------------------
+// --- Audit ----------------------------------------------
 //
 // Read-only renderer-facing view of the append-only `tessera_audit`
 // SQLite store. The renderer renders the recent-activity list on
@@ -2997,7 +2996,7 @@ export interface AuditEventView {
 }
 
 /**
- * Phase 15 Task 12: outcome of one successful audit-log rotation
+ * outcome of one successful audit-log rotation
  * call. `archivePath` is the absolute on-disk path of the gzipped
  * JSONL archive the rotation wrote — the renderer surfaces it in
  * the Settings UI so the user can copy / inspect it.
@@ -3020,13 +3019,13 @@ export interface AuditApi {
    */
   listRecent: (limit?: number, offset?: number) => Promise<AuditEventView[]>;
   /**
-   * Phase 15 Task 12: list audit-archive file paths in the
+   * list audit-archive file paths in the
    * userData/audit-archives directory, newest first. Returns
    * `[]` when no rotations have ever happened.
    */
   getArchives: () => Promise<string[]>;
   /**
-   * Phase 15 Task 12: trigger an immediate audit-log rotation.
+   * trigger an immediate audit-log rotation.
    * Returns `null` when the live table is at or below the
    * threshold (no rotation occurred).
    */
