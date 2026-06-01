@@ -10,390 +10,458 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Phase 15 — Production quality & E2E reliability (six themes,
-  30 tasks).**
+#### Security & privacy
 
-  - **Performance & startup (PR 1, Tasks 1-6).** `performance.mark()` /
-    `performance.measure()` instrumentation at every cold-start stage
-    (app ready, bridge init, DB open, window show); heavy modules
-    (`marpExport`, `typstExport`, `diffusionSidecar`, `autoUpdater`)
-    converted to dynamic `import()` so they no longer block the first
-    render. Indexer + extractor moved to a `rayon` thread pool bounded
-    to `num_cpus / 2` (UI headroom preserved); content-hash gate keeps
-    incremental re-index correct. Hybrid search picks up a covering
-    index on `chunk_hash`+`source_id` and an idle `PRAGMA optimize`
-    pass; n-gram hash table now caches across queries. Streaming bulk
-    indexing in batches of 500 keeps peak RSS under the 200 MB
-    integration-test budget on a 10 K-chunk corpus. File watcher
-    coalesces events in a 500 ms window and dedupes per-path, so
-    write+rename storms (atomic-save pattern) fire one re-index. New
-    `sources:batchReindex` and `artifacts:batchExport` IPC channels
-    collapse N round-trips to 1 and report per-item success/error.
-  - **Reliability & crash recovery (PR 2, Tasks 7-12).** SQLCipher DB
-    now opens in WAL mode with `wal_checkpoint(TRUNCATE)` on graceful
-    shutdown and `integrity_check` on startup; an unrecoverable DB
-    surfaces a typed error rather than silently truncating. Editors
-    write a `.tessera-recovery` JSON sidecar before each auto-save
-    and the renderer offers to restore via `artifacts:checkRecovery`
-    /`artifacts:discardRecovery`. Sidecar lifecycle now records PIDs
-    to `{userData}/tessera-sidecar.pid`, orphan-cleans them at next
-    startup, and escalates SIGTERM→5 s grace→SIGKILL on `will-quit`.
-    Failed exports land in a persistent queue (`failedExportQueue.ts`)
-    and surface via `artifacts:failedExports` / `artifacts:retryExport`;
-    the queue survives restart through `config.json`. Connector sync
-    errors are classified transient (timeout / 429 / 503) vs permanent
-    (401 / 403 / 404) and retried with exponential backoff (base 2 s,
-    max 5 min, jitter); per-source last-error + retry-count is
-    persisted. Audit log rotates at 100 K rows to
-    `audit-archive-<ts>.jsonl.gz` and exposes archives via
-    `audit:getArchives`.
-  - **Export fidelity & platform parity (PR 3, Tasks 13-18).** Five
-    DOCX golden fixtures (headings / lists / tables / code blocks /
-    citations) pin byte-stable output AND OOXML-schema validity.
-    XLSX export now preserves SUM / AVERAGE / COUNT / MIN / MAX
-    formulas as strings (not computed values) and round-trips named
-    ranges. PDF export pre-renders Mermaid blocks to SVG and embeds
-    them through the Typst pipeline so a flowchart no longer leaks as
-    raw source. Linux smoke harness (`scripts/smoke-test-linux.sh` +
-    `scripts/Dockerfile.smoke`) builds the `.deb` and AppImage,
-    installs in an `ubuntu:22.04` container, launches under
-    `xvfb-run`, asserts main-window ready, and round-trips one IPC.
-    Windows portable-zip verifier (`scripts/verify-windows-package.ps1`)
-    asserts the NSIS exe + portable zip both ship `Tessera.exe`,
-    `resources/`, and the native `.node` addon. macOS verifier
-    (`scripts/verify-macos-package.sh`) asserts the native addon is
-    universal (`lipo -info` reports both `x86_64` and `arm64` slices)
-    or splits into two architecture-specific DMGs.
-  - **UX completeness (PR 4, Tasks 19-24).** Three-step first-run
-    onboarding wizard (`OnboardingWizard.tsx`) fires only when the
-    workspace is empty and persists `onboarding_completed` in config.
-    Every list page (Sources / Tasks / Automations / Templates) now
-    renders a Lucide-iconified empty state with descriptive copy and
-    a primary CTA. Toast provider enforces stack-max-3, 5 s
-    auto-dismiss for non-errors, persistence-until-dismissed for
-    errors, focus trap on hover, and Escape to dismiss. Settings
-    grows a Source Health dashboard backed by a new `sources:healthReport`
-    IPC (last sync time, status, indexed chunk count, storage size).
-    Template gallery is fully keyboard-navigable (roving tabindex,
-    arrow keys, Enter to select, Tab between filter and grid,
-    `aria-activedescendant`). Version history supports a section /
-    cell / record-level diff between any two versions of an artifact
-    via an in-tree LCS implementation (no external diff library).
-  - **Security & compliance (PR 5, Tasks 25-28).** CSP is now nonce-
-    based — `script-src` and `style-src-elem` no longer carry
-    `'unsafe-inline'`; a fresh 32-byte nonce per session flows main →
-    preload (`additionalArguments`) → renderer (`useCspNonce()` hook)
-    and is applied to every app-owned `<style>` tag. `connect-src` in
-    production is locked to `'self'` only — the renderer never makes
-    direct outbound HTTP; every network call (KChat loopback sidecar,
-    external connector providers) goes through main-process IPC, so a
-    compromised renderer cannot exfiltrate via `fetch`. In dev mode
-    `connect-src` additionally allows the Vite HMR socket on
-    `ws://localhost:5173`. OAuth refresh races are coalesced onto a
-    single in-flight `Promise` via a per-provider mutex in
-    `ipc/connectors/handlers.ts` — concurrent expired-token detections
-    now produce exactly one upstream call. Sensitive buffers (SQLCipher
-    key in `dbKey.ts`, password-vault decryption fragments in
-    `passwordVault.ts`) are zeroed in `finally` blocks via the new
-    `secureBuffer.ts` helper. The KChat loopback API now enforces a
-    sliding-window per-IP rate limit (`kchatRateLimiter.ts`, default
-    100 req / 60 s, 429 + `Retry-After` clamped ≥ 1 s per RFC 7231),
-    applied BEFORE host / bearer checks so an attacker cannot drain
-    a legitimate caller's budget via malformed traffic.
-  - **Documentation & verification (PR 6, Tasks 29-30).** Linux
-    consistency pass across `README.md` / `ARCHITECTURE.md` /
-    `CONTRIBUTING.md` — Linux prerequisites (libsecret-1-dev,
-    libgtk-3-dev, libnss3-dev, libasound2-dev, libxss1, libxtst6,
-    xdg-utils), Linux packaging (AppImage, `.deb`, arm64), Linux
-    runtime detection (AVX2 / AVX-512 VNNI / NEON / dotprod / Vulkan
-    / CUDA / ROCm) now mentioned on equal footing with macOS /
-    Windows everywhere they belong. `sidecars/scripts/download-llama-server.sh`
-    documents Linux arm64 explicitly. `PHASES.md` carries a Phase 15
-    row; `PROGRESS.md` carries the 30-task table with every box
-    checked.
+- **Auto-updater signature verification.** Update artifacts are
+  verified against a hardcoded `UPDATER_TRUST_ANCHORS` array of
+  Ed25519 public keys before `electron-updater` is allowed to call
+  `quitAndInstall`. Multi-anchor support lets a new pubkey ship
+  alongside the old one for an overlap window during key rotation;
+  every other anchor is still tried if one throws during verification.
+  The verifier never returns `true` for a tampered artifact, and the
+  install gate re-checks the verification result at `quitAndInstall`
+  time so a TOCTOU between download and install cannot launder an
+  unverified artifact through. A `release-tool/signUpdateArtifact.ts`
+  companion script signs the release artifact server-side.
+- **Per-app keychain ACL policy.** `safeStorage`-backed token writes
+  go through a runtime gate that classifies the active backend into
+  a trust tier: `enforced-by-os` (macOS Keychain, Code-Signing-pinned
+  bundle ID), `user-scoped` (Windows DPAPI; Linux gnome-libsecret /
+  kwallet), `none` (Linux `basic_text` — XOR with a hardcoded key,
+  *not* real encryption). When the active backend is `basic_text`
+  the policy refuses to encrypt secrets by default; Settings →
+  Security surfaces the active tier. On macOS the
+  `keychain-access-groups` entitlement pins the access group to
+  Tessera's bundle ID, so other apps signed with a different identity
+  cannot read Tessera Keychain items. Mid-session backend drift
+  (e.g. kwallet daemon crash) is detected and logged before the
+  refusal so operators have forensic visibility.
+- **OAuth scope governance.** Granted scopes are inspected on every
+  connector sync. If the consent screen has been narrowed since the
+  last grant, the renderer receives a precise list of missing scopes
+  and a re-auth CTA instead of an opaque 403. Meta-scopes (e.g.
+  `offline_access`) are filtered out of the required set so they
+  cannot cause permanent false-positive errors; a `SCOPELESS_PROVIDERS`
+  allow-list (`notion`, …) silences the warning for providers whose
+  tokens carry no scopes by design.
+- **App-lock (PIN + biometric).** Optional. PIN is hashed with
+  scrypt (`N = 2^14`, per-PIN salt, key length 64) and stored
+  vault-encrypted at rest, with the scrypt parameters stored
+  alongside so a future parameter bump doesn't lock anyone out.
+  Failed attempts trigger exponential backoff (30 s → 1 h cap).
+  Biometric unlock dispatches to TouchID on macOS or the WinRT
+  `UserConsentVerifier` on Windows. Every app-lock IPC channel
+  (`setPin`, `changePin`, `removePin`, `attemptUnlock`,
+  `attemptBiometric`) shares a token-bucket rate limiter so a
+  compromised renderer cannot side-step throttling by alternating
+  channels.
+- **Telemetry — local-only, opt-in.** Off by default. The sink never
+  opens a socket. When on, only whitelisted counter / event keys are
+  accepted; events are buffered in memory and flushed to a single
+  on-disk JSONL file. Disabling truncates the file. There is no
+  remote endpoint and no opt-out from an opt-in-only system.
+- **Sensitive buffer zero-on-free.** SQLCipher key and password-vault
+  decryption fragments are zeroed in `finally` blocks via a
+  `secureBuffer.ts` helper so secret material does not linger in
+  freed heap memory.
+- **CSP nonce-based** — `script-src` and `style-src-elem` no longer
+  carry `'unsafe-inline'`. A fresh 32-byte nonce per session flows
+  main → preload → renderer (`useCspNonce()` hook) and is applied to
+  every app-owned `<style>` tag. In production `connect-src` is
+  locked to `'self'` only — the renderer never makes a direct
+  outbound HTTP call; every network call goes through main-process
+  IPC.
+- **KChat loopback API rate limit.** Sliding-window per-IP limiter
+  (default 100 req / 60 s, 429 + RFC 7231-compliant `Retry-After`),
+  applied BEFORE host / bearer checks so a malformed-traffic
+  attacker cannot drain a legitimate caller's budget.
+- **Export-path containment with deny-list.** `isSafeExportPath`
+  accepts an optional `denyRoots` parameter that is checked BEFORE
+  the allow-list. `~/.tessera/kchat-channels` is on the deny-list so
+  a compromised renderer cannot overwrite the KChat channel cache
+  via `artifacts:exportToFile` and inject attacker-controlled
+  content the connector would later re-ingest.
 
-### Changed
+#### Search & retrieval
 
-- **CSP `script-src` / `style-src-elem`** — replaced `'unsafe-inline'`
-  with `'nonce-<random>'`. App-owned `<style>` tags carry the same
-  nonce via the new `useCspNonce()` hook. `style-src-attr` retains
-  `'unsafe-inline'` to cover trusted framework-generated `style="…"`
-  attributes from React/lucide-react.
-- **`napi` crate** documented as targeting **macOS, Windows, AND Linux**
-  (x64 + arm64) — previous wording listed only macOS and Windows.
+- **Approximate nearest-neighbor vector index.** IVF-Flat index over
+  the embedding store with `K = √N` centroids, 5-iteration Lloyd
+  k-means build, `nprobe = ⌈√K⌉` probe count. First query after an
+  embedding write pays the synchronous build (<50 ms at 50 K vectors
+  on modern hardware); subsequent queries are an Arc-clone lookup.
+  Falls through to brute-force scoring on cache miss so recall is
+  never worse than the previous baseline.
+- **Read-pool SQLite split.** Search reads now go through a
+  dedicated WAL read pool, leaving the writer connection free for
+  ingest. The pool gracefully degrades to the writer connection on
+  open failure so a file-descriptor exhaustion event reduces search
+  throughput but does not break the app.
+- **Configurable model idle-timeout.** Settings → Performance
+  exposes a `modelIdleTimeoutSecs` knob with five buckets (30 s, 1 m,
+  5 m, 30 m, 1 h, never) plus a synthetic "Custom (Xs)" option that
+  surfaces non-bucket values from manual config edits. Defaults to
+  60 s; the SettingsPage warns memory-constrained-GPU users to pick
+  the 30 s bucket.
 
-### Tests
+#### Editors
 
-- 50+ new Vitest + Rust integration tests across the six PRs:
-  startup-perf guard, indexing/search Criterion benches, memory peak
-  RSS budget test, watcher coalescing test, batch-IPC tests, WAL +
-  integrity crash-recovery test, artifact recovery sidecar tests,
-  sidecar PID registry tests, failed-export queue tests, connector
-  backoff classification tests, audit rotation test, DOCX golden +
-  OOXML schema tests, XLSX formula + named-range round-trip tests,
-  PDF Mermaid embedding test, Linux smoke-test exit-code gate,
-  Windows / macOS package-verifier tests, onboarding wizard +
-  empty-state + toast + source-health + keyboard-nav + version-diff
-  Vitest suites, CSP nonce assembly + no-unsafe-inline tests, OAuth
-  refresh race tests, secret zero-on-free tests, sliding-window
-  rate-limiter unit + HTTP integration tests.
+- **Sheet — formula engine.** Tokenizer → Pratt parser →
+  tree-walking evaluator over a `DependencyGraph` (topological
+  recompute). **64 functions** across math (SUM, AVERAGE, COUNT,
+  MIN, MAX, ROUND, etc.), conditional (IF, IFS, SWITCH), logic
+  (AND, OR, NOT, XOR), text (CONCAT, LEFT, RIGHT, MID, UPPER, LOWER,
+  TRIM, …), lookup (VLOOKUP, HLOOKUP, INDEX, MATCH), date
+  (TODAY, NOW, YEAR, MONTH, DAY, …), and statistics (MEDIAN, MODE,
+  STDEV, VAR, …) categories. Cross-sheet references (`Sheet2!A1`)
+  and a persistent on-disk dependency cache. Incremental recalc
+  walks only the dirty subtree.
+- **Sheet — workbook UX.** Multi-sheet tabs, column / row resize,
+  rectangular and multi-cell selection, copy / paste, freeze panes,
+  auto-fill, cell formatting, CSV import, XLSX export with native
+  formulas and named-range round-trip.
+- **Base — field types.** **20 field types**: six baseline (`text`,
+  `number`, `date`, `select`, `checkbox`, `url`); seven advanced
+  (`multi_select`, `formula`, `linked_record`, `rollup`, `lookup`,
+  `attachment`, `long_text`); seven simple (`email`, `phone`,
+  `currency`, `percent`, `rating`, `duration`, `auto_number`).
+  Per-type filters; bulk-select with shift-click range and bulk
+  delete; manage-fields dialog (reorder / rename / type-change with
+  data migration / delete); CSV / JSON import-export (RFC 4180);
+  five views (Grid, Kanban, Calendar, Timeline, Gallery) over the
+  same records.
+- **Document — TipTap UX.** Toolbar, outline panel, find / replace
+  with case-sensitive and whole-word toggles, slash-command menu,
+  tables, task lists, code-block syntax highlighting via `lowlight`
+  (30+ languages), text-align, highlight, underline.
+- **Slides — layout & block editing.** Five layouts (`blank`,
+  `title`, `titleContent`, `twoColumn`, `imageCaption`), per-block
+  reorder / type-change / delete, stable UUID block IDs, native
+  HTML5 drag-and-drop sidebar reorder, per-slide and deck word
+  count, deck-wide find panel, image uploads inlined through a
+  shared 5 MiB cap.
+- **Global UX.** `Cmd+K` (`Ctrl+K` on Windows / Linux) command
+  palette; global search across artifacts, sources, tasks, and
+  templates; favorites and recents; breadcrumb navigation; 30+
+  keyboard shortcuts; right-click context menus on lists and
+  cells.
 
-- **KChat Desktop integration via `.kcz` extension + loopback HTTP API
-  + deeplinks (Phase 14).** Replaces Phase 13's socket-bridge
-  integration with the correct architecture: Tessera and KChat
-  Desktop are two independent Electron clients that share only the
-  KChat server backend. Cross-app surface is (a) a signed `.kcz`
-  extension under [`extensions/tessera-kchat/`](extensions/tessera-kchat/)
-  installed inside KChat Desktop and talking to Tessera over a
-  loopback-only HTTP API on `127.0.0.1` (bearer-token auth via 256-bit
-  `crypto.randomBytes(32)` → base64url with timing-safe compare,
-  Host-header SSRF guard against DNS-rebind, 64 KiB body cap, port
-  discovery via `{userData}/tessera-kchat-port.json` at mode 0600 via
-  atomic rename), (b) `tessera://` deeplinks for KChat Desktop →
-  Tessera navigation handled by `kchatDeeplinkBridge.ts` with
-  pre-ready route parking and Windows/Linux cold-start argv scanning
-  in the single-instance-lock else branch, and (c) `kchat://`
-  deeplinks for Tessera → KChat Desktop navigation via
-  `shell.openExternal()` (`kchat:openInDesktop`,
-  `kchat:openDesktopExtensions`, sharing a single rate-limiter bucket
-  so a runaway renderer can't multiply the OS-shell budget).
-- **Loopback API routes.** `GET /api/status` returns Tessera connection
-  state and indexed channels; `GET /api/sources` enumerates
-  KChat-sourced rows; `POST /api/ingest-channel` triggers a channel
-  backfill; `POST /api/share-artifact` accepts an artifact id +
-  optional evidence pack from the extension. Errors return a typed
-  `LocalApiErrorCode` envelope (`forbidden` / `not_found` /
+#### KChat integration
+
+- **`.kcz` extension + loopback HTTP API.** Tessera and KChat
+  Desktop are two independent Electron clients sharing only the
+  KChat server backend. Cross-app integration uses a signed `.kcz`
+  extension under `extensions/tessera-kchat/` installed inside KChat
+  Desktop, talking to Tessera over a `127.0.0.1`-bound HTTP API
+  with bearer-token auth (256-bit `crypto.randomBytes(32)` →
+  base64url, timing-safe compare), Host-header SSRF guard against
+  DNS-rebind, 64 KiB body cap, port discovery via
+  `{userData}/tessera-kchat-port.json` (mode 0600 via atomic
+  rename). Routes: `GET /api/status`, `GET /api/sources`,
+  `POST /api/ingest-channel`, `POST /api/share-artifact`; errors
+  return a typed envelope (`forbidden` / `not_found` /
   `method_not_allowed` / `invalid_request` / `payload_too_large` /
-  `rate_limited` / `internal`) paired one-to-one with the HTTP status.
-- **`tessera://` deeplink protocol.** Routes: `tessera://source/<id>`,
+  `rate_limited` / `internal`) paired one-to-one with the HTTP
+  status.
+- **`tessera://` deeplinks.** Routes: `tessera://source/<id>`,
   `tessera://artifact/<id>`, `tessera://ingest?channel=&team=`.
-  Pre-ready URLs are parked in a FIFO queue and replayed on consumer
-  registration. macOS uses `open-url`, Win/Linux warm-start uses
-  `second-instance`, Win/Linux cold-start uses an argv scan inside
-  the single-instance-lock else branch so the URL doesn't get dropped
-  on the about-to-quit second instance.
-- **Concurrency-hardened start/stop state machine** for
-  `KchatLocalApiServer`. Three-slot state machine in `appState.ts`
-  (`kchatLocalApiServer` cached slot, `kchatLocalApiServerPending`
-  start-in-flight slot, `kchatLocalApiServerStopping` stop-in-flight
-  slot) safe against every overlap of start and stop: concurrent
-  starts coalesce onto one server; stop-during-in-flight-start
-  (success and rejection paths) does not strand a server;
-  start-during-in-flight-stop parks the new start on the stopping
-  promise rather than racing it; concurrent stops resolve to one
-  `server.close()` call.
-- **`KchatSettingsCard` passive detection.** Renders a passive
-  "KChat Desktop detected — enhanced integration active" affordance
-  when the loopback API has received a bearer-authed request from the
-  extension within the last 90 seconds. "Open KChat Desktop
-  extensions" button invokes `kchat://app/settings/extensions` via
-  the typed `openDesktopExtensions()` IPC.
-- **`KchatSidebarSection` per-channel deeplink action.** Small
+  Pre-ready URLs are parked in a FIFO queue and replayed on
+  consumer registration. macOS uses `open-url`, Windows / Linux
+  warm-start uses `second-instance`, Windows / Linux cold-start
+  uses an argv scan inside the single-instance-lock else branch so
+  the URL doesn't get dropped on the about-to-quit second instance.
+- **`kchat://` deeplinks (Tessera → KChat Desktop navigation).**
+  `kchat:openInDesktop`, `kchat:openDesktopExtensions`, sharing a
+  single rate-limiter bucket so a runaway renderer can't multiply
+  the OS-shell budget.
+- **KChat Desktop "enhanced integration active" affordance.**
+  Settings card renders a passive detection chip when the loopback
+  API has received a bearer-authed request from the extension
+  within the last 90 seconds.
+- **Per-channel deeplink action in KChat sidebar.** Small
   external-link button next to each KChat channel source opens the
-  corresponding conversation in KChat Desktop via
-  `kchat://app/conversation/<id>`. A heartbeat dot turns green when
-  the loopback API has seen a recent extension request.
-- **`.kcz` extension build pipeline.** `npm run build:kchat-extension`
-  bundles the extension into
-  `extensions/tessera-kchat/releases/com.tessera.kchat-bridge@<version>.kcz`.
-  Build is deterministic (reverse-alpha walk + stable timestamps);
-  the walker throws on symbolic links rather than silently dropping
-  them (`.kcz` archives must contain only regular files for
-  cross-platform reproducibility).
-- **KChat post citation rendering.** KChat post hits in `CitationPanel`
-  render with chat semantics — chat icon, `#channel @sender`, threaded
-  indicator. Two module-scoped `KchatNameCache` LRUs (500-entry user-id
-  cache, 200-entry channel-id cache; both empty-string-rejecting and
-  reconnect-safe) resolve display names from server ids via a
-  dedupe-then-bulk-fetch enrichment pass.
-- **KChat backfill progress UI.** `kchat:backfillProgress` IPC surfaces
-  live `postsIngested` / `oldestFetched` counters maintained by the
-  orchestrator during a historical-backfill walk. The
-  `useKchatBackfillProgress` hook (2 s poll, cancel-safe,
-  transport-failure self-heal at 3 consecutive failures) drives a
-  progress card on `SourceDetailPage` with idle / active / complete /
-  error states.
-- **KChat channel file preview.** File-row metadata enrichment in
-  `KchatChannelSourcePicker` — type-family icon + filename + TYPE +
-  SIZE + "Uploaded by @username on date".
+  corresponding conversation in KChat Desktop. Heartbeat dot turns
+  green when the loopback API has seen a recent extension request.
+- **KChat post citation rendering.** KChat post hits in
+  `CitationPanel` render with chat semantics: chat icon,
+  `#channel @sender`, threaded indicator. User and channel display
+  names are resolved via bounded LRU caches with dedupe-then-bulk-
+  fetch enrichment.
+- **KChat backfill progress UI.** `kchat:backfillProgress` IPC
+  surfaces live `postsIngested` / `oldestFetched` counters during a
+  historical walk, driving a progress card on `SourceDetailPage`
+  with idle / active / complete / error states.
+- **KChat channel file preview.** File rows in
+  `KchatChannelSourcePicker` show type-family icon + filename +
+  type + size + "Uploaded by @username on date".
 - **KChat evidence-pack share-to-channel.** `kchat:shareArtifact`
   uploads the artifact as Markdown to a channel, optionally with a
   SHA-256-verified evidence-pack ZIP. Audit rows are emitted for
-  successful and pack-only-failure paths; primary-upload failures
-  are not audited (no phantom records for an unchanged channel).
-- **KChat thread context.** `fetch_kchat_thread_context(post_id)` on
-  `SourceStore` surfaces the thread root plus up to 2 earlier replies
-  (3 rows total, chronologically ordered) on threaded hits.
-  The retrieval pipeline is plumbed end to end:
-  `SourceStore` → `SourceManager` → N-API bridge →
-  `kchat:fetchThreadContext` IPC → `CitationPanel`.
-- **Scheduler `backfill_kchat_channel` action.** The automation
-  scheduler can now drive periodic KChat backfill sweeps without a
-  renderer-side trigger. New `AutomationAction` action kind validates
-  `channel_id`, reads `getKchatBackfillImpl()` from `appState`,
-  invokes the impl with the channel id, and records the run via
-  `bridgeRecordAutomationRun(status: "ok" | "failed")`.
-- **HomePage breakdown.** The dashboard now renders real recent
-  artifacts (sorted by modified time) and a source-status breakdown
-  card driven by the canonical Rust `SourceStatus` ordering, with
-  quick actions for Templates / Tasks / Sources / Settings.
-- **Template-validation audit logging.** Template parse and validation
-  failures route through the audit log via a typed
-  `TemplateLoadFailureKind` (`parse` vs. `validation`). Operators of
-  packaged builds can find silently-dropped templates in the audit
-  log instead of stderr alone.
-- **Structured source comparison.** Source comparison surfaces a
-  typed result (`common`, `uniqueToA`, `uniqueToB`, `similarity`)
-  through a dedicated modal with download-as-markdown, open-artifact,
-  and parent-qualified labels for sources that share the same last
-  path segment.
-- **Source-type glyphs on Sources surfaces.** `SourcesPage` and
-  `SourceDetailPage` now render a per-source-kind glyph (📁 local
-  folder, 📄 local file, 💬 KChat channel) next to the source title.
-  New `sourceTypeIcon()` helper in `utils/sourceLabels.ts` returns
-  `{ glyph, ariaLabel }` for every known kind with a graceful
-  fallback (empty glyph, humanised aria-label) for unknown
-  discriminators. Glyphs are emoji to match the existing
-  `fileTypeIcon` convention in `KchatChannelSourcePicker`; rendered
-  with `role="img"` + `aria-label` for screen reader support.
+  successful uploads and pack-only failures.
+- **KChat thread context.** Threaded post hits surface the thread
+  root plus up to 2 earlier replies (3 rows total, chronologically
+  ordered) in `CitationPanel`.
+- **`backfill_kchat_channel` scheduler action.** Periodic
+  historical-backfill sweeps without a renderer trigger.
+
+#### Workspace & reliability
+
+- **Performance instrumentation.** `performance.mark()` /
+  `performance.measure()` at every cold-start stage (app ready,
+  bridge init, DB open, window show). Heavy modules
+  (`marpExport`, `typstExport`, `diffusionSidecar`, `autoUpdater`)
+  are dynamic-imported so they no longer block the first render.
+- **Streaming bulk indexing.** Indexer + extractor now run on a
+  `rayon` thread pool bounded to `num_cpus / 2` (UI headroom
+  preserved); content-hash gate keeps incremental re-index correct.
+  Batches of 500 keep peak RSS under the 200 MB budget on a 10 K-
+  chunk corpus.
+- **File watcher debounce.** Coalesces events in a 500 ms window
+  and dedupes per-path, so write+rename storms (atomic-save
+  pattern) fire one re-index.
+- **Batch IPC.** `sources:batchReindex` and
+  `artifacts:batchExport` collapse N round-trips to 1 and report
+  per-item success/error.
+- **SQLCipher DB resilience.** WAL mode with
+  `wal_checkpoint(TRUNCATE)` on graceful shutdown and
+  `integrity_check` on startup; an unrecoverable DB surfaces a
+  typed error rather than silently truncating.
+- **Editor crash recovery.** Editors write a `.tessera-recovery`
+  JSON sidecar before each auto-save; the renderer offers to
+  restore via `artifacts:checkRecovery` /
+  `artifacts:discardRecovery` on next launch.
+- **Sidecar PID registry.** Sidecar lifecycle records PIDs to
+  `{userData}/tessera-sidecar.pid`, orphan-cleans them at next
+  startup, and escalates SIGTERM → 5 s grace → SIGKILL on
+  `will-quit`.
+- **Failed-export queue.** Failed exports land in a persistent
+  queue (`failedExportQueue.ts`) and surface via
+  `artifacts:failedExports` / `artifacts:retryExport`; the queue
+  survives restart through `config.json`.
+- **Connector backoff classification.** Sync errors are classified
+  transient (timeout / 429 / 503) vs permanent (401 / 403 / 404)
+  and retried with exponential backoff (base 2 s, max 5 min,
+  jitter); per-source last-error + retry-count is persisted.
+- **Audit log rotation.** Rotates at 100 K rows to
+  `audit-archive-<ts>.jsonl.gz` and exposes archives via
+  `audit:getArchives`.
+- **Three-step onboarding wizard.** Fires only when the workspace
+  is empty; persists `onboarding_completed`.
+- **Empty states.** Every list page (Sources, Tasks, Automations,
+  Templates) renders a Lucide-iconified empty state with
+  descriptive copy and a primary CTA.
+- **Toast policy.** Stack-max-3, 5 s auto-dismiss for non-errors,
+  persistence-until-dismissed for errors, focus trap on hover,
+  Escape to dismiss.
+- **Source Health dashboard.** Backed by a new
+  `sources:healthReport` IPC (last sync time, status, indexed
+  chunk count, storage size).
+- **Template gallery keyboard nav.** Roving tabindex, arrow keys,
+  Enter to select, Tab between filter and grid,
+  `aria-activedescendant`.
+- **Version diff.** Section / cell / record-level diff between any
+  two versions of an artifact, via an in-tree LCS implementation
+  (no external diff library).
+- **HomePage dashboard.** Real recent artifacts (sorted by modified
+  time) and a source-status breakdown card driven by the canonical
+  Rust `SourceStatus` ordering, with quick actions for Templates /
+  Tasks / Sources / Settings.
+- **Source-type glyphs.** Per-source-kind glyph (📁 local folder,
+  📄 local file, 💬 KChat channel) on `SourcesPage` and
+  `SourceDetailPage`. `role="img"` + `aria-label` for screen-reader
+  support.
+- **Template-validation audit logging.** Template parse and
+  validation failures route through the audit log via a typed
+  `TemplateLoadFailureKind` (`parse` vs. `validation`), so silently
+  dropped templates are visible in packaged builds.
+
+#### Export fidelity
+
+- **DOCX golden fixtures.** Five fixtures (headings, lists,
+  tables, code blocks, citations) pin byte-stable output AND
+  OOXML-schema validity.
+- **XLSX formula fidelity.** SUM / AVERAGE / COUNT / MIN / MAX are
+  preserved as formula strings (not computed values), and named
+  ranges round-trip.
+- **PDF Mermaid embedding.** Mermaid blocks pre-render to SVG and
+  are embedded through the Typst pipeline; flowcharts no longer
+  leak as raw source.
+
+#### Platform support
+
+- **Linux on equal footing.** Prerequisites (`libsecret-1-dev`,
+  `libgtk-3-dev`, `libnss3-dev`, `libasound2-dev`, `libxss1`,
+  `libxtst6`, `xdg-utils`), packaging (AppImage, `.deb`, arm64),
+  runtime detection (AVX2 / AVX-512 VNNI / NEON / dotprod /
+  Vulkan / CUDA / ROCm) are now documented alongside macOS and
+  Windows in `README.md`, `ARCHITECTURE.md`, and
+  `CONTRIBUTING.md`.
+- **Linux smoke test.** `scripts/smoke-test-linux.sh` +
+  `scripts/Dockerfile.smoke` build the `.deb` and AppImage, install
+  in an `ubuntu:22.04` container, launch under `xvfb-run`, assert
+  the main window is ready, and round-trip one IPC.
+- **Windows portable-zip verifier.** `scripts/verify-windows-package.ps1`
+  asserts that the NSIS exe and portable zip both ship
+  `Tessera.exe`, `resources/`, and the native `.node` addon.
+- **macOS universal-binary verifier.** `scripts/verify-macos-package.sh`
+  asserts the native addon is universal (`lipo -info` reports
+  both `x86_64` and `arm64` slices) or splits into two
+  architecture-specific DMGs.
+- **Custom-provider `/v1/models` 404 handling.**
+  `externalProvider:listModels` returns a typed `endpoint_not_found`
+  result on HTTP 404 from a custom provider; the renderer surfaces
+  a clear hint pointing at the exact URL and the manual-entry input.
+- **External-provider rate limits.**
+  `externalProvider:listModels` and `externalProvider:test` share
+  token-bucket gates (1 req / s, burst 5 and 3 respectively) on
+  separate buckets.
+- **KChat citation dark-mode styling.** KChat-specific class names
+  in `CitationPanel` now render as chip-style badges with a
+  primary-tinted background, brand-tinted left-accent on
+  KChat-derived rows, muted secondary text for metadata fragments,
+  theme-aware link tokens for permalinks. Every color is a
+  `var(--color-…)` reference so dark-mode overrides apply
+  automatically.
 
 ### Changed
 
-- **Export-path containment now supports a deny-list.** `isSafeExportPath`
-  accepts an optional `denyRoots` parameter that is checked BEFORE
-  the allow-list. `getDenyExportRoots()` returns
-  `~/.tessera/kchat-channels` so a compromised renderer cannot
-  overwrite the KChat channel cache via `artifacts:exportToFile` and
-  inject attacker-controlled content the connector would later
-  ingest. Wired into all four export-path call sites in
-  `ipc/artifacts.ts`.
+- **OAuth refresh races are coalesced.** Concurrent expired-token
+  detections now produce exactly one upstream refresh call via a
+  per-provider mutex in `ipc/connectors/handlers.ts`.
+- **CSP `script-src` / `style-src-elem`** swap `'unsafe-inline'`
+  for `'nonce-<random>'`. `style-src-attr` retains
+  `'unsafe-inline'` to cover trusted framework-generated `style="…"`
+  attributes from React / lucide-react.
+- **`napi` crate documented as targeting macOS, Windows, AND
+  Linux** (x64 + arm64) — previous wording listed only macOS and
+  Windows.
 - **`KchatAuthService` symmetric teardown.** `disconnect()` flips
   `authMode = "none"` BEFORE calling `client.shutdown()`, so no
   `disconnected` status push ever carries a stale `authMode: "pat"`.
-- **SSRF guard re-validated on vault restore.** `enforceKchatServerUrl`
-  is re-run when restoring a PAT session from the vault — defence-in-depth
-  against SSRF policy tightening between sessions and against tampered
-  vault entries.
-- **`restoreFromVault()` token-only rollback policy** on verify failure
-  (Phase 14 Round 9). The in-memory token is rolled back via
-  `setToken(null)` but `serverUrl` is intentionally NOT rolled back —
-  `setServerUrl("")` would silently fall back to `DEFAULT_KCHAT_SERVER`
-  (a worse failure mode than the stale value), and the token-presence
-  guard in `KchatClient.request()` prevents outbound traffic to the
-  stale URL. Documented in JSDoc + mirroring NOTE comments on the
-  catch blocks of both `restoreFromVault()` and `connect()`.
-- **`LocalApiErrorCode` wire-code/HTTP-status canonical mapping** (Phase
-  14 Round 10). Added `payload_too_large` paired with 413 so extensions
-  can branch on `code` to distinguish payload-size failures from
-  malformed-body failures. Mirrored in `TesseraLocalApiError`.
-- **Port-file-write failure rollback** in `KchatLocalApiServer.start()`
-  (Phase 14 Round 8). If `writeAtomic()` fails after a successful
-  `listen()`, the server closes the bound socket and clears
-  `this.server` / `this.boundPort` / `this.portFileAbsPath` before
-  re-throwing — without this rollback the leaked listener would hold
-  an event-loop handle for the lifetime of the process.
-- **Windows/Linux cold-start `tessera://` argv scan** (Phase 14 Round 14).
-  Runs inside the `else` branch of the single-instance-lock check
-  (primary instance only) and feeds any URL into
-  `getKchatDeeplinkBridge().ingestRawUrl(url)` so it lands in the
-  bridge's parking queue and gets FIFO-dispatched when the renderer
-  consumer registers later in the `whenReady` chain.
+- **SSRF guard re-validated on vault restore.**
+  `enforceKchatServerUrl` is re-run when restoring a PAT session
+  from the vault — defence-in-depth against SSRF policy tightening
+  between sessions and against tampered vault entries.
+- **`restoreFromVault()` token-only rollback** on verify failure.
+  The in-memory token is rolled back via `setToken(null)` but
+  `serverUrl` is intentionally NOT rolled back; the token-presence
+  guard in `KchatClient.request()` prevents outbound traffic to
+  the stale URL.
+- **`LocalApiErrorCode` ↔ HTTP-status canonical mapping.** Added
+  `payload_too_large` paired with 413 so extensions can branch on
+  `code` to distinguish payload-size failures from malformed-body
+  failures.
+- **Port-file-write failure rollback** in
+  `KchatLocalApiServer.start()`. If `writeAtomic()` fails after a
+  successful `listen()`, the server closes the bound socket and
+  clears `this.server` / `this.boundPort` / `this.portFileAbsPath`
+  before re-throwing.
+- **Concurrency-hardened start/stop state machine** for
+  `KchatLocalApiServer` — three-slot state machine in `appState.ts`
+  safe against every overlap of start and stop: concurrent starts
+  coalesce, stop-during-in-flight-start (success and rejection
+  paths) does not strand a server, start-during-in-flight-stop
+  parks the new start on the stopping promise, concurrent stops
+  resolve to one `server.close()` call.
 - **Hoisted `shell` import** in `apps/desktop/electron/ipc/kchat.ts`
-  (Phase 14 Round 13). Dropped two `await import("electron")` sites in
-  the new deeplink handlers in favour of a top-level
-  `import { shell } from "electron"`. CONTRIBUTING.md compliance — new
-  code shouldn't propagate the pre-existing dynamic-import convention
-  violation in `artifacts.ts`.
-- **Hardened symmetric teardown on `KchatLocalApiServer.start()`
-  null-address branch** (Phase 14 Round 13 ANALYSIS_0007). `server.close()`
-  before the null-address throw, symmetric with the wrong-address
-  branch. Structurally unreachable in current Node but defended in
-  depth against any future `node:net` surprise where `address() === null`
-  after a successful `listen()`.
-- **Custom-provider `/v1/models` 404s.** `externalProvider:listModels`
-  now returns a typed `endpoint_not_found` result on HTTP 404 from a
-  custom provider; the renderer surfaces a clear hint pointing at the
-  exact URL and the manual-entry input.
-- **`externalProvider:listModels` / `externalProvider:test` rate
-  limits.** Both channels share token-bucket gates (1 req / s, burst
-  5 and 3 respectively) on separate buckets, matching the protection
-  posture of the sibling generation channels.
-- **KChat citation surfaces are styled for dark mode.**
-  `CitationPanel`'s KChat-specific class names
-  (`citation-source-badge-kchat`, `citation-item-kchat`,
-  `citation-search-hit-kchat`, the `citation-hit-kchat-*` family)
-  shipped without any CSS rules in either light or dark themes —
-  the surface rendered as undecorated inline text. They now render
-  as a chip-style badge with a primary-tinted background, KChat-
-  derived rows carry a 3px brand left-accent, metadata fragments
-  use the muted secondary text token, and the permalink uses the
-  theme-aware link token. Every color value is a `var(--color-…)`
-  reference so dark-mode overrides apply automatically.
+  — replaced two `await import("electron")` sites with a top-level
+  `import { shell } from "electron"`.
 
 ### Removed
 
-- **Phase 13 socket-bridge surface.** Removed
+- **`PHASES.md` and `PROGRESS.md`.** Internal phase / task tracking
+  superseded by the per-release changelog and per-PR descriptions.
+  All user-facing content is reflected here, in `README.md`,
+  `ARCHITECTURE.md`, or `SECURITY.md`.
+- **Prior KChat socket-bridge surface.** Removed
   `kchatExtensionBridge.ts`, `kchatExtensionSession.ts`,
-  `kchatExtensionEvents.ts`, `extensionSocketPath.test.ts`,
-  `kchatExtension.test.ts`, three `kchat:extension*` preload channels
-  (`kchat:extensionStatus`, `kchat:extensionConnect`,
+  `kchatExtensionEvents.ts`, three `kchat:extension*` preload
+  channels (`kchat:extensionStatus`, `kchat:extensionConnect`,
   `kchat:extensionDisconnect`), the `extension-delegated` vault
-  provider, and the per-platform discovery code (Linux
-  `$XDG_RUNTIME_DIR`, macOS Application Support, Windows named pipe).
-  Superseded by Phase 14's `.kcz` extension + loopback HTTP API + deeplink
-  architecture (see Added). PAT mode survives unchanged — it remains
-  the single source of auth between Tessera and the KChat server.
+  provider, and the per-platform socket-discovery code. Superseded
+  by the `.kcz` extension + loopback HTTP API + deeplink
+  architecture (see Added). PAT mode survives unchanged.
 - **`KchatAuthMode` value `"extension"`.** `authMode` is now
-  `"none" | "pat"`. The mode-aware UI surfaces in `KchatSettingsCard`
-  collapsed to a single PAT path + the passive "KChat Desktop
-  detected" affordance driven by the loopback API heartbeat.
+  `"none" | "pat"`. The mode-aware UI surfaces in
+  `KchatSettingsCard` collapsed to a single PAT path plus the
+  passive "KChat Desktop detected" affordance driven by the
+  loopback API heartbeat.
 
 ### Tests
 
 - **AEAD full-lifecycle round-trip.** Integration tests on
   `tessera_sources::manager` exercise the full ingest → DEK wrap →
-  ciphertext → decrypt → cryptoshred → regrant → re-ingest → search
-  chain, plus thread-context retrieval across a cryptoshred
+  ciphertext → decrypt → cryptoshred → regrant → re-ingest →
+  search chain, plus thread-context retrieval across a cryptoshred
   boundary.
 - **Hybrid search regression battery.** Scoring-axis consistency
   between file and post search (RRF `1.0 / (rank + 1.0)`),
-  revocation-takes-effect-immediately on the same manager instance,
-  BM25 ordering preserved through AEAD verification, cross-source
-  revocation isolation.
-- **Preload contract regression.** Source-text assertion that every
-  channel in the 17-entry `EXPECTED_KCHAT_CHANNELS` master list has
-  a matching `ipcRenderer.invoke("<channel>")` string in
-  `preload.ts` — catches the failure mode where a handler is
-  registered but the preload bridge entry is missing, rendering the
-  channel silently unreachable from the renderer.
-- **KChat Desktop integration suite** (Phase 14 PR #58).
-  `kchatDesktopIntegration.test.ts` covers bind/discovery, auth +
-  Host-header policy, route surface, deeplink parsing, bridge
-  lifecycle, cold-start argv scanning, and two regression cases:
-  Round 8 BUG_0001 port-file-write rollback (kernel-assigned port
+  revocation-takes-effect-immediately on the same manager
+  instance, BM25 ordering preserved through AEAD verification,
+  cross-source revocation isolation.
+- **Preload contract regression.** Asserts that every channel in
+  the 17-entry `EXPECTED_KCHAT_CHANNELS` master list has a matching
+  `ipcRenderer.invoke("<channel>")` string in `preload.ts` —
+  catches the failure mode where a handler is registered but the
+  preload bridge entry is missing.
+- **Ed25519 updater signature.** Real-key (`crypto.generateKeyPairSync("ed25519")`,
+  no algorithm mocks) tests for happy path (single anchor),
+  multi-anchor rotation overlap, tampered payload and signature
+  rejection, large-payload streaming, disk vs in-memory flow, and
+  the anchor-loop continuation behaviour (one anchor throws → next
+  anchor still verifies). 60+ tests across `updaterSignature.test.ts`
+  and `autoUpdaterSignature.test.ts`.
+- **Per-app keychain ACL.** Trust-tier classification per backend,
+  `enforceKeychainAcl` flag respected (refuses to encrypt under
+  `basic_text` when set), mid-session backend drift logged before
+  refusal, reads never gated. 26 tests in `keychainAcl.test.ts`.
+- **App-lock.** PIN scrypt parameters read back from the stored
+  record (not module constants); rate-limit parity across all five
+  app-lock IPC channels; bidirectional `appLockMode` ↔ PIN
+  lifecycle coupling (`settings:update({mode:'pin'})` requires a
+  stored PIN, `settings:update({mode:'off'})` clears the PIN,
+  `appLock:removePin` resets mode to `'off'`).
+- **OAuth scope governance.** `MissingScopeError` classified as
+  permanent (not retried with exponential backoff), `offline_access`
+  filtered out of the required set, Jira / Confluence / OneDrive
+  regression cases pinned, `SCOPELESS_PROVIDERS` allow-list
+  documented.
+- **Telemetry sink.** Buffer cap re-applied on re-enqueue (no
+  unbounded growth on persistent retriable errors), `flushSync` →
+  `flushAsync` asymmetry documented, `getEventsSnapshot`
+  flush-disjointness invariant documented.
+- **KChat Desktop integration suite.** `kchatDesktopIntegration.test.ts`
+  covers bind / discovery, auth + Host-header policy, route
+  surface, deeplink parsing, bridge lifecycle, cold-start argv
+  scanning, port-file-write rollback (kernel-assigned port
   captured from inside the failing writer, ECONNREFUSED, second
-  `start()` succeeds), and Round 13 ANALYSIS_0007 null-address
-  symmetric teardown (uses the `createServerFn` injection seam to
-  swap `address` for `() => null`).
-- **Start/stop state machine regression suite** (Phase 14 Rounds
-  11/12/15). `kchatLocalApiServerSingleton.test.ts` pins seven race
+  `start()` succeeds), and null-address symmetric teardown.
+- **Start/stop state machine regression suite.**
+  `kchatLocalApiServerSingleton.test.ts` pins seven race
   scenarios: concurrent-starts coalesce, sequential cached fast
   path, stop-then-start cycle, stop-during-in-flight-start
-  (success path), stop-during-in-flight-start (rejection path),
-  start-during-in-flight-stop (parks on stopping promise), and
-  concurrent-stops resolve to one `server.close()`.
-- **Cold-start argv scanning** (Phase 14 Round 14). Two regression
-  cases in `kchatDesktopIntegration.test.ts`: cold-start argv with
-  `tessera://` URL → URL extracted via the existing
-  `extractUrlFromArgv()` helper, parked, dispatched on consumer
-  registration; cold-start argv without deeplink → no-op, empty
-  queue at consumer-registration time.
-- **KChat citation surface dark-mode contract.** Regression test in
-  `darkModeTokens.test.ts` pins that every KChat-specific CSS class
-  CitationPanel references has a rule in `components.css`, that
-  every rule uses only `var(--color-…)` token references (no bare
-  hex / rgb / hsl), and that every token referenced is in the
-  dark-mode-safe allow list.
+  (success and rejection paths), start-during-in-flight-stop
+  (parks on stopping promise), concurrent-stops resolve to one
+  `server.close()`.
+- **KChat citation dark-mode contract.** `darkModeTokens.test.ts`
+  pins that every KChat-specific CSS class CitationPanel
+  references has a rule in `components.css`, that every rule uses
+  only `var(--color-…)` token references (no bare hex / rgb /
+  hsl), and that every token referenced is in the dark-mode-safe
+  allow list.
+- **50+ new Vitest + Rust integration tests** across the workspace
+  reliability tranche: startup-perf guard, indexing / search
+  Criterion benches, memory peak RSS budget test, watcher
+  coalescing test, batch-IPC tests, WAL + integrity crash-recovery
+  test, artifact recovery sidecar tests, sidecar PID registry
+  tests, failed-export queue tests, connector backoff
+  classification tests, audit rotation test, DOCX golden + OOXML
+  schema tests, XLSX formula + named-range round-trip tests,
+  PDF Mermaid embedding test, Linux smoke-test exit-code gate,
+  Windows / macOS package-verifier tests, onboarding wizard +
+  empty-state + toast + source-health + keyboard-nav + version-
+  diff Vitest suites, CSP nonce assembly + no-unsafe-inline tests,
+  OAuth refresh race tests, secret zero-on-free tests,
+  sliding-window rate-limiter unit + HTTP integration tests.
 
 ---
 

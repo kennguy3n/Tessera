@@ -81,8 +81,8 @@ for connect/sync/disconnect.
 KChat is the exception to the OAuth shape because it doesn't model chat
 as "files" — see the [KChat integration](#kchat-integration) section
 below for its PAT-based auth, WebSocket-driven event pipe, post-level
-AEAD, and the optional Phase 14 `.kcz` extension that lets a running
-KChat Desktop talk to Tessera over a loopback HTTP API.
+AEAD, and the optional `.kcz` extension that lets a running KChat
+Desktop talk to Tessera over a loopback HTTP API.
 
 ### KChat integration
 
@@ -103,7 +103,7 @@ secret, no IPC channel.
 The standard `kchat:connect` flow takes a server URL + PAT, verifies
 the token against `/users/me`, and persists on success.
 
-**Optional cross-app integration via the `.kcz` extension (Phase 14):**
+**Optional cross-app integration via the `.kcz` extension:**
 
 If the user has installed Tessera's
 [`tessera-kchat`](extensions/tessera-kchat/) `.kcz` extension inside
@@ -281,7 +281,12 @@ with regression tests under `apps/desktop/electron/__tests__/`.
 
 | Control | What it does |
 |---|---|
+| **Per-app keychain ACL** | `safeStorage`-backed token writes go through a runtime policy gate that classifies the active backend into a trust tier (`enforced-by-os` for macOS Keychain w/ Code-Signing-pinned bundle ID, `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet, `none` for Linux `basic_text` fallback). The policy refuses to encrypt secrets under `basic_text` (XOR with a hardcoded key — *not* real encryption) by default; the Settings card surfaces the active tier. On macOS the `keychain-access-groups` entitlement pins the access group to Tessera's bundle ID, so other apps signed with a different identity can't read Tessera Keychain items. |
+| **Auto-updater signature verification** | Update artifacts are verified against a hardcoded `UPDATER_TRUST_ANCHORS` array of Ed25519 public keys before `electron-updater` is allowed to call `quitAndInstall`. Multi-anchor support lets a new pubkey ship alongside the old one for an overlap window during key rotation. A `release-tool/signUpdateArtifact.ts` companion script signs the release artifact server-side. |
 | **Password vault fallback** | When Electron's `safeStorage` cannot reach an OS keyring (headless Linux, certain CI runners), Tessera derives a 256-bit key from a user passphrase via **PBKDF2-SHA256 (600 000 iterations)** and wraps the SQLCipher DB key + OAuth tokens + API keys with **AES-256-GCM**. The vault is unlocked at startup by an ephemeral `BrowserWindow` (`data:text/html`, `sandbox: true`, single-purpose preload). |
+| **OAuth scope governance** | Granted scopes are inspected on every connector sync. If a provider's consent screen has been narrowed since the last grant, the renderer receives a precise list of missing scopes (and a re-auth CTA) instead of opaque 403s; meta-scopes like `offline_access` are filtered out of the required set, and a `SCOPELESS_PROVIDERS` allow-list (`notion`, …) silences the warning for providers whose tokens carry no scopes by design. |
+| **App-lock (PIN + biometric)** | Optional PIN — scrypt (N = 2^14) with a per-PIN salt, atomic file writes, vault-encrypted at rest, exponential backoff on failed attempts (30 s → 1 h cap) — and optional biometric unlock (macOS TouchID via the native module; Windows Hello via the WinRT `UserConsentVerifier`). The PIN's stored scrypt parameters are read back at verify time so a future parameter bump doesn't lock anyone out. Every app-lock IPC channel (`setPin`, `changePin`, `removePin`, `attemptUnlock`, `attemptBiometric`) shares a token-bucket rate limiter so a compromised renderer can't side-step throttling. |
+| **Telemetry — local-only, opt-in** | Telemetry is **off by default** and the sink never opens a socket. When on, only whitelisted counter / event keys are accepted; events are buffered in memory and flushed to a single on-disk JSONL file. Disabling truncates the file. There is no remote endpoint and no opt-out from an opt-in-only system. |
 | **CSP per-connector image-source allow-list** | Replaces the prior wildcard `https:` image source with an explicit allow-list keyed off the connected providers — only the CDN hosts that ship thumbnails for the user's enabled connectors are allowed. |
 | **IPC rate limiting** | Token-bucket rate limiter applied to expensive IPC channels (search, generate, indexing actions) so a compromised renderer cannot exhaust the main process. |
 | **Export-path containment** | Renderer-initiated file writes resolve against an allow-list before reaching disk; symlinks and `..` traversal are rejected at the IPC boundary. |
@@ -388,12 +393,12 @@ Tessera ships six real editor implementations — no stubs:
 
 | Editor | Description |
 |---|---|
-| **Document** | TipTap (ProseMirror) rich text with headings, lists, code blocks, links, outline navigation, Mermaid diagram block |
-| **Slides** | Ordered slide deck with thumbnails, content blocks, speaker notes, Marp Mode (Markdown + Shadow-DOM-isolated live preview), Diagram (Mermaid) block, Marp CLI–backed PPTX / HTML / PDF export |
-| **Sheet** | Spreadsheet grid with formulas (SUM, AVERAGE, COUNT, MIN, MAX), CSV import, XLSX export with native formulas |
-| **Base** | Database table with typed fields (text, number, date, select, checkbox, url), sorting, filtering, five views (Grid, Kanban, Calendar, Timeline, Gallery) over the same records |
-| **Infographic** | Drag-and-drop sections with icon + heading + body + stat blocks, color theme selector, vertical / horizontal / grid layouts, live HTML preview |
-| **Landing Page** | Hero / features / stats / testimonials / CTA editor with `IconPicker`, exports to standalone HTML or PDF |
+| **Document** | TipTap (ProseMirror) rich text — headings, lists, code blocks, links, images, tables, task lists, code-block syntax highlighting (`lowlight`, 30+ languages), text-align, highlight, underline, outline panel, slash-command menu, find / replace with case-sensitive and whole-word toggles, Mermaid diagram block. |
+| **Slides** | Ordered slide deck with five layouts (`blank`, `title`, `titleContent`, `twoColumn`, `imageCaption`), per-block reorder / type-change / delete, stable UUID block IDs, native HTML5 drag-and-drop sidebar reorder, per-slide and deck word count, deck-wide find panel, image uploads inlined through a shared 5 MiB cap, speaker notes, Marp Mode (Markdown + Shadow-DOM-isolated live preview), Diagram (Mermaid) block, Marp CLI–backed PPTX / HTML / PDF export. |
+| **Sheet** | Spreadsheet workbook with a hand-rolled formula engine — tokenizer → Pratt parser → tree-walking evaluator over a `DependencyGraph` (topological recompute), **64 functions** across math / conditional / logic / text / lookup / date / stats categories, cross-sheet references (`Sheet2!A1`), multi-sheet tabs, column / row resize, rectangular and multi-cell selection, copy / paste, freeze panes, auto-fill, persistent dependency cache, CSV import, XLSX export with native formulas. |
+| **Base** | Database table with **20 field types** — six baseline (`text`, `number`, `date`, `select`, `checkbox`, `url`), seven advanced (`multi_select`, `formula`, `linked_record`, `rollup`, `lookup`, `attachment`, `long_text`), seven simple (`email`, `phone`, `currency`, `percent`, `rating`, `duration`, `auto_number`) — sorting, per-type filters, bulk-select with shift-click range and bulk-delete, manage-fields dialog (reorder / rename / type-change with data migration / delete), CSV / JSON import-export (RFC 4180), five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records. |
+| **Infographic** | Drag-and-drop sections with icon + heading + body + stat blocks, color theme selector, vertical / horizontal / grid layouts, live HTML preview. |
+| **Landing Page** | Hero / features / stats / testimonials / CTA editor with `IconPicker`, exports to standalone HTML or PDF. |
 
 All editors use debounced auto-save (2s) to the Rust backend via IPC.
 
@@ -452,6 +457,7 @@ tessera/
 │   ├── scripts/             # Platform download scripts for llama-server
 │   └── models.json          # Model download manifest (URLs, checksums, sizes)
 ├── schemas/                 # JSON Schema for templates and artifacts
+├── extensions/              # KChat Desktop `.kcz` extensions (tessera-kchat)
 ├── packaging/               # electron-builder configs, platform installers
 ├── docs/                    # Additional documentation
 ├── .github/workflows/ci.yml # CI configuration (Ubuntu / macOS / Windows matrix)
@@ -461,7 +467,8 @@ tessera/
 ├── SECURITY.md
 ├── PROPOSAL.md
 ├── ARCHITECTURE.md
-└── CHANGELOG.md
+├── CHANGELOG.md
+└── RELEASING.md
 ```
 
 ---

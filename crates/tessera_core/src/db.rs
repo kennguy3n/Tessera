@@ -247,7 +247,7 @@ pub fn wal_checkpoint_truncate(conn: &SharedConnection) -> Result<(i64, i64, i64
 /// checkpoint forces the WAL to flush, then a second
 /// `integrity_check` runs against the now-quiet main file. If that
 /// still reports corruption, the failure is bubbled up so the
-/// bridge can surface it to the renderer (see Task 7 in `PHASES.md`).
+/// bridge can surface it to the renderer.
 ///
 /// Called once at bridge init time, before any store-level
 /// `init_schema` runs, so a corrupt DB is detected before the user's

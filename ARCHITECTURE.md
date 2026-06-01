@@ -255,7 +255,7 @@ require. Per-signal weights and the recency half-life are configurable
 through `HybridSearchConfig`; setting `vector_weight` to 0 collapses
 the pipeline to BM25 + recency.
 
-#### Embedding provider tiers (Phase 19)
+#### Embedding provider tiers
 
 The vector signal supports three interchangeable providers, all behind
 the same `EmbeddingProvider` trait. The Settings page exposes them as
@@ -536,8 +536,8 @@ tessera/
 │       │   │   ├── tasks.ts             # `tasks:*` handlers
 │       │   │   ├── automations.ts       # `automations:*` handlers
 │       │   │   ├── audit.ts             # `audit:*` handlers
-│       │   │   ├── vision.ts            # `vision:*` handlers (Phase 11 vision capability)
-│       │   │   ├── imagegen.ts          # `imagegen:*` handlers (Phase 11 image generation)
+│       │   │   ├── vision.ts            # `vision:*` handlers (VLM image / PDF / chart extraction)
+│       │   │   ├── imagegen.ts          # `imagegen:*` handlers (image-generation capability)
 │       │   │   ├── kchat.ts             # `kchat:*` + `sources:addKchatChannel` + `sources:backfillKchatChannel` handlers; LRU caches for name enrichment; backfill orchestrator + live counters for `kchat:backfillProgress`
 │       │   │   ├── dialog.ts            # `dialog:showSaveDialog`
 │       │   │   ├── context.ts           # shared context object passed into every handler
@@ -546,8 +546,8 @@ tessera/
 │       │   ├── kchat/                   # KChat (Mattermost v4) integration — see "KChat integration" section below
 │       │   │   ├── kchatAuth.ts             # `KchatAuthService`: PAT auth, vault wiring, WebSocket lifecycle, refresh handlers, symmetric teardown ordering (`authMode = "none"` before `client.shutdown()`)
 │       │   │   ├── kchatClient.ts           # REST client (channels / posts / files / users); deserialisation-boundary validation of every server-id field
-│       │   │   ├── kchatLocalApi.ts         # Phase 14: loopback HTTP API the `.kcz` extension running inside KChat Desktop talks to. Binds to `127.0.0.1` only; bearer-token auth (`crypto.randomBytes(32)` → base64url, timing-safe compare); Host-header SSRF guard; 64 KiB body cap; routes: `GET /api/status`, `GET /api/sources`, `POST /api/ingest-channel`, `POST /api/share-artifact`. Discovery via `{userData}/tessera-kchat-port.json` (mode 0600 via atomic rename). Heartbeat tracked in `requireBearer()` for Settings-card "KChat Desktop detected" affordance
-│       │   │   ├── kchatDeeplinkBridge.ts   # Phase 14: `tessera://` deeplink parser + pre-ready route parker. Routes: `tessera://source/<id>`, `tessera://artifact/<id>`, `tessera://ingest?channel=&team=`. Listens on `open-url` (macOS), `second-instance` (Win/Linux warm-start), and the single-instance-lock else branch's argv scan (Win/Linux cold-start) — URLs received before the renderer's consumer registers are parked FIFO and replayed once `whenReady` resolves
+│       │   │   ├── kchatLocalApi.ts         # Loopback HTTP API the `.kcz` extension running inside KChat Desktop talks to. Binds to `127.0.0.1` only; bearer-token auth (`crypto.randomBytes(32)` → base64url, timing-safe compare); Host-header SSRF guard; 64 KiB body cap; routes: `GET /api/status`, `GET /api/sources`, `POST /api/ingest-channel`, `POST /api/share-artifact`. Discovery via `{userData}/tessera-kchat-port.json` (mode 0600 via atomic rename). Heartbeat tracked in `requireBearer()` for Settings-card "KChat Desktop detected" affordance
+│       │   │   ├── kchatDeeplinkBridge.ts   # `tessera://` deeplink parser + pre-ready route parker. Routes: `tessera://source/<id>`, `tessera://artifact/<id>`, `tessera://ingest?channel=&team=`. Listens on `open-url` (macOS), `second-instance` (Win/Linux warm-start), and the single-instance-lock else branch's argv scan (Win/Linux cold-start) — URLs received before the renderer's consumer registers are parked FIFO and replayed once `whenReady` resolves
 │       │   │   ├── kchatEventForwarder.ts   # Bridges WebSocket events to bridge-side handlers (`file_added` targeted sync, `user_added/removed/member_updated` ACL projection, `channel_archived/deleted` cryptoshred)
 │       │   │   ├── kchatChannelSyncer.ts    # Channel-files sync + historical-backfill watermark loop with drain-on-quit
 │       │   │   ├── kchatNameCache.ts        # Bounded LRU resolving KChat user/channel ids → display names; touch-on-read, FIFO-eviction-at-bound; module-scoped singletons reset on `KchatAuthService.onStatusChange("none")`
@@ -591,7 +591,7 @@ tessera/
 ├── crates/                          # Rust core engine
 │   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage)
 │   ├── tessera_bridge/              # N-API bindings for Electron
-│   ├── tessera_sources/             # Source management, file indexing, `.gitignore`-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker, `embedding.rs` (EmbeddingProvider trait + HashTrickEmbedding), `hybrid.rs` (BM25 + vector + RRF + recency), `search.rs` (engine entry point), `progress.rs`, `kchat_crypto.rs` (per-source DEK + column-level AES-256-GCM for `kchat_posts`), `vision_extractor.rs` / `pdf_extractor.rs` (Phase 11 VLM-powered indexing), `fetch_kchat_thread_context` on `SourceStore` (parent-thread retrieval up to 3 levels)
+│   ├── tessera_sources/             # Source management, file indexing, `.gitignore`-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker, `embedding.rs` (EmbeddingProvider trait + HashTrickEmbedding), `onnx_embedder.rs` + `model_registry.rs` (ONNX Runtime sentence-transformer providers — `all-MiniLM-L6-v2` and `paraphrase-multilingual-MiniLM-L12-v2`, both 384-dim, SHA-256-verified, resumable downloads), `hybrid.rs` (BM25 + vector + RRF + recency), `vector_index.rs` (IVF-Flat ANN with k-means centroids), `search.rs` (engine entry point), `progress.rs`, `kchat_crypto.rs` (per-source DEK + column-level AES-256-GCM for `kchat_posts`), `vision_extractor.rs` / `pdf_extractor.rs` (VLM-powered image / PDF / chart extraction), `fetch_kchat_thread_context` on `SourceStore` (parent-thread retrieval up to 3 levels)
 │   ├── tessera_templates/           # Template parsing and validation (Create / Analyze / Plan / Approve categories)
 │   ├── tessera_artifacts/           # Artifact creation, version history, storage, tasks model
 │   ├── tessera_export/              # csv.rs, markdown.rs, html.rs, pdf.rs, typst.rs, docx.rs, xlsx.rs, mermaid.rs, evidence_pack.rs
@@ -599,7 +599,7 @@ tessera/
 │   ├── tessera_connectors/          # gdrive.rs, onedrive.rs, notion.rs, jira.rs, confluence.rs, figma.rs + registry/token/types
 │   ├── tessera_runtime/             # Local model runtime + optional `external_provider` HTTP adapter (OpenAI-compatible / Anthropic / custom)
 │   └── tessera_audit/               # Audit trail logging
-├── extensions/                      # Phase 14 — KChat Desktop extensions packaged as `.kcz` archives
+├── extensions/                      # KChat Desktop extensions packaged as `.kcz` archives
 │   └── tessera-kchat/               # `.kcz` extension that runs *inside* KChat Desktop and talks to Tessera over the loopback HTTP API
 │       ├── manifest.json            # Extension identity (`com.tessera.kchat-bridge`), declared procedures, contributed views, permissions
 │       ├── src/
@@ -669,7 +669,7 @@ the loopback API recently (90 s freshness window) so the Settings card
 can render a passive "KChat Desktop detected — enhanced integration
 active" affordance without polling the desktop app.
 
-### Cross-app architecture (Phase 14)
+### KChat Desktop cross-app architecture
 
 Cross-app surface is three independent channels — no shared token, no
 shared session, no external IPC.
@@ -773,7 +773,7 @@ code review.
 - **RRF scoring-axis consistency.** File search and post search both
   emit ranks through the same `1.0 / (rank + 1.0)` reciprocal-rank
   formula so the renderer can merge file and post hits without
-  type-aware re-scoring. *(Pinned by Phase 13 Theme 3 Task 15
+  type-aware re-scoring. *(Pinned by the
   `tessera_sources::manager::tests` hybrid-search battery.)*
 - **Export-path deny-list.** `~/.tessera/kchat-channels/` is on
   `getDenyExportRoots()` so a compromised renderer cannot overwrite
@@ -829,16 +829,16 @@ code review.
   before re-throwing. Without this rollback the listener would orphan
   for the lifetime of the process — `KchatLocalApiServer` exposes no
   external handle to it once the constructor's caller hasn't retained
-  a reference. *(Pinned by `kchatDesktopIntegration.test.ts`
-  BUG_0001 regression — captures the kernel-assigned port from inside
-  the failing writer, asserts `ECONNREFUSED`, confirms a second
-  `start()` succeeds.)*
+  a reference. *(Pinned by `kchatDesktopIntegration.test.ts` —
+  the rollback regression captures the kernel-assigned port from
+  inside the failing writer, asserts `ECONNREFUSED`, and confirms
+  a second `start()` succeeds.)*
 - **Symmetric teardown on null-address branch.** If `node:net` returns
   `address() === null` after a successful `listen()` (structurally
   unreachable in current Node, but defended in depth), the bound
   socket is closed before the throw, symmetric with the wrong-address
-  branch right below. *(Pinned by `kchatDesktopIntegration.test.ts`
-  ANALYSIS_0007 regression — uses the `createServerFn` injection
+  branch right below. *(Pinned by `kchatDesktopIntegration.test.ts` —
+  the null-address regression uses the `createServerFn` injection
   seam.)*
 - **Start / stop concurrency state machine.** A three-slot state
   machine in `appState.ts` (`kchatLocalApiServer` cached slot,
@@ -889,42 +889,52 @@ notes in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). A summary:
 | `kchat:backfillProgress` | Live counters during historical backfill |
 | `sources:addKchatChannel` / `sources:backfillKchatChannel` | Add a channel as a source + manual backfill trigger |
 
-### Phase 15 IPC channels (production quality & E2E reliability)
+### Production-quality IPC channels (batching, recovery, queues, health)
 
-Added in Phase 15 across the six PRs. Full validation + rate-limit
-notes live in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md).
+Full validation + rate-limit notes live in
+[`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md).
 
 | Channel | Purpose |
 |---|---|
-| `sources:batchReindex` | Re-index N sources in a single bridge call; replaces N round-trips with one, shares the IPC rate-limit budget (PR 1 / Task 6) |
-| `artifacts:batchExport` | Export N artifacts (same format) in a single bridge call with per-item success/error reporting (PR 1 / Task 6) |
-| `artifacts:checkRecovery` / `artifacts:discardRecovery` | Inspect / discard the `.tessera-recovery` JSON sidecar an editor leaves on crash mid-save so the user can recover unsaved state on next open (PR 2 / Task 8) |
-| `artifacts:failedExports` / `artifacts:retryExport` | Read the persistent failed-export queue + retry one entry; queue survives restart via `config.json` (PR 2 / Task 10) |
-| `audit:getArchives` | List rotated audit-log archives (`audit-archive-<ts>.jsonl.gz`) for the Settings page; rotation fires when the audit table exceeds 100 K rows (PR 2 / Task 12) |
-| `sources:healthReport` | Per-source last-sync time, sync status (healthy / warning / error), indexed chunk count, storage size estimate — drives the Settings → Source Health dashboard (PR 4 / Task 22) |
+| `sources:batchReindex` | Re-index N sources in a single bridge call; replaces N round-trips with one and shares the IPC rate-limit budget. |
+| `artifacts:batchExport` | Export N artifacts (same format) in a single bridge call with per-item success/error reporting. |
+| `artifacts:checkRecovery` / `artifacts:discardRecovery` | Inspect / discard the `.tessera-recovery` JSON sidecar an editor leaves on crash mid-save so the user can recover unsaved state on next open. |
+| `artifacts:failedExports` / `artifacts:retryExport` | Read the persistent failed-export queue + retry one entry; queue survives restart via `config.json`. |
+| `audit:getArchives` | List rotated audit-log archives (`audit-archive-<ts>.jsonl.gz`) for the Settings page; rotation fires when the audit table exceeds 100 K rows. |
+| `sources:healthReport` | Per-source last-sync time, sync status (healthy / warning / error), indexed chunk count, storage size estimate — drives the Settings → Source Health dashboard. |
+| `settings:downloadEmbeddingModel` / `settings:switchEmbeddingModel` / `settings:getEmbeddingModelStatus` / `settings:getEmbeddingDownloadProgress` | ONNX Runtime semantic-embedding model management — resumable SHA-256-verified downloads, atomic provider swap with `backfill_embeddings_tracked` kick-off, corpus non-ASCII ratio + currently active model id + per-model installed bit. Per-channel rate limiter (`downloadEmbeddingModel` 1 / 5 s, `switchEmbeddingModel` 1 / 1 s). |
+| `connectors:inspectScopes` | Granted-scope inspection: returns the per-provider `{ requested, granted, missing }` triple so the renderer can detect a narrowed consent screen *before* any provider API call is attempted, surface a precise re-auth CTA, and skip opaque 403 retries. |
+| `appLock:setPin` / `appLock:changePin` / `appLock:removePin` / `appLock:attemptUnlock` / `appLock:attemptBiometric` / `appLock:status` | App-lock IPC surface — scrypt-derived PIN (N = 2^14, per-PIN salt, atomic writes, vault-encrypted at rest, exponential backoff to 1 h cap), TouchID / Windows Hello dispatch. All six handlers share a token-bucket rate limiter (1 / 250 ms) so a compromised renderer can't side-step throttling by alternating channels. |
+| `telemetry:getEvents` / `telemetry:getPersistedEvents` / `telemetry:recordCounter` | Local-only telemetry sink (off by default, opt-in, never opens a socket). Whitelisted counter / event keys; in-memory buffer flushed to a single on-disk JSONL file; disabling truncates the file. |
 
-### Phase 15 new Electron modules
+### Production-quality Electron modules
 
 | File | Purpose |
 |---|---|
-| `electron/csp.ts` + `renderer/src/utils/cspNonce.ts` | Per-session 32-byte CSP nonce + React hook; nonce flows main → preload → renderer via `additionalArguments`. Removes `'unsafe-inline'` from `script-src` and `style-src-elem`. (PR 5 / Task 25) |
-| `electron/secureBuffer.ts` | `zeroBuffer()` / `zeroBuffers()` helpers for `finally`-block buffer zeroing of plaintext keys, tokens, and passphrases. Used by `passwordVault.decryptWithPasswordKey()` and `dbKey.generateDbKey()`. (PR 5 / Task 27) |
-| `electron/kchat/kchatRateLimiter.ts` | Sliding-window per-IP rate limiter (default 100 req / 60 s) on the loopback KChat API; emits 429 with `Retry-After` clamped to ≥ 1 s per RFC 7231. (PR 5 / Task 28) |
-| `electron/artifactRecovery.ts` | Editor recovery-sidecar journaling; pairs with `artifacts:checkRecovery`. (PR 2 / Task 8) |
-| `electron/sidecarPidRegistry.ts` (in `sidecar.ts` / `diffusionSidecar.ts`) | PID-file orphan-cleanup at startup + SIGTERM→5s grace→SIGKILL escalation on `will-quit`. (PR 2 / Task 9) |
-| `electron/failedExportQueue.ts` | Persistent queue for failed exports, retryable via `artifacts:retryExport`. (PR 2 / Task 10) |
-| `electron/connectorBackoff.ts` | Per-source backoff policy (base 2 s, max 5 min, jitter); distinguishes transient (timeout / 429 / 503) vs permanent (401 / 403 / 404) failures. (PR 2 / Task 11) |
+| `electron/csp.ts` + `renderer/src/utils/cspNonce.ts` | Per-session 32-byte CSP nonce + React hook; nonce flows main → preload → renderer via `additionalArguments`. Removes `'unsafe-inline'` from `script-src` and `style-src-elem`. |
+| `electron/secureBuffer.ts` | `zeroBuffer()` / `zeroBuffers()` helpers for `finally`-block buffer zeroing of plaintext keys, tokens, and passphrases. Used by `passwordVault.decryptWithPasswordKey()` and `dbKey.generateDbKey()`. |
+| `electron/kchat/kchatRateLimiter.ts` | Sliding-window per-IP rate limiter (default 100 req / 60 s) on the loopback KChat API; emits 429 with `Retry-After` clamped to ≥ 1 s per RFC 7231. |
+| `electron/artifactRecovery.ts` | Editor recovery-sidecar journaling; pairs with `artifacts:checkRecovery`. |
+| `electron/sidecarPidRegistry.ts` (in `sidecar.ts` / `diffusionSidecar.ts`) | PID-file orphan-cleanup at startup + SIGTERM→5s grace→SIGKILL escalation on `will-quit`. |
+| `electron/failedExportQueue.ts` | Persistent queue for failed exports, retryable via `artifacts:retryExport`. |
+| `electron/connectorBackoff.ts` | Per-source backoff policy (base 2 s, max 5 min, jitter); distinguishes transient (timeout / 429 / 503) vs permanent (401 / 403 / 404) failures. |
+| `electron/keychainAcl.ts` | Per-app keychain ACL policy: classifies the active `safeStorage` backend into a trust tier (`enforced-by-os` for macOS Keychain w/ Code-Signing-pinned bundle ID; `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet; `none` for Linux `basic_text` fallback). `assertSafeEncrypt({ enforce })` refuses to write secrets under `basic_text` (which is XOR with a hardcoded key, *not* real encryption); detects mid-session backend drift; logs and counters every boot via `recordCounter("keychain.backend.<name>")`. |
+| `electron/autoUpdater.ts` + `release-tool/signUpdateArtifact.ts` | Auto-updater Ed25519 signature verification — release-tool signs the artifact server-side; `autoUpdater.ts` verifies the signature against a hardcoded `UPDATER_TRUST_ANCHORS` array (multi-anchor for key rotation overlap) on `update-downloaded`, invalidates the cache on `download-progress`, re-checks on `updates:install` so a cache-poisoned artifact can't slip through. |
+| `electron/appLock.ts` + `electron/ipc/appLock.ts` | App-lock module: scrypt (N = 2^14, per-PIN salt, key length 64, `r=8`, `p=1`) PIN derivation with stored parameters read back at verify time (parameter-bump safe), atomic file writes, vault-encrypted at rest, exponential backoff (30 s → 1 h cap) on failed attempts, TouchID (macOS native) / Windows Hello (WinRT `UserConsentVerifier` via PowerShell) dispatch. The IPC surface enforces a 1 / 250 ms token-bucket rate limit shared across all six handlers. |
+| `electron/telemetrySink.ts` + `electron/ipc/telemetry.ts` | Local-only telemetry sink — off by default, opt-in, never opens a socket. Whitelisted counter / event keys; events buffered in memory; flushed every 60 s to a single on-disk JSONL file; capped at `TELEMETRY_BUFFER_MAX_EVENTS` on re-enqueue so retriable errors don't grow the buffer unboundedly; disabling truncates the file. |
+| `electron/ipc/connectors/oauthScope.ts` | OAuth scope-governance helpers: `parseScopeString()` (RFC 6749 § 3.3 space-delimited + Figma comma-delimited), `compareScopes()` (canonical set-diff), `assertScopesGranted()` (throws `MissingScopeError`, classified `permanent`), `OAUTH_META_SCOPES` (filters `offline_access` and similar from the required set), `SCOPELESS_PROVIDERS` (allow-list of providers whose tokens carry no scopes by design — e.g. Notion). |
 
-### Phase 15 new Rust modules
+### Production-quality Rust modules
 
 | Crate / file | Purpose |
 |---|---|
-| `crates/tessera_sources` benches (`indexing_bench.rs`, `search_bench.rs`) | Criterion benchmarks for indexing throughput at 100 small / 10 large / mixed corpora and hybrid search at 1K / 10K / 100K chunk corpus sizes. (PR 1 / Tasks 2-3) |
-| `crates/tessera_sources::watcher` coalescing | 500 ms watch-event window dedupes per-path rapid write+rename storms before triggering re-index. (PR 1 / Task 5) |
-| `crates/tessera_audit` rotation | 100 K-row rotation threshold writes a compressed `audit-archive-<ts>.jsonl.gz` and trims the live table. (PR 2 / Task 12) |
-| `crates/tessera_export` regression suites (`tests/docx_regression.rs`, inline `#[cfg(test)]` in `src/xlsx.rs`, `tests/pdf_mermaid.rs`) | Golden-file DOCX + OOXML schema validation, XLSX formula + named-range preservation, PDF Mermaid SVG embedding. (PR 3 / Tasks 13-15) |
-| `scripts/smoke-test-linux.sh` + `scripts/Dockerfile.smoke` | Linux `.deb`/AppImage Docker smoke harness (ubuntu:22.04 + `xvfb-run` + IPC probe). (PR 3 / Task 16) |
-| `scripts/verify-windows-package.ps1` / `scripts/verify-macos-package.sh` | Windows portable-`.zip` integrity + macOS universal-binary verification (`lipo -info` per slice). (PR 3 / Tasks 17-18) |
+| `crates/tessera_sources` benches (`indexing_bench.rs`, `search_bench.rs`) | Criterion benchmarks for indexing throughput at 100 small / 10 large / mixed corpora and hybrid search at 1K / 10K / 100K chunk corpus sizes. |
+| `crates/tessera_sources::watcher` coalescing | 500 ms watch-event window dedupes per-path rapid write+rename storms before triggering re-index. |
+| `crates/tessera_sources::vector_index` | IVF-Flat ANN index with k-means centroids (5 Lloyd iterations) over up to 50 K+ vectors; cache keyed by `(model_id, embedding_generation)` so an embedding write invalidates the build; `nprobe = ⌈√K⌉` for the recall floor; brute-force fallback for tiny corpora and tied-score regression test coverage of the `MinHeapEntry` inverted-`Ord` eviction tiebreaker. |
+| `crates/tessera_audit` rotation | 100 K-row rotation threshold writes a compressed `audit-archive-<ts>.jsonl.gz` and trims the live table. |
+| `crates/tessera_export` regression suites (`tests/docx_regression.rs`, inline `#[cfg(test)]` in `src/xlsx.rs`, `tests/pdf_mermaid.rs`) | Golden-file DOCX + OOXML schema validation, XLSX formula + named-range preservation, PDF Mermaid SVG embedding. |
+| `scripts/smoke-test-linux.sh` + `scripts/Dockerfile.smoke` | Linux `.deb`/AppImage Docker smoke harness (ubuntu:22.04 + `xvfb-run` + IPC probe). |
+| `scripts/verify-windows-package.ps1` / `scripts/verify-macos-package.sh` | Windows portable-`.zip` integrity + macOS universal-binary verification (`lipo -info` per slice). |
 
 ---
 

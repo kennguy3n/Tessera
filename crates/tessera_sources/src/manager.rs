@@ -4905,9 +4905,8 @@ mod tests {
     /// Full-lifecycle round-trip: ingest → search → cryptoshred →
     /// verify DEK gone → re-grant → re-ingest → search again.
     ///
-    /// This is the end-to-end test described in PROGRESS.md Task 14:
-    /// "KChat post ingest AEAD round-trip test (post → DEK →
-    /// ciphertext → decrypt → cryptoshred)". Existing tests cover
+    /// End-to-end KChat post ingest AEAD round-trip (post → DEK →
+    /// ciphertext → decrypt → cryptoshred). Existing tests cover
     /// individual stages (e.g. `ingest_kchat_post_seals_chunks_and_
     /// persists_dek` tests ingest + seal + open; `search_kchat_posts_
     /// excludes_revoked_sources` tests revoke-then-search). This test

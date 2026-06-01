@@ -208,9 +208,9 @@ the entire KChat UI when `kchat:isAvailable` returns `false`.
 | `sources:backfillKchatChannel`        | scalar-helper (KChat-id)                                  | ✓ — historical-walk over `kchat:posts` REST surface |
 | `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — uses the KChat token from the vault to fan-out channel-file downloads into the source vault |
 
-### Phase 14 trust model for the KChat-Desktop integration surface
+### Trust model for the KChat-Desktop integration surface
 
-Three new channels (`kchat:openInDesktop`,
+Three channels (`kchat:openInDesktop`,
 `kchat:openDesktopExtensions`, `kchat:desktopBridgeStatus`) plus the
 loopback HTTP API expose Tessera's `.kcz` extension integration with
 KChat Desktop. The salient policies:
