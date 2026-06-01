@@ -415,7 +415,7 @@ export default function SourceDetailPage() {
             </p>
           </Card>
         )}
-        {/* — KChat backfill progress card.
+        {/* KChat backfill progress card.
 
           Rendered ONLY for KChat-channel sources. The card has four
           discriminated states the poll surfaces via

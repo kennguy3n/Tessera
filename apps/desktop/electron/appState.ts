@@ -889,7 +889,7 @@ let kchatLocalApiServer: KchatLocalApiServer | null = null;
 // Pending-promise slot so concurrent `startKchatLocalApiServer()`
 // calls coalesce onto a single `server.start()` rather than racing
 // through the `kchatLocalApiServer === null` check and binding two
-// HTTP ports
+// HTTP ports.
 let kchatLocalApiServerPending: Promise<KchatLocalApiServer> | null = null;
 // Stopping-promise slot so a `startKchatLocalApiServer()` call that
 // arrives while a `stopKchatLocalApiServer()` is in flight waits for

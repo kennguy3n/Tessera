@@ -642,7 +642,7 @@ export function uploadTokenKey(slideId: string, blockId: string): string {
  * stale completions are dropped). Without this cleanup the Map grew
  * for the lifetime of the editor — a long session that added &
  * deleted many image blocks would let it accumulate dead entries
- * .
+ * indefinitely.
  *
  * The helper mutates `tokens` in place and returns `void`; callers
  * are React refs, not state, so mutation is the natural shape. Any
