@@ -963,7 +963,7 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
 });
 
 describe("buildBlock", () => {
-  // Harmonisation regression 
+  // Harmonisation regression:
   // `buildBlock`, `appendBlock`, and `replaceBlock` must all treat
   // empty-string id the same way (= "missing"), so the id-injection
   // policy is uniform from construction through mutation. Without

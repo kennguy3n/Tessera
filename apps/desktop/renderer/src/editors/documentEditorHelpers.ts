@@ -18,11 +18,11 @@
 // Re-exported here under the historical names so existing imports
 // (`import { fileToDataUrl, MAX_IMAGE_BYTES } from
 // "./documentEditorHelpers"`) keep working without a churn-y rename
-// across DocumentEditor.tsx and its tests. Devin Review PR #82
-// ANALYSIS_…_0001 / BUG_…_0001 flagged the duplicate implementation
-// and the missing size cap on the slide-editor copy; centralising
-// here fixes both in one place. Re-exports live at the file top
-// with the imports per CONTRIBUTING.md 
+// across DocumentEditor.tsx and its tests. An earlier audit flagged
+// the duplicate implementation and the missing size cap on the
+// slide-editor copy; centralising here fixes both in one place.
+// Re-exports live at the file top with the imports per
+// CONTRIBUTING.md.
 export {
   MAX_INLINE_IMAGE_BYTES as MAX_IMAGE_BYTES,
   fileToDataUrl,

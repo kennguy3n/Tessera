@@ -1209,14 +1209,14 @@ export function registerKchatHandlers(): void {
     // but we still guard against the impossible double-collision
     // by appending the running count if it ever recurs.
     //
-    // Convergent sync 
-    // we persist a manifest mapping `fi.id → finalName` after
-    // every sync so subsequent re-syncs are convergent rather
-    // than additive. The previous implementation re-downloaded
-    // (and overwrote) every file on every retry but never
-    // cleaned up files that had been removed server-side between
-    // syncs — a deleted file would remain on disk and continue
-    // to be indexed indefinitely. With the manifest we:
+    // Convergent sync: we persist a manifest mapping
+    // `fi.id → finalName` after every sync so subsequent re-syncs
+    // are convergent rather than additive. The previous
+    // implementation re-downloaded (and overwrote) every file on
+    // every retry but never cleaned up files that had been removed
+    // server-side between syncs — a deleted file would remain on
+    // disk and continue to be indexed indefinitely. With the
+    // manifest we:
     //   1. Skip downloads for `fi.id`s whose recorded local file
     //      still exists (KChat file content is immutable per
     //      object-id, so the bytes on disk are still valid).
@@ -1425,18 +1425,17 @@ export function registerKchatHandlers(): void {
     // reuse the existing row), so citations and evidence-pack
     // references survive.
     //
-    // Error consistency 
-    // the bridge call lives OUTSIDE the download/sync try/catch
-    // above (which catches network/disk errors and re-throws as
-    // `toIpcError`). Bridge errors are infrastructure-level
-    // (SQLite lock contention, corrupted database, native-addon
-    // panic) and don't contain the KChat token, but routing them
-    // through the same `toIpcError` wrapper keeps the renderer's
-    // error-handling surface uniform: every error coming out of
-    // `sources:addKchatChannel` lands as the same `Error` shape
-    // regardless of which phase failed. The scrub also defends
-    // against a future native-addon change that might surface a
-    // stack trace containing transient request URLs.
+    // Error consistency: the bridge call lives OUTSIDE the
+    // download/sync try/catch above (which catches network/disk
+    // errors and re-throws as `toIpcError`). Bridge errors are
+    // infrastructure-level (SQLite lock contention, corrupted
+    // database, native-addon panic) and don't contain the KChat
+    // token, but routing them through the same `toIpcError`
+    // wrapper keeps the renderer's error-handling surface uniform:
+    // every error coming out of `sources:addKchatChannel` lands as
+    // the same `Error` shape regardless of which phase failed. The
+    // scrub also defends against a future native-addon change that
+    // might surface a stack trace containing transient request URLs.
     try {
       const outcome = bridge.bridgeAddKchatChannel(cacheDir);
       if (outcome.newlyCreated) {

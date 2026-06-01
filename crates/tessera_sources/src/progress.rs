@@ -186,7 +186,7 @@ pub fn record_error(slot: &Arc<Mutex<ProgressSnapshot>>) {
 /// callers MUST reset to `Scanning` after the VLM pass completes,
 /// otherwise the UI will keep showing "Describing images" through
 /// the rest of the indexing pass. See `indexer.rs:index_file` for
-/// the canonical reset pattern 
+/// the canonical reset pattern.
 pub fn record_phase(slot: &Arc<Mutex<ProgressSnapshot>>, phase: IndexPhase) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.phase = phase;

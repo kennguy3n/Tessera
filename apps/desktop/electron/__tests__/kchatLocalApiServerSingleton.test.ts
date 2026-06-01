@@ -367,14 +367,12 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
     },
   );
 
-  // regression #2:
-  // stop-during-in-flight-start where the start REJECTS must
-  // not throw out of `stopKchatLocalApiServer`. The IIFE's
-  // failure path rollback in
-  // `KchatLocalApiServer.start()`, is responsible for
-  // tearing down its own socket; `stop()` simply needs to
-  // swallow the rejection, observe a null server slot, and
-  // return cleanly.
+  // Regression: stop-during-in-flight-start where the start
+  // REJECTS must not throw out of `stopKchatLocalApiServer`.
+  // The IIFE's rollback path inside
+  // `KchatLocalApiServer.start()` is responsible for tearing
+  // down its own socket; `stop()` simply needs to swallow the
+  // rejection, observe a null server slot, and return cleanly.
   it(
     "stop-during-in-flight-start where start rejects swallows the rejection and returns cleanly",
     async () => {

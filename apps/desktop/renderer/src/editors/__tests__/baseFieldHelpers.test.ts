@@ -715,7 +715,7 @@ describe("matchesFilter — per-type filtering", () => {
   });
 
   // ────────────────────────────────────────────────────────────────
-  // Float-safe equality 
+  // Float-safe equality
   // ────────────────────────────────────────────────────────────────
   it("percent `=N` matches non-representable fractions like 33.3%", () => {
     // The stored value is the literal fraction the user can type

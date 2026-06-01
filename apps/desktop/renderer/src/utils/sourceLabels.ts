@@ -43,11 +43,11 @@ import type { SourceInfo } from "../types/ipc";
  *
  * Splits on BOTH `/` and `\` so the helper works on Windows where
  * `path.join(...)` in the main process produces backslash-separated
- * paths like `C:\Users\user\.tessera\kchat-channels\<id>`
- * Review on 869295e,. A POSIX-only split would yield a
- * single segment containing the full Windows path string, which
- * then fails the IPC's `assertKchatId` regex and the renderer would
- * silently never render a progress card on Windows.
+ * paths like `C:\Users\user\.tessera\kchat-channels\<id>`. A
+ * POSIX-only split would yield a single segment containing the
+ * full Windows path string, which then fails the IPC's
+ * `assertKchatId` regex and the renderer would silently never
+ * render a progress card on Windows.
  *
  * We intentionally do NOT re-validate the 26-char object-id shape
  * here. The IPC handler at `kchat:backfillProgress` re-validates
