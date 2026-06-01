@@ -1,7 +1,7 @@
 /**
  * `tessera://` deeplink protocol handler.
  *
- * Phase 14 Task 3. Tessera registers itself as the default handler
+ * Tessera registers itself as the default handler
  * for the `tessera://` URL scheme so KChat Desktop (and any other
  * cooperating app) can hand the user back to a specific Tessera
  * surface without round-tripping through the OS shell. The three

@@ -3,7 +3,7 @@
  *
  * Read-only API over the `tessera_audit` SQLite store. The
  * renderer renders a "recent activity" list on Settings and (per
- * Phase 11 Task 6) a filtered KChat-events list, both of which
+ *) a filtered KChat-events list, both of which
  * read through `audit:listRecent`. Append-side writes still come
  * exclusively from the existing `bridgeLog*` pass-throughs in
  * `appState.ts` — there is no `audit:write` channel by design, so
@@ -86,7 +86,7 @@ export function registerAuditHandlers(): void {
   );
 
   // ---------------------------------------------------------------------
-  // Phase 15 Task 12: audit log rotation.
+  // audit log rotation.
   //
   // `audit:getArchives` is the read API the Settings page calls to
   // list every `audit-archive-*.jsonl.gz` file in the

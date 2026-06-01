@@ -46,7 +46,7 @@ vi.mock("electron", () => ({
   },
   // `shell.openExternal` is the OS-deeplink surface used by the
   // `kchat:openInDesktop` + `kchat:openDesktopExtensions` handlers
-  // (Phase 14 Task 6). The handlers wrap it in try/catch and
+  //. The handlers wrap it in try/catch and
   // resolve `{ opened: true, url }` on success, so a no-op stub
   // here is sufficient to exercise the registration surface; the
   // happy-path side-effect (the OS opening the deeplink in KChat
@@ -126,7 +126,7 @@ const bridgeMock = {
     indexed: false,
     sourceId: "",
   })),
-  // Block B Task 3 (Phase 11): the connect/disconnect IPC
+  // the connect/disconnect IPC
   // handlers call these on the substrate so the ACL projection
   // knows which user id to compare against on the next
   // membership refresh. The full ACL surface
@@ -139,7 +139,7 @@ const bridgeMock = {
     outcome: "granted",
     memberCount: 0,
     principalPresent: true,
-    // Block B Task 4 (Phase 11): the refresh outcome carries
+    // the refresh outcome carries
     // the substrate's cryptoshred counters on the revoke path;
     // non-revoke outcomes always emit zero.
     chunksDropped: 0,
@@ -149,7 +149,7 @@ const bridgeMock = {
     vacuumSucceeded: true,
     vacuumError: undefined,
   })),
-  // Block B Task 4 (Phase 11): the revoke outcome carries the
+  // the revoke outcome carries the
   // substrate's cryptoshred counters. The IPC suite does not
   // exercise the revoke path itself (that's a forwarder
   // concern), so the default zero counts here are sufficient.
@@ -162,11 +162,11 @@ const bridgeMock = {
   })),
   bridgeLogKchatAclRefreshed: vi.fn(),
   bridgeLogKchatChannelAccessRevoked: vi.fn(),
-  // Block B Task 4 (Phase 11): cryptoshred audit logger;
+  // cryptoshred audit logger;
   // the IPC layer does not invoke it directly (the forwarder
   // does), but the bridge interface requires it to be present.
   bridgeLogKchatSourceCryptoshredded: vi.fn(),
-  // Block C Task 4 (Phase 13): historical-backfill bridge
+  // historical-backfill bridge
   // surface. The IPC suite exercises the orchestrator via
   // `sources:backfillKchatChannel`; defaults below produce a
   // clean fresh-walk-with-end-of-history result (no resume
@@ -194,10 +194,10 @@ const bridgeMock = {
   bridgeLogKchatBackfillPageIngested: vi.fn(),
   bridgeLogKchatBackfillCompleted: vi.fn(),
   bridgeLogKchatBackfillAborted: vi.fn(),
-  // Block D Task 1 (Phase 14): retrieval bridge mocks.
+  // retrieval bridge mocks.
   bridgeSearchKchatPosts: vi.fn(() => [] as Array<unknown>),
   bridgeLogKchatPostSearchExecuted: vi.fn(),
-  // Phase 13 Theme 2 Task 13: thread-context retrieval mock.
+  // thread-context retrieval mock.
   bridgeFetchKchatThreadContext: vi.fn(() => [] as Array<unknown>),
 };
 
@@ -212,10 +212,10 @@ interface StubClient {
   listChannelFiles: ReturnType<typeof vi.fn>;
   uploadFile: ReturnType<typeof vi.fn>;
   downloadFile: ReturnType<typeof vi.fn>;
-  // Block C Task 4 (Phase 13): the historical-backfill
+  // the historical-backfill
   // orchestrator drives this REST method page-by-page.
   getPostsForChannel: ReturnType<typeof vi.fn>;
-  // Phase 13 Theme 2 Task 9: name-enrichment helpers wired into
+  // name-enrichment helpers wired into
   // `kchat:searchPosts` to render `@username` + `#channel` in
   // citation rows. Default: reject — tests that exercise the
   // enrichment path set explicit implementations; other tests
@@ -241,7 +241,7 @@ const clientMock: StubClient = {
 const serviceMock = {
   getClient: () => clientMock,
   getState: vi.fn(),
-  // Phase 13 Theme 2 Task 9: the IPC layer subscribes to status
+  // the IPC layer subscribes to status
   // transitions to clear the name caches on disconnect. Tests
   // don't drive this subscriber, so we return a no-op
   // unsubscribe so the registration path completes cleanly.
@@ -253,15 +253,15 @@ const serviceMock = {
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getKchatAuthService: () => serviceMock,
-  // Block B Task 4 (Phase 11) second-pass Devin Review
-  // ANALYSIS_0002: `registerKchatHandlers` populates this slot
+  // Block B Task 4 second-pass Devin Review
+  //: `registerKchatHandlers` populates this slot
   // with the auto-resync closure that powers the forwarder's
   // `outcome=regranted` re-sync hook. The IPC test suite
   // doesn't exercise the forwarder side of the contract, so we
   // accept the registration into a no-op stub — the test still
   // verifies the IPC handlers themselves register correctly.
   setKchatChannelResyncImpl: vi.fn(),
-  // Block C Task 4 (Phase 13): the backfill orchestrator slot
+  // the backfill orchestrator slot
   // installed by `registerKchatHandlers`. Same pattern as the
   // resync slot above — the IPC handler is exercised directly
   // by the tests (via `sources:backfillKchatChannel`), so we
@@ -327,7 +327,7 @@ beforeEach(() => {
   serviceMock.getState.mockReset();
   serviceMock.connect.mockReset();
   serviceMock.disconnect.mockReset();
-  // ANALYSIS_0003 (Devin Review pass 4 on d0731ec): the
+  // (Devin Review pass 4 on d0731ec): the
   // `runningBackfillCounters` / `inFlightBackfillKchatChannel`
   // maps are scoped inside the `registerKchatHandlers` closure
   // and reset automatically on every `registerKchatHandlers()`
@@ -349,14 +349,14 @@ beforeEach(() => {
 });
 
 describe("kchat IPC registration", () => {
-  // Devin Review pass 2 on f686e5c (ANALYSIS_0004): the master list
+  // Devin Review pass 2 on f686e5c: the master list
   // is the canonical registration contract — any new `kchat:*` /
   // `sources:*` channel added to `registerKchatHandlers` must be
   // listed here. The dedicated per-channel tests further down still
   // exercise behaviour, but the master list is what catches a future
   // refactor that accidentally drops a registration entirely.
   //
-  // Phase 14 replaces the Phase 13 extension-bridge channels
+  // replaces the legacy extension-bridge channels
   // (`kchat:extensionStatus`, `kchat:extensionConnect`,
   // `kchat:extensionDisconnect`) with the three deeplink / local-
   // API affordances the Settings card + sidebar invoke:
@@ -502,7 +502,7 @@ describe("kchat:connect", () => {
       "https://kchat.example.com",
       "user1234567890abcdefgh",
     );
-    // Block B Task 3 (Phase 11): the substrate must learn whose
+    // the substrate must learn whose
     // membership matters for ACL projection on the next refresh.
     expect(bridgeMock.bridgeSetKchatPrincipal).toHaveBeenCalledWith(
       "user1234567890abcdefgh",
@@ -519,7 +519,7 @@ describe("kchat:connect", () => {
   });
 });
 
-// Eighth-pass Devin Review ANALYSIS_0006: SSRF guard on kchat:connect.
+// Eighth-pass: SSRF guard on kchat:connect.
 // The renderer-supplied serverUrl must not point at private,
 // loopback, link-local, or CGNAT address space. If the user pastes
 // (or the renderer is tricked into supplying) a URL like
@@ -627,7 +627,7 @@ describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
   });
 });
 
-// Phase 14-followup: the dev-opt-out branch of `enforceKchatServerUrl`
+// followup: the dev-opt-out branch of `enforceKchatServerUrl`
 // is now tested directly with an injected `allowInternal` instead of
 // via `process.env` mutation through the `kchat:connect` IPC handler.
 // Direct tests are higher-leverage because:
@@ -786,7 +786,7 @@ describe("SSRF guard dev-opt-out (direct injection)", () => {
   });
 });
 
-// Ninth-pass Devin Review BUG_0001: the IPv6 ULA / link-local
+// Ninth-pass: the IPv6 ULA / link-local
 // prefix checks (`fc`/`fd`/`fe80:`) must NOT misfire on regular DNS
 // hostnames that happen to begin with the same two-letter prefix.
 // Real-world examples flagged by the bot: `fcc.example.com`,
@@ -831,7 +831,7 @@ describe("kchat:connect — IPv6 ULA prefix check does not false-positive on DNS
   }
 });
 
-// Ninth-pass Devin Review ANALYSIS_0002: the SSRF guard's DNS-
+// Ninth-pass: the SSRF guard's DNS-
 // based check must NOT silently pass when the lookup throws a
 // non-ENOTFOUND error. A malicious or slow DNS resolver could time
 // out our pre-flight lookup but still hand `fetch` a private IP on
@@ -908,7 +908,7 @@ describe("kchat:connect — DNS error fail-closed posture (ninth-pass invariant)
   });
 });
 
-// Eleventh-pass Devin Review ANALYSIS_0002: the SSRF guard's literal-
+// Eleventh-pass: the SSRF guard's literal-
 // IP check must cover the non-dotted-decimal IPv4 forms that
 // `getaddrinfo` accepts (and resolves to `127.0.0.1` etc) but a
 // naive dotted-quad regex misses. Without coverage at the literal
@@ -978,7 +978,7 @@ describe("kchat:connect — SSRF guard catches non-dotted-decimal IPv4 forms (el
   });
 });
 
-// Twelfth-pass Devin Review ANALYSIS_0002: IPv4-mapped IPv6 has two
+// Twelfth-pass: IPv4-mapped IPv6 has two
 // textual forms — `::ffff:<dotted-decimal>` (the legacy / human form
 // `inet_pton` emits) AND `::ffff:<hi-hextet>:<lo-hextet>` (the
 // canonical compact-hex form produced by some browsers and resolvers
@@ -1054,7 +1054,7 @@ describe("kchat:disconnect", () => {
     expect(bridgeMock.bridgeLogKchatDisconnected).toHaveBeenCalledWith(
       "user1234567890abcdefgh",
     );
-    // Block B Task 3 (Phase 11): clearing the principal prevents
+    // clearing the principal prevents
     // a stale id from being compared against future membership
     // refreshes after the user has disconnected.
     expect(bridgeMock.bridgeClearKchatPrincipal).toHaveBeenCalledTimes(1);
@@ -1064,7 +1064,7 @@ describe("kchat:disconnect", () => {
     serviceMock.disconnect.mockReturnValue(null);
     await handler("kchat:disconnect")(EVENT);
     expect(bridgeMock.bridgeLogKchatDisconnected).not.toHaveBeenCalled();
-    // Block B Task 3 (Phase 11): when there was no connection
+    // when there was no connection
     // to drop, the principal was never set in this session, so
     // the handler skips the bridge-clear too. This mirrors the
     // audit-row gate on the same branch — both side-effects are
@@ -1281,7 +1281,7 @@ describe("kchat:shareArtifact", () => {
     expect(call[4]).toBe(false); // includeCitations forwarded
   });
 
-  // Sixth-pass Devin Review (ANALYSIS_0007): pin the
+  // Sixth-pass Devin Review: pin the
   // audit-to-channel consistency invariant under partial failure.
   // If the primary export uploads successfully but the evidence
   // pack upload fails afterwards, the audit log MUST still record
@@ -1831,7 +1831,7 @@ describe("sources:addKchatChannel — filename collision dedupe", () => {
 });
 
 describe("sources:addKchatChannel — convergent sync via download manifest", () => {
-  // Seventh-pass Devin Review ANALYSIS_0003.
+  // Seventh-pass.
   //
   // The handler writes a sidecar manifest (`<cacheDir>.manifest.json`)
   // recording every `fi.id → on-disk filename` it has successfully
@@ -2210,15 +2210,15 @@ describe("sources:addKchatChannel — convergent sync via download manifest", ()
   });
 });
 
-// Eighth-pass Devin Review BUG_0001 + ANALYSIS_0002 regression suite.
-// BUG_0001: sources:addKchatChannel previously created a fresh source
+// Eighth-pass + regression suite.
+//: sources:addKchatChannel previously created a fresh source
 // row with a new UUID on every re-sync because `bridgeAddKchatChannel`
 // always inserted. The Rust side is now idempotent on `cache_dir`
 // (returns `newlyCreated: false` for re-syncs), and the handler must
 // (a) reuse the returned source id and (b) skip the
 // `KchatChannelLinked` audit on re-sync.
 //
-// ANALYSIS_0002: `seenNames` previously seeded from the previous
+//: `seenNames` previously seeded from the previous
 // manifest, which reserved names of files that had been deleted
 // server-side between syncs. The seeding now happens lazily — only
 // when a file is *kept* — so a deletion + same-name re-upload no
@@ -2456,7 +2456,7 @@ describe("sources:addKchatChannel — seenNames eighth-pass invariant", () => {
 });
 
 describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pass invariant)", () => {
-  // Tenth-pass Devin Review ANALYSIS_0006.
+  // Tenth-pass.
   //
   // Two concurrent `sources:addKchatChannel` invocations for the SAME
   // channelId must collapse into a single piece of work. If the
@@ -2627,7 +2627,7 @@ describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pas
   });
 });
 
-// ─── Block C Task 4 (Phase 13) — `sources:backfillKchatChannel` ──────
+// ─── Block C Task 4 — `sources:backfillKchatChannel` ──────
 //
 // The orchestrator walks `getPostsForChannel` page-by-page from
 // the persisted cursor (or from the newest post on a fresh walk)
@@ -3051,7 +3051,7 @@ describe("sources:backfillKchatChannel — orchestrator", () => {
 });
 
 // =====================================================================
-// Block D Task 1 (Phase 14) — kchat:searchPosts retrieval IPC
+// Block D Task 1 — kchat:searchPosts retrieval IPC
 // ---------------------------------------------------------------------
 // Validates the renderer-facing post-body retrieval path:
 //
@@ -3249,7 +3249,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   });
 
   // -------------------------------------------------------------
-  // Phase 13 Theme 2 Task 9: KChat name-enrichment tests.
+  // KChat name-enrichment tests.
   //
   // These tests use VALID KChat object-id format (26 lowercase
   // alphanumeric chars) so the per-id `assertCallerObjectId`
@@ -3265,7 +3265,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   const VALID_CHANNEL_ID = "c".repeat(26);
   const VALID_CHANNEL_ID_2 = "d".repeat(26);
 
-  it("enriches hits with sender username + channel display name via bulk lookup (Phase 13 Theme 2 Task 9)", async () => {
+  it("enriches hits with sender username + channel display name via bulk lookup", async () => {
     // Lazy import: the reset helper lives in the IPC module
     // alongside the cache itself, exported only for tests so we
     // start from a known-empty state regardless of test order.
@@ -3313,7 +3313,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).toHaveBeenCalledWith(VALID_CHANNEL_ID);
   });
 
-  it("deduplicates lookups across multiple hits referencing the same sender/channel (Phase 13 Theme 2 Task 9)", async () => {
+  it("deduplicates lookups across multiple hits referencing the same sender/channel", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3377,7 +3377,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).toHaveBeenCalledWith(VALID_CHANNEL_ID);
   });
 
-  it("caches names across calls so a repeated search does NOT re-hit the bulk endpoints (Phase 13 Theme 2 Task 9)", async () => {
+  it("caches names across calls so a repeated search does NOT re-hit the bulk endpoints", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3411,7 +3411,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves enriched fields null when bulk lookup throws (best-effort posture) (Phase 13 Theme 2 Task 9)", async () => {
+  it("leaves enriched fields null when bulk lookup throws (best-effort posture)", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3450,7 +3450,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(out[0].channelId).toBe(VALID_CHANNEL_ID);
   });
 
-  it("does not call the bulk endpoints when there are zero hits (Phase 13 Theme 2 Task 9)", async () => {
+  it("does not call the bulk endpoints when there are zero hits", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3471,7 +3471,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).not.toHaveBeenCalled();
   });
 
-  it("does not call the bulk endpoints when the user is disconnected (Phase 13 Theme 2 Task 9)", async () => {
+  it("does not call the bulk endpoints when the user is disconnected", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3501,7 +3501,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).not.toHaveBeenCalled();
   });
 
-  it("recovers gracefully when only one of the two lookups fails (Phase 13 Theme 2 Task 9)", async () => {
+  it("recovers gracefully when only one of the two lookups fails", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3535,7 +3535,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(out[0].channelDisplayName).toBeNull();
   });
 
-  it("partial-result resilience: an unresolved user id leaves only that hit's senderUsername null (Phase 13 Theme 2 Task 9)", async () => {
+  it("partial-result resilience: an unresolved user id leaves only that hit's senderUsername null", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3583,7 +3583,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(out[1].channelDisplayName).toBe("Engineering");
   });
 
-  it("uses one parallel batch of getChannel calls across multiple channels (Phase 13 Theme 2 Task 9)", async () => {
+  it("uses one parallel batch of getChannel calls across multiple channels", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
 
@@ -3629,11 +3629,11 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   });
 
   // -------------------------------------------------------------
-  // Phase 13 Theme 2 Task 9 — Devin Review pass 1 (fafc5f6)
-  // ANALYSIS_0001 / 0004 / 0005 regression tests.
+  // Devin Review pass 1 (fafc5f6)
+  // / 0004 / 0005 regression tests.
   // -------------------------------------------------------------
 
-  it("ANALYSIS_0001: audit latencyMs measures only the bridge call, NOT the enrichment network time (Phase 13 Theme 2 Task 9)", async () => {
+  it(": audit latencyMs measures only the bridge call, NOT the enrichment network time", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3696,7 +3696,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(latencyMs).toBeLessThan(25);
   });
 
-  it("ANALYSIS_0004: empty-string display_name / username is NOT cached (defence-in-depth against protocol drift) (Phase 13 Theme 2 Task 9)", async () => {
+  it(": empty-string display_name / username is NOT cached (defence-in-depth against protocol drift)", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3748,7 +3748,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
   });
 
-  it("ANALYSIS_0005: onStatusChange subscriber is registered exactly once across re-mounts (idempotency guard) (Phase 13 Theme 2 Task 9)", async () => {
+  it(": onStatusChange subscriber is registered exactly once across re-mounts (idempotency guard)", async () => {
     const { _resetKchatNameCachesForTest, registerKchatHandlers } =
       await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
@@ -3768,13 +3768,13 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   });
 
   // -------------------------------------------------------------
-  // Phase 13 Theme 2 Task 9 — Devin Review pass 2 (bef2fa0)
-  // ANALYSIS_0001 (parallel fetches) / 0002 (malformed-id filter)
+  // Devin Review pass 2 (bef2fa0)
+  // (parallel fetches) / 0002 (malformed-id filter)
   // / 0003 (connected-only enrichment) / 0005 (unsubscribe handle)
   // regression tests.
   // -------------------------------------------------------------
 
-  it("pass2-ANALYSIS_0001: user + channel enrichment lookups run concurrently, not sequentially (Phase 13 Theme 2 Task 9)", async () => {
+  it("pass2-: user + channel enrichment lookups run concurrently, not sequentially", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3839,7 +3839,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(elapsedMs).toBeLessThan(130);
   });
 
-  it("pass2-ANALYSIS_0002: malformed senderUserId / channelId is filtered out of bulk lookups (does not suppress other hits) (Phase 13 Theme 2 Task 9)", async () => {
+  it("pass2-: malformed senderUserId / channelId is filtered out of bulk lookups (does not suppress other hits)", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3901,7 +3901,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getUsersByIds).toHaveBeenCalledWith([VALID_USER_ID]);
   });
 
-  it("pass2-ANALYSIS_0003: enrichment skipped during 'connecting' state (only runs when fully 'connected') (Phase 13 Theme 2 Task 9)", async () => {
+  it("pass2-: enrichment skipped during 'connecting' state (only runs when fully 'connected')", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3943,7 +3943,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).not.toHaveBeenCalled();
   });
 
-  it("pass2-ANALYSIS_0005: _resetKchatNameCachesForTest calls the onStatusChange unsubscribe handle (Phase 13 Theme 2 Task 9)", async () => {
+  it("pass2-: _resetKchatNameCachesForTest calls the onStatusChange unsubscribe handle", async () => {
     const { _resetKchatNameCachesForTest, registerKchatHandlers } =
       await import("../ipc/kchat");
 
@@ -3972,7 +3972,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(2);
   });
 
-  it("pass3-ANALYSIS_0001: channelTask is fault-isolated symmetrically with userTask (Phase 13 Theme 2 Task 9)", async () => {
+  it("pass3-: channelTask is fault-isolated symmetrically with userTask", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -4048,7 +4048,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
 });
 
 // =====================================================================
-// Phase 13 Task 10 — kchat:backfillProgress (progress projection IPC)
+// kchat:backfillProgress (progress projection IPC)
 // ---------------------------------------------------------------------
 // The handler is a pure read of two pieces of state:
 //
@@ -4213,8 +4213,8 @@ describe("kchat:backfillProgress — progress projection IPC", () => {
     ).rejects.toThrow(/Rate limit/i);
   });
 
-  it("surfaces live `postsIngested` and `oldestFetched` while a walk is in flight (ANALYSIS_0001)", async () => {
-    // Devin Review on 869295e (ANALYSIS_0001): the handler used to
+  it("surfaces live `postsIngested` and `oldestFetched` while a walk is in flight", async () => {
+    // Devin Review on 869295e: the handler used to
     // hard-code `postsIngested: 0` and `oldestFetched: null` for the
     // `active` discriminator because the comment claimed the
     // substrate didn't carry a running counter. The orchestrator
@@ -4361,7 +4361,7 @@ describe("kchat:backfillProgress — progress projection IPC", () => {
 });
 
 // =====================================================================
-// Phase 13 Theme 2 Task 11 — `kchat:listChannelFiles` uploader
+// `kchat:listChannelFiles` uploader
 // enrichment via the shared `KCHAT_USERNAME_CACHE` /
 // `getUsersByIds()` path the citation enrichment uses. The IPC
 // handler:
@@ -4381,7 +4381,7 @@ describe("kchat:backfillProgress — progress projection IPC", () => {
 // `assertCallerObjectId` / `isKchatObjectId` defence-in-depth
 // branches don't suppress the enrichment.
 // =====================================================================
-describe("kchat:listChannelFiles — uploader enrichment (Phase 13 Theme 2 Task 11)", () => {
+describe("kchat:listChannelFiles — uploader enrichment", () => {
   // Reuse the 26-char object-id constants from the post-search
   // suite by re-declaring them here. We intentionally do NOT
   // import or share — the two suites' fixtures must be able to
@@ -4393,7 +4393,7 @@ describe("kchat:listChannelFiles — uploader enrichment (Phase 13 Theme 2 Task 
   beforeEach(async () => {
     // Reset rate limiter + the module-scoped name caches so the
     // first test under this describe runs against a fresh state
-    // — matching the ANALYSIS_0003 reset shape installed in the
+    // — matching the reset shape installed in the
     // top-level `beforeEach`. Redundant with the top-level reset
     // but documents the invariant explicitly at the suite level.
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
@@ -4658,9 +4658,9 @@ describe("kchat:listChannelFiles — uploader enrichment (Phase 13 Theme 2 Task 
 });
 
 // ------------------------------------------------------------------
-// kchat:fetchThreadContext — Phase 13 Theme 2 Task 13
+// kchat:fetchThreadContext
 // ------------------------------------------------------------------
-describe("kchat:fetchThreadContext (Phase 13 Theme 2 Task 13)", () => {
+describe("kchat:fetchThreadContext", () => {
   // Valid Tessera source UUID shape (assertId allows alphanumerics +
   // _ - : . up to 128 chars).
   const VALID_SOURCE_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";

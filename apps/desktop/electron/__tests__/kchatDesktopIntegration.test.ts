@@ -1,5 +1,5 @@
 /**
- * Phase 14 Task 8 — KChat Desktop integration test suite.
+ * KChat Desktop integration test suite.
  *
  * Exercises the cross-cutting surface that ties the localhost
  * HTTP API (`kchatLocalApi.ts`) to the `tessera://` deeplink
@@ -214,7 +214,7 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
     ).toThrow(/at least 32 characters/);
   });
 
-  // Phase 14 Round 8 Devin Review BUG_0001: when the port-file
+  // when the port-file
   // write throws after the HTTP server has already been bound,
   // `start()` MUST close the bound socket and roll back its
   // internal state — otherwise the leaked server holds an
@@ -297,14 +297,14 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  // Phase 14 Round 13 Devin Review ANALYSIS_0007: when
+  // when
   // `server.address()` returns `null` or a string after a
   // successful `listen()` callback (practically unreachable in
   // production but a real edge case in `node:net`'s typedef),
   // `start()` MUST close the bound socket before throwing — same
   // teardown the wrong-address branch right below already performs.
   // Without this, the throw orphans the listening socket for the
-  // process lifetime, exactly the failure mode Round 8's BUG_0001
+  // process lifetime, exactly the failure mode's
   // rollback set out to prevent.
   //
   // The test injects a `createServerFn` wrapper that delegates to
@@ -442,7 +442,7 @@ describe("KchatLocalApiServer — auth + Host header policy", () => {
         ].join("\r\n"),
       );
     });
-    // Phase 14 Round 6 Devin Review ANALYSIS_0005: the DNS-rebinding
+    // the DNS-rebinding
     // defence must surface as HTTP 403 `forbidden`, not 403
     // `unauthorized`. The wire-code distinction is load-bearing for
     // the .kcz extension's retry logic: a 401/`unauthorized` is a
@@ -624,7 +624,7 @@ describe("KchatLocalApiServer — route surface", () => {
     expect(res.status).toBe(400);
   });
 
-  // Phase 14 Round 4 Devin Review polish: the previous Content-Type
+  //: the previous Content-Type
   // regex used `(\b|;)`, which matched `application/json-ld` because
   // `\b` matches the boundary between `n` and `-`. Tighten the
   // contract to ONLY accept `application/json` (with optional
@@ -692,7 +692,7 @@ describe("KchatLocalApiServer — route surface", () => {
       body: huge,
     });
     expect(res.status).toBe(413);
-    // Phase 14 Round 10 Devin Review ANALYSIS_0002: the 413 must
+    // the 413 must
     // pair with `payload_too_large` (not `invalid_request`). The
     // canonical code↔status mapping in `LocalApiErrorCode` requires
     // exactly one code per HTTP status; an extension branching on
@@ -720,7 +720,7 @@ describe("KchatLocalApiServer — route surface", () => {
   });
 
   it("maps a generic handler throw to a 500 internal_error with sanitised body", async () => {
-    // Phase 14 Round 7 Devin Review ANALYSIS_0005: a non-
+    // a non-
     // `LocalApiError` thrown from a handler must NOT propagate
     // the raw `Error.message` to the wire body — that path used
     // to surface internal implementation details (file paths,
@@ -922,7 +922,7 @@ describe("DeeplinkBridge — consumer lifecycle + parking", () => {
     ).toBeNull();
   });
 
-  // Phase 14 Round 14 Devin Review BUG_0001: pins the
+  // pins the
   // Windows/Linux cold-start contract. The fix in `main.ts`
   // calls `DeeplinkBridge.extractUrlFromArgv(process.argv)` once
   // the single-instance lock is acquired and feeds the result

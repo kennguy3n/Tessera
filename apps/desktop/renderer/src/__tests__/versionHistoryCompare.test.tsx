@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 24 — component test for `VersionHistory`'s Compare
+ * component test for `VersionHistory`'s Compare
  * mode. Exercises:
  *   1. compare button is disabled until two versions are ticked
  *   2. ticking a third version replaces the oldest selection (cap=2)
@@ -138,7 +138,7 @@ describe("VersionHistory Compare", () => {
   });
 
   /**
-   * Devin Review PR #70 follow-up ANALYSIS_0003 (BUG).
+   * Devin Review PR #70 follow-up (BUG).
    *
    * Without the per-`artifactId` reset effect, every piece of UI
    * state in this panel (`compareSet`, `viewMode`, `previewVersion`,

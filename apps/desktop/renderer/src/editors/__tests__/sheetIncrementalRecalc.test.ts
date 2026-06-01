@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 9 — incremental recalculation pinning tests for the
+ * incremental recalculation pinning tests for the
  * SheetEditor render path. The legacy pre-PR-9 code rebuilt the
  * cellCache from scratch on every render; PR 9 persists a
  * DependencyGraph + per-cell result cache across renders and only
@@ -407,7 +407,7 @@ describe("updateCellInRows (row-reference preservation)", () => {
   // `prev.rows.map((r) => [...r])`), `incrementalRecalc`'s
   // O(1) `prevRow === nextRow` short-circuit silently breaks and
   // the dirty diff balloons to O(rows × cols) per keystroke.
-  // Devin Review PR #83 ANALYSIS-0002.
+  // Devin Review PR #83.
 
   it("preserves the original reference for every row except the edited one", () => {
     const r0 = ["1", "2", "3"];

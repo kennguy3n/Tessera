@@ -130,7 +130,7 @@ export interface TokenResponse {
   expiresIn: number;
   tokenType: string;
   /**
-   * Phase 19 PR 10 Task 8 — the scopes the provider ACTUALLY
+   * the scopes the provider ACTUALLY
    * granted, parsed from the token response's `scope` field. May
    * be a strict subset of the requested scopes if the user
    * narrowed consent on the provider's screen. `null` means the
@@ -326,7 +326,7 @@ function base64UrlEncode(buf: Buffer): string {
 }
 
 /**
- * Phase 19 PR 10 Task 8 — parse the OAuth `scope` response value
+ * parse the OAuth `scope` response value
  * into a normalised list of granted scopes.
  *
  * RFC 6749 §3.3 says the value is space-delimited; some providers

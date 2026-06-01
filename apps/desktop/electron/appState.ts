@@ -3,7 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
 import { loadConfig } from "./config";
-// Phase 15 Task 1: `./diffusionSidecar` is loaded dynamically inside
+// `./diffusionSidecar` is loaded dynamically inside
 // `configureSidecars()` so the diffusion module graph (sd-server
 // binary resolution + tar extraction logic + stable-diffusion.cpp
 // log parsing) is not on the cold-start critical path. `import type`
@@ -129,7 +129,7 @@ export interface NativeBridge {
    */
   initBridge(dbPath: string, templateDir: string, dbKey?: string | null): void;
   /**
-   * Phase 15 Task 7: graceful shutdown hook. Runs
+   * graceful shutdown hook. Runs
    * `PRAGMA wal_checkpoint(TRUNCATE)` so the on-disk WAL file is
    * folded back into the main database file before the process
    * exits. The `will-quit` handler (`apps/desktop/electron/main.ts`)
@@ -194,7 +194,7 @@ export interface NativeBridge {
   ): KchatFileIndexOutcomeInfo;
   /**
    * Refresh a KChat channel's ACL roster + project status onto the
-   * source row (Block B Task 3, Phase 11). Called by
+   * source row. Called by
    * `KchatEventForwarder` after every membership-change event
    * (`user_added`, `user_removed`, `channel_updated`) with the
    * authoritative roster fetched from `GET /channels/{id}/members`.
@@ -225,8 +225,7 @@ export interface NativeBridge {
     members: KchatAclMemberInfo[],
   ): KchatAclRefreshOutcomeInfo;
   /**
-   * Explicitly revoke a KChat-channel source (Block B Task 3,
-   * Phase 11). Used for `channel_archived` / `channel_deleted` /
+   * Explicitly revoke a KChat-channel source. Used for `channel_archived` / `channel_deleted` /
    * self-`user_removed` events where there is no roster to fetch.
    * The ACL roster is left intact for forensics — "who else had
    * access at the moment of revocation" is a real question
@@ -235,7 +234,7 @@ export interface NativeBridge {
   bridgeRevokeKchatSource(cacheDir: string): KchatRevokeOutcomeInfo;
   /**
    * Set the locally-authenticated KChat principal user id on the
-   * substrate (Block B Task 3, Phase 11). Called by the
+   * substrate. Called by the
    * `kchat:connect` IPC handler after `/users/me` returns. The
    * substrate persists the id in a singleton `kchat_principal`
    * row so subsequent `bridgeRefreshKchatAcl` calls can check
@@ -271,7 +270,7 @@ export interface NativeBridge {
   ): Promise<BackfillEmbeddingsResult>;
   bridgeGetEmbeddingProgress(): EmbeddingProgressInfo;
   /**
-   * Phase 19 Task 1: snapshot of all shipped ONNX embedding models
+   * snapshot of all shipped ONNX embedding models
    * (catalogue entries with per-model install state) plus the
    * currently-active embedder's `model_id` plus the in-flight
    * download tracker. Single round-trip so the Settings UI can
@@ -285,7 +284,7 @@ export interface NativeBridge {
    */
   bridgeGetEmbeddingModelStatus(userDataDir: string): EmbeddingModelStatusInfo;
   /**
-   * Phase 19 Task 1: download an ONNX embedding model + tokenizer
+   * download an ONNX embedding model + tokenizer
    * to `${userDataDir}/models/onnx/${slug}/`. Returns a Promise
    * that resolves with the model's final catalogue entry
    * (`installed: true`, canonical `modelId`) or rejects with the
@@ -301,14 +300,14 @@ export interface NativeBridge {
     userDataDir: string,
   ): Promise<EmbeddingModelInfo>;
   /**
-   * Phase 19 Task 1: lightweight progress poll for in-flight model
+   * lightweight progress poll for in-flight model
    * downloads. Mirrors `bridgeGetEmbeddingProgress` — bypasses the
    * source-manager lock so the progress bar updates at full timer
    * cadence regardless of what else the bridge is doing.
    */
   bridgeGetEmbeddingDownloadProgress(): EmbeddingDownloadProgressInfo;
   /**
-   * Phase 19 Task 1: synchronously swap the active embedder to a
+   * synchronously swap the active embedder to a
    * downloaded ONNX model. Returns the freshly-activated model's
    * catalogue entry. Does NOT trigger a re-embed pass — the caller
    * (the `settings:switchEmbeddingModel` IPC handler) chains a
@@ -490,7 +489,7 @@ export interface NativeBridge {
   /**
    * No-throw audit append called by `KchatEventForwarder`
    * whenever a KChat-channel source transitions to
-   * `SourceStatus::AccessRevoked` (Block B Task 3, Phase 11).
+   * `SourceStatus::AccessRevoked`.
    * `reason` is the operator-visible short code for the
    * triggering event: `principal_removed` (explicit
    * `user_removed` for the auth user), `channel_archived`,
@@ -504,8 +503,7 @@ export interface NativeBridge {
   /**
    * No-throw audit append called by `KchatEventForwarder` /
    * `kchat:disconnect` immediately after a revoke transition
-   * triggers the substrate's inline cryptoshred (Block B Task 4,
-   * Phase 11). Emitted on every revoke outcome — fresh revoke +
+   * triggers the substrate's inline cryptoshred. Emitted on every revoke outcome — fresh revoke +
    * already-revoked re-shred path + refresh-driven revoke — so
    * the audit trail correlates the `KchatChannelAccessRevoked`
    * status-transition row with the actual evidence-scrub counts.
@@ -543,11 +541,11 @@ export interface NativeBridge {
     reason: string,
     chunksDropped: number,
     filesDropped: number,
-    /** Block C Task 2 (Phase 12): `kchat_posts` row count
+    /** Block C Task 2: `kchat_posts` row count
      *  scrubbed by the cryptoshred. Logged on the audit row so
      *  operators can grep `posts_dropped=N`. */
     postsDropped: number,
-    /** Block C Task 2 (Phase 12): `true` when the per-source DEK
+    /** Block C Task 2: `true` when the per-source DEK
      *  row was actually dropped. `false` indicates no DEK ever
      *  existed for this source (file-only ingest) — NOT a
      *  failure mode. Logged so operators can confirm the
@@ -560,7 +558,7 @@ export interface NativeBridge {
   ): void;
 
   /**
-   * Block C Task 1 (Phase 12): ingest a single KChat post body.
+   * ingest a single KChat post body.
    * Called by `KchatEventForwarder` on a `posted` WS event after
    * `withChannelSyncLock` serialises the work.
    */
@@ -568,7 +566,7 @@ export interface NativeBridge {
     input: KchatPostIngestInputInfo,
   ): KchatPostIngestOutcomeInfo;
   /**
-   * Block C Task 1 (Phase 12): re-ingest a KChat post body after
+   * re-ingest a KChat post body after
    * a `post_edited` WS event. Distinct from
    * `bridgeIngestKchatPost` only so the audit pair routes to
    * `KchatPostEdited` rather than `KchatPostIngested`.
@@ -577,7 +575,7 @@ export interface NativeBridge {
     input: KchatPostIngestInputInfo,
   ): KchatPostIngestOutcomeInfo;
   /**
-   * Block C Task 1 (Phase 12): drop the substrate evidence for
+   * drop the substrate evidence for
    * a KChat post after a `post_deleted` WS event. Returns the
    * outcome so the audit row can record `outcome=not_found`
    * vs `outcome=deleted`.
@@ -587,7 +585,7 @@ export interface NativeBridge {
     postId: string,
   ): KchatPostDeleteOutcomeInfo;
   /**
-   * Block C Task 1 (Phase 12): no-throw audit append for the
+   * no-throw audit append for the
    * post-body ingest pipeline. Called by the forwarder after
    * `bridgeIngestKchatPost` returns.
    */
@@ -597,14 +595,14 @@ export interface NativeBridge {
     outcome: string,
     chunkCount: number,
   ): void;
-  /** Block C Task 1 (Phase 12): see {@link bridgeLogKchatPostIngested}. */
+  /** Block C Task 1: see {@link bridgeLogKchatPostIngested}. */
   bridgeLogKchatPostEdited(
     channelId: string,
     postId: string,
     outcome: string,
     chunkCount: number,
   ): void;
-  /** Block C Task 1 (Phase 12): see {@link bridgeLogKchatPostIngested}. */
+  /** Block C Task 1: see {@link bridgeLogKchatPostIngested}. */
   bridgeLogKchatPostDeleted(
     channelId: string,
     postId: string,
@@ -612,7 +610,7 @@ export interface NativeBridge {
     chunksDropped: number,
   ): void;
 
-  // --- Block C Task 4 (Phase 13): KChat historical backfill ---
+  // --- Block C Task 4: KChat historical backfill ---
   //
   // Three substrate-facing calls + four audit log calls compose
   // the orchestrator. The orchestrator (`runBackfillKchatChannel`
@@ -682,7 +680,7 @@ export interface NativeBridge {
     pagesWalked: number,
     totalPostsIngested: number,
   ): void;
-  /** Block D Task 1 (Phase 14): audit row emitted by the
+  /** Block D Task 1: audit row emitted by the
    *  `kchat:searchPosts` IPC handler after a successful retrieval.
    *  The handler computes `queryHash` (SHA-256 hex, first 16
    *  chars) and `latencyMs` (end-to-end IPC duration) before
@@ -694,7 +692,7 @@ export interface NativeBridge {
     sourcesTouched: number,
     latencyMs: number,
   ): void;
-  /** Block D Task 1 (Phase 14): FTS5 retrieval over chat-post
+  /** Block D Task 1: FTS5 retrieval over chat-post
    *  bodies. Returns AEAD-verified hits — sources whose DEK has
    *  been dropped (revoked) yield no hits even if their old
    *  chunks remain in the FTS5 index (defence-in-depth for the
@@ -705,7 +703,7 @@ export interface NativeBridge {
     query: string,
     limit: number,
   ): KchatPostSearchHitInfo[];
-  /** Phase 13 Theme 2 Task 13: AEAD-verified thread-context
+  /** Task 13: AEAD-verified thread-context
    *  retrieval. Returns up to 3 chronologically-ordered messages
    *  (thread root + up to 2 most-recent earlier-replies) or an
    *  empty array if the post is top-level / unknown / revoked.
@@ -733,7 +731,7 @@ export interface NativeBridge {
     details: string;
   }>;
   /**
-   * Phase 15 Task 12: rotate the audit log (archive + delete the
+   * rotate the audit log (archive + delete the
    * oldest rows once the live table exceeds 100K rows). Returns
    * `null` when the table is below the threshold, otherwise an
    * object describing where the gzipped JSONL archive was
@@ -750,13 +748,13 @@ export interface NativeBridge {
     rotatedCount: number;
   } | null;
   /**
-   * Phase 15 Task 12: list the audit-archive filenames in
+   * list the audit-archive filenames in
    * `archiveDir`, newest-first. Returns `[]` when the directory
    * does not yet exist.
    */
   bridgeAuditListArchives(archiveDir: string): string[];
   /**
-   * Phase 15 Task 11: read the persisted sync-failure state for
+   * read the persisted sync-failure state for
    * one source row. Returns `last_error_json = null`, `retry_count
    * = 0`, `failed_permanently = false` when the row has never
    * failed (and when the row does not exist at all — the two
@@ -768,7 +766,7 @@ export interface NativeBridge {
     failedPermanently: boolean;
   };
   /**
-   * Phase 15 Task 11: atomic persistence of all three failure-
+   * atomic persistence of all three failure-
    * state columns. The caller (TS-side connectorBackoff) computes
    * the new `retryCount` and `failedPermanently` flag by applying
    * the policy in `connectorBackoff.ts` to the previous state +
@@ -781,7 +779,7 @@ export interface NativeBridge {
     failedPermanently: boolean,
   ): void;
   /**
-   * Phase 15 Task 11: clear failure-state columns. Resets
+   * clear failure-state columns. Resets
    * `last_sync_error → NULL`, `retry_count → 0`,
    * `failed_permanently → false`. Called from the success branch
    * of `runConnectorSync`.
@@ -877,7 +875,7 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
-// Phase 14 Task 2: localhost HTTP server the Tessera `.kcz`
+// localhost HTTP server the Tessera `.kcz`
 // extension (running inside KChat Desktop) talks to. Lazily
 // started by `startKchatLocalApiServer()` from the main-process
 // `whenReady` chain and torn down by `stopKchatLocalApiServer()`
@@ -893,7 +891,7 @@ let kchatLocalApiServer: KchatLocalApiServer | null = null;
 // Pending-promise slot so concurrent `startKchatLocalApiServer()`
 // calls coalesce onto a single `server.start()` rather than racing
 // through the `kchatLocalApiServer === null` check and binding two
-// HTTP ports (Phase 14 Round 11 Devin Review ANALYSIS_0002).
+// HTTP ports
 let kchatLocalApiServerPending: Promise<KchatLocalApiServer> | null = null;
 // Stopping-promise slot so a `startKchatLocalApiServer()` call that
 // arrives while a `stopKchatLocalApiServer()` is in flight waits for
@@ -909,19 +907,19 @@ let kchatLocalApiServerPending: Promise<KchatLocalApiServer> | null = null;
 // running, slot null, nobody can call `stop()` on it) or, depending
 // on ordering, the start's IIFE overwrites the stop's null write
 // (giving the caller back a server that the stop has already torn
-// down). Phase 14 Round 15 Devin Review ANALYSIS_0001.
+// down).
 //
 // Symmetric with the start's pending slot: the start awaits the
 // stopping slot if non-null, and the stop publishes its work into
 // the stopping slot so concurrent stops also serialise.
 let kchatLocalApiServerStopping: Promise<void> | null = null;
-// Phase 14 Task 3: `tessera://` deeplink router. Constructed
+// `tessera://` deeplink router. Constructed
 // eagerly at module load so a pre-ready `open-url` event from
 // macOS can be parked before `whenReady` fires. The renderer
 // installs the consumer once it boots.
 const kchatDeeplinkBridge = new DeeplinkBridge();
 let kchatDeeplinkTeardown: (() => void) | null = null;
-// Block B Task 4 (Phase 11) second-pass Devin Review ANALYSIS_0002:
+// Block B Task 4 second-pass:
 // the IPC handler populates this slot with the full-channel-sync
 // closure that `runAddKchatChannel` powers, so the forwarder can
 // schedule a re-sync when a `KchatAclRefreshOutcome::Regranted`
@@ -950,7 +948,7 @@ export function getKchatChannelResyncImpl():
   return kchatChannelResyncImpl;
 }
 
-// Block C Task 4 (Phase 13): backfill orchestrator slot. The IPC
+// backfill orchestrator slot. The IPC
 // handler populates this with the per-channel orchestrator
 // (`runBackfillKchatChannel(id)`) that drives REST pagination
 // via the channel-scoped lock. Lives in module-scope (not inside
@@ -992,7 +990,7 @@ let visionSidecar: ModelSidecar | null = null;
 // idle-unload reflects bursty user interaction (generate / edit /
 // re-generate) typical of the image-gen workflow.
 let diffusionSidecar: DiffusionSidecar | null = null;
-// Phase 15 Task 1 (Devin Review follow-up): track the lifecycle of
+// track the lifecycle of
 // the lazy `./diffusionSidecar` module import so callers can
 // distinguish three states that all looked identical when we only
 // stored `diffusionSidecar: DiffusionSidecar | null`:
@@ -1024,7 +1022,7 @@ type DiffusionSidecarState =
   | "failed";
 let diffusionSidecarState: DiffusionSidecarState = "unloaded";
 let diffusionSidecarLoadError: Error | null = null;
-// Phase 15 PR 2 Devin Review follow-up: track the in-flight
+// follow-up: track the in-flight
 // `import("./diffusionSidecar")` promise so the shutdown path can
 // await it before deciding whether the sidecar slot is null.
 //
@@ -1152,7 +1150,7 @@ export async function initAppState(): Promise<boolean> {
     return false;
   }
 
-  // Phase 19 PR 9 Task 5: read the persisted `modelIdleTimeoutSecs`
+  // read the persisted `modelIdleTimeoutSecs`
   // setting once at boot so every freshly-constructed sidecar
   // (text / vision / diffusion) starts with the user's preferred
   // idle window instead of the historical hardcoded default
@@ -1199,7 +1197,7 @@ export async function initAppState(): Promise<boolean> {
     idleUnloadMs: persistedIdleTimeoutMs,
   });
 
-  // Phase 15 Task 1: defer the `./diffusionSidecar` module load. The
+  // defer the `./diffusionSidecar` module load. The
   // diffusion sidecar is constructed (and the construction is what
   // pulls in the heavy `./diffusionSidecar` module graph — binary
   // resolution, tar extraction, log parsing) but the underlying
@@ -1230,7 +1228,7 @@ export async function initAppState(): Promise<boolean> {
         ),
         port: 8386,
         label: "diffusion",
-        // Phase 19 PR 9 Task 5: re-read the persisted idle window
+        // re-read the persisted idle window
         // when the diffusion sidecar's lazy load settles (rather
         // than capturing the boot-time `persistedIdleTimeoutMs`)
         // so a `settings:update` that landed during the lazy load
@@ -1279,7 +1277,7 @@ export async function initAppState(): Promise<boolean> {
 // suffix decision can be pinned per-platform in future tests without
 // mutating `process.platform`. Production callers pass no argument
 // and get the live platform. Per Devin Review PR #59 pass 2
-// ANALYSIS_0003.
+//.
 function resolveSidecarBinary(
   platform: NodeJS.Platform = process.platform,
 ): string {
@@ -1370,7 +1368,7 @@ export function getDiffusionSidecar(): DiffusionSidecar | null {
 }
 
 /**
- * Phase 19 PR 9 Task 5: push the user's idle-unload window in
+ * push the user's idle-unload window in
  * seconds to every live sidecar. Called from
  * `electron/ipc/settings.ts` after a successful `settings:update`
  * that mutates `modelIdleTimeoutSecs` so the new window takes
@@ -1401,7 +1399,7 @@ export function getDiffusionSidecar(): DiffusionSidecar | null {
  *     text/vision sidecars from picking up the new window.
  */
 /**
- * Phase 19 PR 9 Task 5 (round 3): single normaliser for converting
+ * single normaliser for converting
  * the user-facing `modelIdleTimeoutSecs` setting into the
  * milliseconds value that every sidecar's `idleUnloadMs` field
  * stores. Centralising the rounding/clamp in one helper means the
@@ -1448,7 +1446,7 @@ export function applyModelIdleTimeoutToSidecars(
 }
 
 /**
- * Phase 15 Task 1 (Devin Review follow-up): expose the lazy-load
+ * expose the lazy-load
  * lifecycle of the diffusion sidecar module so IPC handlers can
  * report the right error to the renderer.
  *
@@ -1489,8 +1487,8 @@ export function getKchatAuthService(): KchatAuthService {
     // when the user finally connects.
     kchatEventForwarder = new KchatEventForwarder({
       getBridge,
-      // Block B Task 4 (Phase 11) second-pass Devin Review
-      // ANALYSIS_0002: thread the regrant auto-resync hook
+      // Block B Task 4 second-pass Devin Review
+      //: thread the regrant auto-resync hook
       // through the forwarder. The actual impl is populated by
       // `registerKchatIpcHandlers` in `ipc/kchat.ts`; we wrap it
       // in a closure that re-reads the slot at call time so a
@@ -1522,8 +1520,7 @@ export function getKchatEventForwarder(): KchatEventForwarder | null {
 
 /**
  * Accessor for the singleton localhost API server used by the
- * Tessera `.kcz` extension installed in KChat Desktop (Phase 14
- * Task 2). Returns `null` until {@link startKchatLocalApiServer}
+ * Tessera `.kcz` extension installed in KChat Desktop . Returns `null` until {@link startKchatLocalApiServer}
  * has been called from the main-process `whenReady` chain.
  */
 export function getKchatLocalApiServer(): KchatLocalApiServer | null {
@@ -1534,19 +1531,19 @@ export function getKchatLocalApiServer(): KchatLocalApiServer | null {
  * Start the localhost API server. Idempotent and concurrency-safe
  * against:
  *
- *   1. **Concurrent starts** (Phase 14 Round 11 Devin Review
- *      ANALYSIS_0002). The first caller drives `server.start()`, and
+ * 1. **Concurrent starts** (Devin Review
+ *. The first caller drives `server.start()`, and
  *      any concurrent callers that arrive while that `start()` is
  *      in-flight coalesce onto the same promise instead of racing
  *      through the null-check and binding a second port.
  *
- *   2. **Stop-during-in-flight-start** (Phase 14 Round 12 Devin
- *      Review BUG_0001). Handled by `stopKchatLocalApiServer()`:
+ * 2. **Stop-during-in-flight-start** (Devin
+ * Review. Handled by `stopKchatLocalApiServer()`:
  *      it captures and awaits the pending start before clearing
  *      `kchatLocalApiServer`.
  *
- *   3. **Start-during-in-flight-stop** (Phase 14 Round 15 Devin
- *      Review ANALYSIS_0001). Handled here: if a stop is in flight
+ * 3. **Start-during-in-flight-stop** (Devin
+ * Review. Handled here: if a stop is in flight
  *      we await `kchatLocalApiServerStopping` BEFORE entering the
  *      pending-promise branch, so the stop fully tears down the
  *      previous server (and clears `kchatLocalApiServer`) before
@@ -1623,7 +1620,7 @@ export async function startKchatLocalApiServer(
  * The actual teardown work runs inside an IIFE published into
  * `kchatLocalApiServerStopping` so a concurrent
  * `startKchatLocalApiServer()` can await it before constructing a
- * new server (Phase 14 Round 15 Devin Review ANALYSIS_0001).
+ * new server
  * Concurrent stops also serialise via the same slot.
  */
 export async function stopKchatLocalApiServer(): Promise<void> {
@@ -1654,16 +1651,14 @@ export async function stopKchatLocalApiServer(): Promise<void> {
     // server` AFTER this function returns, leaving an orphaned
     // running HTTP server that nobody will ever call `stop()` on
     // (it would hold an event-loop handle and a bound port for
-    // the rest of the process lifetime). Phase 14 Round 12 Devin
-    // Review BUG_0001.
-    //
+    // the rest of the process lifetime).     //
     // Clearing the slot before the await is intentional: a third
     // concurrent caller arriving while we're inside this await
     // must NOT join the same start (we're about to tear it down)
     // — it observes an empty pending slot, observes the non-null
     // stopping slot we publish below, and awaits the teardown
-    // before constructing a fresh server. Phase 14 Round 15
-    // ANALYSIS_0001.
+    // before constructing a fresh server.
+    //.
     const pending = kchatLocalApiServerPending;
     kchatLocalApiServerPending = null;
     if (pending !== null) {
@@ -1672,8 +1667,8 @@ export async function stopKchatLocalApiServer(): Promise<void> {
       } catch {
         // The in-flight start rejected. The IIFE's failure path
         // is responsible for tearing down its own bound socket
-        // via the BUG_0001 rollback in `KchatLocalApiServer.start()`
-        // (Round 8). `kchatLocalApiServer` will be null when we
+        // via the rollback in `KchatLocalApiServer.start()`
+        //. `kchatLocalApiServer` will be null when we
         // fall through, so this branch is a no-op.
       }
     }
@@ -1850,7 +1845,7 @@ export function setLocalApiShareArtifactHandler(
  * service" invariant — without it, a caller that injects a
  * non-null replacement would observe the auth service start
  * with no WS forwarding (silent regression). Devin Review
- * ANALYSIS_0003 (first pass on PR #43) called this out as a
+ * (first pass on PR #43) called this out as a
  * latent issue; fixed by re-creating the forwarder here.
  * Tests that want a stub forwarder still have the escape hatch
  * of calling {@link resetKchatEventForwarder} afterwards to
@@ -1864,7 +1859,7 @@ export function resetKchatAuthService(
     kchatEventForwarder.dispose();
     kchatEventForwarder = null;
   }
-  // Block B Task 4 (Phase 11) third-pass Devin Review ANALYSIS_0006:
+  // Block B Task 4 third-pass:
   // clear the regrant-resync slot alongside the forwarder so the
   // module-level lifecycle invariants stay coherent. The previous
   // impl captures `runAddKchatChannel` which itself closes over
@@ -1879,18 +1874,18 @@ export function resetKchatAuthService(
   // next startup; tests that need a fresh impl can repopulate via
   // `setKchatChannelResyncImpl` after the reset.
   setKchatChannelResyncImpl(null);
-  // Block C Task 4 (Phase 13): clear the backfill orchestrator
+  // clear the backfill orchestrator
   // slot alongside the resync slot for the same reason — the
   // closure captures `getBridge()` / `getKchatAuthService()`,
   // and a test that calls `resetKchatAuthService(null)` should
   // never observe an impl that closes over a torn-down service.
   setKchatBackfillImpl(null);
-  // Phase 14 Round 4 Devin Review polish: the three local-API
+  //: the three local-API
   // provider slots (`localApiSourcesProvider`,
   // `localApiIngestChannelHandler`,
   // `localApiShareArtifactHandler`) are reachable from the
   // localhost API server via `buildLocalApiHandlers()`. When the
-  // future IPC registration layer (Phase 14 Tasks 9–13) wires
+  // future IPC registration layer  wires
   // them up, the supplied closures will capture
   // `getKchatAuthService()` / `getBridge()` just like the resync
   // and backfill impls above — so the same "stale closure surviving

@@ -1,7 +1,7 @@
 /**
  * KChat connection card shown in the Settings page.
  *
- * Phase 14. Tessera and KChat Desktop are independent KChat
+ * Tessera and KChat Desktop are independent KChat
  * clients; this card is the single place a user pastes a KChat
  * Personal Access Token (PAT). When the Tessera `.kcz` extension
  * installed in KChat Desktop is also reachable (i.e. KChat
@@ -115,7 +115,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
   // round-trip into the main process); the interval is generous
   // (10 s) to keep idle CPU near zero.
   //
-  // Phase 14 Round 6 Devin Review ANALYSIS_0004: the poll is gated on
+  // the poll is gated on
   // `available === true` in addition to `kchat` being present, so the
   // effect does not fire IPC calls when the renderer-side feature
   // flag (`kchat.isAvailable()`) is off and the component renders

@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 17 — cell selection model for the `SheetEditor`.
+ * cell selection model for the `SheetEditor`.
  *
  * The selection is modelled as a single anchor cell + a primary
  * rectangular range that extends to a "head" cell + an optional

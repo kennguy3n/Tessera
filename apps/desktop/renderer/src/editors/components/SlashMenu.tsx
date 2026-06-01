@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — slash-command popup.
+ * slash-command popup.
  *
  * Renders a positioned list of `SLASH_COMMANDS` filtered by the live
  * query that the `SlashCommandExtension` publishes. Keyboard contract

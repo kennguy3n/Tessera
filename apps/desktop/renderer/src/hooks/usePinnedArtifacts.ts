@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 16: hooks for reading and mutating the pinned-
+ * hooks for reading and mutating the pinned-
  * artifact ("favorite") list stored in `SettingsData.pinnedArtifactIds`.
  *
  * Why settings (not localStorage)?
@@ -35,7 +35,7 @@ import { useSettings, useUpdateSetting } from "./useSettings";
  * canonical declaration lives in `shared/types.ts`
  * ({@link MAX_PINNED_ARTIFACTS}) and is shared with both the IPC
  * `SettingsUpdateSchema` and the on-disk `AppConfigSchema`. PR #87
- * Devin Review ANALYSIS_0007: removed the previous "three-way
+ *: removed the previous "three-way
  * literal `256` duplicate" and made the renderer hook import the
  * cap from the same source the schemas use.
  */
@@ -82,7 +82,7 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
   // can read the current list without listing `pinnedIds` in their
   // dep arrays. Mirrors the pattern in `useRecentlyViewedArtifacts`
   // — keeps the callbacks stable across writes so child effects
-  // don't re-run every pin/unpin. PR #87 Devin Review ANALYSIS_0002
+  // don't re-run every pin/unpin. PR #87
   // companion fix.
   const pinnedIdsRef = useRef(pinnedIds);
   pinnedIdsRef.current = pinnedIds;
@@ -93,7 +93,7 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
   // editor + recent-cards each call `isPinned()` once per render
   // for every pinned candidate, so an O(n) check would scale
   // poorly on a 256-entry pinned list. PR #87 Devin Review
-  // ANALYSIS_0002.
+  //.
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
   const isPinned = useCallback(
     (id: string) => pinnedSet.has(id),
@@ -112,7 +112,7 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
       // module-level `settingsStore.setSettings(result)` call at
       // `useSettings.ts:219`. A follow-up `refresh()` would fire a
       // redundant `settings:get` IPC for no benefit (the value is
-      // already in the store). PR #87 Devin Review ANALYSIS_0001
+      // already in the store). PR #87
       // round 3.
       return result.pinnedArtifactIds;
     },

@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — slash-command trigger extension.
+ * slash-command trigger extension.
  *
  * Detects the user typing `/<query>` at the start of an empty
  * paragraph (the standard Notion / Coda / Linear convention) and

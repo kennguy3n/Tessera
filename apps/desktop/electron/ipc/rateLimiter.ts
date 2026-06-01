@@ -163,7 +163,7 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 10_000,
   },
-  // Phase 19 Task 1: ONNX model download. A 22 MB or 120 MB
+  // ONNX model download. A 22 MB or 120 MB
   // download takes 5-60 s on a typical home connection. The bridge
   // tracker's `mark_starting` resets the progress slot but does NOT
   // serialise concurrent `DownloadEmbeddingModelTask` instances —
@@ -255,7 +255,7 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 15_000,
   },
-  // Block D Task 1 (Phase 14): KChat post-body retrieval. Mirrors
+  // KChat post-body retrieval. Mirrors
   // the `sources:search` profile (10 r/s sustained, 20 burst) so
   // a renderer that debounces and fires both `sources:search` +
   // `kchat:searchPosts` for every keystroke can keep up under
@@ -268,7 +268,7 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 20,
   },
-  // Phase 14 Task 6: "Open in KChat Desktop" deeplink fan-out.
+  // "Open in KChat Desktop" deeplink fan-out.
   // The handler calls `shell.openExternal()` to invoke a
   // `kchat://app/conversation/<id>` URL the user clicked on in
   // the Tessera sidebar. A single user click should fire the
@@ -281,7 +281,7 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 8,
   },
-  // Phase 13 Task 10: backfill progress polling. The
+  // backfill progress polling. The
   // SourceDetailPage subscribes via this channel while a backfill
   // is active; a single user-initiated source detail view should
   // poll at most a few times per second. 2/s sustained with
@@ -292,7 +292,7 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 5,
   },
-  // Phase 13 Theme 2 Task 13: thread-context retrieval is called
+  // thread-context retrieval is called
   // on-demand when the user expands a search hit's thread
   // affordance. The substrate call is cheap (single SQL window
   // bounded at 3 rows + per-row AEAD verify); no network. A

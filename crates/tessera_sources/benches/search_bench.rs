@@ -1,4 +1,4 @@
-//! Phase 15 Task 3 — hybrid search latency benchmark.
+//! hybrid search latency benchmark.
 //!
 //! Drives [`hybrid_search`] against an in-memory `SourceStore`
 //! pre-seeded with 1K, 10K, and 100K synthetic chunks so we can

@@ -9,7 +9,7 @@
  * and the component module independently consume types from the
  * third file, breaking the would-be A↔B dependency edge.
  *
- * Phase 17 PR 4 additions:
+ * additions:
  *   - record IDs (`ensureRecordIds`) so `linked_record` fields can
  *     point at a stable identifier rather than a brittle row index
  *   - `aggregateValues` for rollup fields
@@ -511,7 +511,7 @@ export function isComputedFieldType(type: FieldType): boolean {
  * Devin Review on PR #79 round 8 (ANALYSIS_…_0001) flagged the strict
  * equality as a likely user-visible bug on common percentages like
  * 33.3% / 16.7% / 12.5% (the last is exact but the first two are not).
- * Round 9 (ANALYSIS_…_0003) flagged the docstring saying "1e-12
+ * (ANALYSIS_…_0003) flagged the docstring saying "1e-12
  * absolute floor near zero" while the code actually used a 1e-9 floor
  * via the `Math.max(…, 1)` term — fixed to match the implementation.
  */

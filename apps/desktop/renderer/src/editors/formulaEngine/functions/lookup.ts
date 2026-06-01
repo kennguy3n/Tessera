@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 10 — lookup functions.
+ * lookup functions.
  *
  *   VLOOKUP(search_key, range, column_index, [is_sorted])
  *     Vertical lookup. `is_sorted` defaults to TRUE (Excel default —

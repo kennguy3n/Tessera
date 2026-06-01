@@ -401,7 +401,7 @@ describe("scheduler.getSchedulerStatus", () => {
 });
 
 // ----------------------------------------------------------------
-// Phase 13 Theme 3 Task 17: Scheduler + KChat backfill interaction
+// Scheduler + KChat backfill interaction
 // ----------------------------------------------------------------
 
 describe("scheduler.tick — backfill_kchat_channel action", () => {

@@ -7,7 +7,7 @@ use tessera_core::error::{Error, Result};
 use crate::image_metadata::{extract_image_metadata, is_image_extension};
 use crate::pdf_extractor::extract_pdf_text;
 
-/// Phase 15 Task 2: process-wide rayon pool sized to `num_cpus / 2`
+/// process-wide rayon pool sized to `num_cpus / 2`
 /// (min 1, max 8) so bulk extraction parallelises across CPU cores
 /// without starving the rest of the app — most notably the UI thread,
 /// the file watcher's notify loop, and the model sidecar's HTTP
@@ -48,7 +48,7 @@ fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
 /// Extract text from every supported file in `paths` in parallel,
 /// returning per-path results in input order.
 ///
-/// Phase 15 Task 2: this is the bulk-extract entrypoint used by the
+/// this is the bulk-extract entrypoint used by the
 /// indexer (`index_folder_with_progress`) when it has a batch of
 /// pre-walked paths to process. The parallel pass:
 ///

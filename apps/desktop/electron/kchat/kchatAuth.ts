@@ -3,10 +3,10 @@
  *
  * Encapsulates token persistence (OS keychain / encrypted file
  * fallback through `tokenVault.ts`), server-URL configuration, and
- * `KchatClient` lifecycle. Phase 14 — single mode: every Tessera
+ * `KchatClient` lifecycle. — single mode: every Tessera
  * connection is authenticated by a Personal Access Token (PAT) the
  * user pastes into the Settings card. The previous extension-bridge
- * delegation path (Phase 13) has been removed: KChat Desktop and
+ * delegation path has been removed: KChat Desktop and
  * Tessera now talk to the KChat server independently, and the only
  * cross-app cooperation is through the `.kcz` extension Tessera
  * ships into KChat Desktop (see
@@ -127,7 +127,7 @@ export class KchatAuthService {
    * client state), the asymmetry was a footgun: a future caller
    * inspecting `client.getToken()` between a failed restore and
    * the next connect would see a token that no auth code thinks
-   * is valid. Per Phase 14 Round 7 Devin Review ANALYSIS_0002.
+   * is valid.
    *
    * **Why the serverUrl is NOT rolled back.** `setServerUrl()`
    * cannot accept an empty string — `KchatClient.setServerUrl()`
@@ -141,7 +141,7 @@ export class KchatAuthService {
    * null), so no traffic can be sent to the stale URL between a
    * failed restore and the next `connect()`/`restoreFromVault()`
    * — both of which overwrite the URL again before any request
-   * is made. Per Phase 14 Round 9 Devin Review BUG_0001.
+   * is made.
    *
    * Note: the vault entry is intentionally NOT deleted on failure
    * — a failed restore (e.g. transient network blip on startup)
@@ -156,7 +156,7 @@ export class KchatAuthService {
    * error, 401 from an expired/revoked PAT, etc.) — the auth
    * service is left in `{ state: "disconnected", authMode: "none",
    * vault intact }`. Production callers (added in a follow-up
-   * Phase 14 task that wires startup restoration into `main.ts`)
+   * task that wires startup restoration into `main.ts`)
    * MUST wrap this call in a `try/catch` so a transient startup
    * failure doesn't propagate out of the app-ready chain — they
    * should log and leave the user in the disconnected state so
@@ -166,8 +166,8 @@ export class KchatAuthService {
    * "stored but verify failed" would silently swallow the
    * verify error, and treating "nothing stored" as a throw
    * would force every caller to distinguish "expected absence"
-   * from "real failure" via instanceof checks. Per Phase 14
-   * Round 8 Devin Review ANALYSIS_0005.
+   * from "real failure" via instanceof checks.
+   *.
    */
   async restoreFromVault(): Promise<KchatUser | null> {
     const stored = readStoredAuth();
@@ -191,8 +191,8 @@ export class KchatAuthService {
       // URL, which would be a worse failure mode than leaving the
       // stale value, and the token-presence guard in
       // `KchatClient.request()` prevents any outbound traffic to
-      // the stale URL anyway. Per Phase 14 Round 9 Devin Review
-      // BUG_0001.
+      // the stale URL anyway.
+      //.
       this.client.setToken(null);
       throw err;
     }
@@ -235,7 +235,7 @@ export class KchatAuthService {
       if (err instanceof Error) {
         err.message = this.client.scrubMessage(err.message);
       }
-      // Phase 14 Round 5 Devin Review ANALYSIS_0002: when a caller
+      // when a caller
       // re-runs `connect()` from an already-connected `authMode === "pat"`
       // session and the new token fails `verifyConnection()`,
       // `getState()` would otherwise report
@@ -259,7 +259,7 @@ export class KchatAuthService {
       // token-presence guard in `KchatClient.request()` prevents
       // any outbound traffic to the stale URL until the next
       // successful `connect()`/`restoreFromVault()` overwrites it.
-      // Per Phase 14 Round 9 Devin Review BUG_0001.
+      //
       this.authMode = "none";
       this.client.setToken(null);
       throw err;

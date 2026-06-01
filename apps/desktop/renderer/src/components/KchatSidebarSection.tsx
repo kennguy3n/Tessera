@@ -5,8 +5,7 @@
  * When connected: shows the user, default team, and channel count.
  *
  * The unread badge is driven primarily by WebSocket push events
- * surfaced over the `kchat:event` IPC channel (Phase 11 Block B
- * Task 1). On every `file_added` event for a channel in the
+ * surfaced over the `kchat:event` IPC channel . On every `file_added` event for a channel in the
  * rendered list whose `create_at` post-dates the user's
  * last-seen marker, the badge increments by 1 — no IPC poll
  * required. The renderer subscribes via
@@ -139,7 +138,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   const [channels, setChannels] = useState<KchatChannelView[]>([]);
   const [unread, setUnread] = useState(0);
   const [available, setAvailable] = useState<boolean | null>(null);
-  // Phase 14: passive snapshot of Tessera's localhost API server +
+  // passive snapshot of Tessera's localhost API server +
   // last extension heartbeat. Used to render the bridge-health
   // dot and to decide whether to show per-channel "Open in
   // Desktop" buttons. `null` until the first probe lands.
@@ -167,7 +166,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // `ipcRenderer.on` call) but the per-window ring buffer in
   // the main-process forwarder would accumulate events that
   // the renderer can never consume — the eleventh-pass Devin
-  // Review ANALYSIS_0005 finding generalises here too, so we
+  // Review finding generalises here too, so we
   // keep the gate.
   //
   // Reconciliation-only re-fetch: the initial-state read can
@@ -305,7 +304,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // identity flip would tear down the recursive `setTimeout` chain
   // and re-arm it, wasting work today and risking a foot-gun in
   // future refactors that refetch channels more aggressively
-  // (thirteenth-pass Devin Review ANALYSIS_0002). The ref pattern
+  // (thirteenth-pass. The ref pattern
   // keeps `pollUnread`'s identity stable for the lifetime of the
   // connection while still letting each cycle observe the latest
   // channel set.
@@ -321,7 +320,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // and (b) right before `setUnread`, so an unmount that races with
   // the in-flight Promise's resolution doesn't fire a state update
   // against an unmounted component (twelfth-pass Devin Review
-  // ANALYSIS_0006). The cancellation is a getter (not a snapshot
+  //. The cancellation is a getter (not a snapshot
   // boolean) so the effect's `cancelled` mutation is observed
   // immediately by the running cycle rather than at the next
   // `pollUnread` invocation. This is correct long-term: React 18
@@ -381,7 +380,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // accumulated. Both paths converge on the same `unread`
   // state.
   //
-  // CAVEAT (Devin Review ANALYSIS_0002, first pass on PR #43):
+  // CAVEAT, first pass on PR #43):
   // because the WS path is incremental (`n + 1`) and the poll is
   // an absolute overwrite, the badge can briefly tick higher
   // from WS events than the next poll cycle settles at — for
@@ -418,7 +417,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // fetch effect above is — a `"connected"` push that arrives
   // during the initial `isAvailable()` round-trip must not install
   // the IPC listener for a feature that may turn out to be gated
-  // off (twelfth-pass Devin Review ANALYSIS_0002).
+  // off (twelfth-pass.
   useEffect(() => {
     if (!kchat || available !== true || state.state !== "connected") return;
     const unsubscribe = kchat.onEvent((event: KchatWebSocketEventPayload) => {
@@ -443,7 +442,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   }, [kchat, available, state.state]);
 
   // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
-  // Devin Review ANALYSIS_0004). `setInterval` would fire every
+  //. `setInterval` would fire every
   // `POLL_INTERVAL_MS` regardless of whether the previous
   // `pollUnread` had finished — if `listChannelFiles` calls run
   // slow (e.g. the network is degraded), two or more poll cycles
@@ -459,14 +458,14 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // The `cancelled` flag is also passed *into* `pollUnread` via the
   // `isCancelled` getter so an in-flight cycle short-circuits the
   // moment the effect tears down (twelfth-pass Devin Review
-  // ANALYSIS_0006) — both to save rate-limit tokens on a cycle whose
+  // — both to save rate-limit tokens on a cycle whose
   // `setUnread` would be discarded, and to avoid the post-unmount
   // state update entirely.
   //
   // Gated on `available === true` so the recursive poll does not
   // arm while `available === null` (the initial-mount race window
   // described on the channel-fetch effect above); twelfth-pass
-  // Devin Review ANALYSIS_0002.
+  //.
   useEffect(() => {
     if (
       available !== true ||
@@ -494,7 +493,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     };
   }, [pollUnread, available, state.state, channels.length]);
 
-  // Phase 14: poll the bridge-status snapshot so the per-channel
+  // poll the bridge-status snapshot so the per-channel
   // "Open in KChat Desktop" affordance picks up a desktop-app
   // launch / extension install without a remount. The poll is
   // gated on `available && connected` so a disabled-by-feature
@@ -561,7 +560,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   if (available !== true) return null;
   if (state.state !== "connected") return null;
 
-  // Phase 14: KChat Desktop integration health dot. Green when
+  // KChat Desktop integration health dot. Green when
   // the Tessera .kcz extension installed in KChat Desktop has
   // checked in recently (i.e. the user has both apps running and
   // the extension is wired up); grey otherwise. Detection is

@@ -58,7 +58,7 @@ vi.mock("electron", () => ({
     getLocale: () => "en-US",
     setAppUserModelId: vi.fn(),
     requestSingleInstanceLock: vi.fn().mockReturnValue(true),
-    // Phase 14 — `main.ts` registers the `tessera://` deeplink
+    // `main.ts` registers the `tessera://` deeplink
     // scheme before `whenReady` resolves. The will-quit tests
     // never exercise the deeplink path (they hold `whenReady`
     // pending), but the scheme registration runs during module
@@ -148,7 +148,7 @@ vi.mock("../config", () => ({
 vi.mock("../appState", () => ({
   initAppState: vi.fn(),
   stopAllSidecars: vi.fn().mockResolvedValue(undefined),
-  // Phase 14 Task 3 fix — `main.ts` now calls
+  // `main.ts` now calls
   // `attachKchatDeeplinkBridge()` at module top-level (so macOS
   // cold-start `open-url` events aren't lost). The stub must be a
   // callable vi.fn so module load completes; the will-quit tests
@@ -206,7 +206,7 @@ function makeEvent() {
 }
 
 /**
- * Phase 14 Round 4 Devin Review polish: `handleWillQuit` now takes
+ *: `handleWillQuit` now takes
  * `stopKchatLocalApi` and `detachKchatDeeplinkBridge` via the same
  * dep-injection seam as `stopScheduler` / `stopAllSidecars` /
  * `quit`. Tests that don't specifically care about these two
@@ -256,7 +256,7 @@ describe("handleWillQuit", () => {
     expect(order).toEqual(["stopScheduler", "stopAllSidecars", "quit"]);
   });
 
-  // Phase 14 Round 4 Devin Review polish: now that the
+  //: now that the
   // kchat-localhost-API shutdown and the deeplink detach run
   // through the dep-injection seam (rather than as direct module
   // imports), pin the full ordering: scheduler → sidecars →

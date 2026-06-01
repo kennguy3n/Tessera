@@ -1,7 +1,7 @@
 /**
- * Phase 17 PR 4 Task 2 — Base-record formula engine.
+ * Base-record formula engine.
  *
- * Reuses the Phase 16 formula engine (`./formulaEngine`) by mapping
+ * Reuses the formula engine (`./formulaEngine`) by mapping
  * Airtable-style `{FieldName}` references in a formula source string
  * onto synthetic single-row cell references that the existing
  * tokeniser already understands. This avoids forking the engine for
@@ -276,7 +276,7 @@ export function evaluateBaseFormulaInner(
       // first guard against direct self-reference and mutual
       // recursion between formula fields. Without this the engine
       // would call `getEvaluated` back into here forever and blow
-      // the JS call stack (see PR #78 Devin Review BUG_0002).
+      // the JS call stack (see PR #78.
       if (field.type === "formula" && field.formula) {
         if (visiting.has(field.name)) {
           return makeError(

@@ -1,6 +1,6 @@
 /**
  * Tests for the `KchatEventForwarder` push pipeline introduced in
- * Phase 11 Block B Task 1.
+ * Block B Task 1.
  *
  * The forwarder is the bridge between the main-process
  * `KchatClient.onWebSocketEvent` listener set and the renderer-
@@ -109,14 +109,14 @@ interface BridgeMockShape {
   bridgeIsKchatChannelLinked: ReturnType<typeof vi.fn>;
   bridgeIndexKchatFile: ReturnType<typeof vi.fn>;
   bridgeLogKchatFileDownloaded: ReturnType<typeof vi.fn>;
-  // Block B Task 3 (Phase 11) — ACL projection bridge surface.
+  // Block B Task 3 — ACL projection bridge surface.
   bridgeRefreshKchatAcl: ReturnType<typeof vi.fn>;
   bridgeRevokeKchatSource: ReturnType<typeof vi.fn>;
   bridgeLogKchatAclRefreshed: ReturnType<typeof vi.fn>;
   bridgeLogKchatChannelAccessRevoked: ReturnType<typeof vi.fn>;
-  // Block B Task 4 (Phase 11) — cryptoshred audit surface.
+  // Block B Task 4 — cryptoshred audit surface.
   bridgeLogKchatSourceCryptoshredded: ReturnType<typeof vi.fn>;
-  // Block C Task 1 (Phase 12) — chat-post ingest / edit /
+  // Block C Task 1 — chat-post ingest / edit /
   // delete bridge surface + matching audit logger surface.
   bridgeIngestKchatPost: ReturnType<typeof vi.fn>;
   bridgeEditKchatPost: ReturnType<typeof vi.fn>;
@@ -201,7 +201,7 @@ class FakeClient {
     new Uint8Array([0x6f, 0x6b, 0x21, 0x0a]),
   );
 
-  // Block B Task 3 (Phase 11): the forwarder's
+  // the forwarder's
   // `handleMembershipEvent` walks `listChannelMembers` to build
   // the authoritative roster fed to `bridgeRefreshKchatAcl`.
   // Default fixture: a single membership row that contains the
@@ -334,11 +334,11 @@ beforeEach(() => {
       outcome: "granted",
       memberCount: 0,
       principalPresent: true,
-      // Block B Task 4 (Phase 11): refresh outcomes carry
+      // refresh outcomes carry
       // cryptoshred counts; non-revoke paths always emit zero.
       chunksDropped: 0,
       filesDropped: 0,
-      // Block C Task 2 (Phase 12): post + DEK counts. Mirror
+      // post + DEK counts. Mirror
       // the chunks/files zero-on-non-revoke contract.
       postsDropped: 0,
       dekDropped: false,
@@ -350,7 +350,7 @@ beforeEach(() => {
       vacuumSucceeded: true,
       vacuumError: undefined,
     })),
-    // Block B Task 4 (Phase 11): the bridge's revoke outcome
+    // the bridge's revoke outcome
     // now carries the substrate's cryptoshred counts on both
     // `revoked` and `already_revoked` paths. The default fixture
     // returns the live-evidence shape (1 file, 1 chunk) so the
@@ -361,7 +361,7 @@ beforeEach(() => {
       outcome: "revoked",
       chunksDropped: 1,
       filesDropped: 1,
-      // Block C Task 2 (Phase 12): post + DEK counts default to
+      // post + DEK counts default to
       // zero/false for the file-only happy-path; the dedicated
       // chat-post coverage overrides these.
       postsDropped: 0,
@@ -377,7 +377,7 @@ beforeEach(() => {
     bridgeLogKchatAclRefreshed: vi.fn(),
     bridgeLogKchatChannelAccessRevoked: vi.fn(),
     bridgeLogKchatSourceCryptoshredded: vi.fn(),
-    // Block C Task 1 (Phase 12): the chat-post ingest path
+    // the chat-post ingest path
     // returns a substrate outcome short-code + chunk count.
     // Default to `ingested`/`unchanged` so the happy-path
     // dispatch test sees the audit row land with a non-no_post
@@ -1150,7 +1150,7 @@ describe("KchatEventForwarder", () => {
   });
 
   // ----------------------------------------------------------------
-  // Block B Task 3 (Phase 11): KChat channel ACL projection
+  // KChat channel ACL projection
   // dispatch.
   //
   // The forwarder dispatches five new event types into the
@@ -1229,7 +1229,7 @@ describe("KchatEventForwarder", () => {
 
   it("dispatches a revoked outcome and emits the principal-missing access-revoked audit row", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
-    // Block B Task 4 (Phase 11): refresh-driven revoke surfaces
+    // refresh-driven revoke surfaces
     // the substrate's cryptoshred counts so the forwarder can
     // emit both `KchatChannelAccessRevoked` AND
     // `KchatSourceCryptoshredded` audit rows.
@@ -1282,7 +1282,7 @@ describe("KchatEventForwarder", () => {
       "chan-acl-revoke",
       "principal_missing_from_roster",
     );
-    // Block B Task 4 (Phase 11): cryptoshred audit row lands
+    // cryptoshred audit row lands
     // with substrate-authoritative counts (chunks_dropped=5,
     // files_dropped=2). The reason matches the sibling
     // access-revoked row so an operator's grep can correlate.
@@ -1305,8 +1305,8 @@ describe("KchatEventForwarder", () => {
 
   it("dispatches a regranted outcome and schedules a full channel re-sync via scheduleChannelResync", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
-    // Block B Task 4 (Phase 11) second-pass Devin Review
-    // ANALYSIS_0002: when the substrate transitions a previously-
+    // Block B Task 4 second-pass Devin Review
+    //: when the substrate transitions a previously-
     // revoked source back to `Connected`, it reports
     // `outcome=regranted` so the forwarder schedules a full
     // channel re-sync (the revoke path scrubbed every chunk +
@@ -1523,7 +1523,7 @@ describe("KchatEventForwarder", () => {
       // No `bridgeLogKchatAclRefreshed` on these paths — the
       // audit shape is the revoke-row + shred-row pair only.
       expect(bridgeMock!.bridgeLogKchatAclRefreshed).not.toHaveBeenCalled();
-      // Block B Task 4 (Phase 11): the shred audit row pairs
+      // the shred audit row pairs
       // with the access-revoked row on every revoke outcome
       // (default fixture returns chunks_dropped=1, files_dropped=1).
       expect(
@@ -1564,7 +1564,7 @@ describe("KchatEventForwarder", () => {
     expect(
       bridgeMock!.bridgeLogKchatChannelAccessRevoked,
     ).not.toHaveBeenCalled();
-    // Block B Task 4 (Phase 11): no shred audit row on
+    // no shred audit row on
     // non-membership events — the contract is "shred follows
     // every substrate revoke", not "shred on every WS event".
     expect(
@@ -1574,7 +1574,7 @@ describe("KchatEventForwarder", () => {
   });
 
   /**
-   * Block B Task 4 (Phase 11): pin the idempotent re-revoke
+   * pin the idempotent re-revoke
    * path. On a repeat `channel_archived` event for a previously
    * revoked source, the substrate returns `already_revoked` with
    * zero cryptoshred counts (the first revoke already scrubbed
@@ -1660,7 +1660,7 @@ describe("KchatEventForwarder", () => {
   });
 
   /**
-   * Block B Task 4 (Phase 11): pin the `unlinked` outcome —
+   * pin the `unlinked` outcome —
    * the substrate has no source row for this cache_dir, so no
    * shred ran. The forwarder still emits the access-revoked row
    * (so operators see the event arrived) but suppresses the
@@ -1727,7 +1727,7 @@ describe("KchatEventForwarder", () => {
   });
 
   /**
-   * Block B Task 4 (Phase 11): pin the filesystem secure-delete
+   * pin the filesystem secure-delete
    * helper's wiring through `handleChannelGoneEvent`. When the
    * substrate returns a `revoked` (or `already_revoked`) outcome,
    * the cache directory and its manifest sidecar must be
@@ -1794,7 +1794,7 @@ describe("KchatEventForwarder", () => {
   });
 
   /**
-   * Block B Task 4 (Phase 11) third-pass Devin Review fix
+   * Block B Task 4 third-pass Devin Review fix
    * (filesystem-scrub observability): when `fs.rm` fails (e.g.
    * file locked by another process on Windows), the substrate
    * scrub still succeeded but the on-disk plaintext survives.
@@ -1880,7 +1880,7 @@ describe("KchatEventForwarder", () => {
       //        vacuumSucceeded, vacuumError)
       expect(call[0]).toBe(channelId);
       expect(call[1]).toBe("channel_deleted");
-      // Block C Task 2 (Phase 12): post + DEK counts default to
+      // post + DEK counts default to
       // zero/false on a file-only revoke (no chat-post evidence).
       expect(call[4]).toBe(0);
       expect(call[5]).toBe(false);
@@ -1910,7 +1910,7 @@ describe("KchatEventForwarder", () => {
   });
 
   /**
-   * Block B Task 4 (Phase 11) fifth-pass Devin Review fix
+   * Block B Task 4 fifth-pass Devin Review fix
    * (ANALYSIS_pr-review-job-ef3c7d6c..._0001): when the substrate's
    * Phase 5 `VACUUM` fails AFTER the DELETE + UPDATE transaction
    * commits, the row-level scrub still ran under
@@ -1980,7 +1980,7 @@ describe("KchatEventForwarder", () => {
       "channel_deleted",
       9,
       3,
-      // Block C Task 2 (Phase 12): file-only happy path → zero
+      // file-only happy path → zero
       // posts + DEK never dropped.
       0,
       false,
@@ -1996,7 +1996,7 @@ describe("KchatEventForwarder", () => {
   });
 
   /**
-   * Block C Task 1 (Phase 12): dispatch coverage for the chat-
+   * dispatch coverage for the chat-
    * post WS events. Pins:
    *   - `posted` → bridge_ingest under withChannelSyncLock,
    *     followed by `bridgeLogKchatPostIngested` audit row.

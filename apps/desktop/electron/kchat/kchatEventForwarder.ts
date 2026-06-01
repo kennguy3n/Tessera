@@ -1,7 +1,7 @@
 /**
  * KChat WebSocket → renderer + audit forwarder.
  *
- * Block B Task 1 (Phase 11). The Block A sidebar polled
+ * Block B Task 1. The Block A sidebar polled
  * `kchat:listChannelFiles` every 30 s to discover newly uploaded
  * files; the design comment at
  * `renderer/src/components/KchatSidebarSection.tsx:12-17`
@@ -194,7 +194,7 @@ void _assertConnectionStateIsView;
 void _assertConnectionStateViewIsState;
 
 /**
- * Block B Task 4 (Phase 11): drift tripwires for the bridge
+ * drift tripwires for the bridge
  * cryptoshred outcome shapes. The `@napi(object)` structs in
  * `crates/tessera_bridge/src/sources.rs`
  * (`KchatRevokeOutcomeInfo`, `KchatAclRefreshOutcomeInfo`) are
@@ -232,7 +232,7 @@ interface KchatRevokeOutcomeView {
   outcome: "revoked" | "already_revoked" | "unlinked";
   chunksDropped: number;
   filesDropped: number;
-  // Block C Task 2 (Phase 12): chat-post + DEK observability
+  // chat-post + DEK observability
   // surface threaded through bridge → forwarder → audit logger
   // alongside the existing chunks/files counts.
   postsDropped: number;
@@ -254,7 +254,7 @@ interface KchatAclRefreshOutcomeView {
   principalPresent: boolean;
   chunksDropped: number;
   filesDropped: number;
-  // Block C Task 2 (Phase 12): see `KchatRevokeOutcomeView` above.
+  // see `KchatRevokeOutcomeView` above.
   postsDropped: number;
   dekDropped: boolean;
   // Fifth-pass Devin Review fix
@@ -384,7 +384,7 @@ export function toRendererEventView(
  * forwarder so the validation lives next to the consumer that
  * cares.
  *
- * Block C Task 1 (Phase 12).
+ * Block C Task 1.
  */
 interface ParsedPostPayload {
   id: string;
@@ -409,7 +409,7 @@ interface ParsedPostPayload {
  *     the forwarder forwards-compatible if KChat ever pre-parses
  *     server-side, and matches what our test fixtures emit).
  *
- * Block C Task 1 (Phase 12).
+ * Block C Task 1.
  */
 export function parsePostPayload(
   data: Record<string, unknown>,
@@ -543,8 +543,8 @@ export class KchatEventForwarder {
    */
   private readonly getBridgeFn: () => NativeBridge | null;
   /**
-   * Block B Task 4 (Phase 11) second-pass Devin Review
-   * ANALYSIS_0002: optional fire-and-forget hook the forwarder
+   * Block B Task 4 second-pass Devin Review
+   *: optional fire-and-forget hook the forwarder
    * invokes when `handleMembershipEvent` resolves the ACL
    * refresh to `outcome === "regranted"`. Production wires this
    * to the IPC handler's full-channel-sync flow (see
@@ -755,7 +755,7 @@ export class KchatEventForwarder {
       });
     }
 
-    // Block B Task 3 (Phase 11): membership / channel events
+    // membership / channel events
     // drive the per-channel ACL projection so a user who loses
     // access to a KChat channel can no longer retrieve evidence
     // from it in subsequent corpus searches.
@@ -795,7 +795,7 @@ export class KchatEventForwarder {
         );
       });
     } else if (view.event === "posted") {
-      // Block C Task 1 (Phase 12): a new chat post; ingest the
+      // a new chat post; ingest the
       // body so retrieval can surface it alongside the channel's
       // file evidence. Body parsing + AEAD sealing happens
       // under `withChannelSyncLock` inside `handlePostedEvent`.
@@ -806,7 +806,7 @@ export class KchatEventForwarder {
         );
       });
     } else if (view.event === "post_edited") {
-      // Block C Task 1 (Phase 12): a chat post body was edited;
+      // a chat post body was edited;
       // re-chunk under the same indexed_file row so retrieval
       // surfaces the latest text without leaving an orphan
       // ciphertext copy.
@@ -817,7 +817,7 @@ export class KchatEventForwarder {
         );
       });
     } else if (view.event === "post_deleted") {
-      // Block C Task 1 (Phase 12): a chat post was deleted;
+      // a chat post was deleted;
       // drop the bookkeeping row + sealed chunks so retrieval
       // can no longer surface the body.
       this.handlePostDeletedEvent(view).catch((err) => {
@@ -953,7 +953,7 @@ export class KchatEventForwarder {
    * Side-effect path for `file_added` events: targeted single-
    * file sync + audit row.
    *
-   * Block B Task 2 (Phase 11) — Block A and Task 1 audited the
+   * Block B Task 2 — Block A and Task 1 audited the
    * event but did nothing else; the file would land in the
    * index only when the next 30 s sidebar reconciliation poll
    * happened to call `runAddKchatChannel` (which re-walks the
@@ -1238,7 +1238,7 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Block B Task 3 (Phase 11): side-effect path for membership
+   * side-effect path for membership
    * change events (`user_added`, `user_removed`,
    * `channel_member_updated`, `channel_updated`).
    *
@@ -1312,7 +1312,7 @@ export class KchatEventForwarder {
       "unlinked";
     let memberCount = 0;
     let principalPresent = false;
-    // Block B Task 4 (Phase 11): cryptoshred counters captured
+    // cryptoshred counters captured
     // from the bridge's `KchatAclRefreshOutcomeInfo` so the
     // post-lock audit pair (`KchatChannelAccessRevoked` +
     // `KchatSourceCryptoshredded`) can use them. Default 0 so
@@ -1321,13 +1321,13 @@ export class KchatEventForwarder {
     // gate emission on `outcome === "revoked"` below.
     let chunksDropped = 0;
     let filesDropped = 0;
-    // Block C Task 2 (Phase 12): chat-post + DEK counters captured
+    // chat-post + DEK counters captured
     // from the bridge's `KchatAclRefreshOutcomeInfo`. Default 0 /
     // false so non-revoke + unlinked paths still emit a
     // well-formed (zero-count) shred row when applicable.
     let postsDropped = 0;
     let dekDropped = false;
-    // Block B Task 4 (Phase 11) third-pass Devin Review fix:
+    // Block B Task 4 third-pass Devin Review fix:
     // filesystem-scrub outcome captured from
     // `secureDeleteChannelArtifacts` so the audit row records
     // both substrate-side (chunks/files dropped) AND filesystem-side
@@ -1397,7 +1397,7 @@ export class KchatEventForwarder {
         }
 
         const r = bridge.bridgeRefreshKchatAcl(cacheDir, members);
-        // Block B Task 4 (Phase 11): on the revoke path the
+        // on the revoke path the
         // substrate runs its inline cryptoshred under the SAME
         // per-channel lock we're already holding here, so the
         // filesystem scrub below cannot race a concurrent full
@@ -1409,7 +1409,7 @@ export class KchatEventForwarder {
         // by still-live substrate rows.
         //
         // Asymmetry vs. `handleChannelGoneEvent` (third-pass Devin
-        // Review ANALYSIS_0005): the channel-gone path gates the
+        // Review: the channel-gone path gates the
         // filesystem scrub on `outcome !== "unlinked"`, which
         // covers both `revoked` and `already_revoked`. We gate on
         // `=== "revoked"` here because `refresh_kchat_acl` (the
@@ -1481,7 +1481,7 @@ export class KchatEventForwarder {
         channelId,
         "principal_missing_from_roster",
       );
-      // Block B Task 4 (Phase 11): pair every revoke transition
+      // pair every revoke transition
       // with the cryptoshred row so an operator can correlate
       // "status changed" with "evidence scrubbed" in the audit
       // trail. The chunks/files counts come from the bridge's
@@ -1500,8 +1500,8 @@ export class KchatEventForwarder {
         vacuumError,
       );
     } else if (outcome === "regranted") {
-      // Block B Task 4 (Phase 11) second-pass Devin Review
-      // ANALYSIS_0002: a regrant transitions the source from
+      // Block B Task 4 second-pass Devin Review
+      //: a regrant transitions the source from
       // `AccessRevoked` to `Connected` because the earlier revoke
       // cryptoshredded every chunk + indexed_file row. Without
       // an automatic re-sync, the source stays in `Connected`
@@ -1533,7 +1533,7 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Block B Task 3 (Phase 11): side-effect path for
+   * side-effect path for
    * `channel_archived` / `channel_deleted` events.
    *
    * Sequence:
@@ -1573,7 +1573,7 @@ export class KchatEventForwarder {
         ? "channel_archived"
         : "channel_deleted";
 
-    // Block B Task 4 (Phase 11): the bridge's
+    // the bridge's
     // `KchatRevokeOutcomeInfo` carries cryptoshred counts on
     // BOTH `revoked` and `already_revoked` outcomes (the
     // substrate runs the (idempotent) shred on every revoke
@@ -1585,7 +1585,7 @@ export class KchatEventForwarder {
     // The default is the `unlinked` outcome with zero counts so
     // a thrown error inside the lock falls through to the same
     // no-shred-row audit shape as a real `unlinked` outcome.
-    // Block B Task 4 (Phase 11) third-pass Devin Review fix:
+    // Block B Task 4 third-pass Devin Review fix:
     // capture the filesystem-scrub result alongside the substrate
     // counts so the audit row records BOTH halves of the
     // observability surface. `unlinked` outcomes trivially
@@ -1654,7 +1654,7 @@ export class KchatEventForwarder {
     // "we changed state".
     this.safeAuditAccessRevoked(bridge, channelId, reason);
 
-    // Block B Task 4 (Phase 11): pair the access-revoked row
+    // pair the access-revoked row
     // with the cryptoshred row whenever a substrate-side scrub
     // ran. We skip `unlinked` because no source existed; for
     // `revoked` and `already_revoked` the shred always ran (the
@@ -1679,7 +1679,7 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Block C Task 1 (Phase 12): side-effect path for `posted` WS
+   * side-effect path for `posted` WS
    * events. Sequence:
    *   1. Drop if missing channel id / client / bridge.
    *   2. Skip the linked-channel fast path: no source row, no
@@ -1704,7 +1704,7 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Block C Task 1 (Phase 12): side-effect path for `post_edited`
+   * side-effect path for `post_edited`
    * WS events. Routes to `bridgeEditKchatPost` (which under the
    * hood is the same substrate code path as ingest — KChat
    * doesn't pre-track which post id was edited, only the new
@@ -1811,7 +1811,7 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Block C Task 1 (Phase 12): side-effect path for `post_deleted`
+   * side-effect path for `post_deleted`
    * WS events. Pulls the post id out of the WS payload, takes
    * the per-channel lock, drops the substrate evidence.
    */
@@ -1985,7 +1985,7 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Block B Task 4 (Phase 11): no-throw audit append for
+   * no-throw audit append for
    * `bridgeLogKchatSourceCryptoshredded`. Mirrors the
    * {@link safeAuditAccessRevoked} pattern — audit is best-effort
    * and must never wedge the forwarder. Emitted only after the

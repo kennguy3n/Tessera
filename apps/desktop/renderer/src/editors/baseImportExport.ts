@@ -1,5 +1,5 @@
 /**
- * Phase 17 PR 5 — Base import/export.
+ * Base import/export.
  *
  * The artifact-export pipeline already round-trips the raw JSON
  * (`tessera_core::ExportFormat::Json`), which is faithful to the

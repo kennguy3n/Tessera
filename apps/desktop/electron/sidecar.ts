@@ -173,7 +173,7 @@ export class ModelSidecar {
    * immediately. Passing `0` disables idle unloading entirely
    * (`startIdleMonitor` short-circuits when `idleUnloadMs <= 0`).
    *
-   * Phase 19 PR 9 Task 5: wires the renderer's
+   * wires the renderer's
    * `SettingsData.modelIdleTimeoutSecs` user preference to the
    * sidecar lifecycle. The runtime previously hardcoded 60 s as the
    * idle window via the `DEFAULT_OPTIONS.idleUnloadMs` literal,
@@ -279,7 +279,7 @@ export class ModelSidecar {
           // EPERM would mean we lost the right to signal it, which
           // shouldn't happen for a child we spawned.
         }
-        // Phase 15 Task 9: also remove the PID file at the same
+        // also remove the PID file at the same
         // moment we deliver the synchronous SIGKILL — the file is
         // strictly tied to the lifetime of this process, and
         // leaving a stale entry would make the next launch's
@@ -296,7 +296,7 @@ export class ModelSidecar {
       this.crashCleanupHandler = handler;
     }
 
-    // Phase 15 Task 9: record the spawned PID under
+    // record the spawned PID under
     // `<userData>/tessera-sidecar-pids/<label>.pid` so the next
     // cold-launch's `reapOrphanedSidecars` can detect and kill
     // this child if the parent crashes hard before our normal
@@ -331,7 +331,7 @@ export class ModelSidecar {
       // needed and would attempt to signal a dead PID (harmlessly but
       // noisily).
       this.clearCrashCleanup();
-      // Phase 15 Task 9: drop the PID-registry entry now that the
+      // drop the PID-registry entry now that the
       // child is gone. Synchronous because Node child-process
       // `exit` listeners can fire from inside the synchronous
       // process-exit path and we must not leave behind a stale

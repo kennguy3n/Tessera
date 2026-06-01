@@ -1,4 +1,4 @@
-//! Phase 15 Task 11: per-source sync-failure resilience state.
+//! per-source sync-failure resilience state.
 //!
 //! This module encodes the *between-sync-attempt* backoff schedule
 //! and the persistent failure-counter that the connector sync loop
@@ -22,7 +22,7 @@
 //!
 //! ## Backoff parameters
 //!
-//! The defaults match the Phase 15 Task 11 specification:
+//! The defaults match the specification:
 //!
 //!   * **Base interval**: 2 seconds. The first retry after a
 //!     transient failure waits ~2s. This is short enough that a

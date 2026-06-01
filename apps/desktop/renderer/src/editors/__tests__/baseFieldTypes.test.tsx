@@ -1,5 +1,5 @@
 /**
- * Integration tests for the Phase 17 PR 4 Base editor field types.
+ * Integration tests for the Base editor field types.
  * Each new FieldType variant gets a dedicated test covering:
  *   - default value & initial render
  *   - the user-facing interaction that changes the cell value
@@ -247,7 +247,7 @@ describe("BaseEditor — long_text field", () => {
   });
 
   it("locks the inline textarea + Expand button while the modal is open over the same cell", () => {
-    // Devin Review round-7 finding ANALYSIS_0006 — LongTextModal's
+    // Devin Review round-7 finding — LongTextModal's
     // `draft` initializes once from `value` on mount and only flushes
     // on Save. If the user typed into the inline textarea WHILE the
     // modal was open and then hit Save, the modal would overwrite the
@@ -387,7 +387,7 @@ describe("BaseEditor — duration field", () => {
     });
     const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "1:30" } });
-    // Commit is on blur (or Enter) — fix for BUG_0003 so users can
+    // Commit is on blur (or Enter) — fix for so users can
     // type intermediate keystrokes like "1" / "1:" without the
     // controlled input rejecting them mid-typing.
     fireEvent.blur(input);
@@ -876,7 +876,7 @@ describe("BaseEditor — expanded modal auto-closes when target record is delete
 });
 
 describe("BaseEditor — expanded modal auto-closes when target field is removed", () => {
-  // Devin Review PR #78 ANALYSIS_0006 (round 6):
+  // Devin Review PR #78 (round 6):
   //
   // `expandedCell` used to hold a BaseField object reference; if
   // the field was removed via ManageFields while the modal was

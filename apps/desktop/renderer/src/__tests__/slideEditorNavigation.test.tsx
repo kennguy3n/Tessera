@@ -1,5 +1,5 @@
 /**
- * SlideEditor navigation pinning tests — Phase 19 PR 11.
+ * SlideEditor navigation pinning tests.
  *
  * Three entry points to the same `navigateBy` / `goToSlide`
  * primitives:
@@ -90,7 +90,7 @@ function activeSlideTitle(): string {
 }
 
 describe("SlideEditor toolbar — Prev / Next NAVIGATE without reordering", () => {
-  // Phase 19 PR 11. The previous version of the toolbar had only one
+  // The previous version of the toolbar had only one
   // pair of arrow buttons labelled "Prev / Next" that called
   // `moveSlide(activeIndex, activeIndex ± 1)` — i.e. reorder, not
   // navigate. Devin Review PR #82 (ANALYSIS_…_0005) flagged this
@@ -177,7 +177,7 @@ describe("SlideEditor toolbar — Move ↑ / Move ↓ REORDERS distinctly from P
 });
 
 describe("SlideEditor — global Ctrl+PageUp / Ctrl+PageDown keyboard shortcut", () => {
-  // Phase 19 PR 11. Document-level listener so the shortcut fires
+  // Document-level listener so the shortcut fires
   // regardless of which control inside the editor has focus.
   // Matches Impress / Slides / Keynote.
 
@@ -258,7 +258,7 @@ describe("SlideEditor — global Ctrl+PageUp / Ctrl+PageDown keyboard shortcut",
 });
 
 describe("SlideEditor sidebar — Arrow-Up / Arrow-Down / Home / End on a focused thumbnail", () => {
-  // Phase 19 PR 11. The sidebar is a thumbnail list; matching the
+  // The sidebar is a thumbnail list; matching the
   // WAI-ARIA listbox-pattern, arrow keys move selection through
   // adjacent thumbnails (Home / End jump to the edges).
 
@@ -339,7 +339,7 @@ describe("SlideEditor sidebar — Arrow-Up / Arrow-Down / Home / End on a focuse
 });
 
 describe("SlideEditor toolbar — word-count display uses cached deck total", () => {
-  // Phase 19 PR 11. The toolbar header reads
+  // The toolbar header reads
   //   "Words: <active> / <total>"
   // on every render. Pin the surface so future refactors don't
   // accidentally show NaN, 0/0, or two-words-out-of-zero (i.e.
@@ -363,7 +363,7 @@ describe("SlideEditor toolbar — word-count display uses cached deck total", ()
 });
 
 describe("SlideEditor sidebar — thumbnail ref-callbacks are stable across renders", () => {
-  // Phase 19 PR 11 round 2. Regression test for ANALYSIS_0001:
+  // round 2. Regression test for:
   // the original `setThumbRef = useCallback((id) => (node) => ...)`
   // returned a fresh inner closure on every call, so each render
   // handed React a new ref function and React responded with a

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the Phase 17 PR 4 field-type helpers. These cover
+ * Unit tests for the field-type helpers. These cover
  * the pure-function layer that BaseEditor cell components delegate
  * to: record-id minting and migration, link resolution, rollup
  * aggregation, lookup pull-through, auto-numbering, and the inverse
@@ -75,7 +75,7 @@ describe("ensureRecordIds", () => {
   });
 
   it("drops primitives, null, and arrays — only keeps plain objects", () => {
-    // Devin Review ANALYSIS_0004 — hand-edited JSON like
+    // — hand-edited JSON like
     // `records: [null, 42, "oops", [], { Name: "ok" }]` would
     // previously crash on `null.id` (TypeError on the spread).
     // The defensive path filters such elements out and re-keys
@@ -100,7 +100,7 @@ describe("ensureRecordIds", () => {
   });
 
   it("re-mints fresh ids on duplicate-id records (first occurrence keeps the id, subsequent collisions get a new one)", () => {
-    // Devin Review round-7 finding ANALYSIS_0003 — hand-edited JSON
+    // Devin Review round-7 finding — hand-edited JSON
     // can ship two records both claiming `id: "abc"`. Downstream
     // consumers (`recordIndexById`, `linked_record` resolver,
     // `removeRecord`'s id-keyed lookup) all key on id; last write
@@ -162,7 +162,7 @@ describe("parseBaseContent — record id integration", () => {
   });
 
   it("coerces non-array records to []", () => {
-    // Devin Review ANALYSIS_0006 — hand-edited JSON can ship
+    // — hand-edited JSON can ship
     // records that don't satisfy the type contract; the parser
     // must not blow up.
     const cases = [
@@ -204,7 +204,7 @@ describe("parseBaseContent — record id integration", () => {
   });
 
   it("clamps a malformed percentPrecision into the safe range", () => {
-    // Devin Review BUG_0001 — a hand-edited percentPrecision of
+    // — a hand-edited percentPrecision of
     // -1 (or NaN, or 999) used to crash PercentCell with a
     // RangeError on `Number.toFixed`. After sanitization the
     // value must be in [0,20] or be removed entirely.
@@ -605,7 +605,7 @@ describe("matchesFilter — per-type filtering", () => {
   // ">=0", "<=0", or "<1". The old filter code (pre-PR-5) had an
   // explicit `if (val == null) return false;` that this matcher must
   // preserve.
-  it("numeric: stored null / undefined / '' never matches a numeric filter (BUG-0001)", () => {
+  it("numeric: stored null / undefined / '' never matches a numeric filter", () => {
     for (const filter of ["0", "=0", ">=0", "<=0", "<1", ">-1", ">=-99"]) {
       expect(matchesFilter("number", null, filter)).toBe(false);
       expect(matchesFilter("number", undefined, filter)).toBe(false);
@@ -625,7 +625,7 @@ describe("matchesFilter — per-type filtering", () => {
   // an empty display string would otherwise match "0", ">=0", etc.
   // The fix short-circuits any numeric comparison when the display
   // is empty / whitespace-only.
-  it("computed: empty display never matches a numeric filter (ANALYSIS-0001)", () => {
+  it("computed: empty display never matches a numeric filter", () => {
     for (const filter of ["0", "=0", ">=0", "<=0", "<1", ">-1"]) {
       expect(matchesFilter("formula", "ignored", filter, "")).toBe(false);
       expect(matchesFilter("formula", "ignored", filter, " ")).toBe(false);
@@ -641,7 +641,7 @@ describe("matchesFilter — per-type filtering", () => {
   // ANALYSIS_pr-review-job-b04adfa7…-0006: percent stores fractions
   // but the user sees percentages. `>10` on a stored `0.5` (= 50%)
   // must match (50% > 10%), not return false because `0.5 > 10`.
-  it("percent: filter operand is interpreted as a display percentage (ANALYSIS-0006)", () => {
+  it("percent: filter operand is interpreted as a display percentage", () => {
     // `>10` means ">10%". Stored 0.5 (50%) matches; stored 0.05 (5%)
     // does not.
     expect(matchesFilter("percent", 0.5, ">10")).toBe(true);
@@ -670,7 +670,7 @@ describe("matchesFilter — per-type filtering", () => {
   // ────────────────────────────────────────────────────────────────
   // Percent operand may carry a trailing `%` (round 10 — ANALYSIS_…_0004)
   // ────────────────────────────────────────────────────────────────
-  it("percent accepts a trailing `%` on the user's operand (ANALYSIS-0004 round 10)", () => {
+  it("percent accepts a trailing `%` on the user's operand round 10)", () => {
     // The displayed value carries a `%` (`50%`), so the most natural
     // thing a user types is `>50%` not `>50`. Before round 10 the
     // regex rejected the `%`, then `Number("50%") = NaN` silently
@@ -696,7 +696,7 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("currency", 75, ">50%")).toBe(false);
   });
 
-  it("percent: lone `%` (or whitespace-only after strip) never matches (ANALYSIS-0004 round 11)", () => {
+  it("percent: lone `%` (or whitespace-only after strip) never matches round 11)", () => {
     // After stripping the trailing `%`, the operand is empty.
     // Without the empty-after-strip guard, `Number("") === 0` would
     // silently turn the filter into `= 0%` and match every zero-valued
@@ -717,7 +717,7 @@ describe("matchesFilter — per-type filtering", () => {
   // ────────────────────────────────────────────────────────────────
   // Float-safe equality (PR #79 round 8 — ANALYSIS_…_0001)
   // ────────────────────────────────────────────────────────────────
-  it("percent `=N` matches non-representable fractions like 33.3% (ANALYSIS-0001)", () => {
+  it("percent `=N` matches non-representable fractions like 33.3%", () => {
     // The stored value is the literal fraction the user can type
     // into a percent cell — `0.333` for 33.3%. The user's filter
     // operand is `33.3` which we rescale to `33.3 / 100`. That
@@ -734,7 +734,7 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("percent", 0.333, "=33.4")).toBe(false);
   });
 
-  it("number / currency `=N.M` is robust against any single multiply rounding error (ANALYSIS-0001)", () => {
+  it("number / currency `=N.M` is robust against any single multiply rounding error", () => {
     // A user storing the result of a single multiply (e.g. tax = price * 0.07)
     // can hit non-representable values on plain numeric columns too.
     // Verify the comparator applies symmetrically to every numeric type.
@@ -755,7 +755,7 @@ describe("applyFieldRename — atomic cross-pointer rename", () => {
   //   • `linkedDisplayField`    (linked_record → display column)
   // The pre-fix `renameField` only patched pointers on **other** fields.
   // A self-referential pointer on the renamed field itself would survive
-  // with the old name still embedded, which is the bug `BUG_0001` flagged.
+  // with the old name still embedded, which is the bug `` flagged.
   // These tests pin the post-fix contract.
 
   it("rewrites the field's own name", () => {
@@ -797,7 +797,7 @@ describe("applyFieldRename — atomic cross-pointer rename", () => {
   });
 
   it("patches a self-referential pointer on the renamed field itself", () => {
-    // The bug `BUG_0001` was: when renaming the field that owns the
+    // The bug `` was: when renaming the field that owns the
     // self-reference (here, "Foo" → "Bar" on a rollup whose
     // `targetField` was also "Foo"), the rename atomicity broke
     // because only the `name` was rewritten — `targetField` kept the
@@ -922,7 +922,7 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
     expect(out.filters).toEqual({ A: "foo", C: "baz" });
   });
 
-  it("nulls out kanban / calendar / timeline / gallery / title pointers when their target is gone (ANALYSIS-0002)", () => {
+  it("nulls out kanban / calendar / timeline / gallery / title pointers when their target is gone", () => {
     const out = pruneViewStateAgainstFields(fields("Title"), {
       sortField: null,
       filters: {},

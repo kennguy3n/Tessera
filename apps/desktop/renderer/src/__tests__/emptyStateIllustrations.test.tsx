@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 20 — empty-state illustration coverage for every
+ * empty-state illustration coverage for every
  * page that can be empty. Each test asserts (a) the EmptyState card
  * is rendered (`empty-state` class), (b) a Lucide icon-emitted SVG
  * is present (the icons render as `<svg>` elements with role="img"
@@ -49,7 +49,7 @@ function expectEmptyStateRendered(
   ).toBeInTheDocument();
 }
 
-describe("empty-state illustrations (Phase 15 Task 20)", () => {
+describe("empty-state illustrations", () => {
   it("SourcesPage shows the FolderPlus empty state", async () => {
     render(
       <MemoryRouter>

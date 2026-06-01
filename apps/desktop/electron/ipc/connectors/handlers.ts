@@ -78,7 +78,7 @@ export interface ConnectorStatusInfo {
 }
 
 /**
- * Phase 19 PR 10 Task 8 — explicit allowlist of providers whose
+ * explicit allowlist of providers whose
  * OAuth config legitimately uses `scope: ""`.
  *
  * Notion's "internal integration" token is bound to a workspace at
@@ -156,7 +156,7 @@ function safeAudit(ctx: IpcContext, fn: (b: ReturnType<IpcContext["requireBridge
 }
 
 /**
- * Phase 15 Task 11: maps a `ProviderId` (the OAuth-layer label
+ * maps a `ProviderId` (the OAuth-layer label
  * used in this file) to the `sourceType` string the bridge
  * surfaces on each `SourceInfo` row (mirror of Rust
  * `SourceType` enum serialised as snake_case).
@@ -176,7 +176,7 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
 };
 
 /**
- * Phase 15 Task 11: classify a sync error as `transient` or
+ * classify a sync error as `transient` or
  * `permanent`. The decision matrix aligns with
  * `tessera_connectors::ConnectorError::failure_kind` for the canonical
  * cases (401, 403, 404, 410, network errors, rate-limit) so a finding
@@ -298,7 +298,7 @@ export function classifyConnectorError(err: unknown): FailureKind {
 }
 
 /**
- * Phase 15 Task 11: stamp a successful sync onto every source
+ * stamp a successful sync onto every source
  * row that belongs to `provider`. Clearing per-source is
  * intentional — a single provider's sync may touch multiple
  * sources (e.g. multiple Drive folders), and any of them that
@@ -337,7 +337,7 @@ function clearAllProviderFailureStates(ctx: IpcContext, provider: ProviderId): v
 }
 
 /**
- * Phase 15 Task 11: stamp a failed sync onto every source row
+ * stamp a failed sync onto every source row
  * that belongs to `provider`, applying the policy in
  * `connectorBackoff` to the previous state to compute the new
  * `(retry_count, failed_permanently)` tuple.
@@ -404,7 +404,7 @@ import {
 export { NetworkError, NotConnectedError, isNetworkError };
 
 /**
- * Phase 15 Task 26 — per-provider in-flight refresh registry.
+ * per-provider in-flight refresh registry.
  *
  * When two concurrent connector syncs both observe an expired access
  * token they would each independently call `refreshProviderToken`,
@@ -459,7 +459,7 @@ export function __resetOAuthRefreshRegistryForTests(): void {
  * the access token has expired (or is within 60s of expiry). Throws
  * a clear error if the connector is not connected.
  *
- * Phase 15 Task 26: concurrent callers for the same provider share
+ * concurrent callers for the same provider share
  * the in-flight refresh — see `REFRESH_IN_FLIGHT` above.
  */
 async function getValidAccessToken(
@@ -521,7 +521,7 @@ async function getValidAccessToken(
       `${provider} client credentials missing — re-authenticate`,
     );
   }
-  // Phase 15 Task 26 — collapse concurrent refreshes for the same
+  // collapse concurrent refreshes for the same
   // provider onto a single in-flight Promise. If another caller is
   // already refreshing this provider's token, await their result and
   // return — we MUST NOT issue a second exchange against the
@@ -562,7 +562,7 @@ async function getValidAccessToken(
       }
       throw err;
     }
-    // Phase 19 PR 10 Task 8 — RFC 6749 allows the refresh response
+    // RFC 6749 allows the refresh response
     // to narrow scope (return a `scope` field listing a smaller
     // set). Trust the refresh response when present; fall back to
     // the previously-stored grant when the provider omits the
@@ -710,7 +710,7 @@ export async function runConnectorSync(
   try {
     token = await getValidAccessToken(ctx, provider);
   } catch (err) {
-    // Devin Review PR #69 follow-up BUG_0001: record the failure on
+    // Devin Review PR #69 follow-up: record the failure on
     // every provider source BEFORE we branch into the offline-return
     // or hard-throw paths. The original Task 11 wiring only recorded
     // failures from the `runSync` catch below, so a token-refresh
@@ -750,7 +750,7 @@ export async function runConnectorSync(
     }
     throw err;
   }
-  // Phase 19 PR 10 Task 8 — validate the user has granted every
+  // validate the user has granted every
   // required OAuth scope before we burn rate-limit budget and start
   // hitting provider APIs. A narrowed grant would otherwise surface
   // as opaque 403s deep inside the per-provider sync impl; here we
@@ -838,7 +838,7 @@ export async function runConnectorSync(
           result.removed,
         ),
       );
-      // Phase 15 Task 11: a successful sync clears any previously
+      // a successful sync clears any previously
       // recorded failure state. Done AFTER the audit log emits so
       // a hypothetical race where the clear happens but the audit
       // does not still leaves the audit pipeline as the source of
@@ -848,7 +848,7 @@ export async function runConnectorSync(
     }
     return result;
   } catch (err) {
-    // Phase 15 Task 11: record failure BEFORE the offline-result
+    // record failure BEFORE the offline-result
     // branch returns. The renderer's source-health UI relies on
     // this to render the retry-count badge on every source the
     // provider owns. Even when we degrade to `{ status: "offline" }`
@@ -963,7 +963,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         clientSecret,
         codeVerifier: pkce?.verifier,
       });
-      // Phase 19 PR 10 Task 8 — persist the scopes the provider
+      // persist the scopes the provider
       // actually granted (`tokens.grantedScopes`), not just the
       // scopes we requested. If the provider's response omitted the
       // `scope` field entirely (e.g. Notion integration tokens) we
@@ -1130,7 +1130,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     },
   );
 
-  // Phase 19 PR 10 Task 8 — surface the requested-vs-granted scope
+  // surface the requested-vs-granted scope
   // diff to the renderer so the connector card can render a
   // "scopes narrowed" warning + reconnect CTA without the user
   // having to attempt a sync first.

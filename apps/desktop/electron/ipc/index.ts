@@ -42,13 +42,13 @@ export function registerAllIpcHandlers(): void {
   registerDialogHandlers();
   registerKchatHandlers();
   registerAuditHandlers();
-  // Phase 19 PR 10 Task 9 — local-only telemetry event-pumping
+  // local-only telemetry event-pumping
   // IPCs. The `telemetryEnabled` toggle itself lives in
   // `settings:update`; this only registers the event-recording
   // and event-inspection channels so the audit panel and the
   // record-counter callsites have somewhere to dispatch to.
   registerTelemetryHandlers();
-  // Phase 19 PR 10 Task 10 — PIN / biometric app-lock IPC. Wired
+  // PIN / biometric app-lock IPC. Wired
   // last so the lock surface is available after all stateful
   // handlers; ordering is only cosmetic since registration is
   // idempotent.

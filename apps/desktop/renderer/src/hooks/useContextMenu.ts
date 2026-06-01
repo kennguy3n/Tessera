@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 20: context-menu open/close state hook.
+ * context-menu open/close state hook.
  *
  * Lives in `hooks/` (not next to the `<ContextMenu>` component) so
  * Vite's fast-refresh boundary stays clean — a TSX file that

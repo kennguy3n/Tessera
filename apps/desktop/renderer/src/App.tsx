@@ -32,7 +32,7 @@ export default function App() {
   // one artifact). We flip this once the user opens the palette and
   // keep it mounted from then on so subsequent opens are instant
   // (the hooks stay warm and just observe state changes). Devin
-  // Review PR #87 ANALYSIS_0001.
+  // Review PR #87.
   const [paletteHasMounted, setPaletteHasMounted] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);

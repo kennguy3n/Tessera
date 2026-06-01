@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 20 — auto-fill series detection + cell generation.
+ * auto-fill series detection + cell generation.
  *
  * Given a source array of raw cell strings (the cells the user
  * selected before grabbing the fill handle) and a target length,

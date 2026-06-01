@@ -279,7 +279,7 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
  * `waitForReady` is the gate IPC handlers (model:start, vision:describe,
  * imagegen:generate) use AFTER `start()` to prevent the well-known
  * "first request lands before llama-server / sd-server has bound its
- * HTTP port" race (Devin Review ANALYSIS_0005). These tests pin its
+ * HTTP port" race. These tests pin its
  * three observable invariants:
  *
  *   1. Returns `true` once `/health` is reachable.

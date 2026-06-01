@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 9 — local-only telemetry sink.
+ * local-only telemetry sink.
  *
  * Privacy contract
  * ----------------

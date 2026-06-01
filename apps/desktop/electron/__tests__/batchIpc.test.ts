@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 6 — `sources:batchReindex` / `artifacts:batchExport` regression
+ * `sources:batchReindex` / `artifacts:batchExport` regression
  * suite.
  *
  * Three concerns:
@@ -31,7 +31,7 @@ import {
 } from "../ipc/batch";
 import { assertStringArray } from "../ipc/validate";
 
-describe("runBatch (Phase 15 Task 6 — IPC bulk operation primitive)", () => {
+describe("runBatch (IPC bulk operation primitive)", () => {
   it("returns one ok-true entry per id when every handler succeeds", async () => {
     const handler = vi.fn(async (id: string) => `result:${id}`);
     const ids = ["a", "b", "c", "d"];

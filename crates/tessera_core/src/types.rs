@@ -203,7 +203,7 @@ pub enum SourceStatus {
     Error,
     Disconnected,
     /// The local user has lost authorisation to read this source.
-    /// Block B Task 3 (Phase 11) introduces this state for
+    /// Block B Task 3 introduces this state for
     /// `SourceType::Kchat` rows where the most recent ACL
     /// projection (`SourceManager::refresh_kchat_acl`) did not
     /// include the locally-authenticated KChat principal, or where
@@ -214,7 +214,7 @@ pub enum SourceStatus {
     /// loses access to a KChat channel cannot search content that
     /// was indexed while they still had access.
     ///
-    /// Block B Task 4 (Phase 11) additionally cryptoshreds every
+    /// Block B Task 4 additionally cryptoshreds every
     /// chunk + indexed_file row on the revoke transition (see
     /// `SourceStore::cryptoshred_kchat_source_evidence`), so a
     /// re-added principal cannot resurrect stale indexed content

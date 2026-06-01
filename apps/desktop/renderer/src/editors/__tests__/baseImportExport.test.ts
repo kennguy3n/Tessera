@@ -1,5 +1,5 @@
 /**
- * Unit tests for the Phase 17 PR 5 base import/export module.
+ * Unit tests for the base import/export module.
  *
  * Scope:
  *   - `csvEscapeCell` — RFC-4180 quoting rules
@@ -506,7 +506,7 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
     expect(result.records.map((r) => r.Name)).toEqual(["Alice", "Bob"]);
   });
 
-  it("disambiguates duplicate CSV headers with ` (2)`, ` (3)` suffixes (ANALYSIS-0004)", () => {
+  it("disambiguates duplicate CSV headers with ` (2)`, ` (3)` suffixes", () => {
     // The simple-collision case: two identical headers, no
     // pre-existing suffixed names anywhere in the row. The second
     // `Name` becomes `Name (2)`. Downstream code keys filters,
@@ -594,7 +594,7 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
   // ────────────────────────────────────────────────────────────────
   // Empty-CSV-header coverage (PR #79 round 8 — ANALYSIS_…_0004)
   // ────────────────────────────────────────────────────────────────
-  it("auto-names blank CSV headers as `Column N` (1-based) so the column is still visible (ANALYSIS-0004)", () => {
+  it("auto-names blank CSV headers as `Column N` (1-based) so the column is still visible", () => {
     // Excel happily emits `Name,,Score` when a middle column is
     // empty / unnamed. Previously the trimmed empty string passed
     // `isReservedFieldName` and became a field literally named `""`,
@@ -834,7 +834,7 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     expect(reimported.records).toEqual(original.records);
   });
 
-  it("filters non-object records in the canonical shape without throwing (BUG-0004)", () => {
+  it("filters non-object records in the canonical shape without throwing", () => {
     // Defensive: a hand-edited / third-party canonical-JSON could
     // land with `null` (or another primitive) in `records`. Before
     // the round-7 fix the canonical path did `(obj.records as
@@ -853,7 +853,7 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     expect(result.records).toEqual([{ id: "r1", Title: "Alpha" }]);
   });
 
-  it("filters non-object rows in the bare-array shape without throwing (BUG-0004)", () => {
+  it("filters non-object rows in the bare-array shape without throwing", () => {
     // Symmetric to the canonical-shape test — the array shape's
     // record-build `.map` also previously accessed `row.id` without
     // re-filtering, even though the field-harvest loop had a guard.
@@ -873,7 +873,7 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     ]);
   });
 
-  it("mints a fresh id when a canonical record has a non-string id (BUG-0004)", () => {
+  it("mints a fresh id when a canonical record has a non-string id", () => {
     // `ensureRecordIds` also covers the related "wrong-typed id"
     // case: a record with `id: 42` or `id: null` gets a fresh
     // makeRecordId() so downstream linked_record lookups keep
@@ -896,7 +896,7 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     }
   });
 
-  it("sanitises every imported field via sanitizeBaseField — out-of-range percentPrecision is clamped (BUG-0001)", () => {
+  it("sanitises every imported field via sanitizeBaseField — out-of-range percentPrecision is clamped", () => {
     // A hand-crafted JSON with `percentPrecision: 200` would crash the
     // very next CSV export (`Number.prototype.toFixed` throws for
     // arguments outside [0, 100]). The fix runs every imported field
@@ -921,7 +921,7 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
 });
 
 describe("formatValueForCsv defensive clamp", () => {
-  it("clamps percentPrecision above 20 so a stale field config can't throw RangeError on export (BUG-0002)", () => {
+  it("clamps percentPrecision above 20 so a stale field config can't throw RangeError on export", () => {
     // Defence-in-depth: even if `parseJsonToBase`'s sanitisation is
     // bypassed (e.g. a future call site bypasses the parser, or
     // `data.fields` is hand-mutated by another editor flow), the

@@ -123,7 +123,7 @@ export async function writeManifest(
 }
 
 /**
- * Block B Task 4 (Phase 11): filesystem-side scrub of a revoked
+ * filesystem-side scrub of a revoked
  * KChat channel's on-disk artifacts.
  *
  * The substrate-side cryptoshred (`bridgeRevokeKchatSource` /

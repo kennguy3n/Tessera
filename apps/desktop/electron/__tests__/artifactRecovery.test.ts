@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 8 — `artifactRecovery.ts` regression suite.
+ * `artifactRecovery.ts` regression suite.
  *
  * The recovery module is the safety net for the auto-save IPC chain
  * — a process crash between the renderer firing `artifacts:update`

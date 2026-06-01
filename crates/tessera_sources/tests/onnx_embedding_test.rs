@@ -1,4 +1,4 @@
-//! Phase 19 Task 1: end-to-end tests for the ONNX embedding
+//! end-to-end tests for the ONNX embedding
 //! provider, exercised against the two shipped models:
 //!
 //!   * `all-MiniLM-L6-v2` — Xenova quantised English-only distil.

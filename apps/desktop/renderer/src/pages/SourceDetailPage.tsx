@@ -41,7 +41,7 @@ export default function SourceDetailPage() {
   // won't trigger multiple overlapping passes; the button is also
   // disabled while `reembedding === true`.
   const embeddingProgress = useEmbeddingProgress(reembedGeneration);
-  // Phase 13 Task 10: when this source is a KChat channel,
+  // when this source is a KChat channel,
   // subscribe to the substrate-side backfill watermark. The
   // helper returns `null` for non-KChat sources so the hook stays
   // quiescent — there's no per-page polling cost for the common
@@ -220,7 +220,7 @@ export default function SourceDetailPage() {
   // {glyph + ariaLabel} pair, so the call-site shape should be
   // identical — an IIFE inside JSX (the pre-PR-55 shape) is
   // harder to read and diverges from the sibling page. Per
-  // Devin Review PR #55 ANALYSIS_0004.
+  // Devin Review PR #55.
   const sourceDetailTypeIcon = sourceTypeIcon(source.sourceType);
 
   return (
@@ -259,7 +259,7 @@ export default function SourceDetailPage() {
               {reembedding ? "Re-embedding…" : "Re-embed"}
             </Button>
             {kchatChannelId && (
-              // Phase 13 Task 10: manual trigger for the KChat
+              // manual trigger for the KChat
               // post-history backfill walk. The substrate-side
               // orchestrator is idempotent on `cacheDir` (an
               // already-completed walk short-circuits at the state
@@ -415,8 +415,7 @@ export default function SourceDetailPage() {
             </p>
           </Card>
         )}
-        {/*
-          Phase 13 Task 10 — KChat backfill progress card.
+        {/* — KChat backfill progress card.
 
           Rendered ONLY for KChat-channel sources. The card has four
           discriminated states the poll surfaces via

@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 25 — Content-Security-Policy generator.
+ * Content-Security-Policy generator.
  *
  * Centralises the CSP string construction so the policy can be:
  *
@@ -23,8 +23,7 @@
  *
  * NOTE: `tessera-asset:` is a privileged scheme registered before
  * `app.whenReady` fires — see `assetProtocol.ts`. It is whitelisted
- * here in `img-src` (Phase 14 Task: serve generated images without a
- * multi-megabyte base64 data URL) and nowhere else.
+ * here in `img-src`  and nowhere else.
  */
 import { randomBytes } from "crypto";
 

@@ -181,7 +181,7 @@ describe("secureDeleteChannelArtifacts", () => {
   });
 
   /**
-   * Block B Task 4 (Phase 11) third-pass Devin Review fix
+   * Block B Task 4 third-pass Devin Review fix
    * (filesystem-scrub observability): when `fs.rm` fails on the
    * cache dir (e.g. parent directory is read-only on POSIX or a
    * file is locked on Windows), the helper records the failure

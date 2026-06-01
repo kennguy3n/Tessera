@@ -8,7 +8,7 @@ import type {
 } from "../types/ipc";
 
 /**
- * Phase 19 Task 1: settings card that lets the user pick the
+ * settings card that lets the user pick the
  * embedding provider used for semantic search.
  *
  * Three tiers, rendered as radio buttons:

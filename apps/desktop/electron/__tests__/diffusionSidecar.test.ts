@@ -150,7 +150,7 @@ describe("resolveDiffusionBinary", () => {
   // platform default — a future regression that swapped the ternary
   // (e.g., `platform === "linux" ? ".exe" : ""`) would only surface
   // on Windows CI, defeating the point of the injection surface.
-  // Per Devin Review PR #59 pass 3 ANALYSIS_0003.
+  // Per Devin Review PR #59 pass 3.
   it("appends .exe to the binary name when platform is injected as win32", () => {
     // No binaries exist on disk, so the resolver falls through to
     // the bare-binary-name fallback. That bare name MUST reflect the

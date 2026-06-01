@@ -10,7 +10,7 @@ import type { ArtifactInfo } from "../types/ipc";
  * command palette, recents card) without each one needing its own
  * refresh hook or a manual prop drill.
  *
- * PR #87 Devin Review ANALYSIS_0005: previously a delete on a
+ * PR #87: previously a delete on a
  * `RecentArtifactCard` would call `api.artifacts.remove()` but
  * leave the deleted card visible on the home page until the user
  * navigated away and back. Now the delete handler dispatches this
@@ -44,7 +44,7 @@ export function notifyArtifactsChanged(): void {
  * fresh fetch on the next render — the hook re-runs its mount
  * effect when the dep changes.
  *
- * PR #87 Devin Review ANALYSIS_0003 round 3: previously the
+ * PR #87 round 3: previously the
  * Sidebar called `useArtifactList()` unconditionally on every
  * launch, firing an `artifacts:list` IPC that returns the full
  * artifact list (including `content: string`) even when the user
@@ -99,7 +99,7 @@ export function useArtifactList(options: UseArtifactListOptions = {}) {
   // of where the mutation came from. Disabled callers skip the
   // listener entirely — they don't care about mutations because
   // they aren't rendering the list. PR #87 Devin Review
-  // ANALYSIS_0005.
+  //.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!enabled) return;

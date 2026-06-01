@@ -279,7 +279,7 @@ mod tests {
         assert!((1..=31).contains(&now.day()));
     }
 
-    /// Devin Review PR #70 follow-up BUG_0005 — empirical regression
+    /// Devin Review PR #70 follow-up — empirical regression
     /// for the citation-block bracket grammar.
     ///
     /// A Devin Review snapshot repeatedly claimed that the

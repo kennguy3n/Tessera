@@ -384,7 +384,7 @@ function formatBytes(n: number): string {
 }
 
 /**
- * Phase 13 Theme 2 Task 11: human-friendly type label for the
+ * human-friendly type label for the
  * file preview row. Prefers `extension` (3-4 chars, capitalised
  * for visual weight) over the raw `mime_type` because the
  * preview row is space-constrained — `PDF` is friendlier than
@@ -399,7 +399,7 @@ function formatFileType(f: { mime_type?: string; extension?: string }): string {
 }
 
 /**
- * Phase 13 Theme 2 Task 11: choose a Unicode glyph that gives a
+ * choose a Unicode glyph that gives a
  * coarse visual hint about the file type. The Tessera renderer
  * does not download file bytes during the preview phase (would
  * waste bandwidth and rate-limit budget for every "add channel
@@ -432,7 +432,7 @@ function fileTypeIcon(f: {
   // text editor; tabbing them as "📊 spreadsheet" would surprise
   // users who treat them as data dumps. The classification is
   // load-bearing: the spreadsheet regex below must NOT include
-  // `csv`/`tsv` (Devin Review pass 1 on f7c8dd1 ANALYSIS_0001
+  // `csv`/`tsv` (Devin Review pass 1 on f7c8dd1
   // flagged the previous duplicate `csv` entry as dead code; the
   // duplicate is now removed).
   if (mime.startsWith("text/") || /^(md|txt|log|json|yaml|yml|xml|csv|tsv|html|css|js|ts|tsx|jsx|rs|py|go|rb|java|c|h|cpp|hpp|sh|toml)$/.test(ext)) {
@@ -448,7 +448,7 @@ function fileTypeIcon(f: {
 }
 
 /**
- * Phase 13 Theme 2 Task 11: format an uploader handle for the
+ * format an uploader handle for the
  * preview row. Prefers the enriched `uploaderUsername` (from
  * `enrichKchatFileViews` in the main process); falls back to a
  * shortened raw user id when enrichment didn't resolve
@@ -476,7 +476,7 @@ function formatUploader(f: {
 }
 
 /**
- * Phase 13 Theme 2 Task 11: format the upload epoch ms in the
+ * format the upload epoch ms in the
  * user's locale. Uses `Intl.DateTimeFormat` with a fixed shape
  * (`day month year`) so the column width is predictable across
  * locales without being arbitrarily long. A non-finite or

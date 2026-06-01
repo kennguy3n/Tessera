@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 13 — multi-sheet model + cross-sheet formula tests.
+ * multi-sheet model + cross-sheet formula tests.
  *
  * Covers:
  *   - `toWorkbook` wraps legacy single-sheet content into one tab

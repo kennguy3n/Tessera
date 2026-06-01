@@ -46,7 +46,7 @@ import { useSettings, useUpdateSetting } from "./useSettings";
  * bold-text mark. Adding `view:toggleSidebar` to this set caused
  * Cmd+B inside a document to both apply bold AND collapse the
  * sidebar — a disruptive UX bug surfaced by PR #87 Devin Review
- * BUG_0001 (round 3). The sidebar toggle is a chrome-level nav
+ * (round 3). The sidebar toggle is a chrome-level nav
  * action, not an editor action, so suppressing it inside editors
  * is the architecturally correct fix (matches how every native
  * desktop app handles Cmd+B inside rich-text fields).
@@ -56,7 +56,7 @@ import { useSettings, useUpdateSetting } from "./useSettings";
  * the canonical "go anywhere from anywhere" entry point (matches
  * the VSCode / Sublime / Linear pattern). Users typing in a
  * document still need a way to summon the palette without
- * leaving the editor first. PR #87 Devin Review ANALYSIS_0007
+ * leaving the editor first. PR #87
  * round 3.
  */
 const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
@@ -153,7 +153,7 @@ export function useKeyboardShortcuts() {
             return;
           case "toggleTheme": {
             // Three-state cycle so the toggle is meaningful for users who
-            // start on "system" (PR #87 Devin Review ANALYSIS_0004).
+            // start on "system" (PR #87.
             //   system -> dark -> light -> system -> ...
             // Users on "system" who pop into "dark" via this shortcut can
             // get back to "system" by toggling once more from "light".
@@ -167,7 +167,7 @@ export function useKeyboardShortcuts() {
             return;
           }
           case "goBack":
-            // Phase 18 Task 19 follow-up: react-router back navigation.
+            // follow-up: react-router back navigation.
             // We use `navigate(-1)` (not `window.history.back()`) so the
             // router stays in sync with its own history stack — mixing the
             // two stacks would leave the location bar and the rendered

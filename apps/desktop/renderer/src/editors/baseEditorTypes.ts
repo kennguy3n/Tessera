@@ -6,7 +6,7 @@
  * directly without creating a runtime cycle. Compile-time-erased
  * declarations only — no value-level code lives here, by design.
  *
- * Phase 17 PR 4 expansion: 15 new field types covering Airtable
+ * expansion: 15 new field types covering Airtable
  * parity (multi_select, formula, linked_record, rollup, lookup,
  * attachment, long_text, email, phone, currency, percent, rating,
  * duration, auto_number, plus the existing 6 from PR 0).
@@ -28,19 +28,19 @@ export type FieldType =
   | "select"
   | "checkbox"
   | "url"
-  // Phase 17 Task 1
+  //
   | "multi_select"
-  // Phase 17 Task 2
+  //
   | "formula"
-  // Phase 17 Tasks 3-5
+  // Tasks 3-5
   | "linked_record"
   | "rollup"
   | "lookup"
-  // Phase 17 Task 6
+  //
   | "attachment"
-  // Phase 17 Task 7
+  //
   | "long_text"
-  // Phase 17 Task 8 — simple typed inputs
+  // simple typed inputs
   | "email"
   | "phone"
   | "currency"

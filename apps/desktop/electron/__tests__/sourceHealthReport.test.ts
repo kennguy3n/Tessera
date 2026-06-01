@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 22 — `sources:healthReport` IPC handler.
+ * `sources:healthReport` IPC handler.
  *
  * Covers the renderer-facing health summary used by
  * `SourceHealthDashboard`. The Rust bridge is mocked because the

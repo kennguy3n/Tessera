@@ -1,8 +1,8 @@
-//! Phase 15 Task 4 — memory profile regression test.
+//! memory profile regression test.
 //!
 //! Indexes 10 000 synthetic chunks via [`SourceStore::insert_chunks_returning_ids`]
 //! plus the embedding back-fill path and asserts that peak resident-
-//! set size (RSS) stays below the Phase 15 budget of 200 MB.
+//! set size (RSS) stays below the budget of 200 MB.
 //!
 //! What the test is actually verifying:
 //!

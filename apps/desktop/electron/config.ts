@@ -83,14 +83,14 @@ export interface AppConfig {
   /** When true the renderer should auto-check for updates on launch. */
   autoUpdate: boolean;
   /**
-   * Phase 15 Task 19: persisted first-run onboarding flag. See
+   * persisted first-run onboarding flag. See
    * `SettingsData.onboardingCompleted` in `shared/types.ts` for the
    * full semantics. Defaults to `false` so fresh installs see the
    * wizard on first launch.
    */
   onboardingCompleted: boolean;
   /**
-   * Phase 18 Task 16: persisted favorites set. See
+   * persisted favorites set. See
    * `SettingsData.pinnedArtifactIds` in `shared/types.ts` for the
    * full semantics. Cap of 256 entries is enforced by
    * `AppConfigSchema` so a corrupt on-disk array can't blow up the
@@ -99,7 +99,7 @@ export interface AppConfig {
    */
   pinnedArtifactIds: string[];
   /**
-   * Phase 18 Task 17: view-recency list, capped at
+   * view-recency list, capped at
    * {@link SettingsData.MAX_RECENT_ARTIFACTS}. Trimmed on every
    * renderer-side push via `useTrackArtifactView`; the IPC layer
    * re-enforces the cap so a malformed renderer can't grow the
@@ -107,7 +107,7 @@ export interface AppConfig {
    */
   recentArtifactIds: string[];
   /**
-   * Phase 19 PR 10 Task 9 — opt-in flag for the local telemetry sink.
+   * opt-in flag for the local telemetry sink.
    * Defaults to `false` so a fresh install records nothing until the
    * user explicitly enables it from Settings. See
    * `SettingsData.telemetryEnabled` in `shared/types.ts` for the
@@ -115,7 +115,7 @@ export interface AppConfig {
    */
   telemetryEnabled: boolean;
   /**
-   * Phase 19 PR 10 Task 10 — app-lock mode. See
+   * app-lock mode. See
    * `SettingsData.appLockMode` in `shared/types.ts` for the
    * semantics. Defaults to `"off"` so a fresh install does not
    * surprise the user with a lock prompt. Switching to `"pin"` /
@@ -125,7 +125,7 @@ export interface AppConfig {
    */
   appLockMode: AppLockMode;
   /**
-   * Phase 19 PR 10 Task 7 — auto-updater Ed25519 signature
+   * auto-updater Ed25519 signature
    * enforcement. Defaults to `true` so a fresh install enforces
    * verification by default; the embedded public key lives in
    * `electron/updateSignature.ts`.
@@ -139,7 +139,7 @@ export interface AppConfig {
    */
   hybridSearchConfig: HybridSearchConfigPersisted;
   /**
-   * Phase 19 PR 9 Task 5: idle window in seconds after which the
+   * idle window in seconds after which the
    * local sidecars unload model weights. See
    * `SettingsData.modelIdleTimeoutSecs` in `shared/types.ts` for
    * the full semantics. Defaults to `DEFAULT_MODEL_IDLE_TIMEOUT_SECS`
@@ -368,13 +368,13 @@ const AppConfigSchema = z
       .array(z.string().max(1024))
       .max(1024)
       .catch(() => []),
-    // Phase 18 Task 16: per-install favorites. Same factory-style
+    // per-install favorites. Same factory-style
     // `.catch(() => [])` as the sibling arrays above so a corrupted
     // value heals to an empty list instead of leaking a frozen
     // singleton across loads. Cap pulled from `MAX_PINNED_ARTIFACTS`
     // in `shared/types.ts` (single source of truth shared with the
     // IPC `SettingsUpdateSchema` and the renderer hook). PR #87
-    // Devin Review ANALYSIS_0007: removed the previous "can't
+    //: removed the previous "can't
     // import across project boundaries" caveat — this file already
     // imports `EXPORT_FORMATS`, `THEMES`, etc. from
     // `../shared/types`, so there is no actual obstacle.
@@ -382,7 +382,7 @@ const AppConfigSchema = z
       .array(z.string().max(1024))
       .max(MAX_PINNED_ARTIFACTS)
       .catch(() => []),
-    // Phase 18 Task 17: view-recency list. Cap pulled from
+    // view-recency list. Cap pulled from
     // `MAX_RECENT_ARTIFACTS` in `shared/types.ts` (same source of
     // truth as the IPC `SettingsUpdateSchema` and the renderer
     // hook).
@@ -397,31 +397,31 @@ const AppConfigSchema = z
     externalProvider: ExternalProviderConfigOnDiskSchema,
     externalProviderTokenUsage: ExternalProviderTokenUsageOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
-    // Phase 19 PR 10 Task 9 — telemetry toggle. Heals corrupted
+    // telemetry toggle. Heals corrupted
     // values to `false` (opt-in default). The renderer toggle is
     // the only path to flip this to `true`, and `disableTelemetry`
     // in `telemetrySink.ts` truncates the on-disk JSONL when the
     // flag goes false so stale records do not survive a flip.
     telemetryEnabled: z.boolean().catch(false),
-    // Phase 19 PR 10 Task 10 — app-lock mode. Heals corrupted
+    // app-lock mode. Heals corrupted
     // values to `"off"` so a mangled config does NOT brick the
     // user out of the app on next launch. Real mode changes go
     // through the `appLock:setMode` IPC which validates the user
     // has set up a PIN before allowing `"pin"` / `"biometric"`.
     appLockMode: z.enum(APP_LOCK_MODES).catch("off"),
-    // Phase 19 PR 10 Task 7 — auto-updater Ed25519 enforcement.
+    // auto-updater Ed25519 enforcement.
     // Heals corrupted values to `true` (secure default). A user
     // running a self-hosted build channel with their own signing
     // key can disable via Settings; everyone else stays protected.
     enforceUpdateSignature: z.boolean().catch(true),
-    // Phase 15 Task 19: heal a corrupted on-disk value to `true` so a
+    // heal a corrupted on-disk value to `true` so a
     // mangled config does NOT replay the onboarding wizard against an
     // existing install. New installs always start at `false` via
     // `DEFAULT_CONFIG`, so the only path to this `.catch()` is a
     // corrupted persisted value — in which case the safe assumption
     // is "user has already been here".
     onboardingCompleted: z.boolean().catch(true),
-    // Phase 19 PR 9 Task 5: persisted model idle-unload window. A
+    // persisted model idle-unload window. A
     // corrupted or out-of-range on-disk value heals to the documented
     // default (60 s) rather than dropping the user into a sidecar
     // that never unloads (which would silently strand a multi-GB
@@ -475,7 +475,7 @@ const AppConfigSchema = z
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
     externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
-    // Phase 19 PR 10 — these three fields are also present in
+    // these three fields are also present in
     // `DEFAULT_CONFIG` (lines 236-238) and would resolve to the
     // same values via the spread, but we re-declare them
     // explicitly here as a security-critical floor. If a future

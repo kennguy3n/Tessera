@@ -77,7 +77,7 @@ export default function SheetEditor({
 }: SheetEditorProps) {
   const [sheet, setSheet] = useState<SheetContent>(() => parseSheetContent(content));
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
-  // Phase 16 Task 17 — full selection model (anchor + primary range
+  // full selection model (anchor + primary range
   // + disjoint extras). `activeCell` is derived from
   // `selection.anchor` so existing call-sites that only need a
   // single coord (formula bar, edit dispatch) keep working without
@@ -85,7 +85,7 @@ export default function SheetEditor({
   const [selection, setSelection] = useState<Selection | null>(null);
   const activeCell: CellCoord | null = selection?.anchor ?? null;
   const [editValue, setEditValue] = useState("");
-  // Phase 16 Task 19 — context-menu state: { kind, index, x, y }
+  // context-menu state: { kind, index, x, y }
   // backs the right-click freeze menu. `null` when no menu open.
   const [contextMenu, setContextMenu] = useState<{
     kind: "row" | "col";
@@ -155,7 +155,7 @@ export default function SheetEditor({
         // comparison even for a one-character keystroke. With the
         // helper, only the edited row is freshly allocated; the rest
         // survive by reference, so the diff cost stays at O(cols of
-        // edited row) per keystroke. Devin Review PR #83 ANALYSIS-0002.
+        // edited row) per keystroke. Devin Review PR #83.
         const newRows = updateCellInRows(
           prev.rows,
           prev.columns.length,
@@ -237,7 +237,6 @@ export default function SheetEditor({
    *   - shift+click: extend the primary range, preserving anchor
    *   - ctrl/cmd+click: add a disjoint extra range
    *   - plain re-click on the active cell: promote to edit mode
-   * Phase 16 Task 17.
    */
   const selectCell = (
     rowIdx: number,
@@ -288,7 +287,7 @@ export default function SheetEditor({
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       commitEdit();
-      // Phase 16 Task 17 — Excel-style post-commit navigation:
+      // Excel-style post-commit navigation:
       // Enter → down, Tab → right, Shift+Tab → left.
       const row = editingCell.row;
       const col = editingCell.col;
@@ -311,7 +310,7 @@ export default function SheetEditor({
   };
 
   /**
-   * Phase 16 Task 17 — grid-level keyboard handler. Active only
+   * grid-level keyboard handler. Active only
    * when no cell is currently in edit mode; arrow keys move the
    * selection, shift+arrow extends, Enter promotes to edit, plain
    * letter/digit keypress also promotes to edit and seeds the
@@ -401,7 +400,7 @@ export default function SheetEditor({
   // Memoize the evaluated value of every formula cell across
   // renders using incremental recalculation.
   //
-  // Pre-PR-9 path (Phase 16 PR 2 → PR 8): every render rebuilt the
+  // Pre-PR-9 path : every render rebuilt the
   // entire `cellCache` from scratch by walking every formula cell
   // and calling the workbook resolver. The resolver's internal
   // cache prevented O(N²) re-evaluation within a single render,
@@ -483,7 +482,7 @@ export default function SheetEditor({
   );
 
   // ----------------------------------------------------------------
-  // Phase 16 Task 18 — copy / paste via the system clipboard.
+  // copy / paste via the system clipboard.
   // ----------------------------------------------------------------
 
   const copySelection = useCallback(async () => {
@@ -561,7 +560,7 @@ export default function SheetEditor({
   }, [handleClipboardKey]);
 
   // ----------------------------------------------------------------
-  // Phase 16 Task 16 — column / row resize via drag handles.
+  // column / row resize via drag handles.
   // ----------------------------------------------------------------
 
   const beginColumnResize = useCallback(
@@ -627,7 +626,7 @@ export default function SheetEditor({
   );
 
   // ----------------------------------------------------------------
-  // Phase 16 Task 19 — freeze rows / columns via right-click menu.
+  // freeze rows / columns via right-click menu.
   // ----------------------------------------------------------------
 
   const freezeAt = useCallback(
@@ -666,7 +665,7 @@ export default function SheetEditor({
   }, [contextMenu]);
 
   // ----------------------------------------------------------------
-  // Phase 16 Task 20 — auto-fill drag from the selection handle.
+  // auto-fill drag from the selection handle.
   // ----------------------------------------------------------------
 
   const beginAutoFill = useCallback(
@@ -782,7 +781,7 @@ export default function SheetEditor({
         // `columns.length`, and the grid renderer (which iterates
         // `sheet.columns.map(...)`) would silently drop them — data
         // written, nothing displayed. Devin Review PR #86
-        // ANALYSIS-0003 (pre-existing latent bug). `down`/`up`/`left`
+        // (pre-existing latent bug). `down`/`up`/`left`
         // never grow `columns`, so they skip this branch.
         let columns = prev.columns;
         if (direction === "right") {

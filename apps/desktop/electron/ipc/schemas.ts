@@ -166,16 +166,16 @@ export const SettingsUpdateSchema = z.object({
   defaultExportFormat: ExportFormat.optional(),
   ignorePatterns: z.array(z.string().max(1024)).max(10_000).optional(),
   watchPatterns: z.array(z.string().max(1024)).max(10_000).optional(),
-  // Phase 15 Task 19: first-run onboarding flag. Renderer-writable so
+  // first-run onboarding flag. Renderer-writable so
   // the wizard's "Finish" / "Skip" buttons can flip it to `true`. No
   // `.catch()` because a renderer-side type narrowing failure would
   // be a renderer bug worth surfacing rather than silently coercing.
   onboardingCompleted: z.boolean().optional(),
-  // Phase 18 Task 16: pinned/favorited artifact IDs. Cap pulled
+  // pinned/favorited artifact IDs. Cap pulled
   // from `MAX_PINNED_ARTIFACTS` in `shared/types.ts` (single source
   // of truth shared with `AppConfigSchema.pinnedArtifactIds.max()`
   // and the renderer's `usePinnedArtifacts.MAX_PINNED_ARTIFACTS`).
-  // PR #87 Devin Review ANALYSIS_0007: previously a literal `256`
+  // PR #87: previously a literal `256`
   // that risked drift across three files. Element max length
   // matches the artifact ID bound used everywhere else (`assertId`
   // enforces ≤ 1024).
@@ -183,7 +183,7 @@ export const SettingsUpdateSchema = z.object({
     .array(z.string().max(1024))
     .max(MAX_PINNED_ARTIFACTS)
     .optional(),
-  // Phase 18 Task 17: view-recency list. Cap pulled from
+  // view-recency list. Cap pulled from
   // `MAX_RECENT_ARTIFACTS` in `shared/types.ts` (single source of
   // truth shared with `AppConfigSchema.recentArtifactIds.max()`).
   // requirement. Element max length matches the artifact ID bound
@@ -192,7 +192,7 @@ export const SettingsUpdateSchema = z.object({
     .array(z.string().max(1024))
     .max(MAX_RECENT_ARTIFACTS)
     .optional(),
-  // Phase 19 PR 9 Task 5: idle-unload window in seconds for the
+  // idle-unload window in seconds for the
   // local sidecars. `0` disables idle unloading entirely ("Keep
   // loaded forever"). The upper bound is shared with
   // `MAX_MODEL_IDLE_TIMEOUT_SECS` in `shared/types.ts` (24 h) so
@@ -207,17 +207,17 @@ export const SettingsUpdateSchema = z.object({
     .min(0)
     .max(MAX_MODEL_IDLE_TIMEOUT_SECS)
     .optional(),
-  // Phase 19 PR 10 Task 9 — local telemetry toggle. Pure boolean
+  // local telemetry toggle. Pure boolean
   // toggle; the handler in `ipc/settings.ts` is responsible for
   // calling `enableTelemetry()` / `disableTelemetry()` on the
   // singleton sink when this transitions.
   telemetryEnabled: z.boolean().optional(),
-  // Phase 19 PR 10 Task 10 — app-lock mode. Pure enum here; the
+  // app-lock mode. Pure enum here; the
   // handler enforces "must have set a PIN before switching to
   // `pin` / `biometric`" so the IPC cannot transition the user
   // into a state where they cannot unlock the app on next launch.
   appLockMode: z.enum(APP_LOCK_MODES).optional(),
-  // Phase 19 PR 10 Task 7 — auto-updater Ed25519 enforcement. The
+  // auto-updater Ed25519 enforcement. The
   // handler logs the transition because flipping this to `false`
   // is a privileged action that materially reduces install
   // security.
@@ -285,7 +285,7 @@ export type ExternalProviderApiKeyInput = z.infer<
 // so anything outside is a sign of a renderer bug or a tampering
 // attempt rather than a configuration choice we should honour.
 /**
- * Phase 19 Task 1: slugs the renderer is allowed to ask the bridge
+ * slugs the renderer is allowed to ask the bridge
  * to download / switch to. Must stay in lock-step with
  * `crates/tessera_sources/src/model_registry.rs::SHIPPED_MODELS`.
  *
@@ -301,7 +301,7 @@ export type ExternalProviderApiKeyInput = z.infer<
 export const EmbeddingModelSlugSchema = z.enum([
   "all-MiniLM-L6-v2",
   "paraphrase-multilingual-MiniLM-L12-v2",
-  // Phase 19 Task 1: reserved pseudo-slug that maps to the bundled
+  // reserved pseudo-slug that maps to the bundled
   // offline HashTrick provider on the Rust side. No download path
   // — `settings:downloadEmbeddingModel` rejects this slug. See
   // `crates/tessera_bridge/src/sources.rs::HASH_TRICK_SLUG`.
@@ -310,7 +310,7 @@ export const EmbeddingModelSlugSchema = z.enum([
 export type EmbeddingModelSlug = z.infer<typeof EmbeddingModelSlugSchema>;
 
 /**
- * Phase 19 Task 1: download-only subset of the slug enum. The
+ * download-only subset of the slug enum. The
  * `hash-trick` slug is omitted here because it has no on-disk
  * artefact and downloading it makes no sense — calling
  * `settings:downloadEmbeddingModel` with it must fail closed at

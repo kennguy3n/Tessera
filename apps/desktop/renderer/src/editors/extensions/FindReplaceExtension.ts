@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — find-and-replace decoration extension.
+ * find-and-replace decoration extension.
  *
  * Renders persistent ProseMirror decorations for every match of the
  * current find-panel query so the user can see what they're navigating

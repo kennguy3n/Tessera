@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 10 — IPC handlers for the PIN / biometric
+ * IPC handlers for the PIN / biometric
  * app-lock surface. See `electron/appLock.ts` for the underlying
  * cryptography and policy.
  *
@@ -156,7 +156,7 @@ export function registerAppLockHandlers(): void {
         );
       }
       clearPin();
-      // Phase 19 PR 10 Task 10 — keep `appLockMode` and PIN
+      // keep `appLockMode` and PIN
       // material lifecycle-coupled. Removing the PIN MUST drop the
       // mode back to `"off"`, otherwise the next launch would see
       // `appLockMode === "pin"` with no stored PIN and trip the

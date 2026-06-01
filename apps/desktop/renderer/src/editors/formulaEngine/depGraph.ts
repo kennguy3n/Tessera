@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 4 — dependency graph + recalculation.
+ * dependency graph + recalculation.
  *
  * Tracks which cells reference which other cells, so an edit to one
  * cell can recompute exactly the dependents that need it (in
@@ -29,7 +29,7 @@ import type { AstNode } from "./parser";
 /**
  * Canonical cell key.
  *
- * Phase 16 Task 13 added optional `sheet` for multi-sheet workbooks
+ * added optional `sheet` for multi-sheet workbooks
  * (`"sheet1!3,2"`). For backward compatibility, omitting `sheet`
  * keeps the legacy `"row,col"` format — single-sheet artifacts
  * (the most common case) and existing tests stay byte-identical.
@@ -82,7 +82,7 @@ export function parseCellKey(key: string): {
  * workbooks, pass `activeSheet` — unqualified references are bound
  * to that sheet so all dep-graph keys are fully qualified. For
  * single-sheet (legacy) callers, omit `activeSheet` and keys remain
- * plain `"row,col"` (matching the original Phase 16 PR 1 contract).
+ * plain `"row,col"` (matching the original contract).
  */
 export function extractReferences(
   ast: AstNode,

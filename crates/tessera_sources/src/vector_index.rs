@@ -1,4 +1,4 @@
-//! Phase 19 PR 9 Task 2: in-memory IVF-Flat ANN index for the
+//! in-memory IVF-Flat ANN index for the
 //! hybrid-retrieval vector signal.
 //!
 //! ## Why we need this
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn tied_scores_evict_high_chunk_ids_when_k_lt_n() {
-        // Regression: Devin Review BUG_0001 on the IVF index. When all
+        // Regression: on the IVF index. When all
         // candidates have equal scores and `k < n`, the bounded heap
         // must evict entries with the HIGHEST chunk_id so the result
         // matches brute force's (score desc, chunk_id asc) → take(k)

@@ -1,5 +1,5 @@
 //! Per-source data-encryption-key (DEK) layer for KChat chat-body
-//! evidence (Phase 12 / "Block C" tasks 1 + 2).
+//! evidence .
 //!
 //! # Threat model and design
 //!

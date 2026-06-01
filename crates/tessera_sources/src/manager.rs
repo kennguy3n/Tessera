@@ -54,7 +54,7 @@ pub struct KchatAclMember {
 
 /// Outcome of a [`SourceManager::refresh_kchat_acl`] call.
 ///
-/// Block B Task 3 (Phase 11) splits the result into four cases so
+/// Block B Task 3 splits the result into four cases so
 /// callers (the napi bridge + audit logger) can record exactly
 /// what happened without re-querying the store. The cases are
 /// mutually exclusive and exhaustive.
@@ -70,7 +70,7 @@ pub enum KchatAclRefreshOutcome {
     /// removed and then re-added). The roster was replaced
     /// atomically. `principal_present == true`.
     ///
-    /// Block B Task 4 (Phase 11): status transitions to
+    /// status transitions to
     /// `Connected` (NOT `Indexed`). The earlier revoke cryptoshred
     /// scrubbed every chunk + indexed_file row, so the source is
     /// empty until a full re-sync runs. The Node-side forwarder
@@ -85,7 +85,7 @@ pub enum KchatAclRefreshOutcome {
     /// transitions to `Connected` and triggers a re-sync; see
     /// the `Regranted` doc). `principal_present == false`.
     ///
-    /// Block B Task 4 (Phase 11): the transition also triggers an
+    /// the transition also triggers an
     /// inline cryptoshred — the source's chunks and indexed_files
     /// rows are deleted and the database is VACUUMed under
     /// `PRAGMA secure_delete = ON`, so leftover plaintext chunks
@@ -100,10 +100,10 @@ pub enum KchatAclRefreshOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
-        /// Block C Task 2 (Phase 12): count of `kchat_posts` rows
+        /// count of `kchat_posts` rows
         /// scrubbed alongside the file/chunk rows.
         posts_dropped: u32,
-        /// Block C Task 2 (Phase 12): `true` when the per-source
+        /// `true` when the per-source
         /// wrapped DEK row existed and was deleted as part of the
         /// shred. `false` when the source never ingested a chat
         /// post and therefore had no DEK to drop. Together with
@@ -147,7 +147,7 @@ pub enum KchatAclRefreshOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KchatRevokeOutcome {
     /// The source row transitioned from a non-revoked state to
-    /// `AccessRevoked`. Block B Task 4 (Phase 11): the transition
+    /// `AccessRevoked`. Block B Task 4: the transition
     /// also triggers an inline cryptoshred (see
     /// `KchatAclRefreshOutcome::Revoked` for the details).
     Revoked {
@@ -155,10 +155,10 @@ pub enum KchatRevokeOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
-        /// Block C Task 2 (Phase 12): see
+        /// see
         /// [`KchatAclRefreshOutcome::Revoked::posts_dropped`].
         posts_dropped: u32,
-        /// Block C Task 2 (Phase 12): see
+        /// see
         /// [`KchatAclRefreshOutcome::Revoked::dek_dropped`].
         dek_dropped: bool,
         /// Fifth-pass Devin Review fix: see
@@ -174,7 +174,7 @@ pub enum KchatRevokeOutcome {
     /// (otherwise a repeat `channel_archived` would silently drop
     /// the operator's clue that the channel was archived twice).
     ///
-    /// Block B Task 4 (Phase 11): a second revoke still runs
+    /// a second revoke still runs
     /// cryptoshred so the operation is idempotent at the evidence
     /// layer — this also serves as a one-time backfill path for
     /// sources that were soft-revoked under the Task 3 build before
@@ -185,12 +185,12 @@ pub enum KchatRevokeOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
-        /// Block C Task 2 (Phase 12): see
+        /// see
         /// [`KchatAclRefreshOutcome::Revoked::posts_dropped`].
         /// Typically zero on this path because the previous shred
         /// already dropped the kchat_posts rows.
         posts_dropped: u32,
-        /// Block C Task 2 (Phase 12): see
+        /// see
         /// [`KchatAclRefreshOutcome::Revoked::dek_dropped`].
         /// Typically `false` on this path because the previous
         /// shred already deleted the wrapped-DEK row.
@@ -217,7 +217,7 @@ pub enum KchatRevokeOutcome {
 /// Input wire-shape for [`SourceManager::ingest_kchat_post`] /
 /// [`SourceManager::edit_kchat_post`].
 ///
-/// Block C Task 1 (Phase 12). Built by the napi bridge from the
+/// Block C Task 1. Built by the napi bridge from the
 /// `posted` / `post_edited` WS event payloads (which the
 /// `KchatEventForwarder` has already parsed + serialised against a
 /// per-channel lock).
@@ -291,7 +291,7 @@ pub enum KchatPostDeleteOutcome {
     AccessRevoked,
 }
 
-/// Block C Task 4 (Phase 13): persisted backfill state for a KChat
+/// persisted backfill state for a KChat
 /// channel.
 ///
 /// The orchestrator uses this to decide whether to (a) start a new
@@ -325,7 +325,7 @@ pub enum KchatBackfillState {
     AccessRevoked { source_id: SourceId },
 }
 
-/// Block C Task 4 (Phase 13): outcome of a single backfill page
+/// outcome of a single backfill page
 /// ingest.
 ///
 /// Carries the per-page counters the audit row needs to record
@@ -357,7 +357,7 @@ pub enum KchatBackfillIngestOutcome {
     AccessRevoked { source_id: SourceId },
 }
 
-/// Block C Task 4 (Phase 13): outcome of
+/// outcome of
 /// [`SourceManager::mark_kchat_backfill_complete`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KchatBackfillCompletionOutcome {
@@ -373,7 +373,7 @@ pub enum KchatBackfillCompletionOutcome {
     AccessRevoked { source_id: SourceId },
 }
 
-/// Block D Task 1 (Phase 14): one renderer-facing hit returned by
+/// one renderer-facing hit returned by
 /// [`SourceManager::search_kchat_posts`].
 ///
 /// Each hit is one chunk of a KChat post body that matched the
@@ -435,7 +435,7 @@ pub struct KchatPostSearchHit {
     pub relevance: f64,
 }
 
-/// Phase 13 Theme 2 Task 13: one renderer-facing AEAD-verified
+/// one renderer-facing AEAD-verified
 /// message of thread context surrounding a search hit.
 ///
 /// Returned by
@@ -496,7 +496,7 @@ pub struct SourceManager {
     /// never block in-flight searches and an in-flight search never
     /// holds the lock across a SQLite call.
     hybrid_config: Mutex<HybridSearchConfig>,
-    /// Block C Task 2 (Phase 12): per-source DEK + AEAD facade used
+    /// per-source DEK + AEAD facade used
     /// by the KChat post-ingest path. Initialised with the same
     /// SQLCipher master key the bridge already validates in
     /// `tessera_core::db::open_shared_with_key`, so the KEK
@@ -547,7 +547,7 @@ impl SourceManager {
         Self::with_shared_conn_and_read_pool(conn, tessera_core::empty_read_pool(), ignore_patterns)
     }
 
-    /// Phase 19 PR 9 Task 4: variant of [`Self::with_shared_conn`]
+    /// variant of [`Self::with_shared_conn`]
     /// that wires a [`SharedReadPool`] into the underlying
     /// [`SourceStore`].
     ///
@@ -576,7 +576,7 @@ impl SourceManager {
         })
     }
 
-    /// Block C Task 2 (Phase 12): wire the per-source KChat-post DEK
+    /// wire the per-source KChat-post DEK
     /// layer to a real master key.
     ///
     /// The bridge calls this immediately after `with_shared_conn`,
@@ -717,7 +717,7 @@ impl SourceManager {
         self.embedder.as_ref().map(|e| e.model_id().to_string())
     }
 
-    /// Phase 19 Task 1: forward to [`SourceStore::count_non_ascii_chunks`]
+    /// forward to [`SourceStore::count_non_ascii_chunks`]
     /// for the Settings page's "consider the multilingual model"
     /// hint. Returns `(non_ascii_chunks, total_chunks)`.
     pub fn count_non_ascii_chunks(&self) -> Result<(u64, u64)> {
@@ -902,7 +902,7 @@ impl SourceManager {
         // the Node side is the single source of truth for cache
         // location.
         //
-        // Tenth-pass Devin Review ANALYSIS_0004: a previous version
+        // Tenth-pass: a previous version
         // of this method did `list_sources().into_iter().find(...)`
         // which loaded every connector's sources off disk and
         // scanned them in-process. With hundreds of mixed-connector
@@ -1074,7 +1074,7 @@ impl SourceManager {
     /// `refresh_kchat_acl` calls can check membership without
     /// re-threading the id through every event.
     ///
-    /// Block B Task 3 (Phase 11).
+    /// Block B Task 3.
     pub fn set_kchat_principal(&self, user_id: &str) -> Result<()> {
         self.store.set_kchat_principal(user_id)
     }
@@ -1168,7 +1168,7 @@ impl SourceManager {
                 self.store
                     .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
             }
-            // Block B Task 4 (Phase 11): inline cryptoshred of
+            // inline cryptoshred of
             // chunks / indexed_files + VACUUM under PRAGMA
             // secure_delete=ON. Runs unconditionally on the revoke
             // path (idempotent — drops zero rows if the source was
@@ -1176,7 +1176,7 @@ impl SourceManager {
             // were soft-revoked under Task 3 before this step
             // landed.
             let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
-            // Block C Task 2 (Phase 12) — pair the on-disk DEK
+            // Block C Task 2 — pair the on-disk DEK
             // deletion that `cryptoshred_kchat_source_evidence`
             // already issued with an in-memory cache eviction so the
             // process can no longer decrypt previously-sealed
@@ -1196,7 +1196,7 @@ impl SourceManager {
 
         if source.status == SourceStatus::AccessRevoked {
             // Principal was re-added after a previous revoke.
-            // Block B Task 4 (Phase 11): because the revoke path
+            // because the revoke path
             // now cryptoshreds every chunk + indexed_file row
             // (`cryptoshred_kchat_source_evidence`), the source
             // has zero indexed content even though it was
@@ -1237,7 +1237,7 @@ impl SourceManager {
     /// "who else had access at the moment of revocation" is a
     /// real question operators ask.
     ///
-    /// Block B Task 3 (Phase 11).
+    /// Block B Task 3.
     pub fn revoke_kchat_source(&self, cache_dir: &str) -> Result<KchatRevokeOutcome> {
         let Some(source) = self
             .store
@@ -1253,7 +1253,7 @@ impl SourceManager {
                 .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
         }
 
-        // Block B Task 4 (Phase 11): cryptoshred runs on BOTH paths
+        // cryptoshred runs on BOTH paths
         // — the first revoke transitions status and scrubs evidence;
         // a re-revoke (AlreadyRevoked) still calls shred so the
         // operation is idempotent at the evidence layer AND serves
@@ -1262,7 +1262,7 @@ impl SourceManager {
         // a VACUUM after, which is cheap when there is nothing to
         // free; we pay it intentionally to keep the contract simple.
         let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
-        // Block C Task 2 (Phase 12) — pair the on-disk DEK
+        // Block C Task 2 — pair the on-disk DEK
         // deletion with an in-memory cache eviction. See the
         // matching block in `refresh_kchat_acl` for rationale.
         self.kchat_crypto.forget_dek(&source.id);
@@ -1295,7 +1295,7 @@ impl SourceManager {
         })
     }
 
-    /// Block C Task 1 (Phase 12): ingest a KChat post body into the
+    /// ingest a KChat post body into the
     /// substrate.
     ///
     /// Called by the Node-side `KchatEventForwarder` on a `posted`
@@ -1462,7 +1462,7 @@ impl SourceManager {
         })
     }
 
-    /// Block C Task 1 (Phase 12): handle a `post_edited` WS event.
+    /// handle a `post_edited` WS event.
     ///
     /// Delegates to [`Self::ingest_kchat_post`] — the ingest path's
     /// hash-comparison branch already covers the "same id, new
@@ -1473,7 +1473,7 @@ impl SourceManager {
         self.ingest_kchat_post(input)
     }
 
-    /// Block C Task 1 (Phase 12): handle a `post_deleted` WS event.
+    /// handle a `post_deleted` WS event.
     ///
     /// Deletes the chunks and the bookkeeping row for the post.
     /// The DEK stays in place — other posts on the source may still
@@ -1508,7 +1508,7 @@ impl SourceManager {
         })
     }
 
-    /// Block C Task 4 (Phase 13): read the persisted backfill state
+    /// read the persisted backfill state
     /// for a KChat channel.
     ///
     /// Returns `Ok(KchatBackfillState::Unlinked)` when no source
@@ -1536,7 +1536,7 @@ impl SourceManager {
         })
     }
 
-    /// Block C Task 4 (Phase 13): ingest one page of historical
+    /// ingest one page of historical
     /// KChat posts as part of the backfill walk.
     ///
     /// Each post in the page flows through the same
@@ -1672,7 +1672,7 @@ impl SourceManager {
         })
     }
 
-    /// Block C Task 4 (Phase 13): mark the backfill walk complete.
+    /// mark the backfill walk complete.
     ///
     /// Called by the orchestrator when the REST page returns
     /// `prev_post_id == null` (the server says "no posts older
@@ -1759,7 +1759,7 @@ impl SourceManager {
         self.store.get_source(source_id)
     }
 
-    /// Phase 15 Task 11: read the persisted sync-failure state for
+    /// read the persisted sync-failure state for
     /// a source row. Pass-through to [`SourceStore::get_sync_failure_state`].
     /// Returns `Ok((None, 0, false))` when the row has never failed.
     pub fn get_sync_failure_state(
@@ -1769,7 +1769,7 @@ impl SourceManager {
         self.store.get_sync_failure_state(source_id)
     }
 
-    /// Phase 15 Task 11: stamp a failed sync attempt. Pass-through
+    /// stamp a failed sync attempt. Pass-through
     /// to [`SourceStore::record_sync_failure`]. The connectors
     /// layer (TS-side `runConnectorSync`) calls this via the napi
     /// bridge after classifying the error.
@@ -1788,7 +1788,7 @@ impl SourceManager {
         )
     }
 
-    /// Phase 15 Task 11: clear failure state on a successful sync.
+    /// clear failure state on a successful sync.
     /// Pass-through to [`SourceStore::record_sync_success`].
     pub fn record_sync_success(&self, source_id: &SourceId) -> Result<()> {
         self.store.record_sync_success(source_id)
@@ -1819,7 +1819,7 @@ impl SourceManager {
         engine.search_broad(query, limit)
     }
 
-    /// Block D Task 1 (Phase 14): retrieve KChat post chunks that
+    /// retrieve KChat post chunks that
     /// match `query`. The returned hits are the chat-body counterpart
     /// to [`SourceManager::search`] (which only surfaces file
     /// chunks).
@@ -1977,7 +1977,7 @@ impl SourceManager {
         Ok(verified)
     }
 
-    /// Phase 13 Theme 2 Task 13: fetch up to 3 thread-context
+    /// fetch up to 3 thread-context
     /// messages surrounding the post identified by `post_id`.
     ///
     /// Returns an empty vec — never an error — for any of the
@@ -2355,7 +2355,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // KChat-channel idempotency (eighth-pass Devin Review BUG_0001)
+    // KChat-channel idempotency (eighth-pass
     // ----------------------------------------------------------------
 
     #[test]
@@ -2570,7 +2570,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Block B Task 3 (Phase 11): KChat channel ACL projection
+    // KChat channel ACL projection
     // ----------------------------------------------------------------
 
     fn make_acl_member(user_id: &str, role: &str) -> KchatAclMember {
@@ -2676,7 +2676,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        // Block B Task 4 (Phase 11): the revoke outcome carries the
+        // the revoke outcome carries the
         // cryptoshred counters. `add_kchat_channel` above indexed
         // the single `f.txt` file (one indexed_files row + one
         // chunk), so the revoke scrubs both. The dedicated end-to-end
@@ -2689,7 +2689,7 @@ mod tests {
             KchatAclRefreshOutcome::Revoked {
                 chunks_dropped: 1,
                 files_dropped: 1,
-                // Block C Task 2 (Phase 12): file-only ingest never
+                // file-only ingest never
                 // generated a per-source DEK or kchat_posts row, so
                 // both new counters report zero on the file-only
                 // shred path.
@@ -2741,7 +2741,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(outcome, KchatAclRefreshOutcome::Regranted);
-        // Block B Task 4 (Phase 11): regrant transitions to
+        // regrant transitions to
         // `Connected`, NOT `Indexed`. The earlier revoke
         // cryptoshredded every chunk + indexed_file row, so the
         // source is empty until the Node-side forwarder runs a
@@ -2778,7 +2778,7 @@ mod tests {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped: 1,
                 files_dropped: 1,
-                // Block C Task 2 (Phase 12): file-only ingest —
+                // file-only ingest —
                 // no post / DEK rows were ever created.
                 posts_dropped: 0,
                 dek_dropped: false,
@@ -2817,7 +2817,7 @@ mod tests {
         assert_eq!(outcome, KchatRevokeOutcome::Unlinked);
     }
 
-    /// Block B Task 4 (Phase 11): end-to-end regression for
+    /// end-to-end regression for
     /// cryptoshred-on-explicit-revoke. We index a multi-file channel,
     /// confirm `list_indexed_files` reports the expected rows, revoke
     /// the source, and assert that the indexed_files + chunk rows
@@ -2908,7 +2908,7 @@ mod tests {
         );
     }
 
-    /// Block B Task 4 (Phase 11): regression for the
+    /// regression for the
     /// `refresh_kchat_acl(Revoked)` auto-shred path. The
     /// retrieval-side filter from Task 3 is the first line of
     /// defence; the inline cryptoshred makes the chunks actually
@@ -3527,7 +3527,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Block C Task 1 + Task 2 (Phase 12): KChat post body ingestion
+    // Block C Task 1 + Task 2: KChat post body ingestion
     // ----------------------------------------------------------------
 
     fn make_post_input(
@@ -3788,7 +3788,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Block C Task 4 (Phase 13) — historical backfill watermark
+    // Block C Task 4 — historical backfill watermark
     // ─────────────────────────────────────────────────────────────
 
     /// A freshly-linked channel reports a clean backfill state:
@@ -4152,7 +4152,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Block D Task 1 (Phase 14): KChat post retrieval bridge
+    // KChat post retrieval bridge
     // ----------------------------------------------------------------
 
     /// Happy path: ingest a couple of post bodies, search for a
@@ -4406,7 +4406,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Phase 13 Theme 2 Task 13: KChat thread context retrieval
+    // KChat thread context retrieval
     // ----------------------------------------------------------------
 
     /// Convenience: build a `KchatPostIngestInput` for a thread
@@ -4899,7 +4899,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Phase 13 Theme 3 Task 14: AEAD full-lifecycle round-trip
+    // AEAD full-lifecycle round-trip
     // ----------------------------------------------------------------
 
     /// Full-lifecycle round-trip: ingest → search → cryptoshred →
@@ -5260,7 +5260,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Phase 13 Theme 3 Task 15: Hybrid search ordering + revocation
+    // Hybrid search ordering + revocation
     // ----------------------------------------------------------------
 
     /// The reciprocal-rank scoring contract between file-search and

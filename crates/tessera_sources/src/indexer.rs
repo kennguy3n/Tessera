@@ -660,7 +660,7 @@ impl Indexer {
         //     failures uniformly regardless of which call site
         //     fires.
         //
-        // Devin Review pass-N 🐛 BUG-0001 finding identified the
+        // Devin Review pass-N 🐛 finding identified the
         // asymmetry between this branch's `?` and the outer
         // handler's `if let Err`, and the resulting permanent-
         // data-loss path when both fail. This is the corrected

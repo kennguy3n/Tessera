@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 2 — parser tests.
+ * parser tests.
  *
  * 20+ formulas asserting the produced AST follows the documented
  * precedence ladder. We use `JSON.stringify` to make the assertions

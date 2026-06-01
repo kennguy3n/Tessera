@@ -10,7 +10,7 @@ import type { ArtifactInfo } from "../types/ipc";
 
 interface SidebarProps {
   /**
-   * Phase 18 Task 19 (Cmd+B): when true, render the sidebar as a
+   * when true, render the sidebar as a
    * narrow icon-only rail. Driven by the `tessera:toggle-sidebar`
    * custom event from the keyboard-shortcut runner; default false.
    */
@@ -23,7 +23,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
   // Gate the artifact-list IPC on `pinnedIds.length > 0` so a
   // fresh-install / zero-pins user never pays the cost of fetching
   // every artifact (including `content: string`) just to render an
-  // empty Pinned section. PR #87 Devin Review ANALYSIS_0003 round
+  // empty Pinned section. PR #87 round
   // 3. When the user pins their first artifact the gate flips
   // open, `useArtifactList` re-runs its mount effect, and the
   // sidebar's Pinned section populates on the next render.
@@ -33,7 +33,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
     /Mac|iPhone|iPad/.test(navigator.platform);
   const modLabel = isMac ? "⌘" : "Ctrl";
 
-  // Phase 18 Task 16: surface pinned artifacts directly in the
+  // surface pinned artifacts directly in the
   // sidebar so the user can jump to a favorite without opening
   // the command palette. Pruning of stale IDs (artifacts deleted
   // elsewhere) happens lazily in the command palette's join, so
@@ -44,7 +44,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
   // Map this was O(pinnedIds.length * artifacts.length) per render
   // — negligible at small N, but scales poorly past a few hundred
   // artifacts. Mirrors the same pattern in `CommandPalette`. PR
-  // #87 Devin Review ANALYSIS_0006.
+  // #87.
   const artifactById = useMemo(() => {
     const map = new Map<string, ArtifactInfo>();
     for (const a of artifacts) map.set(a.id, a);

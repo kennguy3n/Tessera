@@ -9,7 +9,7 @@ import { useKchatBackfillProgress } from "../hooks/useKchatBackfillProgress";
  * cover the full SourceDetailPage projection of every status
  * branch; this file pins the polling-loop semantics in isolation —
  * specifically the transport-error surfacing introduced by Devin
- * Review pass 3 on d7290e0 (ANALYSIS_0004).
+ * Review pass 3 on d7290e0.
  *
  * The fix preserves the self-heal property (a transient transport
  * failure does not flicker the UI from a valid snapshot into an
@@ -56,7 +56,7 @@ describe("useKchatBackfillProgress", () => {
     expect(result.current).toEqual(snap);
   });
 
-  it("rides out 1\u20132 consecutive transport failures without surfacing an error (self-heal preserved, ANALYSIS_0004)", async () => {
+  it("rides out 1\u20132 consecutive transport failures without surfacing an error (self-heal preserved,", async () => {
     // Two failing ticks (below threshold), then a successful tick.
     // The hook must NOT emit a synthetic error view; the eventual
     // success snapshot must surface to the caller unchanged.
@@ -88,7 +88,7 @@ describe("useKchatBackfillProgress", () => {
     expect(spy.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("surfaces a synthetic `status: \"error\"` view after \u2265 3 consecutive transport failures (ANALYSIS_0004)", async () => {
+  it("surfaces a synthetic `status: \"error\"` view after \u2265 3 consecutive transport failures", async () => {
     // The hook keeps polling even after surfacing the error \u2014
     // the loop self-heals on the next successful tick. Here the
     // mock keeps rejecting so the synthetic error sticks.
@@ -116,7 +116,7 @@ describe("useKchatBackfillProgress", () => {
     expect(result.current!.error).toMatch(/transport failure/i);
   });
 
-  it("self-heals: a successful tick AFTER the synthetic error replaces it with the live snapshot (ANALYSIS_0004)", async () => {
+  it("self-heals: a successful tick AFTER the synthetic error replaces it with the live snapshot", async () => {
     // 3 failures \u2192 synthetic error surfaces; 4th call (held
     // pending) gives the error a chance to settle in `result`;
     // resolving the 4th \u2192 hook replaces the synthetic error
@@ -170,7 +170,7 @@ describe("useKchatBackfillProgress", () => {
     );
   });
 
-  it("resets the consecutive-failure counter on a successful tick (ANALYSIS_0004)", async () => {
+  it("resets the consecutive-failure counter on a successful tick", async () => {
     // Sequence: success, fail, fail, success, fail, fail, then
     // hold the 7th call pending. None of the failure windows hit
     // 3 consecutive without an intermediate success, and the
@@ -234,7 +234,7 @@ describe("useKchatBackfillProgress", () => {
     expect(result.current).toEqual(b);
   });
 
-  it("does NOT surface a synthetic error after unmount even if a failing tick was in flight (ANALYSIS_0004 \u00d7 cancellation)", async () => {
+  it("does NOT surface a synthetic error after unmount even if a failing tick was in flight \u00d7 cancellation)", async () => {
     // Reject the first tick AFTER unmount; the `cancelled` guard
     // must short-circuit the threshold check so we never set
     // state on an unmounted component (React would warn) and so a

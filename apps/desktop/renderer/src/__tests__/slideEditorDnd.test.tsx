@@ -7,11 +7,11 @@
  * contract — specifically the bits Devin Review round 6 flagged on
  * PR #82:
  *
- *   - ANALYSIS_0001: dropping with a stale `draggedBlockId` (source
+ * -: dropping with a stale `draggedBlockId` (source
  *     block no longer in the active slide's `blocks`) must still
  *     clear the dragged-id state so the `is-dragging` visual cue
  *     can't stick.
- *   - ANALYSIS_0005: every interactive child of a `draggable` slide
+ * -: every interactive child of a `draggable` slide
  *     thumbnail row must carry `draggable={false}` so touch /
  *     accessibility tooling can't mis-tap them as a drag-start.
  *
@@ -93,12 +93,12 @@ describe("SlideEditor — slide-thumbnail draggable={false} on interactive child
 
 describe("SlideEditor — block-row draggable={false} on toolbar children", () => {
   it("opts every interactive child of the SlideBlockRow toolbar out of the parent's drag inheritance", () => {
-    // Companion to the slide-thumb-row test above. Round 6 added
+    // Companion to the slide-thumb-row test above. added
     // `draggable={false}` to the slide-thumbnail-row buttons but
     // missed the SAME pattern on the block-row toolbar: the
     // `<select>` for type-switching plus the ↑ / ↓ / × buttons all
     // live inside a `<div className="slide-block">` that is itself
-    // marked `draggable`. Devin Review PR #82 ANALYSIS-0002 flagged
+    // marked `draggable`. Devin Review PR #82 flagged
     // the inconsistency. This test pins the contract that ALL
     // toolbar children carry the explicit opt-out.
     renderDeck();

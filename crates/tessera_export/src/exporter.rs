@@ -65,7 +65,7 @@ pub fn export_to_file(
     let effective: &[Citation] = if include_citations { citations } else { &[] };
     match format {
         ExportFormat::Pdf => {
-            // Phase 15 Task 15: when the `typst` feature is enabled
+            // when the `typst` feature is enabled
             // (default), route through `export_pdf_with_svgs` so any
             // ```mermaid blocks in the artifact body are rendered
             // as embedded SVG diagrams. With no pre-rendered SVGs

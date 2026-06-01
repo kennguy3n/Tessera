@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 11 — vitest coverage for `functions/date.ts`.
+ * vitest coverage for `functions/date.ts`.
  *
  * Tests pin `EvaluationContext.now` to a fixed instant so
  * `TODAY()` / `NOW()` assertions are stable, and exercise the

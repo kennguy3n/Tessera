@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 18: breadcrumb navigation.
+ * breadcrumb navigation.
  *
  * Renders a horizontal trail of links ending with the current
  * page label. Each non-terminal segment is clickable and navigates

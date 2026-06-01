@@ -10,7 +10,7 @@ use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
 
 use crate::event::{AuditEvent, AuditEventType};
 
-/// Phase 15 Task 12: row-count threshold above which the audit log
+/// row-count threshold above which the audit log
 /// is rotated by [`AuditStore::rotate`]. When the live table holds
 /// more rows than this, the oldest `live_count - AUDIT_ROTATION_THRESHOLD`
 /// rows are archived to `audit-archive-<rfc3339>.jsonl.gz` and
@@ -23,7 +23,7 @@ use crate::event::{AuditEvent, AuditEventType};
 /// remain on disk inside the archives directory).
 pub const AUDIT_ROTATION_THRESHOLD: u64 = 100_000;
 
-/// Phase 15 Task 12 (Devin Review ANALYSIS-0002): process-wide
+/// process-wide
 /// serializer for concurrent calls to [`AuditStore::rotate`].
 ///
 /// `rotate(&self)` takes a shared reference, so two callers can
@@ -43,7 +43,7 @@ pub const AUDIT_ROTATION_THRESHOLD: u64 = 100_000;
 /// points at the same underlying SQLite file), and the napi
 /// bridge constructs transient `AuditStore` instances on the
 /// rotation path to bypass the outer `Mutex<AuditLogger>`
-/// (ANALYSIS-0001 fix in `bridge_audit_rotate`). An instance
+/// fix in `bridge_audit_rotate`). An instance
 /// mutex would not serialize across those transient instances.
 ///
 /// The mutex is held for the *entire* `rotate()` call — Phase 1
@@ -271,7 +271,7 @@ impl AuditStore {
         Ok(count as u64)
     }
 
-    /// Phase 15 Task 12: archive the oldest rows once the live
+    /// archive the oldest rows once the live
     /// table exceeds [`AUDIT_ROTATION_THRESHOLD`], then DELETE them.
     ///
     /// Behaviour:
@@ -307,7 +307,7 @@ impl AuditStore {
     ///
     /// `archive_dir` is created (mkdir -p) if it does not exist.
     pub fn rotate(&self, archive_dir: &Path) -> Result<Option<RotationOutcome>> {
-        // Devin Review ANALYSIS-0002: serialize concurrent rotations
+        //: serialize concurrent rotations
         // process-wide so a scheduled rotation and a user-triggered
         // "Rotate now" click cannot produce duplicate archive files
         // for the same logical rotation window. See the docstring on
@@ -447,7 +447,7 @@ impl AuditStore {
         }))
     }
 
-    /// Phase 15 Task 12: list archive filenames in `archive_dir`
+    /// list archive filenames in `archive_dir`
     /// matching the `audit-archive-*.jsonl.gz` pattern, sorted
     /// newest-first by filename (the embedded timestamp).
     ///
@@ -581,7 +581,7 @@ fn execute_rotation_delete(conn: &rusqlite::Connection, ids: &[String]) -> Resul
         [],
     )
     .map_err(rollback_on_err)?;
-    // Devin Review PR #69 BUG_0001: route COMMIT failure through the
+    // Devin Review PR #69: route COMMIT failure through the
     // same rollback_on_err path as every other failable step. If
     // COMMIT itself errors (e.g. SQLITE_FULL, disk write failure, or
     // the rare WAL-corruption case) we must NOT leave the connection
@@ -796,7 +796,7 @@ mod tests {
         assert_eq!(b.count().unwrap(), 1);
     }
 
-    // -- Phase 15 Task 12: audit log rotation tests -----------------------
+    // -- audit log rotation tests -----------------------
 
     use std::io::Read as _;
 
@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn concurrent_rotations_are_serialized_no_duplicate_archives() {
-        // Devin Review ANALYSIS-0002: two threads racing into
+        //: two threads racing into
         // `rotate()` against the same logical table must produce
         // ONE archive file containing the rotated rows, not two
         // archive files containing the same rows. The process-wide

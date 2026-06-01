@@ -1,12 +1,12 @@
 /**
- * Phase 16 Task 3 — AST evaluator.
+ * AST evaluator.
  *
  * Walks the AST produced by `parser.ts` and returns a `FormulaValue`
  * (number / string / boolean / null / `FormulaError`). Cell and
  * range references are resolved via the `CellResolver` interface so
  * the evaluator stays decoupled from the React state shape and can
- * be re-used by the Base-editor formula field (Phase 17) and the
- * cross-sheet workbook (Phase 16 PR 2).
+ * be re-used by the Base-editor formula field and the
+ * cross-sheet workbook.
  *
  * Type coercion follows Excel rules:
  *
@@ -91,7 +91,7 @@ export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
       return node.value;
     case "identifier":
       // Bare identifiers are reserved for future named-range support
-      // (Phase 16 PR 2). For now, surface as `#NAME?` so the user
+      //. For now, surface as `#NAME?` so the user
       // sees a precise error instead of a silent `0`.
       return makeError("#NAME?", `unknown name "${node.name}"`);
     case "cell": {

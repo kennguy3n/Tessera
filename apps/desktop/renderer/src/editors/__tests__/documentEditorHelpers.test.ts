@@ -1,5 +1,5 @@
 /**
- * Phase 18 PR 6 — pure-helper coverage for `documentEditorHelpers.ts`.
+ * pure-helper coverage for `documentEditorHelpers.ts`.
  *
  * The actual TipTap / ProseMirror integration (decoration painting,
  * slash-trigger detection inside a live editor) is covered in the

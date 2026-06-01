@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 14 — cell formatting tests.
+ * cell formatting tests.
  *
  * Covers the `applyCellFormat()` number-format mini-language (currency,
  * percent, decimals, thousands, custom prefixes/suffixes), date-format

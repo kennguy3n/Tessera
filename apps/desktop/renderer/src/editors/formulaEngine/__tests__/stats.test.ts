@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 12 — vitest coverage for `functions/stats.ts`.
+ * vitest coverage for `functions/stats.ts`.
  *
  * Values are hand-computed to verify the implementation, not via
  * the same algorithm (avoiding circular validation):

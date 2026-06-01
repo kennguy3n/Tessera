@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 9 — local-only telemetry sink unit tests.
+ * local-only telemetry sink unit tests.
  *
  * Covers enable/disable transitions, key whitelisting, value
  * clamping/validation, persistence (`flushAsync` /

@@ -96,7 +96,7 @@ describe("KchatAuthService.connect", () => {
     expect(vaultStore.has("kchat")).toBe(false);
   });
 
-  // Sixth-pass Devin Review (ANALYSIS_0001): the catch path in
+  // Sixth-pass Devin Review: the catch path in
   // `connect()` previously called `setToken(null)` BEFORE re-throwing
   // the error, so when the IPC layer's `toIpcError` later ran
   // `scrubMessage` the literal-token redaction was a no-op (the
@@ -159,7 +159,7 @@ describe("KchatAuthService.connect", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  // Phase 14 Round 5 Devin Review ANALYSIS_0002: the catch path in
+  // the catch path in
   // `connect()` previously cleared the in-memory token but did NOT
   // reset `authMode` back to `"none"`. So a PAT→bad-PAT re-connect
   // would leave the service in `{ state: "error", authMode: "pat" }`
@@ -405,7 +405,7 @@ describe("KchatAuthService.restoreFromVault", () => {
     expect(seen[0]).toBe("https://kchat.example.com/api/v4/users/me");
   });
 
-  // Phase 14 Round 7 Devin Review ANALYSIS_0002: on `verifyConnection`
+  // on `verifyConnection`
   // failure, `restoreFromVault()` previously left the client carrying
   // the stale token and serverUrl that were pushed into it just
   // before the failed verify. The fix matches the symmetric cleanup

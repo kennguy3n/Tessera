@@ -267,7 +267,7 @@ pub fn to_pdf_placeholder(block: &MermaidBlock) -> String {
     )
 }
 
-/// Phase 15 Task 15: render a mermaid block to an SVG string suitable
+/// render a mermaid block to an SVG string suitable
 /// for embedding into a Typst document via `image.decode(svg, format: "svg")`.
 ///
 /// Tessera does NOT bundle a full mermaid renderer on the Rust side

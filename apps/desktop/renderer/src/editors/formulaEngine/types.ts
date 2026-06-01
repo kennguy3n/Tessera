@@ -1,5 +1,5 @@
 /**
- * Phase 16 — formula-engine shared types.
+ * formula-engine shared types.
  *
  * Pure type declarations only (no runtime exports). Lives in its own
  * file so the tokenizer / parser / evaluator / dependency graph / function
@@ -89,7 +89,7 @@ export interface RangeRef {
  * cross-sheet / base-formula features inject their own resolvers
  * (e.g. multi-sheet workbook, base-record field references).
  *
- * Multi-sheet (Phase 16 Task 13): the optional `sheet` parameter
+ * Multi-sheet: the optional `sheet` parameter
  * names a sibling worksheet when a formula uses `Sheet2!A1` syntax.
  * Single-sheet resolvers (legacy callers, Base-editor field
  * resolver) ignore the parameter and continue to operate against

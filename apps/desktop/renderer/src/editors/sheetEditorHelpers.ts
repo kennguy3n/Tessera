@@ -7,7 +7,7 @@
  * component module independently consume types from the third file,
  * breaking the would-be A↔B dependency edge.
  *
- * As of Phase 16 PR 1, `evaluateFormula` is a thin wrapper around
+ * As of, `evaluateFormula` is a thin wrapper around
  * the real formula engine in `./formulaEngine/`. It preserves the
  * historical return-type (`string | number | boolean`) so existing
  * callers (and the on-disk artifact format) keep working unchanged.
@@ -127,7 +127,7 @@ export function parseSheetContent(content: string): SheetContent {
 }
 
 /**
- * Phase 16 Task 13 — in-memory multi-sheet view of a `SheetContent`.
+ * in-memory multi-sheet view of a `SheetContent`.
  * Pure-functional: `toWorkbook` always succeeds (the legacy
  * single-sheet shape wraps into one tab named "Sheet1"), and
  * `fromWorkbook` mirrors the active sheet back into the legacy
@@ -273,7 +273,7 @@ export function literalFromCellText(raw: string | undefined): FormulaValue {
  *     evaluation, which is how chains like `A1=B1`, `B1=A1` get
  *     promoted to `#CIRCULAR!` instead of stack-overflowing.
  *
- * Multi-sheet (Phase 16 Task 13): when the artifact contains a
+ * Multi-sheet: when the artifact contains a
  * `sheets[]` array (or the user has added a second tab in the
  * editor), pass a `Workbook` instead — the resolver routes
  * sheet-qualified refs (`Sheet2!A1`) to the right tab.
@@ -292,13 +292,13 @@ function makeResolver(sheet: SheetContent): {
 
 /**
  * Workbook-aware resolver. The `sheet` arg on `getRaw`/`getEvaluated`
- * (added in Phase 16 Task 13) names a sibling tab; when absent, the
+ * (added Task 13) names a sibling tab; when absent, the
  * lookup targets `workbook.sheets[workbook.activeSheetIndex]`.
  *
  * Returns the shared `visiting` set so the top-level driver can
  * inject it into `defaultContext()` for cycle detection.
  *
- * Phase 19 PR 9 — incremental recalculation: callers may pass an
+ * incremental recalculation: callers may pass an
  * external `cache` so it survives between top-level evaluations.
  * When `cache.has(key)` is true at lookup time, the cached value
  * is returned without re-parsing or re-evaluating — that's how

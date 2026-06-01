@@ -6,7 +6,7 @@
  * (which depends on DOM globals not available under jsdom in CI).
  *
  * Every helper here implements the real algorithm — no stubs, no
- * "TODO real implementation" markers. The Phase 18 PR 6 document
+ * "TODO real implementation" markers. The document
  * editor surface (tables, task lists, syntax-highlight code blocks,
  * find/replace, slash menu, image upload, char/word count) depends
  * on these helpers behaving identically whether they're called from

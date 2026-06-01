@@ -316,7 +316,7 @@ export function decryptWithPasswordKey(blob: Buffer): string {
 
   const decipher = crypto.createDecipheriv("aes-256-gcm", cachedKey, iv);
   decipher.setAuthTag(tag);
-  // Phase 15 Task 27 — sensitive-buffer cleanup.
+  // sensitive-buffer cleanup.
   //
   // `decipher.update(ciphertext)` and `decipher.final()` allocate
   // intermediate Buffers holding plaintext fragments of the secret.

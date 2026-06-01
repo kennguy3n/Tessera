@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 11: connector sync error resilience.
+ * connector sync error resilience.
  *
  * Mirror of `tessera_connectors::failure_state` in TypeScript.
  * The Rust module is the canonical reference (and is exercised by
@@ -53,9 +53,9 @@ import type { NativeBridge } from "./appState";
 
 /**
  * Re-exported alias so call sites can import a stable name even
- * if `appState.ts` ever renames the interface. Phase 15 Task 11
+ * if `appState.ts` ever renames the interface.
  * surfaces both spellings (`NativeBridge`, the original; and
- * `TesseraBridge`, the Phase 15 convention used elsewhere in
+ * `TesseraBridge`, the convention used elsewhere in
  * docs / tests) to avoid churn across phases.
  */
 export type TesseraBridge = NativeBridge;
@@ -98,7 +98,7 @@ export interface PersistedSyncError {
 
 /**
  * In-memory shape mirroring `tessera_connectors::SyncFailureState`.
- * The fields map 1:1 to the three new columns added in Phase 15
+ * The fields map 1:1 to the three new columns added
  * Task 11 (`last_sync_error`, `retry_count`, `failed_permanently`).
  */
 export interface SyncFailureState {

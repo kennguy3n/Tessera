@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 10: persisted failure queue for artifact exports.
+ * persisted failure queue for artifact exports.
  *
  * Exports can fail for a variety of recoverable + non-recoverable
  * reasons:
@@ -83,7 +83,7 @@ export interface FailedExportEntry {
   /**
    * Original destination path. ALWAYS a non-empty absolute path:
    * `enqueueFailedExport` rejects empty / non-absolute inputs at the
-   * write boundary (Devin Review PR #69 ANALYSIS_0003) and
+   * write boundary (Devin Review PR #69 and
    * `listFailedExports` silently drops entries on disk that no
    * longer match (defense in depth against a tampered queue file).
    * The retry handler and the safe-export allowlist both rely on
@@ -130,7 +130,7 @@ function filePathFor(): string {
 let writeChain: Promise<unknown> = Promise.resolve();
 
 function serializeWrites<T>(fn: () => Promise<T>): Promise<T> {
-  // Devin Review ANALYSIS-0003: only one callback on `.then()`.
+  //: only one callback on `.then()`.
   // `writeChain` is set to `next.catch(() => undefined)` immediately
   // after every call, so it can never reach a rejected state — the
   // two-arg form `then(onFulfilled, onRejected)` would have been
@@ -267,7 +267,7 @@ export async function enqueueFailedExport(args: {
   filePath: string;
   errorMessage: string;
 }): Promise<FailedExportEntry> {
-  // Devin Review PR #69 ANALYSIS_0003: validate the inputs at the
+  // Devin Review PR #69: validate the inputs at the
   // write boundary, not just at the read boundary. The on-disk
   // queue file is the source of truth for what the renderer
   // surfaces as "retry this", and `listFailedExports` already

@@ -82,7 +82,7 @@ vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: () => null },
 }));
 
-// Phase 15 Task 1 (Devin Review follow-up): the IPC handler now
+// the IPC handler now
 // distinguishes loading / loaded / failed / unloaded lifecycle
 // states. Tests can override `diffusionSidecarStateStub` to assert
 // the per-state error message is surfaced.
@@ -304,7 +304,7 @@ describe("imagegen IPC handlers", () => {
     });
 
     it("rejects when waitForReady times out so the next imagegen:generate doesn't race the listener bind with ECONNREFUSED", async () => {
-      // Regression test for Devin Review ANALYSIS_0005:
+      // Regression test for:
       // sd-server's ~15-30 s cold-start can outlast the readiness
       // budget on slow disks / GPU-starved hosts. start() returns
       // immediately after spawn(), so without the explicit

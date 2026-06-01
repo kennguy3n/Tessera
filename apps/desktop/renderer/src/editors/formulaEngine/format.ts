@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 14 — cell display formatting.
+ * cell display formatting.
  *
  * Renders a `FormulaValue` into the string the grid shows, applying
  * a `CellFormat`'s `numberFormat` mini-language. Visual format bits

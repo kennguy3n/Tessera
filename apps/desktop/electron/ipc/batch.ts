@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 6 — IPC batch operation primitives.
+ * IPC batch operation primitives.
  *
  * The bulk re-index and bulk export channels need consistent
  * semantics across both domains:

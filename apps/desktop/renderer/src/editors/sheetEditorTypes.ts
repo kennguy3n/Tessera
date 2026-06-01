@@ -8,7 +8,7 @@
  */
 
 /**
- * Phase 15 Task 14: a workbook-level named range. The `name` is the
+ * a workbook-level named range. The `name` is the
  * identifier the user (or a formula like `=SUM(Revenue)`) references;
  * `range` is an A1-style cell reference matching the XLSX defined-names
  * spec (e.g. `Sheet1!$B$2:$B$10` or `Sheet1!$A$1`).
@@ -23,7 +23,7 @@ export interface SheetNamedRange {
 }
 
 /**
- * Phase 16 Task 14 — per-cell display formatting. Stored separately
+ * per-cell display formatting. Stored separately
  * from the cell's raw text so a `=A1+B1` formula keeps its computed
  * value while the cell renders it as `$1,234.56` or bold-red, etc.
  *
@@ -49,7 +49,7 @@ export interface CellFormat {
 }
 
 /**
- * Phase 16 Task 13 — a single worksheet within a multi-sheet
+ * a single worksheet within a multi-sheet
  * workbook. Backward compatible: the legacy single-sheet
  * `SheetContent` (just `columns`/`rows`) parses into a workbook of
  * one `SheetTab` named "Sheet1".
@@ -62,30 +62,30 @@ export interface SheetTab {
   /** Row × column raw cell text. Formulas start with `=`. */
   rows: string[][];
   /**
-   * Optional per-cell formatting (Phase 16 Task 14). Keys are
+   * Optional per-cell formatting. Keys are
    * `"row,col"` strings; missing entries render plain.
    */
   formats?: Record<string, CellFormat>;
   /**
-   * Phase 16 Task 16 — per-column pixel widths. Sparse: an entry of
+   * per-column pixel widths. Sparse: an entry of
    * `undefined` (or an index past the array end) means "use the
    * grid's default column width". Persisted so widths survive
    * reload.
    */
   columnWidths?: (number | undefined)[];
   /**
-   * Phase 16 Task 16 — per-row pixel heights, sparse like
+   * per-row pixel heights, sparse like
    * `columnWidths`.
    */
   rowHeights?: (number | undefined)[];
   /**
-   * Phase 16 Task 19 — number of frozen rows from the top (header
+   * number of frozen rows from the top (header
    * row excluded). 0 / undefined means no freeze. Frozen rows stay
    * visible while the grid scrolls vertically.
    */
   frozenRows?: number;
   /**
-   * Phase 16 Task 19 — number of frozen columns from the left.
+   * number of frozen columns from the left.
    * 0 / undefined means no freeze.
    */
   frozenCols?: number;
@@ -106,7 +106,7 @@ export interface SheetContent {
    */
   rows: string[][];
   /**
-   * Phase 16 Task 13 — full multi-sheet workbook. When omitted,
+   * full multi-sheet workbook. When omitted,
    * the artifact has a single implicit sheet named "Sheet1"
    * containing `columns`/`rows`.
    */
@@ -117,7 +117,7 @@ export interface SheetContent {
    */
   activeSheetIndex?: number;
   /**
-   * Phase 16 Task 14 — per-cell formats for the active (legacy)
+   * per-cell formats for the active (legacy)
    * sheet. When `sheets` is present, prefer the per-sheet
    * `SheetTab.formats` instead. Both are honoured on read for
    * forward-compatibility with documents that store the active
@@ -125,7 +125,7 @@ export interface SheetContent {
    */
   formats?: Record<string, CellFormat>;
   /**
-   * Phase 15 Task 14: optional workbook-level named ranges. Persisted on
+   * optional workbook-level named ranges. Persisted on
    * the artifact JSON so the XLSX exporter can emit `<definedName>`
    * entries; the renderer-side Sheet editor does NOT currently surface
    * these to the user (a future task), but the JSON schema is forward-
@@ -134,15 +134,15 @@ export interface SheetContent {
    */
   namedRanges?: SheetNamedRange[];
   /**
-   * Phase 16 Task 16 — column widths on the legacy / active sheet.
+   * column widths on the legacy / active sheet.
    * Mirrored to/from `sheets[activeSheetIndex].columnWidths` when
    * `sheets` is present.
    */
   columnWidths?: (number | undefined)[];
-  /** Phase 16 Task 16 — row heights, mirror of `columnWidths`. */
+  /** — row heights, mirror of `columnWidths`. */
   rowHeights?: (number | undefined)[];
-  /** Phase 16 Task 19 — frozen rows on the legacy / active sheet. */
+  /** — frozen rows on the legacy / active sheet. */
   frozenRows?: number;
-  /** Phase 16 Task 19 — frozen columns on the legacy / active sheet. */
+  /** — frozen columns on the legacy / active sheet. */
   frozenCols?: number;
 }

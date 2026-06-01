@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 11 unit tests for `connectorBackoff.ts`.
+ * unit tests for `connectorBackoff.ts`.
  *
  * These tests pin the policy decisions that the connector sync
  * orchestrator relies on:
@@ -323,7 +323,7 @@ describe("saveSyncFailureState", () => {
 });
 
 /**
- * Phase 15 PR 2 (Devin Review follow-up): pin the classifier
+ * pin the classifier
  * matrix against the Rust `failure_kind` matrix on
  * `tessera_connectors::ConnectorError`. Each row here corresponds
  * to a row in the doc-comment on `classifyConnectorError`.
@@ -346,7 +346,7 @@ describe("classifyConnectorError (mirrors tessera_connectors failure_kind)", () 
     expect(classifyConnectorError(err)).toBe("transient");
   });
   it("classifies MissingScopeError as permanent (re-auth required, do not retry)", () => {
-    // Regression: Devin Review BUG_0001 on PR #89. Without this
+    // Regression: on PR #89. Without this
     // branch in `classifyConnectorError`, MissingScopeError fell
     // through to the default `transient` return, which forced the
     // source-health badge to wait for 8 transient retries (~4

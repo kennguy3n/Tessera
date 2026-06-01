@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 23 — TemplatesPage keyboard navigation tests.
+ * TemplatesPage keyboard navigation tests.
  *
  * Asserts the ARIA `aria-activedescendant` listbox contract: a
  * single focus stop on the gallery container; arrow keys move the
@@ -82,7 +82,7 @@ beforeEach(() => {
   navigateMock.mockReset();
 });
 
-describe("TemplatesPage — keyboard navigation (Phase 15 Task 23)", () => {
+describe("TemplatesPage — keyboard navigation", () => {
   it("renders a single listbox container with aria-activedescendant", () => {
     renderPage();
     const listbox = screen.getByRole("listbox", { name: /template gallery/i });

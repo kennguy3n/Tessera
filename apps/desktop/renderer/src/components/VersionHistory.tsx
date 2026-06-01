@@ -23,7 +23,7 @@ export default function VersionHistory({
   const [previewVersion, setPreviewVersion] = useState<number | null>(null);
   const [previewContent, setPreviewContent] = useState<string>("");
   const [restoring, setRestoring] = useState(false);
-  // Phase 15 Task 24: side-by-side diff for two versions. The
+  // side-by-side diff for two versions. The
   // compare-selection set is a Set rather than a tuple so the user
   // can click any two versions in either order; the diff direction
   // is "oldest → newest" by version number regardless of click order
@@ -49,7 +49,7 @@ export default function VersionHistory({
     if (isOpen) loadVersions();
   }, [isOpen, loadVersions]);
 
-  // Devin Review PR #70 follow-up ANALYSIS_0003 (BUG):
+  // Devin Review PR #70 follow-up (BUG):
   // every piece of UI state in this panel is scoped to the *current*
   // artifact — the compare-selection set holds version numbers from
   // the previously-viewed artifact's history, the preview pane holds

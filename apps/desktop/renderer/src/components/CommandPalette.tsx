@@ -1,5 +1,5 @@
 /**
- * Phase 18 Task 14-17: Cmd+K command palette.
+ * 17: Cmd+K command palette.
  *
  * Single overlay that fuses four UX patterns into one widget:
  *
@@ -113,7 +113,7 @@ export default function CommandPalette({
   // still want to prune in that case. Earlier code guarded on
   // `artifacts.length === 0` and silently skipped the prune,
   // leaving the user with a palette full of dead ids. PR #87
-  // Devin Review ANALYSIS_0005.
+  //.
   useEffect(() => {
     if (!isOpen || artifactsLoading) return;
     const stalePins = new Set<string>();
@@ -245,7 +245,7 @@ export default function CommandPalette({
     }));
     // Hoist the pinned/recent Sets above the .map so we don't pay
     // O(N) construction cost per row (PR #87 Devin Review
-    // ANALYSIS_0003). pinnedIds is capped at 256, recentIds at
+    //. pinnedIds is capped at 256, recentIds at
     // MAX_RECENT_ARTIFACTS=32, so the Sets cost <O(300) once
     // instead of <O(300 * MAX_RESULTS) inside the loop.
     const pinnedSet = new Set(pinnedIds);
@@ -289,7 +289,7 @@ export default function CommandPalette({
   // derive each row's absolute palette index from
   // `groupStartIndexes[gi] + ri` instead of relying on a
   // mutating-during-render `let rowCursor = 0; rowCursor++`
-  // counter. PR #87 Devin Review ANALYSIS_0003: the prior
+  // counter. PR #87: the prior
   // pattern was technically safe (React 18 strict mode double-
   // invocation produced the same values both passes) but mutating
   // a render-local outside the JSX tree is unconventional and
@@ -351,7 +351,7 @@ export default function CommandPalette({
             // See `useKeyboardShortcuts.toggleTheme` for the rationale;
             // we keep the two runners in lockstep so the chord and the
             // palette behave identically (PR #87 Devin Review
-            // ANALYSIS_0004).
+            //.
             const next =
               settings.theme === "system"
                 ? "dark"
@@ -363,7 +363,7 @@ export default function CommandPalette({
           }
           case "goBack":
             // react-router back navigation, matching the keyboard
-            // runner (BUG_0001). `navigate(-1)` not
+            // runner. `navigate(-1)` not
             // `window.history.back()` so the router's own history
             // stack stays in phase with the location bar.
             navigate(-1);
@@ -390,7 +390,7 @@ export default function CommandPalette({
         // computing `Math.min(-1, i + 1)` would set `activeIndex`
         // to -1 and the clamp at the top of `flatRows` derivation
         // only fires when the index is over the upper bound, not
-        // below 0. PR #87 Devin Review ANALYSIS_0004 round 3.
+        // below 0. PR #87 round 3.
         setActiveIndex((i) =>
           Math.max(0, Math.min(flatRows.length - 1, i + 1)),
         );

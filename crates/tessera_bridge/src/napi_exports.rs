@@ -78,7 +78,7 @@ struct AppState {
     /// a `bridge_backfill_embeddings` `AsyncTask` is in flight on a
     /// libuv worker thread holding the `source_manager` lock.
     embedding_progress: Arc<EmbeddingProgressTracker>,
-    /// Phase 19 Task 1: tracker for in-flight ONNX embedding-model
+    /// tracker for in-flight ONNX embedding-model
     /// downloads. Pollable from any thread without locking
     /// `source_manager`, just like `embedding_progress` — important
     /// because the download `AsyncTask` runs on a libuv worker
@@ -87,7 +87,7 @@ struct AppState {
     /// the renderer polls progress on its own timer that must not
     /// block on either.
     download_progress: Arc<sources::DownloadProgressTracker>,
-    /// Phase 15 Task 7: Arc clone of the shared SQLite connection so
+    /// Arc clone of the shared SQLite connection so
     /// `bridge_dispose` can run `wal_checkpoint(TRUNCATE)` without
     /// going through any individual store's lock. Holding it here
     /// also keeps the connection alive even if every individual
@@ -139,7 +139,7 @@ pub fn init_bridge(
     let conn = open_shared_with_key(&db_path, key_ref)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    // Phase 15 Task 7: run `PRAGMA integrity_check` (with one
+    // run `PRAGMA integrity_check` (with one
     // retry after `wal_checkpoint(TRUNCATE)`) before any store
     // touches the database. If corruption persists past the retry
     // we surface a structured error to the renderer rather than
@@ -148,7 +148,7 @@ pub fn init_bridge(
     tessera_core::db::integrity_check_with_retry(&conn)
         .map_err(|e| napi::Error::from_reason(format!("database integrity check failed: {e}")))?;
 
-    // Phase 19 PR 9 Task 4: open a small pool of read-only
+    // open a small pool of read-only
     // connections backing the SourceStore's hot read paths (BM25
     // FTS5, embedding-row scan, chunk hydration, age lookup).
     // Pool size 2 is the minimum that exercises the
@@ -186,7 +186,7 @@ pub fn init_bridge(
         SourceManager::with_shared_conn_and_read_pool(conn.clone(), read_pool, &[])
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    // Block C Task 2 (Phase 12): bind the per-source DEK / AEAD
+    // bind the per-source DEK / AEAD
     // facade in the manager to the same master key that protects
     // the SQLCipher file. Without this rebind, ingestion would use
     // the ephemeral per-process random key the constructor falls
@@ -224,7 +224,7 @@ pub fn init_bridge(
             automation_store: Mutex::new(automation_store),
             template_dir,
             embedding_progress,
-            // Phase 19 Task 1: tracker starts in `idle` with no
+            // tracker starts in `idle` with no
             // download in flight; the first call to
             // `bridge_download_embedding_model` flips it to
             // `downloading` synchronously before the AsyncTask
@@ -238,7 +238,7 @@ pub fn init_bridge(
     Ok(())
 }
 
-/// Phase 15 Task 7: graceful-shutdown hook. Runs
+/// graceful-shutdown hook. Runs
 /// `PRAGMA wal_checkpoint(TRUNCATE)` so the on-disk WAL is folded
 /// back into the main database file and shrunk to zero bytes
 /// before the process exits. The Electron side calls this from
@@ -397,7 +397,7 @@ pub fn bridge_index_kchat_file(
 }
 
 /// Refresh a KChat channel's ACL roster + project status onto the
-/// source row (Block B Task 3, Phase 11).
+/// source row.
 ///
 /// Called by the Node-side `KchatEventForwarder` after every
 /// membership-change event (`user_added`, `user_removed`,
@@ -495,7 +495,7 @@ pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     Ok(())
 }
 
-// -- Phase 15 Task 11: sync-failure persistence napi exports ------------
+// -- sync-failure persistence napi exports ------------
 //
 // The TS-side `runConnectorSync` calls these three functions in
 // the failure / success paths to durably persist a source's
@@ -591,7 +591,7 @@ pub fn bridge_search_sources(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-/// Block D Task 1 (Phase 14): query the KChat-post FTS5 index for
+/// query the KChat-post FTS5 index for
 /// chat-body chunks that match `query`. The Node-side
 /// `kchat:searchPosts` IPC handler maps the returned shape
 /// (which carries channel id, post id, sender id, timestamps)
@@ -613,7 +613,7 @@ pub fn bridge_search_kchat_posts(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-/// Phase 13 Theme 2 Task 13: fetch thread context for a search
+/// fetch thread context for a search
 /// hit whose `root_id` is non-null. The Node-side
 /// `kchat:fetchThreadContext` IPC handler calls this after a
 /// `kchat:searchPosts` row was selected by the user; the result
@@ -841,7 +841,7 @@ pub fn bridge_update_hybrid_search_config(
 }
 
 // =====================================================================
-// Phase 19 Task 1: ONNX embedding-model management exports.
+// ONNX embedding-model management exports.
 //
 // Four exports mirror the four IPC channels in
 // `apps/desktop/electron/ipc/settings.ts`:
@@ -2382,8 +2382,7 @@ pub fn bridge_log_kchat_acl_refreshed(
     Ok(())
 }
 
-/// Append a `KchatChannelAccessRevoked` audit row (Block B Task
-/// 3, Phase 11). Called by the Node-side `KchatEventForwarder`
+/// Append a `KchatChannelAccessRevoked` audit row. Called by the Node-side `KchatEventForwarder`
 /// whenever a KChat-channel source transitions to
 /// `SourceStatus::AccessRevoked` — either via an ACL refresh
 /// where the principal was missing from the roster, or via an
@@ -2404,8 +2403,7 @@ pub fn bridge_log_kchat_channel_access_revoked(
     Ok(())
 }
 
-/// Append a `KchatSourceCryptoshredded` audit row (Block B Task 4,
-/// Phase 11). Called by the Node-side `KchatEventForwarder` /
+/// Append a `KchatSourceCryptoshredded` audit row. Called by the Node-side `KchatEventForwarder` /
 /// `kchat:disconnect` IPC handler whenever a revoke transition
 /// triggers the substrate's inline cryptoshred. The `reason`
 /// matches the sibling `KchatChannelAccessRevoked` row so the two
@@ -2481,7 +2479,7 @@ pub fn bridge_log_kchat_source_cryptoshredded(
 /// surface the chunk-count the audit logger records (zero on
 /// every non-success outcome).
 ///
-/// Block C Task 1 (Phase 12).
+/// Block C Task 1.
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostIngestOutcomeInfo {
@@ -2500,7 +2498,7 @@ pub struct KchatPostIngestOutcomeInfo {
 /// is one of `deleted`/`not_found`/`unlinked`/`access_revoked`.
 /// `chunks_dropped` carries the count surfaced on the audit row.
 ///
-/// Block C Task 1 (Phase 12).
+/// Block C Task 1.
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostDeleteOutcomeInfo {
@@ -2516,7 +2514,7 @@ pub struct KchatPostDeleteOutcomeInfo {
 /// `post_edited` WS event after `withChannelSyncLock` serialises
 /// it.
 ///
-/// Block C Task 1 (Phase 12).
+/// Block C Task 1.
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostIngestInputInfo {
@@ -2590,7 +2588,7 @@ fn build_post_ingest_input(
     }
 }
 
-/// Block C Task 1 (Phase 12): ingest a KChat post body via the
+/// ingest a KChat post body via the
 /// substrate's `ingest_kchat_post`. Called by the Node-side
 /// `KchatEventForwarder` on a `posted` WS event. Returns the
 /// outcome shape the audit logger forwards to
@@ -2611,7 +2609,7 @@ pub fn bridge_ingest_kchat_post(
     Ok(ingest_post_outcome_to_info(outcome))
 }
 
-/// Block C Task 1 (Phase 12): re-ingest a KChat post body after a
+/// re-ingest a KChat post body after a
 /// `post_edited` WS event. Delegates to
 /// `SourceManager::edit_kchat_post` which currently shares the
 /// same code path as ingest but is surfaced as a distinct bridge
@@ -2633,7 +2631,7 @@ pub fn bridge_edit_kchat_post(
     Ok(ingest_post_outcome_to_info(outcome))
 }
 
-/// Block C Task 1 (Phase 12): drop the substrate evidence for a
+/// drop the substrate evidence for a
 /// KChat post after a `post_deleted` WS event.
 #[napi]
 pub fn bridge_delete_kchat_post(
@@ -2676,7 +2674,7 @@ pub fn bridge_delete_kchat_post(
     })
 }
 
-/// Block C Task 1 (Phase 12): record a KChat post-body ingest
+/// record a KChat post-body ingest
 /// outcome on the audit log. The Node-side forwarder calls this
 /// after `bridge_ingest_kchat_post` returns.
 #[napi]
@@ -2693,7 +2691,7 @@ pub fn bridge_log_kchat_post_ingested(
     Ok(())
 }
 
-/// Block C Task 1 (Phase 12): record a KChat post-body edit
+/// record a KChat post-body edit
 /// outcome on the audit log.
 #[napi]
 pub fn bridge_log_kchat_post_edited(
@@ -2709,7 +2707,7 @@ pub fn bridge_log_kchat_post_edited(
     Ok(())
 }
 
-/// Block C Task 1 (Phase 12): record a KChat post-body delete
+/// record a KChat post-body delete
 /// outcome on the audit log.
 #[napi]
 pub fn bridge_log_kchat_post_deleted(
@@ -2726,7 +2724,7 @@ pub fn bridge_log_kchat_post_deleted(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Block C Task 4 (Phase 13) — KChat historical backfill bridge surface
+// Block C Task 4 — KChat historical backfill bridge surface
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// JS-facing view of [`SourceManager::kchat_backfill_state`].
@@ -2780,7 +2778,7 @@ pub struct KchatBackfillCompletionOutcomeInfo {
     pub source_id: Option<String>,
 }
 
-/// Block C Task 4 (Phase 13): read the persisted backfill state
+/// read the persisted backfill state
 /// for a KChat channel. The renderer / orchestrator uses this to
 /// decide whether to start, resume, or skip the walk.
 #[napi]
@@ -2820,7 +2818,7 @@ pub fn bridge_get_kchat_backfill_state(cache_dir: String) -> napi::Result<KchatB
     })
 }
 
-/// Block C Task 4 (Phase 13): ingest one page of historical KChat
+/// ingest one page of historical KChat
 /// posts. Each input in `page` must be in REST-returned order
 /// (newest-first); the substrate advances the persisted cursor to
 /// the OLDEST post id in the page.
@@ -2881,7 +2879,7 @@ pub fn bridge_ingest_kchat_backfill_page(
     })
 }
 
-/// Block C Task 4 (Phase 13): mark the backfill walk complete.
+/// mark the backfill walk complete.
 /// Called by the orchestrator when the REST page returns
 /// `prev_post_id == null` (the server says "there are no posts
 /// older than the current cursor").
@@ -2918,7 +2916,7 @@ pub fn bridge_mark_kchat_backfill_complete(
     })
 }
 
-/// Block C Task 4 (Phase 13): record a `KchatBackfillStarted`
+/// record a `KchatBackfillStarted`
 /// audit row when the orchestrator kicks off (or resumes) a walk.
 /// `resume_from_post_id` is the persisted cursor at start time
 /// (NULL on a fresh walk) so the audit timeline shows whether the
@@ -2940,7 +2938,7 @@ pub fn bridge_log_kchat_backfill_started(
     Ok(())
 }
 
-/// Block C Task 4 (Phase 13): record a `KchatBackfillPageIngested`
+/// record a `KchatBackfillPageIngested`
 /// audit row after each page the orchestrator processes. The page
 /// number is 1-based so the audit timeline reads "page 1, page 2…"
 /// rather than "page 0, page 1…".
@@ -2970,7 +2968,7 @@ pub fn bridge_log_kchat_backfill_page_ingested(
     Ok(())
 }
 
-/// Block C Task 4 (Phase 13): record a `KchatBackfillCompleted`
+/// record a `KchatBackfillCompleted`
 /// audit row when the orchestrator observes the end-of-history
 /// signal (REST page returns `prev_post_id == null`).
 #[napi]
@@ -2994,7 +2992,7 @@ pub fn bridge_log_kchat_backfill_completed(
     Ok(())
 }
 
-/// Block C Task 4 (Phase 13): record a `KchatBackfillAborted`
+/// record a `KchatBackfillAborted`
 /// audit row when the orchestrator stops the walk early (mid-walk
 /// revocation, safety-cap hit, network error, or unlinked
 /// source). `reason` is a short machine-readable tag:
@@ -3025,7 +3023,7 @@ pub fn bridge_log_kchat_backfill_aborted(
     Ok(())
 }
 
-/// Block D Task 1 (Phase 14): record a `KchatPostSearchExecuted`
+/// record a `KchatPostSearchExecuted`
 /// audit row when the renderer's evidence search calls into the
 /// KChat-content retrieval bridge. The IPC handler computes
 /// `query_hash` (SHA-256 over the normalised query, hex-encoded
@@ -3070,7 +3068,7 @@ pub struct AuditEventView {
     pub details: String,
 }
 
-/// Phase 15 Task 12: rotate the audit log if it has grown above
+/// rotate the audit log if it has grown above
 /// the threshold. Returns the archive path and rotated-row count
 /// when a rotation occurred; returns `null` when the table is at
 /// or below the threshold.
@@ -3095,7 +3093,7 @@ pub struct AuditRotationResultView {
 #[napi]
 pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRotationResultView>> {
     let s = state()?;
-    // Devin Review ANALYSIS-0001: do NOT go through the outer
+    //: do NOT go through the outer
     // `Mutex<AuditLogger>` for the rotation path. Inside
     // `AuditStore::rotate`, the code intentionally releases the
     // `SharedConnection` mutex between Phase 1 (SELECT) and Phase
@@ -3116,7 +3114,7 @@ pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRota
     // Concurrent rotations across the IPC entry point and any
     // future scheduled-rotation entry point are still serialized
     // by the process-wide `AUDIT_ROTATION_SERIALIZER` inside
-    // `AuditStore::rotate` (ANALYSIS-0002), so dropping the outer
+    // `AuditStore::rotate`, so dropping the outer
     // mutex does not introduce a duplicate-archive race.
     let store = AuditStore::with_shared_conn(s.shared_conn.clone())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -3129,7 +3127,7 @@ pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRota
     }))
 }
 
-/// Phase 15 Task 12: list the audit-archive files in
+/// list the audit-archive files in
 /// `archive_dir`, newest-first. The Settings page renders this
 /// list with download links. Returns `[]` when the directory does
 /// not yet exist (no rotations have happened).
@@ -3165,7 +3163,7 @@ pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<A
             // `rename_all = "snake_case"` derive but without the
             // JSON-string + quote-trim round-trip the bridge
             // previously used (fourteenth-pass Devin Review
-            // ANALYSIS_0007). The serde form remains the
+            //. The serde form remains the
             // authoritative on-disk representation in SQLite; this
             // helper just keeps the napi → JS conversion direct.
             // A unit test in `tessera_audit::event::tests`

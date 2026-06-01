@@ -230,7 +230,7 @@ export async function enforceKchatServerUrl(
   // is what we want, but reviewers reading the line have to remember
   // that to be sure. The parens cost nothing and remove a class of
   // future regressions where someone "tidies up" by wrapping the
-  // wrong sub-expression. Per Devin Review Pass 2 ANALYSIS_0001 on
+  // wrong sub-expression. Per Devin Review Pass 2 on
   // PR #61: `??` precedence relative to comparison operators is a
   // common source of confusion, so make the grouping explicit.
   const allowInternal =

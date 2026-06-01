@@ -43,7 +43,7 @@ const fixtures = [
 function makeApi(rows = fixtures): typeof window.tessera.audit {
   return {
     listRecent: vi.fn().mockResolvedValue(rows),
-    // Phase 15 Task 12: rotation/archive endpoints exist on the
+    // rotation/archive endpoints exist on the
     // API surface but are not exercised by this component. Stub
     // them with empty returns so the type-checker sees a complete
     // AuditApi shape — production behaviour is covered by the

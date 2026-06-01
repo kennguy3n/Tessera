@@ -1,4 +1,4 @@
-//! Phase 15 Task 13: DOCX export cross-platform regression suite.
+//! DOCX export cross-platform regression suite.
 //!
 //! Five golden-shape fixtures (headings, lists, tables, code blocks,
 //! citations) exercise the major DOCX output paths. For each fixture

@@ -1,5 +1,5 @@
 /**
- * Phase 15 Task 27 — zero-on-free regression suite for sensitive
+ * zero-on-free regression suite for sensitive
  * buffers.
  *
  * Locks three properties that defend against a "secret bytes lingering

@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 10 — vitest coverage for `functions/lookup.ts`.
+ * vitest coverage for `functions/lookup.ts`.
  *
  * Lookup functions operate on RANGE references, so tests rely on a
  * mock `CellResolver` that materialises 2-D string arrays into

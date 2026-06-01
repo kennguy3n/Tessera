@@ -82,7 +82,7 @@ export default function HomePage() {
   const hasArtifacts = recent.length > 0;
   const isLoading = artifactsLoading || sourcesLoading || settingsLoading;
 
-  // Phase 15 Task 19: gate the wizard on all three signals.
+  // gate the wizard on all three signals.
   // `settingsLoading` is intentionally included so we never flash the
   // wizard before the persisted flag has loaded — the loading block
   // below covers that interval with a generic "Loading..." instead.
@@ -273,7 +273,7 @@ export default function HomePage() {
 }
 
 /**
- * Phase 18 Task 20: artifact card with right-click context menu.
+ * artifact card with right-click context menu.
  *
  * Wraps a `Card` so the user can right-click to pin/unpin,
  * duplicate, or delete the artifact without leaving the home page.
@@ -295,7 +295,7 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
   // row: `artifact` (id/title/type/content/templateId), `navigate`,
   // `togglePin`, and `isPinned`'s memoised `pinnedSet` (re-fires
   // when the user pins/unpins this artifact). PR #87 Devin Review
-  // ANALYSIS_0006 round 3.
+  // round 3.
   const pinned = isPinned(artifact.id);
   const items: ContextMenuItem[] = useMemo(
     () => [
@@ -325,7 +325,7 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
               artifact.templateId ?? undefined,
             );
             await api.artifacts.update(copy.id, artifact.content);
-            // PR #87 Devin Review ANALYSIS_0005: broadcast so every
+            // PR #87: broadcast so every
             // live `useArtifactList()` consumer (sidebar, palette,
             // recents grid) picks up the new artifact without a
             // remount.
@@ -348,7 +348,7 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
             const api = window.tessera;
             if (!api) return;
             await api.artifacts.remove(artifact.id);
-            // PR #87 Devin Review ANALYSIS_0005: broadcast so the
+            // PR #87: broadcast so the
             // deleted card disappears from the recents grid
             // immediately. Without this dispatch the user would see
             // a stale card until they navigated away and back
@@ -371,7 +371,7 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
           // /artifacts/:id isn't a registered route (router only knows
           // /artifacts/:id/edit and /artifacts/:id/preview); navigating
           // there caused a silent fallback to "/" (PR #87 Devin Review
-          // BUG_0002). Send the user straight to the editor, matching
+          //. Send the user straight to the editor, matching
           // what the CommandPalette does for recent items.
           onClick={() => navigate(`/artifacts/${artifact.id}/edit`)}
         >

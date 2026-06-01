@@ -16,7 +16,7 @@ import {
 import type { SourceInfo } from "../types/ipc";
 
 /**
- * Phase 13 Task 10 \u2014 KChat backfill progress card on
+ * \u2014 KChat backfill progress card on
  * `SourceDetailPage`.
  *
  * The IPC (`kchat:backfillProgress`) already exists and is unit
@@ -125,8 +125,8 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       ).toBe(KCHAT_CHANNEL_ID);
     });
 
-    it("returns the basename for a Windows-style backslash path (BUG_0001)", () => {
-      // Devin Review on 869295e (BUG_0001): the main process's
+    it("returns the basename for a Windows-style backslash path", () => {
+      // Devin Review on 869295e: the main process's
       // `kchatChannelCacheDir` uses Node `path.join(...)` which produces
       // backslash-separated paths on Windows. A `/`-only split would yield
       // a single segment that fails `assertKchatId` at the IPC boundary and
@@ -165,7 +165,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
   });
 
   describe("formatSourceTypeLabel", () => {
-    // Devin Review on 869295e (ANALYSIS_0003): KChat sources rendered as
+    // Devin Review on 869295e: KChat sources rendered as
     // "Local File" in the Source Information card pre-fix, which is
     // confusing once the page actively renders KChat channels. The
     // mapping is now centralised in `formatSourceTypeLabel`.
@@ -192,7 +192,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
     });
 
     it("returns the 'Unknown' sentinel for an empty discriminator", () => {
-      // Per Devin Review on PR #55 (ANALYSIS_0005), an empty
+      // Per Devin Review on PR #55, an empty
       // discriminator used to fall through to `""` (the humanised
       // form of an empty input), which then cascaded into
       // malformed downstream surfaces — most visibly
@@ -212,7 +212,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
   });
 
   describe("sourceTypeIcon", () => {
-    // Phase 13 Theme 5 Task 27: every known source kind must map to
+    // every known source kind must map to
     // a glyph + ariaLabel pair so SourcesPage / SourceDetailPage can
     // render a recognisable marker at a glance. The mapping must
     // stay in lockstep with `formatSourceTypeLabel` — if a future
@@ -252,7 +252,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       // the normalisation, `formatSourceTypeLabel` would title-case
       // each word and produce "Some New Kind source", visually
       // inconsistent with the hardcoded siblings. Per Devin Review
-      // PR #55 ANALYSIS_0006.
+      // PR #55.
       expect(t.ariaLabel).toBe("Some new kind source");
     });
 
@@ -268,7 +268,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
     });
 
     it("returns an empty glyph and a well-formed 'Unknown source' ariaLabel for an empty discriminator", () => {
-      // Per Devin Review on PR #55 (ANALYSIS_0005), an empty
+      // Per Devin Review on PR #55, an empty
       // input previously fell through to `" source"` with a
       // leading space because `formatSourceTypeLabel("")` returned
       // an empty string. The fix lives in `formatSourceTypeLabel`:
@@ -409,8 +409,8 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       expect(status.textContent).toContain("bridge unavailable");
     });
 
-    it("renders 'KChat Channel' as the source type in the Source Information card (ANALYSIS_0003)", async () => {
-      // Devin Review on 869295e (ANALYSIS_0003): the Source Information
+    it("renders 'KChat Channel' as the source type in the Source Information card", async () => {
+      // Devin Review on 869295e: the Source Information
       // card used to render "Local File" for any source that wasn't a
       // `local_folder`, including KChat channels. Now that Task 10 lit
       // up the page for KChat sources, the label is centralised in
@@ -435,14 +435,14 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       const typeRow = screen.getByText("Type", { selector: "span" });
       const valueCell = typeRow.nextElementSibling as HTMLElement | null;
       expect(valueCell).not.toBeNull();
-      // The cell composes the Phase 13 Theme 5 Task 27 icon
+      // The cell composes the icon
       // (💬) with the formatted type label. Asserting on
       // `toContain` keeps this test focused on the
-      // ANALYSIS_0003 invariant (the cell SAYS "KChat Channel"
+      // invariant (the cell SAYS "KChat Channel"
       // somewhere) without coupling it to the visual marker
       // layout — the icon itself is independently pinned by the
       // `source-detail-type-icon` test in the
-      // `source-type icon (Phase 13 Theme 5 Task 27)` describe
+      // `source-type icon` describe
       // block below.
       expect(valueCell!.textContent).toContain("KChat Channel");
     });
@@ -640,7 +640,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
     });
   });
 
-  describe("source-type icon (Phase 13 Theme 5 Task 27)", () => {
+  describe("source-type icon", () => {
     // Integration-level pin for the SourceDetailPage Source
     // Information card. The unit-level `sourceTypeIcon` tests
     // (above) verify the helper returns the right glyph / aria

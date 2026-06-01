@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 10 — PIN + biometric app lock.
+ * PIN + biometric app lock.
  *
  * Threat model
  * ------------

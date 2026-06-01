@@ -1,4 +1,4 @@
-//! Phase 15 Task 4 — process resident-set-size sampler.
+//! process resident-set-size sampler.
 //!
 //! Exposes a single `current_rss_bytes()` accessor that returns the
 //! current resident-set size of the calling process in bytes, or

@@ -77,7 +77,7 @@ export function newSlideId(prefix: "slide" | "block" = "slide"): string {
  * short-circuit a re-render.
  *
  * Used by `parseSlideContent` to backfill IDs on legacy decks saved
- * before Phase 18 PR 8 (which had no `Slide.id` / `SlideBlock.id`
+ * before (which had no `Slide.id` / `SlideBlock.id`
  * field). Exported because the tests verify the migration and the
  * SlideEditor's content-sync effect uses it directly.
  */
@@ -434,7 +434,7 @@ export function applyMarpToShadow(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 18 PR 7 — UX helpers (block & slide mutations, layouts, find)
+// UX helpers (block & slide mutations, layouts, find)
 //
 // Every helper below is PURE: takes a `Slide[]` (or `Slide`) plus
 // arguments and returns a fresh structure. Callers feed the result
@@ -868,7 +868,7 @@ export function deckWordCount(slides: Slide[]): number {
  * Per-slide and deck-total word counts in one O(N + W) pass, where
  * `N` is the number of slides and `W` the total content length.
  *
- * Phase 19 PR 11 perf: the SlideEditor toolbar shows
+ * perf: the SlideEditor toolbar shows
  * `Words: <active> / <total>` on every render. Before this helper
  * existed, the active count was computed inline (a fresh
  * `slideWordCount(activeSlide)` per render) AND `deckWordCount(slides)`

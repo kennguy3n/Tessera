@@ -178,7 +178,7 @@ const api: TesseraApi = {
       ipcRenderer.invoke("sources:search", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
-    // Phase 15 Task 6: bulk re-index. Calls the main-process
+    // bulk re-index. Calls the main-process
     // `sources:batchReindex` handler registered in `ipc/sources.ts`,
     // which validates the id list (≤ BATCH_MAX_ITEMS, well-formed
     // ids) and then runs the per-item handler through the shared
@@ -195,7 +195,7 @@ const api: TesseraApi = {
       ),
     getEmbeddingProgress: () =>
       ipcRenderer.invoke("sources:getEmbeddingProgress"),
-    // Phase 15 Task 22 — Source Health dashboard.
+    // Source Health dashboard.
     healthReport: () => ipcRenderer.invoke("sources:healthReport"),
   },
   artifacts: {
@@ -217,7 +217,7 @@ const api: TesseraApi = {
         format,
         contentOverride ?? null,
       ),
-    // Phase 15 Task 6: bulk export. Calls the main-process
+    // bulk export. Calls the main-process
     // `artifacts:batchExport` handler in `ipc/artifacts.ts`,
     // which validates ids + format and runs the per-item handler
     // through `runBatch()`. The batch path always exports the
@@ -260,14 +260,14 @@ const api: TesseraApi = {
       ),
     exportMarp: (req) => ipcRenderer.invoke("artifacts:exportMarp", req),
     exportTypst: (req) => ipcRenderer.invoke("artifacts:exportTypst", req),
-    // Phase 15 Task 8: artifact auto-save recovery surface. See
+    // artifact auto-save recovery surface. See
     // `ArtifactApi.checkRecovery` / `discardRecovery` for the
     // contract.
     checkRecovery: (id: string) =>
       ipcRenderer.invoke("artifacts:checkRecovery", id),
     discardRecovery: (id: string) =>
       ipcRenderer.invoke("artifacts:discardRecovery", id),
-    // Phase 15 Task 10: failed-export queue surface. See
+    // failed-export queue surface. See
     // `ArtifactApi.failedExports` / `retryExport` /
     // `discardFailedExport` for the contract.
     failedExports: () => ipcRenderer.invoke("artifacts:failedExports"),
@@ -306,7 +306,7 @@ const api: TesseraApi = {
       ipcRenderer.invoke("settings:getHybridSearchConfig"),
     updateHybridSearchConfig: (update: HybridSearchConfigUpdate) =>
       ipcRenderer.invoke("settings:updateHybridSearchConfig", update),
-    // Phase 19 Task 1: ONNX embedding-model lifecycle. Channel
+    // ONNX embedding-model lifecycle. Channel
     // names mirror the IPC handlers in `electron/ipc/settings.ts`,
     // which themselves mirror the bridge exports in
     // `crates/tessera_bridge/src/napi_exports.rs`. Three reads, two
@@ -321,7 +321,7 @@ const api: TesseraApi = {
     switchEmbeddingModel: (slug: string) =>
       ipcRenderer.invoke("settings:switchEmbeddingModel", { slug }),
   },
-  // Phase 19 PR 10 Task 9 — telemetry inspection surface. No
+  // telemetry inspection surface. No
   // write API here beyond `recordCounter` because every writeable
   // key is gated by the whitelist in `electron/telemetrySink.ts`.
   telemetry: {
@@ -331,7 +331,7 @@ const api: TesseraApi = {
     recordCounter: (key: string, increment?: number) =>
       ipcRenderer.invoke("telemetry:recordCounter", key, increment ?? 1),
   },
-  // Phase 19 PR 10 Task 10 — PIN / biometric app lock IPC. See
+  // PIN / biometric app lock IPC. See
   // `electron/ipc/appLock.ts` for the channel contract.
   appLock: {
     getStatus: () => ipcRenderer.invoke("appLock:getStatus"),
@@ -455,7 +455,7 @@ const api: TesseraApi = {
     getAllRedirectUris: () =>
       ipcRenderer.invoke("connectors:getAllRedirectUris"),
     /**
-     * Phase 19 PR 10 Task 8 — inspect the requested-vs-granted
+     * inspect the requested-vs-granted
      * scope diff for a connector. Returns `null` when the user
      * isn't connected yet (no stored token). The renderer's
      * connector card calls this on mount and renders a yellow
@@ -535,7 +535,7 @@ const api: TesseraApi = {
     addChannelSource: (channelId: string, channelName: string) =>
       ipcRenderer.invoke("sources:addKchatChannel", channelId, channelName),
     /**
-     * Block C Task 4 (Phase 13): trigger the historical-backfill
+     * trigger the historical-backfill
      * walk for an already-linked KChat channel. Returns a single
      * aggregate outcome rather than streaming progress; the
      * substrate emits per-page audit rows for operators that need
@@ -546,7 +546,7 @@ const api: TesseraApi = {
     backfillChannel: (channelId: string) =>
       ipcRenderer.invoke("sources:backfillKchatChannel", channelId),
     /**
-     * Block D Task 1 (Phase 14): KChat post-body retrieval. The
+     * KChat post-body retrieval. The
      * renderer's evidence-search UI calls this alongside
      * `sources.search` so chat threads surface as evidence
      * alongside files. See the IPC handler in
@@ -556,7 +556,7 @@ const api: TesseraApi = {
     searchPosts: (query: string, limit: number) =>
       ipcRenderer.invoke("kchat:searchPosts", query, limit),
     /**
-     * Phase 13 Theme 2 Task 13: thread-context retrieval. The
+     * thread-context retrieval. The
      * renderer calls this when the user expands a threaded search
      * hit to see the root + earlier-replies as a conversation
      * transcript. Returns a chronologically-ordered array of up
@@ -566,7 +566,7 @@ const api: TesseraApi = {
     fetchThreadContext: (sourceId: string, postId: string) =>
       ipcRenderer.invoke("kchat:fetchThreadContext", sourceId, postId),
     /**
-     * Phase 14 Task 6: open a KChat conversation in KChat Desktop
+     * open a KChat conversation in KChat Desktop
      * via the OS-registered `kchat://` URL handler. The renderer
      * invokes this from the "Open in KChat Desktop" action button
      * next to each KChat channel source in the sidebar. Resolves
@@ -576,7 +576,7 @@ const api: TesseraApi = {
     openInDesktop: (channelId: string) =>
       ipcRenderer.invoke("kchat:openInDesktop", channelId),
     /**
-     * Phase 14 Task 4: open the KChat Desktop extension-management
+     * open the KChat Desktop extension-management
      * settings page (`kchat://app/settings/extensions`). The IPC
      * handler is a typed no-arg call so the renderer cannot
      * smuggle arbitrary deeplinks into `shell.openExternal`.
@@ -584,14 +584,14 @@ const api: TesseraApi = {
     openDesktopExtensions: () =>
       ipcRenderer.invoke("kchat:openDesktopExtensions"),
     /**
-     * Phase 14 Task 4: read Tessera's snapshot of the .kcz
+     * read Tessera's snapshot of the .kcz
      * extension bridge state. Used by the Settings card to render
      * the "KChat Desktop detected" affordance.
      */
     desktopBridgeStatus: () =>
       ipcRenderer.invoke("kchat:desktopBridgeStatus"),
     /**
-     * Phase 13 Task 10: KChat channel backfill progress. The
+     * KChat channel backfill progress. The
      * SourceDetailPage subscribes to this while a backfill is
      * active; the IPC handler returns the current watermark and
      * a status discriminator the renderer maps to a progress
@@ -617,7 +617,7 @@ const api: TesseraApi = {
     listRecent: (limit?: number, offset?: number) =>
       ipcRenderer.invoke("audit:listRecent", limit, offset),
     /**
-     * Phase 15 Task 12: list audit-archive file paths in the
+     * list audit-archive file paths in the
      * userData/audit-archives directory, newest first. Returns
      * `[]` when no rotations have ever happened. Used by the
      * Settings page audit pane to render a list of rotated
@@ -626,7 +626,7 @@ const api: TesseraApi = {
     getArchives: (): Promise<string[]> =>
       ipcRenderer.invoke("audit:getArchives"),
     /**
-     * Phase 15 Task 12: trigger an immediate audit-log rotation.
+     * trigger an immediate audit-log rotation.
      * Returns `null` when the live table is at or below the
      * threshold (no rotation occurred), or an object with the
      * archive path + rotated-row count when one fired.
@@ -641,7 +641,7 @@ const api: TesseraApi = {
 contextBridge.exposeInMainWorld("tessera", api);
 
 /**
- * Phase 15 Task 25 — surface the per-session CSP nonce to the
+ * surface the per-session CSP nonce to the
  * renderer so each component-local `<style>{…}</style>` block can
  * emit `<style nonce={…}>…</style>` and pass the strict
  * `style-src-elem 'self' 'nonce-X'` check installed by

@@ -71,7 +71,7 @@ impl From<reqwest::Error> for ConnectorError {
 
 pub type ConnectorResult<T> = std::result::Result<T, ConnectorError>;
 
-/// Phase 15 Task 11: classification of a `ConnectorError` for the
+/// classification of a `ConnectorError` for the
 /// sync-failure resilience layer. The sync loop inspects this value
 /// to decide whether to schedule another retry (and bump
 /// `retry_count`) or to mark the source as `failed_permanently` and
@@ -261,7 +261,7 @@ mod tests {
         assert!(std::error::Error::source(&err).is_none());
     }
 
-    /// Phase 15 Task 11: pin the failure-kind classification for
+    /// pin the failure-kind classification for
     /// every variant. The sync-failure resilience layer keys its
     /// retry-vs-give-up decision off this matrix, so silently
     /// reclassifying a variant from Permanent to Transient (or

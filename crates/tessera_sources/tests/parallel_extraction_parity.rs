@@ -1,4 +1,4 @@
-//! Phase 15 Task 2 — parallel-vs-serial extraction parity tests.
+//! parallel-vs-serial extraction parity tests.
 //!
 //! These tests guard the invariant that
 //! [`extract_files_parallel`] returns byte-identical output to a

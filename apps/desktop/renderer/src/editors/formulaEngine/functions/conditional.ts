@@ -1,5 +1,5 @@
 /**
- * Phase 16 Task 6 — conditional aggregation functions.
+ * conditional aggregation functions.
  *
  *   SUMIF(range, criterion, [sum_range])
  *   SUMIFS(sum_range, criteria_range1, criterion1, ...)

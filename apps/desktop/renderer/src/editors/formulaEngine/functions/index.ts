@@ -1,5 +1,5 @@
 /**
- * Phase 16 — function registry.
+ * function registry.
  *
  * Every function the evaluator dispatches goes through this map. The
  * registry is split into per-category modules (`math.ts`,

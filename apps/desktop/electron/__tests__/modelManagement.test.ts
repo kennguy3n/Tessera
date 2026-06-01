@@ -1970,7 +1970,7 @@ describe("manifest validation guard — models[] entries", () => {
     };
   }
 
-  it("rejects a vision-GGUF entry with mmprojUrl but no mmprojSizeMb (BUG_0001)", async () => {
+  it("rejects a vision-GGUF entry with mmprojUrl but no mmprojSizeMb", async () => {
     const bad = visionManifest(
       visionGgufEntry({ mmprojSizeMb: undefined as unknown as number }),
     );

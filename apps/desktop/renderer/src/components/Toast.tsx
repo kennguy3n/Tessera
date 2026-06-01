@@ -14,7 +14,7 @@ import type { Toast as ToastShape, ToastType } from "./toastContext";
 let toastCounter = 0;
 
 /**
- * Phase 15 Task 21 — toast notification polish.
+ * toast notification polish.
  *
  * Behaviour matrix expected by the task spec:
  *   * `success` / `info` auto-dismiss after 5s.
@@ -55,7 +55,7 @@ const MAX_VISIBLE_TOASTS = 3;
 // the head of `queued` into `visible` when a slot opens — so we
 // never need to nest one state setter inside another's updater.
 //
-// Devin Review PR #70 BUG_0001: the previous implementation called
+// Devin Review PR #70: the previous implementation called
 // `setQueued` from inside `setVisible`'s updater. Under React 19
 // `<StrictMode>` (enabled in `main.tsx`), state updaters are
 // double-invoked in development to surface impurities. The nested

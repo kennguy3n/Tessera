@@ -240,7 +240,7 @@ export interface KchatConnectedUserView {
  * Connection state surfaced to the renderer via `kchat:status`.
  * `error` carries a human-readable reason when `state === "error"`.
  *
- * Phase 14: `authMode` is either `"none"` (disconnected) or
+ * `authMode` is either `"none"` (disconnected) or
  * `"pat"` (operator pasted a personal access token in the
  * Settings card). The earlier extension-bridge delegation path
  * has been removed — KChat Desktop and Tessera are now

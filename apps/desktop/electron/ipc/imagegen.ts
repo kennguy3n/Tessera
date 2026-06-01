@@ -145,7 +145,7 @@ export async function probeImagegenAvailable(): Promise<boolean> {
 export async function ensureDiffusionSidecarRunning(): Promise<void> {
   const sidecar = getDiffusionSidecar();
   if (!sidecar) {
-    // Phase 15 Task 1 (Devin Review follow-up): replace the generic
+    // replace the generic
     // "not initialised" message with an error that reflects the
     // actual lazy-load state. The three states the renderer can
     // act on are:

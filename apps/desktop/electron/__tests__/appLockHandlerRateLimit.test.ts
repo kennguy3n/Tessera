@@ -1,5 +1,5 @@
 /**
- * Phase 19 PR 10 Task 10 — defense-in-depth rate-limit parity for
+ * defense-in-depth rate-limit parity for
  * the four `appLock:*` channels that invoke scrypt or the platform
  * biometric prompt.
  *

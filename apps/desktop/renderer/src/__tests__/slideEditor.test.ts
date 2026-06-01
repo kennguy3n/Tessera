@@ -115,7 +115,7 @@ describe("slidesToMarpMarkdown", () => {
   });
 
   it("renders image blocks as Markdown image syntax (not raw data URLs)", () => {
-    // Regression test for BUG_0001 (Devin Review on PR #81):
+    // Regression test for (Devin Review on PR #81):
     //
     // Before this fix, image blocks fell through to the catch-all
     // `else { parts.push(content); }` branch in `renderSlideAsMarp`,
@@ -155,7 +155,7 @@ describe("slidesToMarpMarkdown", () => {
   });
 
   it("renders image URLs containing parens via CommonMark angle-bracket form", () => {
-    // Regression test for ANALYSIS_0001 (Devin Review on PR #81
+    // Regression test for (Devin Review on PR #81
     // round 2): Wikipedia / Mediawiki / SharePoint URLs commonly
     // contain unescaped `(` and `)` characters (e.g.
     // `C_(programming_language).png`). Emitting these inside the
@@ -427,7 +427,7 @@ describe("setFrontmatterTheme", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 18 PR 7 — slide UX helpers
+// slide UX helpers
 // ─────────────────────────────────────────────────────────────────────
 
 let __slideOfCounter = 0;
@@ -611,7 +611,7 @@ describe("moveBlock", () => {
 });
 
 describe("moveSlide", () => {
-  // Devin Review PR #82 round 5 ANALYSIS_0002 — `moveSlide` lacks
+  // Devin Review PR #82 round 5 — `moveSlide` lacks
   // dedicated unit tests. The helper has non-trivial logic
   // (bounds checking, splice-based reorder, reference-stable
   // no-op contract) that SlideEditor.tsx relies on; pin it.
@@ -681,7 +681,7 @@ describe("moveSlide", () => {
 });
 
 describe("backfillSlideIds", () => {
-  // Devin Review PR #82 round 5 ANALYSIS_0002 — companion to the
+  // Devin Review PR #82 round 5 — companion to the
   // `moveSlide` pin. `backfillSlideIds` is exercised indirectly
   // through `parseSlideContent`, but the migration / lazy-clone
   // contract is worth pinning directly so future refactors
@@ -964,7 +964,7 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
 });
 
 describe("buildBlock", () => {
-  // Harmonisation regression (PR #82 round 4 ANALYSIS_0001):
+  // Harmonisation regression (PR #82 round 4:
   // `buildBlock`, `appendBlock`, and `replaceBlock` must all treat
   // empty-string id the same way (= "missing"), so the id-injection
   // policy is uniform from construction through mutation. Without
@@ -1091,7 +1091,7 @@ describe("replaceBlock", () => {
 
   it("falls back to the existing block's id when the replacement omits one (PR #82 round 3 layer-2 defence)", () => {
     // The "second layer of defence" Devin Review called out
-    // (ANALYSIS_0005): if a future call site builds a replacement
+    //: if a future call site builds a replacement
     // block by hand and forgets to carry the id forward (e.g. a
     // toolbar action that constructs a fresh block from a template),
     // `replaceBlock` still preserves the slot's identity by reading
@@ -1132,10 +1132,10 @@ describe("nextBlockForTypeChange", () => {
   // The type-select dropdown handler in `SlideEditor.tsx` delegates to
   // this pure helper. Tests pin the keep / seed / clear matrix so the
   // dropdown stays well-behaved when block types cross the `image`
-  // boundary (BUG_0001 on PR #81 round 2) and when entering `diagram`
+  // boundary on PR #81 round 2) and when entering `diagram`
   // for the first time.
 
-  it("clears content when switching FROM an image block (BUG_0001)", () => {
+  it("clears content when switching FROM an image block", () => {
     // Regression: previously, switching FROM image → text|bullets|diagram
     // preserved `block.content`, which for an image block is a
     // multi-megabyte `data:image/...;base64,...` URL written by
@@ -1302,7 +1302,7 @@ describe("nextBlockForTypeChange", () => {
   it("preserves block.id across every type transition (PR #82 round 3 spread-invariant)", () => {
     // Pins the "spread copies id, then named overrides only touch
     // type/content/alt" contract that Devin Review flagged
-    // (ANALYSIS_0005). Without this regression, a future contributor
+    //. Without this regression, a future contributor
     // could accidentally add `id: newSlideId("block")` after the
     // spread in `nextBlockForTypeChange` and silently break React's
     // key stability across type changes (the `<textarea>` would lose
@@ -1403,7 +1403,7 @@ describe("deckWordCount", () => {
 });
 
 describe("computeDeckWordCounts", () => {
-  // Phase 19 PR 11 perf helper. The SlideEditor toolbar reads
+  // perf helper. The SlideEditor toolbar reads
   // `<active> / <total>` on every render, which previously walked
   // every slide twice per keystroke. `computeDeckWordCounts` is the
   // single-pass replacement with optional WeakMap caching.
@@ -1493,7 +1493,7 @@ describe("computeDeckWordCounts", () => {
   });
 
   it("treats a cached value of 0 as a hit (defensive against `=== undefined` regression)", () => {
-    // Phase 19 PR 11 round 3 — pinning test for ANALYSIS_0002.
+    // round 3 — pinning test for.
     // `slideWordCount({ title:'', blocks:[], notes:'' })` legitimately
     // returns 0, so the cache lookup must distinguish "not in cache"
     // (undefined) from "cached value is zero". A falsy check (`!count`)

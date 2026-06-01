@@ -659,7 +659,7 @@ describe("SourcesPage", () => {
     ).toHaveTextContent("62%");
   });
 
-  it("renders a source-type glyph on every row (Phase 13 Theme 5 Task 27)", async () => {
+  it("renders a source-type glyph on every row", async () => {
     // Integration pin for the new `sourceTypeIcon` helper applied
     // at the SourcesPage row level: each source kind must surface
     // its glyph + aria-label so a user scanning the list can tell

@@ -1,6 +1,6 @@
 /**
- * Tests for the Phase 17 PR 4 base-record formula engine. The engine
- * reuses the Phase 16 spreadsheet formula engine by mapping
+ * Tests for the base-record formula engine. The engine
+ * reuses the spreadsheet formula engine by mapping
  * Airtable-style `{FieldName}` references onto synthetic single-row
  * cell references. These tests assert the rewrite layer works for
  * every supported field type and that the evaluator returns the
