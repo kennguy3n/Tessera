@@ -473,11 +473,11 @@ export interface NativeBridge {
   ): void;
   /**
    * No-throw audit append called by `KchatEventForwarder` after
-   * every `bridgeRefreshKchatAcl` call Member ids / roles are NOT logged — only the roster
-   * size and the projection outcome (`granted` / `regranted` /
-   * `revoked` / `unlinked` / `no_principal`) so operators can
-   * see the ACL decision in the audit trail without re-querying
-   * the substrate.
+   * every `bridgeRefreshKchatAcl` call. Member ids / roles are
+   * NOT logged — only the roster size and the projection outcome
+   * (`granted` / `regranted` / `revoked` / `unlinked` /
+   * `no_principal`) so operators can see the ACL decision in the
+   * audit trail without re-querying the substrate.
    */
   bridgeLogKchatAclRefreshed(
     channelId: string,
@@ -502,10 +502,11 @@ export interface NativeBridge {
   /**
    * No-throw audit append called by `KchatEventForwarder` /
    * `kchat:disconnect` immediately after a revoke transition
-   * triggers the substrate's inline cryptoshred. Emitted on every revoke outcome — fresh revoke +
-   * already-revoked re-shred path + refresh-driven revoke — so
-   * the audit trail correlates the `KchatChannelAccessRevoked`
-   * status-transition row with the actual evidence-scrub counts.
+   * triggers the substrate's inline cryptoshred. Emitted on every
+   * revoke outcome — fresh revoke, already-revoked re-shred path,
+   * and refresh-driven revoke — so the audit trail correlates the
+   * `KchatChannelAccessRevoked` status-transition row with the
+   * actual evidence-scrub counts.
    *
    * `reason` matches the sibling
    * `bridgeLogKchatChannelAccessRevoked` short code;
@@ -514,9 +515,8 @@ export interface NativeBridge {
    * `KchatAclRefreshOutcomeInfo`.
    *
    * `fsScrubSucceeded` / `fsScrubError` are the Node-side
-   * filesystem-scrub outcomes from `secureDeleteChannelArtifacts`
-   * The
-   * substrate counts only describe the database scrub; the
+   * filesystem-scrub outcomes from `secureDeleteChannelArtifacts`.
+   * The substrate counts only describe the database scrub; the
    * filesystem holds downloaded plaintext until the cache dir +
    * manifest sidecar are removed. Operators grep
    * `fs_scrub_succeeded=false` in the audit log to find revokes
@@ -524,8 +524,8 @@ export interface NativeBridge {
    *
    * `vacuumSucceeded` / `vacuumError` are the substrate's Phase 5
    * `VACUUM` outcomes, forwarded through the bridge revoke /
-   * refresh outcome structs A `false` value is
-   * NOT a scrub failure — the row-level DELETE + UPDATE already
+   * refresh outcome structs. A `false` value is NOT a scrub
+   * failure — the row-level DELETE + UPDATE already
    * committed under `secure_delete = ON` so the cryptographic
    * guarantee holds — but operators want the audit row to record
    * the degraded state so they can re-run `VACUUM` manually once

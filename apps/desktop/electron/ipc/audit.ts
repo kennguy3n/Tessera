@@ -2,9 +2,9 @@
  * IPC handlers for the `audit:*` channels.
  *
  * Read-only API over the `tessera_audit` SQLite store. The
- * renderer renders a "recent activity" list on Settings and (per
- *) a filtered KChat-events list, both of which
- * read through `audit:listRecent`. Append-side writes still come
+ * renderer renders a "recent activity" list on Settings and a
+ * filtered KChat-events list, both of which read through
+ * `audit:listRecent`. Append-side writes still come
  * exclusively from the existing `bridgeLog*` pass-throughs in
  * `appState.ts` — there is no `audit:write` channel by design, so
  * the renderer can never forge an audit row.

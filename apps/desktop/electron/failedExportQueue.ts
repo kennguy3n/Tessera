@@ -82,10 +82,11 @@ export interface FailedExportEntry {
   format: string;
   /**
    * Original destination path. ALWAYS a non-empty absolute path:
-   * `enqueueFailedExport` rejects empty / non-absolute inputs at the
-   * write boundary 
-   * The retry handler and the safe-export allowlist both rely on
-   * this invariant.
+   * `enqueueFailedExport` rejects empty / non-absolute inputs at
+   * the write boundary, and `listFailedExports` silently drops
+   * entries on disk that no longer match (defense in depth against
+   * a tampered queue file). The retry handler and the safe-export
+   * allowlist both rely on this invariant.
    */
   filePath: string;
   /** Human-readable failure reason from the original exporter throw. */

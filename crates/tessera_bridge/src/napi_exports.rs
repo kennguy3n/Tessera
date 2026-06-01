@@ -421,8 +421,9 @@ pub fn bridge_refresh_kchat_acl(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-/// Explicitly revoke a KChat-channel source Used for `channel_archived` / `channel_deleted` / self-
-/// `user_removed` events.
+/// Explicitly revoke a KChat-channel source. Used for
+/// `channel_archived` / `channel_deleted` / self-`user_removed`
+/// events.
 #[napi]
 pub fn bridge_revoke_kchat_source(
     cache_dir: String,
@@ -2352,8 +2353,9 @@ pub fn bridge_log_kchat_file_event_received(
     Ok(())
 }
 
-/// Append a `KchatAclRefreshed` audit row Called by the Node-side `KchatEventForwarder` after every
-/// `bridge_refresh_kchat_acl` call so an operator can see the
+/// Append a `KchatAclRefreshed` audit row. Called by the Node-side
+/// `KchatEventForwarder` after every `bridge_refresh_kchat_acl`
+/// call so an operator can see the
 /// projection outcome (`granted` / `regranted` / `revoked` /
 /// `unlinked` / `no_principal`) in the audit trail without
 /// re-querying the substrate.
