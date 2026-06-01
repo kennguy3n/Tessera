@@ -148,12 +148,19 @@ export function _setVerifyImplForTests(
  * # Why no anchor today
  *
  * The release pipeline that uploads `.sig` files is configured per-
- * release; until that pipeline is wired up, this array is empty and
- * verification is a no-op (gated by `enforceUpdateSignature: false`
- * default in the config schema for the first release that ships this
- * code). Setting `enforceUpdateSignature: true` with an empty anchor
- * array is a configuration error that this module surfaces as
- * `reason: "no trust anchors configured"`.
+ * release; until that pipeline is wired up, this array is empty.
+ * `verifyUpdateSignature` short-circuits with
+ * `reason: "no-trust-anchors"` on every call in that state. The
+ * config default for `enforceUpdateSignature` is `true` (see
+ * `apps/desktop/electron/config.ts` `DEFAULT_CONFIG` + the schema's
+ * `.catch(true)` heal), but the auto-updater (`autoUpdater.ts`)
+ * special-cases the `"no-trust-anchors"` reason: it logs a WARN and
+ * falls through to broadcasting `"downloaded"` (instead of
+ * `"signature-rejected"`), so auto-updates continue working for
+ * every user during the bootstrap window. Once the release manager
+ * populates this array with at least one anchor, the same
+ * `enforceUpdateSignature: true` default flips from "warn + allow"
+ * to "verify or refuse" with no further config change required.
  */
 export const UPDATER_TRUST_ANCHORS: readonly string[] = Object.freeze([
   // Add base64-encoded raw 32-byte Ed25519 public keys here. Example:
@@ -249,19 +256,24 @@ const ED25519_SPKI_PREFIX = Buffer.from([
  * for `crypto.verify`. Throws on malformed input — caller treats this
  * as a fatal configuration error and surfaces "anchor decode failed"
  * to the operator log.
+ *
+ * Note: `Buffer.from(str, "base64")` never throws on its own — it
+ * silently ignores characters outside the base64 alphabet and returns
+ * whatever valid bytes it could decode. The length check below is
+ * what catches malformed input: any garbage that doesn't decode to
+ * exactly 32 bytes (`ED25519_PUBKEY_LEN`) fails fast with a precise
+ * error message that includes a prefix of the offending base64 input
+ * so the operator can grep `UPDATER_TRUST_ANCHORS` for the broken
+ * entry. We deliberately do NOT wrap the decode in `try/catch`
+ * because there is no path where it could throw, and a dead catch
+ * branch would mislead future readers about Node's base64 behaviour.
  */
 function decodeAnchor(b64: string): crypto.KeyObject {
-  let raw: Buffer;
-  try {
-    raw = Buffer.from(b64, "base64");
-  } catch {
-    throw new Error(
-      `UPDATER_TRUST_ANCHORS entry is not valid base64: ${b64.slice(0, 16)}…`,
-    );
-  }
+  const raw = Buffer.from(b64, "base64");
   if (raw.length !== ED25519_PUBKEY_LEN) {
     throw new Error(
-      `UPDATER_TRUST_ANCHORS entry must decode to ${ED25519_PUBKEY_LEN} bytes, got ${raw.length}`,
+      `UPDATER_TRUST_ANCHORS entry must decode to ${ED25519_PUBKEY_LEN} bytes, ` +
+        `got ${raw.length} (input prefix: ${b64.slice(0, 16)}…)`,
     );
   }
   const spki = Buffer.concat([ED25519_SPKI_PREFIX, raw]);

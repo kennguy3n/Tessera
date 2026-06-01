@@ -491,13 +491,6 @@ export function registerAutoUpdaterIpc(): void {
 }
 
 /**
- * Exported for unit testing — lets us reset state between runs.
- * Tests should call this from `beforeEach`; the IPC handler
- * registration itself is now idempotent (see `registerAutoUpdaterIpc`)
- * so forgetting to call this won't crash subsequent registration
- * attempts, only leak event listeners on the cached updater module.
- */
-/**
  * Test-only hook: inject a fake `electron-updater` module so the
  * integration tests in `__tests__/autoUpdaterSignature.test.ts` can
  * synthesize `update-downloaded` / `download-progress` events without
@@ -535,6 +528,13 @@ export function _setInstallGateStateForTests(
   lastSignatureCheck = signature;
 }
 
+/**
+ * Exported for unit testing — lets us reset state between runs.
+ * Tests should call this from `beforeEach`; the IPC handler
+ * registration itself is now idempotent (see `registerAutoUpdaterIpc`)
+ * so forgetting to call this won't crash subsequent registration
+ * attempts, only leak event listeners on the cached updater module.
+ */
 export function _resetForTests(): void {
   registered = false;
   cachedUpdater = null;
