@@ -222,6 +222,12 @@ export const SettingsUpdateSchema = z.object({
   // is a privileged action that materially reduces install
   // security.
   enforceUpdateSignature: z.boolean().optional(),
+  // Per-app keychain ACL enforcement. The handler logs the transition
+  // because flipping this to `false` on Linux materially weakens the
+  // at-rest protection of secrets (basic_text fallback =
+  // XOR-with-hardcoded-key). macOS / Windows installs are unaffected
+  // by the value.
+  enforceKeychainAcl: z.boolean().optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 

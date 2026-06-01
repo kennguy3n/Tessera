@@ -30,7 +30,7 @@ sha2 = { workspace = true }
 rand = { workspace = true }
 zeroize = { workspace = true }
 rayon = { workspace = true }
-# Phase 19 Task 1: ONNX Runtime + HuggingFace tokenizers for the
+# ONNX Runtime + HuggingFace tokenizers for the
 # semantic embedding providers (English MiniLM and multilingual XLM-R
 # distillates). Used by `onnx_embedder.rs` and `model_registry.rs`.
 # `reqwest` is shared with the rest of the workspace for the model

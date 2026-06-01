@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS: SettingsData = {
   // wizard on a previously-onboarded user. The real value is loaded
   // by `refresh()` on mount and overwrites this within a tick.
   onboardingCompleted: true,
-  // 17: empty arrays as the placeholder so the
+  // Empty arrays as the placeholder so the
   // command palette and the sidebar Pinned section render an
   // empty (rather than undefined-guarded) state during the brief
   // window before `refresh()` resolves. Avoids one class of
@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS: SettingsData = {
   // sensible bucket even during the brief window before the IPC
   // response lands (matches `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` so a
   // future change to the default propagates without a renderer
+  // edit).
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
   // telemetry defaults OFF (opt-in).
   // The renderer placeholder mirrors the main-process default in
@@ -45,6 +46,10 @@ const DEFAULT_SETTINGS: SettingsData = {
   // defaults to ON; the Settings UI surfaces a checkbox that
   // toggles this so power users on dev builds can disable it.
   enforceUpdateSignature: true,
+  // per-app keychain ACL enforcement defaults to ON; the Settings UI
+  // surfaces a checkbox that toggles this so Linux users without a
+  // secret-store daemon can flip it off after weighing the trade-off.
+  enforceKeychainAcl: true,
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

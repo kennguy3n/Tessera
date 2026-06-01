@@ -12,5 +12,24 @@
     <true/>
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+    <!--
+        Per-app keychain ACL.
+
+        `keychain-access-groups` pins the Keychain Services access group
+        Tessera writes safeStorage-encrypted items into. The entry MUST
+        be prefixed with our Team Identifier (`$(AppIdentifierPrefix)`
+        resolves to `<TEAM_ID>.` at codesign time) followed by the
+        bundle ID. Only processes signed with the same Team ID + this
+        access group entry can read the items — i.e. another macOS app
+        running as the same user cannot decrypt Tessera secrets even
+        if it gains read access to the Keychain blob on disk.
+
+        Reference: Apple "Sharing access to keychain items among a
+        collection of apps" — https://developer.apple.com/documentation/security/sharing-access-to-keychain-items-among-a-collection-of-apps
+    -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.tessera.desktop</string>
+    </array>
 </dict>
 </plist>

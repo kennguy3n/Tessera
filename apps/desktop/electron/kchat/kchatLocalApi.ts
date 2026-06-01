@@ -854,7 +854,7 @@ function respondRateLimited(
  * operators can diagnose the failure from the Electron log
  * pipeline. Surfacing it directly would leak implementation
  * details (file paths, stack fragments) past the loopback bearer-
- * token boundary; see.
+ * token boundary.
  */
 function respondError(
   res: ServerResponse,

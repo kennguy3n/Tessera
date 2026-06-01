@@ -242,16 +242,15 @@
 }
 
 /*
- * Phase 13 Theme 5 Task 29 — Dark-theme audit for KChat citation
- * surfaces in `CitationPanel`.
+ * Dark-theme audit for KChat citation surfaces in `CitationPanel`.
  *
  * The KChat-specific class names below were introduced incrementally
- * across Phase 13 Themes 1–4 (`citation-source-badge-kchat`,
+ * across earlier dark-theme rollouts (`citation-source-badge-kchat`,
  * `citation-item-kchat`, `citation-search-hit-kchat`, and the
  * `citation-hit-kchat-*` family). All of them shipped without CSS
  * rules — they served as test selectors and semantic markers only,
  * which meant the surface rendered as undecorated inline text in
- * BOTH light and dark themes. Theme 5 lands the styling so:
+ * BOTH light and dark themes. The current rules land the styling so:
  *
  *   1. The KChat badge actually looks like a badge (rounded chip
  *      with a primary-tinted background) and reads as a distinct
@@ -369,7 +368,7 @@
   }
 }
 
-/* Phase 15 Task 24 — VersionHistory + diff view. The panel is
+/* VersionHistory + diff view. The panel is
  * spawned as an overlay above the editor by the parent component;
  * we style it as a card-on-card so the existing modal-overlay can
  * sit above the editor without taking over the whole viewport. */
@@ -561,7 +560,7 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────
- * Phase 18 PR 6 — Document editor (TipTap)
+ * Document editor (TipTap)
  *
  * Layout: a three-row grid — toolbar, then a two-column main with
  * the outline rail on the left and the editor canvas on the right,

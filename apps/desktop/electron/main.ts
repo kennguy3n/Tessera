@@ -767,6 +767,22 @@ app.whenReady().then(async () => {
       message: err instanceof Error ? err.message : String(err),
     });
   }
+  // Snapshot the active safeStorage backend and emit one boot-time
+  // log entry + `keychain.backend.<name>` telemetry counter. Runs
+  // AFTER `app.whenReady` (so `safeStorage.isEncryptionAvailable()`
+  // returns truthful values on Linux) and BEFORE
+  // `maybeInitPasswordVault()` so the password vault prompt and any
+  // subsequent vault writes already have the boot backend recorded
+  // for forensic visibility. Idempotent — a second call returns the
+  // cached snapshot.
+  try {
+    const { captureBackendAtBoot } = await import("./keychainAcl");
+    captureBackendAtBoot();
+  } catch (err) {
+    getLogger().warn("keychain.backend.capture_failed", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Run the vault prompt BEFORE `initAppState()` so that when
   // `getOrCreateDbKeyAsync()` checks `passwordVaultActive()`, the
   // vault key (if any) is already cached. On non-keyringless

@@ -297,15 +297,14 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  // when
-  // `server.address()` returns `null` or a string after a
+  // When `server.address()` returns `null` or a string after a
   // successful `listen()` callback (practically unreachable in
   // production but a real edge case in `node:net`'s typedef),
   // `start()` MUST close the bound socket before throwing — same
   // teardown the wrong-address branch right below already performs.
   // Without this, the throw orphans the listening socket for the
-  // process lifetime, exactly the failure mode's
-  // rollback set out to prevent.
+  // process lifetime — exactly the failure mode the IIFE rollback
+  // set out to prevent.
   //
   // The test injects a `createServerFn` wrapper that delegates to
   // the real `node:http.createServer` but replaces the inner

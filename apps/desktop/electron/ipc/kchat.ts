@@ -735,14 +735,13 @@ export function registerKchatHandlers(): void {
     async (_event, token: unknown, serverUrl: unknown) => {
       const tok = assertString(token, "token", { maxLen: 4096 });
       const url = assertString(serverUrl, "serverUrl", { maxLen: 1024 });
-      // SSRF guard reject
-      // non-http(s) URLs AND URLs that resolve to a private,
-      // loopback, link-local, or CGNAT address. Without this, the
-      // renderer could direct the authenticated `Bearer <PAT>`
-      // request at any internal endpoint (Jenkins, internal admin
-      // UI, etc.) reachable from the main process. The PAT is
-      // useless to a non-KChat server, but the request itself
-      // probes the internal service and the response can be
+      // SSRF guard: reject non-http(s) URLs AND URLs that resolve
+      // to a private, loopback, link-local, or CGNAT address.
+      // Without this the renderer could direct the authenticated
+      // `Bearer <PAT>` request at any internal endpoint (Jenkins,
+      // internal admin UI, etc.) reachable from the main process.
+      // The PAT is useless to a non-KChat server, but the request
+      // itself probes the internal service and the response can be
       // exfiltrated back through the IPC error path.
       //
       // We pass the renderer-supplied `url` string through to the

@@ -2,7 +2,7 @@
  * ESLint v9 flat config for the @tessera/desktop workspace.
  *
  * Migrated from `.eslintrc.cjs` (ESLint v8 legacy format) as part of
- * the Phase 14 tech-debt cleanup PR 3 of 3. The flat config format is
+ * a tech-debt cleanup. The flat config format is
  * mandatory in ESLint v9 and supersedes the legacy `.eslintrc*` files.
  *
  * Composition (top to bottom, later configs override earlier ones for

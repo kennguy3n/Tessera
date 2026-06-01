@@ -288,6 +288,7 @@ export function registerSettingsHandlers(): void {
       telemetryEnabled: config.telemetryEnabled,
       appLockMode: config.appLockMode,
       enforceUpdateSignature: config.enforceUpdateSignature,
+      enforceKeychainAcl: config.enforceKeychainAcl,
     } as SettingsData;
   });
 
@@ -441,6 +442,16 @@ export function registerSettingsHandlers(): void {
         "enforceUpdateSignature",
         String(parsed.enforceUpdateSignature),
       );
+    // Per-app keychain ACL enforcement toggle. The next call to
+    // `vaultCrypto.encryptForVault` reads this via `loadConfig()` to
+    // decide whether to refuse writes under `basic_text`. Flipping to
+    // `false` on Linux materially weakens at-rest protection, hence
+    // the audit-log entry.
+    if (parsed.enforceKeychainAcl !== undefined)
+      auditSettingsField(
+        "enforceKeychainAcl",
+        String(parsed.enforceKeychainAcl),
+      );
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -453,6 +464,7 @@ export function registerSettingsHandlers(): void {
       telemetryEnabled: persisted.telemetryEnabled,
       appLockMode: persisted.appLockMode,
       enforceUpdateSignature: persisted.enforceUpdateSignature,
+      enforceKeychainAcl: persisted.enforceKeychainAcl,
     } as SettingsData;
   });
 
