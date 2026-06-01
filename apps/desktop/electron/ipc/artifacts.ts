@@ -421,7 +421,7 @@ export function registerArtifactsHandlers(): void {
     // path could redirect the write — checking again is cheap and
     // closes the gap structurally.
     //
-    // Defense-in-depth (Devin Review PR #69: we ALSO
+    // Defense-in-depth we ALSO
     // reject any non-absolute or empty path here. In normal
     // operation the queue is only populated from `resolvedPath`
     // (always absolute), but a tampered `failed-exports.json` on

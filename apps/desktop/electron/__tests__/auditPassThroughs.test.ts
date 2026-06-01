@@ -78,8 +78,7 @@ const sidecarMock = {
   setModelPath: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
   // After `start()` returns, IPC handlers gate the next bridge call on
-  // `waitForReady()` to avoid the spawn-vs-listener race
-  //. Tests resolve it `true` by default;
+  // `waitForReady()` to avoid the spawn-vs-listener race. Tests resolve it `true` by default;
   // the handler only short-circuits to its error branch when the gate
   // returns `false`, and these audit tests verify the success path.
   waitForReady: vi.fn().mockResolvedValue(true),

@@ -112,5 +112,3 @@ export function extendRegistry(
   }
   return next;
 }
-
-

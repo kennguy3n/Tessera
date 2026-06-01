@@ -444,4 +444,3 @@ function parsePickedIcon(spec: string | undefined): IconPickerValue | null {
   if (!name) return null;
   return { set, name };
 }
-

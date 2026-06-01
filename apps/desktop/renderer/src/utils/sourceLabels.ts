@@ -43,7 +43,7 @@ import type { SourceInfo } from "../types/ipc";
  *
  * Splits on BOTH `/` and `\` so the helper works on Windows where
  * `path.join(...)` in the main process produces backslash-separated
- * paths like `C:\Users\user\.tessera\kchat-channels\<id>` (Devin
+ * paths like `C:\Users\user\.tessera\kchat-channels\<id>`
  * Review on 869295e,. A POSIX-only split would yield a
  * single segment containing the full Windows path string, which
  * then fails the IPC's `assertKchatId` regex and the renderer would
@@ -71,7 +71,7 @@ export function extractKchatChannelIdFromSource(
  * the Source Information card (and any other surface that displays
  * the type) shows something coherent for every known kind.
  *
- * fix (Devin Review on 869295e,: the
+ * fix the
  * pre-Task-10 page only rendered local sources, so the card used a
  * binary `local_folder ? "Local Folder" : "Local File"` ternary.
  * Task 10 lit up the page for KChat sources too, which made the

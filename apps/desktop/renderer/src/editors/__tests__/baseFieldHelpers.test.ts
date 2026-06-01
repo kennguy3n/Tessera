@@ -670,7 +670,7 @@ describe("matchesFilter — per-type filtering", () => {
   // ────────────────────────────────────────────────────────────────
   // Percent operand may carry a trailing `%` (round 10 — ANALYSIS_…_0004)
   // ────────────────────────────────────────────────────────────────
-  it("percent accepts a trailing `%` on the user's operand round 10)", () => {
+  it("percent accepts a trailing `%` on the user's operand", () => {
     // The displayed value carries a `%` (`50%`), so the most natural
     // thing a user types is `>50%` not `>50`. Before round 10 the
     // regex rejected the `%`, then `Number("50%") = NaN` silently
@@ -696,7 +696,7 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("currency", 75, ">50%")).toBe(false);
   });
 
-  it("percent: lone `%` (or whitespace-only after strip) never matches round 11)", () => {
+  it("percent: lone `%` (or whitespace-only after strip) never matches", () => {
     // After stripping the trailing `%`, the operand is empty.
     // Without the empty-after-strip guard, `Number("") === 0` would
     // silently turn the filter into `= 0%` and match every zero-valued
@@ -715,7 +715,7 @@ describe("matchesFilter — per-type filtering", () => {
   });
 
   // ────────────────────────────────────────────────────────────────
-  // Float-safe equality (PR #79 round 8 — ANALYSIS_…_0001)
+  // Float-safe equality 
   // ────────────────────────────────────────────────────────────────
   it("percent `=N` matches non-representable fractions like 33.3%", () => {
     // The stored value is the literal fraction the user can type

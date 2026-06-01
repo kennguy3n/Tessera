@@ -194,4 +194,3 @@ function MermaidNodeView({ node, updateAttributes, editor }: NodeViewProps) {
     </NodeViewWrapper>
   );
 }
-

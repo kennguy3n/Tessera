@@ -234,7 +234,7 @@ describe("useKchatBackfillProgress", () => {
     expect(result.current).toEqual(b);
   });
 
-  it("does NOT surface a synthetic error after unmount even if a failing tick was in flight \u00d7 cancellation)", async () => {
+  it("does NOT surface a synthetic error after unmount even if a failing tick was in flight (cancellation)", async () => {
     // Reject the first tick AFTER unmount; the `cancelled` guard
     // must short-circuit the threshold check so we never set
     // state on an unmounted component (React would warn) and so a

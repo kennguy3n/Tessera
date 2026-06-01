@@ -35,8 +35,7 @@
  * `VersionHistory` displays a banner explaining the degradation so
  * the user knows the diff is approximate.
  *
- * Future optimisation paths (deferred — see Devin Review PR #70
- *:
+ * Future optimisation paths (deferred):
  *
  *  - Hirschberg's algorithm reduces memory to O(min(m, n)) by
  *    recursively splitting the problem and keeping only two DP

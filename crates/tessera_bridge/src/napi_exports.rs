@@ -421,8 +421,7 @@ pub fn bridge_refresh_kchat_acl(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-/// Explicitly revoke a KChat-channel source (Block B Task 3, Phase
-/// 11). Used for `channel_archived` / `channel_deleted` / self-
+/// Explicitly revoke a KChat-channel source Used for `channel_archived` / `channel_deleted` / self-
 /// `user_removed` events.
 #[napi]
 pub fn bridge_revoke_kchat_source(
@@ -2353,8 +2352,7 @@ pub fn bridge_log_kchat_file_event_received(
     Ok(())
 }
 
-/// Append a `KchatAclRefreshed` audit row (Block B Task 3, Phase
-/// 11). Called by the Node-side `KchatEventForwarder` after every
+/// Append a `KchatAclRefreshed` audit row Called by the Node-side `KchatEventForwarder` after every
 /// `bridge_refresh_kchat_acl` call so an operator can see the
 /// projection outcome (`granted` / `regranted` / `revoked` /
 /// `unlinked` / `no_principal`) in the audit trail without
@@ -3162,8 +3160,7 @@ pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<A
             // which is the same value emitted by the serde
             // `rename_all = "snake_case"` derive but without the
             // JSON-string + quote-trim round-trip the bridge
-            // previously used (fourteenth-pass Devin Review
-            //. The serde form remains the
+            // previously used. The serde form remains the
             // authoritative on-disk representation in SQLite; this
             // helper just keeps the napi → JS conversion direct.
             // A unit test in `tessera_audit::event::tests`

@@ -208,7 +208,7 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     expect(insideBlock).not.toBeNull();
   });
 
-  it("returns null when the synthesized `\\n` is the FINAL character of the match off-by-one round 2)", () => {
+  it("returns null when the synthesized `\\n` is the FINAL character of the match off-by-one", () => {
     // added the cross-block guard but the loop bound was
     // `i < toEndIndex` — toEndIndex = end - 1 is itself the LAST
     // character of the match, so a match that ends exactly on the
@@ -372,7 +372,7 @@ describe("SlashCommandExtension — trigger state lifecycle", () => {
     expect(last.visible).toBe(false);
   });
 
-  it("dismissSlashMenu latches `suppressed` so the menu stays hidden on subsequent keystrokes round 2)", () => {
+  it("dismissSlashMenu latches `suppressed` so the menu stays hidden on subsequent keystrokes", () => {
     // closed the menu by clearing React state in the
     // DocumentEditor's `dismissSlash` callback, but the PM plugin
     // still observed a paragraph starting with `/` on the very next

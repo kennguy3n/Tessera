@@ -154,7 +154,7 @@ export async function writeManifest(
  * and an operator pursuing a hardened workflow can always re-run
  * the revoke (which re-invokes this helper).
  *
- * Observability (third-pass Devin Review fix on PR #46): the
+ * Observability the
  * helper now returns a {@link SecureDeleteResult} so the caller
  * can record the per-path outcome on the `KchatSourceCryptoshredded`
  * audit row. The substrate-side counts captured the database scrub;

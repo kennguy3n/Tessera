@@ -193,8 +193,7 @@ impl AuditEventType {
     /// Return the canonical snake_case identifier for this variant,
     /// matching the `#[serde(rename_all = "snake_case")]` JSON form
     /// but without the JSON-string round-trip + quote-trim that the
-    /// napi bridge previously used (fourteenth-pass Devin Review
-    ///. Centralising the mapping here also gives a
+    /// napi bridge previously used. Centralising the mapping here also gives a
     /// single place to look when adding a new variant.
     pub fn as_snake_case(&self) -> &'static str {
         match self {

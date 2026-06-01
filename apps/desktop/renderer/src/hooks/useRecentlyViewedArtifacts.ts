@@ -146,7 +146,6 @@ export function useTrackArtifactView(id: string | null | undefined): void {
     // race because the store already has the loaded snapshot, but
     // the FIRST mount on app launch still hits the race window
     // unless we gate explicitly on `loading`. PR #87 Devin Review
-    //.
     if (loading) return;
     void trackView(id);
   }, [id, trackView, loading]);

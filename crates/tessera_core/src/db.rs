@@ -328,8 +328,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
         // and before the sqlite_master probe so the probe runs under
         // the same journal mode as production reads/writes.
         //
-        // The `let _ =` discard is LOAD-BEARING (Devin Review PR #69
-        //: on an encrypted DB opened without a key,
+        // The `let _ =` discard is LOAD-BEARING: on an encrypted DB opened without a key,
         // the WAL pragma itself reads a page from the file to
         // discover the existing journal mode. That page is
         // encrypted, so the pragma fails with `NotADatabase` /

@@ -373,8 +373,7 @@ const AppConfigSchema = z
     // value heals to an empty list instead of leaking a frozen
     // singleton across loads. Cap pulled from `MAX_PINNED_ARTIFACTS`
     // in `shared/types.ts` (single source of truth shared with the
-    // IPC `SettingsUpdateSchema` and the renderer hook). PR #87
-    //: removed the previous "can't
+    // IPC `SettingsUpdateSchema` and the renderer hook). PR #87: removed the previous "can't
     // import across project boundaries" caveat — this file already
     // imports `EXPORT_FORMATS`, `THEMES`, etc. from
     // `../shared/types`, so there is no actual obstacle.

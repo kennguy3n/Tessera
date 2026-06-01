@@ -90,8 +90,7 @@ export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
     case "boolean":
       return node.value;
     case "identifier":
-      // Bare identifiers are reserved for future named-range support
-      //. For now, surface as `#NAME?` so the user
+      // Bare identifiers are reserved for future named-range support. For now, surface as `#NAME?` so the user
       // sees a precise error instead of a silent `0`.
       return makeError("#NAME?", `unknown name "${node.name}"`);
     case "cell": {

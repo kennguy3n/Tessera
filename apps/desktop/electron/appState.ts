@@ -473,8 +473,7 @@ export interface NativeBridge {
   ): void;
   /**
    * No-throw audit append called by `KchatEventForwarder` after
-   * every `bridgeRefreshKchatAcl` call (Block B Task 3, Phase
-   * 11). Member ids / roles are NOT logged — only the roster
+   * every `bridgeRefreshKchatAcl` call Member ids / roles are NOT logged — only the roster
    * size and the projection outcome (`granted` / `regranted` /
    * `revoked` / `unlinked` / `no_principal`) so operators can
    * see the ACL decision in the audit trail without re-querying
@@ -516,7 +515,7 @@ export interface NativeBridge {
    *
    * `fsScrubSucceeded` / `fsScrubError` are the Node-side
    * filesystem-scrub outcomes from `secureDeleteChannelArtifacts`
-   * (third-pass Devin Review observability fix on PR #46). The
+   * The
    * substrate counts only describe the database scrub; the
    * filesystem holds downloaded plaintext until the cache dir +
    * manifest sidecar are removed. Operators grep
@@ -525,8 +524,7 @@ export interface NativeBridge {
    *
    * `vacuumSucceeded` / `vacuumError` are the substrate's Phase 5
    * `VACUUM` outcomes, forwarded through the bridge revoke /
-   * refresh outcome structs (fifth-pass Devin Review fix,
-   * ANALYSIS_pr-review-job-ef3c7d6c..._0001). A `false` value is
+   * refresh outcome structs A `false` value is
    * NOT a scrub failure — the row-level DELETE + UPDATE already
    * committed under `secure_delete = ON` so the cryptographic
    * guarantee holds — but operators want the audit row to record
@@ -1277,7 +1275,6 @@ export async function initAppState(): Promise<boolean> {
 // suffix decision can be pinned per-platform in future tests without
 // mutating `process.platform`. Production callers pass no argument
 // and get the live platform. Per Devin Review PR #59 pass 2
-//.
 function resolveSidecarBinary(
   platform: NodeJS.Platform = process.platform,
 ): string {
@@ -1487,8 +1484,7 @@ export function getKchatAuthService(): KchatAuthService {
     // when the user finally connects.
     kchatEventForwarder = new KchatEventForwarder({
       getBridge,
-      // Block B Task 4 second-pass Devin Review
-      //: thread the regrant auto-resync hook
+      // Block B Task 4 second-pass Devin Review: thread the regrant auto-resync hook
       // through the forwarder. The actual impl is populated by
       // `registerKchatIpcHandlers` in `ipc/kchat.ts`; we wrap it
       // in a closure that re-reads the slot at call time so a
@@ -1531,20 +1527,17 @@ export function getKchatLocalApiServer(): KchatLocalApiServer | null {
  * Start the localhost API server. Idempotent and concurrency-safe
  * against:
  *
- * 1. **Concurrent starts** (Devin Review
- *. The first caller drives `server.start()`, and
+ * 1. **Concurrent starts** — The first caller drives `server.start()`, and
  *      any concurrent callers that arrive while that `start()` is
  *      in-flight coalesce onto the same promise instead of racing
  *      through the null-check and binding a second port.
  *
- * 2. **Stop-during-in-flight-start** (Devin
- * Review. Handled by `stopKchatLocalApiServer()`:
- *      it captures and awaits the pending start before clearing
- *      `kchatLocalApiServer`.
+ * 2. **Stop-during-in-flight-start** — handled by
+ *      `stopKchatLocalApiServer()`: it captures and awaits the
+ *      pending start before clearing `kchatLocalApiServer`.
  *
- * 3. **Start-during-in-flight-stop** (Devin
- * Review. Handled here: if a stop is in flight
- *      we await `kchatLocalApiServerStopping` BEFORE entering the
+ * 3. **Start-during-in-flight-stop** — handled here: if a stop is in
+ *      flight we await `kchatLocalApiServerStopping` BEFORE entering the
  *      pending-promise branch, so the stop fully tears down the
  *      previous server (and clears `kchatLocalApiServer`) before
  *      we construct a new one. Without this wait, a new start's
@@ -1651,14 +1644,13 @@ export async function stopKchatLocalApiServer(): Promise<void> {
     // server` AFTER this function returns, leaving an orphaned
     // running HTTP server that nobody will ever call `stop()` on
     // (it would hold an event-loop handle and a bound port for
-    // the rest of the process lifetime).     //
+    // the rest of the process lifetime).
     // Clearing the slot before the await is intentional: a third
     // concurrent caller arriving while we're inside this await
     // must NOT join the same start (we're about to tear it down)
     // — it observes an empty pending slot, observes the non-null
     // stopping slot we publish below, and awaits the teardown
     // before constructing a fresh server.
-    //.
     const pending = kchatLocalApiServerPending;
     kchatLocalApiServerPending = null;
     if (pending !== null) {
@@ -1667,9 +1659,9 @@ export async function stopKchatLocalApiServer(): Promise<void> {
       } catch {
         // The in-flight start rejected. The IIFE's failure path
         // is responsible for tearing down its own bound socket
-        // via the rollback in `KchatLocalApiServer.start()`
-        //. `kchatLocalApiServer` will be null when we
-        // fall through, so this branch is a no-op.
+        // via the rollback in `KchatLocalApiServer.start()`.
+        // `kchatLocalApiServer` will be null when we fall through,
+        // so this branch is a no-op.
       }
     }
     if (kchatLocalApiServer === null) return;

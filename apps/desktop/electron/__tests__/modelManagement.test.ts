@@ -2712,5 +2712,3 @@ describe("legacy flat-layout migration", () => {
     expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(true);
   });
 });
-
-

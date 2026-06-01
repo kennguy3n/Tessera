@@ -2482,9 +2482,9 @@ export interface TesseraApi {
   updates: UpdatesApi;
   kchat: KchatApi;
   audit: AuditApi;
-  /** — local-only telemetry inspection. */
+  /** Local-only telemetry inspection. */
   telemetry: TelemetryApi;
-  /** — PIN / biometric app lock surface. */
+  /** PIN / biometric app lock surface. */
   appLock: AppLockApi;
 }
 
@@ -2600,8 +2600,7 @@ export interface KchatFileView {
   id: string;
   /**
    * Uploader's KChat user id. Surfaced to the renderer so the
-   * "channel files" preview can show *who* uploaded each file
-   *. The id is validated against the
+   * "channel files" preview can show *who* uploaded each file. The id is validated against the
    * KChat object-id shape at the client/deserialisation boundary
    * inside `KchatClient.listChannelFiles`, so the renderer can
    * trust it as opaque-but-shape-valid.

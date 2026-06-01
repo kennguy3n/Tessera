@@ -430,9 +430,7 @@ export function findRecordsLinkingTo(
  * value would hit `null` for every row on `auto_number`, and the
  * formula *source* (rather than its evaluated result) for the
  * other three.  Centralising the predicate here keeps the four
- * type names from drifting between callers (a Devin Review
- * finding on PR #79 caught the filter path having only three of
- * the four).
+ * type names from drifting between callers .
  */
 export function isComputedFieldType(type: FieldType): boolean {
   return (

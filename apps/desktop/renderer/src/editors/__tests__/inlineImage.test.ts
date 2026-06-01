@@ -10,7 +10,7 @@ import {
 //
 // This module backs the upload path for BOTH the document editor and
 // the slide editor. The slide editor previously had its own hand-rolled
-// copy with no size cap (Devin Review PR #82 BUG_…_0001 + ANALYSIS_…_0001).
+// copy with no size cap .
 // The tests below pin the shared contract:
 //
 //   1. Files at-or-below the cap resolve with a `data:` URL.

@@ -45,8 +45,7 @@ vi.mock("electron", () => ({
     fromWebContents: () => null,
   },
   // `shell.openExternal` is the OS-deeplink surface used by the
-  // `kchat:openInDesktop` + `kchat:openDesktopExtensions` handlers
-  //. The handlers wrap it in try/catch and
+  // `kchat:openInDesktop` + `kchat:openDesktopExtensions` handlers. The handlers wrap it in try/catch and
   // resolve `{ opened: true, url }` on success, so a no-op stub
   // here is sufficient to exercise the registration surface; the
   // happy-path side-effect (the OS opening the deeplink in KChat
@@ -253,8 +252,7 @@ const serviceMock = {
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getKchatAuthService: () => serviceMock,
-  // Block B Task 4 second-pass Devin Review
-  //: `registerKchatHandlers` populates this slot
+  // Block B Task 4 second-pass Devin Review: `registerKchatHandlers` populates this slot
   // with the auto-resync closure that powers the forwarder's
   // `outcome=regranted` re-sync hook. The IPC test suite
   // doesn't exercise the forwarder side of the contract, so we
@@ -327,7 +325,7 @@ beforeEach(() => {
   serviceMock.getState.mockReset();
   serviceMock.connect.mockReset();
   serviceMock.disconnect.mockReset();
-  // (Devin Review pass 4 on d0731ec): the
+  //  the
   // `runningBackfillCounters` / `inFlightBackfillKchatChannel`
   // maps are scoped inside the `registerKchatHandlers` closure
   // and reset automatically on every `registerKchatHandlers()`
@@ -2210,14 +2208,12 @@ describe("sources:addKchatChannel — convergent sync via download manifest", ()
   });
 });
 
-// Eighth-pass + regression suite.
-//: sources:addKchatChannel previously created a fresh source
+// Eighth-pass + regression suite.: sources:addKchatChannel previously created a fresh source
 // row with a new UUID on every re-sync because `bridgeAddKchatChannel`
 // always inserted. The Rust side is now idempotent on `cache_dir`
 // (returns `newlyCreated: false` for re-syncs), and the handler must
 // (a) reuse the returned source id and (b) skip the
 // `KchatChannelLinked` audit on re-sync.
-//
 //: `seenNames` previously seeded from the previous
 // manifest, which reserved names of files that had been deleted
 // server-side between syncs. The seeding now happens lazily — only

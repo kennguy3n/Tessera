@@ -481,11 +481,7 @@ pub fn vlm_ocr_chunks_from_probes(
         //      budget without producing any OCR text, starving
         //      subsequent pages.
         //   2. We also need to avoid writing the temp file before
-        //      the rate-limit check passes (Devin Review pass-9 📝
-        //      finding flagged the OCR/chart asymmetry: the chart
-        //      pass checks the limiter first, the OCR pass was
-        //      writing the temp file first and then having to
-        //      unlink it on rate-limit denial). Doing the
+        //      the rate-limit check passes Doing the
         //      decodability probe via a non-writing helper lets us
         //      align the order with the chart pass: probe → check
         //      limiter → write → VLM call.

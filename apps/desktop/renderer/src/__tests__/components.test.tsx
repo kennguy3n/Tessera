@@ -676,7 +676,7 @@ describe("ModelRuntimeCard onDownloadProgress capability filter", () => {
   });
 
   it("accepts legacy progress events with no capability field (backward compat)", async () => {
-    // Strengthened test (Devin Review pass-N): not just "filter
+    // Strengthened test not just "filter
     // didn't throw" but "filter actually paints the legacy event
     // into the text card's progress bar after a Download click puts
     // the gate in the busyModelId state".

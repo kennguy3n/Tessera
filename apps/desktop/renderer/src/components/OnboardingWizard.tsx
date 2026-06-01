@@ -116,7 +116,7 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(0);
-  // Re-entrancy guard MUST be a ref, not a useState value (Devin
+  // Re-entrancy guard MUST be a ref, not a useState value
   // Review PR #70. The risk is a fast Escape press while
   // a Finish click's `await api.settings.update(...)` is still
   // resolving: the Modal's Escape handler closes over the

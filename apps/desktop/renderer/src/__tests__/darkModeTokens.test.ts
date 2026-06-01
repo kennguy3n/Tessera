@@ -476,7 +476,6 @@ describe("dark-mode CSS variable enforcement", () => {
     // one source of truth: a future patch that adds a token to
     // either list automatically extends the dark-mode-safe surface
     // here, with no manual sync. Per Devin Review (PR #55,
-    //.
     const SAFE_TOKENS = new Set<string>([
       ...REQUIRED_DARK_OVERRIDES,
       ...THEME_AGNOSTIC_ACCENT_TOKENS,

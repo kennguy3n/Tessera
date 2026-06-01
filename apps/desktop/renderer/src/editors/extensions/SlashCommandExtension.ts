@@ -294,8 +294,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
       // state owner is the source of truth for visibility — React
       // setting its local `slashTrigger` to closed isn't sufficient
       // because the plugin will republish `visible: true` on the
-      // next keystroke (see Devin Review PR #80 round 2,
-      // ANALYSIS_…_0001).
+      // next keystroke 
       dismissSlashMenu:
         () =>
         ({ tr, dispatch }) => {

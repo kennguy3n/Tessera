@@ -1101,7 +1101,7 @@ impl SourceManager {
     /// runs `assertKchatServerObjectId` on each member). The
     /// roster replaces any previously-cached rows atomically.
     ///
-    /// Status projection rules (Block B Task 3):
+    /// Status projection rules :
     ///
     /// - If the locally-authenticated principal is in `members`
     ///   AND the source was `AccessRevoked`, transition to
@@ -2355,7 +2355,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // KChat-channel idempotency (eighth-pass
+    // KChat-channel idempotency
     // ----------------------------------------------------------------
 
     #[test]
@@ -4107,7 +4107,7 @@ mod tests {
         }
     }
 
-    /// Cryptoshred-on-revoke (Block B Task 4) extension: the
+    /// Cryptoshred-on-revoke extension: the
     /// `cryptoshred_kchat_source_evidence` path clears the
     /// backfill cursor + completion sentinel inside the same
     /// transaction as the chunks/files/posts/DEK deletes. A

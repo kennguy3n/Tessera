@@ -34,8 +34,7 @@ import { useSettings, useUpdateSetting } from "./useSettings";
  * Re-export so existing consumers of this hook keep working. The
  * canonical declaration lives in `shared/types.ts`
  * ({@link MAX_PINNED_ARTIFACTS}) and is shared with both the IPC
- * `SettingsUpdateSchema` and the on-disk `AppConfigSchema`. PR #87
- *: removed the previous "three-way
+ * `SettingsUpdateSchema` and the on-disk `AppConfigSchema`. PR #87: removed the previous "three-way
  * literal `256` duplicate" and made the renderer hook import the
  * cap from the same source the schemas use.
  */
@@ -93,7 +92,6 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
   // editor + recent-cards each call `isPinned()` once per render
   // for every pinned candidate, so an O(n) check would scale
   // poorly on a 256-entry pinned list. PR #87 Devin Review
-  //.
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
   const isPinned = useCallback(
     (id: string) => pinnedSet.has(id),

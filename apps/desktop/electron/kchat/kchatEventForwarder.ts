@@ -47,7 +47,7 @@
  *         would flood the audit log with content most operators
  *         don't want to grep.
  *
- *      d. **Targeted single-file sync** (Block B Task 2). On
+ *      d. **Targeted single-file sync** On
  *         `file_added`, after the audit step above, the
  *         forwarder fetches the file metadata from the KChat
  *         REST endpoint, downloads the bytes into the channel's
@@ -543,8 +543,7 @@ export class KchatEventForwarder {
    */
   private readonly getBridgeFn: () => NativeBridge | null;
   /**
-   * Block B Task 4 second-pass Devin Review
-   *: optional fire-and-forget hook the forwarder
+   * Block B Task 4 second-pass Devin Review: optional fire-and-forget hook the forwarder
    * invokes when `handleMembershipEvent` resolves the ACL
    * refresh to `outcome === "regranted"`. Production wires this
    * to the IPC handler's full-channel-sync flow (see
@@ -1408,8 +1407,7 @@ export class KchatEventForwarder {
         // an operator — rather than scrubbing files referenced
         // by still-live substrate rows.
         //
-        // Asymmetry vs. `handleChannelGoneEvent` (third-pass Devin
-        // Review: the channel-gone path gates the
+        // Asymmetry vs. `handleChannelGoneEvent`: the channel-gone path gates the
         // filesystem scrub on `outcome !== "unlinked"`, which
         // covers both `revoked` and `already_revoked`. We gate on
         // `=== "revoked"` here because `refresh_kchat_acl` (the
@@ -1500,8 +1498,7 @@ export class KchatEventForwarder {
         vacuumError,
       );
     } else if (outcome === "regranted") {
-      // Block B Task 4 second-pass Devin Review
-      //: a regrant transitions the source from
+      // Block B Task 4 second-pass Devin Review: a regrant transitions the source from
       // `AccessRevoked` to `Connected` because the earlier revoke
       // cryptoshredded every chunk + indexed_file row. Without
       // an automatic re-sync, the source stays in `Connected`

@@ -444,7 +444,8 @@ function EvidenceRowButton({
  *     and round-trips across re-connects to the same workspace,
  *     where the permalink would break if the user re-connects
  *     to a renamed server URL). Title is the channel display
- *     name when the IPC handler resolved it , falling back to the raw channel id when offline
+ *     name when the IPC handler resolved it, falling back to the
+ *     raw channel id when offline
  *     so the stored citation remains retrievable end-to-end.
  *     Persisting the resolved name (rather than re-resolving on
  *     every render) means the artifact stays attributable even

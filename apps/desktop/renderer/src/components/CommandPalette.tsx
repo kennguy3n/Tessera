@@ -113,7 +113,6 @@ export default function CommandPalette({
   // still want to prune in that case. Earlier code guarded on
   // `artifacts.length === 0` and silently skipped the prune,
   // leaving the user with a palette full of dead ids. PR #87
-  //.
   useEffect(() => {
     if (!isOpen || artifactsLoading) return;
     const stalePins = new Set<string>();
@@ -244,8 +243,7 @@ export default function CommandPalette({
       command: m.item,
     }));
     // Hoist the pinned/recent Sets above the .map so we don't pay
-    // O(N) construction cost per row (PR #87 Devin Review
-    //. pinnedIds is capped at 256, recentIds at
+    // O(N) construction cost per row pinnedIds is capped at 256, recentIds at
     // MAX_RECENT_ARTIFACTS=32, so the Sets cost <O(300) once
     // instead of <O(300 * MAX_RESULTS) inside the loop.
     const pinnedSet = new Set(pinnedIds);
@@ -350,8 +348,7 @@ export default function CommandPalette({
             // Three-state cycle: system -> dark -> light -> system.
             // See `useKeyboardShortcuts.toggleTheme` for the rationale;
             // we keep the two runners in lockstep so the chord and the
-            // palette behave identically (PR #87 Devin Review
-            //.
+            // palette behave identically.
             const next =
               settings.theme === "system"
                 ? "dark"

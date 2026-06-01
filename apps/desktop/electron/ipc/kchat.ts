@@ -261,8 +261,7 @@ function toIpcError(err: unknown): Error {
  * **Scope: module-level, intentionally asymmetric with
  * `runningBackfillCounters` / `inFlightBackfillKchatChannel`.**
  *
- * (Devin Review pass 4 on d0731ec): the
- * backfill-related maps below live INSIDE the
+ * The backfill-related maps below live INSIDE the
  * `registerKchatHandlers` closure, so every fresh call to that
  * function (e.g. test `beforeEach`) gets a brand-new map and
  * cross-test contamination is impossible by construction. The
@@ -292,8 +291,8 @@ const KCHAT_CHANNEL_NAME_CACHE = new KchatNameCache(200);
  * test suite so a test that exercises name-cache eviction
  * boundaries can start from a known state.
  *
- * (Devin Review pass 2 on bef2fa0): if a previous
- * `registerKchatHandlers` invocation successfully installed the
+ * If a previous `registerKchatHandlers` invocation successfully
+ * installed the
  * `onStatusChange` subscriber, call its unsubscribe handle so
  * the next install path can re-subscribe cleanly. Without this,
  * a hypothetical production caller (or a future test path that
@@ -319,9 +318,9 @@ export function _resetKchatNameCachesForTest(): void {
 }
 
 /**
- * (Devin Review pass 1 on fafc5f6): one-shot
- * idempotency guard for the `KchatAuthService.onStatusChange`
- * subscriber that clears the name caches on disconnect.
+ * One-shot idempotency guard for the
+ * `KchatAuthService.onStatusChange` subscriber that clears the
+ * name caches on disconnect.
  *
  * In production `registerKchatHandlers` runs exactly once at
  * app start, so the subscriber count is naturally 1. The
@@ -339,8 +338,7 @@ export function _resetKchatNameCachesForTest(): void {
 let KCHAT_STATUS_LISTENER_INSTALLED = false;
 
 /**
- * (Devin Review pass 2 on bef2fa0): handle to the
- * unsubscribe callback returned by
+ * Handle to the unsubscribe callback returned by
  * `KchatAuthService.onStatusChange`. Stored at the module level
  * so `_resetKchatNameCachesForTest` can clean up the live
  * listener before flipping the install flag back to `false`.
@@ -472,9 +470,7 @@ async function enrichKchatPostHits(
   hits: KchatPostSearchHit[],
   client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
 ): Promise<void> {
-  // 1. Collect unique missing ids per cache.
-  //
-  // (Devin Review pass 2 on bef2fa0): only ids
+  // 1. Collect unique missing ids per cache. Only ids
   //    that pass `isKchatObjectId` are added to the network
   //    request sets. A substrate-corrupted row carrying a
   //    malformed id would otherwise cause the per-id assertion
@@ -504,8 +500,7 @@ async function enrichKchatPostHits(
   }
 
   // 2. Run the user bulk lookup AND the per-channel parallel
-  //    fan-out CONCURRENTLY (Devin Review pass 2 on bef2fa0
-  //. The two REST endpoints are independent
+  //    fan-out CONCURRENTLY. The two REST endpoints are independent
   //    and previously ran sequentially — wall-clock cost was
   //    additive (`Tuser + Tchannel_max`), now it is
   //    `max(Tuser, Tchannel_max)`. Each side keeps its own
@@ -528,8 +523,7 @@ async function enrichKchatPostHits(
   const channelTask: Promise<void> =
     missingChannelIds.size > 0
       ? (async () => {
-          // (Devin Review pass 3 on e3d9562): wrap
-          // the entire branch body in a try/catch so it is
+          // Wrap the entire branch body in a try/catch so it is
           // *symmetric* with `userTask`. `Promise.allSettled`
           // itself never rejects per spec and `KchatNameCache.set`
           // cannot throw today, but a future change to either side
@@ -593,9 +587,8 @@ async function enrichKchatPostHits(
  * is immediately available for thread-context enrichment without
  * a redundant network round-trip, and vice versa.
  *
- * **Maintenance contract** (Devin Review
- * pass 1, pass 2 edit): the body of this
- * function shares its enrichment posture with two siblings:
+ * **Maintenance contract**: the body of this function shares its
+ * enrichment posture with two siblings:
  *
  *   - `enrichKchatPostHits` (lines 530-642): full two-cache shape
  *     (user + channel) for search hits.
@@ -685,9 +678,7 @@ export function registerKchatHandlers(): void {
   // re-handshake to a different server (or the same server with
   // changed channel membership) must not return stale names.
   // The subscription survives the handler lifetime; the IPC
-  // layer is mounted once per process and never torn down.
-  //
-  // (Devin Review pass 1 on fafc5f6): the
+  // layer is mounted once per process and never torn down. The
   // module-level `KCHAT_STATUS_LISTENER_INSTALLED` flag guards
   // against listener-stacking if `registerKchatHandlers` is
   // re-invoked (vitest harness re-mounting between describe
@@ -698,9 +689,9 @@ export function registerKchatHandlers(): void {
   // unsubscribe handle that survives the IPC re-mount.
   if (!KCHAT_STATUS_LISTENER_INSTALLED) {
     try {
-      // (Devin Review pass 2 on bef2fa0): store
-      // the unsubscribe handle so `_resetKchatNameCachesForTest`
-      // can detach it before flipping the install flag back to
+      // Store the unsubscribe handle so
+      // `_resetKchatNameCachesForTest` can detach it before
+      // flipping the install flag back to
       // `false`. Without this, a subsequent re-install would
       // stack a second listener on top of the first — the very
       // failure mode the pass-1 guard was supposed to prevent.
@@ -744,7 +735,7 @@ export function registerKchatHandlers(): void {
     async (_event, token: unknown, serverUrl: unknown) => {
       const tok = assertString(token, "token", { maxLen: 4096 });
       const url = assertString(serverUrl, "serverUrl", { maxLen: 1024 });
-      // SSRF guard (eighth-pass: reject
+      // SSRF guard reject
       // non-http(s) URLs AND URLs that resolve to a private,
       // loopback, link-local, or CGNAT address. Without this, the
       // renderer could direct the authenticated `Bearer <PAT>`
@@ -849,9 +840,7 @@ export function registerKchatHandlers(): void {
   // per-bucket rate, multiplying the effective OS-shell budget
   // by N. The `kchat:openDesktopExtensions` sibling handler
   // intentionally shares the same key so the cap is honoured
-  // across both deeplink paths (Devin Review
-  // — comment previously claimed "per-channel-id"
-  // which was the opposite of the truth).
+  // across both deeplink paths
   idempotentHandle(
     "kchat:openInDesktop",
     async (
@@ -1061,8 +1050,7 @@ export function registerKchatHandlers(): void {
 
         // Phase 3: optionally upload evidence pack.
         //
-        // Audit-trail integrity (sixth-pass Devin Review
-        //: the primary export is already in the
+        // Audit-trail integrity: the primary export is already in the
         // channel by this point. If the evidence-pack upload below
         // fails (rate-limit, network blip, KChat quota, etc.), we
         // must NOT leave the primary share unaudited — that would
@@ -1122,8 +1110,7 @@ export function registerKchatHandlers(): void {
   //
   // Two layers of concurrency control wrap every full channel sync:
   //
-  //   1. **Per-channel-id in-flight DEDUPLICATION** (tenth-pass
-  //. `sources:addKchatChannel` is
+  //   1. **Per-channel-id in-flight DEDUPLICATION**. `sources:addKchatChannel` is
   //      a multi-step operation: it downloads files, writes a
   //      manifest, runs the indexer, and registers the source row.
   //      Electron's `ipcMain.handle` dispatches calls concurrently,
@@ -1137,7 +1124,7 @@ export function registerKchatHandlers(): void {
   //      this layer a second IPC call would land back-to-back full
   //      syncs (after layer 2 serialised them) — wasted bandwidth.
   //
-  //   2. **Per-channel-id `withChannelSyncLock`** (Block B Task 2).
+  //   2. **Per-channel-id `withChannelSyncLock`** .
   //      Even with layer 1, a WS-driven single-file sync that
   //      arrives mid-full-sync would race with the full sync's
   //      manifest write (forwarder writes M ∪ {newFile}, then the
@@ -1222,7 +1209,7 @@ export function registerKchatHandlers(): void {
     // but we still guard against the impossible double-collision
     // by appending the running count if it ever recurs.
     //
-    // Convergent sync (seventh-pass:
+    // Convergent sync 
     // we persist a manifest mapping `fi.id → finalName` after
     // every sync so subsequent re-syncs are convergent rather
     // than additive. The previous implementation re-downloaded
@@ -1246,8 +1233,7 @@ export function registerKchatHandlers(): void {
     const MAX_PAGES = 1000;
     const resolvedCacheDir = path.resolve(cacheDir);
     const previousManifest = await readManifest(cacheDir, id);
-    // `seenNames` starts EMPTY (eighth-pass Devin Review
-    //. A previous implementation seeded it from
+    // `seenNames` starts EMPTY. A previous implementation seeded it from
     // `Object.values(previousManifest.files)` to prevent same-name
     // collisions with pre-existing files, but that also reserved
     // names of files that had been deleted server-side between
@@ -1429,7 +1415,7 @@ export function registerKchatHandlers(): void {
       }
     }
 
-    // (eighth-pass Devin Review): `bridgeAddKchatChannel`
+    //  `bridgeAddKchatChannel`
     // is now idempotent on `cacheDir`. The Rust side returns
     // `newlyCreated: true` only on the call that inserted the
     // source row; every subsequent re-sync flips it to `false`
@@ -1439,7 +1425,7 @@ export function registerKchatHandlers(): void {
     // reuse the existing row), so citations and evidence-pack
     // references survive.
     //
-    // Error consistency (fourteenth-pass:
+    // Error consistency 
     // the bridge call lives OUTSIDE the download/sync try/catch
     // above (which catches network/disk errors and re-throws as
     // `toIpcError`). Bridge errors are infrastructure-level
@@ -1472,8 +1458,7 @@ export function registerKchatHandlers(): void {
       const id = assertKchatId(channelId, "channelId");
       const name = assertString(channelName, "channelName", { maxLen: 256 });
 
-      // Per-channel-id in-flight dedupe (tenth-pass Devin Review
-      //. If a sync for this channel is already in
+      // Per-channel-id in-flight dedupe. If a sync for this channel is already in
       // progress, return its Promise so both callers settle
       // identically; cleanup runs in `.finally` so the slot is
       // released regardless of success/failure. Validation runs
@@ -1519,9 +1504,7 @@ export function registerKchatHandlers(): void {
   // `name` semantics: `runAddKchatChannel` only consumes the name
   // argument inside the `outcome.newlyCreated` branch's
   // `bridgeLogKchatChannelLinked` audit emission. On a regrant the
-  // source row already exists (Block B Task 3 retains the row +
-  // flips its status to `AccessRevoked`, then back to `Connected`
-  // on regrant), so `newlyCreated` is always `false` here and the
+  // source row already exists, so `newlyCreated` is always `false` here and the
   // name is never consumed. We pass the stable channel id as the
   // audit-name fallback so the value is well-formed for the
   // exotic-race case where the source row was somehow dropped
@@ -1592,8 +1575,7 @@ export function registerKchatHandlers(): void {
     Promise<KchatBackfillRunOutcome>
   >();
   /**
-   * fix (Devin Review on 869295e,:
-   * per-channel running counters surfaced through `kchat:backfillProgress`
+   * Per-channel running counters surfaced through `kchat:backfillProgress`
    * so the renderer's progress card shows live `postsIngested` and
    * `oldestFetched` values while a walk is in flight, instead of the
    * hardcoded `0` / `null` placeholders the first cut shipped with.
@@ -2035,8 +2017,7 @@ export function registerKchatHandlers(): void {
           status: "idle",
         };
       }
-      // fix (Devin Review on 869295e,:
-      // surface the orchestrator's live counters when a walk is
+      // Surface the orchestrator's live counters when a walk is
       // currently in flight so the renderer's `postsIngested` /
       // `oldestFetched` counters reflect real progress instead of
       // the hardcoded `0` / `null` placeholders the first cut
@@ -2197,8 +2178,7 @@ export function registerKchatHandlers(): void {
         };
       });
 
-      // (Devin Review pass
-      // 1 on fafc5f6): the audit `latencyMs` metric must continue
+      //  the audit `latencyMs` metric must continue
       // to measure ONLY the synchronous bridge work (the part of
       // the search that lands on the substrate). Enrichment is a
       // pure-IPC-layer concern that fires network calls to KChat
@@ -2213,9 +2193,7 @@ export function registerKchatHandlers(): void {
       // enrich hits with sender username
       // and channel display name. Only attempt enrichment when
       // the connection is fully `connected` (NOT `connecting`).
-      //
-      // (Devin Review pass 2 on bef2fa0): the
-      // previous guard `if (hits.length > 0 && serverUrl)` was
+      // The previous guard `if (hits.length > 0 && serverUrl)` was
       // permissive because `serverUrl` is non-null in both
       // `connected` AND `connecting` (see the conditional 30
       // lines up). The mid-handshake `connecting` window can
@@ -2294,8 +2272,8 @@ export function registerKchatHandlers(): void {
         "kchat:fetchThreadContext",
         RATE_LIMIT_PROFILES["kchat:fetchThreadContext"],
       );
-      // (Devin Review pass 1 on 5860a94): use the same
-      // shape-strict validators every other KChat handler uses.
+      // Use the same shape-strict validators every other KChat
+      // handler uses.
       // `assertId` enforces the Tessera source UUID shape (the
       // bridge layer parses this with `uuid::Uuid::parse_str` and
       // would otherwise return a bridge-level error for a string

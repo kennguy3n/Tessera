@@ -304,7 +304,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // identity flip would tear down the recursive `setTimeout` chain
   // and re-arm it, wasting work today and risking a foot-gun in
   // future refactors that refetch channels more aggressively
-  // (thirteenth-pass. The ref pattern
+  //  The ref pattern
   // keeps `pollUnread`'s identity stable for the lifetime of the
   // connection while still letting each cycle observe the latest
   // channel set.
@@ -319,8 +319,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // rate-limit tokens on a cycle whose result will be discarded —
   // and (b) right before `setUnread`, so an unmount that races with
   // the in-flight Promise's resolution doesn't fire a state update
-  // against an unmounted component (twelfth-pass Devin Review
-  //. The cancellation is a getter (not a snapshot
+  // against an unmounted component. The cancellation is a getter (not a snapshot
   // boolean) so the effect's `cancelled` mutation is observed
   // immediately by the running cycle rather than at the next
   // `pollUnread` invocation. This is correct long-term: React 18
@@ -396,8 +395,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // which is worth the complexity for a UI badge that converges
   // within 30 s anyway.
   //
-  // SECONDARY CAVEAT (Devin Review on PR #43, seventh-pass
-  // `ANALYSIS_pr-review-job-...0007`): the `?? 0` fallback for
+  // SECONDARY CAVEAT the `?? 0` fallback for
   // `event.data.create_at` combined with the `getLastSeen() || 0`
   // default produces an "ignore on missing timestamp" branch — a
   // `file_added` event whose `data.create_at` is missing or
@@ -417,7 +415,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // fetch effect above is — a `"connected"` push that arrives
   // during the initial `isAvailable()` round-trip must not install
   // the IPC listener for a feature that may turn out to be gated
-  // off (twelfth-pass.
+  // off
   useEffect(() => {
     if (!kchat || available !== true || state.state !== "connected") return;
     const unsubscribe = kchat.onEvent((event: KchatWebSocketEventPayload) => {
@@ -441,8 +439,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     };
   }, [kchat, available, state.state]);
 
-  // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
-  //. `setInterval` would fire every
+  // Recursive `setTimeout` instead of `setInterval`. `setInterval` would fire every
   // `POLL_INTERVAL_MS` regardless of whether the previous
   // `pollUnread` had finished — if `listChannelFiles` calls run
   // slow (e.g. the network is degraded), two or more poll cycles
@@ -457,7 +454,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   //
   // The `cancelled` flag is also passed *into* `pollUnread` via the
   // `isCancelled` getter so an in-flight cycle short-circuits the
-  // moment the effect tears down (twelfth-pass Devin Review
+  // moment the effect tears down
   // — both to save rate-limit tokens on a cycle whose
   // `setUnread` would be discarded, and to avoid the post-unmount
   // state update entirely.
@@ -465,7 +462,6 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // Gated on `available === true` so the recursive poll does not
   // arm while `available === null` (the initial-mount race window
   // described on the channel-fetch effect above); twelfth-pass
-  //.
   useEffect(() => {
     if (
       available !== true ||

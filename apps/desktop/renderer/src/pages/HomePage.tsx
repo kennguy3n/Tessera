@@ -370,8 +370,7 @@ function RecentArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
           data-testid={`recent-artifact-${artifact.id}`}
           // /artifacts/:id isn't a registered route (router only knows
           // /artifacts/:id/edit and /artifacts/:id/preview); navigating
-          // there caused a silent fallback to "/" (PR #87 Devin Review
-          //. Send the user straight to the editor, matching
+          // there caused a silent fallback to "/" Send the user straight to the editor, matching
           // what the CommandPalette does for recent items.
           onClick={() => navigate(`/artifacts/${artifact.id}/edit`)}
         >

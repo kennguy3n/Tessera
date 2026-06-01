@@ -1305,8 +1305,7 @@ describe("KchatEventForwarder", () => {
 
   it("dispatches a regranted outcome and schedules a full channel re-sync via scheduleChannelResync", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
-    // Block B Task 4 second-pass Devin Review
-    //: when the substrate transitions a previously-
+    // Block B Task 4 second-pass Devin Review: when the substrate transitions a previously-
     // revoked source back to `Connected`, it reports
     // `outcome=regranted` so the forwarder schedules a full
     // channel re-sync (the revoke path scrubbed every chunk +

@@ -30,7 +30,6 @@ const DEFAULT_SETTINGS: SettingsData = {
   // sensible bucket even during the brief window before the IPC
   // response lands (matches `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` so a
   // future change to the default propagates without a renderer
-  // edit).
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
   // telemetry defaults OFF (opt-in).
   // The renderer placeholder mirrors the main-process default in

@@ -432,9 +432,7 @@ function fileTypeIcon(f: {
   // text editor; tabbing them as "📊 spreadsheet" would surprise
   // users who treat them as data dumps. The classification is
   // load-bearing: the spreadsheet regex below must NOT include
-  // `csv`/`tsv` (Devin Review pass 1 on f7c8dd1
-  // flagged the previous duplicate `csv` entry as dead code; the
-  // duplicate is now removed).
+  // `csv`/`tsv` 
   if (mime.startsWith("text/") || /^(md|txt|log|json|yaml|yml|xml|csv|tsv|html|css|js|ts|tsx|jsx|rs|py|go|rb|java|c|h|cpp|hpp|sh|toml)$/.test(ext)) {
     return "📄";
   }

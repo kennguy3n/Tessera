@@ -592,7 +592,7 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
   });
 
   // ────────────────────────────────────────────────────────────────
-  // Empty-CSV-header coverage (PR #79 round 8 — ANALYSIS_…_0004)
+  // Empty-CSV-header coverage 
   // ────────────────────────────────────────────────────────────────
   it("auto-names blank CSV headers as `Column N` (1-based) so the column is still visible", () => {
     // Excel happily emits `Name,,Score` when a middle column is

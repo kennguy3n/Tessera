@@ -563,8 +563,7 @@ impl SourceStore {
         // Composite index on (source_type, path) so the idempotent
         // KChat-channel registration in `SourceManager::add_kchat_channel`
         // can locate an existing row in O(log n) instead of scanning
-        // every row in the table (tenth-pass Devin Review
-        //. The hot path is `find_source_by_type_and_path`,
+        // every row in the table. The hot path is `find_source_by_type_and_path`,
         // called once per channel sync; with hundreds of mixed-connector
         // sources the previous `list_sources()` linear scan was the
         // dominant cost on each re-sync. `source_type` is the leading
@@ -791,7 +790,7 @@ impl SourceStore {
     /// `SourceManager::add_kchat_channel` to make channel
     /// registration idempotent on the cache-directory path in O(log n)
     /// rather than scanning the entire sources table on every re-sync
-    /// (tenth-pass.
+    ///
     ///
     /// `source_type` is stored as its JSON discriminant in the
     /// `sources.source_type` column (e.g. `"\"Kchat\""`), so the SQL
@@ -1421,7 +1420,7 @@ impl SourceStore {
         })();
 
         // Phase 5 — VACUUM (cannot run inside a transaction). Moved
-        // OUT of the scrub_result closure (fifth-pass Devin Review
+        // OUT of the scrub_result closure
         // fix, ANALYSIS_pr-review-job-ef3c7d6c..._0001): a VACUUM
         // failure after the DELETE + UPDATE transaction commits is
         // NOT a scrub failure. The row-level deletes already ran
@@ -1482,8 +1481,7 @@ impl SourceStore {
         // process lifetime, silently degrading every steady-state
         // chunk insert.
         //
-        // Diagnostic-ordering invariant (Block B Task 4 third-pass
-        //: the reset diagnostic MUST be
+        // Diagnostic-ordering invariant the reset diagnostic MUST be
         // emitted before the scrub error is propagated, otherwise
         // the rare scrub-failed + reset-failed double-failure case
         // would silently lose the reset diagnostic — the operator
@@ -3345,7 +3343,7 @@ pub struct KchatAclRow {
 }
 
 /// Counters returned by
-/// [`SourceStore::cryptoshred_kchat_source_evidence`] (Block B Task 4).
+/// [`SourceStore::cryptoshred_kchat_source_evidence`] .
 ///
 /// Surfaced through the bridge so the Node-side audit row
 /// (`KchatSourceCryptoshredded`) records how much evidence was

@@ -168,8 +168,7 @@ export interface ShareArtifactResponse {
  * as "the host rejected this request on policy grounds; do not retry".
  *
  * The split between `invalid_request` (400) and `payload_too_large`
- * (413) is similarly load-bearing
- *: every code maps to exactly one HTTP status so the
+ * (413) is similarly load-bearing: every code maps to exactly one HTTP status so the
  * mapping in this jsdoc, the `TesseraLocalApiError` mirror in
  * `extensions/tessera-kchat/src/types.ts`, and the actual `throw`
  * sites all agree. A 413 paired with `invalid_request` (the previous
@@ -425,8 +424,7 @@ export class KchatLocalApiServer {
       // branch below performs: `server.close()` releases the kernel
       // event-loop handle that `listen()` opened. Without this
       // call, the throw would orphan the listening socket for the
-      // rest of the process lifetime (Devin
-      // Review.
+      // rest of the process lifetime
       server.close();
       throw new Error("KchatLocalApiServer failed to bind");
     }

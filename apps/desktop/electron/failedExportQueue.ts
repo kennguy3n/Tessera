@@ -83,9 +83,7 @@ export interface FailedExportEntry {
   /**
    * Original destination path. ALWAYS a non-empty absolute path:
    * `enqueueFailedExport` rejects empty / non-absolute inputs at the
-   * write boundary (Devin Review PR #69 and
-   * `listFailedExports` silently drops entries on disk that no
-   * longer match (defense in depth against a tampered queue file).
+   * write boundary 
    * The retry handler and the safe-export allowlist both rely on
    * this invariant.
    */
@@ -188,7 +186,7 @@ export async function listFailedExports(): Promise<FailedExportEntry[]> {
   // worst case ("renderer doesn't see one failed export") is far
   // better than the failure mode ("settings page crashes").
   //
-  // Defense-in-depth (Devin Review PR #69, store.rs:423 follow-up):
+  // Defense-in-depth :
   // also require `filePath` to be a non-empty ABSOLUTE path. The
   // queue is only ever written with an already-resolved absolute
   // destination (see `enqueue` callers), so any entry on disk with

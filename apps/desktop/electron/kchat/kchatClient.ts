@@ -54,7 +54,6 @@ export const DEFAULT_KCHAT_SERVER = "https://kchat.com";
  * server-side effects (a second file in the channel, a second message
  * in the timeline) because the server may have processed the first
  * request and crashed before sending the response — see seventh-pass
- *.
  */
 const RETRYABLE_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504]);
 
@@ -334,7 +333,7 @@ export function assertKchatServerObjectId(
  * that bypass the IPC layer (background polling, internal tests,
  * batch sync workers) so the URL-path-segment guarantees the
  * client relies on are enforced AT the client boundary, not
- * upstream-of-it (fourteenth-pass.
+ * upstream-of-it
  *
  * Throws a plain `Error` rather than a `KchatRequestError` —
  * server-response validation failures and caller-input failures
@@ -761,8 +760,7 @@ export class KchatClient {
    * endpoint, all of which interpolate the id into a URL path.
    */
   async listChannels(teamId: string): Promise<KchatChannel[]> {
-    // Defense-in-depth caller-input validation (fourteenth-pass
-    //: the IPC layer already validates
+    // Defense-in-depth caller-input validation: the IPC layer already validates
     // renderer-supplied ids with `assertKchatId`, but a future
     // internal caller (scheduled sync, batch worker) that bypasses
     // IPC would otherwise interpolate an unchecked string into the
@@ -1626,8 +1624,7 @@ export class KchatClient {
     // "GET with declared JSON body but Content-Length: 0") and
     // either rewrite the request or drop it. Sending the header
     // only on body-carrying methods removes the foot-gun without
-    // affecting any current call site (fourteenth-pass Devin
-    // Review.
+    // affecting any current call site
     const headers: Record<string, string> =
       body === undefined ? {} : { "Content-Type": "application/json" };
     const resp = await this.rawRequest(method, endpoint, {

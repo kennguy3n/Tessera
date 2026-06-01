@@ -134,15 +134,14 @@ export interface SheetContent {
    */
   namedRanges?: SheetNamedRange[];
   /**
-   * column widths on the legacy / active sheet.
-   * Mirrored to/from `sheets[activeSheetIndex].columnWidths` when
-   * `sheets` is present.
+   * Column widths on the legacy / active sheet. Mirrored to/from
+   * `sheets[activeSheetIndex].columnWidths` when `sheets` is present.
    */
   columnWidths?: (number | undefined)[];
-  /** — row heights, mirror of `columnWidths`. */
+  /** Row heights, mirror of `columnWidths`. */
   rowHeights?: (number | undefined)[];
-  /** — frozen rows on the legacy / active sheet. */
+  /** Frozen rows on the legacy / active sheet. */
   frozenRows?: number;
-  /** — frozen columns on the legacy / active sheet. */
+  /** Frozen columns on the legacy / active sheet. */
   frozenCols?: number;
 }

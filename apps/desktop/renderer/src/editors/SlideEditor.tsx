@@ -379,7 +379,7 @@ export default function SlideEditor({
         // Free upload-race tokens for every block in the slide we're
         // about to drop. The `uploadTokensRef` Map otherwise accumulates
         // dead `${slideId}|${blockId}` entries for the lifetime of the
-        // editor (Devin Review PR #82 round 7 ANALYSIS_…_0003). The
+        // editor The
         // entries are tiny (a string key + small int) but a long
         // editing session that adds/removes many slides would let the
         // Map grow without bound. We delete based on the OUTGOING slide
@@ -639,8 +639,7 @@ export default function SlideEditor({
         const updatedSlide = removeBlockHelper(slide, blockIndex);
         if (updatedSlide === slide) return prev;
         // Free the upload-race token for the dropped block so the Map
-        // doesn't accumulate dead entries (Devin Review PR #82 round 7
-        // ANALYSIS_…_0003). Read the block off `prev[slideIndex]` (the
+        // doesn't accumulate dead entries Read the block off `prev[slideIndex]` (the
         // freshest state inside the updater) rather than the outer
         // `slides` closure so a concurrent remove doesn't free the
         // wrong key. `removeBlockHelper` returns the SAME slide ref on
@@ -1461,9 +1460,7 @@ function SlideBlockRow({
          * interpret as a drag-start. Mirrors the existing defensive
          * pattern on the textarea / file-input / alt-text input
          * further down in this component, and the slide-thumbnail-row
-         * buttons in the parent component (Devin Review PR #82
-         * — extends round 6's slide-row fix to the
-         * block-row toolbar that was missed in that pass).
+         * buttons in the parent component.
          */}
         <select
           value={block.type}

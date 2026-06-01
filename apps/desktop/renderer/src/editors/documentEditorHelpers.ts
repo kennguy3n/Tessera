@@ -22,8 +22,7 @@
 // ANALYSIS_…_0001 / BUG_…_0001 flagged the duplicate implementation
 // and the missing size cap on the slide-editor copy; centralising
 // here fixes both in one place. Re-exports live at the file top
-// with the imports per CONTRIBUTING.md (Devin Review PR #82
-// ANALYSIS_…_0005).
+// with the imports per CONTRIBUTING.md 
 export {
   MAX_INLINE_IMAGE_BYTES as MAX_IMAGE_BYTES,
   fileToDataUrl,

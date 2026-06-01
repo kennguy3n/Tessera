@@ -115,7 +115,7 @@ describe("slidesToMarpMarkdown", () => {
   });
 
   it("renders image blocks as Markdown image syntax (not raw data URLs)", () => {
-    // Regression test for (Devin Review on PR #81):
+    // Regression test for :
     //
     // Before this fix, image blocks fell through to the catch-all
     // `else { parts.push(content); }` branch in `renderSlideAsMarp`,
@@ -155,8 +155,7 @@ describe("slidesToMarpMarkdown", () => {
   });
 
   it("renders image URLs containing parens via CommonMark angle-bracket form", () => {
-    // Regression test for (Devin Review on PR #81
-    // round 2): Wikipedia / Mediawiki / SharePoint URLs commonly
+    // Regression test for Wikipedia / Mediawiki / SharePoint URLs commonly
     // contain unescaped `(` and `)` characters (e.g.
     // `C_(programming_language).png`). Emitting these inside the
     // CommonMark `()` link-destination group truncates the URL at the
@@ -964,7 +963,7 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
 });
 
 describe("buildBlock", () => {
-  // Harmonisation regression (PR #82 round 4:
+  // Harmonisation regression 
   // `buildBlock`, `appendBlock`, and `replaceBlock` must all treat
   // empty-string id the same way (= "missing"), so the id-injection
   // policy is uniform from construction through mutation. Without
@@ -1090,8 +1089,7 @@ describe("replaceBlock", () => {
   });
 
   it("falls back to the existing block's id when the replacement omits one (PR #82 round 3 layer-2 defence)", () => {
-    // The "second layer of defence" Devin Review called out
-    //: if a future call site builds a replacement
+    // The "second layer of defence" Devin Review called out: if a future call site builds a replacement
     // block by hand and forgets to carry the id forward (e.g. a
     // toolbar action that constructs a fresh block from a template),
     // `replaceBlock` still preserves the slot's identity by reading
@@ -1301,8 +1299,7 @@ describe("nextBlockForTypeChange", () => {
 
   it("preserves block.id across every type transition (PR #82 round 3 spread-invariant)", () => {
     // Pins the "spread copies id, then named overrides only touch
-    // type/content/alt" contract that Devin Review flagged
-    //. Without this regression, a future contributor
+    // type/content/alt" contract that Devin Review flagged. Without this regression, a future contributor
     // could accidentally add `id: newSlideId("block")` after the
     // spread in `nextBlockForTypeChange` and silently break React's
     // key stability across type changes (the `<textarea>` would lose

@@ -99,7 +99,6 @@ export function useArtifactList(options: UseArtifactListOptions = {}) {
   // of where the mutation came from. Disabled callers skip the
   // listener entirely — they don't care about mutations because
   // they aren't rendering the list. PR #87 Devin Review
-  //.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!enabled) return;

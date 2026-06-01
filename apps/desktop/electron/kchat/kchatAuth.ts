@@ -167,7 +167,6 @@ export class KchatAuthService {
    * verify error, and treating "nothing stored" as a throw
    * would force every caller to distinguish "expected absence"
    * from "real failure" via instanceof checks.
-   *.
    */
   async restoreFromVault(): Promise<KchatUser | null> {
     const stored = readStoredAuth();
@@ -192,7 +191,6 @@ export class KchatAuthService {
       // stale value, and the token-presence guard in
       // `KchatClient.request()` prevents any outbound traffic to
       // the stale URL anyway.
-      //.
       this.client.setToken(null);
       throw err;
     }

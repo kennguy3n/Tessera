@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn recent_events_skips_unknown_event_type_rows() {
-        // Forward-compatibility pin (sixteenth-pass Devin Review).
+        // Forward-compatibility pin .
         // A row whose `event_type` column does not deserialise into
         // a known `AuditEventType` variant — the scenario this guards
         // against is a database written by a newer Tessera build,
