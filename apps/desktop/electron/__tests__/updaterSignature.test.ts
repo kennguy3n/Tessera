@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   SIGNATURE_SUFFIX,
+  _setVerifyImplForTests,
   loadSignature,
   verifyUpdateSignature,
   verifyUpdateSignatureFromBuffers,
@@ -213,6 +214,115 @@ describe("verifyUpdateSignatureFromBuffers — rejection paths", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("verifier-error");
     expect(result.message).toMatch(/anchor #0/i);
+  });
+});
+
+/**
+ * Regression tests for the anchor-loop continuation behavior.
+ *
+ * The verifier MUST continue to the next anchor when `crypto.verify`
+ * throws on an earlier one — otherwise a single corrupt anchor at
+ * index 0 silently shadows healthy anchors during a key-rotation
+ * overlap window, and every install would fail.
+ *
+ * These tests stub `crypto.verify` selectively (only inside the
+ * `describe` block) to inject deterministic throws. The rest of the
+ * suite continues to use real cryptographic material per the file
+ * header.
+ */
+describe("verifyUpdateSignatureFromBuffers — anchor-loop continuation", () => {
+  // Use the module's test-only seam (`_setVerifyImplForTests`) rather
+  // than monkey-patching the live `crypto.verify` binding. Vitest's
+  // ESM bridge holds the crypto module's property descriptors in a
+  // way that rejects direct assignment, and the seam is also a
+  // first-class supported injection point.
+  afterEach(() => {
+    _setVerifyImplForTests(null);
+  });
+
+  it("continues to anchor #1 when crypto.verify throws on anchor #0", () => {
+    const badAnchor = generateTestKeypair();
+    const goodAnchor = generateTestKeypair();
+    const payload = Buffer.from("payload signed by the second anchor");
+    const sig = signPayload(payload, goodAnchor.privateKey);
+
+    // Stub the verifier to throw the FIRST time it is called and
+    // delegate to the real `crypto.verify` on every subsequent call.
+    // This simulates a hypothetical Node-version edge case where
+    // anchor #0's KeyObject triggers an exception inside libcrypto.
+    let callCount = 0;
+    _setVerifyImplForTests((algorithm, data, key, signature) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new Error("simulated libcrypto failure on anchor #0");
+      }
+      return crypto.verify(algorithm, data, key, signature);
+    });
+
+    const result = verifyUpdateSignatureFromBuffers(payload, sig, {
+      anchors: [badAnchor.publicKeyBase64, goodAnchor.publicKeyBase64],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.anchorIndex).toBe(1);
+    expect(callCount).toBe(2); // proves the loop reached anchor #1
+  });
+
+  it("returns verifier-error when crypto.verify throws on every anchor", () => {
+    const a0 = generateTestKeypair();
+    const a1 = generateTestKeypair();
+    const payload = Buffer.from("payload");
+    const sig = signPayload(payload, a0.privateKey);
+
+    let callCount = 0;
+    _setVerifyImplForTests(() => {
+      callCount += 1;
+      throw new Error(`structural failure on anchor #${callCount - 1}`);
+    });
+
+    const result = verifyUpdateSignatureFromBuffers(payload, sig, {
+      anchors: [a0.publicKeyBase64, a1.publicKeyBase64],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("verifier-error");
+    expect(result.message).toContain("every anchor");
+    expect(result.message).toContain("anchor #0");
+    expect(result.message).toContain("anchor #1");
+    expect(callCount).toBe(2);
+  });
+
+  it("surfaces verification-failed (not verifier-error) when one anchor throws and one rejects cleanly", () => {
+    const badAnchor = generateTestKeypair();
+    const otherAnchor = generateTestKeypair();
+    const payload = Buffer.from("payload");
+    // Sign with a third, completely unrelated key so neither anchor
+    // would verify even without the throw — the clean `false` from
+    // anchor #1 is what we want to surface.
+    const stranger = generateTestKeypair();
+    const sig = signPayload(payload, stranger.privateKey);
+
+    let callCount = 0;
+    _setVerifyImplForTests((algorithm, data, key, signature) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new Error("simulated throw on anchor #0");
+      }
+      return crypto.verify(algorithm, data, key, signature);
+    });
+
+    const result = verifyUpdateSignatureFromBuffers(payload, sig, {
+      anchors: [badAnchor.publicKeyBase64, otherAnchor.publicKeyBase64],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("verification-failed");
+    // The verification-failed message should still mention the
+    // partial throw as a diagnostic so the operator knows anchor #0
+    // is structurally broken.
+    expect(result.message).toMatch(/anchor.*were skipped/i);
+    expect(result.message).toMatch(/#0/);
+    expect(callCount).toBe(2);
   });
 });
 

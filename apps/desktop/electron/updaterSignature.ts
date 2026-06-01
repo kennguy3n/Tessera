@@ -93,6 +93,35 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 
 /**
+ * Test-only seam: lets the anchor-loop regression tests substitute a
+ * stub verifier without monkey-patching the live `crypto` module
+ * (which Node refuses to allow under ESM-bridge mode used by vitest).
+ *
+ * Production code paths never set this — the default delegates
+ * straight through to `crypto.verify`. The seam is exported via
+ * `_setVerifyImplForTests` (test-only) so that the test file can
+ * inject a custom function for the duration of a single test and
+ * restore the default in `afterEach`.
+ */
+type VerifyFn = (
+  algorithm: null,
+  data: Buffer,
+  key: crypto.KeyObject,
+  signature: Buffer,
+) => boolean;
+
+let _verifyImpl: VerifyFn = (algorithm, data, key, signature) =>
+  crypto.verify(algorithm, data, key, signature);
+
+export function _setVerifyImplForTests(
+  override: VerifyFn | null,
+): void {
+  _verifyImpl =
+    override ?? ((algorithm, data, key, signature) =>
+      crypto.verify(algorithm, data, key, signature));
+}
+
+/**
  * Trust anchors compiled into the Tessera binary. Each entry is a
  * base64-encoded raw 32-byte Ed25519 public key (RFC 8032 § 5.1.5).
  *
@@ -348,11 +377,31 @@ export function verifyUpdateSignatureFromBuffers(
     };
   }
 
+  // Per-anchor verifier errors are accumulated rather than fatal. Key
+  // rotation requires the array to hold N anchors at once during the
+  // overlap window; if anchor #0 throws (truly malformed key material,
+  // or a Node-version-specific edge case in `crypto.verify`), anchor
+  // #1 must still get a chance to verify. We surface the accumulated
+  // errors as `verifier-error` ONLY when every anchor failed — if any
+  // anchor returns `false` cleanly, the canonical "no anchor accepted"
+  // result wins because that is what the operator actually needs to
+  // see ("the artifact does not match any of our signing keys"). The
+  // verifier-error message is preserved as a fallback for the rare
+  // case where every anchor threw and none returned cleanly.
+  const verifierErrors: Array<{ index: number; message: string }> = [];
+
   for (let i = 0; i < anchors.length; i += 1) {
     let anchorKey: crypto.KeyObject;
     try {
       anchorKey = decodeAnchor(anchors[i]);
     } catch (err) {
+      // Anchor decode failures are a hard configuration error
+      // distinct from a verification mismatch: a malformed anchor is
+      // the operator's bug (a typo in the base64), not a sign of
+      // tampering. We return immediately rather than `continue` so
+      // the operator sees the broken anchor on the FIRST failing
+      // verification rather than discovering it only after every
+      // other anchor also fails to verify.
       const message = err instanceof Error ? err.message : String(err);
       return {
         ok: false,
@@ -363,7 +412,7 @@ export function verifyUpdateSignatureFromBuffers(
 
     let accepted = false;
     try {
-      accepted = crypto.verify(
+      accepted = _verifyImpl(
         null,
         artifactBytes,
         anchorKey,
@@ -371,15 +420,15 @@ export function verifyUpdateSignatureFromBuffers(
       );
     } catch (err) {
       // `crypto.verify` throws on truly malformed key material; the
-      // anchor-length guard above should make that unreachable, but
-      // we tolerate the throw to keep the loop moving — another
-      // anchor might still verify.
+      // anchor-length guard inside `decodeAnchor` should make that
+      // unreachable, but we tolerate the throw to keep the loop
+      // moving — another anchor might still verify. Without this
+      // `continue`, a single broken anchor at index 0 would shadow a
+      // healthy anchor at index 1 during a rotation overlap window,
+      // and every install would fail.
       const message = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        reason: "verifier-error",
-        message: `crypto.verify threw for anchor #${i}: ${message}`,
-      };
+      verifierErrors.push({ index: i, message });
+      continue;
     }
 
     if (accepted) {
@@ -391,13 +440,40 @@ export function verifyUpdateSignatureFromBuffers(
     }
   }
 
+  // If every anchor threw a verifier-error and none returned a clean
+  // `false`, the failure is structural (broken anchors / Node-version
+  // issue) rather than a tampering signal. Surface that as
+  // `verifier-error` with all per-anchor messages so the operator can
+  // see which anchors are healthy and which need replacement.
+  if (
+    verifierErrors.length === anchors.length &&
+    verifierErrors.length > 0
+  ) {
+    return {
+      ok: false,
+      reason: "verifier-error",
+      message:
+        `crypto.verify threw for every anchor (${verifierErrors.length}/${anchors.length}). ` +
+        verifierErrors
+          .map((e) => `anchor #${e.index}: ${e.message}`)
+          .join("; "),
+    };
+  }
+
   return {
     ok: false,
     reason: "verification-failed",
     message:
       `No trust anchor accepted the signature (tried ${anchors.length}). ` +
       "Either the artifact was modified, the signature is from a retired " +
-      "key, or the artifact-signature pair was substituted.",
+      "key, or the artifact-signature pair was substituted." +
+      (verifierErrors.length > 0
+        ? ` (Note: ${verifierErrors.length} anchor(s) threw during verification and were skipped: ` +
+          verifierErrors
+            .map((e) => `#${e.index} (${e.message})`)
+            .join(", ") +
+          ".)"
+        : ""),
   };
 }
 
