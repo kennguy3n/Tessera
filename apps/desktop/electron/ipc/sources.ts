@@ -226,7 +226,7 @@ export function registerSourcesHandlers(): void {
     // remaining microtask yield was per-call dead weight — every
     // other handler in this file imports its deps statically, so
     // hoisting `fs` to the top normalises the style with no
-    // observable behaviour change. 
+    // observable behaviour change.
     const sources = bridge.bridgeListSources();
     const items = await Promise.all(
       sources.map(async (src) => {

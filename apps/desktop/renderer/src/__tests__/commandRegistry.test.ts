@@ -41,7 +41,7 @@ describe("commandRegistry", () => {
     expect(KNOWN_CALLBACK_IDS).toContain("goBack");
   });
 
-  it("artifact:goBack is bound to goBack (regression for PR #87", () => {
+  it("artifact:goBack is bound to goBack", () => {
     const goBack = COMMAND_REGISTRY.find((c) => c.id === "artifact:goBack");
     expect(goBack).toBeDefined();
     expect(goBack?.kind).toBe("callback");

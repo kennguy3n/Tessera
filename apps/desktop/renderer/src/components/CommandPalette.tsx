@@ -242,9 +242,9 @@ export default function CommandPalette({
       command: m.item,
     }));
     // Hoist the pinned/recent Sets above the .map so we don't pay
-    // O(N) construction cost per row pinnedIds is capped at 256, recentIds at
-    // MAX_RECENT_ARTIFACTS=32, so the Sets cost <O(300) once
-    // instead of <O(300 * MAX_RESULTS) inside the loop.
+    // O(N) construction cost per row. pinnedIds is capped at 256,
+    // recentIds at MAX_RECENT_ARTIFACTS=32, so the Sets cost
+    // <O(300) once instead of <O(300 * MAX_RESULTS) inside the loop.
     const pinnedSet = new Set(pinnedIds);
     const recentSet = new Set(recentIds);
     const artifactRows: PaletteRow[] = artifactMatches.map((m) => {

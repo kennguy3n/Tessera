@@ -56,7 +56,7 @@ describe("useKchatBackfillProgress", () => {
     expect(result.current).toEqual(snap);
   });
 
-  it("rides out 1\u20132 consecutive transport failures without surfacing an error (self-heal preserved,", async () => {
+  it("rides out 1\u20132 consecutive transport failures without surfacing an error (self-heal preserved)", async () => {
     // Two failing ticks (below threshold), then a successful tick.
     // The hook must NOT emit a synthetic error view; the eventual
     // success snapshot must surface to the caller unchanged.

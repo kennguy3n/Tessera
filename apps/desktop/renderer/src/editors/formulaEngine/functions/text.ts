@@ -11,7 +11,7 @@
  *                       `n` characters.
  *   LEN(text)           UTF-16 code-unit length (matches Excel —
  *                       surrogate-pair-aware variants live behind a
- * feature flag).
+ *                       feature flag).
  *   UPPER / LOWER       Case folding using locale-independent
  *                       `toUpperCase()` / `toLowerCase()` (Excel /
  *                       Google Sheets are locale-independent too).
