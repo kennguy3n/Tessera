@@ -639,13 +639,14 @@ export default function SlideEditor({
         const updatedSlide = removeBlockHelper(slide, blockIndex);
         if (updatedSlide === slide) return prev;
         // Free the upload-race token for the dropped block so the Map
-        // doesn't accumulate dead entries Read the block off `prev[slideIndex]` (the
-        // freshest state inside the updater) rather than the outer
-        // `slides` closure so a concurrent remove doesn't free the
-        // wrong key. `removeBlockHelper` returns the SAME slide ref on
-        // out-of-range indices — we already early-return above in that
-        // case, so reaching this point guarantees the helper finds the
-        // outgoing block to discard.
+        // doesn't accumulate dead entries. Read the block off
+        // `prev[slideIndex]` (the freshest state inside the updater)
+        // rather than the outer `slides` closure so a concurrent
+        // remove doesn't free the wrong key. `removeBlockHelper`
+        // returns the SAME slide ref on out-of-range indices — we
+        // already early-return above in that case, so reaching this
+        // point guarantees the helper finds the outgoing block to
+        // discard.
         discardUploadTokensForBlock(
           uploadTokensRef.current,
           slide,

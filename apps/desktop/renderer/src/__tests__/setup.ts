@@ -290,10 +290,10 @@ const mockApi = {
       // accidentally render the wizard. Wizard-specific tests
       // override this field explicitly.
       onboardingCompleted: true,
-      // 17: default mock returns empty arrays so
-      // every page-level test starts with a fresh "no pins / no
-      // recents" state. Tests that exercise the command palette or
-      // sidebar Pinned section override these fields with the
+      // Default mock returns empty arrays so every page-level test
+      // starts with a fresh "no pins / no recents" state. Tests
+      // that exercise the command palette or sidebar Pinned
+      // section override these fields with the
       // specific IDs they want to assert against.
       pinnedArtifactIds: [],
       recentArtifactIds: [],

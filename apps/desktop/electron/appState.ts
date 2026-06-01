@@ -1516,8 +1516,9 @@ export function getKchatEventForwarder(): KchatEventForwarder | null {
 
 /**
  * Accessor for the singleton localhost API server used by the
- * Tessera `.kcz` extension installed in KChat Desktop . Returns `null` until {@link startKchatLocalApiServer}
- * has been called from the main-process `whenReady` chain.
+ * Tessera `.kcz` extension installed in KChat Desktop. Returns
+ * `null` until {@link startKchatLocalApiServer} has been called
+ * from the main-process `whenReady` chain.
  */
 export function getKchatLocalApiServer(): KchatLocalApiServer | null {
   return kchatLocalApiServer;
@@ -1876,16 +1877,16 @@ export function resetKchatAuthService(
   // `localApiIngestChannelHandler`,
   // `localApiShareArtifactHandler`) are reachable from the
   // localhost API server via `buildLocalApiHandlers()`. When the
-  // future IPC registration layer  wires
-  // them up, the supplied closures will capture
-  // `getKchatAuthService()` / `getBridge()` just like the resync
-  // and backfill impls above — so the same "stale closure surviving
-  // a `resetKchatAuthService(null)` could deref a torn-down
-  // service" hazard applies. Clearing the slots here pre-emptively
-  // means the future wiring PR doesn't have to remember to update
-  // this reset path; the local API server's null-checks already
-  // map "slot is null" to a 503 `tessera_unavailable` envelope,
-  // which is the correct post-reset behaviour in tests.
+  // future IPC registration layer wires them up, the supplied
+  // closures will capture `getKchatAuthService()` / `getBridge()`
+  // just like the resync and backfill impls above — so the same
+  // "stale closure surviving a `resetKchatAuthService(null)` could
+  // deref a torn-down service" hazard applies. Clearing the slots
+  // here pre-emptively means the future wiring PR doesn't have to
+  // remember to update this reset path; the local API server's
+  // null-checks already map "slot is null" to a 503
+  // `tessera_unavailable` envelope, which is the correct
+  // post-reset behaviour in tests.
   setLocalApiSourcesProvider(null);
   setLocalApiIngestChannelHandler(null);
   setLocalApiShareArtifactHandler(null);

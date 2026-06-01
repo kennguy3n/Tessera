@@ -461,11 +461,11 @@ export default function ArtifactEditorPage() {
     }
   }, [id, artifact?.title]);
 
-  // + 19 + 20: wire global custom events to the
-  // editor's own state. The keyboard-shortcut runner and the
-  // command palette dispatch these events without coupling to
-  // this component, so any save/export/share/pin/duplicate/delete
-  // shortcut fired from anywhere in the app routes here as long
+  // Wire global custom events to the editor's own state. The
+  // keyboard-shortcut runner and the command palette dispatch
+  // these events without coupling to this component, so any
+  // save / export / share / pin / duplicate / delete shortcut
+  // fired from anywhere in the app routes here as long
   // as this page is mounted.
   useEffect(() => {
     if (!id) return;

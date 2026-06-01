@@ -265,7 +265,7 @@ export function registerSettingsHandlers(): void {
       // the renderer so `OnboardingWizard` can decide whether to
       // mount itself.
       onboardingCompleted: config.onboardingCompleted,
-      // 17: persisted favorites + view-recency.
+      // Persisted favorites + view-recency.
       // The renderer fans these out to the command palette, the
       // sidebar Pinned section, and the editor PinButton via
       // `usePinnedArtifacts` / `useRecentlyViewedArtifacts`. Empty
@@ -367,7 +367,7 @@ export function registerSettingsHandlers(): void {
         "onboardingCompleted",
         String(parsed.onboardingCompleted),
       );
-    // 17: log delta-by-length for the same reason
+    // Log delta-by-length for the same reason
     // ignorePatterns / watchPatterns are logged by length — the
     // IDs themselves aren't useful in an audit, but the
     // "user added/removed a pin" or "user viewed 5 new artifacts

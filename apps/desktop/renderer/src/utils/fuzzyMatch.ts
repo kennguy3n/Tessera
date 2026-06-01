@@ -1,6 +1,6 @@
 /**
- * 15: subsequence-based fuzzy matcher used by the
- * Cmd+K command palette and the global cross-artifact search.
+ * Subsequence-based fuzzy matcher used by the Cmd+K command
+ * palette and the global cross-artifact search.
  *
  * Why subsequence (not Levenshtein / trigrams / BM25)?
  *

@@ -1,20 +1,19 @@
 /**
- * 17: Cmd+K command palette.
+ * Cmd+K command palette.
  *
  * Single overlay that fuses four UX patterns into one widget:
  *
- *   1. **Command palette** (Tasks 14, 19): every entry in
- *      `COMMAND_REGISTRY` is a row. Selecting a row invokes its
- *      navigate / dispatch / callback action.
- *   2. **Global cross-artifact search** (Task 15): every artifact
- *      is also a row, and a single fuzzy query string filters
- *      both commands and artifacts. Selecting an artifact opens
- *      its editor page.
- *   3. **Favorites / Pinned** (Task 16): a "Pinned" group renders
- *      first when the query is empty, surfacing the user's pinned
- *      artifacts as one-tap targets.
- *   4. **Recent items navigation** (Task 17): a "Recent" group
- *      below "Pinned" renders the view-history list from
+ *   1. **Command palette**: every entry in `COMMAND_REGISTRY` is a
+ *      row. Selecting a row invokes its navigate / dispatch /
+ *      callback action.
+ *   2. **Global cross-artifact search**: every artifact is also a
+ *      row, and a single fuzzy query string filters both commands
+ *      and artifacts. Selecting an artifact opens its editor page.
+ *   3. **Favorites / Pinned**: a "Pinned" group renders first when
+ *      the query is empty, surfacing the user's pinned artifacts
+ *      as one-tap targets.
+ *   4. **Recent items navigation**: a "Recent" group below "Pinned"
+ *      renders the view-history list from
  *      `useRecentlyViewedArtifacts`.
  *
  * The single-input pattern (one text field for everything) mirrors

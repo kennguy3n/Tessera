@@ -88,9 +88,10 @@ type RendererChannelMember = Pick<
 
 /**
  * Subset of `KchatFileInfo` the renderer is allowed to read,
- * extended with the resolved uploader name . The `user_id` lives here because the renderer needs
- * to render `@user_id` as a stable fallback when enrichment
- * doesn't resolve `uploaderUsername`. The full `update_at` /
+ * extended with the resolved uploader name. The `user_id` lives
+ * here because the renderer needs to render `@user_id` as a
+ * stable fallback when enrichment doesn't resolve
+ * `uploaderUsername`. The full `update_at` /
  * `delete_at` / `channel_id` / `post_id` columns on the wire
  * format stay stripped — the file preview only needs upload
  * provenance, not the full mutation history.

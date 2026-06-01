@@ -1,6 +1,6 @@
 /**
- * + 19: declarative registry of every global
- * Cmd+K command + its associated keyboard shortcut.
+ * Declarative registry of every global Cmd+K command + its
+ * associated keyboard shortcut.
  *
  * Why declarative?
  *

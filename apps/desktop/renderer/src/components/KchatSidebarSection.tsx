@@ -5,10 +5,10 @@
  * When connected: shows the user, default team, and channel count.
  *
  * The unread badge is driven primarily by WebSocket push events
- * surfaced over the `kchat:event` IPC channel . On every `file_added` event for a channel in the
- * rendered list whose `create_at` post-dates the user's
- * last-seen marker, the badge increments by 1 — no IPC poll
- * required. The renderer subscribes via
+ * surfaced over the `kchat:event` IPC channel. On every
+ * `file_added` event for a channel in the rendered list whose
+ * `create_at` post-dates the user's last-seen marker, the badge
+ * increments by 1 — no IPC poll required. The renderer subscribes via
  * `window.tessera.kchat.onEvent(cb)` on mount and unsubscribes
  * on unmount; the main-process forwarder owns the per-window
  * ring buffer + drop-oldest backpressure.
