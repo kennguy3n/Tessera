@@ -139,6 +139,7 @@ vi.mock("../updaterSignature", async () => {
 import {
   _injectUpdaterForTests,
   _resetForTests,
+  _setInstallGateStateForTests,
   registerAutoUpdaterIpc,
 } from "../autoUpdater";
 import { SIGNATURE_SUFFIX } from "../updaterSignature";
@@ -394,6 +395,147 @@ describe("updates:install gate — enforcement OFF", () => {
       version: "1.2.3",
       downloadedFile: artifactPath,
     });
+
+    const result = (await invoke("updates:install")) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(mocks.fakeUpdater.quitAndInstall).toHaveBeenCalled();
+  });
+});
+
+describe("update-downloaded — enforcement ON but no trust anchors configured", () => {
+  // Regression for the production-breaking interim state: shipping
+  // `enforceUpdateSignature: true` (the config default) with an empty
+  // `UPDATER_TRUST_ANCHORS` array (until the release pipeline starts
+  // signing artifacts) used to silently broadcast `signature-rejected`
+  // for every download, breaking auto-updates for every user. The
+  // handler now special-cases `reason: "no-trust-anchors"` to log a
+  // WARN and fall through to `downloaded`.
+  it("transitions to 'downloaded' (with a skip counter) when no anchors are configured", async () => {
+    mocks.testAnchors = []; // <-- empty anchor array
+    const artifactPath = path.join(tmpDir, "Tessera-Setup-1.2.3.exe");
+    const payload = Buffer.from("any installer bytes");
+    fs.writeFileSync(artifactPath, payload);
+    // Sig file is irrelevant — verifier short-circuits before reading
+    // it when anchors are empty. We omit it to confirm that.
+
+    emitUpdaterEvent("update-downloaded", {
+      version: "1.2.3",
+      downloadedFile: artifactPath,
+    });
+
+    const status = (await invoke("updates:status")) as {
+      status: string;
+      newVersion?: string;
+      signature?: { reason?: string };
+    };
+    expect(status.status).toBe("downloaded");
+    expect(status.newVersion).toBe("1.2.3");
+    // The signature payload is preserved so a renderer can surface
+    // the "verification skipped" state to the user if it wants to.
+    expect(status.signature?.reason).toBe("no-trust-anchors");
+    // Telemetry tags the skip distinctly from pass/fail so an
+    // operator can see how many installs are in the no-anchor interim.
+    expect(mocks.counterCalls).toContain("update.signature_skipped_no_anchors");
+    expect(mocks.counterCalls).not.toContain("update.signature_pass");
+    expect(mocks.counterCalls).not.toContain("update.signature_fail");
+  });
+
+  it("allows install (with a WARN log) when no anchors are configured", async () => {
+    mocks.testAnchors = [];
+    const artifactPath = path.join(tmpDir, "Tessera-Setup-1.2.3.exe");
+    fs.writeFileSync(artifactPath, Buffer.from("any installer bytes"));
+
+    emitUpdaterEvent("update-downloaded", {
+      version: "1.2.3",
+      downloadedFile: artifactPath,
+    });
+
+    const result = (await invoke("updates:install")) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(mocks.fakeUpdater.quitAndInstall).toHaveBeenCalled();
+  });
+});
+
+describe("updates:install gate — defense-in-depth (state injected directly)", () => {
+  // Regression for ANALYSIS_0002: the install-time signature gate is
+  // defense-in-depth that fires only when a hypothetical caller
+  // somehow constructs the state `lastStatus.status === "downloaded"`
+  // + `lastSignatureCheck.ok === false`. The production
+  // `update-downloaded` handler refuses to put the system into that
+  // state (it broadcasts `signature-rejected` instead of `downloaded`
+  // when verification fails), so the guard is unreachable through
+  // normal event flow. These tests inject the state directly via the
+  // `_setInstallGateStateForTests` hook so a regression in the
+  // install-gate path is caught even if the download-gate stays
+  // healthy.
+  it("blocks install when lastStatus is 'downloaded' but lastSignatureCheck.ok is false (verification-failed)", async () => {
+    _setInstallGateStateForTests(
+      { status: "downloaded", newVersion: "1.2.3" },
+      {
+        ok: false,
+        reason: "verification-failed",
+        message: "Signature did not verify against any trust anchor",
+      },
+    );
+
+    const result = (await invoke("updates:install")) as {
+      ok: boolean;
+      message?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("did not verify");
+    expect(mocks.fakeUpdater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("blocks install when lastStatus is 'downloaded' but lastSignatureCheck is null (cache cleared)", async () => {
+    // Simulates the `download-progress` race where the in-flight
+    // verifier never wrote a result. The install gate refuses rather
+    // than letting a stale `downloaded` status leak through.
+    _setInstallGateStateForTests(
+      { status: "downloaded", newVersion: "1.2.3" },
+      null,
+    );
+
+    const result = (await invoke("updates:install")) as {
+      ok: boolean;
+      message?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Signature verification has not run");
+    expect(mocks.fakeUpdater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("blocks install for signature-malformed even when lastStatus says downloaded", async () => {
+    _setInstallGateStateForTests(
+      { status: "downloaded", newVersion: "1.2.3" },
+      {
+        ok: false,
+        reason: "signature-malformed",
+        message: "Signature length 12 is not the expected 64 bytes",
+      },
+    );
+
+    const result = (await invoke("updates:install")) as {
+      ok: boolean;
+      message?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Signature length");
+    expect(mocks.fakeUpdater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("allows install for the no-trust-anchors skip even when ok is false", async () => {
+    // The only `ok: false` reason that DOES pass the install gate is
+    // `no-trust-anchors` — the deliberate fall-through documented in
+    // both the download handler and the install gate.
+    _setInstallGateStateForTests(
+      { status: "downloaded", newVersion: "1.2.3" },
+      {
+        ok: false,
+        reason: "no-trust-anchors",
+        message: "Refusing to verify update: UPDATER_TRUST_ANCHORS is empty",
+      },
+    );
 
     const result = (await invoke("updates:install")) as { ok: boolean };
     expect(result.ok).toBe(true);

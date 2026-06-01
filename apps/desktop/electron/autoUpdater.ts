@@ -247,6 +247,34 @@ function attachListenersOnce(updater: AutoUpdaterModule): void {
       const result = verifyUpdateSignature(downloadedFile);
       lastSignatureCheck = result;
       if (!result.ok) {
+        // Special-case the "no anchors configured" state. Until the
+        // release pipeline ships its first signed artifact,
+        // UPDATER_TRUST_ANCHORS is empty and verification cannot run.
+        // Treating that as `signature-rejected` would silently break
+        // every auto-update for every user on a fresh install, because
+        // the config default for `enforceUpdateSignature` is true.
+        // Instead, log a WARN (so operators see this in telemetry),
+        // record the skipped counter, and fall through to broadcast
+        // `downloaded` so users still get updates. The install gate
+        // below treats the same `reason: "no-trust-anchors"` value as
+        // "skip with warning" rather than "block", preserving the
+        // defense-in-depth path: every OTHER `ok: false` reason
+        // (verification-failed, signature-missing, signature-malformed,
+        // verifier-error) still blocks install.
+        if (result.reason === "no-trust-anchors") {
+          getLogger().warn("autoUpdater.signature.skipped_no_anchors", {
+            version,
+            downloadedFile,
+            message: result.message,
+          });
+          recordCounter("update.signature_skipped_no_anchors");
+          broadcast({
+            status: "downloaded",
+            newVersion: version,
+            signature: result,
+          });
+          return;
+        }
         getLogger().error("autoUpdater.signature.rejected", {
           version,
           downloadedFile,
@@ -409,7 +437,25 @@ export function registerAutoUpdaterIpc(): void {
     // null (verification was skipped) and we let install proceed.
     const config = loadConfig();
     if (config.enforceUpdateSignature) {
-      if (!lastSignatureCheck || !lastSignatureCheck.ok) {
+      // Special-case the no-trust-anchors state (symmetric with the
+      // `update-downloaded` handler above). When the release pipeline
+      // has not yet shipped its first signed artifact, refusing the
+      // install would silently break auto-updates for every user.
+      // Log a WARN so operators still see this skip in telemetry,
+      // then allow the install. Every OTHER failure reason
+      // (verification-failed, signature-missing, signature-malformed,
+      // verifier-error) continues to block install — the
+      // defense-in-depth against a tampered artifact / artifact swap
+      // is preserved.
+      if (
+        lastSignatureCheck &&
+        !lastSignatureCheck.ok &&
+        lastSignatureCheck.reason === "no-trust-anchors"
+      ) {
+        getLogger().warn("autoUpdater.install.skipped_no_anchors", {
+          message: lastSignatureCheck.message,
+        });
+      } else if (!lastSignatureCheck || !lastSignatureCheck.ok) {
         const reason =
           lastSignatureCheck?.message ??
           "Signature verification has not run for the staged artifact; " +
@@ -466,6 +512,27 @@ export function registerAutoUpdaterIpc(): void {
 export function _injectUpdaterForTests(updater: AutoUpdaterModule): void {
   cachedUpdater = updater;
   attachListenersOnce(updater);
+}
+
+/**
+ * Test-only: directly seed the cached `lastStatus` / `lastSignatureCheck`
+ * pair so a regression test can exercise the install-time defense-in-depth
+ * gate independently of the `update-downloaded` handler. Without this
+ * hook, every `lastSignatureCheck` write goes through the download
+ * handler, which couples the two gates and makes it impossible to test
+ * the install-gate in isolation (e.g. the case where `lastStatus` is
+ * `"downloaded"` but `lastSignatureCheck.ok` is `false` — a state that
+ * the download handler ordinarily prevents but that a future refactor
+ * could re-introduce).
+ *
+ * Production callers MUST NOT invoke this.
+ */
+export function _setInstallGateStateForTests(
+  status: UpdateStatusEvent,
+  signature: SignatureVerificationResult | null,
+): void {
+  lastStatus = status;
+  lastSignatureCheck = signature;
 }
 
 export function _resetForTests(): void {

@@ -232,16 +232,29 @@ export interface VaultLabel {
  */
 export function encryptForVault(plaintext: string): Buffer {
   if (safeStorage.isEncryptionAvailable()) {
-    // Phase 19 PR 10b Task 6 — gate the write through the keychain
-    // ACL policy BEFORE handing the plaintext to safeStorage. When
-    // `enforceKeychainAcl` is on and the active backend is the Linux
-    // `basic_text` fallback (XOR with a hardcoded key, NOT real
-    // encryption), `assertSafeEncrypt` throws a `KeychainAclError`
-    // so the caller never persists a secret under no-real-encryption
-    // storage. macOS / Windows / any real Linux daemon path is a
-    // no-op. We deliberately do NOT call this from the decrypt path:
-    // a user mid-session who lost their keyring daemon should still
-    // be able to read blobs that were written when the daemon was up.
+    // Gate the write through the keychain ACL policy BEFORE handing
+    // the plaintext to safeStorage. When `enforceKeychainAcl` is on
+    // and the active backend is the Linux `basic_text` fallback (XOR
+    // with a hardcoded key, NOT real encryption), `assertSafeEncrypt`
+    // throws a `KeychainAclError` so the caller never persists a
+    // secret under no-real-encryption storage. macOS / Windows / any
+    // real Linux daemon path is a no-op. We deliberately do NOT call
+    // this from the decrypt path: a user mid-session who lost their
+    // keyring daemon should still be able to read blobs that were
+    // written when the daemon was up.
+    //
+    // Mutual-exclusion invariant with the `passwordVaultActive()`
+    // branch below: `initPasswordVaultIfNeeded` (passwordVault.ts)
+    // short-circuits with `active: false` whenever
+    // `isEncryptionAvailable()` returns true, which `basic_text` does.
+    // So a `KeychainAclError` thrown from this branch will NEVER
+    // strand the caller in a "safeStorage refused, password vault
+    // could have helped" state — the password vault is never
+    // initialised when safeStorage is reachable. If a future refactor
+    // decouples the two paths (e.g. allows a user to opt into the
+    // password vault even when safeStorage is available), this
+    // invariant must be re-established or the refusal path widened to
+    // fall through to the password vault on `KeychainAclError`.
     const cfg = loadConfig();
     assertSafeEncrypt({ enforce: cfg.enforceKeychainAcl });
     return safeStorage.encryptString(plaintext);

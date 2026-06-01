@@ -64,13 +64,16 @@
  * Keychain API calls (which would require a native module we
  * explicitly want to avoid for the cross-platform surface).
  *
- * The default for `enforceKeychainAcl` is `false` on Linux (so an
- * existing install that has been happily running on basic_text keeps
- * working without a hard error) and `true` on macOS/Windows (where the
- * native backend is always available and basic_text never fires). A
- * user who deliberately wants the strict policy on Linux flips the
- * flag in Settings; we surface a clear warning in the UI so they know
- * the trade-off.
+ * The default for `enforceKeychainAcl` is `true` on every platform so
+ * a fresh install enforces the strict policy by default. On macOS and
+ * Windows the native backend is always available and basic_text never
+ * fires, so the flag is effectively a no-op there. On Linux without a
+ * secret-store daemon (basic_text fallback), this default surfaces as
+ * a `KeychainAclError` on the next secret write — the user then either
+ * starts a daemon (gnome-keyring, kwallet5, kwallet6) and retries, or
+ * flips the toggle off in Settings → Security to accept the reduced
+ * protection. The Settings UI surfaces a clear warning either way so
+ * the trade-off is explicit.
  */
 
 import { safeStorage } from "electron";
@@ -331,14 +334,22 @@ export function _resetBootBackendForTests(): void {
 
 /**
  * Gate writes through the policy. Called by `vaultCrypto.encryptForVault`
- * before delegating to `safeStorage.encryptString`. When
- * `enforce === true` AND the freshly-computed backend is `basic_text`,
- * refuses with `KeychainAclError` so the caller never persists a secret
- * under the no-real-encryption fallback. When `enforce === false`
- * (the default for backwards compatibility), logs a WARN and
- * proceeds — useful for an existing Linux install that wants to
- * keep working without surprising the user with a hard error on the
- * first launch after upgrade.
+ * before delegating to `safeStorage.encryptString`. The caller passes
+ * the current value of the `enforceKeychainAcl` config field (default
+ * `true` on every platform — see the module-level doc above).
+ *
+ * Behaviour matrix:
+ *
+ *   - `enforce === true` + backend is `basic_text` (Linux fallback,
+ *     XOR-with-hardcoded-key, NOT real encryption) → throw
+ *     `KeychainAclError` so the caller never persists a secret under
+ *     no-real-encryption storage.
+ *   - `enforce === false` + backend is `basic_text` → log a WARN and
+ *     proceed. The user has deliberately opted out of the strict
+ *     policy in Settings → Security after seeing the trade-off badge;
+ *     we honour that choice but record it for forensic visibility.
+ *   - Any other backend → no-op (the backend is one we trust for
+ *     write protection).
  *
  * Does NOT gate reads. A user mid-session who switched off their
  * keyring daemon should still be able to decrypt blobs that were
@@ -362,6 +373,18 @@ export function assertSafeEncrypt(options: { enforce: boolean }): void {
         "safeStorage backend changed since boot — the secret-store daemon may have crashed or been restarted. Future writes use the new backend.",
     });
   }
+  // We gate `basic_text` (the only backend that is provably NOT real
+  // encryption — it is XOR with a hardcoded key, documented as a
+  // fallback in Electron's source) but deliberately do NOT also gate
+  // `unknown`. The reasoning: an unrecognised backend is a future
+  // Electron-introduced variant we do not yet have information about
+  // — it could be MORE secure than what we know about today (e.g. a
+  // new Linux keyring), and refusing writes would block legitimate
+  // Electron upgrades. The Settings UI conservatively tiers `unknown`
+  // as `none` so the user is informed of the asymmetry. If a future
+  // Electron release adds a backend that we determine IS insecure,
+  // the right fix is to add a case here, not to widen the gate to
+  // every unknown variant.
   if (current.name === "basic_text") {
     if (options.enforce) {
       throw new KeychainAclError(
