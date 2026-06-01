@@ -132,6 +132,18 @@ export interface AppConfig {
    */
   enforceUpdateSignature: boolean;
   /**
+   * Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement. See
+   * `SettingsData.enforceKeychainAcl` in `shared/types.ts` for the
+   * full contract. Defaults to `true` so a fresh install refuses to
+   * persist secrets under Electron's Linux `basic_text` fallback;
+   * macOS / Windows are unaffected because the OS backend is always
+   * available. A Linux user without a running secret-store daemon
+   * (gnome-keyring / kwallet) can either install one OR flip this
+   * off in Settings → Security to accept the reduced protection.
+   * Reads are never gated.
+   */
+  enforceKeychainAcl: boolean;
+  /**
    * Persisted hybrid retrieval config. The defaults here mirror
    * `tessera_sources::hybrid::HybridSearchConfig::default()` so a
    * fresh install behaves identically with or without this field
@@ -248,6 +260,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   telemetryEnabled: false,
   appLockMode: "off",
   enforceUpdateSignature: true,
+  enforceKeychainAcl: true,
   hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
 });
@@ -414,6 +427,13 @@ const AppConfigSchema = z
     // running a self-hosted build channel with their own signing
     // key can disable via Settings; everyone else stays protected.
     enforceUpdateSignature: z.boolean().catch(true),
+    // Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement.
+    // Heals corrupted values to `true` (secure default). When on,
+    // refuses to encrypt fresh secrets under Electron's Linux
+    // `basic_text` fallback (XOR-with-hardcoded-key). macOS /
+    // Windows are unaffected. See `electron/keychainAcl.ts` for the
+    // policy implementation.
+    enforceKeychainAcl: z.boolean().catch(true),
     // Phase 15 Task 19: heal a corrupted on-disk value to `true` so a
     // mangled config does NOT replay the onboarding wizard against an
     // existing install. New installs always start at `false` via
@@ -490,6 +510,7 @@ const AppConfigSchema = z
     telemetryEnabled: false,
     appLockMode: "off" as const,
     enforceUpdateSignature: true,
+    enforceKeychainAcl: true,
     hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   }));
 

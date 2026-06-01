@@ -29,6 +29,11 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { loadConfig, updateConfig } from "./config";
 import { getLogger } from "./logger";
 import { assertBoolean } from "./ipc/validate";
+import { recordCounter } from "./telemetrySink";
+import {
+  SignatureVerificationResult,
+  verifyUpdateSignature,
+} from "./updaterSignature";
 
 interface UpdateStatusEvent {
   status:
@@ -38,7 +43,8 @@ interface UpdateStatusEvent {
     | "not-available"
     | "downloading"
     | "downloaded"
-    | "error";
+    | "error"
+    | "signature-rejected";
   message?: string;
   /** 0–100 download progress percentage. Only populated for "downloading". */
   percent?: number;
@@ -46,10 +52,32 @@ interface UpdateStatusEvent {
   bytesPerSecond?: number;
   /** Semver of the new release, if known. */
   newVersion?: string;
+  /**
+   * Populated whenever a verification attempt has run for the
+   * currently-staged artifact. The renderer surfaces this in the
+   * Settings → Updates panel so users can see WHY a signed-update
+   * enforcement run rejected an artifact (vs. a generic "error").
+   *
+   * Mirrors the shape of `SignatureVerificationResult` so callers
+   * receive the structured `reason` enum without us re-flattening it
+   * into a string.
+   */
+  signature?: SignatureVerificationResult;
 }
 
 let lastStatus: UpdateStatusEvent = { status: "idle" };
 let registered = false;
+/**
+ * Per-staged-artifact verification cache. Populated by the
+ * `update-downloaded` handler immediately after the artifact lands on
+ * disk; consulted by the `updates:install` handler so a previously
+ * rejected artifact cannot be force-installed via a second IPC call.
+ *
+ * Reset to `null` when `electron-updater` starts a new download (the
+ * `download-progress` event) so a freshly-started download doesn't
+ * inherit a stale `ok: true` from a previous run.
+ */
+let lastSignatureCheck: SignatureVerificationResult | null = null;
 
 function broadcast(status: UpdateStatusEvent): void {
   lastStatus = status;
@@ -153,6 +181,13 @@ function attachListenersOnce(updater: AutoUpdaterModule): void {
     broadcast({ status: "not-available" });
   });
   updater.on("download-progress", (progress: unknown) => {
+    // Reset the signature cache as soon as a new download starts so
+    // a previously-verified artifact's `ok: true` cannot leak into
+    // the next install attempt. Without this reset, an attacker who
+    // could swap the downloaded file on disk between the `downloaded`
+    // event and the `updates:install` call would inherit the cached
+    // pass from the prior (legitimate) download.
+    lastSignatureCheck = null;
     if (progress && typeof progress === "object") {
       const p = progress as { percent?: number; bytesPerSecond?: number };
       broadcast({
@@ -165,10 +200,116 @@ function attachListenersOnce(updater: AutoUpdaterModule): void {
     }
   });
   updater.on("update-downloaded", (info: unknown) => {
+    const event =
+      info && typeof info === "object"
+        ? (info as { version?: unknown; downloadedFile?: unknown })
+        : {};
     const version =
-      info && typeof info === "object" && "version" in info
-        ? String((info as { version: unknown }).version)
+      typeof event.version === "string" || typeof event.version === "number"
+        ? String(event.version)
         : undefined;
+    const downloadedFile =
+      typeof event.downloadedFile === "string"
+        ? event.downloadedFile
+        : undefined;
+
+    // Verify the artifact signature BEFORE broadcasting "downloaded".
+    // If enforcement is on AND verification fails, we broadcast
+    // `signature-rejected` instead of `downloaded` so the renderer
+    // never offers an Install button for an artifact we don't trust.
+    const config = loadConfig();
+    if (config.enforceUpdateSignature) {
+      if (!downloadedFile) {
+        // electron-updater always sets this in modern versions; if
+        // it's missing we treat the artifact as unverifiable rather
+        // than blindly trusting it.
+        const reason =
+          "electron-updater did not surface the downloaded file path; " +
+          "cannot verify signature. Refusing to stage update.";
+        lastSignatureCheck = {
+          ok: false,
+          reason: "verifier-error",
+          message: reason,
+        };
+        getLogger().error("autoUpdater.signature.unverifiable", {
+          version,
+          reason,
+        });
+        recordCounter("update.signature_fail");
+        broadcast({
+          status: "signature-rejected",
+          newVersion: version,
+          message: reason,
+          signature: lastSignatureCheck,
+        });
+        return;
+      }
+      const result = verifyUpdateSignature(downloadedFile);
+      lastSignatureCheck = result;
+      if (!result.ok) {
+        // Special-case the "no anchors configured" state. Until the
+        // release pipeline ships its first signed artifact,
+        // UPDATER_TRUST_ANCHORS is empty and verification cannot run.
+        // Treating that as `signature-rejected` would silently break
+        // every auto-update for every user on a fresh install, because
+        // the config default for `enforceUpdateSignature` is true.
+        // Instead, log a WARN (so operators see this in telemetry),
+        // record the skipped counter, and fall through to broadcast
+        // `downloaded` so users still get updates. The install gate
+        // below treats the same `reason: "no-trust-anchors"` value as
+        // "skip with warning" rather than "block", preserving the
+        // defense-in-depth path: every OTHER `ok: false` reason
+        // (verification-failed, signature-missing, signature-malformed,
+        // verifier-error) still blocks install.
+        if (result.reason === "no-trust-anchors") {
+          getLogger().warn("autoUpdater.signature.skipped_no_anchors", {
+            version,
+            downloadedFile,
+            message: result.message,
+          });
+          recordCounter("update.signature_skipped_no_anchors");
+          broadcast({
+            status: "downloaded",
+            newVersion: version,
+            signature: result,
+          });
+          return;
+        }
+        getLogger().error("autoUpdater.signature.rejected", {
+          version,
+          downloadedFile,
+          reason: result.reason,
+          message: result.message,
+        });
+        recordCounter("update.signature_fail");
+        broadcast({
+          status: "signature-rejected",
+          newVersion: version,
+          message: result.message,
+          signature: result,
+        });
+        return;
+      }
+      getLogger().info("autoUpdater.signature.verified", {
+        version,
+        downloadedFile,
+        anchorIndex: result.anchorIndex,
+      });
+      recordCounter("update.signature_pass");
+      broadcast({
+        status: "downloaded",
+        newVersion: version,
+        signature: result,
+      });
+      return;
+    }
+
+    // Enforcement disabled — surface the same status the previous
+    // (pre-Ed25519) implementation did. We do NOT short-circuit on
+    // `app.isPackaged` here because the caller has already opted out
+    // of signature checking via config and we want consistent
+    // behaviour for that opt-out across dev and packaged builds.
+    lastSignatureCheck = null;
     broadcast({ status: "downloaded", newVersion: version });
   });
   updater.on("error", (err: unknown) => {
@@ -285,6 +426,44 @@ export function registerAutoUpdaterIpc(): void {
         message: `No update is ready to install (current status: ${lastStatus.status})`,
       };
     }
+    // Re-check the signature gate at install time. The state we
+    // consult here is set by the `update-downloaded` handler above
+    // and is reset on every new download (`download-progress`), so
+    // an attacker who can call `updates:install` cannot bypass a
+    // signature rejection by waiting until lastStatus drifts.
+    //
+    // We only insist on a positive verification result when
+    // enforcement is on; otherwise the field may legitimately be
+    // null (verification was skipped) and we let install proceed.
+    const config = loadConfig();
+    if (config.enforceUpdateSignature) {
+      // Special-case the no-trust-anchors state (symmetric with the
+      // `update-downloaded` handler above). When the release pipeline
+      // has not yet shipped its first signed artifact, refusing the
+      // install would silently break auto-updates for every user.
+      // Log a WARN so operators still see this skip in telemetry,
+      // then allow the install. Every OTHER failure reason
+      // (verification-failed, signature-missing, signature-malformed,
+      // verifier-error) continues to block install — the
+      // defense-in-depth against a tampered artifact / artifact swap
+      // is preserved.
+      if (
+        lastSignatureCheck &&
+        !lastSignatureCheck.ok &&
+        lastSignatureCheck.reason === "no-trust-anchors"
+      ) {
+        getLogger().warn("autoUpdater.install.skipped_no_anchors", {
+          message: lastSignatureCheck.message,
+        });
+      } else if (!lastSignatureCheck || !lastSignatureCheck.ok) {
+        const reason =
+          lastSignatureCheck?.message ??
+          "Signature verification has not run for the staged artifact; " +
+            "refusing to install. This usually means the artifact was " +
+            "replaced on disk after download.";
+        return { ok: false, message: reason };
+      }
+    }
     updater.quitAndInstall();
     return { ok: true };
   });
@@ -312,6 +491,44 @@ export function registerAutoUpdaterIpc(): void {
 }
 
 /**
+ * Test-only hook: inject a fake `electron-updater` module so the
+ * integration tests in `__tests__/autoUpdaterSignature.test.ts` can
+ * synthesize `update-downloaded` / `download-progress` events without
+ * actually requiring the real (CommonJS, packaged-only) module. The
+ * fake updater is wired through the same `attachListenersOnce` path
+ * the production code uses, so the test exercises the real listener
+ * registration and dispatch logic.
+ *
+ * Production callers MUST NOT invoke this — `getUpdater()` is the
+ * sole production entry point for resolving the updater module.
+ */
+export function _injectUpdaterForTests(updater: AutoUpdaterModule): void {
+  cachedUpdater = updater;
+  attachListenersOnce(updater);
+}
+
+/**
+ * Test-only: directly seed the cached `lastStatus` / `lastSignatureCheck`
+ * pair so a regression test can exercise the install-time defense-in-depth
+ * gate independently of the `update-downloaded` handler. Without this
+ * hook, every `lastSignatureCheck` write goes through the download
+ * handler, which couples the two gates and makes it impossible to test
+ * the install-gate in isolation (e.g. the case where `lastStatus` is
+ * `"downloaded"` but `lastSignatureCheck.ok` is `false` — a state that
+ * the download handler ordinarily prevents but that a future refactor
+ * could re-introduce).
+ *
+ * Production callers MUST NOT invoke this.
+ */
+export function _setInstallGateStateForTests(
+  status: UpdateStatusEvent,
+  signature: SignatureVerificationResult | null,
+): void {
+  lastStatus = status;
+  lastSignatureCheck = signature;
+}
+
+/**
  * Exported for unit testing — lets us reset state between runs.
  * Tests should call this from `beforeEach`; the IPC handler
  * registration itself is now idempotent (see `registerAutoUpdaterIpc`)
@@ -322,4 +539,5 @@ export function _resetForTests(): void {
   registered = false;
   cachedUpdater = null;
   lastStatus = { status: "idle" };
+  lastSignatureCheck = null;
 }
