@@ -379,12 +379,12 @@ export default function SlideEditor({
         // Free upload-race tokens for every block in the slide we're
         // about to drop. The `uploadTokensRef` Map otherwise accumulates
         // dead `${slideId}|${blockId}` entries for the lifetime of the
-        // editor The
-        // entries are tiny (a string key + small int) but a long
-        // editing session that adds/removes many slides would let the
-        // Map grow without bound. We delete based on the OUTGOING slide
-        // (read from `prev[index]` not `slides`) so this is safe inside
-        // a `setSlides` updater even if React batches multiple removes.
+        // editor. The entries are tiny (a string key + small int) but a
+        // long editing session that adds/removes many slides would let
+        // the Map grow without bound. We delete based on the OUTGOING
+        // slide (read from `prev[index]` not `slides`) so this is safe
+        // inside a `setSlides` updater even if React batches multiple
+        // removes.
         const removed = prev[index];
         if (removed) {
           discardUploadTokensForSlide(

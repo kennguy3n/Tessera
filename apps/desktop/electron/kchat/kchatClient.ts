@@ -53,7 +53,9 @@ export const DEFAULT_KCHAT_SERVER = "https://kchat.com";
  * a 500/502/503/504 on a non-idempotent POST can produce duplicate
  * server-side effects (a second file in the channel, a second message
  * in the timeline) because the server may have processed the first
- * request and crashed before sending the response — see seventh-pass
+ * request and crashed before sending the response — the client has
+ * no way to distinguish a pre-write crash (safe to retry) from a
+ * post-write crash (would duplicate). Opt-in is intentional.
  */
 const RETRYABLE_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504]);
 

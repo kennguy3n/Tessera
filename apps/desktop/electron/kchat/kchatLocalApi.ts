@@ -383,8 +383,8 @@ export class KchatLocalApiServer {
         // call here when `dispatch()` already responded is a
         // no-op. The error message is sanitised so a non-
         // `LocalApiError` can never leak implementation details
-        // (file paths, stack fragments) over the wire — see
-        // + the `respondError()` sanitiser below.
+        // (file paths, stack fragments) over the wire — the
+        // `respondError()` sanitiser below enforces this.
         respondError(
           res,
           err instanceof LocalApiError

@@ -3,11 +3,11 @@
  *
  * Encapsulates token persistence (OS keychain / encrypted file
  * fallback through `tokenVault.ts`), server-URL configuration, and
- * `KchatClient` lifecycle. — single mode: every Tessera
- * connection is authenticated by a Personal Access Token (PAT) the
- * user pastes into the Settings card. The previous extension-bridge
- * delegation path has been removed: KChat Desktop and
- * Tessera now talk to the KChat server independently, and the only
+ * `KchatClient` lifecycle. Single auth mode: every Tessera connection
+ * is authenticated by a Personal Access Token (PAT) the user pastes
+ * into the Settings card. The previous extension-bridge delegation
+ * path has been removed: KChat Desktop and Tessera now talk to the
+ * KChat server independently, and the only
  * cross-app cooperation is through the `.kcz` extension Tessera
  * ships into KChat Desktop (see
  * `extensions/tessera-kchat/`) plus the `tessera://` deeplink

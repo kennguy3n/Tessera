@@ -303,11 +303,10 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // scheduling effect below depends on `pollUnread`, so each
   // identity flip would tear down the recursive `setTimeout` chain
   // and re-arm it, wasting work today and risking a foot-gun in
-  // future refactors that refetch channels more aggressively
-  //  The ref pattern
-  // keeps `pollUnread`'s identity stable for the lifetime of the
-  // connection while still letting each cycle observe the latest
-  // channel set.
+  // future refactors that refetch channels more aggressively. The
+  // ref pattern keeps `pollUnread`'s identity stable for the
+  // lifetime of the connection while still letting each cycle
+  // observe the latest channel set.
   const channelsRef = useRef(channels);
   useEffect(() => {
     channelsRef.current = channels;
