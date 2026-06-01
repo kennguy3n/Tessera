@@ -1082,6 +1082,30 @@ export interface SettingsData {
    * skip), so this flag only matters in packaged installs.
    */
   enforceUpdateSignature: boolean;
+  /**
+   * Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement. When
+   * `true`, `vaultCrypto.encryptForVault` refuses to write secrets
+   * under Electron's `basic_text` fallback (Linux-only,
+   * XOR-with-hardcoded-key — NOT real encryption). On macOS / Windows
+   * the OS-backed backend is always available, so this flag is a
+   * no-op in practice. On Linux a user without a running secret-store
+   * daemon (gnome-keyring / kwallet) will see a `KeychainAclError`
+   * when Tessera tries to persist a new secret; they recover by
+   * starting the daemon and re-launching, or by flipping this off in
+   * Settings → Security to accept the reduced protection.
+   *
+   * Defaults to `true` so a fresh install enforces the strict policy.
+   * Reads of already-stored blobs are NEVER gated — refusing to
+   * decrypt would brick a running session.
+   *
+   * Trust tier reported via `keychain.backend.<name>` telemetry +
+   * surfaced in the Settings → Security panel:
+   *   - `enforced-by-os` (macOS Keychain w/ per-bundle ACL)
+   *   - `user-scoped`     (Windows DPAPI, Linux gnome/kwallet)
+   *   - `none`            (Linux basic_text)
+   *   - `none-unavailable` (no safeStorage; password-vault fallback active)
+   */
+  enforceKeychainAcl: boolean;
 }
 
 /**

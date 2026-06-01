@@ -46,6 +46,11 @@ const DEFAULT_SETTINGS: SettingsData = {
   // defaults to ON; the Settings UI surfaces a checkbox that
   // toggles this so power users on dev builds can disable it.
   enforceUpdateSignature: true,
+  // Phase 19 PR 10b Task 6 — per-app keychain ACL enforcement
+  // defaults to ON; the Settings UI surfaces a checkbox that
+  // toggles this so Linux users without a secret-store daemon
+  // can flip it off after weighing the trade-off.
+  enforceKeychainAcl: true,
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're
