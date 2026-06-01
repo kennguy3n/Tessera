@@ -1872,8 +1872,7 @@ export function resetKchatAuthService(
   // and a test that calls `resetKchatAuthService(null)` should
   // never observe an impl that closes over a torn-down service.
   setKchatBackfillImpl(null);
-  //: the three local-API
-  // provider slots (`localApiSourcesProvider`,
+  // The three local-API provider slots (`localApiSourcesProvider`,
   // `localApiIngestChannelHandler`,
   // `localApiShareArtifactHandler`) are reachable from the
   // localhost API server via `buildLocalApiHandlers()`. When the

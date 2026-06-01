@@ -107,7 +107,7 @@ vi.mock("electron", () => ({
     fromWebContents: () => null,
   },
   // `shell.openExternal` is loaded at module-import time by
-  // `electron/ipc/kchat.ts` (// top-level import). This test never invokes the
+  // `electron/ipc/kchat.ts` (top-level import). This test never invokes the
   // `kchat:openInDesktop` / `kchat:openDesktopExtensions` handlers,
   // but the symbol must exist or `import` resolution fails before
   // any tests run.
@@ -609,8 +609,8 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
   it("audits evidenceShared=false when the primary succeeds but the pack upload fails over the wire", async () => {
     // Re-stand the server with a route that fails the SECOND
     // request only. This exercises the partial-failure invariant
-    // (Sixth-pass over the real
-    // network stack: a 500 on the pack upload must not cancel the
+    // over the real network stack: a 500 on the pack upload must
+    // not cancel the
     // primary's audit row but must re-throw so the renderer
     // learns of the divergence.
     if (!server) throw new Error("test setup did not start the server");
@@ -754,7 +754,7 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
       // `if (wantEvidence)` branch is reached only on primary
       // success). The audit row is NOT emitted because the
       // channel is unchanged — emitting it would create a
-      // phantom record (Sixth-pass.
+      // phantom record.
       expect(bridgeMock.bridgeLogKchatArtifactShared).not.toHaveBeenCalled();
       expect(bridgeMock.bridgeEvidencePackBytes).not.toHaveBeenCalled();
     } finally {

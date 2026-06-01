@@ -3093,8 +3093,8 @@ pub struct AuditRotationResultView {
 #[napi]
 pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRotationResultView>> {
     let s = state()?;
-    //: do NOT go through the outer
-    // `Mutex<AuditLogger>` for the rotation path. Inside
+    // Do NOT go through the outer `Mutex<AuditLogger>` for the
+    // rotation path. Inside
     // `AuditStore::rotate`, the code intentionally releases the
     // `SharedConnection` mutex between Phase 1 (SELECT) and Phase
     // 2 (gzip compression) so concurrent `log_*` IPC calls can

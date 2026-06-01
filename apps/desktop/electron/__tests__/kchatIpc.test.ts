@@ -2214,8 +2214,8 @@ describe("sources:addKchatChannel — convergent sync via download manifest", ()
 // (returns `newlyCreated: false` for re-syncs), and the handler must
 // (a) reuse the returned source id and (b) skip the
 // `KchatChannelLinked` audit on re-sync.
-//: `seenNames` previously seeded from the previous
-// manifest, which reserved names of files that had been deleted
+// `seenNames` was previously seeded from the previous manifest,
+// which reserved names of files that had been deleted
 // server-side between syncs. The seeding now happens lazily — only
 // when a file is *kept* — so a deletion + same-name re-upload no
 // longer poisons the dedupe set or causes the cleanup loop to
@@ -3629,7 +3629,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   // / 0004 / 0005 regression tests.
   // -------------------------------------------------------------
 
-  it(": audit latencyMs measures only the bridge call, NOT the enrichment network time", async () => {
+  it("audit latencyMs measures only the bridge call, NOT the enrichment network time", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3692,7 +3692,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(latencyMs).toBeLessThan(25);
   });
 
-  it(": empty-string display_name / username is NOT cached (defence-in-depth against protocol drift)", async () => {
+  it("empty-string display_name / username is NOT cached (defence-in-depth against protocol drift)", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3744,7 +3744,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
   });
 
-  it(": onStatusChange subscriber is registered exactly once across re-mounts (idempotency guard)", async () => {
+  it("onStatusChange subscriber is registered exactly once across re-mounts (idempotency guard)", async () => {
     const { _resetKchatNameCachesForTest, registerKchatHandlers } =
       await import("../ipc/kchat");
     _resetKchatNameCachesForTest();
@@ -3770,7 +3770,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   // regression tests.
   // -------------------------------------------------------------
 
-  it("pass2-: user + channel enrichment lookups run concurrently, not sequentially", async () => {
+  it("user + channel enrichment lookups run concurrently, not sequentially", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3835,7 +3835,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(elapsedMs).toBeLessThan(130);
   });
 
-  it("pass2-: malformed senderUserId / channelId is filtered out of bulk lookups (does not suppress other hits)", async () => {
+  it("malformed senderUserId / channelId is filtered out of bulk lookups (does not suppress other hits)", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3897,7 +3897,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getUsersByIds).toHaveBeenCalledWith([VALID_USER_ID]);
   });
 
-  it("pass2-: enrichment skipped during 'connecting' state (only runs when fully 'connected')", async () => {
+  it("enrichment skipped during 'connecting' state (only runs when fully 'connected')", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();
@@ -3939,7 +3939,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).not.toHaveBeenCalled();
   });
 
-  it("pass2-: _resetKchatNameCachesForTest calls the onStatusChange unsubscribe handle", async () => {
+  it("_resetKchatNameCachesForTest calls the onStatusChange unsubscribe handle", async () => {
     const { _resetKchatNameCachesForTest, registerKchatHandlers } =
       await import("../ipc/kchat");
 
@@ -3968,7 +3968,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(2);
   });
 
-  it("pass3-: channelTask is fault-isolated symmetrically with userTask", async () => {
+  it("channelTask is fault-isolated symmetrically with userTask", async () => {
     const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
     const { defaultRateLimiter } = await import("../ipc/rateLimiter");
     _resetKchatNameCachesForTest();

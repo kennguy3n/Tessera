@@ -56,8 +56,7 @@ export class KchatNameCache {
   }
 
   set(id: string, name: string): void {
-    // :
-    // reject empty-string display names at the boundary. The
+    // Reject empty-string display names at the boundary. The
     // renderer uses nullish coalescing (`?? rawId`) for fallback;
     // an empty string would be cached as a positive value and
     // surface as `#` / `@` with no text. Mattermost server-side

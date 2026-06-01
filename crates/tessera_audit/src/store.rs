@@ -307,8 +307,8 @@ impl AuditStore {
     ///
     /// `archive_dir` is created (mkdir -p) if it does not exist.
     pub fn rotate(&self, archive_dir: &Path) -> Result<Option<RotationOutcome>> {
-        //: serialize concurrent rotations
-        // process-wide so a scheduled rotation and a user-triggered
+        // Serialize concurrent rotations process-wide so a scheduled
+        // rotation and a user-triggered
         // "Rotate now" click cannot produce duplicate archive files
         // for the same logical rotation window. See the docstring on
         // [`AUDIT_ROTATION_SERIALIZER`] for the full rationale.
@@ -912,8 +912,8 @@ mod tests {
 
     #[test]
     fn concurrent_rotations_are_serialized_no_duplicate_archives() {
-        //: two threads racing into
-        // `rotate()` against the same logical table must produce
+        // Two threads racing into `rotate()` against the same logical
+        // table must produce
         // ONE archive file containing the rotated rows, not two
         // archive files containing the same rows. The process-wide
         // `AUDIT_ROTATION_SERIALIZER` enforces this regardless of

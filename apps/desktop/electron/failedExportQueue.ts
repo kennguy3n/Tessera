@@ -129,8 +129,8 @@ function filePathFor(): string {
 let writeChain: Promise<unknown> = Promise.resolve();
 
 function serializeWrites<T>(fn: () => Promise<T>): Promise<T> {
-  //: only one callback on `.then()`.
-  // `writeChain` is set to `next.catch(() => undefined)` immediately
+  // Only one callback on `.then()`. `writeChain` is set to
+  // `next.catch(() => undefined)` immediately
   // after every call, so it can never reach a rejected state — the
   // two-arg form `then(onFulfilled, onRejected)` would have been
   // dead code (the rejection branch is unreachable). Keeping the

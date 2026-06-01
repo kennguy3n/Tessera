@@ -997,8 +997,8 @@ export async function handleWillQuit(
   deps: {
     stopScheduler: () => Promise<void>;
     stopAllSidecars: () => Promise<void>;
-    //: take the kchat
-    // localhost-API shutdown and the deeplink-bridge detach via
+    // Take the kchat localhost-API shutdown and the
+    // deeplink-bridge detach via
     // dep-injection so this function follows the same testability
     // pattern as the existing scheduler / sidecar drains. The
     // production caller passes the real implementations; the

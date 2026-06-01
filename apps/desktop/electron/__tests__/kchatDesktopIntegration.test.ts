@@ -624,8 +624,8 @@ describe("KchatLocalApiServer — route surface", () => {
     expect(res.status).toBe(400);
   });
 
-  //: the previous Content-Type
-  // regex used `(\b|;)`, which matched `application/json-ld` because
+  // The previous Content-Type regex used `(\b|;)`, which matched
+  // `application/json-ld` because
   // `\b` matches the boundary between `n` and `-`. Tighten the
   // contract to ONLY accept `application/json` (with optional
   // `;parameters`) so a future caller (or a misconfigured proxy)
