@@ -185,3 +185,94 @@ describe("computeVirtualWindow", () => {
     expect(w.startIndex).toBe(200 - DEFAULT_OVERSCAN);
   });
 });
+
+/** Cumulative prefix-sum of row tops (length `heights.length + 1`). */
+function offsetsFromHeights(heights: number[]): number[] {
+  const out = new Array<number>(heights.length + 1);
+  out[0] = 0;
+  for (let i = 0; i < heights.length; i++) out[i + 1] = out[i] + heights[i];
+  return out;
+}
+
+describe("computeVirtualWindow — variable row heights (rowOffsets)", () => {
+  it("derives the window from real geometry, not the uniform rowHeight", () => {
+    // 1000 rows, all 50px tall, but `rowHeight` lies and says 20.
+    // Without rowOffsets the window would be computed at the wrong
+    // scale; with rowOffsets it must reflect the true 50px rows.
+    const heights = Array.from({ length: 1000 }, () => 50);
+    const rowOffsets = offsetsFromHeights(heights);
+    const w = computeVirtualWindow({
+      scrollTop: 5000, // true firstVisible = 5000/50 = 100
+      viewportHeight: 500, // 10 rows visible → lastVisible = 110
+      rowCount: 1000,
+      rowHeight: 20, // deliberately wrong; must be ignored
+      rowOffsets,
+      overscan: 4,
+    });
+    expect(w.startIndex).toBe(100 - 4);
+    expect(w.endIndex).toBe(110 + 4);
+    // topPad is the exact pixel gap to startIndex, not start*20.
+    expect(w.topPad).toBe(rowOffsets[w.startIndex]);
+  });
+
+  it("preserves the exact-height invariant for non-uniform rows", () => {
+    // Heights vary per row so the uniform model would drift.
+    const heights = Array.from({ length: 500 }, (_, i) =>
+      20 + (i % 7) * 6,
+    );
+    const rowOffsets = offsetsFromHeights(heights);
+    const total = rowOffsets[heights.length];
+    const w = computeVirtualWindow({
+      scrollTop: 3210,
+      viewportHeight: 640,
+      rowCount: heights.length,
+      rowHeight: 24,
+      rowOffsets,
+      frozenLeadingRows: 3,
+    });
+    const frozenPx = rowOffsets[3];
+    let renderedPx = 0;
+    for (let i = w.startIndex; i <= w.endIndex; i++) renderedPx += heights[i];
+    // frozen + topPad + rendered + bottomPad must equal total height
+    // exactly, so the scrollbar geometry never drifts.
+    expect(frozenPx + w.topPad + renderedPx + w.bottomPad).toBe(total);
+  });
+
+  it("includes the row that straddles the scroll offset (no drift)", () => {
+    // A tall row early on shifts every later row's true position.
+    const heights = [200, ...Array.from({ length: 999 }, () => 20)];
+    const rowOffsets = offsetsFromHeights(heights);
+    // scrollTop lands inside row 5: top(5) = 200 + 4*20 = 280.
+    const w = computeVirtualWindow({
+      scrollTop: 285,
+      viewportHeight: 100,
+      rowCount: heights.length,
+      rowHeight: 20,
+      rowOffsets,
+      overscan: 0,
+    });
+    expect(w.startIndex).toBe(5);
+  });
+
+  it("falls back to the uniform model when rowOffsets length mismatches", () => {
+    // Stale prefix-sum (wrong length) must not index out of bounds;
+    // it should behave exactly like the uniform path.
+    const stale = [0, 20, 40]; // length 3, but rowCount is 1000
+    const withStale = computeVirtualWindow({
+      scrollTop: 4000,
+      viewportHeight: 200,
+      rowCount: 1000,
+      rowHeight: 20,
+      rowOffsets: stale,
+      overscan: 4,
+    });
+    const uniform = computeVirtualWindow({
+      scrollTop: 4000,
+      viewportHeight: 200,
+      rowCount: 1000,
+      rowHeight: 20,
+      overscan: 4,
+    });
+    expect(withStale).toEqual(uniform);
+  });
+});

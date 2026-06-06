@@ -8,8 +8,14 @@ import {
 export interface UseVirtualRowsOptions {
   /** Total number of rows in the dataset. */
   rowCount: number;
-  /** Uniform row height (px) used for the windowing math. */
+  /** Uniform row height (px) used for the windowing math. Ignored
+   * when a valid `rowOffsets` prefix-sum is supplied. */
   rowHeight: number;
+  /** Optional cumulative prefix-sum of row tops (length
+   * `rowCount + 1`) for variable-height grids. When provided the
+   * window is computed exactly from this geometry instead of the
+   * uniform `rowHeight`. */
+  rowOffsets?: readonly number[];
   /** Turn windowing on. When `false` the hook reports the full range
    * so small grids render exactly as they did before virtualization. */
   enabled: boolean;
@@ -37,8 +43,14 @@ export function useVirtualRows(
   scrollRef: RefObject<HTMLElement | null>,
   options: UseVirtualRowsOptions,
 ): VirtualWindow & { onScroll: () => void } {
-  const { rowCount, rowHeight, enabled, frozenLeadingRows = 0, overscan } =
-    options;
+  const {
+    rowCount,
+    rowHeight,
+    rowOffsets,
+    enabled,
+    frozenLeadingRows = 0,
+    overscan,
+  } = options;
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -83,6 +95,7 @@ export function useVirtualRows(
     viewportHeight,
     rowCount,
     rowHeight,
+    rowOffsets,
     overscan,
     frozenLeadingRows,
   });

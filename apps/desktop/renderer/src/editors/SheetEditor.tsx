@@ -888,6 +888,29 @@ export default function SheetEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet.rows.length, sheet.rowHeights]);
 
+  // When any row has been resized away from the default height, the
+  // uniform virtualization model would drift the scrollbar. Build a
+  // cumulative prefix-sum of row tops (length `rows.length + 1`,
+  // ending in the total content height) so the windowing math is exact.
+  // When every row is the default height the uniform model is already
+  // exact, so we pass `undefined` and keep the cheaper path.
+  const hasCustomRowHeights = useMemo(
+    () =>
+      !!sheet.rowHeights &&
+      sheet.rowHeights.some((h) => !!h && h !== DEFAULT_ROW_HEIGHT),
+    [sheet.rowHeights],
+  );
+  const rowOffsets = useMemo<number[] | undefined>(() => {
+    if (!hasCustomRowHeights) return undefined;
+    const out = new Array<number>(sheet.rows.length + 1);
+    out[0] = 0;
+    for (let i = 0; i < sheet.rows.length; i++) {
+      out[i + 1] = out[i] + rowHeight(i);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet.rows.length, sheet.rowHeights, hasCustomRowHeights]);
+
   // ── row virtualization ────────────────────────────────────────
   // Window the body for large sheets so only the rows near the
   // viewport are in the DOM. `useVirtualRows` reports the full range
@@ -904,6 +927,7 @@ export default function SheetEditor({
   } = useVirtualRows(gridWrapperRef, {
     rowCount: sheet.rows.length,
     rowHeight: DEFAULT_ROW_HEIGHT,
+    rowOffsets,
     enabled: virtualizeRows,
     frozenLeadingRows: frozenRowCount,
   });
