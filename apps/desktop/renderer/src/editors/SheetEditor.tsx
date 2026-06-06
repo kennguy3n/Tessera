@@ -30,6 +30,7 @@ import {
   selectionToTSV,
 } from "./sheetCopyPaste";
 import { type FillDirection, fillSeries } from "./sheetAutoFill";
+import { useVirtualRows } from "../hooks/useVirtualRows";
 
 export type { SheetContent } from "./sheetEditorTypes";
 
@@ -68,6 +69,15 @@ const DEFAULT_COLUMN_WIDTH = 96;
 const DEFAULT_ROW_HEIGHT = 24;
 const MIN_COLUMN_WIDTH = 32;
 const MIN_ROW_HEIGHT = 16;
+
+/**
+ * Row count at or above which the grid body is virtualized (only the
+ * rows intersecting the viewport are committed to the DOM). Chosen
+ * well below the 10K+ "large sheet" target so those sheets always
+ * window, and comfortably above any realistic small sheet so the
+ * common case keeps its exact prior full-render path.
+ */
+const VIRTUALIZE_ROW_THRESHOLD = 1000;
 
 export default function SheetEditor({
   content,
@@ -855,8 +865,74 @@ export default function SheetEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet.rows.length, sheet.rowHeights]);
 
+  // ── row virtualization ────────────────────────────────────────
+  // Window the body for large sheets so only the rows near the
+  // viewport are in the DOM. `useVirtualRows` reports the full range
+  // (and zero padding) when disabled, so the small-sheet render path
+  // is byte-for-byte unchanged.
+  const frozenRowCount = Math.min(sheet.frozenRows ?? 0, sheet.rows.length);
+  const virtualizeRows = sheet.rows.length >= VIRTUALIZE_ROW_THRESHOLD;
+  const {
+    startIndex: rowWindowStart,
+    endIndex: rowWindowEnd,
+    topPad: rowTopPad,
+    bottomPad: rowBottomPad,
+    onScroll: onGridScroll,
+  } = useVirtualRows(gridWrapperRef, {
+    rowCount: sheet.rows.length,
+    rowHeight: DEFAULT_ROW_HEIGHT,
+    enabled: virtualizeRows,
+    frozenLeadingRows: frozenRowCount,
+  });
+
+  type RowRenderItem =
+    | { type: "row"; ri: number }
+    | { type: "spacer"; key: string; height: number };
+  const rowRenderPlan = useMemo<RowRenderItem[]>(() => {
+    const plan: RowRenderItem[] = [];
+    if (!virtualizeRows) {
+      for (let i = 0; i < sheet.rows.length; i++) {
+        plan.push({ type: "row", ri: i });
+      }
+      return plan;
+    }
+    // Frozen leading rows always render so they can stay pinned.
+    for (let i = 0; i < frozenRowCount; i++) {
+      plan.push({ type: "row", ri: i });
+    }
+    if (rowTopPad > 0) {
+      plan.push({
+        type: "spacer",
+        key: "sheet-virtual-top-pad",
+        height: rowTopPad,
+      });
+    }
+    for (let i = rowWindowStart; i <= rowWindowEnd; i++) {
+      plan.push({ type: "row", ri: i });
+    }
+    if (rowBottomPad > 0) {
+      plan.push({
+        type: "spacer",
+        key: "sheet-virtual-bottom-pad",
+        height: rowBottomPad,
+      });
+    }
+    return plan;
+  }, [
+    virtualizeRows,
+    sheet.rows.length,
+    frozenRowCount,
+    rowTopPad,
+    rowBottomPad,
+    rowWindowStart,
+    rowWindowEnd,
+  ]);
+
   return (
-    <div className="sheet-editor">
+    <div
+      className="sheet-editor"
+      style={{ display: "flex", flexDirection: "column", height: "100%" }}
+    >
       <div className="sheet-toolbar">
         <button type="button" className="btn-sm" onClick={addColumn}>
           + Column
@@ -946,6 +1022,8 @@ export default function SheetEditor({
         ref={gridWrapperRef}
         tabIndex={0}
         onKeyDown={handleGridKeyDown}
+        onScroll={onGridScroll}
+        style={{ flex: 1, minHeight: 0, overflow: "auto" }}
       >
         <table className="sheet-grid">
           <thead>
@@ -1008,7 +1086,23 @@ export default function SheetEditor({
             </tr>
           </thead>
           <tbody>
-            {sheet.rows.map((row, ri) => {
+            {rowRenderPlan.map((item) => {
+              if (item.type === "spacer") {
+                return (
+                  <tr
+                    key={item.key}
+                    data-testid={item.key}
+                    aria-hidden="true"
+                  >
+                    <td
+                      colSpan={sheet.columns.length + 1}
+                      style={{ height: item.height, padding: 0, border: "none" }}
+                    />
+                  </tr>
+                );
+              }
+              const ri = item.ri;
+              const row = sheet.rows[ri];
               const rowFrozen = isFrozenRow(ri);
               return (
               <tr

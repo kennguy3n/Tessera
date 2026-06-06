@@ -41,6 +41,13 @@ export default tseslint.config(
     ignores: [
       "dist/**",
       "dist-electron/**",
+      // Vite renderer build output (`build.outDir` in vite.config.ts).
+      // Sibling of `dist-electron/**` above; without it a local
+      // `npm run build` before `npm run lint` makes ESLint try to
+      // parse the minified production bundles and emit thousands of
+      // spurious errors. CI never hits this because it lints before
+      // building, but the local workflow does.
+      "renderer-dist/**",
       "node_modules/**",
       // Build outputs from sub-workspaces (e.g. the extension's tsc emit)
       // happen to live inside `apps/desktop/node_modules/...` so they're

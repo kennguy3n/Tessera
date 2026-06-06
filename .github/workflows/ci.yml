@@ -238,6 +238,63 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Cold-start perf gate. Boots the built Electron app once in headless
+  # "perf smoke" mode and fails if boot-to-first-render exceeds the 3s
+  # budget on the ubuntu runner. This is the required perf gate
+  # (ubuntu-only, no continue-on-error): a cold-start regression blocks
+  # merge the same way a failing test does.
+  #
+  # Only runs when TypeScript/app sources changed (same path filter as
+  # the `typescript` job) — a Rust-only or docs-only PR can't move the
+  # renderer/electron boot path, so we don't pay for an Electron boot on
+  # those. The job builds the app itself (`npm run build`) rather than
+  # depending on the `typescript` job because matrix jobs don't share a
+  # workspace; reusing its artifacts would need an upload/download
+  # round-trip that costs more than the ~30s incremental build here.
+  cold-start:
+    name: Cold-start perf gate
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # xvfb provides the virtual X display the gate's `xvfb-run`
+      # wrapper needs; the rest are Electron/Chromium's shared-library
+      # runtime deps that aren't guaranteed on a bare runner. libsecret
+      # matches the other ubuntu jobs (keychain backend probe at boot).
+      - name: Install headless Electron deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libsecret-1-dev \
+            pkg-config \
+            libnss3 \
+            libgbm1 \
+            libasound2 \
+            libgtk-3-0 \
+            libxss1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The gate auto-wraps itself in `xvfb-run` and passes
+      # `--no-sandbox`; it boots the app once, reads the
+      # `TESSERA_COLD_START_MS` marker the main process prints on first
+      # paint, and exits non-zero if it exceeds the budget.
+      - name: Cold-start gate
+        run: npm run perf:cold-start
+
   # Single aggregator check. This is the one to require in branch
   # protection on `main`; everything else is conditional or advisory.
   #
@@ -252,7 +309,7 @@ jobs:
   ci-success:
     name: CI
     runs-on: ubuntu-22.04
-    needs: [changes, rust, typescript]
+    needs: [changes, rust, typescript, cold-start]
     if: always()
     steps:
       - name: Verify required job outcomes
@@ -260,10 +317,12 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           TS_RESULT: ${{ needs.typescript.result }}
+          COLD_START_RESULT: ${{ needs.cold-start.result }}
         run: |
           echo "changes:    $CHANGES_RESULT"
           echo "rust:       $RUST_RESULT"
           echo "typescript: $TS_RESULT"
+          echo "cold-start: $COLD_START_RESULT"
 
           fail=0
           if [ "$CHANGES_RESULT" != "success" ]; then
@@ -282,6 +341,10 @@ jobs:
           case "$TS_RESULT" in
             success|skipped) ;;
             *) echo "::error::Required TypeScript gate did not succeed (result: $TS_RESULT)."; fail=1 ;;
+          esac
+          case "$COLD_START_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required cold-start perf gate did not succeed (result: $COLD_START_RESULT)."; fail=1 ;;
           esac
 
           if [ "$fail" -ne 0 ]; then
