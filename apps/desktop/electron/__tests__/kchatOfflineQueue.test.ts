@@ -17,6 +17,7 @@ import {
   KchatOfflineQueue,
   MAX_REPLAY_ATTEMPTS,
   isOfflineError,
+  isNonReplayableCommit,
   type KchatQueueFs,
 } from "../kchat/kchatOfflineQueue";
 
@@ -138,6 +139,27 @@ describe("isOfflineError", () => {
   it("returns false for null/ordinary errors", () => {
     expect(isOfflineError(null)).toBe(false);
     expect(isOfflineError(new Error("artifact not found"))).toBe(false);
+  });
+
+  it("refuses to classify a nonReplayableCommit error as offline, even with a transport cause", () => {
+    // A share whose primary upload already landed but whose evidence
+    // pack then failed offline must NOT be queued (replaying would
+    // duplicate the primary). The producer wraps it with the
+    // `nonReplayableCommit` marker; `isOfflineError` must honour that
+    // marker ahead of the usual transport-keyword / `cause` recursion,
+    // so a wrapped "fetch failed" cause can't leak back through.
+    const wrapped = Object.assign(new Error("fetch failed"), {
+      nonReplayableCommit: true,
+      cause: Object.assign(new Error("boom"), { code: "ECONNREFUSED" }),
+    });
+    expect(isNonReplayableCommit(wrapped)).toBe(true);
+    expect(isOfflineError(wrapped)).toBe(false);
+    // Sanity: without the marker, the same shape IS offline.
+    const unmarked = Object.assign(new Error("fetch failed"), {
+      cause: Object.assign(new Error("boom"), { code: "ECONNREFUSED" }),
+    });
+    expect(isNonReplayableCommit(unmarked)).toBe(false);
+    expect(isOfflineError(unmarked)).toBe(true);
   });
 });
 
@@ -312,6 +334,51 @@ describe("KchatOfflineQueue replay", () => {
     const final = await q.replay();
     expect(final).toEqual({ replayed: 0, deadLettered: 1, remaining: 0 });
     expect(q.size()).toBe(0);
+  });
+
+  it("drops (dead-letters) a nonReplayableCommit failure immediately without retrying", async () => {
+    // A queued shareArtifact whose primary upload lands on replay but
+    // whose evidence pack then fails offline surfaces as a
+    // `nonReplayableCommit` error. Retrying would re-upload the primary
+    // (duplicate), so replay must drop the op on the first occurrence
+    // rather than re-queue it for another attempt.
+    const q = makeQueue(fs, ["op1", "op2"]);
+    await q.enqueueShareArtifact({
+      artifactId: "a1",
+      channelId: "c1",
+      format: "markdown",
+      includeCitations: false,
+      includeEvidencePack: true,
+    });
+    await q.enqueueIngestChannel({ channelId: "c2", channelName: "general" });
+
+    let shareAttempts = 0;
+    let ingestRan = false;
+    q.setExecutors({
+      shareArtifact: async () => {
+        shareAttempts += 1;
+        // Primary already committed; evidence pack failed offline.
+        throw Object.assign(new Error("fetch failed"), {
+          nonReplayableCommit: true,
+        });
+      },
+      ingestChannel: async () => {
+        ingestRan = true;
+      },
+    });
+
+    const summary = await q.replay();
+    // The share op is dropped (dead-lettered), NOT re-queued, and the
+    // later ingest op still replays — one committed-share failure must
+    // not block the rest of the queue.
+    expect(summary).toEqual({ replayed: 1, deadLettered: 1, remaining: 0 });
+    expect(shareAttempts).toBe(1);
+    expect(ingestRan).toBe(true);
+    expect(q.size()).toBe(0);
+
+    // A second replay does not re-run the share executor (it's gone).
+    await q.replay();
+    expect(shareAttempts).toBe(1);
   });
 
   it("persists across a fresh instance (crash/restart survival)", async () => {

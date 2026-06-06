@@ -2705,6 +2705,31 @@ function mimeForFormat(format: string): string {
   }
 }
 
+/**
+ * Raised when a share operation has already committed an irreversible
+ * side-effect (the primary file upload landed in the channel) but a
+ * later phase — the evidence-pack upload — then failed.
+ *
+ * Such a failure must NOT be treated as offline-retryable. The offline
+ * queue replays the *entire* `KchatShareArtifactRequest`, which would
+ * re-upload the primary file and leave a duplicate in the channel. By
+ * carrying the `nonReplayableCommit` marker (which {@link isOfflineError}
+ * short-circuits on), this wrapper forces the IPC handler down the
+ * `throw toIpcError(err)` path so the renderer surfaces a partial
+ * failure and the user can retry manually — matching the pre-offline-
+ * queue behaviour where evidence-pack failures were surfaced, not
+ * swallowed.
+ */
+class KchatPartialShareError extends Error {
+  /** Marker read by `isOfflineError` to refuse offline-queueing. */
+  readonly nonReplayableCommit = true;
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "KchatPartialShareError";
+    this.cause = cause;
+  }
+}
+
 /** Outcome of a single share operation (attachment or deeplink). */
 interface ShareArtifactResult {
   /** File id when delivered as an attachment; `""` for deeplink. */
@@ -2808,7 +2833,12 @@ async function runShareArtifactOperation(
         req.includeCitations,
         false,
       );
-      throw err;
+      // The primary upload has already landed, so this operation can no
+      // longer be replayed atomically. Wrap the failure (even a genuine
+      // offline one) so `isOfflineError` refuses it and the IPC handler
+      // surfaces a partial failure instead of offline-queueing the whole
+      // request — which would duplicate the primary file on replay.
+      throw new KchatPartialShareError(err);
     }
   }
 

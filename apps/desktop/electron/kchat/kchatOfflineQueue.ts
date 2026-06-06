@@ -185,6 +185,22 @@ export function defaultOfflineQueuePath(): string {
 }
 
 /**
+ * Does `err` carry the `nonReplayableCommit` marker? Such an error
+ * signals a multi-phase operation that has already committed an
+ * irreversible side-effect (e.g. a `shareArtifact` whose primary upload
+ * landed before the evidence-pack phase failed). Re-running the whole
+ * request would duplicate that side-effect, so the operation must never
+ * be offline-queued ({@link isOfflineError} returns false for it) and
+ * must never be retried on replay (it is dead-lettered immediately).
+ */
+export function isNonReplayableCommit(err: unknown): boolean {
+  return (
+    err != null &&
+    (err as { nonReplayableCommit?: unknown }).nonReplayableCommit === true
+  );
+}
+
+/**
  * Heuristic: does `err` indicate the KChat server was **unreachable**
  * — i.e. the request never produced an HTTP response — as opposed to
  * a server that responded with an error status?
@@ -212,6 +228,12 @@ export function defaultOfflineQueuePath(): string {
  */
 export function isOfflineError(err: unknown): boolean {
   if (err == null) return false;
+
+  // A post-commit failure is not safely replayable — surface it to the
+  // user instead of offline-queueing. Checked first, ahead of the
+  // `cause` recursion below, so a wrapped transport error can't leak
+  // back through as "offline".
+  if (isNonReplayableCommit(err)) return false;
 
   // Duck-type KchatRequestError without importing it (avoids a
   // cycle with kchatClient). A numeric `status` means the server
@@ -424,6 +446,15 @@ export class KchatOfflineQueue {
         await executor(op.payload as never);
         replayed += 1;
       } catch (err) {
+        if (isNonReplayableCommit(err)) {
+          // The operation already committed an irreversible side-effect
+          // on this attempt (e.g. the primary upload landed before the
+          // evidence pack failed). Retrying would duplicate it, so drop
+          // the op immediately rather than re-queue it.
+          op.lastError = errorMessage(err);
+          deadLettered += 1;
+          continue;
+        }
         if (isOfflineError(err)) {
           // Still offline — stop draining, preserve order, do NOT
           // count this as a failed attempt.

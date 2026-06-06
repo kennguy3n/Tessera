@@ -1416,6 +1416,48 @@ describe("kchat:shareArtifact", () => {
     );
   });
 
+  it("does NOT offline-queue when the evidence pack fails offline after the primary already landed", async () => {
+    // Regression: the offline queue replays the ENTIRE
+    // KchatShareArtifactRequest. If the primary upload succeeds and
+    // only the evidence-pack upload then fails with a transport-level
+    // (offline) error, enqueueing the whole request would re-upload
+    // the primary on replay — duplicating it in the channel. The
+    // handler must instead surface the partial failure (re-throw) and
+    // NOT enqueue, leaving the already-delivered primary in place for
+    // the user to retry the pack manually.
+    clientMock.uploadFile
+      .mockResolvedValueOnce({
+        id: "fidprimary00000000000abc",
+        name: "Quarterly-Roadmap.md",
+      })
+      .mockRejectedValueOnce(
+        new Error("fetch failed: connect ECONNREFUSED 127.0.0.1:443"),
+      );
+    await expect(
+      handler("kchat:shareArtifact")(
+        EVENT,
+        "550e8400-e29b-41d4-a716-446655440000",
+        "chid0000000000000000abcd",
+        "markdown",
+        true,
+        true, // includeEvidencePack — primary succeeds, pack fails offline
+      ),
+    ).rejects.toThrow();
+    // The critical assertion: the whole request was NOT queued, so a
+    // reconnect can't re-upload the primary file.
+    expect(offlineQueueMock.enqueueShareArtifact).not.toHaveBeenCalled();
+    // Both uploads were attempted (primary then pack) and the audit
+    // row still records the actual on-channel outcome.
+    expect(clientMock.uploadFile).toHaveBeenCalledTimes(2);
+    expect(bridgeMock.bridgeLogKchatArtifactShared).toHaveBeenCalledWith(
+      "550e8400-e29b-41d4-a716-446655440000",
+      "chid0000000000000000abcd",
+      "markdown",
+      true,
+      false,
+    );
+  });
+
   it("audits with evidenceShared=true ONLY when the pack actually uploaded", async () => {
     // Both uploads succeed → audit row reflects the requested
     // evidence flag (which here equals the actual outcome).
