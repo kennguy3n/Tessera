@@ -2158,25 +2158,30 @@ impl SourceStore {
             // transaction so a crash between them can't strand the
             // `indexed_files` row with its chunks already gone (or vice
             // versa).
-            with_secure_delete_transaction(&mut conn, |txn| {
-                txn.execute(
-                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                    params![file_id],
-                )
-                .map_err(Error::Sqlite)?;
+            let deleted_chunks = with_secure_delete_transaction(&mut conn, |txn| {
+                let deleted = txn
+                    .execute(
+                        "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                        params![file_id],
+                    )
+                    .map_err(Error::Sqlite)?;
                 txn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
                     .map_err(Error::Sqlite)?;
-                Ok(())
+                Ok(deleted)
             })?;
-            // The chunk delete cascades through `chunks_ad_embeddings`
-            // (so the cached IVF index may now reference deleted rows)
-            // and changes the corpus's non-ASCII ratio. Invalidate the
-            // multilingual-hint cache and bump the embedding generation
-            // — same post-chunk-delete bookkeeping as
-            // `delete_chunks_for_indexed_file` / `remove_source`.
+            // Same post-chunk-delete bookkeeping as
+            // `delete_chunks_for_indexed_file`: the removed chunks changed
+            // the corpus's non-ASCII ratio, so always drop the
+            // multilingual-hint cache; and the delete cascades through
+            // `chunks_ad_embeddings` (stale cached IVF index), so bump the
+            // embedding generation — but only when chunks were actually
+            // removed, to avoid forcing a gratuitous index rebuild for a
+            // file that had none.
             drop(conn);
             self.invalidate_non_ascii_cache();
-            self.bump_embedding_generation();
+            if deleted_chunks > 0 {
+                self.bump_embedding_generation();
+            }
         }
         Ok(())
     }
@@ -3211,6 +3216,11 @@ mod tests {
 
         // Two indexed files, each with chunks, so the chunk delete spans
         // more than one file (the path the old per-file loop walked).
+        // Capture the file ids so the orphan check can query `chunks`
+        // directly by id rather than through an `indexed_files` subquery
+        // (which empties once the parent rows are deleted, making the
+        // assertion trivially pass even if chunks were stranded).
+        let mut file_ids = Vec::new();
         for (path, hash) in [("/tmp/multi/a.txt", "h-a"), ("/tmp/multi/b.txt", "h-b")] {
             let fid = store
                 .upsert_indexed_file(&source.id, path, hash, "2026-01-01")
@@ -3229,26 +3239,35 @@ mod tests {
                     }],
                 )
                 .unwrap();
+            file_ids.push(fid);
         }
 
         let id_str = source.id.to_string();
-        let count = |sql: &str| -> i64 {
+        let count_by_source = |sql: &str| -> i64 {
             let conn = store.conn.lock().expect("conn poisoned");
             conn.query_row(sql, params![id_str], |row| row.get::<_, i64>(0))
                 .expect("count query should return a row")
         };
+        // Count chunks by the captured file ids directly, independent of
+        // whether the `indexed_files` rows still exist.
+        let count_chunks_for_files = || -> i64 {
+            let conn = store.conn.lock().expect("conn poisoned");
+            let placeholders = vec!["?"; file_ids.len()].join(", ");
+            let sql =
+                format!("SELECT COUNT(*) FROM chunks WHERE indexed_file_id IN ({placeholders})");
+            conn.query_row(&sql, rusqlite::params_from_iter(file_ids.iter()), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count query should return a row")
+        };
 
         assert_eq!(
-            count("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
+            count_by_source("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
             2,
             "precondition: both files indexed",
         );
         assert_eq!(
-            count(
-                "SELECT COUNT(*) FROM chunks
-                 WHERE indexed_file_id IN
-                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
-            ),
+            count_chunks_for_files(),
             2,
             "precondition: both files' chunks present",
         );
@@ -3260,16 +3279,15 @@ mod tests {
             "the source row must be gone",
         );
         assert_eq!(
-            count("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
+            count_by_source("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
             0,
             "no orphaned indexed_files rows may survive remove_source",
         );
+        // Direct by-id check: even though the `indexed_files` rows are
+        // gone, the chunk rows keyed to those ids must also be gone — a
+        // partial scrub would leave them stranded here.
         assert_eq!(
-            count(
-                "SELECT COUNT(*) FROM chunks
-                 WHERE indexed_file_id IN
-                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
-            ),
+            count_chunks_for_files(),
             0,
             "no orphaned chunk rows may survive remove_source",
         );
