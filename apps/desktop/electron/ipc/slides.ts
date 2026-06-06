@@ -28,7 +28,7 @@
  * no access to `window.tessera` or Node.
  */
 import { app, BrowserWindow } from "electron";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { idempotentHandle } from "./register";
@@ -175,11 +175,27 @@ export function buildPresentationHtml(deck: NormalizedPresentation): string {
     role === "presenter" ? "Presenter view" : "";
 
   function clamp(i) { return Math.max(0, Math.min(total - 1, i)); }
-  function readIndex() {
-    var raw = parseInt(window.localStorage.getItem(KEY) || "", 10);
-    return isNaN(raw) ? clamp(deck.startIndex || 0) : clamp(raw);
+  // localStorage is the cross-window sync channel, but it can be
+  // unavailable for a file:// origin (or throw in locked-down
+  // contexts). Guard every access and keep a per-window fallback so a
+  // window still renders and navigates on its own; only live sync
+  // between the two windows is lost when storage is unavailable.
+  var memIndex = clamp(deck.startIndex || 0);
+  function storageGet() {
+    try { return window.localStorage.getItem(KEY); } catch (e) { return null; }
   }
-  function writeIndex(i) { window.localStorage.setItem(KEY, String(clamp(i))); }
+  function storageSet(v) {
+    try { window.localStorage.setItem(KEY, v); } catch (e) { /* fall back to memIndex */ }
+  }
+  function readIndex() {
+    var stored = storageGet();
+    var raw = parseInt(stored === null ? "" : stored, 10);
+    return isNaN(raw) ? clamp(memIndex) : clamp(raw);
+  }
+  function writeIndex(i) {
+    memIndex = clamp(i);
+    storageSet(String(memIndex));
+  }
 
   function fillBullets(ul, lines) {
     ul.textContent = "";
@@ -222,7 +238,7 @@ export function buildPresentationHtml(deck: NormalizedPresentation): string {
 
   function go(delta) { writeIndex(readIndex() + delta); render(); }
 
-  if (window.localStorage.getItem(KEY) === null) writeIndex(deck.startIndex || 0);
+  if (storageGet() === null) writeIndex(deck.startIndex || 0);
 
   window.addEventListener("keydown", function (e) {
     if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
@@ -318,13 +334,24 @@ export function registerSlidesHandlers(): void {
       await presenter.loadFile(file, { hash: "presenter" });
 
       // Closing either window tears down the other so the user is never
-      // left with an orphaned half of the presentation.
-      const closeBoth = () => {
+      // left with an orphaned half of the presentation. Once both are
+      // gone, the generated temp file is no longer needed, so remove it
+      // (best-effort) to avoid leaking a file per presentation.
+      let closedCount = 0;
+      const onClosed = () => {
         if (!audience.isDestroyed()) audience.close();
         if (!presenter.isDestroyed()) presenter.close();
+        closedCount += 1;
+        if (closedCount >= 2) {
+          try {
+            unlinkSync(file);
+          } catch {
+            /* best-effort temp cleanup */
+          }
+        }
       };
-      audience.on("closed", closeBoth);
-      presenter.on("closed", closeBoth);
+      audience.on("closed", onClosed);
+      presenter.on("closed", onClosed);
 
       return { ok: true, slideCount };
     },

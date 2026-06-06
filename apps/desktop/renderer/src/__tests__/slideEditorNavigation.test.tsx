@@ -403,3 +403,39 @@ describe("SlideEditor sidebar — thumbnail ref-callbacks are stable across rend
     expect(screen.getByRole("button", { name: /3 Gamma/ })).toBe(initialThird);
   });
 });
+
+describe("SlideEditor presenter mode", () => {
+  type StartPresentation = NonNullable<
+    NonNullable<typeof window.tessera>["slides"]
+  >["startPresentation"];
+
+  function presentSpy(): ReturnType<typeof vi.fn> {
+    const spy = vi.fn().mockResolvedValue({ ok: true, slideCount: 0 });
+    window.tessera.slides.startPresentation =
+      spy as unknown as StartPresentation;
+    return spy;
+  }
+
+  it("Present passes the flattened deck and the active slide as start index", () => {
+    const spy = presentSpy();
+    renderDeck();
+
+    // Default active slide is the first one.
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenLastCalledWith({
+      startIndex: 0,
+      slides: [
+        { title: "Alpha", lines: ["alpha body"], notes: "" },
+        { title: "Beta", lines: ["beta body"], notes: "" },
+        { title: "Gamma", lines: ["gamma body"], notes: "" },
+      ],
+    });
+
+    // Selecting a different slide makes it the presentation entry point.
+    fireEvent.click(screen.getByRole("button", { name: /3 Gamma/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[1][0]).toMatchObject({ startIndex: 2 });
+  });
+});

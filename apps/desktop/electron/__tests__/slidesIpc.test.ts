@@ -28,6 +28,7 @@ const {
   browserWindowCtor,
   writeFileSyncMock,
   mkdirSyncMock,
+  unlinkSyncMock,
 } = vi.hoisted(() => ({
   handleMock: vi.fn(),
   removeHandlerMock: vi.fn(),
@@ -37,6 +38,7 @@ const {
   browserWindowCtor: vi.fn(),
   writeFileSyncMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
+  unlinkSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => {
@@ -66,7 +68,13 @@ vi.mock("electron", () => {
 vi.mock("node:fs", () => {
   const writeFileSync = (...args: unknown[]) => writeFileSyncMock(...args);
   const mkdirSync = (...args: unknown[]) => mkdirSyncMock(...args);
-  return { writeFileSync, mkdirSync, default: { writeFileSync, mkdirSync } };
+  const unlinkSync = (...args: unknown[]) => unlinkSyncMock(...args);
+  return {
+    writeFileSync,
+    mkdirSync,
+    unlinkSync,
+    default: { writeFileSync, mkdirSync, unlinkSync },
+  };
 });
 
 import {
@@ -102,6 +110,7 @@ beforeEach(() => {
   browserWindowCtor.mockClear();
   writeFileSyncMock.mockClear();
   mkdirSyncMock.mockClear();
+  unlinkSyncMock.mockClear();
   isDestroyedMock.mockReturnValue(false);
 });
 
@@ -217,6 +226,27 @@ describe("registerSlidesHandlers", () => {
       (c) => (c[1] as { hash: string }).hash,
     );
     expect(hashes).toEqual(["audience", "presenter"]);
+  });
+
+  it("removes the generated temp file only once both windows have closed", async () => {
+    registerSlidesHandlers();
+    const handler = getHandler("slides:startPresentation");
+    await handler({}, SAMPLE);
+
+    const writtenFile = writeFileSyncMock.mock.calls[0][0] as string;
+    const closedHandlers = onMock.mock.calls
+      .filter((c) => c[0] === "closed")
+      .map((c) => c[1] as () => void);
+    expect(closedHandlers).toHaveLength(2);
+
+    // First window closes: the file is still needed by the second.
+    closedHandlers[0]();
+    expect(unlinkSyncMock).not.toHaveBeenCalled();
+
+    // Second window closes: now the temp file is cleaned up exactly once.
+    closedHandlers[1]();
+    expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
+    expect(unlinkSyncMock).toHaveBeenCalledWith(writtenFile);
   });
 
   it("short-circuits on an empty deck without opening windows", async () => {
