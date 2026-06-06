@@ -2,7 +2,7 @@
  * Offline operation queue for KChat write actions.
  *
  * KChat is a remote (Mattermost-v4) service; Tessera is local-first
- * and must degrade gracefully when the server is unreachable. Two
+ * and must degrade gracefully when the server is unreachable. Three
  * user-initiated write actions are expensive to lose:
  *
  *   - `shareArtifact` — exporting an artifact and uploading it to a
@@ -14,6 +14,12 @@
  *     the IPC layer (the in-flight map + `withChannelSyncLock`
  *     collapse duplicates), so a replayed enqueue can never double
  *     up a source row.
+ *   - `postTask` — posting a Tessera task to a channel
+ *     (`kchat:postTaskToChannel`). We persist the normalised task,
+ *     not the rendered message, and re-render with
+ *     `formatTaskForKchat` on replay. Only a transport-level failure
+ *     (no post was created) queues, so a replay cannot duplicate a
+ *     post the server already accepted.
  *
  * When the IPC handler observes an offline error (see
  * {@link isOfflineError}) it enqueues the request instead of
@@ -48,9 +54,13 @@ import { randomUUID } from "crypto";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import type { TaskForKchat } from "./kchatTaskSync";
 
 /** Discriminator for a queued operation. */
-export type KchatQueuedOpType = "shareArtifact" | "ingestChannel";
+export type KchatQueuedOpType =
+  | "shareArtifact"
+  | "ingestChannel"
+  | "postTask";
 
 /** Persisted request envelope for a deferred `shareArtifact`. */
 export interface KchatShareArtifactRequest {
@@ -73,10 +83,23 @@ export interface KchatIngestChannelRequest {
   channelName: string;
 }
 
+/**
+ * Persisted request envelope for a deferred `postTaskToChannel`.
+ * Only the normalised task plus its target channel is stored; the
+ * KChat message body is re-rendered from the task on replay
+ * (`formatTaskForKchat`), mirroring how `shareArtifact` re-exports
+ * its bytes rather than persisting them.
+ */
+export interface KchatPostTaskRequest {
+  channelId: string;
+  task: TaskForKchat;
+}
+
 /** Map of op-type to its payload shape. */
 export interface KchatQueuedPayloadMap {
   shareArtifact: KchatShareArtifactRequest;
   ingestChannel: KchatIngestChannelRequest;
+  postTask: KchatPostTaskRequest;
 }
 
 /** A single persisted queue entry. */
@@ -104,6 +127,7 @@ export type KchatQueueExecutor<T extends KchatQueuedOpType> = (
 export interface KchatQueueExecutors {
   shareArtifact?: KchatQueueExecutor<"shareArtifact">;
   ingestChannel?: KchatQueueExecutor<"ingestChannel">;
+  postTask?: KchatQueueExecutor<"postTask">;
 }
 
 /** Outcome summary returned by {@link KchatOfflineQueue.replay}. */
@@ -317,6 +341,11 @@ export class KchatOfflineQueue {
     return this.enqueue("ingestChannel", payload);
   }
 
+  /** Enqueue a deferred task-post request. */
+  async enqueuePostTask(payload: KchatPostTaskRequest): Promise<string> {
+    return this.enqueue("postTask", payload);
+  }
+
   private async enqueue<T extends KchatQueuedOpType>(
     type: T,
     payload: KchatQueuedPayloadMap[T],
@@ -486,7 +515,13 @@ function sanitizeOperation(value: unknown): KchatQueuedOperation | null {
   if (typeof value !== "object" || value === null) return null;
   const rec = value as Record<string, unknown>;
   const type = rec.type;
-  if (type !== "shareArtifact" && type !== "ingestChannel") return null;
+  if (
+    type !== "shareArtifact" &&
+    type !== "ingestChannel" &&
+    type !== "postTask"
+  ) {
+    return null;
+  }
   const payload = sanitizePayload(type, rec.payload);
   if (!payload) return null;
   const id = typeof rec.id === "string" && rec.id.length > 0 ? rec.id : null;
@@ -532,9 +567,34 @@ function sanitizePayload(
         : {}),
     };
   }
+  if (type === "postTask") {
+    if (typeof rec.channelId !== "string") return null;
+    const task = sanitizeTaskForKchat(rec.task);
+    if (!task) return null;
+    return { channelId: rec.channelId, task };
+  }
   // ingestChannel
   if (typeof rec.channelId !== "string" || typeof rec.channelName !== "string") {
     return null;
   }
   return { channelId: rec.channelId, channelName: rec.channelName };
+}
+
+/**
+ * Validate a persisted {@link TaskForKchat}. `id` and `title` are
+ * required; the remaining fields are optional strings that are only
+ * carried through when present, so a version-skewed or hand-edited
+ * file can never inject a non-string into the re-render path.
+ */
+function sanitizeTaskForKchat(value: unknown): TaskForKchat | null {
+  if (typeof value !== "object" || value === null) return null;
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.id !== "string" || typeof rec.title !== "string") return null;
+  const task: TaskForKchat = { id: rec.id, title: rec.title };
+  if (typeof rec.description === "string") task.description = rec.description;
+  if (typeof rec.status === "string") task.status = rec.status;
+  if (typeof rec.priority === "string") task.priority = rec.priority;
+  if (typeof rec.dueDate === "string") task.dueDate = rec.dueDate;
+  if (typeof rec.assignee === "string") task.assignee = rec.assignee;
+  return task;
 }

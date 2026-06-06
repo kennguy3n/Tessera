@@ -225,6 +225,9 @@ interface StubClient {
   // (`kchat:searchUsers`). Default returns an empty list; tests
   // that exercise the populated path set an explicit impl.
   searchUsers: ReturnType<typeof vi.fn>;
+  // backs `kchat:postTaskToChannel` (Task 6): posts a formatted
+  // task body to a channel. Default resolves a stub post id.
+  createPost: ReturnType<typeof vi.fn>;
   scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
@@ -238,6 +241,7 @@ const clientMock: StubClient = {
   getUsersByIds: vi.fn(),
   getChannel: vi.fn(),
   searchUsers: vi.fn(async () => [] as Array<unknown>),
+  createPost: vi.fn(async () => ({ id: "post0000000000000000abcd" })),
   // Default: pass-through. Tests that need to assert scrub
   // behaviour replace this implementation in their own `beforeEach`.
   scrubMessage: vi.fn((msg: string) => msg),
@@ -270,6 +274,7 @@ const offlineQueueMock = {
   setExecutors: vi.fn(),
   enqueueShareArtifact: vi.fn(async () => "queued-share-id"),
   enqueueIngestChannel: vi.fn(async () => "queued-ingest-id"),
+  enqueuePostTask: vi.fn(async () => "queued-task-id"),
 };
 
 vi.mock("../appState", () => ({
@@ -367,6 +372,9 @@ beforeEach(() => {
   // explicitly. The redundant per-test invocations elsewhere in
   // the file are intentionally kept as documentation that the
   // test exercises cache state.
+  offlineQueueMock.enqueueShareArtifact.mockClear();
+  offlineQueueMock.enqueueIngestChannel.mockClear();
+  offlineQueueMock.enqueuePostTask.mockClear();
   _resetKchatNameCachesForTest();
   registerKchatHandlers();
 });
@@ -1195,6 +1203,56 @@ describe("toIpcError redaction", () => {
     }
     expect(caught?.message).not.toContain("secret-endpoint");
     expect(caught?.message).toContain("[REDACTED]");
+  });
+});
+
+describe("kchat:postTaskToChannel", () => {
+  const CHANNEL = "chid0000000000000000abcd";
+  const TASK = { id: "t1", title: "Ship the release", priority: "high" };
+
+  it("posts the formatted task and returns the post id", async () => {
+    clientMock.createPost.mockResolvedValue({ id: "post0000000000000000abcd" });
+    const out = await handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK);
+    expect(clientMock.createPost).toHaveBeenCalledTimes(1);
+    expect(clientMock.createPost.mock.calls[0][0]).toBe(CHANNEL);
+    // The body is the rendered task markdown, not the raw object.
+    expect(clientMock.createPost.mock.calls[0][1]).toContain(
+      "Ship the release",
+    );
+    expect(out).toEqual({ postId: "post0000000000000000abcd" });
+    expect(offlineQueueMock.enqueuePostTask).not.toHaveBeenCalled();
+  });
+
+  it("queues the task for replay when the server is unreachable", async () => {
+    // Transport-level failure → offline. Matches the shareArtifact /
+    // addKchatChannel offline-resilience contract instead of hard-
+    // failing the user's post.
+    clientMock.createPost.mockRejectedValue(
+      new Error("connect ECONNREFUSED 127.0.0.1:443"),
+    );
+    const out = await handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK);
+    expect(offlineQueueMock.enqueuePostTask).toHaveBeenCalledTimes(1);
+    expect(offlineQueueMock.enqueuePostTask.mock.calls[0][0]).toEqual({
+      channelId: CHANNEL,
+      task: expect.objectContaining({ id: "t1", title: "Ship the release" }),
+    });
+    expect(out).toEqual({
+      postId: "",
+      queued: true,
+      queueId: "queued-task-id",
+    });
+  });
+
+  it("propagates a non-offline server error without queuing", async () => {
+    // A reachable server returning an error must surface to the user,
+    // never be silently swallowed into the offline queue.
+    clientMock.createPost.mockRejectedValue(
+      Object.assign(new Error("KChat 403"), { status: 403 }),
+    );
+    await expect(
+      handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK),
+    ).rejects.toThrow();
+    expect(offlineQueueMock.enqueuePostTask).not.toHaveBeenCalled();
   });
 });
 

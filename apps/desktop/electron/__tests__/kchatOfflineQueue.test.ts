@@ -393,4 +393,79 @@ describe("KchatOfflineQueue replay", () => {
     expect(calls).toBe(1);
     expect(a).toBe(b);
   });
+
+  it("replays a queued postTask through its executor with the stored task", async () => {
+    const q = makeQueue(fs, ["op1"]);
+    await q.enqueuePostTask({
+      channelId: "c1",
+      task: { id: "t1", title: "Ship it", priority: "high" },
+    });
+    const seen: Array<{ channelId: string; taskId: string }> = [];
+    q.setExecutors({
+      postTask: async (p) => {
+        seen.push({ channelId: p.channelId, taskId: p.task.id });
+      },
+    });
+    const summary = await q.replay();
+    expect(seen).toEqual([{ channelId: "c1", taskId: "t1" }]);
+    expect(summary).toEqual({ replayed: 1, deadLettered: 0, remaining: 0 });
+  });
+
+  it("collapses duplicate postTask enqueues and returns the existing id", async () => {
+    const q = makeQueue(fs, ["op1", "op2"]);
+    const req = {
+      channelId: "c1",
+      task: { id: "t1", title: "Ship it" },
+    };
+    const first = await q.enqueuePostTask({ ...req });
+    const second = await q.enqueuePostTask({ ...req });
+    expect(first).toBe("op1");
+    expect(second).toBe("op1");
+    expect(q.size()).toBe(1);
+  });
+
+  it("survives a reload from disk (postTask payload round-trips)", async () => {
+    const q1 = makeQueue(fs, ["op1"]);
+    await q1.enqueuePostTask({
+      channelId: "c9",
+      task: { id: "t9", title: "Reconcile", dueDate: "2026-06-10" },
+    });
+
+    // Fresh instance backed by the same fs re-reads the persisted file.
+    const q2 = makeQueue(fs, ["unused"]);
+    await q2.load();
+    expect(q2.size()).toBe(1);
+    const op = q2.list()[0];
+    expect(op.type).toBe("postTask");
+    expect(op.payload).toEqual({
+      channelId: "c9",
+      task: { id: "t9", title: "Reconcile", dueDate: "2026-06-10" },
+    });
+  });
+
+  it("discards a persisted postTask whose task is missing required fields", async () => {
+    await fs.writeFile(
+      QUEUE_PATH,
+      JSON.stringify({
+        version: 1,
+        operations: [
+          {
+            id: "ok",
+            type: "postTask",
+            payload: { channelId: "c1", task: { id: "t1", title: "fine" } },
+          },
+          // task without a title → dropped on load.
+          {
+            id: "bad",
+            type: "postTask",
+            payload: { channelId: "c1", task: { id: "t2" } },
+          },
+        ],
+      }),
+    );
+    const q = makeQueue(fs, []);
+    await q.load();
+    expect(q.size()).toBe(1);
+    expect(q.list()[0].id).toBe("ok");
+  });
 });

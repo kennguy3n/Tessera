@@ -1173,6 +1173,20 @@ export function registerKchatHandlers(): void {
         const post = await svc.getClient().createPost(channel, message);
         return { postId: post.id };
       } catch (err) {
+        // Server unreachable → persist for replay on reconnect,
+        // matching the offline-resilience contract of
+        // `kchat:shareArtifact` and `sources:addKchatChannel`. A
+        // deterministic failure (validation, missing channel) is
+        // surfaced normally. We queue the normalised task, not the
+        // rendered message, so the replay re-renders the current
+        // footer/format via `formatTaskForKchat`.
+        if (isOfflineError(err)) {
+          const queueId = await getKchatOfflineQueue().enqueuePostTask({
+            channelId: channel,
+            task: normalised,
+          });
+          return { postId: "", queued: true, queueId };
+        }
         throw toIpcError(err);
       }
     },
@@ -1750,6 +1764,16 @@ export function registerKchatHandlers(): void {
       await withChannelSyncLock(payload.channelId, () =>
         runAddKchatChannel(payload.channelId, payload.channelName),
       );
+    },
+    // Re-render the task from the persisted envelope (not a stale
+    // pre-rendered body) and re-post it. Errors propagate so the
+    // queue distinguishes still-offline (stop + keep) from a
+    // deterministic failure (count + dead-letter past the cap).
+    postTask: async (payload) => {
+      const body = formatTaskForKchat(payload.task);
+      await getKchatAuthService()
+        .getClient()
+        .createPost(payload.channelId, body);
     },
   });
 
