@@ -3,6 +3,7 @@ import KanbanView from "./baseviews/KanbanView";
 import CalendarView from "./baseviews/CalendarView";
 import TimelineView from "./baseviews/TimelineView";
 import GalleryView from "./baseviews/GalleryView";
+import FormView from "./baseviews/FormView";
 import {
   defaultViewConfig,
   type BaseViewConfig,
@@ -872,6 +873,7 @@ export default function BaseEditor({
               ["calendar", "Calendar"],
               ["timeline", "Timeline"],
               ["gallery", "Gallery"],
+              ["form", "Form"],
             ] as [BaseViewKind, string][]
           ).map(([v, label]) => (
             <button
@@ -926,6 +928,7 @@ export default function BaseEditor({
       {view === "calendar" && <CalendarView {...viewProps} />}
       {view === "timeline" && <TimelineView {...viewProps} />}
       {view === "gallery" && <GalleryView {...viewProps} />}
+      {view === "form" && <FormView {...viewProps} />}
 
       {view === "grid" && (
       <div className="base-grid-wrapper">

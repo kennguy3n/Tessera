@@ -20,6 +20,7 @@ import { registerKchatHandlers } from "./kchat";
 import { registerModelHandlers } from "./model";
 import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
+import { registerSlidesHandlers } from "./slides";
 import { registerSourcesHandlers } from "./sources";
 import { registerTasksHandlers } from "./tasks";
 import { registerTelemetryHandlers } from "./telemetry";
@@ -40,6 +41,7 @@ export function registerAllIpcHandlers(): void {
   registerTasksHandlers();
   registerAutomationsHandlers();
   registerDialogHandlers();
+  registerSlidesHandlers();
   registerKchatHandlers();
   registerAuditHandlers();
   // local-only telemetry event-pumping

@@ -37,6 +37,7 @@ import {
   computeDeckWordCounts,
   findInSlides,
   fileToDataUrl,
+  buildPresentationSlides,
   nextBlockForTypeChange,
   type ParsedSlideContent,
   type SlideFindMatch,
@@ -502,6 +503,21 @@ export default function SlideEditor({
     },
     [slides.length],
   );
+
+  // Launch presenter mode: hand the main process a flattened, plain-
+  // text snapshot of the deck (see `buildPresentationSlides`) plus the
+  // current slide as the entry point. Main opens a fullscreen audience
+  // window and a second presenter window (speaker notes + next-slide
+  // preview); the two stay in sync without further IPC. No-op on an
+  // empty deck. `window.tessera` is always present in the packaged app
+  // but may be absent in non-Electron contexts, so we guard defensively.
+  const startPresentation = useCallback(() => {
+    if (slides.length === 0) return;
+    void window.tessera?.slides?.startPresentation({
+      slides: buildPresentationSlides(slides),
+      startIndex: activeIndex,
+    });
+  }, [slides, activeIndex]);
 
   // Refs to each `.slide-thumb` <button>, keyed by `slide.id`. Used by
   // the sidebar arrow-key handler to programmatically focus the newly
@@ -1096,6 +1112,16 @@ export default function SlideEditor({
             disabled={slides.length <= 1}
           >
             Delete
+          </button>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={startPresentation}
+            disabled={slides.length === 0}
+            aria-label="Start presentation"
+            title="Present fullscreen with speaker notes in a second window"
+          >
+            Present
           </button>
           <button
             type="button"

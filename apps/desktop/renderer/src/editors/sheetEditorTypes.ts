@@ -49,6 +49,62 @@ export interface CellFormat {
 }
 
 /**
+ * Comparison operators a conditional-formatting rule can test a cell's
+ * value against. Numeric operators (`gt`/`gte`/`lt`/`lte`) coerce both
+ * sides to numbers and never match non-numeric cells; the text
+ * operators compare the cell's displayed string. `isEmpty`/`notEmpty`
+ * ignore the rule's `value` entirely.
+ */
+export type ConditionalOperator =
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "eq"
+  | "neq"
+  | "contains"
+  | "notContains"
+  | "isEmpty"
+  | "notEmpty";
+
+/**
+ * A single rule-based cell-styling rule. Rules are evaluated against a
+ * cell's *displayed* value (formulas use their computed result), and
+ * every matching rule's style is merged onto the cell in array order
+ * (later rules win on conflicting properties — a deterministic cascade).
+ *
+ * `column` scopes the rule to one column by zero-based index; `null`
+ * (the default) applies the rule across every column. The `style`
+ * reuses the same visual subset of `CellFormat` so the renderer can
+ * funnel it through the existing `cellFormatStyle` translator.
+ */
+export interface ConditionalFormatRule {
+  /** Stable id used as the React key and for edit/delete targeting. */
+  id: string;
+  /** Zero-based column index this rule targets, or `null` for all. */
+  column: number | null;
+  /** The comparison to perform. */
+  operator: ConditionalOperator;
+  /** Right-hand operand (ignored by `isEmpty`/`notEmpty`). */
+  value: string;
+  /** Visual styling applied to a matching cell. */
+  style: ConditionalRuleStyle;
+}
+
+/**
+ * The visual-only slice of {@link CellFormat} a conditional rule may
+ * set. Number formatting is intentionally excluded — conditional rules
+ * change appearance, not how a value is parsed/serialised.
+ */
+export interface ConditionalRuleStyle {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+  background?: string;
+}
+
+/**
  * a single worksheet within a multi-sheet
  * workbook. Backward compatible: the legacy single-sheet
  * `SheetContent` (just `columns`/`rows`) parses into a workbook of
@@ -66,6 +122,11 @@ export interface SheetTab {
    * `"row,col"` strings; missing entries render plain.
    */
   formats?: Record<string, CellFormat>;
+  /**
+   * Optional rule-based conditional formatting evaluated against each
+   * cell's displayed value. Omitted ⇒ no conditional styling.
+   */
+  conditionalRules?: ConditionalFormatRule[];
   /**
    * per-column pixel widths. Sparse: an entry of
    * `undefined` (or an index past the array end) means "use the
@@ -124,6 +185,12 @@ export interface SheetContent {
    * sheet's formats at both locations.
    */
   formats?: Record<string, CellFormat>;
+  /**
+   * Conditional-formatting rules for the active (legacy) sheet. Stored
+   * at the top level so the single-sheet editor round-trips them
+   * through plain `JSON.stringify`/`parseSheetContent`; absent ⇒ none.
+   */
+  conditionalRules?: ConditionalFormatRule[];
   /**
    * optional workbook-level named ranges. Persisted on
    * the artifact JSON so the XLSX exporter can emit `<definedName>`

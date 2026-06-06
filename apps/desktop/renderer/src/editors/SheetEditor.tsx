@@ -11,8 +11,13 @@ import {
   type CellEdit,
   type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
-import { cellKey, isFormulaError } from "./formulaEngine";
-import type { SheetContent } from "./sheetEditorTypes";
+import { cellFormatStyle, cellKey, isFormulaError } from "./formulaEngine";
+import type {
+  ConditionalFormatRule,
+  SheetContent,
+} from "./sheetEditorTypes";
+import { conditionalStyleForCell } from "./sheetConditionalFormatting";
+import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import {
   type CellCoord,
   type Selection,
@@ -93,6 +98,8 @@ export default function SheetEditor({
     x: number;
     y: number;
   } | null>(null);
+  // Conditional-formatting rules editor visibility.
+  const [cfOpen, setCfOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -477,6 +484,22 @@ export default function SheetEditor({
       const updated: SheetContent = { columns: headers, rows };
       setSheet(updated);
       debouncedSave(updated);
+    },
+    [debouncedSave],
+  );
+
+  // Replace the active sheet's conditional-formatting rules and persist.
+  // An empty array drops the field entirely so a sheet with no rules
+  // stays byte-identical to its pre-feature JSON.
+  const setConditionalRules = useCallback(
+    (rules: ConditionalFormatRule[]) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (rules.length === 0) delete next.conditionalRules;
+        else next.conditionalRules = rules;
+        debouncedSave(next);
+        return next;
+      });
     },
     [debouncedSave],
   );
@@ -874,7 +897,28 @@ export default function SheetEditor({
         >
           Import CSV
         </button>
+        <button
+          type="button"
+          className={cfOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={cfOpen}
+          data-testid="sheet-conditional-format-toggle"
+          onClick={() => setCfOpen((open) => !open)}
+        >
+          Conditional formatting
+          {sheet.conditionalRules && sheet.conditionalRules.length > 0
+            ? ` (${sheet.conditionalRules.length})`
+            : ""}
+        </button>
       </div>
+
+      {cfOpen && (
+        <ConditionalFormatPanel
+          rules={sheet.conditionalRules ?? []}
+          columns={sheet.columns}
+          onChange={setConditionalRules}
+          onClose={() => setCfOpen(false)}
+        />
+      )}
 
       <div className="sheet-formula-bar" data-testid="sheet-formula-bar">
         <span
@@ -1102,11 +1146,24 @@ export default function SheetEditor({
                           }
                         : {};
                   const rawValue = row[ci] ?? "";
+                  const displayValue = getCellDisplay(rawValue, ri, ci);
+                  // Conditional formatting reacts to the *displayed*
+                  // value (computed result for formulas), translated
+                  // through the same `cellFormatStyle` used by manual
+                  // cell formats so styling stays consistent.
+                  const conditionalStyle = cellFormatStyle(
+                    conditionalStyleForCell(
+                      sheet.conditionalRules,
+                      ci,
+                      displayValue,
+                    ),
+                  );
                   return (
                     <td
                       key={ci}
                       data-row={ri}
                       data-col={ci}
+                      data-testid={`sheet-cell-${ri}-${ci}`}
                       className={[
                         "sheet-cell",
                         isEditing ? "editing" : "",
@@ -1118,6 +1175,7 @@ export default function SheetEditor({
                       style={{
                         width: colWidth(ci),
                         position: "relative",
+                        ...conditionalStyle,
                         outline: isSelected
                           ? "1px solid var(--color-primary, #1a73e8)"
                           : isActive
@@ -1144,7 +1202,7 @@ export default function SheetEditor({
                         />
                       ) : (
                         <span className="sheet-cell-display">
-                          {getCellDisplay(rawValue, ri, ci)}
+                          {displayValue}
                         </span>
                       )}
                       {isFillHandle && (
