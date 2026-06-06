@@ -37,6 +37,7 @@ import {
   computeDeckWordCounts,
   findInSlides,
   fileToDataUrl,
+  buildPresentationSlides,
   nextBlockForTypeChange,
   type ParsedSlideContent,
   type SlideFindMatch,
@@ -64,6 +65,12 @@ interface SlideEditorProps {
   /** See SheetEditor.onDraftChange — published synchronously on every edit. */
   onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
+  /**
+   * The artifact's name, forwarded to presenter mode so both windows are
+   * titled with the real deck name rather than the generic default.
+   * Optional: the IPC layer falls back to "Presentation" when absent.
+   */
+  deckTitle?: string;
 }
 
 /**
@@ -126,6 +133,7 @@ export default function SlideEditor({
   onSave,
   onDraftChange,
   autoSaveMs = 2000,
+  deckTitle,
 }: SlideEditorProps) {
   // Parse the initial content exactly once. Subsequent prop-driven changes
   // are handled by the sync effect below; recomputing on every keystroke
@@ -502,6 +510,25 @@ export default function SlideEditor({
     },
     [slides.length],
   );
+
+  // Launch presenter mode: hand the main process a flattened, plain-
+  // text snapshot of the deck (see `buildPresentationSlides`) plus the
+  // current slide as the entry point. Main opens a fullscreen audience
+  // window and a second presenter window (speaker notes + next-slide
+  // preview); the two stay in sync without further IPC. No-op on an
+  // empty deck. `window.tessera` is always present in the packaged app
+  // but may be absent in non-Electron contexts, so we guard defensively.
+  const startPresentation = useCallback(() => {
+    if (slides.length === 0) return;
+    const trimmedTitle = deckTitle?.trim();
+    void window.tessera?.slides?.startPresentation({
+      slides: buildPresentationSlides(slides),
+      startIndex: activeIndex,
+      // Only forward a real title; the main process defaults to
+      // "Presentation" when it's absent.
+      ...(trimmedTitle ? { deckTitle: trimmedTitle } : {}),
+    });
+  }, [slides, activeIndex, deckTitle]);
 
   // Refs to each `.slide-thumb` <button>, keyed by `slide.id`. Used by
   // the sidebar arrow-key handler to programmatically focus the newly
@@ -1096,6 +1123,16 @@ export default function SlideEditor({
             disabled={slides.length <= 1}
           >
             Delete
+          </button>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={startPresentation}
+            disabled={slides.length === 0}
+            aria-label="Start presentation"
+            title="Present fullscreen with speaker notes in a second window"
+          >
+            Present
           </button>
           <button
             type="button"

@@ -35,12 +35,24 @@ import {
   type SlashTriggerState,
 } from "./extensions/SlashCommandExtension";
 import {
+  CommentMark,
+  collectCommentsFromDoc,
+} from "./extensions/CommentMark";
+import {
   parseDocumentContent,
   countDocText,
   fileToDataUrl,
   type SlashCommand,
 } from "./documentEditorHelpers";
+import {
+  DEFAULT_COMMENT_AUTHOR,
+  countOpenComments,
+  makeCommentId,
+  normalizeCommentText,
+  type DocumentComment,
+} from "./documentCommentsHelpers";
 import { FindReplacePanel } from "./components/FindReplacePanel";
+import { CommentsPanel } from "./components/CommentsPanel";
 import { SlashMenu } from "./components/SlashMenu";
 
 interface DocumentEditorProps {
@@ -93,6 +105,9 @@ export default function DocumentEditor({
 
   // Find/replace panel visibility — toggled by Ctrl+F and the toolbar.
   const [findOpen, setFindOpen] = useState(false);
+
+  // Comments side-panel visibility — toggled by the toolbar.
+  const [commentsOpen, setCommentsOpen] = useState(false);
 
   // Bumped on every TipTap `onUpdate` so memos that derive from the
   // editor's plain-text content (e.g. word count, outline headings)
@@ -149,6 +164,7 @@ export default function DocumentEditor({
       Image.configure({ inline: false, allowBase64: true }),
       MermaidNode,
       FindReplaceExtension,
+      CommentMark,
       SlashCommandExtension.configure({
         onStateChange: (state) => setSlashTrigger(state),
       }),
@@ -336,6 +352,77 @@ export default function DocumentEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, docVersion]);
 
+  // Live comment threads, re-collected from the doc on every edit
+  // (`docVersion` bumps in `onUpdate`). The `comment` mark IS the
+  // store, so this stays in sync with persistence for free.
+  const comments = useMemo<DocumentComment[]>(() => {
+    if (!editor) return [];
+    return collectCommentsFromDoc(editor.state.doc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, docVersion]);
+
+  const openCommentCount = countOpenComments(comments);
+
+  // Prompt for a comment body and anchor it to the current selection.
+  // A collapsed (empty) selection has nothing to anchor to, so we tell
+  // the user to select text first rather than silently no-op-ing.
+  const addCommentFromToolbar = useCallback(() => {
+    if (!editor) return;
+    const { from, to } = editor.state.selection;
+    if (from >= to) {
+      window.alert("Select some text first, then add a comment.");
+      return;
+    }
+    const raw = window.prompt("Add a comment:");
+    if (raw === null) return;
+    const text = normalizeCommentText(raw);
+    if (!text) return;
+    editor
+      .chain()
+      .focus()
+      .addComment({
+        commentId: makeCommentId(),
+        author: DEFAULT_COMMENT_AUTHOR,
+        createdAt: new Date().toISOString(),
+        text,
+        resolved: false,
+      })
+      .run();
+    setCommentsOpen(true);
+  }, [editor]);
+
+  const toggleCommentResolved = useCallback(
+    (comment: DocumentComment) => {
+      if (!editor) return;
+      editor
+        .chain()
+        .focus()
+        .setCommentResolved(comment.id, !comment.resolved)
+        .run();
+    },
+    [editor],
+  );
+
+  const removeComment = useCallback(
+    (comment: DocumentComment) => {
+      if (!editor) return;
+      editor.chain().focus().removeComment(comment.id).run();
+    },
+    [editor],
+  );
+
+  const jumpToComment = useCallback(
+    (comment: DocumentComment) => {
+      if (!editor) return;
+      editor
+        .chain()
+        .focus()
+        .setTextSelection({ from: comment.from, to: comment.to })
+        .run();
+    },
+    [editor],
+  );
+
   if (!editor) return null;
 
   return (
@@ -345,6 +432,10 @@ export default function DocumentEditor({
         onSetLink={setLink}
         onInsertImage={insertImageFromToolbar}
         onOpenFind={() => setFindOpen(true)}
+        onAddComment={addCommentFromToolbar}
+        onToggleComments={() => setCommentsOpen((open) => !open)}
+        commentsOpen={commentsOpen}
+        openCommentCount={openCommentCount}
       />
       <div className="document-editor-outline">
         <OutlinePanel editor={editor} />
@@ -355,6 +446,15 @@ export default function DocumentEditor({
           <FindReplacePanel
             editor={editor}
             onClose={() => setFindOpen(false)}
+          />
+        )}
+        {commentsOpen && (
+          <CommentsPanel
+            comments={comments}
+            onToggleResolved={toggleCommentResolved}
+            onRemove={removeComment}
+            onJumpTo={jumpToComment}
+            onClose={() => setCommentsOpen(false)}
           />
         )}
         {slashTrigger.visible && (
@@ -387,11 +487,19 @@ function Toolbar({
   onSetLink,
   onInsertImage,
   onOpenFind,
+  onAddComment,
+  onToggleComments,
+  commentsOpen,
+  openCommentCount,
 }: {
   editor: Editor;
   onSetLink: () => void;
   onInsertImage: () => void;
   onOpenFind: () => void;
+  onAddComment: () => void;
+  onToggleComments: () => void;
+  commentsOpen: boolean;
+  openCommentCount: number;
 }) {
   const inTable = editor.isActive("table");
   return (
@@ -578,6 +686,28 @@ function Toolbar({
         title="Find & replace (Ctrl+F)"
       >
         🔍
+      </button>
+      <span className="toolbar-separator" />
+      <button
+        type="button"
+        className={
+          editor.isActive("comment") ? "toolbar-btn active" : "toolbar-btn"
+        }
+        onClick={onAddComment}
+        title="Comment on selection"
+        aria-label="Comment on selection"
+      >
+        💬+
+      </button>
+      <button
+        type="button"
+        className={commentsOpen ? "toolbar-btn active" : "toolbar-btn"}
+        onClick={onToggleComments}
+        title="Toggle comments panel"
+        aria-label="Toggle comments panel"
+        aria-pressed={commentsOpen}
+      >
+        Comments{openCommentCount > 0 ? ` (${openCommentCount})` : ""}
       </button>
     </div>
   );

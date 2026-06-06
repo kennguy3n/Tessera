@@ -12,6 +12,7 @@
  * third file, breaking the would-be A↔B dependency edge.
  */
 import type { MarpRenderOptions } from "../services/marpRenderer";
+import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
 import type {
   Slide,
@@ -848,6 +849,53 @@ export function slideWordCount(slide: Slide): number {
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
     .reduce((acc, s) => acc + s.split(/\s+/).length, 0);
+}
+
+/**
+ * Flatten one slide's blocks into the ordered, plain-text body lines
+ * shown by presenter mode:
+ *   - text / bullets — one line per non-blank source line
+ *   - diagram — a single `[Diagram]` placeholder (Mermaid DSL is not
+ *     re-rendered in the lightweight presentation windows)
+ *   - image — `[Image: <alt>]`, or `[Image]` when no alt text is set
+ *
+ * Plain text only by design: the presentation windows render every
+ * line via `textContent`, so nothing here can inject markup.
+ */
+export function slideBodyLines(slide: Slide): string[] {
+  const lines: string[] = [];
+  for (const block of slide.blocks) {
+    if (block.type === "image") {
+      const alt = (block.alt ?? "").trim();
+      lines.push(alt.length > 0 ? `[Image: ${alt}]` : "[Image]");
+      continue;
+    }
+    if (block.type === "diagram") {
+      lines.push("[Diagram]");
+      continue;
+    }
+    for (const raw of block.content.split("\n")) {
+      const line = raw.trim();
+      if (line.length > 0) lines.push(line);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Build the plain-text, IPC-ready snapshot of a deck handed to
+ * `slides:startPresentation`. Each slide contributes its title, the
+ * flattened body lines (see {@link slideBodyLines}), and its speaker
+ * notes.
+ */
+export function buildPresentationSlides(
+  slides: readonly Slide[],
+): PresentationSlide[] {
+  return slides.map((slide) => ({
+    title: slide.title,
+    lines: slideBodyLines(slide),
+    notes: slide.notes,
+  }));
 }
 
 /**

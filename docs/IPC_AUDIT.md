@@ -175,6 +175,25 @@ rejected through `path.resolve` normalisation.
 |---------------------------------------|-------------------------------------------|------|
 | `dialog:showSaveDialog`               | zod-schema (`SaveDialogOptionsSchema`)    |      |
 
+## Slides
+
+Presenter mode for the Slides editor. `slides:startPresentation`
+receives a flattened, plain-text snapshot of the deck (per-slide
+title, body lines, and speaker notes) plus the entry slide index, and
+opens two windows from a single generated HTML file: a fullscreen
+audience window and a presenter window (speaker notes + next-slide
+preview). The two windows run on a dedicated session partition with
+no preload bridge, so they cannot reach `window.tessera` or Node;
+they stay in sync purely via `localStorage` `storage` events, so no
+further IPC is needed once they are open. All deck strings are
+rendered with `textContent` (never `innerHTML`) and the embedded deck
+JSON is `<`/`>`/`&`-escaped, so deck content can never inject markup
+into the presentation windows.
+
+| Channel                               | Strategy                                  | Auth |
+|---------------------------------------|-------------------------------------------|------|
+| `slides:startPresentation`            | zod-schema (`StartPresentationSchema`)    |      |
+
 ## KChat
 
 These channels expose the KChat (Mattermost v4) REST + WebSocket
