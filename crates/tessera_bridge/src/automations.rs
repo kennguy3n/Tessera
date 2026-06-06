@@ -20,11 +20,12 @@ use tessera_core::types::{AutomationId, TemplateId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
-/// Automation Info.
+/// JS-facing view of an [`Automation`]: identity, JSON-encoded
+/// trigger/action, and run-state metadata.
 pub struct AutomationInfo {
-    /// Id.
+    /// Automation id, stringified.
     pub id: String,
-    /// Name.
+    /// Human-readable automation name.
     pub name: String,
     /// `AutomationTrigger` encoded as JSON. Discriminator key `kind`
     /// is `schedule`, `on_generate`, or `on_kchat_message_match`
@@ -34,15 +35,15 @@ pub struct AutomationInfo {
     /// is `reindex_source`, `generate_from_template`, or `sequence`
     /// (a `sequence` wraps an ordered `actions` array of leaf actions).
     pub action_json: String,
-    /// Enabled.
+    /// Whether the runner will dispatch this automation.
     pub enabled: bool,
-    /// Created at.
+    /// When the automation was created, RFC 3339.
     pub created_at: String,
-    /// Updated at.
+    /// When the automation was last updated, RFC 3339.
     pub updated_at: String,
-    /// Last run at.
+    /// When the automation last ran (RFC 3339), or `None` if never.
     pub last_run_at: Option<String>,
-    /// Last run status.
+    /// Outcome of the last run (e.g. `"ok"` / `"error"`), if any.
     pub last_run_status: Option<String>,
     /// Convenience field: for `Schedule` triggers, the next moment the
     /// runner would fire this automation.  `None` for `OnGenerate`.
@@ -76,14 +77,14 @@ impl From<Automation> for AutomationInfo {
 /// must parse as `AutomationTrigger` / `AutomationAction` respectively.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateAutomationRequest {
-    /// Name.
+    /// Human-readable automation name.
     pub name: String,
-    /// Trigger json.
+    /// JSON that must parse as an `AutomationTrigger`.
     pub trigger_json: String,
-    /// Action json.
+    /// JSON that must parse as an `AutomationAction`.
     pub action_json: String,
     #[serde(default = "default_enabled")]
-    /// Enabled.
+    /// Whether the automation starts enabled (defaults to `true`).
     pub enabled: bool,
 }
 
@@ -129,7 +130,7 @@ fn parse_action(s: &str) -> Result<AutomationAction> {
     serde_json::from_str(s).map_err(|e| Error::InvalidConfig(format!("invalid action json: {e}")))
 }
 
-/// Create automation.
+/// Creates an automation from a renderer request and returns it.
 pub fn create_automation(
     store: &AutomationStore,
     req: CreateAutomationRequest,
@@ -142,24 +143,25 @@ pub fn create_automation(
     Ok(a.into())
 }
 
-/// List automations.
+/// Returns every registered automation.
 pub fn list_automations(store: &AutomationStore) -> Result<Vec<AutomationInfo>> {
     Ok(store.list()?.into_iter().map(Into::into).collect())
 }
 
-/// Get automation.
+/// Fetches a single automation by id, or `None` if absent.
 pub fn get_automation(store: &AutomationStore, id: &str) -> Result<Option<AutomationInfo>> {
     let aid = parse_automation_id(id)?;
     Ok(store.get(&aid)?.map(Into::into))
 }
 
-/// Set automation enabled.
+/// Enables or disables an automation by id.
 pub fn set_automation_enabled(store: &AutomationStore, id: &str, enabled: bool) -> Result<()> {
     let aid = parse_automation_id(id)?;
     store.set_enabled(&aid, enabled)
 }
 
-/// Delete automation.
+/// Deletes an automation by id; returns `true` if a row was
+/// removed.
 pub fn delete_automation(store: &AutomationStore, id: &str) -> Result<bool> {
     let aid = parse_automation_id(id)?;
     store.delete(&aid)

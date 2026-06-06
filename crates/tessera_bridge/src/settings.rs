@@ -6,7 +6,8 @@ use tessera_core::config::TesseraConfig;
 
 use crate::{BridgeError, BridgeResult};
 
-/// Get settings.
+/// Returns the settings at `config_path` as a JSON string,
+/// falling back to defaults when the file does not exist.
 pub fn get_settings(config_path: &str) -> BridgeResult<String> {
     let path = Path::new(config_path);
     let config = if path.exists() {
@@ -17,7 +18,8 @@ pub fn get_settings(config_path: &str) -> BridgeResult<String> {
     serde_json::to_string(&config).map_err(|e| BridgeError::Serialization(e.to_string()))
 }
 
-/// Update settings.
+/// Validates and persists the given settings JSON to
+/// `config_path`.
 pub fn update_settings(config_path: &str, settings_json: &str) -> BridgeResult<()> {
     let config: TesseraConfig =
         serde_json::from_str(settings_json).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;

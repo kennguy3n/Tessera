@@ -9,35 +9,37 @@ use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
-/// Task Info.
+/// JS-facing view of a [`Task`], with ids and timestamps rendered
+/// as strings for the renderer.
 pub struct TaskInfo {
-    /// Id.
+    /// Task id, stringified.
     pub id: String,
-    /// Title.
+    /// Short task title.
     pub title: String,
-    /// Description.
+    /// Longer task description (may be empty).
     pub description: String,
-    /// Status.
+    /// Lifecycle status (`"todo"` / `"in_progress"` / `"done"` /
+    /// `"blocked"`).
     pub status: String,
-    /// Priority.
+    /// Priority (`"low"` / `"medium"` / `"high"`).
     pub priority: String,
-    /// Position.
+    /// Sort position within its status column.
     pub position: i64,
-    /// Assignee.
+    /// Assignee identifier, or `None` if unassigned.
     pub assignee: Option<String>,
-    /// Due date.
+    /// Due date (RFC 3339), or `None` if unset.
     pub due_date: Option<String>,
-    /// Source id.
+    /// Source this task was extracted from, stringified, if any.
     pub source_id: Option<String>,
-    /// Extracted item id.
+    /// Id of the extracted item that produced this task, if any.
     pub extracted_item_id: Option<String>,
     /// Ids of the tasks this task depends on, as UUID strings. Empty
     /// when the task has no dependencies. The renderer uses these to
     /// draw dependency arrows in the Gantt view.
     pub depends_on: Vec<String>,
-    /// Created at.
+    /// When the task was created, RFC 3339.
     pub created_at: String,
-    /// Updated at.
+    /// When the task was last updated, RFC 3339.
     pub updated_at: String,
 }
 
@@ -62,30 +64,32 @@ impl From<Task> for TaskInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Create Task Request.
+/// Renderer request to create a new task. Defaults mirror the
+/// serde defaults so an omitted field uses the same value on both
+/// the JS and Rust sides.
 pub struct CreateTaskRequest {
-    /// Title.
+    /// Short task title.
     pub title: String,
     #[serde(default)]
-    /// Description.
+    /// Longer task description (defaults to empty).
     pub description: String,
     #[serde(default = "default_status")]
-    /// Status.
+    /// Initial status (defaults to `"todo"`).
     pub status: String,
     #[serde(default = "default_priority")]
-    /// Priority.
+    /// Initial priority (defaults to `"medium"`).
     pub priority: String,
     #[serde(default)]
-    /// Assignee.
+    /// Optional assignee identifier.
     pub assignee: Option<String>,
     #[serde(default)]
-    /// Due date.
+    /// Optional due date, RFC 3339.
     pub due_date: Option<String>,
     #[serde(default)]
-    /// Source id.
+    /// Optional originating source id, stringified.
     pub source_id: Option<String>,
     #[serde(default)]
-    /// Extracted item id.
+    /// Optional id of the extracted item that produced the task.
     pub extracted_item_id: Option<String>,
     /// Task ids (UUID strings) this task depends on. Defaults to empty.
     #[serde(default)]
@@ -120,24 +124,26 @@ impl Default for CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// Update Task Request.
+/// Renderer request to patch a task. Every field is optional;
+/// `None` leaves the corresponding column unchanged.
 pub struct UpdateTaskRequest {
-    /// Title.
+    /// New title, or `None` to leave unchanged.
     pub title: Option<String>,
-    /// Description.
+    /// New description, or `None` to leave unchanged.
     pub description: Option<String>,
-    /// Status.
+    /// New status, or `None` to leave unchanged.
     pub status: Option<String>,
-    /// Priority.
+    /// New priority, or `None` to leave unchanged.
     pub priority: Option<String>,
-    /// Position.
+    /// New sort position, or `None` to leave unchanged.
     pub position: Option<i64>,
     /// `Some(Some("x"))` sets assignee="x", `Some(None)` clears,
     /// `None` leaves unchanged.
     #[serde(default)]
     pub assignee: Option<Option<String>>,
+    /// `Some(Some("..."))` sets the due date, `Some(None)` clears
+    /// it, `None` leaves it unchanged.
     #[serde(default)]
-    /// Due date.
     pub due_date: Option<Option<String>>,
     /// `Some(vec)` replaces the dependency set, `None` leaves it
     /// unchanged. Pass `Some(vec![])` to clear all dependencies.
@@ -210,7 +216,7 @@ fn parse_opt_source_id(s: Option<&str>) -> Result<Option<SourceId>> {
     }
 }
 
-/// Create task.
+/// Creates a task from a renderer request and returns it.
 pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo> {
     let mut t = Task::new(
         req.title,
@@ -227,18 +233,18 @@ pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo
     Ok(t.into())
 }
 
-/// List tasks.
+/// Returns every task in creation/position order.
 pub fn list_tasks(store: &TaskStore) -> Result<Vec<TaskInfo>> {
     Ok(store.list()?.into_iter().map(Into::into).collect())
 }
 
-/// Get task.
+/// Fetches a single task by id, or `None` if it doesn't exist.
 pub fn get_task(store: &TaskStore, id: &str) -> Result<Option<TaskInfo>> {
     let tid = parse_task_id(id)?;
     Ok(store.get(&tid)?.map(Into::into))
 }
 
-/// Update task.
+/// Applies a partial update to a task and returns the result.
 pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Result<TaskInfo> {
     let tid = parse_task_id(id)?;
     // `req.due_date` distinguishes three states:
@@ -266,13 +272,13 @@ pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Resul
     Ok(store.update(&tid, update)?.into())
 }
 
-/// Delete task.
+/// Deletes a task by id; returns `true` if a row was removed.
 pub fn delete_task(store: &TaskStore, id: &str) -> Result<bool> {
     let tid = parse_task_id(id)?;
     store.delete(&tid)
 }
 
-/// Reorder tasks.
+/// Persists a new ordering for the tasks in one status column.
 pub fn reorder_tasks(store: &TaskStore, status: &str, ids: &[String]) -> Result<()> {
     let parsed: Vec<TaskId> = ids
         .iter()

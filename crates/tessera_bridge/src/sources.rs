@@ -22,55 +22,57 @@ const DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE: usize = 64;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Source Info.
+/// JS-facing view of a [`Source`]: identity plus indexing state,
+/// with timestamps rendered as RFC 3339 strings for the renderer.
 pub struct SourceInfo {
-    /// Id.
+    /// Source id, stringified.
     pub id: String,
-    /// Source type.
+    /// Source kind (`"local_folder"`, `"local_file"`, `"kchat"`, …).
     pub source_type: String,
-    /// Path.
+    /// Filesystem path or channel cache dir the source reads from.
     pub path: String,
-    /// Status.
+    /// Current indexing/connection status, stringified.
     pub status: String,
-    /// Created at.
+    /// When the source was added, RFC 3339.
     pub created_at: String,
-    /// Last indexed.
+    /// When indexing last completed (RFC 3339), or `None` if never.
     pub last_indexed: Option<String>,
-    /// File count.
+    /// Number of files indexed from this source.
     pub file_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Search Hit Info.
+/// JS-facing view of one ranked search hit (a matched chunk plus
+/// its source and relevance).
 pub struct SearchHitInfo {
-    /// Content.
+    /// Full chunk text.
     pub content: String,
-    /// Excerpt.
+    /// Query-centred snippet for display.
     pub excerpt: String,
-    /// Source path.
+    /// Path of the source the chunk came from.
     pub source_path: String,
-    /// Source id.
+    /// Source id, stringified.
     pub source_id: String,
-    /// Chunk hash.
+    /// Content hash of the matched chunk.
     pub chunk_hash: String,
-    /// Chunk index.
+    /// Position of the chunk within its source.
     pub chunk_index: i32,
-    /// Relevance.
+    /// Relevance score in `(0, 1]`; higher ranks first.
     pub relevance: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Indexed File Info.
+/// JS-facing view of one indexed file belonging to a source.
 pub struct IndexedFileInfo {
-    /// Path.
+    /// File path, relative to or within the source.
     pub path: String,
-    /// Hash.
+    /// Content hash at last index, used for staleness detection.
     pub hash: String,
-    /// Last modified.
+    /// File modification time, RFC 3339.
     pub last_modified: String,
-    /// Chunk count.
+    /// Number of chunks produced from this file.
     pub chunk_count: i32,
 }
 
@@ -100,43 +102,43 @@ pub struct IndexedFileInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatPostSearchHitInfo {
-    /// Content.
+    /// AEAD-verified plaintext of the matched chunk.
     pub content: String,
-    /// Excerpt.
+    /// Query-centred snippet for display.
     pub excerpt: String,
-    /// Source path.
+    /// Channel cache dir (equals the channel id) the post lives in.
     pub source_path: String,
-    /// Source id.
+    /// Source id, stringified.
     pub source_id: String,
-    /// Chunk hash.
+    /// Content hash of the matched chunk.
     pub chunk_hash: String,
-    /// Chunk index.
+    /// Position of the chunk within the post.
     pub chunk_index: i32,
-    /// Byte offset.
+    /// Byte offset of the chunk's start within the post body.
     pub byte_offset: i32,
-    /// Relevance.
+    /// Relevance score in `(0, 1]`; higher ranks first.
     pub relevance: f64,
-    /// Post id.
+    /// KChat post id of the match.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the post was sent in.
     pub channel_id: String,
-    /// Root id.
+    /// Thread root post id, or `None` if the post is a root.
     pub root_id: Option<String>,
-    /// Sender user id.
+    /// User id of the post's author.
     pub sender_user_id: String,
-    /// Created at ms.
+    /// Post creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds.
     pub edited_at_ms: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Source Detail Info.
+/// JS-facing source-detail payload: a source plus its indexed files.
 pub struct SourceDetailInfo {
-    /// Source.
+    /// The source's summary info.
     pub source: SourceInfo,
-    /// Files.
+    /// Files indexed from the source.
     pub files: Vec<IndexedFileInfo>,
 }
 
@@ -151,9 +153,10 @@ pub struct SourceDetailInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatChannelAddOutcomeInfo {
-    /// Source.
+    /// The linked (or re-synced) channel source.
     pub source: SourceInfo,
-    /// Newly created.
+    /// `true` only on the first link; `false` on subsequent
+    /// re-syncs of the same channel.
     pub newly_created: bool,
 }
 
@@ -222,19 +225,19 @@ impl From<&KchatPostSearchHit> for KchatPostSearchHitInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatThreadContextMessageInfo {
-    /// Post id.
+    /// KChat post id of this thread message.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the message was sent in.
     pub channel_id: String,
-    /// Sender user id.
+    /// User id of the message's author.
     pub sender_user_id: String,
-    /// Created at ms.
+    /// Creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds.
     pub edited_at_ms: i64,
-    /// Content.
+    /// AEAD-verified plaintext of the message.
     pub content: String,
-    /// Is root.
+    /// Whether this message is the thread root.
     pub is_root: bool,
 }
 
@@ -252,13 +255,15 @@ impl From<&KchatThreadContextMessage> for KchatThreadContextMessageInfo {
     }
 }
 
-/// Add local folder.
+/// Registers a local folder as a source and returns its
+/// [`SourceInfo`].
 pub fn add_local_folder(manager: &SourceManager, path: &str) -> BridgeResult<SourceInfo> {
     let source = manager.add_local_folder(path).map_err(BridgeError::Core)?;
     Ok(SourceInfo::from(&source))
 }
 
-/// Add local file.
+/// Registers a single local file as a source and returns its
+/// [`SourceInfo`].
 pub fn add_local_file(manager: &SourceManager, path: &str) -> BridgeResult<SourceInfo> {
     let source = manager.add_local_file(path).map_err(BridgeError::Core)?;
     Ok(SourceInfo::from(&source))
@@ -315,11 +320,11 @@ pub fn add_kchat_channel(
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatFileIndexOutcomeInfo {
-    /// Was linked.
+    /// `true` if a KChat source exists for the cache dir.
     pub was_linked: bool,
-    /// Indexed.
+    /// `true` if this event actually triggered indexer work.
     pub indexed: bool,
-    /// Source id.
+    /// Source id (empty string when `was_linked` is false).
     pub source_id: String,
 }
 
@@ -370,9 +375,9 @@ pub fn index_kchat_file(
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatAclMemberInfo {
-    /// User id.
+    /// KChat user id of the channel member.
     pub user_id: String,
-    /// Role.
+    /// Member's role in the channel (e.g. `"member"`, `"admin"`).
     pub role: String,
 }
 
@@ -402,11 +407,12 @@ pub struct KchatAclMemberInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatAclRefreshOutcomeInfo {
-    /// Outcome.
+    /// Which projection rule fired (`granted` / `regranted` /
+    /// `revoked` / `unlinked` / `no_principal`).
     pub outcome: String,
-    /// Member count.
+    /// Number of members in the refreshed roster.
     pub member_count: i64,
-    /// Principal present.
+    /// Whether the local principal is a member of the channel.
     pub principal_present: bool,
     /// Count of chunk rows scrubbed by the inline cryptoshred on
     /// the revoke path. Zero on all non-revoke outcomes.
@@ -454,7 +460,7 @@ pub struct KchatAclRefreshOutcomeInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatRevokeOutcomeInfo {
-    /// Outcome.
+    /// Revoke result (`revoked` / `already_revoked` / `unlinked`).
     pub outcome: String,
     /// Count of chunk rows scrubbed by the inline cryptoshred.
     pub chunks_dropped: u32,
@@ -631,13 +637,14 @@ pub fn clear_kchat_principal(manager: &SourceManager) -> BridgeResult<()> {
     manager.clear_kchat_principal().map_err(BridgeError::Core)
 }
 
-/// List sources.
+/// Returns every registered source as [`SourceInfo`].
 pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {
     let sources = manager.list_sources().map_err(BridgeError::Core)?;
     Ok(sources.iter().map(SourceInfo::from).collect())
 }
 
-/// Remove source.
+/// Removes a source and all of its indexed data (id parsed from a
+/// UUID string).
 pub fn remove_source(manager: &SourceManager, source_id: &str) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -703,7 +710,8 @@ pub fn record_source_sync_success(manager: &SourceManager, source_id: &str) -> B
         .map_err(BridgeError::Core)
 }
 
-/// Search sources.
+/// Runs a hybrid search over file sources, returning up to `limit`
+/// [`SearchHitInfo`]s.
 pub fn search_sources(
     manager: &SourceManager,
     query: &str,
@@ -776,7 +784,8 @@ pub fn fetch_kchat_thread_context(
         .collect())
 }
 
-/// Get source detail.
+/// Returns a source together with its indexed files for the
+/// detail view.
 pub fn get_source_detail(
     manager: &SourceManager,
     source_id: &str,
@@ -804,7 +813,8 @@ pub fn get_source_detail(
     })
 }
 
-/// Reindex source.
+/// Re-runs indexing for a source and returns its refreshed
+/// [`SourceInfo`].
 pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<SourceInfo> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -819,29 +829,30 @@ pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Indexing Progress Info.
+/// JS-facing snapshot of a source's indexing progress.
 pub struct IndexingProgressInfo {
-    /// Status.
+    /// Lifecycle state (`"idle"` / `"running"` / `"done"` /
+    /// `"failed"`).
     pub status: String,
-    /// Scanned.
+    /// Files visited so far.
     pub scanned: u32,
-    /// Indexed.
+    /// Files (re)indexed.
     pub indexed: u32,
-    /// Unchanged.
+    /// Files skipped because unchanged.
     pub unchanged: u32,
-    /// Skipped.
+    /// Files skipped (ignored/unsupported).
     pub skipped: u32,
-    /// Errors.
+    /// Files that errored.
     pub errors: u32,
-    /// Total files.
+    /// Final file count when done (0 while running).
     pub total_files: u32,
-    /// Current path.
+    /// In-flight file path, if known.
     pub current_path: Option<String>,
-    /// Last error.
+    /// Failure reason when `status == "failed"`.
     pub last_error: Option<String>,
 }
 
-/// Get indexing progress.
+/// Returns the current [`IndexingProgressInfo`] for a source.
 pub fn get_indexing_progress(
     manager: &SourceManager,
     source_id: &str,
@@ -869,31 +880,33 @@ pub fn get_indexing_progress(
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Embedding Progress Info.
+/// JS-facing snapshot of an embedding-backfill pass's progress.
 pub struct EmbeddingProgressInfo {
-    /// Status.
+    /// Lifecycle state (`"idle"` / `"running"` / `"done"` /
+    /// `"failed"`).
     pub status: String,
-    /// Total chunks.
+    /// Chunks the pass intends to embed (stable denominator).
     pub total_chunks: u32,
-    /// Embedded.
+    /// Chunks successfully embedded so far.
     pub embedded: u32,
-    /// Failed.
+    /// Chunks whose embedding failed (non-fatal).
     pub failed: u32,
-    /// Model id.
+    /// Embedder model id the pass targets, if started.
     pub model_id: Option<String>,
-    /// Last error.
+    /// Failure reason when `status == "failed"`.
     pub last_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Backfill Embeddings Result.
+/// Result of a one-shot embedding-backfill pass: how many chunks
+/// were embedded plus the final progress snapshot.
 pub struct BackfillEmbeddingsResult {
     /// Number of chunks newly embedded by this call. If the index
     /// already has up-to-date embeddings for the active model, this
     /// is 0 and `progress.status` flips Idle → Done immediately.
     pub embedded: u32,
-    /// Progress.
+    /// Final progress snapshot after the call.
     pub progress: EmbeddingProgressInfo,
 }
 
@@ -907,11 +920,11 @@ pub struct BackfillEmbeddingsResult {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct HybridSearchConfigInfo {
-    /// Bm25 weight.
+    /// Weight of the BM25 ranking in fusion.
     pub bm25_weight: f64,
-    /// Vector weight.
+    /// Weight of the vector-cosine ranking in fusion.
     pub vector_weight: f64,
-    /// Rrf k.
+    /// RRF damping constant.
     pub rrf_k: f64,
     /// `true` when the active config applies temporal recency decay,
     /// `false` when decay is disabled (internally
@@ -922,7 +935,7 @@ pub struct HybridSearchConfigInfo {
     /// that mode so the renderer should keep its last-known value
     /// rather than reset the slider to a placeholder.
     pub recency_halflife_secs: Option<f64>,
-    /// Candidate pool size.
+    /// Candidates pulled from each ranking before fusion.
     pub candidate_pool_size: u32,
 }
 
@@ -950,20 +963,21 @@ impl From<&HybridSearchConfig> for HybridSearchConfigInfo {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[napi(object)]
 pub struct HybridSearchConfigUpdate {
-    /// Bm25 weight.
+    /// New BM25 weight, or `None` to leave unchanged.
     pub bm25_weight: Option<f64>,
-    /// Vector weight.
+    /// New vector-cosine weight, or `None` to leave unchanged.
     pub vector_weight: Option<f64>,
-    /// Rrf k.
+    /// New RRF damping constant, or `None` to leave unchanged.
     pub rrf_k: Option<f64>,
     /// `Some(true)` → enable decay (use the accompanying
     /// `recency_halflife_secs` if provided, else keep current);
     /// `Some(false)` → disable decay (sets internal halflife to
     /// `f64::INFINITY`); `None` → don't touch the flag.
     pub recency_decay_enabled: Option<bool>,
-    /// Recency halflife secs.
+    /// New recency half-life (seconds), or `None` to leave
+    /// unchanged.
     pub recency_halflife_secs: Option<f64>,
-    /// Candidate pool size.
+    /// New candidate-pool size, or `None` to leave unchanged.
     pub candidate_pool_size: Option<u32>,
 }
 
@@ -1161,11 +1175,11 @@ use tessera_sources::onnx_embedder::OnnxEmbeddingProvider;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct EmbeddingModelInfo {
-    /// Slug.
+    /// Stable registry slug used to select/download the model.
     pub slug: String,
-    /// Display name.
+    /// Human-readable name for the model picker.
     pub display_name: String,
-    /// Dim.
+    /// Output embedding dimensionality.
     pub dim: u32,
     /// Approximate ONNX file size in bytes — used to render the
     /// "120 MB download" hint before the user opts into the
@@ -1173,11 +1187,12 @@ pub struct EmbeddingModelInfo {
     pub model_size_bytes: f64,
     /// Approximate tokenizer.json size in bytes.
     pub tokenizer_size_bytes: f64,
-    /// Languages.
+    /// Human-readable language coverage (e.g. `"English"`).
     pub languages: String,
-    /// Installed.
+    /// `true` when downloaded and SHA-256-verified on disk.
     pub installed: bool,
-    /// Model id.
+    /// Canonical id written to `chunk_embeddings.model_id` when
+    /// this model is active.
     pub model_id: String,
 }
 
@@ -1288,7 +1303,8 @@ impl Default for DownloadProgressTracker {
 }
 
 impl DownloadProgressTracker {
-    /// Creates a new instance.
+    /// Creates a tracker in the `idle` state with no active
+    /// download.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(DownloadProgressInfo {
@@ -1344,7 +1360,7 @@ impl DownloadProgressTracker {
         }
     }
 
-    /// Mark done.
+    /// Marks the active download as completed successfully.
     pub fn mark_done(&self) {
         if let Ok(mut g) = self.inner.lock() {
             g.status = "done".to_string();
@@ -1352,7 +1368,7 @@ impl DownloadProgressTracker {
         }
     }
 
-    /// Mark failed.
+    /// Marks the active download as failed, recording `msg`.
     pub fn mark_failed(&self, msg: &str) {
         if let Ok(mut g) = self.inner.lock() {
             g.status = "failed".to_string();
@@ -1360,7 +1376,8 @@ impl DownloadProgressTracker {
         }
     }
 
-    /// Snapshot.
+    /// Returns a copy of the current progress for the renderer to
+    /// poll.
     pub fn snapshot(&self) -> DownloadProgressInfo {
         self.inner.lock().ok().map_or_else(
             || DownloadProgressInfo {
