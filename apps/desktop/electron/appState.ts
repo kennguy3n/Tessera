@@ -1598,7 +1598,11 @@ function applyKchatForwarderIntent(): void {
  * handler validates/sanitises ids before calling this.
  */
 export function setKchatWatchedChannels(channelIds: readonly string[]): void {
-  kchatWatchedChannelsIntent = [...channelIds];
+  // Dedupe at the boundary so the stored intent matches what the
+  // forwarder actually watches (it also dedupes via `new Set`), rather
+  // than carrying redundant ids that are re-deduped on every
+  // `applyKchatForwarderIntent()`.
+  kchatWatchedChannelsIntent = [...new Set(channelIds)];
   kchatEventForwarder?.setWatchedChannels(kchatWatchedChannelsIntent);
 }
 

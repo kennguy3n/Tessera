@@ -235,7 +235,17 @@ export function isNonReplayableCommit(err: unknown): boolean {
  * body that happens to contain a word like "offline" from being
  * misclassified as a connectivity failure.
  */
-export function isOfflineError(err: unknown, depth = 0): boolean {
+export function isOfflineError(err: unknown): boolean {
+  return isOfflineErrorAtDepth(err, 0);
+}
+
+/**
+ * Recursive worker for {@link isOfflineError}. The `depth` parameter
+ * is an implementation detail of the `cause`-chain walk and is kept
+ * off the public signature; callers always start at depth 0 via the
+ * wrapper above.
+ */
+function isOfflineErrorAtDepth(err: unknown, depth: number): boolean {
   if (err == null) return false;
 
   // A post-commit failure is not safely replayable — surface it to the
@@ -286,7 +296,7 @@ export function isOfflineError(err: unknown, depth = 0): boolean {
   // self-reference guard alone wouldn't catch.
   const cause = (err as { cause?: unknown }).cause;
   if (cause && cause !== err && depth < MAX_CAUSE_DEPTH) {
-    return isOfflineError(cause, depth + 1);
+    return isOfflineErrorAtDepth(cause, depth + 1);
   }
 
   // AbortError surfaced by an aborted/timed-out request.
