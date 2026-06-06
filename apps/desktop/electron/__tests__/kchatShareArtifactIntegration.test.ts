@@ -207,6 +207,7 @@ const offlineQueueMock = {
   setExecutors: vi.fn(),
   enqueueShareArtifact: vi.fn(async () => "queued-share-id"),
   enqueueIngestChannel: vi.fn(async () => "queued-ingest-id"),
+  enqueuePostTask: vi.fn(async () => "queued-task-id"),
 };
 
 vi.mock("../appState", () => ({

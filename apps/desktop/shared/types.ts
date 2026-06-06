@@ -2826,7 +2826,11 @@ export interface KchatUserStatusView {
 /** One pending offline-queue operation, as seen by the renderer (Task 1). */
 export interface KchatOfflineQueueOpView {
   id: string;
-  type: "shareArtifact" | "ingestChannel";
+  // Mirror the main-process `KchatQueuedOpType` discriminator exactly.
+  // `kchat:offlineQueueStatus` forwards `op.type` verbatim, so a value
+  // omitted here would arrive at the renderer untyped and break any
+  // exhaustive match on the discriminator.
+  type: "shareArtifact" | "ingestChannel" | "postTask";
   attempts: number;
   enqueuedAt: number;
 }
