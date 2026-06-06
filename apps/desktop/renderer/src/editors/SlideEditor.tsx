@@ -65,6 +65,12 @@ interface SlideEditorProps {
   /** See SheetEditor.onDraftChange — published synchronously on every edit. */
   onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
+  /**
+   * The artifact's name, forwarded to presenter mode so both windows are
+   * titled with the real deck name rather than the generic default.
+   * Optional: the IPC layer falls back to "Presentation" when absent.
+   */
+  deckTitle?: string;
 }
 
 /**
@@ -127,6 +133,7 @@ export default function SlideEditor({
   onSave,
   onDraftChange,
   autoSaveMs = 2000,
+  deckTitle,
 }: SlideEditorProps) {
   // Parse the initial content exactly once. Subsequent prop-driven changes
   // are handled by the sync effect below; recomputing on every keystroke
@@ -513,11 +520,15 @@ export default function SlideEditor({
   // but may be absent in non-Electron contexts, so we guard defensively.
   const startPresentation = useCallback(() => {
     if (slides.length === 0) return;
+    const trimmedTitle = deckTitle?.trim();
     void window.tessera?.slides?.startPresentation({
       slides: buildPresentationSlides(slides),
       startIndex: activeIndex,
+      // Only forward a real title; the main process defaults to
+      // "Presentation" when it's absent.
+      ...(trimmedTitle ? { deckTitle: trimmedTitle } : {}),
     });
-  }, [slides, activeIndex]);
+  }, [slides, activeIndex, deckTitle]);
 
   // Refs to each `.slide-thumb` <button>, keyed by `slide.id`. Used by
   // the sidebar arrow-key handler to programmatically focus the newly

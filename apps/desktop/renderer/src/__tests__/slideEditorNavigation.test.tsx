@@ -58,7 +58,7 @@ function buildContent(): string {
   return JSON.stringify(content);
 }
 
-function renderDeck() {
+function renderDeck(props?: { deckTitle?: string }) {
   const onSave = vi.fn();
   const onDraftChange = vi.fn();
   render(
@@ -66,6 +66,7 @@ function renderDeck() {
       content={buildContent()}
       onSave={onSave}
       onDraftChange={onDraftChange}
+      deckTitle={props?.deckTitle}
     />,
   );
   return { onSave, onDraftChange };
@@ -437,5 +438,25 @@ describe("SlideEditor presenter mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
     expect(spy).toHaveBeenCalledTimes(2);
     expect(spy.mock.calls[1][0]).toMatchObject({ startIndex: 2 });
+  });
+
+  it("forwards the artifact title as deckTitle when one is provided", () => {
+    const spy = presentSpy();
+    renderDeck({ deckTitle: "  Q3 Roadmap  " });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    // The title is trimmed before being sent; both presenter windows
+    // will be labelled with the real deck name instead of the default.
+    expect(spy.mock.calls[0][0]).toMatchObject({ deckTitle: "Q3 Roadmap" });
+  });
+
+  it("omits deckTitle entirely when the title is blank", () => {
+    const spy = presentSpy();
+    renderDeck({ deckTitle: "   " });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    // A blank title is dropped so the main process applies its own
+    // "Presentation" default rather than an empty string.
+    expect(spy.mock.calls[0][0]).not.toHaveProperty("deckTitle");
   });
 });
