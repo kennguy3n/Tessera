@@ -10,6 +10,74 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+#### Competitive upgrade — parallel feature streams
+
+This release integrates eight parallel work streams (merged in the order
+arch → opt → perf → sec → dx → editors → tasks → kchat) that push every
+critique dimension toward best-in-class against Notion / Coda / Google
+Workspace while staying a local-first desktop app. See
+`docs/COMPETITIVE_SCORECARD.md` for the dimension-by-dimension scoring.
+
+- **Architecture — versioned migrations & typed errors.** New
+  `crates/tessera_migrate` runs forward-only, numbered SQL migrations
+  tracked in a `_migrations` table (with rollback stubs), replacing the
+  ad-hoc migration blocks previously inlined in `tessera_sources`. The
+  read pool auto-sizes to the CPU count (capped at four readers), and
+  `Error::Database(String)` is gone in favor of typed variants
+  (`Error::Sqlite` wrapping `rusqlite::Error` so callers can match on the
+  concrete cause, and `Error::DatabaseState(String)` for semantic
+  failures). Migration-runner tests cover a fresh DB, a v1→v5 upgrade,
+  and idempotent re-runs.
+- **Editors — comments, conditional formatting, form view, presenter.**
+  TipTap inline document comments (author, timestamp, resolved state,
+  side panel); rule-based conditional formatting in the Sheet editor; a
+  sixth Base view that renders a fillable form which creates records; and
+  a Slides presenter mode that opens a fullscreen second `BrowserWindow`
+  with speaker notes over the new `slides:startPresentation` IPC channel.
+- **Tasks & automations — dependencies, Gantt, new triggers.** Tasks
+  gain a `depends_on` set with topological-sort cycle detection; an
+  SVG Gantt timeline on the Tasks page; a new
+  `on_kchat_message_match(channel_id, regex)` automation trigger that
+  fires when the KChat WebSocket delivers a matching post; and
+  multi-step automation actions that chain sequentially with per-step
+  error reporting. Schema changes ride Session 1's migration framework.
+- **Performance & scale.** Criterion benches extended to 100K and 500K
+  chunk corpora; incremental IVF index updates assign new vectors to the
+  nearest centroid and only trigger a full k-means rebuild past a 20%
+  corpus change; virtual scrolling for Sheet/Base grids at 10K+ rows;
+  read-pool connections pre-warmed at boot; and a CI cold-start gate that
+  fails if boot-to-first-render exceeds 3s on the ubuntu runner.
+- **Cost & install size.** Release builds strip debug symbols from the
+  Rust N-API addon (`strip = true`); unused Electron locales are pruned
+  from the packaging config; the CI cargo cache key now hashes
+  `rustc --version` alongside `Cargo.lock`; blockmap-based delta updates
+  are enabled in the auto-updater; and model downloads support HTTP
+  range-request resume.
+- **Security & privacy.** FIDO2/WebAuthn is now a third app-lock method
+  alongside PIN and biometric; `PRAGMA secure_delete` wraps every
+  artifact/source deletion path so freed pages are zero-filled; the Linux
+  `basic_text` keychain fallback raises a runtime warning and blocks
+  secret writes in enforce mode; the CSP drops its remaining wildcard
+  origins; and `cargo vet` + `npm audit --audit-level=high` run as CI
+  supply-chain gates.
+- **Maintainability (DX).** Ten Architecture Decision Records under
+  `docs/adr/`; `#![warn(missing_docs)]` across the public Rust crates
+  plus a `cargo doc --no-deps` CI step; renderer TypeScript types
+  auto-generated from the zod IPC schemas with a CI drift check; React
+  error boundaries around every editor and page that write a
+  `crash-report.json` on crash; and an auto-generated
+  `docs/DEPENDENCIES.md` license inventory.
+- **KChat collaboration depth.** An offline queue persists
+  `shareArtifact` / `ingest-channel` requests when the server is
+  unreachable and replays them on reconnect; an `@mention` TipTap
+  extension searches KChat users and resolves to `@username` on share;
+  a notification bridge surfaces new posts in watched channels as native
+  OS notifications; share-to-channel adds DOCX/PDF attachment and
+  `tessera://` deeplink formats alongside Markdown; the Sidebar shows a
+  KChat presence / sync-status indicator; and task sync is bidirectional
+  (Tessera tasks can post to KChat, and task-like KChat messages can
+  auto-create Tessera tasks).
+
 #### Security & privacy
 
 - **Auto-updater signature verification.** Update artifacts are
