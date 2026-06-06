@@ -3125,10 +3125,19 @@ export interface KchatApi {
   offlineQueueStatus: () => Promise<KchatOfflineQueueStatusView>;
   /**
    * Session 8 Task 3: set which channels raise native OS
-   * notifications (and auto-create tasks) for new posts. Returns
-   * the deduped count actually applied.
+   * notifications for new posts. Returns the deduped count actually
+   * applied. Task auto-create is a separate opt-in toggled via
+   * {@link setAutoCreateTasks}.
    */
   setWatchedChannels: (channelIds: string[]) => Promise<{ count: number }>;
+  /**
+   * Session 8 Task 6: toggle inbound task auto-create. Opt-in and
+   * controlled independently of the watch list, since auto-create
+   * writes persistent Tessera tasks (a higher-consequence
+   * side-effect than a transient notification). Echoes the applied
+   * state.
+   */
+  setAutoCreateTasks: (enabled: boolean) => Promise<{ enabled: boolean }>;
   /**
    * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
    * channel as a formatted message. Carries the `— via Tessera`

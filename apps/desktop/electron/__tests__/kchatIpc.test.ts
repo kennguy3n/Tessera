@@ -282,6 +282,14 @@ vi.mock("../appState", () => ({
   getKchatAuthService: () => serviceMock,
   getKchatOfflineQueue: () => offlineQueueMock,
   getKchatEventForwarder: () => null,
+  // Session 8 Task 3/6: the `kchat:setWatchedChannels` /
+  // `kchat:setAutoCreateTasks` handlers now persist the renderer's
+  // intent through these appState setters (so it survives forwarder
+  // (re)construction) instead of poking a possibly-null forwarder.
+  // This suite mocks appState away, so a no-op double is enough to
+  // verify the handlers wire through and echo correctly.
+  setKchatWatchedChannels: vi.fn(),
+  setKchatAutoCreateTasks: vi.fn(),
   // Block B Task 4 second-pass Devin Review: `registerKchatHandlers` populates this slot
   // with the auto-resync closure that powers the forwarder's
   // `outcome=regranted` re-sync hook. The IPC test suite
@@ -301,6 +309,13 @@ import {
   registerKchatHandlers,
   _resetKchatNameCachesForTest,
 } from "../ipc/kchat";
+// Mocked (see `vi.mock("../appState")` above): these are the
+// persistent-intent setters the watch-list / auto-create handlers
+// now delegate to, so tests assert the handler routes through them.
+import {
+  setKchatAutoCreateTasks,
+  setKchatWatchedChannels,
+} from "../appState";
 import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
 import * as ssrfGuardModule from "../kchat/ssrfGuard";
 import type { KchatBackfillRunOutcome } from "../../shared/types";
@@ -375,6 +390,8 @@ beforeEach(() => {
   offlineQueueMock.enqueueShareArtifact.mockClear();
   offlineQueueMock.enqueueIngestChannel.mockClear();
   offlineQueueMock.enqueuePostTask.mockClear();
+  vi.mocked(setKchatWatchedChannels).mockClear();
+  vi.mocked(setKchatAutoCreateTasks).mockClear();
   _resetKchatNameCachesForTest();
   registerKchatHandlers();
 });
@@ -419,6 +436,7 @@ describe("kchat IPC registration", () => {
     "kchat:getUserStatuses", // presence indicator (Task 5)
     "kchat:offlineQueueStatus", // offline-queue depth surface (Task 1)
     "kchat:setWatchedChannels", // notification bridge watch-list (Task 3)
+    "kchat:setAutoCreateTasks", // inbound task auto-create opt-in (Task 6)
     "kchat:postTaskToChannel", // bidirectional task sync (Task 6)
   ];
 
@@ -1253,6 +1271,60 @@ describe("kchat:postTaskToChannel", () => {
       handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK),
     ).rejects.toThrow();
     expect(offlineQueueMock.enqueuePostTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("kchat:setWatchedChannels", () => {
+  it("persists the validated set via the appState intent setter", async () => {
+    // The handler must route through `setKchatWatchedChannels`
+    // (which stores the intent at module scope and survives forwarder
+    // (re)construction) rather than poking a possibly-null forwarder
+    // directly — otherwise a watch list set before connecting would
+    // be silently dropped while the handler still echoed success.
+    const a = "channel000000000000000000a";
+    const b = "channel000000000000000000b";
+    await expect(
+      handler("kchat:setWatchedChannels")(EVENT, [a, b, a]),
+    ).resolves.toEqual({ count: 2 });
+    expect(vi.mocked(setKchatWatchedChannels)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(setKchatWatchedChannels)).toHaveBeenCalledWith([a, b, a]);
+  });
+
+  it("rejects a non-array argument without touching the intent", async () => {
+    await expect(
+      handler("kchat:setWatchedChannels")(EVENT, "nope"),
+    ).rejects.toThrow(/array/);
+    expect(vi.mocked(setKchatWatchedChannels)).not.toHaveBeenCalled();
+  });
+});
+
+describe("kchat:setAutoCreateTasks", () => {
+  it("echoes the applied state and persists it via the intent setter", async () => {
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, true),
+    ).resolves.toEqual({ enabled: true });
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, false),
+    ).resolves.toEqual({ enabled: false });
+    // The toggle is persisted through appState so it is honoured even
+    // when flipped before the forwarder exists (or after a reconnect
+    // reconstructs it) — not just forwarded to the live forwarder.
+    expect(vi.mocked(setKchatAutoCreateTasks).mock.calls).toEqual([
+      [true],
+      [false],
+    ]);
+  });
+
+  it("rejects a non-boolean argument without touching the intent", async () => {
+    // The renderer toggle is a checkbox; anything else is a contract
+    // violation and must not silently coerce to on/off.
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, "yes"),
+    ).rejects.toThrow(/boolean/);
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, 1),
+    ).rejects.toThrow(/boolean/);
+    expect(vi.mocked(setKchatAutoCreateTasks)).not.toHaveBeenCalled();
   });
 });
 

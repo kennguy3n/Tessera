@@ -131,6 +131,49 @@ describe("isOfflineError", () => {
     expect(isOfflineError(err)).toBe(true);
   });
 
+  it("terminates on a cyclic cause chain instead of recursing forever", () => {
+    // A corrupted or adversarial error whose `cause` chain loops
+    // (a -> b -> a) must not blow the stack. The depth bound caps
+    // the walk; because none of these carry a transport keyword the
+    // classification falls through to `false` rather than hanging.
+    const a = new Error("layer-a");
+    const b = new Error("layer-b");
+    (a as { cause?: unknown }).cause = b;
+    (b as { cause?: unknown }).cause = a;
+    expect(isOfflineError(a)).toBe(false);
+  });
+
+  it("still detects a transport signal within the depth bound", () => {
+    // A genuine errno a few levels deep is still classified offline:
+    // the cap (5) is comfortably above Node fetch's ~2-level nesting.
+    const top = new Error("wrapper");
+    const mid = new Error("middle");
+    const root = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    (top as { cause?: unknown }).cause = mid;
+    (mid as { cause?: unknown }).cause = root;
+    expect(isOfflineError(top)).toBe(true);
+  });
+
+  it("does not classify a transport signal buried below the depth bound", () => {
+    // Build a chain longer than MAX_CAUSE_DEPTH (5) with the offline
+    // signal only at the very bottom; the walk stops before reaching
+    // it, so the error is treated as non-offline (surfaced, not
+    // silently queued) — the conservative outcome for a pathological
+    // chain no real code path produces.
+    const offline = Object.assign(new Error("fetch failed"), {
+      code: "ECONNREFUSED",
+    });
+    let head: Error = offline;
+    for (let i = 0; i < 7; i++) {
+      const wrapper = new Error(`wrapper-${i}`);
+      (wrapper as { cause?: unknown }).cause = head;
+      head = wrapper;
+    }
+    expect(isOfflineError(head)).toBe(false);
+  });
+
   it("treats AbortError / TimeoutError by name", () => {
     const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
     expect(isOfflineError(abort)).toBe(true);

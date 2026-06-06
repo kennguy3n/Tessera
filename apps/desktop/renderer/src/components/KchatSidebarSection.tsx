@@ -493,6 +493,15 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       state.state !== "connected" ||
       channels.length === 0
     ) {
+      // No poll loop is armed in these states, so no reconciliation
+      // is in flight — clear the indicator. This also recovers the
+      // narrow stuck-`syncing` case: a cycle cancelled mid-poll
+      // skips `setSyncing(false)` in its `finally` (so it can't
+      // clobber a freshly re-armed cycle's `true`), so if the loop
+      // then disarms — e.g. the channel list empties to zero while
+      // still connected — nothing else would ever reset the flag and
+      // "syncing…" would stick. Resetting here closes that gap.
+      setSyncing(false);
       return;
     }
     let cancelled = false;

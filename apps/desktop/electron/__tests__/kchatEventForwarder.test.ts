@@ -124,6 +124,8 @@ interface BridgeMockShape {
   bridgeLogKchatPostIngested: ReturnType<typeof vi.fn>;
   bridgeLogKchatPostEdited: ReturnType<typeof vi.fn>;
   bridgeLogKchatPostDeleted: ReturnType<typeof vi.fn>;
+  // Session 8 Task 6 — inbound task auto-create target.
+  bridgeCreateTask: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -422,6 +424,7 @@ beforeEach(() => {
     bridgeLogKchatPostIngested: vi.fn(),
     bridgeLogKchatPostEdited: vi.fn(),
     bridgeLogKchatPostDeleted: vi.fn(),
+    bridgeCreateTask: vi.fn(() => ({ id: "task-created-1" })),
   };
 });
 
@@ -2523,6 +2526,206 @@ describe("KchatEventForwarder watched-channel notifications (Task 3)", () => {
 
     expect(notifications).toHaveLength(0);
     expect(client.getUsersByIds).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+});
+
+describe("KchatEventForwarder inbound task auto-create (Task 6)", () => {
+  const WATCHED = "chan-auto-create";
+
+  function taskEvent(
+    overrides: { userId?: string; message?: string } = {},
+  ): KchatWebSocketEvent {
+    const userId = overrides.userId ?? "author-2";
+    const message = overrides.message ?? "TODO: fix the crash";
+    return makeRawEvent({
+      event: "posted",
+      data: {
+        post: JSON.stringify({
+          id: "post-task-1",
+          channel_id: WATCHED,
+          user_id: userId,
+          message,
+          create_at: 1700000000000,
+          edit_at: 0,
+        }),
+      },
+      broadcast: {
+        omit_users: {},
+        channel_id: WATCHED,
+        team_id: "team-1",
+        user_id: userId,
+      },
+      seq: 950,
+    });
+  }
+
+  function makeForwarder(): KchatEventForwarder {
+    return new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: () => {},
+      resolveChannelName: () => "general",
+    });
+  }
+
+  it("does NOT auto-create tasks by default (opt-in)", async () => {
+    // The forwarder defaults `autoCreateTasks` to false: watching a
+    // channel for notifications must not silently write Tessera
+    // tasks. An actionable message in a watched channel is detected
+    // but no task is created until the user opts in.
+    const fwd = makeForwarder();
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    expect(fwd.getAutoCreateTasks()).toBe(false);
+
+    client.triggerWsEvent(taskEvent());
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(bridgeMock?.bridgeCreateTask).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+
+  it("auto-creates a task once enabled via setAutoCreateTasks(true)", async () => {
+    const fwd = makeForwarder();
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    fwd.setAutoCreateTasks(true);
+    expect(fwd.getAutoCreateTasks()).toBe(true);
+
+    client.triggerWsEvent(taskEvent({ message: "TODO: fix the crash" }));
+    await waitForCondition(
+      () => (bridgeMock?.bridgeCreateTask.mock.calls.length ?? 0) > 0,
+    );
+
+    expect(bridgeMock?.bridgeCreateTask).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(
+      bridgeMock?.bridgeCreateTask.mock.calls[0][0] as string,
+    );
+    expect(payload.title).toContain("fix the crash");
+    fwd.dispose();
+  });
+
+  it("does not auto-create from ordinary (non-task) chatter when enabled", async () => {
+    const fwd = makeForwarder();
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    fwd.setAutoCreateTasks(true);
+
+    client.triggerWsEvent(taskEvent({ message: "lunch at noon?" }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(bridgeMock?.bridgeCreateTask).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+
+  it("auto-creates from the local user's own task message (self not suppressed)", async () => {
+    // Asymmetry-by-design: notifications suppress the local user's
+    // own posts (noise), but task auto-create does NOT — jotting your
+    // own `TODO:` in a watched channel and having it captured is the
+    // primary single-user use case. Loop safety comes from the
+    // `— via Tessera` footer guard, not from authorship.
+    const fwd = makeForwarder();
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    fwd.setAutoCreateTasks(true);
+
+    // `self` is the local user id per FakeClient.getUser().
+    client.triggerWsEvent(
+      taskEvent({ userId: "self", message: "TODO: write the changelog" }),
+    );
+    await waitForCondition(
+      () => (bridgeMock?.bridgeCreateTask.mock.calls.length ?? 0) > 0,
+    );
+
+    expect(bridgeMock?.bridgeCreateTask).toHaveBeenCalledTimes(1);
+    fwd.dispose();
+  });
+});
+
+describe("KchatEventForwarder dispose() clears session-scoped state", () => {
+  const WATCHED = "chan-dispose";
+
+  function postedEvent(userId: string): KchatWebSocketEvent {
+    return makeRawEvent({
+      event: "posted",
+      data: {
+        post: JSON.stringify({
+          id: `post-${userId}`,
+          channel_id: WATCHED,
+          user_id: userId,
+          message: "ship it",
+          create_at: 1700000000000,
+          edit_at: 0,
+        }),
+      },
+      broadcast: {
+        omit_users: {},
+        channel_id: WATCHED,
+        team_id: "team-1",
+        user_id: userId,
+      },
+      seq: 1000,
+    });
+  }
+
+  it("clears the watched-channel set and auto-create toggle", () => {
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: () => {},
+      resolveChannelName: () => "general",
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED, "chan-other"]);
+    fwd.setAutoCreateTasks(true);
+    expect(fwd.getWatchedChannels()).toHaveLength(2);
+    expect(fwd.getAutoCreateTasks()).toBe(true);
+
+    fwd.dispose();
+
+    // dispose() + start() is a supported lifecycle that may bind a
+    // different account; the previous session's watch list and
+    // toggle must not survive into the re-start.
+    expect(fwd.getWatchedChannels()).toEqual([]);
+    expect(fwd.getAutoCreateTasks()).toBe(false);
+  });
+
+  it("clears the username cache so a re-start re-resolves the same id", async () => {
+    const notifications: PostNotification[] = [];
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: (n) => notifications.push(n),
+      resolveChannelName: () => "general",
+      autoCreateTasks: false,
+    });
+
+    const client1 = new FakeClient();
+    fwd.start(client1 as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    client1.triggerWsEvent(postedEvent("author-1"));
+    await waitForCondition(() => notifications.length > 0);
+    expect(client1.getUsersByIds).toHaveBeenCalledTimes(1);
+
+    fwd.dispose();
+
+    // Re-start against a *different* client/account. Without
+    // clearing the cache, `author-1` would reuse the stale name
+    // resolved from the first connection instead of looking it up
+    // again on the new server.
+    const client2 = new FakeClient();
+    fwd.start(client2 as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    client2.triggerWsEvent(postedEvent("author-1"));
+    await waitForCondition(() => notifications.length > 1);
+    expect(client2.getUsersByIds).toHaveBeenCalledTimes(1);
+
     fwd.dispose();
   });
 });

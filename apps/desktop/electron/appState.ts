@@ -881,6 +881,18 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
+// Session 8 Task 3/6: renderer-owned watch list + auto-create toggle,
+// held at module scope so the intent survives forwarder
+// (re)construction. The forwarder is reconstructed on every
+// `resetKchatAuthService` (token change / re-login) and is only
+// lazily built on the first `getKchatAuthService()`; without
+// persisting the intent here, a toggle applied before either event
+// would be silently dropped while the IPC handler still echoed
+// success. `applyKchatForwarderIntent` re-applies these to whichever
+// forwarder is live. Reset to defaults on `resetKchatAuthService`
+// because the ids/toggle are scoped to a single auth session.
+let kchatWatchedChannelsIntent: string[] = [];
+let kchatAutoCreateTasksIntent = false;
 // Offline write-queue singleton. Holds `shareArtifact` /
 // `ingestChannel` requests that were issued while the KChat
 // server was unreachable and replays them FIFO on the next
@@ -1514,6 +1526,10 @@ export function getKchatAuthService(): KchatAuthService {
       },
     });
     kchatEventForwarder.start(kchatAuthService.getClient());
+    // Honour any watch list / auto-create toggle the renderer sent
+    // before this lazy construction (the IPC handler stored the
+    // intent at module scope).
+    applyKchatForwarderIntent();
 
     // Replay any persisted offline write-queue when the connection
     // comes back. The subscription lives here (not in the IPC
@@ -1559,6 +1575,46 @@ export function getKchatOfflineQueue(): KchatOfflineQueue {
  */
 export function getKchatEventForwarder(): KchatEventForwarder | null {
   return kchatEventForwarder;
+}
+
+/**
+ * Re-apply the persisted watch list + auto-create toggle to the
+ * live forwarder. Called at every forwarder construction site so a
+ * toggle the renderer sent before the forwarder existed (or before
+ * the most recent `resetKchatAuthService`) is honoured rather than
+ * silently dropped. No-op when no forwarder is live.
+ */
+function applyKchatForwarderIntent(): void {
+  if (!kchatEventForwarder) return;
+  kchatEventForwarder.setWatchedChannels(kchatWatchedChannelsIntent);
+  kchatEventForwarder.setAutoCreateTasks(kchatAutoCreateTasksIntent);
+}
+
+/**
+ * Session 8 Task 3: record the renderer's watched-channel set and
+ * push it to the live forwarder. The intent is stored at module
+ * scope (see {@link applyKchatForwarderIntent}) so it survives a
+ * forwarder that is constructed or reconstructed later. The IPC
+ * handler validates/sanitises ids before calling this.
+ */
+export function setKchatWatchedChannels(channelIds: readonly string[]): void {
+  // Dedupe at the boundary so the stored intent matches what the
+  // forwarder actually watches (it also dedupes via `new Set`), rather
+  // than carrying redundant ids that are re-deduped on every
+  // `applyKchatForwarderIntent()`.
+  kchatWatchedChannelsIntent = [...new Set(channelIds)];
+  kchatEventForwarder?.setWatchedChannels(kchatWatchedChannelsIntent);
+}
+
+/**
+ * Session 8 Task 6: record the renderer's inbound task auto-create
+ * toggle and push it to the live forwarder. Persisted at module
+ * scope so it is honoured even when toggled before the forwarder
+ * exists or after a later reconnect reconstructs it.
+ */
+export function setKchatAutoCreateTasks(enabled: boolean): void {
+  kchatAutoCreateTasksIntent = enabled;
+  kchatEventForwarder?.setAutoCreateTasks(enabled);
 }
 
 /**
@@ -1899,6 +1955,14 @@ export function resetKchatAuthService(
     kchatEventForwarder.dispose();
     kchatEventForwarder = null;
   }
+  // A reset means a new auth session (token change / re-login, or a
+  // test swapping the service). The watch list + auto-create toggle
+  // are scoped to the previous session — channel ids and the toggle
+  // from the old account must not leak into the new one — so reset
+  // the persisted intent to defaults. The renderer re-applies its
+  // own intent after the next `connected` transition.
+  kchatWatchedChannelsIntent = [];
+  kchatAutoCreateTasksIntent = false;
   // Drop the offline-queue singleton so a test that swaps the auth
   // service starts from a clean in-memory queue (and re-registers
   // executors against the new service). The on-disk file is left
@@ -1953,6 +2017,10 @@ export function resetKchatAuthService(
       },
     });
     kchatEventForwarder.start(next.getClient());
+    // Re-apply the (just-reset) intent so the new forwarder starts
+    // from a coherent baseline and is ready to honour the renderer's
+    // next toggle.
+    applyKchatForwarderIntent();
   }
 }
 

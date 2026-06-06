@@ -35,13 +35,13 @@ import {
   type SlashTriggerState,
 } from "./extensions/SlashCommandExtension";
 import {
-  CommentMark,
-  collectCommentsFromDoc,
-} from "./extensions/CommentMark";
-import {
   KchatMentionExtension,
   type MentionTriggerState,
 } from "./extensions/KchatMentionExtension";
+import {
+  CommentMark,
+  collectCommentsFromDoc,
+} from "./extensions/CommentMark";
 import {
   parseDocumentContent,
   countDocText,

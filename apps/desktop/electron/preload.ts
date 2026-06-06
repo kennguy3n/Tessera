@@ -587,10 +587,18 @@ const api: TesseraApi = {
       ipcRenderer.invoke("kchat:offlineQueueStatus"),
     /**
      * Session 8 Task 3: set which channels raise native OS
-     * notifications (and auto-create tasks) for new posts.
+     * notifications for new posts. Task auto-create is a separate
+     * opt-in toggled via `setAutoCreateTasks`.
      */
     setWatchedChannels: (channelIds: string[]) =>
       ipcRenderer.invoke("kchat:setWatchedChannels", channelIds),
+    /**
+     * Session 8 Task 6: toggle inbound task auto-create. Opt-in and
+     * controlled independently of the watch list, since auto-create
+     * writes persistent Tessera tasks rather than a transient alert.
+     */
+    setAutoCreateTasks: (enabled: boolean) =>
+      ipcRenderer.invoke("kchat:setAutoCreateTasks", enabled),
     /**
      * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
      * channel as a formatted message. Carries the `— via Tessera`
