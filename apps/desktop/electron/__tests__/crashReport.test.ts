@@ -155,4 +155,16 @@ describe("recordCrashReport", () => {
     const debris = fs.readdirSync(dir).filter((f) => f.includes(".tmp"));
     expect(debris).toEqual([]);
   });
+
+  it("cleans up the temp file and returns null when the rename fails", () => {
+    // Force a real rename failure: a directory sits where the report
+    // file should go, so renaming the temp file onto it throws. The temp
+    // file has already been written, so the failure path must remove it
+    // rather than leaving debris behind.
+    fs.mkdirSync(path.join(dir, CRASH_REPORT_FILENAME));
+    const written = recordCrashReport({ component: "A", error: "1" }, dir);
+    expect(written).toBeNull();
+    const debris = fs.readdirSync(dir).filter((f) => f.includes(".tmp"));
+    expect(debris).toEqual([]);
+  });
 });

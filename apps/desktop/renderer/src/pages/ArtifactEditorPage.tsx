@@ -805,5 +805,13 @@ function EditorSwitch({
       );
   }
 
-  return <ErrorBoundary name={name}>{editor}</ErrorBoundary>;
+  // `key={name}` ties the boundary's identity to the editor it wraps, so
+  // switching artifact type (e.g. document -> slides) remounts the
+  // boundary and clears any error caught for the previous editor rather
+  // than leaving the recovery UI stuck on the new one.
+  return (
+    <ErrorBoundary key={name} name={name}>
+      {editor}
+    </ErrorBoundary>
+  );
 }

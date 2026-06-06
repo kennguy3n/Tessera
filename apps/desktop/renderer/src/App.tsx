@@ -25,9 +25,18 @@ type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
  * `crash-report.json` entry tagged with the page name) instead of
  * taking down the whole app shell. The sidebar and command palette
  * live outside the boundary and stay interactive.
+ *
+ * The `key={name}` makes the per-route remount explicit: navigating to a
+ * different page swaps the boundary's key, so React unmounts the crashed
+ * subtree (clearing its caught-error state) instead of relying on React
+ * Router's internal route keying to do so.
  */
 function page(name: string, node: ReactNode): ReactNode {
-  return <ErrorBoundary name={name}>{node}</ErrorBoundary>;
+  return (
+    <ErrorBoundary key={name} name={name}>
+      {node}
+    </ErrorBoundary>
+  );
 }
 
 export default function App() {

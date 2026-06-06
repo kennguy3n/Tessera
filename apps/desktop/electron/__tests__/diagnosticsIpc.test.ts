@@ -76,6 +76,14 @@ describe("diagnostics:reportCrash IPC handler", () => {
     expect(recordCrashReport).toHaveBeenCalledWith(null);
   });
 
+  it("passes null for an array payload rather than recording a junk entry", async () => {
+    // Arrays are `typeof "object"` but have no report-shaped fields, so
+    // salvaging one would only persist an empty "unknown" report. Treat
+    // it like any other non-report payload and default to null.
+    await invoke("diagnostics:reportCrash", [1, 2, 3]);
+    expect(recordCrashReport).toHaveBeenCalledWith(null);
+  });
+
   it("accepts a partial report (all fields optional)", async () => {
     await invoke("diagnostics:reportCrash", { component: "HomePage" });
     expect(recordCrashReport).toHaveBeenCalledWith({ component: "HomePage" });

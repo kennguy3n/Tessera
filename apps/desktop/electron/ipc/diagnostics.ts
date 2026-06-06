@@ -33,13 +33,19 @@ export function registerDiagnosticsHandlers(): void {
       let payload: Partial<RendererCrashReport> | null;
       if (parsed.success) {
         payload = parsed.data;
-      } else if (typeof raw === "object" && raw !== null) {
-        // Structurally an object but out of bounds (e.g. oversized
-        // stack). Salvage it: normalize truncates each field instead of
-        // discarding the whole report.
+      } else if (
+        typeof raw === "object" &&
+        raw !== null &&
+        !Array.isArray(raw)
+      ) {
+        // A plain object that is out of bounds (e.g. oversized stack).
+        // Salvage it: normalize truncates each field instead of
+        // discarding the whole report. Arrays are excluded — they have
+        // no report-shaped fields, so recording one would only add a
+        // junk "unknown" entry, not salvage anything.
         payload = raw as Partial<RendererCrashReport>;
       } else {
-        // Not even an object (number, string, null, undefined).
+        // Not a report-shaped object (primitive, null, or array).
         payload = null;
       }
       recordCrashReport(payload);

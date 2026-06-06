@@ -112,8 +112,20 @@ export function recordCrashReport(
     // Atomic-ish write: a torn write would otherwise corrupt the only
     // crash evidence we have. Write to a sibling temp then rename.
     const tmp = `${filePath}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, `${JSON.stringify(bounded, null, 2)}\n`, "utf8");
-    fs.renameSync(tmp, filePath);
+    try {
+      fs.writeFileSync(tmp, `${JSON.stringify(bounded, null, 2)}\n`, "utf8");
+      fs.renameSync(tmp, filePath);
+    } catch (err) {
+      // The rename can fail (e.g. weaker cross-platform atomicity on
+      // Windows when the target exists). Don't leave the temp file as
+      // debris — best-effort unlink before giving up.
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // Nothing more we can do.
+      }
+      throw err;
+    }
     return filePath;
   } catch {
     // Best-effort; the logger already captured the crash above.
