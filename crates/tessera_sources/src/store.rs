@@ -308,8 +308,12 @@ impl SourceStore {
         // removing a source cascades through
         // chunks_ad_embeddings, so the cached IVF index for any
         // model_id may now point at deleted chunk rows. Bump so the
-        // next search rebuilds against the post-delete row set.
+        // next search rebuilds against the post-delete row set. The
+        // removed chunks also changed the corpus's non-ASCII ratio, so
+        // drop the multilingual-hint cache too — same post-chunk-delete
+        // bookkeeping as `delete_chunks_for_indexed_file`.
         drop(conn);
+        self.invalidate_non_ascii_cache();
         self.bump_embedding_generation();
         Ok(())
     }
@@ -2164,6 +2168,15 @@ impl SourceStore {
                     .map_err(Error::Sqlite)?;
                 Ok(())
             })?;
+            // The chunk delete cascades through `chunks_ad_embeddings`
+            // (so the cached IVF index may now reference deleted rows)
+            // and changes the corpus's non-ASCII ratio. Invalidate the
+            // multilingual-hint cache and bump the embedding generation
+            // — same post-chunk-delete bookkeeping as
+            // `delete_chunks_for_indexed_file` / `remove_source`.
+            drop(conn);
+            self.invalidate_non_ascii_cache();
+            self.bump_embedding_generation();
         }
         Ok(())
     }
@@ -4692,5 +4705,48 @@ mod tests {
         // Phase 4: delete_chunks_for_indexed_file also invalidates.
         store.delete_chunks_for_indexed_file(file_id).unwrap();
         assert_eq!(store.count_non_ascii_chunks().unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn remove_source_and_remove_indexed_file_invalidate_non_ascii_cache() {
+        // Devin Review (Info): remove_source / remove_indexed_file delete
+        // chunks but historically skipped invalidate_non_ascii_cache, so
+        // the memoized multilingual-hint counts could stay stale for up to
+        // NON_ASCII_CACHE_TTL after a removal. Pin that both removal paths
+        // now invalidate, matching delete_chunks_for_indexed_file.
+        for use_remove_source in [true, false] {
+            let store = SourceStore::open_in_memory().unwrap();
+            let source = Source::new_local_folder("/tmp/test".to_string());
+            store.add_source(&source).unwrap();
+
+            // Seed one non-ASCII chunk and prime the cache to (1, 1).
+            let file_id = store
+                .upsert_indexed_file(&source.id, "/tmp/test/a.txt", "hashA", "2026-01-01")
+                .unwrap();
+            {
+                let conn = store.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash) \
+                     VALUES (?1, 0, 0, '財務報告', 'h1')",
+                    params![file_id],
+                )
+                .unwrap();
+            }
+            assert_eq!(store.count_non_ascii_chunks().unwrap(), (1, 1));
+
+            // Remove via the path under test. The cache MUST be dropped so
+            // the next poll re-scans the now-empty corpus instead of
+            // returning the stale (1, 1).
+            if use_remove_source {
+                store.remove_source(&source.id).unwrap();
+            } else {
+                store.remove_indexed_file("/tmp/test/a.txt").unwrap();
+            }
+            assert_eq!(
+                store.count_non_ascii_chunks().unwrap(),
+                (0, 0),
+                "removal path must invalidate the multilingual-hint cache"
+            );
+        }
     }
 }
