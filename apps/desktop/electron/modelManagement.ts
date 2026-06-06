@@ -1889,10 +1889,15 @@ export function createDefaultFetcher(
 
       // 416: our partial is at/past the resource length (the remote
       // file shrank or we somehow already have it all). Drop the
-      // prefix and restart from scratch on the next attempt.
+      // prefix and restart from scratch on the next attempt. Clear the
+      // validator too: the next attempt sends no Range (downloaded is
+      // 0), so the stale validator would never be used, but resetting
+      // it keeps "no bytes written" and "no captured validator" in
+      // lockstep rather than relying on that downstream invariant.
       if (resp.status === 416) {
         await resp.body?.cancel().catch(() => undefined);
         downloaded = 0;
+        validator = null;
         await fsp.truncate(destPath, 0).catch(() => undefined);
         lastErr = new Error(`Download failed: HTTP ${resp.status}`);
         continue;

@@ -159,10 +159,11 @@ function configureUpdater(updater: AutoUpdaterModule): void {
   updater.logger = adapter;
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = false;
-  // Opt in (explicitly) to blockmap-based delta updates. With this
-  // off, electron-updater downloads only the blocks that changed
-  // between the installed artifact and the new release, which on a
-  // patch-level bump is a small fraction of the full installer.
+  // Enable blockmap-based delta updates by leaving electron-updater's
+  // differential download ON (its `disable*` flag set to false). The
+  // updater then fetches only the blocks that changed between the
+  // installed artifact and the new release, which on a patch-level bump
+  // is a small fraction of the full installer.
   updater.disableDifferentialDownload = false;
 }
 
