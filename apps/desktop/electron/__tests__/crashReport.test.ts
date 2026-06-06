@@ -177,6 +177,27 @@ describe("recordCrashReport", () => {
     expect(reports[0].component).toBe("New");
   });
 
+  it("drops persisted entries whose `component` is not a string", () => {
+    const file = path.join(dir, CRASH_REPORT_FILENAME);
+    // Existing entries are re-serialized as-is (only the appended report
+    // is normalized), so the read guard must reject a wrong-typed
+    // `component` to keep malformed data from persisting across writes.
+    fs.writeFileSync(
+      file,
+      JSON.stringify([
+        { component: 42, error: "bad" },
+        { component: "Good", error: "ok" },
+      ]),
+      "utf8",
+    );
+    recordCrashReport({ component: "New", error: "new" }, dir);
+    const reports = readReports();
+    expect(reports.map((r: { component: string }) => r.component)).toEqual([
+      "Good",
+      "New",
+    ]);
+  });
+
   it("leaves no .tmp debris after writing", () => {
     recordCrashReport({ component: "A", error: "1" }, dir);
     const debris = fs.readdirSync(dir).filter((f) => f.includes(".tmp"));

@@ -61,7 +61,16 @@ export function normalizeCrashReport(
 }
 
 function isReportShaped(e: unknown): e is RendererCrashReport {
-  return typeof e === "object" && e !== null && "component" in e;
+  // Require a string `component`, not merely the key's presence: existing
+  // entries are returned to the caller and re-serialized as-is (only the
+  // freshly appended report is normalized), so a malformed `{component:
+  // 42}` would otherwise persist unnormalized. Every report this module
+  // writes has a string `component` (see `normalizeCrashReport`).
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    typeof (e as { component?: unknown }).component === "string"
+  );
 }
 
 function readExisting(filePath: string): RendererCrashReport[] {
