@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/tessera_core",
+    "crates/tessera_migrate",
     "crates/tessera_bridge",
     "crates/tessera_sources",
     "crates/tessera_templates",

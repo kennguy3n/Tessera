@@ -4085,6 +4085,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera_migrate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "rusqlite",
+ "tempfile",
+ "tessera_core",
+]
+
+[[package]]
 name = "tessera_runtime"
 version = "0.1.0"
 dependencies = [
@@ -4128,6 +4139,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tessera_core",
+ "tessera_migrate",
  "thiserror 1.0.69",
  "tokenizers",
  "tokio",

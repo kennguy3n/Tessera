@@ -1174,7 +1174,7 @@ mod tests {
         }
         fn embed(&self, _text: &str) -> tessera_core::error::Result<Vec<f32>> {
             *self.calls.lock().unwrap() += 1;
-            Err(tessera_core::error::Error::Database(
+            Err(tessera_core::error::Error::DatabaseState(
                 "synthetic embed failure (test fixture)".to_string(),
             ))
         }
@@ -1258,7 +1258,7 @@ mod tests {
                 let mut c = self.calls.lock().unwrap();
                 *c += 1;
                 if (*c).is_multiple_of(2) {
-                    Err(tessera_core::error::Error::Database(
+                    Err(tessera_core::error::Error::DatabaseState(
                         "flaky failure".to_string(),
                     ))
                 } else {
@@ -1323,7 +1323,7 @@ mod tests {
             let mut tally = self.per_chunk_calls.lock().unwrap();
             *tally.entry(text.to_string()).or_insert(0) += 1;
             if self.blocked.contains(text) {
-                Err(tessera_core::error::Error::Database(
+                Err(tessera_core::error::Error::DatabaseState(
                     "persistently-failing content".to_string(),
                 ))
             } else {
@@ -1427,7 +1427,7 @@ mod tests {
         fn embed(&self, _text: &str) -> tessera_core::error::Result<Vec<f32>> {
             let mut b = self.budget.lock().unwrap();
             if *b == 0 {
-                return Err(tessera_core::error::Error::Database(
+                return Err(tessera_core::error::Error::DatabaseState(
                     "embedder budget exhausted".to_string(),
                 ));
             }

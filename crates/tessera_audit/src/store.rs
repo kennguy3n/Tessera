@@ -159,14 +159,13 @@ impl AuditStore {
                     SELECT RAISE(ABORT, 'audit_events is append-only: DELETE not allowed');
                 END;",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
     /// Append.
     pub fn append(&self, event: &AuditEvent) -> Result<()> {
-        let type_str =
-            serde_json::to_string(&event.event_type).map_err(|e| Error::Database(e.to_string()))?;
+        let type_str = serde_json::to_string(&event.event_type).map_err(Error::Json)?;
         self.conn
             .lock()
             .expect("connection mutex poisoned")
@@ -179,18 +178,17 @@ impl AuditStore {
                     event.details,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
     /// Query by type.
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
-        let type_str =
-            serde_json::to_string(event_type).map_err(|e| Error::Database(e.to_string()))?;
+        let type_str = serde_json::to_string(event_type).map_err(Error::Json)?;
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare("SELECT id, event_type, timestamp, details FROM audit_events WHERE event_type = ?1 ORDER BY timestamp DESC")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let events = stmt
             .query_map(params![type_str], |row| {
@@ -201,7 +199,7 @@ impl AuditStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .filter_map(parse_event_row)
             .collect();
@@ -220,7 +218,7 @@ impl AuditStore {
             .prepare(
                 "SELECT id, event_type, timestamp, details FROM audit_events WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp DESC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let events = stmt
             .query_map(params![from.to_rfc3339(), to.to_rfc3339()], |row| {
@@ -231,7 +229,7 @@ impl AuditStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .filter_map(parse_event_row)
             .collect();
@@ -251,7 +249,7 @@ impl AuditStore {
                 "SELECT id, event_type, timestamp, details FROM audit_events \
                  ORDER BY timestamp DESC, id DESC LIMIT ?1 OFFSET ?2",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let events = stmt
             .query_map(params![limit as i64, offset as i64], |row| {
@@ -262,7 +260,7 @@ impl AuditStore {
                     row.get::<_, String>(3)?,
                 ))
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .filter_map(parse_event_row)
             .collect();
@@ -277,7 +275,7 @@ impl AuditStore {
             .lock()
             .expect("connection mutex poisoned")
             .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(count as u64)
     }
 
@@ -347,7 +345,7 @@ impl AuditStore {
         let target_rotate = live_count - AUDIT_ROTATION_THRESHOLD;
 
         std::fs::create_dir_all(archive_dir).map_err(|e| {
-            Error::Database(format!(
+            Error::DatabaseState(format!(
                 "rotate: failed to create archive_dir {}: {e}",
                 archive_dir.display()
             ))
@@ -390,7 +388,7 @@ impl AuditStore {
                      ORDER BY timestamp ASC, id ASC
                      LIMIT ?1",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
             let collected: Vec<(String, String, String, String)> = stmt
                 .query_map(params![target_rotate as i64], |row| {
                     Ok((
@@ -400,9 +398,9 @@ impl AuditStore {
                         row.get::<_, String>(3)?,
                     ))
                 })
-                .map_err(|e| Error::Database(e.to_string()))?
+                .map_err(Error::Sqlite)?
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
             collected
             // `conn` and `stmt` are dropped here, releasing the mutex.
         };
@@ -473,7 +471,7 @@ impl AuditStore {
             Ok(rd) => rd,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => {
-                return Err(Error::Database(format!(
+                return Err(Error::DatabaseState(format!(
                     "list_archives: read_dir({}): {e}",
                     archive_dir.display()
                 )))
@@ -513,7 +511,7 @@ fn write_rotation_archive(
     rows: &[(String, String, String, String)],
 ) -> Result<()> {
     let file = std::fs::File::create(archive_path).map_err(|e| {
-        Error::Database(format!(
+        Error::DatabaseState(format!(
             "rotate: failed to create {}: {e}",
             archive_path.display()
         ))
@@ -535,17 +533,17 @@ fn write_rotation_archive(
             "details": details,
         });
         let serialised = serde_json::to_string(&line)
-            .map_err(|e| Error::Database(format!("rotate: serialise row: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("rotate: serialise row: {e}")))?;
         encoder
             .write_all(serialised.as_bytes())
-            .map_err(|e| Error::Database(format!("rotate: gz write: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("rotate: gz write: {e}")))?;
         encoder
             .write_all(b"\n")
-            .map_err(|e| Error::Database(format!("rotate: gz write newline: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("rotate: gz write newline: {e}")))?;
     }
     encoder
         .finish()
-        .map_err(|e| Error::Database(format!("rotate: gz finish: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("rotate: gz finish: {e}")))?;
     Ok(())
 }
 
@@ -554,13 +552,13 @@ fn write_rotation_archive(
 /// connection.
 fn execute_rotation_delete(conn: &rusqlite::Connection, ids: &[String]) -> Result<()> {
     conn.execute_batch("BEGIN IMMEDIATE;")
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
     let rollback_on_err = |err: rusqlite::Error| -> Error {
         // Best-effort rollback. If it fails, propagate the original
         // error — the next connection acquisition will roll back
         // the partial transaction.
         let _ = conn.execute_batch("ROLLBACK;");
-        Error::Database(err.to_string())
+        Error::Sqlite(err)
     };
     conn.execute("DROP TRIGGER IF EXISTS audit_no_delete", [])
         .map_err(rollback_on_err)?;

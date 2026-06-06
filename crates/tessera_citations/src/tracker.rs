@@ -96,7 +96,7 @@ impl CitationTracker {
     /// `current_hash_lookup` should return `Ok(Some(hash))` when the
     /// source is still indexed and `Ok(None)` when the source URI
     /// has been removed. Returns
-    /// `Err(Error::Database("citation not found: ..."))` if the
+    /// `Err(Error::DatabaseState("citation not found: ..."))` if the
     /// citation does not exist.
     pub fn check_freshness<F>(
         &self,
@@ -106,10 +106,9 @@ impl CitationTracker {
     where
         F: FnOnce(&str) -> Result<Option<String>>,
     {
-        let citation = self
-            .store
-            .get(citation_id)?
-            .ok_or_else(|| Error::Database(format!("citation not found: {}", citation_id.0)))?;
+        let citation = self.store.get(citation_id)?.ok_or_else(|| {
+            Error::DatabaseState(format!("citation not found: {}", citation_id.0))
+        })?;
         check_source_freshness(&citation, current_hash_lookup)
     }
 
@@ -124,19 +123,18 @@ impl CitationTracker {
         citation_id: &CitationId,
         replacement: CitationReplacement,
     ) -> Result<Citation> {
-        let existing = self
-            .store
-            .get(citation_id)?
-            .ok_or_else(|| Error::Database(format!("citation not found: {}", citation_id.0)))?;
+        let existing = self.store.get(citation_id)?.ok_or_else(|| {
+            Error::DatabaseState(format!("citation not found: {}", citation_id.0))
+        })?;
 
         let owning_artifact = self.store.artifact_for(citation_id)?.ok_or_else(|| {
-            Error::Database(format!(
+            Error::DatabaseState(format!(
                 "citation has no artifact association: {}",
                 citation_id.0
             ))
         })?;
         if owning_artifact != *artifact_id {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "citation {} belongs to a different artifact",
                 citation_id.0
             )));
@@ -158,7 +156,7 @@ impl CitationTracker {
         // but we re-read the row so the caller sees a consistent
         // round-tripped value.
         let updated = self.store.get(citation_id)?.ok_or_else(|| {
-            Error::Database(format!(
+            Error::DatabaseState(format!(
                 "citation disappeared after replace: {}",
                 citation_id.0
             ))

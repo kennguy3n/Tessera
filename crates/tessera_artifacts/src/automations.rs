@@ -213,7 +213,7 @@ impl AutomationStore {
                     last_run_status TEXT
                 );",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -241,7 +241,7 @@ impl AutomationStore {
                     a.last_run_status,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -254,14 +254,10 @@ impl AutomationStore {
                         created_at, updated_at, last_run_at, last_run_status
                  FROM automations WHERE id = ?1",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let mut rows = stmt
-            .query(params![id.to_string()])
-            .map_err(|e| Error::Database(e.to_string()))?;
-        if let Some(row) = rows.next().map_err(|e| Error::Database(e.to_string()))? {
-            Ok(Some(
-                row_to_automation(row).map_err(|e| Error::Database(e.to_string()))?,
-            ))
+            .map_err(Error::Sqlite)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(Error::Sqlite)?;
+        if let Some(row) = rows.next().map_err(Error::Sqlite)? {
+            Ok(Some(row_to_automation(row).map_err(Error::Sqlite)?))
         } else {
             Ok(None)
         }
@@ -276,13 +272,13 @@ impl AutomationStore {
                         created_at, updated_at, last_run_at, last_run_status
                  FROM automations ORDER BY created_at DESC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let rows = stmt
             .query_map([], row_to_automation)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.map_err(|e| Error::Database(e.to_string()))?);
+            out.push(r.map_err(Error::Sqlite)?);
         }
         Ok(out)
     }
@@ -296,7 +292,7 @@ impl AutomationStore {
                 "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
                 params![enabled as i64, Utc::now().to_rfc3339(), id.to_string(),],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -310,7 +306,7 @@ impl AutomationStore {
                 "DELETE FROM automations WHERE id = ?1",
                 params![id.to_string()],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(rows > 0)
     }
 
@@ -330,7 +326,7 @@ impl AutomationStore {
                     id.to_string(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 

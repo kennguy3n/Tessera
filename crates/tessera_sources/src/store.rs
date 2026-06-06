@@ -200,436 +200,42 @@ impl SourceStore {
     }
 
     fn init_schema(&self) -> Result<()> {
-        self.conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute_batch(
-                "
-            -- Re-assert PRAGMA foreign_keys = ON on this connection.
-            -- The primary place this is set is `tessera_core::db::
-            -- open_shared`, which applies it at construction time so
-            -- every store inherits the setting regardless of which
-            -- `init_schema` runs first. We re-assert it here as
-            -- defence-in-depth: a future caller that constructs a
-            -- `SourceStore` from a raw `rusqlite::Connection` via some
-            -- yet-unwritten escape hatch would otherwise silently get
-            -- a no-op CASCADE on `chunk_embeddings`. The pragma is
-            -- idempotent, so applying it twice costs nothing.
-            -- Note that SQLite scopes this pragma per-connection (not
-            -- per-database); the per-connection nature is why the
-            -- pragma cannot live solely in the schema migration.
-            PRAGMA foreign_keys = ON;
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
 
-            CREATE TABLE IF NOT EXISTS sources (
-                id TEXT PRIMARY KEY,
-                source_type TEXT NOT NULL,
-                path TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                last_indexed TEXT,
-                file_count INTEGER NOT NULL DEFAULT 0
-            );
+        // Re-assert PRAGMA foreign_keys = ON on this connection. The
+        // primary place this is set is `tessera_core::db::open_shared`,
+        // which applies it at construction time so every store inherits
+        // the setting. We re-assert it here as defence-in-depth: a
+        // future caller that constructs a `SourceStore` from a raw
+        // `rusqlite::Connection` via some yet-unwritten escape hatch
+        // would otherwise silently get a no-op CASCADE on
+        // `chunk_embeddings`. SQLite scopes this pragma per-connection
+        // (not per-database), which is why it cannot live in a
+        // database-scoped migration; the pragma is idempotent, so
+        // applying it twice costs nothing.
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(Error::Sqlite)?;
 
-            CREATE TABLE IF NOT EXISTS indexed_files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_id TEXT NOT NULL,
-                path TEXT NOT NULL UNIQUE,
-                hash TEXT NOT NULL,
-                last_modified TEXT NOT NULL,
-                chunk_count INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (source_id) REFERENCES sources(id)
-            );
+        // Apply all pending schema migrations via the versioned runner
+        // in `tessera_migrate`. This replaces the previous ad-hoc
+        // `CREATE TABLE ... IF NOT EXISTS` + idempotent `ALTER TABLE`
+        // batch. The runner is idempotent and produces a schema
+        // identical to the legacy path for both fresh databases and
+        // databases an older build populated: the `CREATE`s are
+        // `IF NOT EXISTS` no-ops and the column-adds are skipped when
+        // the column already exists.
+        tessera_migrate::Migrator::new().run(&mut conn)?;
 
-            CREATE TABLE IF NOT EXISTS chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                indexed_file_id INTEGER NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                byte_offset INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                hash TEXT NOT NULL,
-                -- Provenance columns added by Block C (vision-powered
-                -- indexing). NULL on legacy / native-extraction rows;
-                -- set to the lower-snake-case `ExtractionMethod`
-                -- discriminant and the manifest entry id of the
-                -- vision model that produced VLM-derived rows. See
-                -- `crate::chunker::ExtractionMethod` for the value
-                -- catalogue.
-                extraction_method TEXT,
-                extraction_model_id TEXT,
-                FOREIGN KEY (indexed_file_id) REFERENCES indexed_files(id)
-            );
-
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-                content,
-                content='chunks',
-                content_rowid='id'
-            );
-
-            CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-                INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS chunks_ad BEFORE DELETE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', old.id, old.content);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', old.id, old.content);
-                INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
-            END;
-
-            CREATE TABLE IF NOT EXISTS chunk_embeddings (
-                chunk_id INTEGER NOT NULL,
-                model_id TEXT NOT NULL,
-                dim INTEGER NOT NULL,
-                vec BLOB NOT NULL,
-                PRIMARY KEY (chunk_id, model_id),
-                FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model
-                ON chunk_embeddings(model_id);
-
-            CREATE TRIGGER IF NOT EXISTS chunks_ad_embeddings BEFORE DELETE ON chunks BEGIN
-                DELETE FROM chunk_embeddings WHERE chunk_id = old.id;
-            END;
-
-            -- Block B Task 3: per-channel ACL projection.
-            -- The Node-side `KchatEventForwarder` calls
-            -- `bridge_refresh_kchat_acl` after every membership
-            -- change event (`user_added`, `user_removed`,
-            -- `channel_updated`) with the authoritative member
-            -- roster from `GET /channels/{id}/members`. The roster
-            -- is persisted here so retrieval-side filters can
-            -- enforce \"principal is still a member\" without a
-            -- round-trip to the KChat server on every search.
-            --
-            -- The `kchat_principal` singleton (id='singleton') is
-            -- the locally-authenticated KChat user id. It is set
-            -- by `kchat:connect` after the `/users/me` probe
-            -- succeeds and cleared by `kchat:disconnect`. A NULL
-            -- principal means \"no KChat connection\" — the ACL
-            -- projection logic treats refresh calls as no-ops in
-            -- that state rather than auto-revoking every source.
-            CREATE TABLE IF NOT EXISTS kchat_principal (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                set_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS kchat_source_acl (
-                source_id TEXT NOT NULL,
-                member_user_id TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT '',
-                refreshed_at TEXT NOT NULL,
-                PRIMARY KEY (source_id, member_user_id),
-                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
-            );
-
-            -- Indexed lookup for \"every source the principal is a
-            -- member of\". Used by `is_principal_member` to answer
-            -- the per-source ACL question in O(log n) rather than
-            -- scanning the full ACL table.
-            CREATE INDEX IF NOT EXISTS idx_kchat_source_acl_member
-                ON kchat_source_acl(member_user_id);
-
-            -- Block C Task 2: per-source data-encryption-key
-            -- (DEK) lifecycle table. One row per KChat-channel source
-            -- that has ever ingested a chat-post body chunk. The
-            -- wrapped DEK is generated lazily on the first
-            -- `ingest_kchat_post` call for the source; subsequent
-            -- ingests reuse the existing row. The row is dropped
-            -- (and the in-memory DEK is zeroized) by
-            -- `cryptoshred_kchat_source_evidence` so a leaked SQLCipher
-            -- master key cannot decrypt any surviving AEAD ciphertext
-            -- bytes for that source.
-            --
-            -- `wrap_nonce` (12 bytes) + `wrapped_dek` (48 bytes = 32-byte
-            -- DEK + 16-byte GCM tag) are stored as BLOBs because they
-            -- are uniform random bytes; storing them as base64 TEXT
-            -- would double the on-disk footprint with no observability
-            -- benefit (the keychain integrity check already happens at
-            -- unwrap time via the GCM tag). `ON DELETE CASCADE` makes
-            -- a future `remove_source` automatically drop the wrapped
-            -- DEK row too, so an operator cannot silently leave a
-            -- DEK lying around when removing a source the normal way.
-            CREATE TABLE IF NOT EXISTS kchat_source_deks (
-                source_id TEXT PRIMARY KEY,
-                wrap_nonce BLOB NOT NULL,
-                wrapped_dek BLOB NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
-            );
-
-            -- Block C Task 1: per-post bookkeeping. Maps
-            -- the KChat-server-issued post_id to the local
-            -- `indexed_files` row that holds its chunks, so a
-            -- `post_edited` or `post_deleted` event can locate the
-            -- existing rows in O(log n) and re-chunk / delete them
-            -- without scanning every chunk in the channel.
-            --
-            -- `message_hash` (BLAKE3 of the trimmed post body) is the
-            -- dedupe key for idempotent re-ingestion of an unchanged
-            -- post: a `posted` event that arrives twice (e.g. server
-            -- replay during reconnect) finds the existing row with
-            -- the same hash and skips the chunk insert. An edit
-            -- bumps the hash; the manager re-chunks under a
-            -- transaction (delete-old-chunks + insert-new).
-            --
-            -- `root_id` is the KChat thread root for replies; NULL
-            -- for top-level posts. `sender_user_id` is the post
-            -- author; both are stored so retrieval surfaces can
-            -- carry citation metadata into the renderer without
-            -- another round-trip through KChat REST.
-            CREATE TABLE IF NOT EXISTS kchat_posts (
-                source_id TEXT NOT NULL,
-                post_id TEXT NOT NULL,
-                channel_id TEXT NOT NULL,
-                root_id TEXT,
-                sender_user_id TEXT NOT NULL,
-                indexed_file_id INTEGER NOT NULL,
-                message_hash TEXT NOT NULL,
-                created_at_ms INTEGER NOT NULL,
-                edited_at_ms INTEGER NOT NULL,
-                ingested_at TEXT NOT NULL,
-                PRIMARY KEY (source_id, post_id),
-                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
-                FOREIGN KEY (indexed_file_id) REFERENCES indexed_files(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_kchat_posts_channel
-                ON kchat_posts(channel_id, post_id);
-            CREATE INDEX IF NOT EXISTS idx_kchat_posts_indexed_file
-                ON kchat_posts(indexed_file_id);
-            ",
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
-
-        // Block C migration: databases created by earlier Tessera
-        // builds have a `chunks` table WITHOUT the
-        // `extraction_method` / `extraction_model_id` columns. The
-        // CREATE TABLE above is a no-op against an existing table, so
-        // we have to ALTER explicitly. SQLite has no
-        // `ADD COLUMN IF NOT EXISTS`, so we make this idempotent by
-        // querying `PRAGMA table_info` for the existing columns
-        // FIRST and only issuing the ALTER for ones that don't
-        // already exist. This is structurally robust — unlike the
-        // "execute then match the rusqlite error string" approach
-        // which would silently mis-detect a future rusqlite version
-        // that reworded the duplicate-column message.
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-        let existing_columns: std::collections::HashSet<String> = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(chunks)")
-                .map_err(|e| Error::Database(format!("table_info(chunks): {e}")))?;
-            let rows = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|e| Error::Database(format!("table_info(chunks) query: {e}")))?;
-            rows.filter_map(std::result::Result::ok).collect()
-        };
-        for column in &["extraction_method", "extraction_model_id"] {
-            if existing_columns.contains(*column) {
-                continue;
-            }
-            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} TEXT");
-            conn.execute(&sql, [])
-                .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
-        }
-
-        // Block C Task 2 chunks AEAD migration. Three new
-        // columns, all NULLable, all backwards-compatible with the
-        // existing file-sourced rows:
-        //
-        // - `kind` discriminates a `file_chunk` (extracted from a
-        //   filesystem artifact) from a `chat_post` (a KChat post
-        //   body). Legacy rows are written before this column
-        //   existed, so they read as NULL and are interpreted as
-        //   `file_chunk` for retrieval. New rows always carry a
-        //   non-NULL value.
-        // - `content_aead` is the AES-256-GCM ciphertext of the
-        //   chunk content under the per-source DEK. Populated only
-        //   on `chat_post` rows; NULL on file_chunk rows (where the
-        //   plaintext in `content` is the only canonical copy).
-        // - `content_aead_nonce` is the 12-byte AES-GCM nonce that
-        //   produced `content_aead`. NULL when `content_aead` is.
-        //
-        // The plaintext copy in `content` is retained for chat_post
-        // rows too — FTS5 needs it to tokenize for retrieval — but
-        // both copies are dropped in lockstep by
-        // `cryptoshred_kchat_source_evidence` (single DELETE +
-        // secure_delete + VACUUM), so retaining the plaintext does
-        // not weaken the long-term cryptographic forgetting
-        // guarantee. The DEK destruction at the same time is what
-        // makes the surviving AEAD bytes (if a backup leaked
-        // between DELETE and the freelist sweep) unrecoverable.
-        for (column, ty) in [
-            ("kind", "TEXT"),
-            ("content_aead", "BLOB"),
-            ("content_aead_nonce", "BLOB"),
-        ] {
-            if existing_columns.contains(column) {
-                continue;
-            }
-            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} {ty}");
-            conn.execute(&sql, [])
-                .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
-        }
-
-        // Block C Task 4 backfill cursor migration. Two
-        // columns on `sources`:
-        //
-        // - `kchat_backfill_oldest_post_id` — the oldest KChat post
-        //   id the substrate has ingested for this source so far.
-        //   The renderer's backfill loop uses this as the `before=`
-        //   cursor for the next page fetch, so a restart picks up
-        //   exactly where the previous run left off (no double-
-        //   indexing of the most-recent ingested page, no skipping
-        //   of older pages). NULL means "no backfill has run yet";
-        //   the first page fetch happens without a `before` param,
-        //   which the KChat REST contract treats as "newest first".
-        //
-        // - `kchat_backfill_completed_at` — RFC3339 timestamp set
-        //   when the walk reached the end (server returned a page
-        //   with `prev_post_id=null`). NULL means "incomplete /
-        //   needs more pages". A non-NULL value short-circuits any
-        //   future `runBackfillKchatChannel` call so a user clicking
-        //   "Backfill history" on an already-walked channel doesn't
-        //   re-walk the full history (idempotent re-runs are cheap
-        //   since the per-post dedupe in `ingest_kchat_post` would
-        //   no-op every row anyway, but we want the audit row to
-        //   reflect "no work to do" rather than "walked the whole
-        //   history and re-no-op'd it").
-        //
-        // Both are NULL on every legacy row; the runtime treats
-        // NULL as the "never walked" state. The
-        // `cryptoshred_kchat_source_evidence` scrub clears both
-        // columns inside the same transaction as the chunks /
-        // indexed_files / kchat_posts / kchat_source_deks deletes
-        // so a re-grant on the same source starts the backfill walk
-        // from scratch (the old cursor would point at a post id
-        // whose evidence was just shredded).
-        for (column, ty) in [
-            ("kchat_backfill_oldest_post_id", "TEXT"),
-            ("kchat_backfill_completed_at", "TEXT"),
-            // connector sync error resilience.
-            // Three nullable / defaulted columns added in the same
-            // idempotent migration loop so older databases pick
-            // them up on first open without a separate migration
-            // step.
-            //
-            // - `last_sync_error` — JSON-encoded
-            //   `tessera_connectors::PersistedSyncError` (`kind`
-            //   discriminant + `message`). NULL on rows that have
-            //   never failed or whose last attempt succeeded.
-            // - `retry_count` — consecutive transient failures
-            //   since the last successful sync. Reset to 0 on
-            //   success. Used by the scheduler to compute the next
-            //   exponential-backoff retry instant.
-            // - `failed_permanently` — sticky bit (0/1). Set when
-            //   a `Permanent`-classified failure is observed or
-            //   when `retry_count` exceeds the policy threshold.
-            //   Only the user can clear it (via "Retry now" or
-            //   "Re-authorize") — `record_sync_success` does this
-            //   automatically once a successful sync proves the
-            //   source is healthy again.
-            ("last_sync_error", "TEXT"),
-            ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
-            ("failed_permanently", "INTEGER NOT NULL DEFAULT 0"),
-        ] {
-            let existing: bool = conn
-                .query_row(
-                    "SELECT 1 FROM pragma_table_info('sources') WHERE name = ?1",
-                    params![column],
-                    |_| Ok(true),
-                )
-                .unwrap_or(false);
-            if existing {
-                continue;
-            }
-            let sql = format!("ALTER TABLE sources ADD COLUMN {column} {ty}");
-            conn.execute(&sql, [])
-                .map_err(|e| Error::Database(format!("failed to add sources.{column}: {e}")))?;
-        }
-
-        // Partial index on the new column. Created AFTER the ALTERs
-        // above so legacy databases (where the column didn't exist
-        // when the batch ran) still get the index. `WHERE … IS NOT
-        // NULL` keeps the index dense — the index only holds rows
-        // for VLM-derived chunks, which is the only access pattern
-        // ("delete all chunks produced by the previously-installed
-        // vision model so we can re-extract").
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chunks_extraction_model
-             ON chunks(extraction_model_id)
-             WHERE extraction_model_id IS NOT NULL",
-            [],
-        )
-        .map_err(|e| Error::Database(e.to_string()))?;
-
-        // Composite index on (source_type, path) so the idempotent
-        // KChat-channel registration in `SourceManager::add_kchat_channel`
-        // can locate an existing row in O(log n) instead of scanning
-        // every row in the table. The hot path is `find_source_by_type_and_path`,
-        // called once per channel sync; with hundreds of mixed-connector
-        // sources the previous `list_sources()` linear scan was the
-        // dominant cost on each re-sync. `source_type` is the leading
-        // column so the same index also covers future "list all KChat
-        // sources" / "list all Gmail sources" queries without a
-        // separate index.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_sources_type_path
-             ON sources(source_type, path)",
-            [],
-        )
-        .map_err(|e| Error::Database(e.to_string()))?;
-
-        // covering index on `(hash, indexed_file_id)`
-        // so the hybrid-search post-fusion fetch can resolve a chunk
-        // row without touching the main `chunks` table. The hot
-        // path in `SearchEngine::search_with_mode` selects
-        // `chunks.id`, `chunks.content`, `chunks.indexed_file_id`,
-        // `chunks.hash`, `chunks.chunk_index` for the top-K fused
-        // chunk ids and joins to `indexed_files.path`. Without this
-        // index, the `WHERE chunks.hash = ?` path used by the
-        // dedup-on-re-search guard required a full-table scan on
-        // 100K-chunk corpora (visible as a 60 ms tail in the
-        // 100k search bench before the optimisation). The index
-        // also unblocks `EXPLAIN QUERY PLAN` showing a `SEARCH
-        // chunks USING INDEX idx_chunks_hash_file` rather than
-        // `SCAN chunks`. The leading column is `hash` because the
-        // dedup query filters on hash equality first; the trailing
-        // `indexed_file_id` is included so the planner can satisfy
-        // the join without a secondary lookup.
-        //
-        // `(hash, indexed_file_id)` rather than just `(hash)` because
-        // re-ingestion of the same content under a different file
-        // path is a real workflow (the user moves a file between
-        // sources) and the dedup needs to be per-file, not per-
-        // source. The pair index supports both that path AND the
-        // search-side covering case without a second index.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chunks_hash_file
-             ON chunks(hash, indexed_file_id)",
-            [],
-        )
-        .map_err(|e| Error::Database(e.to_string()))?;
-
-        // ask SQLite to run its cost-model
-        // optimiser on the schema after every migration. `PRAGMA
-        // optimize` consults `sqlite_stat1` / `sqlite_stat4` and,
-        // when stats are stale, runs `ANALYZE` on the tables that
-        // need it. Running this after migration ensures the planner
-        // has fresh stats for the indexes we just (re)created — most
-        // notably `idx_chunks_hash_file` above. The pragma is
-        // cheap when nothing needs analysing (a single sqlite_stat
-        // probe) so the overhead is invisible on warm boots.
-        //
-        // The pragma is run again from `SourceManager::run_idle_maintenance`
-        // (called from the bridge's idle-timer tick) so a long-
-        // running session whose corpus grew an order of magnitude
-        // since boot also gets the stats refresh.
+        // Ask SQLite to refresh its cost-model statistics after
+        // migration. `PRAGMA optimize` consults `sqlite_stat1` /
+        // `sqlite_stat4` and runs `ANALYZE` only on tables whose stats
+        // are stale, so it is cheap on warm boots. Running it here gives
+        // the planner fresh stats for the indexes the migrations just
+        // (re)created. It is run again from
+        // `SourceManager::run_idle_maintenance` for long-running
+        // sessions whose corpus grew since boot.
         conn.execute_batch("PRAGMA optimize;")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         Ok(())
     }
@@ -645,16 +251,16 @@ impl SourceStore {
                 params![
                     source.id.to_string(),
                     serde_json::to_string(&source.source_type)
-                        .map_err(|e| Error::Database(e.to_string()))?,
+                        .map_err(Error::Json)?,
                     source.path,
                     serde_json::to_string(&source.status)
-                        .map_err(|e| Error::Database(e.to_string()))?,
+                        .map_err(Error::Json)?,
                     source.created_at.to_rfc3339(),
                     source.last_indexed.map(|t| t.to_rfc3339()),
                     source.file_count as i64,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -665,9 +271,9 @@ impl SourceStore {
 
         let file_ids: Vec<i64> = conn
             .prepare("SELECT id FROM indexed_files WHERE source_id = ?1")
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .query_map(params![id_str], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
 
@@ -676,17 +282,17 @@ impl SourceStore {
                 "DELETE FROM chunks WHERE indexed_file_id = ?1",
                 params![fid],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         }
 
         conn.execute(
             "DELETE FROM indexed_files WHERE source_id = ?1",
             params![id_str],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
         conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         // removing a source cascades through
         // chunks_ad_embeddings, so the cached IVF index for any
@@ -704,7 +310,7 @@ impl SourceStore {
             .prepare(
                 "SELECT id, source_type, path, status, created_at, last_indexed, file_count FROM sources",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let sources = stmt
             .query_map([], |row| {
@@ -748,9 +354,9 @@ impl SourceStore {
                     file_count: row.get::<_, i64>(6)? as u64,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Database(format!("corrupted row: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("corrupted row: {e}")))?;
 
         Ok(sources)
     }
@@ -792,7 +398,7 @@ impl SourceStore {
                     })
                 },
             )
-            .map_err(|e| Error::Database(e.to_string()))
+            .map_err(Error::Sqlite)
     }
 
     /// Find the source row (if any) whose `source_type` and `path`
@@ -819,8 +425,7 @@ impl SourceStore {
         source_type: &SourceType,
         path: &str,
     ) -> Result<Option<Source>> {
-        let type_str =
-            serde_json::to_string(source_type).map_err(|e| Error::Database(e.to_string()))?;
+        let type_str = serde_json::to_string(source_type).map_err(Error::Json)?;
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare(
@@ -829,29 +434,26 @@ impl SourceStore {
                  WHERE source_type = ?1 AND path = ?2
                  LIMIT 1",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let mut rows = stmt
-            .query(params![type_str, path])
-            .map_err(|e| Error::Database(e.to_string()))?;
-        match rows.next().map_err(|e| Error::Database(e.to_string()))? {
+            .map_err(Error::Sqlite)?;
+        let mut rows = stmt.query(params![type_str, path]).map_err(Error::Sqlite)?;
+        match rows.next().map_err(Error::Sqlite)? {
             Some(row) => {
-                let id_s: String = row.get(0).map_err(|e| Error::Database(e.to_string()))?;
-                let source_type_str: String =
-                    row.get(1).map_err(|e| Error::Database(e.to_string()))?;
-                let status_str: String = row.get(3).map_err(|e| Error::Database(e.to_string()))?;
-                let created_at_str: String =
-                    row.get(4).map_err(|e| Error::Database(e.to_string()))?;
-                let last_indexed_str: Option<String> =
-                    row.get(5).map_err(|e| Error::Database(e.to_string()))?;
+                let id_s: String = row.get(0).map_err(Error::Sqlite)?;
+                let source_type_str: String = row.get(1).map_err(Error::Sqlite)?;
+                let status_str: String = row.get(3).map_err(Error::Sqlite)?;
+                let created_at_str: String = row.get(4).map_err(Error::Sqlite)?;
+                let last_indexed_str: Option<String> = row.get(5).map_err(Error::Sqlite)?;
 
                 let parsed_id = uuid::Uuid::parse_str(&id_s)
-                    .map_err(|e| Error::Database(format!("corrupt source.id: {e}")))?;
-                let parsed_type: SourceType = serde_json::from_str(&source_type_str)
-                    .map_err(|e| Error::Database(format!("corrupt source.source_type: {e}")))?;
+                    .map_err(|e| Error::DatabaseState(format!("corrupt source.id: {e}")))?;
+                let parsed_type: SourceType =
+                    serde_json::from_str(&source_type_str).map_err(|e| {
+                        Error::DatabaseState(format!("corrupt source.source_type: {e}"))
+                    })?;
                 let parsed_status: SourceStatus = serde_json::from_str(&status_str)
-                    .map_err(|e| Error::Database(format!("corrupt source.status: {e}")))?;
-                let row_path: String = row.get(2).map_err(|e| Error::Database(e.to_string()))?;
-                let file_count: i64 = row.get(6).map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::DatabaseState(format!("corrupt source.status: {e}")))?;
+                let row_path: String = row.get(2).map_err(Error::Sqlite)?;
+                let file_count: i64 = row.get(6).map_err(Error::Sqlite)?;
                 Ok(Some(Source {
                     id: SourceId(parsed_id),
                     source_type: parsed_type,
@@ -874,8 +476,7 @@ impl SourceStore {
         file_count: Option<u64>,
     ) -> Result<()> {
         let id_str = source_id.to_string();
-        let status_str =
-            serde_json::to_string(&status).map_err(|e| Error::Database(e.to_string()))?;
+        let status_str = serde_json::to_string(&status).map_err(Error::Json)?;
         let now = chrono::Utc::now().to_rfc3339();
 
         let conn = self.conn.lock().expect("connection mutex poisoned");
@@ -884,13 +485,13 @@ impl SourceStore {
                 "UPDATE sources SET status = ?1, last_indexed = ?2, file_count = ?3 WHERE id = ?4",
                 params![status_str, now, count as i64, id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         } else {
             conn.execute(
                 "UPDATE sources SET status = ?1 WHERE id = ?2",
                 params![status_str, id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         }
         // source-status transitions to/from
         // `AccessRevoked` change the join predicate in
@@ -949,7 +550,7 @@ impl SourceStore {
             // the retry counter starts fresh).
             Ok((err, retry, perm)) => Ok((err, u32::try_from(retry).unwrap_or(0), perm != 0)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, 0, false)),
-            Err(e) => Err(Error::Database(e.to_string())),
+            Err(e) => Err(Error::Sqlite(e)),
         }
     }
 
@@ -986,9 +587,9 @@ impl SourceStore {
                     id_str,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         if n == 0 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "record_sync_failure: no source with id {id_str}"
             )));
         }
@@ -1012,9 +613,9 @@ impl SourceStore {
                  WHERE id = ?1",
                 params![id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         if n == 0 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "record_sync_success: no source with id {id_str}"
             )));
         }
@@ -1044,7 +645,7 @@ impl SourceStore {
                     set_at  = excluded.set_at",
                 params![user_id, now],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -1066,7 +667,7 @@ impl SourceStore {
             ) {
             Ok(user_id) => Ok(Some(user_id)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(Error::Database(e.to_string())),
+            Err(e) => Err(Error::Sqlite(e)),
         }
     }
 
@@ -1081,7 +682,7 @@ impl SourceStore {
             .lock()
             .expect("connection mutex poisoned")
             .execute("DELETE FROM kchat_principal WHERE id = 'singleton'", [])
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -1107,14 +708,12 @@ impl SourceStore {
         let id_str = source_id.to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let mut conn = self.conn.lock().expect("connection mutex poisoned");
-        let tx = conn
-            .transaction()
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let tx = conn.transaction().map_err(Error::Sqlite)?;
         tx.execute(
             "DELETE FROM kchat_source_acl WHERE source_id = ?1",
             params![id_str],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         {
             let mut stmt = tx
                 .prepare(
@@ -1125,13 +724,13 @@ impl SourceStore {
                         role         = excluded.role,
                         refreshed_at = excluded.refreshed_at",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
             for (user_id, role) in members {
                 stmt.execute(params![id_str, user_id, role, now])
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(Error::Sqlite)?;
             }
         }
-        tx.commit().map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -1153,7 +752,7 @@ impl SourceStore {
             .map(|_| true)
             .or_else(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => Ok(false),
-                other => Err(Error::Database(other.to_string())),
+                other => Err(Error::Sqlite(other)),
             })
     }
 
@@ -1171,7 +770,7 @@ impl SourceStore {
                  WHERE source_id = ?1
                  ORDER BY member_user_id",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let rows = stmt
             .query_map(params![id_str], |row| {
                 Ok(KchatAclRow {
@@ -1180,7 +779,7 @@ impl SourceStore {
                     refreshed_at: row.get(2)?,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
         Ok(rows)
@@ -1263,7 +862,7 @@ impl SourceStore {
                 params![id_str],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let files_to_drop: i64 = conn
             .query_row(
@@ -1271,7 +870,7 @@ impl SourceStore {
                 params![id_str],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         // count the per-post bookkeeping
         // rows and the wrapped-DEK row that the scrub will also drop.
@@ -1287,7 +886,7 @@ impl SourceStore {
                 params![id_str],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let dek_to_drop: i64 = conn
             .query_row(
@@ -1295,7 +894,7 @@ impl SourceStore {
                 params![id_str],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         // Phase 2 — enable secure_delete BEFORE the DELETEs so the
         // freed pages are zero-filled at delete time. This is what
@@ -1324,7 +923,7 @@ impl SourceStore {
         // when a Drop-based guard would conflict with downstream
         // borrows.
         conn.execute_batch("PRAGMA secure_delete = ON;")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let scrub_result: Result<()> = (|| {
             // Phases 3+4 — wrap the row-level mutations in an
@@ -1337,7 +936,7 @@ impl SourceStore {
             // our DELETEs.
             let txn = conn
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
 
             // DELETE FROM chunks fires the `chunks_ad` trigger
             // (removes the row from `chunks_fts`) and the
@@ -1353,7 +952,7 @@ impl SourceStore {
                      (SELECT id FROM indexed_files WHERE source_id = ?1)",
                 params![id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
             // Drop the kchat_posts bookkeeping rows BEFORE
             // `indexed_files` because the post row has a FK to
@@ -1366,13 +965,13 @@ impl SourceStore {
                 "DELETE FROM kchat_posts WHERE source_id = ?1",
                 params![id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
             txn.execute(
                 "DELETE FROM indexed_files WHERE source_id = ?1",
                 params![id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
             // drop the wrapped-DEK row
             // INSIDE the same transaction so a crash between the
@@ -1389,7 +988,7 @@ impl SourceStore {
                 "DELETE FROM kchat_source_deks WHERE source_id = ?1",
                 params![id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
             // Reset the source-row aggregates so the renderer's
             // source-detail surface reflects the scrub. Status is
@@ -1416,9 +1015,9 @@ impl SourceStore {
                  WHERE id = ?1",
                 params![id_str],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
-            txn.commit().map_err(|e| Error::Database(e.to_string()))?;
+            txn.commit().map_err(Error::Sqlite)?;
 
             // the DELETE FROM chunks above
             // cascaded into `chunk_embeddings` via the
@@ -1516,7 +1115,7 @@ impl SourceStore {
         // with the same audit row.
         let reset_result = conn
             .execute_batch("PRAGMA secure_delete = OFF;")
-            .map_err(|e| Error::Database(e.to_string()));
+            .map_err(Error::Sqlite);
 
         if let Err(e) = reset_result.as_ref() {
             eprintln!(
@@ -1566,19 +1165,19 @@ impl SourceStore {
                 "DELETE FROM chunks WHERE indexed_file_id = ?1",
                 params![file_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
             conn.execute(
                 "UPDATE indexed_files SET hash = ?1, last_modified = ?2, chunk_count = 0 WHERE id = ?3",
                 params![hash, last_modified, file_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
             Ok(file_id)
         } else {
             conn.execute(
                 "INSERT INTO indexed_files (source_id, path, hash, last_modified, chunk_count) VALUES (?1, ?2, ?3, ?4, 0)",
                 params![id_str, path, hash, last_modified],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
             Ok(conn.last_insert_rowid())
         }
     }
@@ -1609,7 +1208,7 @@ impl SourceStore {
                      )
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
 
             for chunk in chunks {
                 stmt.execute(params![
@@ -1623,7 +1222,7 @@ impl SourceStore {
                         .map(crate::chunker::ExtractionMethod::as_str),
                     chunk.extraction_model_id.as_deref(),
                 ])
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
                 ids.push(conn.last_insert_rowid());
             }
         }
@@ -1632,7 +1231,7 @@ impl SourceStore {
             "UPDATE indexed_files SET chunk_count = ?1 WHERE id = ?2",
             params![chunks.len() as i64, indexed_file_id],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
         // Corpus composition just changed; drop the multilingual-hint cache so
         // the next status poll re-scans rather than serving stale ratios for up
@@ -1704,7 +1303,7 @@ impl SourceStore {
                 created_at = excluded.created_at",
             params![id_str, &wrapped.wrap_nonce[..], &wrapped.wrapped[..], now],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -1880,7 +1479,7 @@ impl SourceStore {
                  -- Renderer expects oldest-first conversation order.
                  ORDER BY s.created_at_ms ASC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let rows: Vec<KchatThreadContextRow> = stmt
             .query_map(
@@ -1899,7 +1498,7 @@ impl SourceStore {
                     })
                 },
             )
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
 
@@ -1953,7 +1552,7 @@ impl SourceStore {
                 chunk_count = 0",
             params![id_str, synthetic_path, message_hash, now],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
         let indexed_file_id: i64 = conn
             .query_row(
@@ -1961,7 +1560,7 @@ impl SourceStore {
                 params![synthetic_path],
                 |r| r.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         conn.execute(
             "INSERT INTO kchat_posts (
@@ -1989,7 +1588,7 @@ impl SourceStore {
                 now,
             ],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
         Ok(indexed_file_id)
     }
@@ -2004,7 +1603,7 @@ impl SourceStore {
     /// the manager layer (`manager::ingest_kchat_post`) computes
     /// both in a single pass to keep this invariant. A length
     /// mismatch is a programmer error and returns a hard
-    /// `Error::Database`.
+    /// `Error::DatabaseState`.
     ///
     /// On a successful insert, the matching `indexed_files`
     /// row's `chunk_count` is updated. The transaction boundary
@@ -2019,7 +1618,7 @@ impl SourceStore {
         sealed: &[crate::kchat_crypto::SealedChunk],
     ) -> Result<Vec<i64>> {
         if chunks.len() != sealed.len() {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "insert_kchat_post_chunks: chunks/sealed length mismatch ({} vs {})",
                 chunks.len(),
                 sealed.len()
@@ -2038,7 +1637,7 @@ impl SourceStore {
                      )
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
             for (chunk, seal) in chunks.iter().zip(sealed.iter()) {
                 stmt.execute(params![
                     indexed_file_id,
@@ -2054,7 +1653,7 @@ impl SourceStore {
                     &seal.ciphertext[..],
                     &seal.nonce[..],
                 ])
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
                 ids.push(conn.last_insert_rowid());
             }
         }
@@ -2063,7 +1662,7 @@ impl SourceStore {
             "UPDATE indexed_files SET chunk_count = ?1 WHERE id = ?2",
             params![chunks.len() as i64, indexed_file_id],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
         // Same rationale as `insert_chunks_returning_ids`: invalidate the
         // multilingual-hint cache after a chunk-set mutation.
@@ -2084,12 +1683,12 @@ impl SourceStore {
                 "DELETE FROM chunks WHERE indexed_file_id = ?1",
                 params![indexed_file_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         conn.execute(
             "UPDATE indexed_files SET chunk_count = 0 WHERE id = ?1",
             params![indexed_file_id],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         // Same rationale as `insert_chunks_returning_ids`: invalidate the
         // multilingual-hint cache after a chunk-set mutation.
         drop(conn);
@@ -2122,12 +1721,12 @@ impl SourceStore {
             "DELETE FROM kchat_posts WHERE source_id = ?1 AND post_id = ?2",
             params![id_str, post_id],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         conn.execute(
             "DELETE FROM indexed_files WHERE id = ?1",
             params![indexed_file_id],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -2142,7 +1741,7 @@ impl SourceStore {
                 params![indexed_file_id],
                 |r| r.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
@@ -2202,7 +1801,7 @@ impl SourceStore {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let total: i64 = conn
             .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let non_ascii: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM chunks \
@@ -2210,7 +1809,7 @@ impl SourceStore {
                 [],
                 |r| r.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok((non_ascii.max(0) as u64, total.max(0) as u64))
     }
 
@@ -2284,9 +1883,9 @@ impl SourceStore {
                  WHERE id = ?1",
                 params![id_str, oldest_post_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         if updated == 0 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "set_kchat_backfill_cursor: no source row for id={id_str}"
             )));
         }
@@ -2310,9 +1909,9 @@ impl SourceStore {
                  WHERE id = ?1",
                 params![id_str, now],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         if updated == 0 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "mark_kchat_backfill_complete: no source row for id={id_str}"
             )));
         }
@@ -2364,7 +1963,7 @@ impl SourceStore {
                 "UPDATE chunks SET content = ?1 WHERE kind = 'chat_post'",
                 params![new_content],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
@@ -2399,7 +1998,7 @@ impl SourceStore {
                  )",
                 params![new_content, id_str, post_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
@@ -2426,7 +2025,7 @@ impl SourceStore {
                  WHERE f.path = ?1
                  ORDER BY c.chunk_index ASC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let rows = stmt
             .query_map(params![path], |row| {
                 let extraction_method: Option<String> = row.get(4)?;
@@ -2445,7 +2044,7 @@ impl SourceStore {
                     extraction_model_id,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
         Ok(rows)
@@ -2488,7 +2087,7 @@ impl SourceStore {
              WHERE id = ?1",
             params![file_id],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -2519,9 +2118,9 @@ impl SourceStore {
                 "DELETE FROM chunks WHERE indexed_file_id = ?1",
                 params![file_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
             conn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
         }
         Ok(())
     }
@@ -2559,7 +2158,7 @@ impl SourceStore {
                      ORDER BY rank
                      LIMIT ?2",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
 
             let results = stmt
                 .query_map(
@@ -2581,7 +2180,7 @@ impl SourceStore {
                         })
                     },
                 )
-                .map_err(|e| Error::Database(e.to_string()))?
+                .map_err(Error::Sqlite)?
                 .filter_map(std::result::Result::ok)
                 .collect();
 
@@ -2630,9 +2229,7 @@ impl SourceStore {
              WHERE c.id IN ({placeholders})
                AND s.status != ?"
         );
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut stmt = conn.prepare(&sql).map_err(Error::Sqlite)?;
         let mut id_params: Vec<rusqlite::types::Value> = ids
             .iter()
             .map(|&i| rusqlite::types::Value::Integer(i))
@@ -2657,7 +2254,7 @@ impl SourceStore {
                     relevance: 0.0,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
 
@@ -2735,7 +2332,7 @@ impl SourceStore {
                  ORDER BY rank
                  LIMIT ?2",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let rows: Vec<KchatPostSearchHitRow> = stmt
             .query_map(
@@ -2765,7 +2362,7 @@ impl SourceStore {
                     })
                 },
             )
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
 
@@ -2791,7 +2388,7 @@ impl SourceStore {
                 vec = excluded.vec",
             params![chunk_id, model_id, dim as i64, vec_bytes],
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
         // a new / replaced embedding row
         // changes the set `load_embeddings_for_model` returns —
         // invalidate any cached IVF index for any model so the
@@ -2934,7 +2531,7 @@ impl SourceStore {
                      WHERE ce.model_id = ?1
                        AND s.status != ?2",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
             let rows = stmt
                 .query_map(
                     params![model_id, SourceStatus::AccessRevoked.as_stored_json()],
@@ -2950,7 +2547,7 @@ impl SourceStore {
                         })
                     },
                 )
-                .map_err(|e| Error::Database(e.to_string()))?
+                .map_err(Error::Sqlite)?
                 .filter_map(std::result::Result::ok)
                 .filter(|r| !r.vector.is_empty())
                 .collect();
@@ -3044,9 +2641,7 @@ impl SourceStore {
              ORDER BY c.id ASC
              LIMIT ?2"
         );
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut stmt = conn.prepare(&sql).map_err(Error::Sqlite)?;
         // Build the parameter list: ?1 = model_id, ?2 = limit,
         // ?3.. = exclude IDs in order.
         let mut params_vec: Vec<rusqlite::types::Value> =
@@ -3061,7 +2656,7 @@ impl SourceStore {
             .query_map(params_iter, |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
         Ok(rows)
@@ -3088,10 +2683,10 @@ impl SourceStore {
                     ON e.chunk_id = c.id AND e.model_id = ?1
                  WHERE e.chunk_id IS NULL",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let count: i64 = stmt
             .query_row([model_id], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(count.max(0) as u64)
     }
 
@@ -3116,9 +2711,7 @@ impl SourceStore {
                  JOIN indexed_files f ON f.id = c.indexed_file_id
                  WHERE c.id IN ({placeholders})"
             );
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| Error::Database(e.to_string()))?;
+            let mut stmt = conn.prepare(&sql).map_err(Error::Sqlite)?;
             let id_params: Vec<rusqlite::types::Value> = ids
                 .iter()
                 .map(|&i| rusqlite::types::Value::Integer(i))
@@ -3131,7 +2724,7 @@ impl SourceStore {
                     let last_mod: String = row.get(1)?;
                     Ok((id, last_mod))
                 })
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(Error::Sqlite)?;
             for r in rows.flatten() {
                 let age_secs = parse_datetime_opt(&r.1)
                     .map_or(0.0, |dt| (now - dt).num_seconds().max(0) as f64);
@@ -3153,7 +2746,7 @@ impl SourceStore {
                 params![id_str],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(count as u64)
     }
 
@@ -3168,13 +2761,13 @@ impl SourceStore {
                  WHERE f.source_id = ?1
                  ORDER BY c.chunk_index",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let rows = stmt
             .query_map(params![id_str], |row| row.get::<_, String>(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let mut contents = Vec::new();
         for row in rows {
-            contents.push(row.map_err(|e| Error::Database(e.to_string()))?);
+            contents.push(row.map_err(Error::Sqlite)?);
         }
         Ok(contents)
     }
@@ -3193,7 +2786,7 @@ impl SourceStore {
         match result {
             Ok(hash) => Ok(Some(hash)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(Error::Database(e.to_string())),
+            Err(e) => Err(Error::Sqlite(e)),
         }
     }
 
@@ -3205,7 +2798,7 @@ impl SourceStore {
             .prepare(
                 "SELECT path, hash, last_modified, chunk_count FROM indexed_files WHERE source_id = ?1",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let files = stmt
             .query_map(params![id_str], |row| {
@@ -3216,7 +2809,7 @@ impl SourceStore {
                     chunk_count: row.get::<_, i64>(3)? as u64,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .filter_map(std::result::Result::ok)
             .collect();
 

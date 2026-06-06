@@ -1699,7 +1699,7 @@ impl SourceManager {
                     // shared connection mutex across this call.
                     // Surface as a hard error so a future race
                     // condition does NOT silently drop posts.
-                    return Err(Error::Database(format!(
+                    return Err(Error::DatabaseState(format!(
                         "ingest_kchat_backfill_page: source disappeared mid-walk for cache_dir={cache_dir}"
                     )));
                 }
@@ -3406,7 +3406,7 @@ mod tests {
             self.dim
         }
         fn embed(&self, _input: &str) -> Result<Vec<f32>> {
-            Err(Error::Database(
+            Err(Error::DatabaseState(
                 "AlwaysFailEmbedder rejects every input on purpose".into(),
             ))
         }
@@ -3536,7 +3536,7 @@ mod tests {
                 let i = *n;
                 *n += 1;
                 if i.is_multiple_of(2) {
-                    Err(Error::Database("simulated even-index failure".into()))
+                    Err(Error::DatabaseState("simulated even-index failure".into()))
                 } else {
                     Ok(vec![0.0; self.dim])
                 }

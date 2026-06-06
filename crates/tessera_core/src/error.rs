@@ -13,9 +13,21 @@ pub enum Error {
     /// JSON serialization error.
     Json(#[from] serde_json::Error),
 
+    /// A low-level SQLite failure surfaced by `rusqlite`. The underlying
+    /// error is wrapped (not stringified) so callers can still match on the
+    /// concrete `rusqlite::Error` variant — e.g. distinguishing
+    /// `QueryReturnedNoRows` from a constraint violation — instead of
+    /// pattern-matching against a message substring.
     #[error("Database error: {0}")]
-    /// Database error.
-    Database(String),
+    Sqlite(#[from] rusqlite::Error),
+
+    /// A database-layer invariant that does not correspond to a bare
+    /// `rusqlite::Error`: schema/version validation, integrity-check
+    /// failures, a poisoned connection mutex, or an at-rest crypto
+    /// (DEK/AEAD) failure surfaced by a store. Carries a human-readable
+    /// message because there is no single underlying error type to wrap.
+    #[error("Database error: {0}")]
+    DatabaseState(String),
 
     #[error("Source not found: {0}")]
     /// Source not found.
