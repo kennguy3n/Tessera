@@ -77,15 +77,18 @@ function readExisting(filePath: string): RendererCrashReport[] {
   try {
     const text = fs.readFileSync(filePath, "utf8");
     const parsed: unknown = JSON.parse(text);
-    if (Array.isArray(parsed)) {
-      return parsed.filter(isReportShaped);
-    }
-    // Tolerate an older single-object file by lifting it into the array,
-    // applying the same report-shape guard the array path uses so a
-    // malformed legacy object can't slip past unfiltered.
-    if (isReportShaped(parsed)) {
-      return [parsed];
-    }
+    // An array is the current format; tolerate an older single-object
+    // file by treating it as a one-element array. Drop anything that
+    // isn't report-shaped (junk objects, primitives), then normalize the
+    // survivors: retained entries are re-serialized on the next write, so
+    // normalizing here heals a field that was hand-edited or written by
+    // an older build (a non-string `error`/`stack`, an oversized field, a
+    // missing one) instead of persisting it verbatim. Entries this module
+    // wrote are already normalized, so normalization is a no-op for them.
+    const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    return entries
+      .filter(isReportShaped)
+      .map((e) => normalizeCrashReport(e));
   } catch {
     // Missing or corrupt file — start fresh.
   }

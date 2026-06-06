@@ -198,6 +198,32 @@ describe("recordCrashReport", () => {
     ]);
   });
 
+  it("normalizes a retained entry with wrong-typed fields on read", () => {
+    const file = path.join(dir, CRASH_REPORT_FILENAME);
+    // A hand-edited / older entry keeps a string `component` (so it
+    // survives the shape guard) but has a non-string `error` and no
+    // `stack`/`timestamp`. It must be healed to the storage caps rather
+    // than re-serialized verbatim, so malformed data can't persist.
+    fs.writeFileSync(
+      file,
+      JSON.stringify([{ component: "Edited", error: 42 }]),
+      "utf8",
+    );
+    recordCrashReport({ component: "New", error: "new" }, dir);
+    const reports = readReports() as Array<{
+      component: string;
+      error: string;
+      stack: string;
+      timestamp: string;
+    }>;
+    const edited = reports[0];
+    expect(edited.component).toBe("Edited");
+    expect(edited.error).toBe(""); // non-string coerced, not persisted as 42
+    expect(typeof edited.stack).toBe("string");
+    expect(typeof edited.timestamp).toBe("string");
+    expect(edited.timestamp.length).toBeGreaterThan(0);
+  });
+
   it("leaves no .tmp debris after writing", () => {
     recordCrashReport({ component: "A", error: "1" }, dir);
     const debris = fs.readdirSync(dir).filter((f) => f.includes(".tmp"));
