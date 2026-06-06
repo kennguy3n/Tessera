@@ -378,8 +378,8 @@ impl IvfIndex {
     /// Incrementally remove vectors by `chunk_id`. Returns the number
     /// of vectors actually removed.
     ///
-    /// Because [`Self::cells`] stores positional indices into
-    /// [`Self::vectors`], removing entries shifts every later index;
+    /// Because `cells` stores positional indices into
+    /// `vectors`, removing entries shifts every later index;
     /// rather than patch the inverted lists in place we filter the
     /// surviving vectors and re-derive the cell assignments against
     /// the **existing** (frozen) centroids with a single
