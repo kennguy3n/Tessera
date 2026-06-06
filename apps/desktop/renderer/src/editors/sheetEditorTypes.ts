@@ -95,14 +95,16 @@ export interface ConditionalFormatRule {
  * The visual-only slice of {@link CellFormat} a conditional rule may
  * set. Number formatting is intentionally excluded — conditional rules
  * change appearance, not how a value is parsed/serialised.
+ *
+ * Derived via `Pick` rather than re-declared so it stays compiler-bound
+ * to `CellFormat`: if a shared property's type ever changes there, this
+ * follows automatically (and passing it to `cellFormatStyle`, which
+ * takes `CellFormat`, can never silently drift out of shape).
  */
-export interface ConditionalRuleStyle {
-  bold?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-  color?: string;
-  background?: string;
-}
+export type ConditionalRuleStyle = Pick<
+  CellFormat,
+  "bold" | "italic" | "underline" | "color" | "background"
+>;
 
 /**
  * a single worksheet within a multi-sheet
