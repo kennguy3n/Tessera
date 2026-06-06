@@ -3,6 +3,8 @@ import type {
   AddCitationRequest,
   ExternalProviderConfigInput,
   ExternalProviderListModelsDraftOverrides,
+  Fido2AssertionInput,
+  Fido2RegistrationInput,
   HybridSearchConfigUpdate,
   InstalledModelsByCapability,
   KchatConnectionStateView,
@@ -54,6 +56,10 @@ export type {
   ExternalProviderTestResult,
   ExternalProviderType,
   ExtractedItem,
+  Fido2AssertionInput,
+  Fido2AssertionOptions,
+  Fido2RegistrationInput,
+  Fido2RegistrationOptions,
   GenerateChunk,
   GenerateRequest,
   HybridSearchConfigInfo,
@@ -344,6 +350,16 @@ const api: TesseraApi = {
       ipcRenderer.invoke("appLock:attemptUnlock", pin),
     attemptBiometric: (reason?: string) =>
       ipcRenderer.invoke("appLock:attemptBiometric", reason),
+    getFido2RegistrationOptions: () =>
+      ipcRenderer.invoke("appLock:getFido2RegistrationOptions"),
+    registerFido2: (input: Fido2RegistrationInput) =>
+      ipcRenderer.invoke("appLock:registerFido2", input),
+    getFido2AssertionOptions: () =>
+      ipcRenderer.invoke("appLock:getFido2AssertionOptions"),
+    verifyFido2: (input: Fido2AssertionInput) =>
+      ipcRenderer.invoke("appLock:verifyFido2", input),
+    removeFido2: (pin: string) =>
+      ipcRenderer.invoke("appLock:removeFido2", pin),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),

@@ -1061,12 +1061,17 @@ export interface SettingsData {
    * is required to open the app. `"pin"` prompts a PIN. `"biometric"`
    * uses the platform biometric (TouchID on macOS, Windows Hello on
    * Windows) and falls back to PIN if biometric is unavailable.
+   * `"fido2"` uses a registered FIDO2/WebAuthn authenticator
+   * (platform authenticator or roaming security key) and likewise
+   * falls back to PIN if the authenticator is unavailable.
    *
    * Setup of a PIN is gated behind a separate IPC
    * (`appLock:setPin`) so flipping the mode to `"pin"` /
-   * `"biometric"` without first setting a PIN is rejected at the
-   * IPC boundary. Defaults to `"off"` so a fresh install does not
-   * surprise the user with a lock prompt.
+   * `"biometric"` / `"fido2"` without first setting a PIN is
+   * rejected at the IPC boundary. `"fido2"` additionally requires a
+   * registered credential (`appLock:registerFido2`). Defaults to
+   * `"off"` so a fresh install does not surprise the user with a
+   * lock prompt.
    */
   appLockMode: AppLockMode;
   /**
@@ -1113,7 +1118,7 @@ export interface SettingsData {
  * fixed enum so the renderer's lock-mode selector, the IPC schema,
  * and the persisted config all reference the same tuple.
  */
-export const APP_LOCK_MODES = ["off", "pin", "biometric"] as const;
+export const APP_LOCK_MODES = ["off", "pin", "biometric", "fido2"] as const;
 export type AppLockMode = (typeof APP_LOCK_MODES)[number];
 
 /**
@@ -2554,17 +2559,110 @@ export interface AppLockApi {
   attemptBiometric: (
     reason?: string,
   ) => Promise<{ success: boolean }>;
+  /**
+   * Options the renderer hands to `navigator.credentials.create()`
+   * to register a new FIDO2 authenticator. The challenge is
+   * single-use and expires; the renderer must call
+   * `registerFido2` with the resulting credential before it lapses.
+   */
+  getFido2RegistrationOptions: () => Promise<Fido2RegistrationOptions>;
+  /**
+   * Persist a freshly-created FIDO2 credential. The renderer
+   * extracts the SPKI public key and COSE algorithm from the
+   * `PublicKeyCredential` (via `response.getPublicKey()` /
+   * `response.getPublicKeyAlgorithm()`) so the main process never
+   * has to CBOR-decode the attestation object.
+   */
+  registerFido2: (
+    input: Fido2RegistrationInput,
+  ) => Promise<{ success: boolean }>;
+  /**
+   * Options the renderer hands to `navigator.credentials.get()` to
+   * produce an assertion that unlocks the app. Returns `null` when
+   * no credential is registered (the renderer should fall back to
+   * PIN).
+   */
+  getFido2AssertionOptions: () => Promise<Fido2AssertionOptions | null>;
+  /** Verify a FIDO2 assertion and, on success, unlock the app. */
+  verifyFido2: (input: Fido2AssertionInput) => Promise<AppLockUnlockResult>;
+  /** Remove the registered FIDO2 credential (requires the PIN). */
+  removeFido2: (pin: string) => Promise<void>;
 }
 
 /**
  * Status snapshot returned by `appLock:getStatus`. The renderer
  * uses `hasPinSet` to decide whether the Settings UI should show
- * "Set up a PIN" or "Change PIN", and `mode` to decide whether
- * to render the lock overlay at all.
+ * "Set up a PIN" or "Change PIN", `hasFido2Set` to decide whether
+ * to offer "Register a security key" vs "Remove security key", and
+ * `mode` to decide whether to render the lock overlay at all.
  */
 export interface AppLockStatus {
   hasPinSet: boolean;
+  hasFido2Set: boolean;
   mode: AppLockMode;
+}
+
+/**
+ * COSE algorithm identifiers Tessera accepts for FIDO2 unlock.
+ * `-7` = ES256 (ECDSA P-256 + SHA-256, the platform-authenticator
+ * default), `-257` = RS256 (RSA PKCS#1 v1.5 + SHA-256), `-8` =
+ * EdDSA (Ed25519). These are the three the main process knows how
+ * to verify in `appLock.ts`.
+ */
+export const FIDO2_SUPPORTED_ALGS = [-7, -257, -8] as const;
+
+/**
+ * Registration options surfaced to the renderer. Mirrors the
+ * subset of `PublicKeyCredentialCreationOptions` the renderer
+ * needs; binary fields are base64url so they cross the IPC
+ * boundary as JSON.
+ */
+export interface Fido2RegistrationOptions {
+  /** base64url, single-use, server-issued. */
+  challenge: string;
+  rpId: string;
+  rpName: string;
+  /** base64url stable per-install user handle. */
+  userId: string;
+  userName: string;
+  userDisplayName: string;
+  /** COSE alg ids, most-preferred first. */
+  pubKeyCredParams: readonly number[];
+  timeoutMs: number;
+}
+
+/** Payload the renderer posts back after `credentials.create()`. */
+export interface Fido2RegistrationInput {
+  /** base64url credential ID from the authenticator. */
+  credentialId: string;
+  /** base64 DER SPKI public key (`response.getPublicKey()`). */
+  publicKeySpki: string;
+  /** COSE alg (`response.getPublicKeyAlgorithm()`). */
+  alg: number;
+  /** base64 of the raw `response.clientDataJSON`. */
+  clientDataJson: string;
+}
+
+/** Assertion options surfaced to the renderer for unlock. */
+export interface Fido2AssertionOptions {
+  /** base64url, single-use, server-issued. */
+  challenge: string;
+  rpId: string;
+  /** base64url credential IDs the renderer may use. */
+  allowCredentialIds: readonly string[];
+  timeoutMs: number;
+}
+
+/** Payload the renderer posts back after `credentials.get()`. */
+export interface Fido2AssertionInput {
+  /** base64url credential ID used for the assertion. */
+  credentialId: string;
+  /** base64 of `response.authenticatorData`. */
+  authenticatorData: string;
+  /** base64 of `response.clientDataJSON`. */
+  clientDataJson: string;
+  /** base64 of `response.signature`. */
+  signature: string;
 }
 
 /**

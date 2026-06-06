@@ -1,6 +1,8 @@
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
-use tessera_core::{open_shared, open_shared_in_memory, ArtifactId, SharedConnection};
+use tessera_core::{
+    open_shared, open_shared_in_memory, with_secure_delete, ArtifactId, SharedConnection,
+};
 
 use crate::artifact::Artifact;
 
@@ -244,15 +246,18 @@ impl ArtifactStore {
     }
 
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
-        self.conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute(
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Zero-fill the freed pages so the artifact body (and its
+        // CASCADE-deleted version snapshots) cannot be recovered from
+        // the SQLCipher freelist after deletion.
+        with_secure_delete(&conn, |conn| {
+            conn.execute(
                 "DELETE FROM artifacts WHERE id = ?1",
                 params![id.to_string()],
             )
             .map_err(Error::Sqlite)?;
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn save_version(
@@ -385,6 +390,38 @@ mod tests {
 
         let result = store.get(&artifact.id);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_restores_secure_delete_off() {
+        // `ArtifactStore::delete` runs its DELETE under
+        // `secure_delete = ON` to zero-fill the freed pages. Because
+        // the pragma is connection-scoped on a shared connection, it
+        // MUST be restored to OFF afterwards so steady-state inserts
+        // don't pay the page-zero-fill cost for the process lifetime.
+        let store = ArtifactStore::open_in_memory().unwrap();
+
+        let read_secure_delete = || -> i64 {
+            store
+                .conn
+                .lock()
+                .expect("conn poisoned")
+                .query_row("PRAGMA secure_delete", [], |r| r.get::<_, i64>(0))
+                .expect("PRAGMA secure_delete should always return a row")
+        };
+
+        assert_eq!(read_secure_delete(), 0, "control: defaults to OFF");
+
+        let artifact = Artifact::new("Sensitive".to_string(), ArtifactType::Document, None);
+        store.insert(&artifact).unwrap();
+        store.delete(&artifact.id).unwrap();
+
+        assert!(store.get(&artifact.id).is_err(), "row should be gone");
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "delete must restore secure_delete=OFF on the shared connection",
+        );
     }
 
     #[test]
