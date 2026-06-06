@@ -1,3 +1,7 @@
+//! Artifact model and the generation, storage, task, automation, and
+//! comparison logic built on top of it.
+#![warn(missing_docs)]
+
 pub mod artifact;
 pub mod automations;
 pub mod comparison;

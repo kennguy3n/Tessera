@@ -3,6 +3,7 @@ import KanbanView from "./baseviews/KanbanView";
 import CalendarView from "./baseviews/CalendarView";
 import TimelineView from "./baseviews/TimelineView";
 import GalleryView from "./baseviews/GalleryView";
+import FormView from "./baseviews/FormView";
 import {
   defaultViewConfig,
   type BaseViewConfig,
@@ -41,9 +42,21 @@ import type {
   FieldType,
   RollupAggregation,
 } from "./baseEditorTypes";
+import { useVirtualRows } from "../hooks/useVirtualRows";
 
 export type { FieldType, BaseField, BaseContent, BaseRecord } from "./baseEditorTypes";
 export type { BaseViewConfig, BaseViewKind } from "./baseviews/types";
+
+/**
+ * Record count at or above which the grid view virtualizes its body
+ * (only the rows intersecting the viewport are committed to the DOM).
+ * Mirrors the Sheet grid's threshold: well under the 10K+ target so
+ * large bases always window, and well over any realistic small base
+ * so the common case keeps its exact prior full-render path.
+ */
+const VIRTUALIZE_ROW_THRESHOLD = 1000;
+/** Uniform row-height estimate (px) for the grid's windowing math. */
+const ESTIMATED_BASE_ROW_HEIGHT = 36;
 
 interface BaseEditorProps {
   content: string;
@@ -769,6 +782,60 @@ export default function BaseEditor({
     return m;
   }, [data.records]);
 
+  // ── grid row virtualization ───────────────────────────────────
+  // Large bases (10K+ records) blow up the DOM if every row renders;
+  // window the grid body to the rows near the viewport. The hook
+  // reports the full range with zero padding when disabled, so small
+  // bases — and every existing test — keep the prior full render.
+  const gridScrollRef = useRef<HTMLDivElement>(null);
+  const virtualizeRows =
+    filteredAndSorted.length >= VIRTUALIZE_ROW_THRESHOLD;
+  const {
+    startIndex: rowWindowStart,
+    endIndex: rowWindowEnd,
+    topPad: rowTopPad,
+    bottomPad: rowBottomPad,
+    onScroll: onGridScroll,
+  } = useVirtualRows(gridScrollRef, {
+    rowCount: filteredAndSorted.length,
+    rowHeight: ESTIMATED_BASE_ROW_HEIGHT,
+    enabled: virtualizeRows,
+  });
+
+  type RowRenderItem =
+    | { type: "row"; ri: number }
+    | { type: "spacer"; key: string; height: number };
+  const rowRenderPlan = useMemo<RowRenderItem[]>(() => {
+    const plan: RowRenderItem[] = [];
+    if (!virtualizeRows) {
+      for (let i = 0; i < filteredAndSorted.length; i++) {
+        plan.push({ type: "row", ri: i });
+      }
+      return plan;
+    }
+    if (rowTopPad > 0) {
+      plan.push({ type: "spacer", key: "base-virtual-top-pad", height: rowTopPad });
+    }
+    for (let i = rowWindowStart; i <= rowWindowEnd; i++) {
+      plan.push({ type: "row", ri: i });
+    }
+    if (rowBottomPad > 0) {
+      plan.push({
+        type: "spacer",
+        key: "base-virtual-bottom-pad",
+        height: rowBottomPad,
+      });
+    }
+    return plan;
+  }, [
+    virtualizeRows,
+    filteredAndSorted.length,
+    rowTopPad,
+    rowBottomPad,
+    rowWindowStart,
+    rowWindowEnd,
+  ]);
+
   // Shared props passed to every non-grid view. The grid view stays
   // inline below because it has filter/sort behavior the others
   // don't need.
@@ -783,7 +850,10 @@ export default function BaseEditor({
   };
 
   return (
-    <div className="base-editor">
+    <div
+      className="base-editor"
+      style={{ display: "flex", flexDirection: "column", height: "100%" }}
+    >
       <div
         className="base-toolbar"
         style={{
@@ -872,6 +942,7 @@ export default function BaseEditor({
               ["calendar", "Calendar"],
               ["timeline", "Timeline"],
               ["gallery", "Gallery"],
+              ["form", "Form"],
             ] as [BaseViewKind, string][]
           ).map(([v, label]) => (
             <button
@@ -926,9 +997,15 @@ export default function BaseEditor({
       {view === "calendar" && <CalendarView {...viewProps} />}
       {view === "timeline" && <TimelineView {...viewProps} />}
       {view === "gallery" && <GalleryView {...viewProps} />}
+      {view === "form" && <FormView {...viewProps} />}
 
       {view === "grid" && (
-      <div className="base-grid-wrapper">
+      <div
+        className="base-grid-wrapper"
+        ref={gridScrollRef}
+        onScroll={onGridScroll}
+        style={{ flex: 1, minHeight: 0, overflow: "auto" }}
+      >
         <table className="base-grid">
           <thead>
             <tr>
@@ -1003,7 +1080,19 @@ export default function BaseEditor({
             </tr>
           </thead>
           <tbody>
-            {filteredAndSorted.map((record, ri) => {
+            {rowRenderPlan.map((item) => {
+              if (item.type === "spacer") {
+                return (
+                  <tr key={item.key} data-testid={item.key} aria-hidden="true">
+                    <td
+                      colSpan={data.fields.length + 3}
+                      style={{ height: item.height, padding: 0, border: "none" }}
+                    />
+                  </tr>
+                );
+              }
+              const ri = item.ri;
+              const record = filteredAndSorted[ri];
               // O(1) lookup via the pre-built `recordIndexById` map;
               // falls back to -1 if a row somehow leaks through with no
               // id (legacy hand-edited JSON), which `removeRecord` /

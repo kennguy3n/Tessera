@@ -11,7 +11,7 @@
 //!    work for the VLM to do.
 //!
 //! 2. **OCR pass (`pdf_pages_needing_ocr` +
-//!    [`PdfOcrExtractor::vlm_ocr_chunks_for_pdf`])**: walk every
+//!    `PdfOcrExtractor::vlm_ocr_chunks_for_pdf`)**: walk every
 //!    page; for each one whose text-pass output is below a "this
 //!    page has no real text" threshold AND whose `Resources/XObject`
 //!    dictionary references at least one embedded raster image,
@@ -862,7 +862,7 @@ const CHART_TARGET_ASPECTS: &[f64] = &[4.0 / 3.0, 16.0 / 9.0];
 /// True when an image of size `w × h` pixels matches the chart
 /// heuristic: both dimensions ≥ [`CHART_MIN_PIXELS_PER_SIDE`] AND
 /// `max(w,h) / min(w,h)` is within `±CHART_ASPECT_TOLERANCE` of
-/// one of [`CHART_TARGET_ASPECTS`].
+/// one of `CHART_TARGET_ASPECTS`.
 ///
 /// Takes `i64` to match the type `lopdf::xobject::PdfImage` exposes
 /// for `width` / `height` (the PDF spec stores them as integer

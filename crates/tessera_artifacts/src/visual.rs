@@ -21,13 +21,18 @@ use crate::generator::{GeneratedContent, GeneratedSection, SectionKind, SourcePa
 use tessera_core::ArtifactType;
 
 #[derive(Debug, Clone, Copy)]
+/// Infographic Layout.
 pub enum InfographicLayout {
+    /// The `Vertical` variant.
     Vertical,
+    /// The `Horizontal` variant.
     Horizontal,
+    /// The `Grid` variant.
     Grid,
 }
 
 impl InfographicLayout {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Vertical => "vertical",
@@ -38,30 +43,46 @@ impl InfographicLayout {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Infographic Color Scheme.
 pub struct InfographicColorScheme {
-    pub primary: Option<String>,   // hex e.g. "#7C3AED"
+    /// Primary.
+    pub primary: Option<String>, // hex e.g. "#7C3AED"
+    /// Secondary.
     pub secondary: Option<String>, // hex
+    /// Accent.
     pub accent: Option<String>,
 }
 
 #[derive(Debug, Clone)]
+/// Infographic Spec.
 pub struct InfographicSpec<'a> {
+    /// Title.
     pub title: &'a str,
+    /// Subtitle.
     pub subtitle: Option<&'a str>,
+    /// Layout.
     pub layout: InfographicLayout,
+    /// Color scheme.
     pub color_scheme: InfographicColorScheme,
     /// Optional default icon set ("lucide" or "phosphor") used when a
     /// section doesn't specify one. Defaults to "lucide".
     pub default_icon_set: Option<&'a str>,
+    /// Source packs.
     pub source_packs: &'a [SourcePack],
 }
 
 #[derive(Debug, Clone)]
+/// Landing Page Spec.
 pub struct LandingPageSpec<'a> {
+    /// Title.
     pub title: &'a str,
+    /// Hero headline.
     pub hero_headline: &'a str,
+    /// Hero subheadline.
     pub hero_subheadline: &'a str,
+    /// Hero cta.
     pub hero_cta: Option<&'a str>,
+    /// Features.
     pub features: &'a [SourcePack],
     /// Optional stats (number, label).
     pub stats: &'a [(String, String)],

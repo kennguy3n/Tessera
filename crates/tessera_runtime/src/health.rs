@@ -1,32 +1,48 @@
+//! Health/status types reported by the inference sidecar.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Health Response.
 pub struct HealthResponse {
+    /// Status.
     pub status: String,
+    /// Slots idle.
     pub slots_idle: Option<u32>,
+    /// Slots processing.
     pub slots_processing: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Model Props.
 pub struct ModelProps {
+    /// Model.
     pub model: Option<String>,
+    /// Ctx size.
     pub ctx_size: Option<u32>,
+    /// N predict.
     pub n_predict: Option<u32>,
 }
 
 #[derive(thiserror::Error, Debug)]
+/// Health Error.
 pub enum HealthError {
     #[error("Health check failed: {0}")]
+    /// Health check failed.
     RequestFailed(String),
     #[error("Unhealthy: {0}")]
+    /// Unhealthy.
     Unhealthy(String),
     #[error("Parse error: {0}")]
+    /// Parse error.
     ParseError(String),
 }
 
+/// Result type alias.
 pub type Result<T> = std::result::Result<T, HealthError>;
 
 #[cfg(feature = "http")]
+/// Check health.
 pub async fn check_health(endpoint: &str) -> Result<HealthResponse> {
     let url = format!("{endpoint}/health");
     let resp = reqwest::get(&url)
@@ -47,6 +63,7 @@ pub async fn check_health(endpoint: &str) -> Result<HealthResponse> {
 }
 
 #[cfg(feature = "http")]
+/// Get model info.
 pub async fn get_model_info(endpoint: &str) -> Result<ModelProps> {
     let url = format!("{endpoint}/props");
     let resp = reqwest::get(&url)
@@ -61,10 +78,12 @@ pub async fn get_model_info(endpoint: &str) -> Result<ModelProps> {
     serde_json::from_str(&body).map_err(|e| HealthError::ParseError(e.to_string()))
 }
 
+/// Parse health response.
 pub fn parse_health_response(json: &str) -> Result<HealthResponse> {
     serde_json::from_str(json).map_err(|e| HealthError::ParseError(e.to_string()))
 }
 
+/// Is healthy.
 pub fn is_healthy(response: &HealthResponse) -> bool {
     response.status == "ok"
 }

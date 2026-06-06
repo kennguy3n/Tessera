@@ -6,7 +6,7 @@
 //! lazily on the first `TaskStore::open` call.
 //!
 //! Tasks can be created manually or extracted from source material via
-//! [`tessera_artifacts::extraction`]. The `source_id` and
+//! `tessera_artifacts::extraction`. The `source_id` and
 //! `extracted_item_id` fields preserve provenance so the UI can render
 //! "open the source" affordances.
 
@@ -15,7 +15,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
-use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
+use tessera_core::{open_shared, open_shared_in_memory, with_secure_delete, SharedConnection};
 
 /// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
 /// a `rusqlite::Error` instead of silently substituting the current time.
@@ -41,24 +41,32 @@ fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTi
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Task.
 pub struct Task {
+    /// Id.
     pub id: TaskId,
+    /// Title.
     pub title: String,
     #[serde(default)]
+    /// Description.
     pub description: String,
+    /// Status.
     pub status: TaskStatus,
+    /// Priority.
     pub priority: TaskPriority,
     /// User-controlled ordering within the same status column.
     pub position: i64,
     #[serde(default)]
+    /// Assignee.
     pub assignee: Option<String>,
     #[serde(default)]
+    /// Due date.
     pub due_date: Option<DateTime<Utc>>,
     /// Optional source provenance — set when the task was extracted
     /// from indexed source material.
     #[serde(default)]
     pub source_id: Option<SourceId>,
-    /// Optional pointer to the originating [`ExtractedItem`] so the
+    /// Optional pointer to the originating `ExtractedItem` so the
     /// UI can re-open the extraction context.
     #[serde(default)]
     pub extracted_item_id: Option<String>,
@@ -70,11 +78,14 @@ pub struct Task {
     /// created or already-deleted task never wedges the board.
     #[serde(default)]
     pub depends_on: Vec<TaskId>,
+    /// Created at.
     pub created_at: DateTime<Utc>,
+    /// Updated at.
     pub updated_at: DateTime<Utc>,
 }
 
 impl Task {
+    /// Creates a new instance.
     pub fn new(title: impl Into<String>, status: TaskStatus, priority: TaskPriority) -> Self {
         let now = Utc::now();
         Self {
@@ -101,12 +112,19 @@ impl Task {
 /// provides `Some(None)` via the dedicated helpers below.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskUpdate {
+    /// Title.
     pub title: Option<String>,
+    /// Description.
     pub description: Option<String>,
+    /// Status.
     pub status: Option<TaskStatus>,
+    /// Priority.
     pub priority: Option<TaskPriority>,
+    /// Position.
     pub position: Option<i64>,
+    /// Assignee.
     pub assignee: Option<Option<String>>,
+    /// Due date.
     pub due_date: Option<Option<DateTime<Utc>>>,
     /// Replace the dependency set. `None` preserves the existing
     /// edges; `Some(vec)` overwrites them (pass an empty vec to clear
@@ -115,15 +133,18 @@ pub struct TaskUpdate {
     pub depends_on: Option<Vec<TaskId>>,
 }
 
+/// Task Store.
 pub struct TaskStore {
     conn: SharedConnection,
 }
 
 impl TaskStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -176,15 +197,18 @@ impl TaskStore {
                 |_| Ok(()),
             )
             .optional()
-            .map_err(Error::Sqlite)?
+            .map_err(|e| Error::DatabaseState(format!("table_info(tasks): {e}")))?
             .is_some();
         if !has_depends_on {
             conn.execute("ALTER TABLE tasks ADD COLUMN depends_on TEXT", [])
-                .map_err(Error::Sqlite)?;
+                .map_err(|e| {
+                    Error::DatabaseState(format!("failed to add tasks.depends_on: {e}"))
+                })?;
         }
         Ok(())
     }
 
+    /// Create.
     pub fn create(&self, task: &Task) -> Result<()> {
         // Reject a create whose dependency edges would close a cycle
         // with the tasks already in the store. Validated BEFORE the
@@ -242,6 +266,7 @@ impl TaskStore {
         topological_sort(&tasks).map(|_| ())
     }
 
+    /// Get.
     pub fn get(&self, id: &TaskId) -> Result<Option<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -279,6 +304,7 @@ impl TaskStore {
         Ok(out)
     }
 
+    /// List by status.
     pub fn list_by_status(&self, status: TaskStatus) -> Result<Vec<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -299,6 +325,7 @@ impl TaskStore {
         Ok(out)
     }
 
+    /// Update.
     pub fn update(&self, id: &TaskId, update: TaskUpdate) -> Result<Task> {
         let existing = self
             .get(id)?
@@ -364,13 +391,15 @@ impl TaskStore {
         })
     }
 
+    /// Delete.
     pub fn delete(&self, id: &TaskId) -> Result<bool> {
-        let rows = self
-            .conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])
-            .map_err(Error::Sqlite)?;
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Zero-fill the freed page so the deleted task (title, notes,
+        // assignee) is unrecoverable from the freelist.
+        let rows = with_secure_delete(&conn, |conn| {
+            conn.execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])
+                .map_err(Error::Sqlite)
+        })?;
         Ok(rows > 0)
     }
 
@@ -480,7 +509,7 @@ fn encode_depends_on(depends_on: &[TaskId]) -> Result<Option<String>> {
     }
     serde_json::to_string(depends_on)
         .map(Some)
-        .map_err(Error::Json)
+        .map_err(|e| Error::DatabaseState(format!("failed to encode depends_on: {e}")))
 }
 
 /// Parse the JSON-array text from the `tasks.depends_on` column back

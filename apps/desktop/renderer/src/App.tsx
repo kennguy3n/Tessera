@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import HomePage from "./pages/HomePage";
 import SourcesPage from "./pages/SourcesPage";
@@ -17,6 +18,40 @@ import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTheme } from "./hooks/useTheme";
 
 type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
+
+/**
+ * Wrap a routed page element in a named {@link ErrorBoundary} so a
+ * render-time crash in one page shows the recovery UI (and writes a
+ * `crash-report.json` entry tagged with the page name) instead of
+ * taking down the whole app shell. The sidebar and command palette
+ * live outside the boundary and stay interactive.
+ *
+ * `resetKeys={[pathname]}` clears a caught error whenever the URL
+ * changes. A static key alone is not enough: parameterized routes like
+ * `/sources/:id` reuse the same boundary instance across ids, so a crash
+ * on `/sources/a` would otherwise keep showing the recovery screen after
+ * navigating to `/sources/b`. Keying on the full pathname covers both
+ * cross-page and same-route-different-param navigation without
+ * force-remounting healthy pages on unrelated re-renders.
+ */
+function PageBoundary({
+  name,
+  children,
+}: {
+  name: string;
+  children: ReactNode;
+}): ReactNode {
+  const { pathname } = useLocation();
+  return (
+    <ErrorBoundary name={name} resetKeys={[pathname]}>
+      {children}
+    </ErrorBoundary>
+  );
+}
+
+function page(name: string, node: ReactNode): ReactNode {
+  return <PageBoundary name={name}>{node}</PageBoundary>;
+}
 
 export default function App() {
   useKeyboardShortcuts();
@@ -72,16 +107,31 @@ export default function App() {
       <Sidebar collapsed={sidebarCollapsed} />
       <main className="app-main">
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/sources" element={<SourcesPage />} />
-          <Route path="/sources/:id" element={<SourceDetailPage />} />
-          <Route path="/templates" element={<TemplatesPage />} />
-          <Route path="/create" element={<CreatePage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/automations" element={<AutomationsPage />} />
-          <Route path="/vision" element={<VisionPage />} />
-          <Route path="/artifacts/:id/edit" element={<ArtifactEditorPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/" element={page("HomePage", <HomePage />)} />
+          <Route path="/sources" element={page("SourcesPage", <SourcesPage />)} />
+          <Route
+            path="/sources/:id"
+            element={page("SourceDetailPage", <SourceDetailPage />)}
+          />
+          <Route
+            path="/templates"
+            element={page("TemplatesPage", <TemplatesPage />)}
+          />
+          <Route path="/create" element={page("CreatePage", <CreatePage />)} />
+          <Route path="/tasks" element={page("TasksPage", <TasksPage />)} />
+          <Route
+            path="/automations"
+            element={page("AutomationsPage", <AutomationsPage />)}
+          />
+          <Route path="/vision" element={page("VisionPage", <VisionPage />)} />
+          <Route
+            path="/artifacts/:id/edit"
+            element={page("ArtifactEditorPage", <ArtifactEditorPage />)}
+          />
+          <Route
+            path="/settings"
+            element={page("SettingsPage", <SettingsPage />)}
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

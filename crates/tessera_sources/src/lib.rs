@@ -1,3 +1,7 @@
+//! Source ingestion, extraction, chunking, embedding, and hybrid
+//! (lexical + vector) search over the local knowledge substrate.
+#![warn(missing_docs)]
+
 pub mod chunker;
 pub mod embedding;
 pub mod extractor;

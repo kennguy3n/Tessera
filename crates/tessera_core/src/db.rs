@@ -123,6 +123,68 @@ fn apply_default_pragmas(conn: &Connection) -> Result<()> {
         .map_err(Error::Sqlite)
 }
 
+/// Run `op` with `PRAGMA secure_delete = ON` active on `conn`, then
+/// always restore `PRAGMA secure_delete = OFF` afterwards — on the
+/// success path *and* on every error path.
+///
+/// # Why this exists
+///
+/// SQLite's default `secure_delete = OFF` leaves the *content* of
+/// deleted rows on the freed b-tree pages until those pages are
+/// reused, so a forensic image (or a synced backup that captured the
+/// raw file) can still recover the bytes after a `DELETE`. For
+/// content-bearing deletion paths — source evidence chunks, indexed
+/// files, artifacts, tasks, automations — we want the freed pages
+/// zero-filled at delete time so the deletion is durable against that
+/// recovery. Wrapping the `DELETE`(s) in `secure_delete = ON`
+/// achieves exactly that.
+///
+/// # The connection-scoped pragma hazard
+///
+/// `secure_delete` is a *connection*-scoped pragma, and Tessera shares
+/// one [`SharedConnection`] across every store in the process (see the
+/// module docs). If we set it `ON` and then early-return via `?` on a
+/// failing statement, the pragma would stay `ON` for the remaining
+/// process lifetime — every steady-state chunk insert / FTS trigger
+/// fire / audit append would then pay the page-zero-fill write
+/// amplification. So this helper guarantees the `OFF` reset runs on
+/// every exit path, returning the operation's value only after the
+/// reset has been attempted. A reset failure is surfaced to stderr
+/// (the connection is in a degraded state an operator needs to know
+/// about) and then propagated, but the original `op` error always
+/// takes precedence as the return value.
+///
+/// `op` receives the same `&Connection` so it can issue its `DELETE`s
+/// (and any surrounding logic) directly. It intentionally does **not**
+/// receive a `&mut Connection`, so callers that need an explicit
+/// `rusqlite` transaction must set the pragma manually around the
+/// `&mut`-borrowing transaction instead (see
+/// `SourceStore::cryptoshred_kchat_source_evidence` for that pattern).
+pub fn with_secure_delete<T>(
+    conn: &Connection,
+    op: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("PRAGMA secure_delete = ON;")
+        .map_err(Error::Sqlite)?;
+
+    let op_result = op(conn);
+
+    let reset_result = conn
+        .execute_batch("PRAGMA secure_delete = OFF;")
+        .map_err(Error::Sqlite);
+    if let Err(e) = reset_result.as_ref() {
+        eprintln!(
+            "[secure_delete] failed to reset secure_delete=OFF on shared \
+             connection; steady-state writes will pay zero-fill overhead \
+             until process restart: {e}"
+        );
+    }
+
+    let value = op_result?;
+    reset_result?;
+    Ok(value)
+}
+
 /// switch the database journal to WAL mode and tune
 /// fsync to `NORMAL`.
 ///
@@ -434,7 +496,7 @@ pub fn open_shared_in_memory() -> Result<SharedConnection> {
 /// scanning every chunk row) blocks any concurrent writer for the
 /// duration of the scan, and vice-versa.
 ///
-/// WAL journal mode (enabled in [`apply_wal_pragmas`]) lets a single
+/// WAL journal mode (enabled in `apply_wal_pragmas`) lets a single
 /// writer and unlimited readers coexist at the SQLite level — but
 /// only across **different connections**. Multiple borrows of the
 /// same `Connection` still serialise inside SQLite. So unlocking the
@@ -500,7 +562,7 @@ impl SharedReadPool {
     ///    on the connection at the round-robin start index.
     ///
     /// Panics if the pool is empty — callers MUST check
-    /// [`is_empty`] (or hold the pool as `Option<SharedReadPool>`)
+    /// `is_empty` (or hold the pool as `Option<SharedReadPool>`)
     /// first.
     pub fn with_read<R>(&self, f: impl FnOnce(&Connection) -> R) -> R {
         let n = self.conns.len();
@@ -522,6 +584,38 @@ impl SharedReadPool {
             .lock()
             .expect("SharedReadPool connection mutex poisoned");
         f(&guard)
+    }
+
+    /// Pre-warm every connection in the pool at boot so the first
+    /// real read on each one doesn't pay the cold-cache cost.
+    ///
+    /// A freshly-opened SQLite connection has an empty page cache and
+    /// no parsed schema: the first query against it faults the
+    /// `sqlite_master` b-tree (and, under SQLCipher, decrypts those
+    /// pages) on the critical path of whatever user-facing read
+    /// happens to land first — typically the initial search or
+    /// source-list render right after launch. Running a tiny schema
+    /// read on each connection up front moves that one-time cost into
+    /// the boot window, where it overlaps with the rest of init and
+    /// is invisible to the user.
+    ///
+    /// This is intentionally additive and self-contained: it only
+    /// issues read-only probes through the already-constructed pool
+    /// and touches no other `db.rs` state, so it composes cleanly
+    /// with independent read-pool changes (e.g. auto-sizing the pool
+    /// count). A no-op on an empty pool. Probe failures are swallowed
+    /// — pre-warming is a best-effort latency optimisation and must
+    /// never turn into a boot-blocking error.
+    pub fn prewarm(&self) {
+        for conn in self.conns.iter() {
+            let Ok(guard) = conn.lock() else { continue };
+            // `sqlite_master` is the catalog every later query
+            // consults to resolve table/index names; reading it
+            // faults the schema pages into the cache and forces the
+            // SQLCipher codec to decrypt them once, up front.
+            let _ = guard
+                .query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0));
+        }
     }
 }
 
@@ -786,6 +880,59 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn with_secure_delete_sets_on_during_op_and_restores_off() {
+        let db = open_shared_in_memory().expect("in-memory");
+        let conn = db.lock().expect("lock");
+
+        // Baseline: secure_delete defaults to OFF on a fresh connection.
+        let before: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, 0, "secure_delete should default to OFF");
+
+        let observed_inside = with_secure_delete(&conn, |conn| {
+            conn.query_row("PRAGMA secure_delete", [], |r| r.get::<_, i64>(0))
+                .map_err(Error::Sqlite)
+        })
+        .expect("op should succeed");
+
+        assert_eq!(
+            observed_inside, 1,
+            "secure_delete must be ON for the duration of the op"
+        );
+
+        let after: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after, 0,
+            "secure_delete must be restored to OFF after with_secure_delete returns"
+        );
+    }
+
+    #[test]
+    fn with_secure_delete_restores_off_even_on_error() {
+        let db = open_shared_in_memory().expect("in-memory");
+        let conn = db.lock().expect("lock");
+
+        let result: Result<()> = with_secure_delete(&conn, |_conn| {
+            Err(Error::DatabaseState(
+                "simulated failure mid-scrub".to_string(),
+            ))
+        });
+        assert!(result.is_err(), "the op error must propagate");
+
+        let after: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after, 0,
+            "secure_delete must be reset to OFF even when the op returns Err — \
+             otherwise the shared connection stays in ON for the process lifetime"
+        );
     }
 
     #[test]
@@ -1410,6 +1557,47 @@ mod tests {
         let _writer = open_shared(db_path_str).expect("writer");
         let pool = open_shared_read_pool(db_path_str, 3).expect("pool");
         assert_eq!(pool.len(), 3);
+    }
+
+    #[test]
+    fn prewarm_is_a_noop_on_empty_pool() {
+        // The empty pool (in-memory / size-0 / failed-open sentinel)
+        // must tolerate `prewarm()` without panicking.
+        let pool = empty_read_pool();
+        pool.prewarm();
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn prewarm_leaves_pool_fully_usable() {
+        // After pre-warming, every connection must still serve real
+        // reads (and observe writer state), proving the warm-up
+        // probe doesn't leave any connection in a bad state.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("prewarm.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared(db_path_str).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO t (id, v) VALUES (?1, ?2)",
+                rusqlite::params![1, "warm"],
+            )
+            .unwrap();
+        }
+        let pool = open_shared_read_pool(db_path_str, 2).expect("pool");
+        // Pre-warm twice to confirm it is idempotent.
+        pool.prewarm();
+        pool.prewarm();
+        for _ in 0..pool.len() {
+            let v: String = pool.with_read(|c| {
+                c.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))
+                    .unwrap()
+            });
+            assert_eq!(v, "warm");
+        }
     }
 
     #[test]

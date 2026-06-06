@@ -11,11 +11,11 @@
 //! Actions:
 //!
 //! - **ReindexSource(SourceId)** — re-run extraction on a known source.
-//! - **GenerateFromTemplate(TemplateId, Vec<SourceId>)** — generate
+//! - **GenerateFromTemplate(TemplateId, `Vec<SourceId>`)** — generate
 //!   a new artifact from a template + sources.
 //!
 //! The store handles persistence; the runner (in
-//! [`automations_runner`]) loops over enabled rules and dispatches.
+//! `automations_runner`) loops over enabled rules and dispatches.
 //!
 //! # Scalability follow-up
 //!
@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{AutomationId, SourceId, TemplateId};
-use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
+use tessera_core::{open_shared, open_shared_in_memory, with_secure_delete, SharedConnection};
 
 /// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
 /// a `rusqlite::Error` instead of silently substituting the current time.
@@ -72,13 +72,20 @@ fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTi
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+/// Automation Trigger.
 pub enum AutomationTrigger {
     /// Run every `interval_seconds` seconds. The runner schedules the
     /// next run from `last_run_at + interval_seconds`, or `created_at`
     /// for the first run.
-    Schedule { interval_seconds: i64 },
+    Schedule {
+        /// Interval seconds.
+        interval_seconds: i64,
+    },
     /// Run when an artifact is generated from `template_id`.
-    OnGenerate { template_id: TemplateId },
+    OnGenerate {
+        /// Template id.
+        template_id: TemplateId,
+    },
     /// Run when the KChat WebSocket delivers a post in `channel_id`
     /// whose body matches `regex`. The KChat event path
     /// (`apps/desktop/electron/kchat/kchatEventForwarder`) calls into
@@ -90,17 +97,28 @@ pub enum AutomationTrigger {
     /// `String`. `regex` is an unanchored Rust `regex`-crate pattern;
     /// an invalid pattern is rejected at creation time by the bridge
     /// and, defensively, treated as "never matches" at dispatch time.
-    OnKchatMessageMatch { channel_id: String, regex: String },
+    OnKchatMessageMatch {
+        /// KChat (Mattermost) channel id to watch.
+        channel_id: String,
+        /// Unanchored `regex`-crate pattern matched against post bodies.
+        regex: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+/// Automation Action.
 pub enum AutomationAction {
+    /// Reindex Source.
     ReindexSource {
+        /// Source id.
         source_id: SourceId,
     },
+    /// Generate From Template.
     GenerateFromTemplate {
+        /// Template id.
         template_id: TemplateId,
+        /// Source ids.
         source_ids: Vec<SourceId>,
     },
     /// Run several actions in order as a single automation. Steps
@@ -110,6 +128,7 @@ pub enum AutomationAction {
     /// [`AutomationAction::steps`] so a `Sequence` of `Sequence`s
     /// behaves as one flat ordered list of leaf actions.
     Sequence {
+        /// Ordered child actions executed sequentially.
         actions: Vec<AutomationAction>,
     },
 }
@@ -140,6 +159,7 @@ pub struct StepOutcome {
 }
 
 impl StepOutcome {
+    /// True when the step executed without error.
     pub fn succeeded(&self) -> bool {
         self.error.is_none()
     }
@@ -150,6 +170,7 @@ impl StepOutcome {
 /// step, in execution order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceReport {
+    /// One outcome per executed step, in execution order.
     pub steps: Vec<StepOutcome>,
 }
 
@@ -219,19 +240,30 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Automation.
 pub struct Automation {
+    /// Id.
     pub id: AutomationId,
+    /// Name.
     pub name: String,
+    /// Trigger.
     pub trigger: AutomationTrigger,
+    /// Action.
     pub action: AutomationAction,
+    /// Enabled.
     pub enabled: bool,
+    /// Created at.
     pub created_at: DateTime<Utc>,
+    /// Updated at.
     pub updated_at: DateTime<Utc>,
+    /// Last run at.
     pub last_run_at: Option<DateTime<Utc>>,
+    /// Last run status.
     pub last_run_status: Option<String>,
 }
 
 impl Automation {
+    /// Creates a new instance.
     pub fn new(
         name: impl Into<String>,
         trigger: AutomationTrigger,
@@ -274,15 +306,18 @@ impl Automation {
     }
 }
 
+/// Automation Store.
 pub struct AutomationStore {
     conn: SharedConnection,
 }
 
 impl AutomationStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -316,6 +351,7 @@ impl AutomationStore {
         Ok(())
     }
 
+    /// Create.
     pub fn create(&self, a: &Automation) -> Result<()> {
         let trigger_json = serde_json::to_string(&a.trigger)?;
         let action_json = serde_json::to_string(&a.action)?;
@@ -343,6 +379,7 @@ impl AutomationStore {
         Ok(())
     }
 
+    /// Get.
     pub fn get(&self, id: &AutomationId) -> Result<Option<Automation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -360,6 +397,7 @@ impl AutomationStore {
         }
     }
 
+    /// List.
     pub fn list(&self) -> Result<Vec<Automation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -379,6 +417,7 @@ impl AutomationStore {
         Ok(out)
     }
 
+    /// Set enabled.
     pub fn set_enabled(&self, id: &AutomationId, enabled: bool) -> Result<()> {
         self.conn
             .lock()
@@ -391,21 +430,23 @@ impl AutomationStore {
         Ok(())
     }
 
+    /// Delete.
     pub fn delete(&self, id: &AutomationId) -> Result<bool> {
-        let rows = self
-            .conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute(
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Zero-fill the freed page so the deleted automation rule
+        // (trigger/action config) is unrecoverable from the freelist.
+        let rows = with_secure_delete(&conn, |conn| {
+            conn.execute(
                 "DELETE FROM automations WHERE id = ?1",
                 params![id.to_string()],
             )
-            .map_err(Error::Sqlite)?;
+            .map_err(Error::Sqlite)
+        })?;
         Ok(rows > 0)
     }
 
     /// Record the result of a run. Persists `last_run_at` and a string
-    /// status the UI can render (e.g. "ok", "failed: <message>").
+    /// status the UI can render (e.g. "ok", "failed: `<message>`").
     pub fn record_run(&self, id: &AutomationId, ran_at: DateTime<Utc>, status: &str) -> Result<()> {
         self.conn
             .lock()

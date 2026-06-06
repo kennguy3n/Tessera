@@ -194,6 +194,7 @@ pub struct HashTrickEmbedding {
 }
 
 impl HashTrickEmbedding {
+    /// Creates a new instance.
     pub fn new(dim: usize, n_min: usize, n_max: usize) -> Self {
         assert!(dim > 0, "HashTrickEmbedding: dim must be > 0");
         assert!(n_min > 0, "HashTrickEmbedding: n_min must be > 0");

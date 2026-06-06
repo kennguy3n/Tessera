@@ -1,3 +1,6 @@
+//! Format-dispatching entry point that routes an artifact to the
+//! matching per-format exporter.
+
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 use tessera_core::error::{Error, Result};

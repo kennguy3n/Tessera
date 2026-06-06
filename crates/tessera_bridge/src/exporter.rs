@@ -1,3 +1,5 @@
+//! N-API surface for exporting artifacts to the supported formats.
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_artifacts::manager::ArtifactManager;
@@ -10,8 +12,11 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Export Result.
 pub struct ExportResult {
+    /// Content.
     pub content: String,
+    /// Format.
     pub format: String,
 }
 

@@ -93,9 +93,25 @@ interface BuildCspOptions {
  *   - `frame-ancestors 'none'` — defense-in-depth; the renderer
  *     cannot be framed (Electron does not embed us in another page,
  *     but the directive shuts the door on a future regression).
+ *   - `frame-src 'none'` — the renderer embeds zero `<iframe>`s (the
+ *     document sanitiser in `documentEditorHelpers.ts` strips any
+ *     `<iframe>` before render), so we forbid frame loading outright
+ *     rather than inheriting the `'self'` that `default-src` would
+ *     otherwise grant. Strictly tighter than the fallback.
+ *   - `media-src 'none'` — no `<audio>`/`<video>` elements exist in
+ *     the renderer (the only `URL.createObjectURL` call sites build
+ *     download anchors, not media elements), so media loading is
+ *     forbidden. Again tighter than the `default-src 'self'` fallback.
  *   - `worker-src 'self' blob:` — `blob:` is required for the
  *     dynamic-import Vite chunk splitting and for any future Web
  *     Worker that loads its source via `URL.createObjectURL`.
+ *
+ * No directive uses a bare `*`, `https:`, or `http:` wildcard origin.
+ * The only host wildcards anywhere in the policy are the leftmost-
+ * subdomain forms (`https://*.host`) in the `img-src` connector
+ * allow-list (see `cspImageSources.ts`), which are host-scoped per
+ * the CSP3 grammar — not open-ended scheme wildcards. The
+ * `no-wildcard-origin` regression test in `csp.test.ts` locks this.
  */
 export function buildCsp(opts: BuildCspOptions): string {
   const { isDev, nonce, imageSources, assetScheme } = opts;
@@ -114,6 +130,8 @@ export function buildCsp(opts: BuildCspOptions): string {
     "base-uri 'self'",
     "form-action 'none'",
     "frame-ancestors 'none'",
+    "frame-src 'none'",
+    "media-src 'none'",
     "worker-src 'self' blob:",
   ];
 

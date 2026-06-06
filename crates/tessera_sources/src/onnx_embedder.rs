@@ -14,7 +14,7 @@
 //! mutability. Single-text `embed` calls are short (<100 ms on
 //! CPU for a 128-token batch on either shipped model) so the
 //! mutex contention is negligible in practice; the indexing path
-//! amortises this by calling [`embed_batch`] which runs one ONNX
+//! amortises this by calling `embed_batch` which runs one ONNX
 //! inference per 32-text batch instead of one per text.
 //!
 //! ## Why mean-pool + L2-normalise

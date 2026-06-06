@@ -34,6 +34,7 @@ const DEFAULT_TOKEN_URL: &str = "https://api.figma.com/v1/oauth/token";
 const DEFAULT_REFRESH_URL: &str = "https://api.figma.com/v1/oauth/refresh";
 const DEFAULT_API_BASE: &str = "https://api.figma.com/v1";
 
+/// Figma Connector.
 pub struct FigmaConnector {
     client: Client,
     status: ConnectorStatus,
@@ -52,6 +53,7 @@ pub struct FigmaConnector {
 }
 
 impl FigmaConnector {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -71,6 +73,7 @@ impl FigmaConnector {
         }
     }
 
+    /// With base url.
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
             client: Client::new(),
@@ -90,32 +93,40 @@ impl FigmaConnector {
         }
     }
 
+    /// Set access token.
     pub fn set_access_token(&mut self, token: &str, expires_in_secs: i64) {
         self.access_token = Some(token.to_string());
         self.token_expiry = Some(Utc::now() + chrono::Duration::seconds(expires_in_secs));
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Set team id.
     pub fn set_team_id(&mut self, team_id: &str) {
         self.team_id = Some(team_id.to_string());
     }
 
+    /// Provider name.
     pub fn provider_name(&self) -> &'static str {
         "figma"
     }
+    /// Status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
+    /// Last sync time.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
+    /// File count.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }
+    /// Team id.
     pub fn team_id(&self) -> Option<&str> {
         self.team_id.as_deref()
     }
 
+    /// Build auth url.
     pub fn build_auth_url(&self, config: &AuthConfig) -> String {
         let scopes = if config.scopes.is_empty() {
             "files:read".to_string()
@@ -134,6 +145,7 @@ impl FigmaConnector {
         )
     }
 
+    /// Authenticate.
     pub async fn authenticate(&mut self, config: &AuthConfig) -> ConnectorResult<StoredTokens> {
         self.status = ConnectorStatus::Connecting;
         self.client_id = Some(config.client_id.clone());
@@ -188,6 +200,7 @@ impl FigmaConnector {
         })
     }
 
+    /// Restore tokens.
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
@@ -203,6 +216,7 @@ impl FigmaConnector {
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Refresh access token.
     pub async fn refresh_access_token(&mut self) -> ConnectorResult<StoredTokens> {
         let refresh_token = self
             .refresh_token
@@ -410,6 +424,7 @@ impl FigmaConnector {
         })
     }
 
+    /// Sync changes.
     pub async fn sync_changes(
         &mut self,
         change_token: Option<&str>,

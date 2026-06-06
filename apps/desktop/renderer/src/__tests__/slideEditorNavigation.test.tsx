@@ -58,7 +58,7 @@ function buildContent(): string {
   return JSON.stringify(content);
 }
 
-function renderDeck() {
+function renderDeck(props?: { deckTitle?: string }) {
   const onSave = vi.fn();
   const onDraftChange = vi.fn();
   render(
@@ -66,6 +66,7 @@ function renderDeck() {
       content={buildContent()}
       onSave={onSave}
       onDraftChange={onDraftChange}
+      deckTitle={props?.deckTitle}
     />,
   );
   return { onSave, onDraftChange };
@@ -401,5 +402,61 @@ describe("SlideEditor sidebar — thumbnail ref-callbacks are stable across rend
     expect(screen.getByRole("button", { name: /1 Alpha/ })).toBe(initialFirst);
     expect(screen.getByRole("button", { name: /2 Beta/ })).toBe(initialSecond);
     expect(screen.getByRole("button", { name: /3 Gamma/ })).toBe(initialThird);
+  });
+});
+
+describe("SlideEditor presenter mode", () => {
+  type StartPresentation = NonNullable<
+    NonNullable<typeof window.tessera>["slides"]
+  >["startPresentation"];
+
+  function presentSpy(): ReturnType<typeof vi.fn> {
+    const spy = vi.fn().mockResolvedValue({ ok: true, slideCount: 0 });
+    window.tessera.slides.startPresentation =
+      spy as unknown as StartPresentation;
+    return spy;
+  }
+
+  it("Present passes the flattened deck and the active slide as start index", () => {
+    const spy = presentSpy();
+    renderDeck();
+
+    // Default active slide is the first one.
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenLastCalledWith({
+      startIndex: 0,
+      slides: [
+        { title: "Alpha", lines: ["alpha body"], notes: "" },
+        { title: "Beta", lines: ["beta body"], notes: "" },
+        { title: "Gamma", lines: ["gamma body"], notes: "" },
+      ],
+    });
+
+    // Selecting a different slide makes it the presentation entry point.
+    fireEvent.click(screen.getByRole("button", { name: /3 Gamma/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[1][0]).toMatchObject({ startIndex: 2 });
+  });
+
+  it("forwards the artifact title as deckTitle when one is provided", () => {
+    const spy = presentSpy();
+    renderDeck({ deckTitle: "  Q3 Roadmap  " });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    // The title is trimmed before being sent; both presenter windows
+    // will be labelled with the real deck name instead of the default.
+    expect(spy.mock.calls[0][0]).toMatchObject({ deckTitle: "Q3 Roadmap" });
+  });
+
+  it("omits deckTitle entirely when the title is blank", () => {
+    const spy = presentSpy();
+    renderDeck({ deckTitle: "   " });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start presentation" }));
+    // A blank title is dropped so the main process applies its own
+    // "Presentation" default rather than an empty string.
+    expect(spy.mock.calls[0][0]).not.toHaveProperty("deckTitle");
   });
 });

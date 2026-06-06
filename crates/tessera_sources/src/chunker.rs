@@ -1,3 +1,6 @@
+//! Splitting extracted source text into overlapping, provenance-tagged
+//! chunks ready for embedding and indexing.
+
 use serde::{Deserialize, Serialize};
 
 /// Provenance tag for a chunk's content. `None` means the chunk
@@ -74,11 +77,17 @@ impl ExtractionMethod {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Chunk.
 pub struct Chunk {
+    /// Source path.
     pub source_path: String,
+    /// Chunk index.
     pub chunk_index: usize,
+    /// Byte offset.
     pub byte_offset: usize,
+    /// Content.
     pub content: String,
+    /// Hash.
     pub hash: String,
     /// Provenance of this chunk's content. `None` for legacy /
     /// native extraction; `Some(_)` for VLM-derived content.
@@ -93,8 +102,11 @@ pub struct Chunk {
 }
 
 #[derive(Debug, Clone)]
+/// Chunker Config.
 pub struct ChunkerConfig {
+    /// Chunk size.
     pub chunk_size: usize,
+    /// Chunk overlap.
     pub chunk_overlap: usize,
 }
 
@@ -123,6 +135,7 @@ fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
     idx
 }
 
+/// Chunk text.
 pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
     if text.is_empty() {
         return Vec::new();

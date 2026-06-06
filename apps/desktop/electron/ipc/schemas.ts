@@ -38,6 +38,35 @@ const NonEmptyString = z.string().min(1).max(MAX_STRING_LEN);
 const OptionalString = z.string().max(MAX_STRING_LEN).optional();
 const NullableString = z.string().max(MAX_STRING_LEN).nullable();
 
+// --- Diagnostics ---
+
+// Per-field caps for a crash report. These are deliberately far above
+// any realistic value (a component name, an error message, a JS stack,
+// an ISO timestamp) so a legitimate report is never rejected, but far
+// below `MAX_STRING_LEN` so a buggy or hostile renderer cannot make the
+// main process retain a multi-megabyte string. `crashReport.ts` clamps
+// again to its own (smaller) storage caps; this schema bound is the
+// outer envelope that keeps a pathological payload from getting that
+// far. (The IPC payload is already deserialized by Electron before we
+// see it, so this bounds retention/processing, not the initial copy.)
+const CRASH_COMPONENT_MAX = 1024;
+const CRASH_TEXT_MAX = 64 * 1024;
+const CRASH_TIMESTAMP_MAX = 64;
+
+// Renderer crash reports forwarded by the React error boundaries. The
+// fields are coerced again in `crashReport.ts:normalizeCrashReport`, so
+// this schema is intentionally permissive (every field optional) — it
+// rejects only grossly malformed (non-object) or oversized payloads
+// while letting a partial report through to be defaulted and recorded.
+// No matching `z.infer` type is exported because the wire shape already
+// lives in `shared/types.ts` as `RendererCrashReport`.
+export const RendererCrashReportSchema = z.object({
+  component: z.string().max(CRASH_COMPONENT_MAX).optional(),
+  error: z.string().max(CRASH_TEXT_MAX).optional(),
+  stack: z.string().max(CRASH_TEXT_MAX).optional(),
+  timestamp: z.string().max(CRASH_TIMESTAMP_MAX).optional(),
+});
+
 // --- Citations ---
 
 export const AddCitationSchema = z.object({
@@ -481,6 +510,26 @@ export const MarpExportSchema = z.object({
   allowHtml: z.boolean().optional(),
 });
 export type MarpExportInput = z.infer<typeof MarpExportSchema>;
+
+// --- Slides presenter mode ---
+//
+// `slides:startPresentation` ships a flattened, plain-text snapshot of
+// the deck to the two presentation windows. Bounds mirror the deck
+// editor's practical limits: a slide body is a handful of short lines,
+// and a deck is rarely more than a few hundred slides. The caps exist
+// to keep a hostile / buggy renderer from handing the main process a
+// pathologically large payload to serialise into the generated HTML.
+export const PresentationSlideSchema = z.object({
+  title: z.string().max(MAX_STRING_LEN),
+  lines: z.array(z.string().max(MAX_STRING_LEN)).max(1000),
+  notes: z.string().max(MAX_STRING_LEN),
+});
+export const StartPresentationSchema = z.object({
+  slides: z.array(PresentationSlideSchema).max(5000),
+  startIndex: z.number().int().min(0),
+  deckTitle: z.string().max(1000).optional(),
+});
+export type StartPresentationInput = z.infer<typeof StartPresentationSchema>;
 
 // --- Drive picker ---
 //
