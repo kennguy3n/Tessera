@@ -348,4 +348,76 @@ describe("SheetEditor UX — Task 20 auto-fill", () => {
     expect(within(cellAt(0, 3)).getByText("4")).toBeInTheDocument();
     expect(within(cellAt(0, 4)).getByText("5")).toBeInTheDocument();
   });
+
+  it("tears down auto-fill drag listeners on unmount (no zombie window handlers)", () => {
+    // Regression: `beginAutoFill` binds mousemove/mouseup listeners to
+    // `window` that previously only detached on mouseup. If the editor
+    // unmounted mid-drag (mouse still held), the listeners stayed bound
+    // and a later mousemove would invoke the handler against a
+    // torn-down grid — calling `document.elementFromPoint`, which jsdom
+    // doesn't implement, and surfacing as an async unhandled
+    // "elementFromPoint is not a function" error in unrelated tests.
+    const onSave = vi.fn();
+    const { unmount } = render(
+      <SheetEditor
+        content={makeContent({
+          columns: ["A"],
+          rows: [["1"], ["2"], [""], [""], [""]],
+        })}
+        onSave={onSave}
+        autoSaveMs={0}
+      />,
+    );
+    fireEvent.click(cellAt(0, 0));
+    fireEvent.click(cellAt(1, 0), { shiftKey: true });
+    const handle = screen.getByTestId("sheet-fill-handle-1-0");
+    // Begin the drag but never release the mouse — instead unmount.
+    fireEvent.mouseDown(handle, { clientX: 0, clientY: 0 });
+    unmount();
+
+    // A leaked listener would call `elementFromPoint` on this move.
+    const realFn = document.elementFromPoint;
+    const spy = vi.fn().mockReturnValue(null);
+    document.elementFromPoint = spy as typeof document.elementFromPoint;
+    try {
+      fireEvent.mouseMove(window, { clientX: 0, clientY: 100 });
+    } finally {
+      document.elementFromPoint = realFn;
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("does not throw on mousemove when elementFromPoint is unavailable", () => {
+    // jsdom does not implement `document.elementFromPoint`. The
+    // auto-fill move handler must no-op rather than throw when the API
+    // is missing.
+    const onSave = vi.fn();
+    render(
+      <SheetEditor
+        content={makeContent({
+          columns: ["A"],
+          rows: [["1"], ["2"], [""], [""], [""]],
+        })}
+        onSave={onSave}
+        autoSaveMs={0}
+      />,
+    );
+    fireEvent.click(cellAt(0, 0));
+    fireEvent.click(cellAt(1, 0), { shiftKey: true });
+    const handle = screen.getByTestId("sheet-fill-handle-1-0");
+    fireEvent.mouseDown(handle, { clientX: 0, clientY: 0 });
+
+    const realFn = document.elementFromPoint;
+    // Force the "API unavailable" shape jsdom presents.
+    (document as unknown as { elementFromPoint: undefined }).elementFromPoint =
+      undefined;
+    try {
+      expect(() =>
+        fireEvent.mouseMove(window, { clientX: 0, clientY: 100 }),
+      ).not.toThrow();
+      fireEvent.mouseUp(window);
+    } finally {
+      document.elementFromPoint = realFn;
+    }
+  });
 });

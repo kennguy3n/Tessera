@@ -26,6 +26,26 @@ if (typeof SVGElement !== "undefined") {
   }
 }
 
+// jsdom does not implement `Document.elementFromPoint` (a layout-dependent
+// hit-testing API). Libraries that probe the element under a coordinate call
+// it unconditionally — notably ProseMirror/TipTap, whose placeholder
+// extension runs `posAtCoords` from a viewport-tracking plugin when the editor
+// mounts (see prosemirror-view `posAtCoords`). With the API missing that
+// throws "elementFromPoint is not a function", and because the plugin can fire
+// asynchronously the throw surfaces as an *unhandled* error attributed to
+// whichever test is running — an intermittent, platform-dependent failure that
+// bit the Windows CI leg. Provide a no-op that reports "nothing here" (null);
+// both ProseMirror and our own SheetEditor auto-fill treat a null hit as "no
+// element at this point" and fall back gracefully.
+if (typeof Document !== "undefined") {
+  const docProto = Document.prototype as unknown as {
+    elementFromPoint?: (x: number, y: number) => Element | null;
+  };
+  if (!docProto.elementFromPoint) {
+    docProto.elementFromPoint = () => null;
+  }
+}
+
 const mockApi = {
   sources: {
     addLocalFolder: vi.fn().mockResolvedValue({

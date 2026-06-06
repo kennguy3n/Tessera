@@ -115,6 +115,13 @@ export default function SheetEditor({
   const formulaBarRef = useRef<HTMLInputElement>(null);
   const gridWrapperRef = useRef<HTMLDivElement>(null);
   const lastSavedRef = useRef(content);
+  // Teardown callbacks for in-flight pointer drags (column/row resize,
+  // auto-fill). Each drag attaches window-level mousemove/mouseup
+  // listeners that normally detach on mouseup; if the editor unmounts
+  // mid-drag those would otherwise stay bound to `window` and keep
+  // firing against a torn-down grid. We register each drag's teardown
+  // here and run any still-pending ones on unmount.
+  const dragTeardownsRef = useRef<Set<() => void>>(new Set());
 
   const debouncedSave = useCallback(
     (data: SheetContent) => {
@@ -132,8 +139,14 @@ export default function SheetEditor({
   );
 
   useEffect(() => {
+    const dragTeardowns = dragTeardownsRef.current;
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      // Detach any drag listeners left bound to `window` by an
+      // interaction that was still in progress when the editor
+      // unmounted (e.g. mouse button held while navigating away).
+      for (const teardown of [...dragTeardowns]) teardown();
+      dragTeardowns.clear();
     };
   }, []);
 
@@ -596,6 +609,30 @@ export default function SheetEditor({
   // column / row resize via drag handles.
   // ----------------------------------------------------------------
 
+  // Wire up a window-level pointer drag with guaranteed teardown.
+  // `onMove` runs for every mousemove; `onCommit` (optional) runs once
+  // on mouseup after the listeners are detached. The teardown is also
+  // registered in `dragTeardownsRef` so an unmount mid-drag tears the
+  // listeners down too — preventing a zombie handler from firing
+  // against an unmounted grid.
+  const beginPointerDrag = useCallback(
+    (onMove: (ev: MouseEvent) => void, onCommit?: () => void) => {
+      const teardown = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", handleUp);
+        dragTeardownsRef.current.delete(teardown);
+      };
+      const handleUp = () => {
+        teardown();
+        onCommit?.();
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", handleUp);
+      dragTeardownsRef.current.add(teardown);
+    },
+    [],
+  );
+
   const beginColumnResize = useCallback(
     (colIdx: number, e: React.MouseEvent) => {
       e.preventDefault();
@@ -617,14 +654,9 @@ export default function SheetEditor({
           return updated;
         });
       };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      beginPointerDrag(onMove);
     },
-    [sheet.columnWidths, debouncedSave],
+    [sheet.columnWidths, debouncedSave, beginPointerDrag],
   );
 
   const beginRowResize = useCallback(
@@ -648,14 +680,9 @@ export default function SheetEditor({
           return updated;
         });
       };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      beginPointerDrag(onMove);
     },
-    [sheet.rowHeights, debouncedSave],
+    [sheet.rowHeights, debouncedSave, beginPointerDrag],
   );
 
   // ----------------------------------------------------------------
@@ -700,60 +727,6 @@ export default function SheetEditor({
   // ----------------------------------------------------------------
   // auto-fill drag from the selection handle.
   // ----------------------------------------------------------------
-
-  const beginAutoFill = useCallback(
-    (e: React.MouseEvent) => {
-      if (!selection) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
-      // Track-but-don't-commit until mouse-up; we just need the
-      // final hover target. Find the cell under (x,y) via DOM
-      // ancestry — each <td> is annotated with data-row/data-col
-      // for exactly this lookup.
-      let hoverRow = r2;
-      let hoverCol = c2;
-      const onMove = (ev: MouseEvent) => {
-        const target = document.elementFromPoint(
-          ev.clientX,
-          ev.clientY,
-        );
-        const td = target?.closest("td[data-row]");
-        if (!td) return;
-        const row = Number(td.getAttribute("data-row"));
-        const col = Number(td.getAttribute("data-col"));
-        if (!Number.isFinite(row) || !Number.isFinite(col)) return;
-        hoverRow = row;
-        hoverCol = col;
-      };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-        // Determine fill direction + length from the hover target.
-        let direction: FillDirection | null = null;
-        let length = 0;
-        if (hoverRow > r2) {
-          direction = "down";
-          length = hoverRow - r2;
-        } else if (hoverRow < r1) {
-          direction = "up";
-          length = r1 - hoverRow;
-        } else if (hoverCol > c2) {
-          direction = "right";
-          length = hoverCol - c2;
-        } else if (hoverCol < c1) {
-          direction = "left";
-          length = c1 - hoverCol;
-        }
-        if (!direction || length === 0) return;
-        applyAutoFill(direction, length);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selection, sheet, debouncedSave],
-  );
 
   /**
    * Apply an auto-fill given a finalised direction + length. Pure
@@ -853,6 +826,61 @@ export default function SheetEditor({
       });
     },
     [selection, debouncedSave],
+  );
+
+  const beginAutoFill = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selection) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+      // Track-but-don't-commit until mouse-up; we just need the
+      // final hover target. Find the cell under (x,y) via DOM
+      // ancestry — each <td> is annotated with data-row/data-col
+      // for exactly this lookup.
+      let hoverRow = r2;
+      let hoverCol = c2;
+      const onMove = (ev: MouseEvent) => {
+        // `elementFromPoint` is a layout-dependent DOM API that isn't
+        // available in every environment (e.g. jsdom). Guard so a
+        // mousemove that arrives without it simply doesn't update the
+        // hover target rather than throwing.
+        if (typeof document.elementFromPoint !== "function") return;
+        const target = document.elementFromPoint(
+          ev.clientX,
+          ev.clientY,
+        );
+        const td = target?.closest("td[data-row]");
+        if (!td) return;
+        const row = Number(td.getAttribute("data-row"));
+        const col = Number(td.getAttribute("data-col"));
+        if (!Number.isFinite(row) || !Number.isFinite(col)) return;
+        hoverRow = row;
+        hoverCol = col;
+      };
+      const onCommit = () => {
+        // Determine fill direction + length from the hover target.
+        let direction: FillDirection | null = null;
+        let length = 0;
+        if (hoverRow > r2) {
+          direction = "down";
+          length = hoverRow - r2;
+        } else if (hoverRow < r1) {
+          direction = "up";
+          length = r1 - hoverRow;
+        } else if (hoverCol > c2) {
+          direction = "right";
+          length = hoverCol - c2;
+        } else if (hoverCol < c1) {
+          direction = "left";
+          length = c1 - hoverCol;
+        }
+        if (!direction || length === 0) return;
+        applyAutoFill(direction, length);
+      };
+      beginPointerDrag(onMove, onCommit);
+    },
+    [selection, applyAutoFill, beginPointerDrag],
   );
 
   // Helpers used in render — derived state only.
