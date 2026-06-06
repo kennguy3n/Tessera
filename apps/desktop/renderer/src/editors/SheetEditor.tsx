@@ -595,16 +595,15 @@ export default function SheetEditor({
   const beginPointerDrag = useCallback(
     (onMove: (ev: MouseEvent) => void, onCommit?: () => void) => {
       const teardown = () => {
-        window.removeEventListener("mousemove", handleMove);
+        window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", handleUp);
         dragTeardownsRef.current.delete(teardown);
       };
-      const handleMove = (ev: MouseEvent) => onMove(ev);
       const handleUp = () => {
         teardown();
         onCommit?.();
       };
-      window.addEventListener("mousemove", handleMove);
+      window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", handleUp);
       dragTeardownsRef.current.add(teardown);
     },
@@ -706,62 +705,6 @@ export default function SheetEditor({
   // auto-fill drag from the selection handle.
   // ----------------------------------------------------------------
 
-  const beginAutoFill = useCallback(
-    (e: React.MouseEvent) => {
-      if (!selection) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
-      // Track-but-don't-commit until mouse-up; we just need the
-      // final hover target. Find the cell under (x,y) via DOM
-      // ancestry — each <td> is annotated with data-row/data-col
-      // for exactly this lookup.
-      let hoverRow = r2;
-      let hoverCol = c2;
-      const onMove = (ev: MouseEvent) => {
-        // `elementFromPoint` is a layout-dependent DOM API that isn't
-        // available in every environment (e.g. jsdom). Guard so a
-        // mousemove that arrives without it simply doesn't update the
-        // hover target rather than throwing.
-        if (typeof document.elementFromPoint !== "function") return;
-        const target = document.elementFromPoint(
-          ev.clientX,
-          ev.clientY,
-        );
-        const td = target?.closest("td[data-row]");
-        if (!td) return;
-        const row = Number(td.getAttribute("data-row"));
-        const col = Number(td.getAttribute("data-col"));
-        if (!Number.isFinite(row) || !Number.isFinite(col)) return;
-        hoverRow = row;
-        hoverCol = col;
-      };
-      const onCommit = () => {
-        // Determine fill direction + length from the hover target.
-        let direction: FillDirection | null = null;
-        let length = 0;
-        if (hoverRow > r2) {
-          direction = "down";
-          length = hoverRow - r2;
-        } else if (hoverRow < r1) {
-          direction = "up";
-          length = r1 - hoverRow;
-        } else if (hoverCol > c2) {
-          direction = "right";
-          length = hoverCol - c2;
-        } else if (hoverCol < c1) {
-          direction = "left";
-          length = c1 - hoverCol;
-        }
-        if (!direction || length === 0) return;
-        applyAutoFill(direction, length);
-      };
-      beginPointerDrag(onMove, onCommit);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selection, sheet, debouncedSave],
-  );
-
   /**
    * Apply an auto-fill given a finalised direction + length. Pure
    * sheet mutation — does not interact with selection state
@@ -860,6 +803,61 @@ export default function SheetEditor({
       });
     },
     [selection, debouncedSave],
+  );
+
+  const beginAutoFill = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selection) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+      // Track-but-don't-commit until mouse-up; we just need the
+      // final hover target. Find the cell under (x,y) via DOM
+      // ancestry — each <td> is annotated with data-row/data-col
+      // for exactly this lookup.
+      let hoverRow = r2;
+      let hoverCol = c2;
+      const onMove = (ev: MouseEvent) => {
+        // `elementFromPoint` is a layout-dependent DOM API that isn't
+        // available in every environment (e.g. jsdom). Guard so a
+        // mousemove that arrives without it simply doesn't update the
+        // hover target rather than throwing.
+        if (typeof document.elementFromPoint !== "function") return;
+        const target = document.elementFromPoint(
+          ev.clientX,
+          ev.clientY,
+        );
+        const td = target?.closest("td[data-row]");
+        if (!td) return;
+        const row = Number(td.getAttribute("data-row"));
+        const col = Number(td.getAttribute("data-col"));
+        if (!Number.isFinite(row) || !Number.isFinite(col)) return;
+        hoverRow = row;
+        hoverCol = col;
+      };
+      const onCommit = () => {
+        // Determine fill direction + length from the hover target.
+        let direction: FillDirection | null = null;
+        let length = 0;
+        if (hoverRow > r2) {
+          direction = "down";
+          length = hoverRow - r2;
+        } else if (hoverRow < r1) {
+          direction = "up";
+          length = r1 - hoverRow;
+        } else if (hoverCol > c2) {
+          direction = "right";
+          length = hoverCol - c2;
+        } else if (hoverCol < c1) {
+          direction = "left";
+          length = c1 - hoverCol;
+        }
+        if (!direction || length === 0) return;
+        applyAutoFill(direction, length);
+      };
+      beginPointerDrag(onMove, onCommit);
+    },
+    [selection, applyAutoFill, beginPointerDrag],
   );
 
   // Helpers used in render — derived state only.

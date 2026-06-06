@@ -168,6 +168,17 @@ describe("SourceHealthDashboard", () => {
     await waitFor(() => {
       expect(api.healthReport).toHaveBeenCalledTimes(1);
     });
+    // The mock's call count increments synchronously (before the
+    // awaited promise resolves and `setLoading(false)` runs), so the
+    // assertion above can pass while `loading` is still true and the
+    // Refresh button is `disabled`. Clicking a disabled button is a
+    // no-op, which raced into an intermittent CI failure ("expected 2
+    // calls, got 1"). Wait for the initial load to settle — i.e. the
+    // button to become enabled, exactly as a real user must — before
+    // clicking.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /refresh/i })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
     await waitFor(() => {
       expect(api.healthReport).toHaveBeenCalledTimes(2);
