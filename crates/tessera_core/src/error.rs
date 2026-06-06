@@ -6,11 +6,11 @@ use std::path::PathBuf;
 /// The error type returned by the Tessera core crate.
 pub enum Error {
     #[error("IO error: {0}")]
-    /// IO error.
+    /// A filesystem or other `std::io` operation failed.
     Io(#[from] std::io::Error),
 
     #[error("JSON serialization error: {0}")]
-    /// JSON serialization error.
+    /// (De)serializing a value to/from JSON failed.
     Json(#[from] serde_json::Error),
 
     /// A low-level SQLite failure surfaced by `rusqlite`. The underlying
@@ -30,23 +30,23 @@ pub enum Error {
     DatabaseState(String),
 
     #[error("Source not found: {0}")]
-    /// Source not found.
+    /// No source exists for the given id.
     SourceNotFound(String),
 
     #[error("Artifact not found: {0}")]
-    /// Artifact not found.
+    /// No artifact exists for the given id.
     ArtifactNotFound(String),
 
     #[error("Template not found: {0}")]
-    /// Template not found.
+    /// No template exists for the given id.
     TemplateNotFound(String),
 
     #[error("Invalid path: {}", .0.display())]
-    /// Invalid path.
+    /// A supplied path was malformed or outside an allowed root.
     InvalidPath(PathBuf),
 
     #[error("Invalid configuration: {0}")]
-    /// Invalid configuration.
+    /// A configuration value failed validation.
     InvalidConfig(String),
 
     #[error("Extraction error for {path}: {message}")]
@@ -59,21 +59,22 @@ pub enum Error {
     },
 
     #[error("Template validation error: {0}")]
-    /// Template validation error.
+    /// A template failed structural/semantic validation.
     TemplateValidation(String),
 
     #[error("Export error: {0}")]
-    /// Export error.
+    /// Rendering or writing an artifact export failed.
     Export(String),
 
     #[error("Audit error: {0}")]
-    /// Audit error.
+    /// Appending to or reading the audit log failed.
     Audit(String),
 
     #[error("Not found: {0}")]
-    /// Not found.
+    /// A generic "entity not found" for cases without a dedicated
+    /// variant.
     NotFound(String),
 }
 
-/// Result type alias.
+/// Convenience `Result` alias defaulting the error to [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;

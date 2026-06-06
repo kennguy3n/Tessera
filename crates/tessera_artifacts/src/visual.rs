@@ -50,7 +50,7 @@ impl InfographicLayout {
 pub struct InfographicColorScheme {
     /// Dominant colour (headings, primary fills).
     pub primary: Option<String>, // hex e.g. "#7C3AED"
-    /// Supporting colour.
+    /// Supporting colour (secondary fills, borders).
     pub secondary: Option<String>, // hex
     /// Highlight colour for emphasis.
     pub accent: Option<String>,
@@ -61,13 +61,13 @@ pub struct InfographicColorScheme {
 /// colours, and the source packs that become sections. Borrows its
 /// inputs for the duration of generation.
 pub struct InfographicSpec<'a> {
-    /// Infographic title.
+    /// Main heading shown at the top of the infographic.
     pub title: &'a str,
     /// Optional subtitle rendered as an overview blurb.
     pub subtitle: Option<&'a str>,
-    /// Section arrangement.
+    /// How sections are arranged (vertical / horizontal / grid).
     pub layout: InfographicLayout,
-    /// Brand colours.
+    /// Optional brand colours applied to the rendered output.
     pub color_scheme: InfographicColorScheme,
     /// Optional default icon set ("lucide" or "phosphor") used when a
     /// section doesn't specify one. Defaults to "lucide".

@@ -79,9 +79,9 @@ pub struct Task {
     /// created or already-deleted task never wedges the board.
     #[serde(default)]
     pub depends_on: Vec<TaskId>,
-    /// Created at.
+    /// When the task was created, in UTC.
     pub created_at: DateTime<Utc>,
-    /// Updated at.
+    /// When the task was last modified, in UTC.
     pub updated_at: DateTime<Utc>,
 }
 

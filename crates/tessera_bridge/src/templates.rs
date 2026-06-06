@@ -36,7 +36,7 @@ pub struct TemplateInfo {
 #[napi(object)]
 /// JS-facing view of one section within a template.
 pub struct TemplateSectionInfo {
-    /// Section heading.
+    /// Heading shown for this section in the template.
     pub title: String,
     /// Generation prompt used to fill this section.
     pub prompt: String,
