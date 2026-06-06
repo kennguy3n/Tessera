@@ -1126,25 +1126,6 @@ export default function SheetEditor({
                       );
                       return ri === r2 && ci === c2;
                     })();
-                  const colFrozen = isFrozenCol(ci);
-                  const stickyStyle: React.CSSProperties =
-                    colFrozen
-                      ? {
-                          position: "sticky",
-                          left: frozenColLefts[ci],
-                          zIndex: rowFrozen ? 3 : 1,
-                          background:
-                            "var(--color-bg-page, #ffffff)",
-                        }
-                      : rowFrozen
-                        ? {
-                            position: "sticky",
-                            top: frozenRowTops[ri],
-                            zIndex: 1,
-                            background:
-                              "var(--color-bg-page, #ffffff)",
-                          }
-                        : {};
                   const rawValue = row[ci] ?? "";
                   const displayValue = getCellDisplay(rawValue, ri, ci);
                   // Conditional formatting reacts to the *displayed*
@@ -1158,6 +1139,34 @@ export default function SheetEditor({
                       displayValue,
                     ),
                   );
+                  const colFrozen = isFrozenCol(ci);
+                  // Frozen cells need an OPAQUE background so scrolled
+                  // content doesn't show through. Use the conditional-
+                  // formatting colour when a rule matches (it's a solid
+                  // colour) so the highlight stays visible on frozen
+                  // rows/cols; otherwise fall back to the page colour.
+                  // The shorthand `background` would otherwise reset the
+                  // `backgroundColor` set by `conditionalStyle`.
+                  const frozenBackground =
+                    typeof conditionalStyle.backgroundColor === "string"
+                      ? conditionalStyle.backgroundColor
+                      : "var(--color-bg-page, #ffffff)";
+                  const stickyStyle: React.CSSProperties =
+                    colFrozen
+                      ? {
+                          position: "sticky",
+                          left: frozenColLefts[ci],
+                          zIndex: rowFrozen ? 3 : 1,
+                          background: frozenBackground,
+                        }
+                      : rowFrozen
+                        ? {
+                            position: "sticky",
+                            top: frozenRowTops[ri],
+                            zIndex: 1,
+                            background: frozenBackground,
+                          }
+                        : {};
                   return (
                     <td
                       key={ci}

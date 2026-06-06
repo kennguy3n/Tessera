@@ -81,7 +81,9 @@ import {
   buildPresentationHtml,
   escapeJsonForScript,
   normalizePresentation,
+  presentationIndexKey,
   registerSlidesHandlers,
+  PRESENTATION_INDEX_KEY,
   PRESENTATION_PARTITION,
 } from "../ipc/slides";
 
@@ -176,6 +178,16 @@ describe("buildPresentationHtml", () => {
     expect(html).toContain("audience");
   });
 
+  it("embeds the provided per-presentation index key", () => {
+    const deck = normalizePresentation(SAMPLE);
+    const html = buildPresentationHtml(deck, presentationIndexKey("abc123"));
+    // The runtime script must broadcast/listen on the unique key, not
+    // the bare prefix, so concurrent presentations don't collide.
+    expect(html).toContain(
+      `var KEY = ${JSON.stringify("tessera:presentation:index:abc123")}`,
+    );
+  });
+
   it("escapes a hostile title so it cannot break out of the doc", () => {
     const html = buildPresentationHtml(
       normalizePresentation({
@@ -226,6 +238,28 @@ describe("registerSlidesHandlers", () => {
       (c) => (c[1] as { hash: string }).hash,
     );
     expect(hashes).toEqual(["audience", "presenter"]);
+  });
+
+  it("gives each presentation a distinct localStorage key (no cross-talk)", async () => {
+    registerSlidesHandlers();
+    const handler = getHandler("slides:startPresentation");
+    await handler({}, SAMPLE);
+    await handler({}, SAMPLE);
+
+    // Both windows of ONE presentation share its file (and thus its
+    // key), but the two presentations must embed DIFFERENT keys so the
+    // shared persistent partition can't make them step on each other.
+    const htmls = writeFileSyncMock.mock.calls.map((c) => c[1] as string);
+    expect(htmls).toHaveLength(2);
+    const keyOf = (html: string) =>
+      /var KEY = "([^"]+)"/.exec(html)?.[1] ?? null;
+    const [k1, k2] = htmls.map(keyOf);
+    expect(k1).not.toBeNull();
+    expect(k2).not.toBeNull();
+    expect(k1).not.toBe(k2);
+    // Each key is namespaced under the shared prefix.
+    expect(k1?.startsWith(`${PRESENTATION_INDEX_KEY}:`)).toBe(true);
+    expect(k2?.startsWith(`${PRESENTATION_INDEX_KEY}:`)).toBe(true);
   });
 
   it("removes the generated temp file only once both windows have closed", async () => {

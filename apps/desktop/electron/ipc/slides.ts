@@ -16,6 +16,12 @@
  * listener re-renders. No further IPC is needed once the windows exist,
  * which keeps the main-process surface to this single channel.
  *
+ * Each `startPresentation` call mints a *unique* `localStorage` key
+ * (embedded in its generated file) so two presentations open at the
+ * same time — which share the persistent partition — never cross-talk:
+ * a window only reads/writes, and only reacts to `storage` events for,
+ * its own key.
+ *
  * The deck content is *plain text*. The generated page renders every
  * user string through `textContent`, never `innerHTML`, so a slide can
  * never inject markup or script into the presentation windows. The
@@ -42,8 +48,24 @@ import type { StartPresentationInput } from "./schemas";
  */
 export const PRESENTATION_PARTITION = "persist:tessera-presentation";
 
-/** `localStorage` key the two windows use to broadcast the live index. */
+/**
+ * Prefix for the `localStorage` key the two windows use to broadcast
+ * the live index. The actual key is per-presentation
+ * (`presentationIndexKey`) so concurrent presentations stay isolated.
+ */
 export const PRESENTATION_INDEX_KEY = "tessera:presentation:index";
+
+/**
+ * Per-presentation `localStorage` key. The two windows of ONE
+ * presentation load the same generated file and therefore share this
+ * key, but every `startPresentation` call passes a fresh token so two
+ * presentations open at once (same partition) never cross-talk — each
+ * window only reads/writes, and only reacts to `storage` events for,
+ * its own key.
+ */
+export function presentationIndexKey(token: string): string {
+  return `${PRESENTATION_INDEX_KEY}:${token}`;
+}
 
 /**
  * Escape a JSON string for safe inlining inside a `<script>` element.
@@ -89,7 +111,10 @@ export function normalizePresentation(
  * Build the self-contained presentation HTML document. Pure (no
  * Electron / filesystem access) so it can be unit-tested directly.
  */
-export function buildPresentationHtml(deck: NormalizedPresentation): string {
+export function buildPresentationHtml(
+  deck: NormalizedPresentation,
+  indexKey: string = PRESENTATION_INDEX_KEY,
+): string {
   const data = escapeJsonForScript(
     JSON.stringify({
       slides: deck.slides,
@@ -168,7 +193,7 @@ export function buildPresentationHtml(deck: NormalizedPresentation): string {
   var deck = JSON.parse(document.getElementById("deck-data").textContent);
   var slides = Array.isArray(deck.slides) ? deck.slides : [];
   var total = slides.length;
-  var KEY = ${JSON.stringify(PRESENTATION_INDEX_KEY)};
+  var KEY = ${JSON.stringify(indexKey)};
   var role = location.hash.replace("#", "") === "presenter" ? "presenter" : "audience";
   document.body.classList.add(role);
   document.getElementById("role-label").textContent =
@@ -303,10 +328,15 @@ export function registerSlidesHandlers(): void {
         return { ok: false, slideCount: 0 };
       }
 
-      const html = buildPresentationHtml(deck);
+      // One token per presentation, reused for both the temp file name
+      // and the localStorage key, so a presentation's two windows share
+      // state while distinct presentations stay isolated even on the
+      // shared persistent partition.
+      const token = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const html = buildPresentationHtml(deck, presentationIndexKey(token));
       const dir = presentationTempDir();
       mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `deck-${Date.now()}.html`);
+      const file = path.join(dir, `deck-${token}.html`);
       writeFileSync(file, html, "utf-8");
 
       const webPreferences: Electron.WebPreferences = {
