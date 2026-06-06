@@ -127,7 +127,8 @@ mod halflife_serde {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Hybrid Search Config.
+/// Tuning for hybrid retrieval: per-signal weights, RRF damping,
+/// recency decay, and candidate-pool sizing.
 pub struct HybridSearchConfig {
     /// Weight applied to the BM25 ranking in RRF. Default 1.0.
     pub bm25_weight: f64,
@@ -176,15 +177,16 @@ impl Default for HybridSearchConfig {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct HybridSearchConfigInput {
-    /// Bm25 weight.
+    /// New BM25 weight, or `None` to leave unchanged.
     pub bm25_weight: Option<f64>,
-    /// Vector weight.
+    /// New vector-cosine weight, or `None` to leave unchanged.
     pub vector_weight: Option<f64>,
-    /// Rrf k.
+    /// New RRF damping constant, or `None` to leave unchanged.
     pub rrf_k: Option<f64>,
-    /// Recency halflife secs.
+    /// New recency half-life (seconds), or `None` to leave
+    /// unchanged.
     pub recency_halflife_secs: Option<f64>,
-    /// Candidate pool size.
+    /// New candidate-pool size, or `None` to leave unchanged.
     pub candidate_pool_size: Option<usize>,
 }
 
@@ -288,9 +290,10 @@ impl HybridSearchConfig {
 /// by each individual signal (BM25, vector) before RRF.
 #[derive(Debug, Clone)]
 pub struct RankedCandidate {
-    /// Chunk id.
+    /// Row id of the candidate chunk.
     pub chunk_id: i64,
-    /// Rank.
+    /// Zero-based position of this candidate within its signal's
+    /// ranking.
     pub rank: usize,
 }
 
@@ -299,13 +302,14 @@ pub struct RankedCandidate {
 /// `fuse_rankings` instead.
 #[derive(Debug, Default, Clone)]
 pub struct FusedScore {
-    /// Chunk id.
+    /// Row id of the chunk being scored.
     pub chunk_id: i64,
-    /// Rrf score.
+    /// Reciprocal-rank-fusion score across all signals (pre-recency).
     pub rrf_score: f64,
-    /// Recency multiplier.
+    /// Recency decay factor applied to `rrf_score` (1.0 = no decay).
     pub recency_multiplier: f64,
-    /// Final score.
+    /// `rrf_score * recency_multiplier`; the value chunks are ranked
+    /// by.
     pub final_score: f64,
 }
 

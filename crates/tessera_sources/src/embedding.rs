@@ -194,7 +194,8 @@ pub struct HashTrickEmbedding {
 }
 
 impl HashTrickEmbedding {
-    /// Creates a new instance.
+    /// Builds a hashing-trick embedder producing `dim`-dimensional
+    /// vectors over character n-grams in `[n_min, n_max]`.
     pub fn new(dim: usize, n_min: usize, n_max: usize) -> Self {
         assert!(dim > 0, "HashTrickEmbedding: dim must be > 0");
         assert!(n_min > 0, "HashTrickEmbedding: n_min must be > 0");

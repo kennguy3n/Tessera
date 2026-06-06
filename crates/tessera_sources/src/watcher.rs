@@ -19,13 +19,14 @@ use tessera_core::error::{Error, Result};
 pub const DEFAULT_COALESCE_WINDOW: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// File Event.
+/// A filesystem change observed under a watched source, normalized
+/// to the three actions the indexer reacts to.
 pub enum FileEvent {
-    /// The `Created` variant.
+    /// A new file appeared at the path.
     Created(PathBuf),
-    /// The `Modified` variant.
+    /// An existing file's contents changed.
     Modified(PathBuf),
-    /// The `Removed` variant.
+    /// A file was deleted (or moved out of the watched tree).
     Removed(PathBuf),
 }
 
@@ -41,14 +42,16 @@ impl FileEvent {
     }
 }
 
-/// File Watcher.
+/// Recursively watches a directory and delivers normalized
+/// [`FileEvent`]s for the indexer to act on.
 pub struct FileWatcher {
     _watcher: RecommendedWatcher,
     receiver: mpsc::Receiver<FileEvent>,
 }
 
 impl FileWatcher {
-    /// Creates a new instance.
+    /// Starts watching `path` recursively, spawning the OS watcher
+    /// and the event channel.
     pub fn new(path: &Path) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
 
@@ -73,7 +76,7 @@ impl FileWatcher {
         })
     }
 
-    /// Poll events.
+    /// Drains all events currently queued without blocking.
     pub fn poll_events(&self) -> Vec<FileEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.receiver.try_recv() {
@@ -82,7 +85,8 @@ impl FileWatcher {
         events
     }
 
-    /// Recv event.
+    /// Blocks up to `timeout` for the next event, returning `None`
+    /// on timeout.
     pub fn recv_event(&self, timeout: std::time::Duration) -> Option<FileEvent> {
         self.receiver.recv_timeout(timeout).ok()
     }

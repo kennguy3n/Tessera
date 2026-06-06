@@ -6,26 +6,29 @@ use serde::{Deserialize, Serialize};
 use tessera_core::{SourceId, SourceStatus, SourceType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Source.
+/// An ingested source (local folder/file or remote channel) together
+/// with its indexing state. Persisted in the `sources` table and
+/// referenced by chunks and citations via [`SourceId`].
 pub struct Source {
-    /// Id.
+    /// Stable identity, used as the foreign key for chunks/citations.
     pub id: SourceId,
-    /// Source type.
+    /// What kind of source this is (local folder/file, KChat, …).
     pub source_type: SourceType,
-    /// Path.
+    /// Absolute filesystem path (or cache dir) the indexer reads from.
     pub path: String,
-    /// Status.
+    /// Current indexing/connection status.
     pub status: SourceStatus,
-    /// Created at.
+    /// When the source was first added.
     pub created_at: DateTime<Utc>,
-    /// Last indexed.
+    /// When indexing last completed, or `None` if never indexed.
     pub last_indexed: Option<DateTime<Utc>>,
-    /// File count.
+    /// Number of files indexed from this source.
     pub file_count: u64,
 }
 
 impl Source {
-    /// New local folder.
+    /// Creates a [`SourceType::LocalFolder`] source rooted at `path`,
+    /// with a fresh id and `Connected` status.
     pub fn new_local_folder(path: String) -> Self {
         Self {
             id: SourceId::new(),
@@ -38,7 +41,8 @@ impl Source {
         }
     }
 
-    /// New local file.
+    /// Creates a [`SourceType::LocalFile`] source for a single file
+    /// at `path`, with a fresh id and `Connected` status.
     pub fn new_local_file(path: String) -> Self {
         Self {
             id: SourceId::new(),

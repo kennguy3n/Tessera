@@ -166,9 +166,9 @@ pub struct IvfIndex {
 /// can ignore it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IndexHit {
-    /// Chunk id.
+    /// Row id of the matched chunk.
     pub chunk_id: i64,
-    /// Score.
+    /// Unnormalised cosine similarity in `[-1, 1]`.
     pub score: f32,
 }
 
@@ -267,7 +267,7 @@ impl IvfIndex {
         self.vectors.len()
     }
 
-    /// Is empty.
+    /// Returns `true` when no vectors are indexed.
     pub fn is_empty(&self) -> bool {
         self.vectors.is_empty()
     }

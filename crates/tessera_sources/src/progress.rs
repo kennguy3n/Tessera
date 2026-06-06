@@ -30,15 +30,16 @@ use tessera_core::SourceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Index Status.
+/// Lifecycle state of an indexing pass for one source.
 pub enum IndexStatus {
-    /// The `Idle` variant.
+    /// No indexing pass has started (or the last one's state was
+    /// cleared).
     Idle,
-    /// The `Running` variant.
+    /// A pass is currently walking and chunking files.
     Running,
-    /// The `Done` variant.
+    /// The pass finished successfully.
     Done,
-    /// The `Failed` variant.
+    /// The pass aborted with an error (see `last_error`).
     Failed,
 }
 
@@ -69,19 +70,20 @@ pub enum IndexPhase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Progress Snapshot.
+/// Point-in-time progress for a source's indexing pass, polled by
+/// the renderer to drive the progress UI.
 pub struct ProgressSnapshot {
-    /// Status.
+    /// Current lifecycle state of the pass.
     pub status: IndexStatus,
-    /// Scanned.
+    /// Files visited so far during the walk.
     pub scanned: u64,
-    /// Indexed.
+    /// Files (re)indexed because they were new or changed.
     pub indexed: u64,
-    /// Unchanged.
+    /// Files skipped because their hash was unchanged.
     pub unchanged: u64,
-    /// Skipped.
+    /// Files skipped for other reasons (ignored, unsupported type).
     pub skipped: u64,
-    /// Errors.
+    /// Files that errored during extraction/indexing.
     pub errors: u64,
     /// Final file count when `status == Done`. Zero while running.
     pub total_files: u64,
@@ -117,13 +119,14 @@ impl Default for ProgressSnapshot {
 }
 
 #[derive(Default, Debug)]
-/// Progress Tracker.
+/// Holds a live [`ProgressSnapshot`] per source, updated by the
+/// indexer and read by the renderer.
 pub struct ProgressTracker {
     inner: Mutex<HashMap<SourceId, Arc<Mutex<ProgressSnapshot>>>>,
 }
 
 impl ProgressTracker {
-    /// Creates a new instance.
+    /// Creates an empty tracker with no sources registered.
     pub fn new() -> Self {
         Self::default()
     }
@@ -170,25 +173,25 @@ pub fn record_scanned(slot: &Arc<Mutex<ProgressSnapshot>>, path: &str) {
     s.current_path = Some(path.to_string());
 }
 
-/// Record indexed.
+/// Increments the `indexed` counter for a snapshot slot.
 pub fn record_indexed(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.indexed = s.indexed.saturating_add(1);
 }
 
-/// Record unchanged.
+/// Increments the `unchanged` counter for a snapshot slot.
 pub fn record_unchanged(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.unchanged = s.unchanged.saturating_add(1);
 }
 
-/// Record skipped.
+/// Increments the `skipped` counter for a snapshot slot.
 pub fn record_skipped(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.skipped = s.skipped.saturating_add(1);
 }
 
-/// Record error.
+/// Increments the `errors` counter for a snapshot slot.
 pub fn record_error(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.errors = s.errors.saturating_add(1);
@@ -210,7 +213,8 @@ pub fn record_phase(slot: &Arc<Mutex<ProgressSnapshot>>, phase: IndexPhase) {
     s.phase = phase;
 }
 
-/// Finish.
+/// Marks the pass `Done`, records the final file count, and clears
+/// the in-flight path and phase.
 pub fn finish(slot: &Arc<Mutex<ProgressSnapshot>>, total_files: u64) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.status = IndexStatus::Done;
@@ -219,7 +223,8 @@ pub fn finish(slot: &Arc<Mutex<ProgressSnapshot>>, total_files: u64) {
     s.phase = IndexPhase::Scanning;
 }
 
-/// Mark failed.
+/// Marks the pass `Failed` with `error`, clearing the in-flight
+/// path and resetting the phase.
 pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.status = IndexStatus::Failed;
@@ -257,22 +262,24 @@ pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Embedding Status.
+/// Lifecycle state of an embedding-backfill pass, mirroring
+/// [`IndexStatus`] so the renderer can reuse its polling machinery.
 pub enum EmbeddingStatus {
-    /// The `Idle` variant.
+    /// No embedding pass has started yet.
     Idle,
-    /// The `Running` variant.
+    /// A pass is currently embedding chunks.
     Running,
-    /// The `Done` variant.
+    /// The pass finished successfully.
     Done,
-    /// The `Failed` variant.
+    /// The pass aborted with an error (see `last_error`).
     Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Embedding Progress Snapshot.
+/// Point-in-time progress for an embedding-backfill pass, polled by
+/// the renderer.
 pub struct EmbeddingProgressSnapshot {
-    /// Status.
+    /// Current lifecycle state of the pass.
     pub status: EmbeddingStatus,
     /// Total chunks the current backfill pass intended to embed at
     /// the moment `start` was called. Snapshotted once and kept
@@ -311,13 +318,14 @@ impl Default for EmbeddingProgressSnapshot {
 }
 
 #[derive(Default, Debug)]
-/// Embedding Progress Tracker.
+/// Holds the live [`EmbeddingProgressSnapshot`], updated by the
+/// embedder and read by the renderer.
 pub struct EmbeddingProgressTracker {
     inner: Mutex<EmbeddingProgressSnapshot>,
 }
 
 impl EmbeddingProgressTracker {
-    /// Creates a new instance.
+    /// Creates a tracker in the `Idle` state.
     pub fn new() -> Self {
         Self::default()
     }

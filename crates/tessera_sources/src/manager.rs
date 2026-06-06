@@ -229,17 +229,18 @@ pub enum KchatRevokeOutcome {
 /// that `add_kchat_channel` registered as the `source.path`).
 #[derive(Debug, Clone)]
 pub struct KchatPostIngestInput {
-    /// Cache dir.
+    /// On-disk cache directory for the channel; equals the source's
+    /// `path` and the `channel_id` (see `add_kchat_channel`).
     pub cache_dir: String,
-    /// Post id.
+    /// KChat post id being ingested.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the post belongs to.
     pub channel_id: String,
-    /// Root id.
+    /// Thread root post id, or `None` if the post is a root.
     pub root_id: Option<String>,
-    /// Sender user id.
+    /// User id of the post's author.
     pub sender_user_id: String,
-    /// Body.
+    /// Raw post body text to be chunked and indexed.
     pub body: String,
     /// KChat-server `create_at` millis since the unix epoch.
     pub created_at_ms: i64,
@@ -256,13 +257,13 @@ pub enum KchatPostIngestOutcome {
     /// in the same order they were chunked. `sealed_count == 0`
     /// is valid (an empty-body post records bookkeeping only).
     Ingested {
-        /// Source id.
+        /// Source the post was ingested into.
         source_id: SourceId,
-        /// Indexed file id.
+        /// Row id of the post's bookkeeping (`indexed_files`) entry.
         indexed_file_id: i64,
-        /// Chunk ids.
+        /// Row ids of the AEAD-sealed chunks, in chunk order.
         chunk_ids: Vec<i64>,
-        /// Sealed count.
+        /// Number of chunks sealed (0 for an empty-body post).
         sealed_count: u32,
     },
     /// The (source_id, post_id) row already exists with the same
@@ -270,11 +271,11 @@ pub enum KchatPostIngestOutcome {
     /// still surfaces the row's chunk count so the audit row can
     /// faithfully record "no chunks added".
     Unchanged {
-        /// Source id.
+        /// Source the duplicate post belongs to.
         source_id: SourceId,
-        /// Indexed file id.
+        /// Row id of the existing bookkeeping entry.
         indexed_file_id: i64,
-        /// Chunk count.
+        /// Number of chunks already stored for the post.
         chunk_count: u32,
     },
     /// No `SourceType::Kchat` row exists for the cache_dir.
@@ -291,16 +292,16 @@ pub enum KchatPostIngestOutcome {
 pub enum KchatPostDeleteOutcome {
     /// The chunks and the bookkeeping row were deleted.
     Deleted {
-        /// Source id.
+        /// Source the post was deleted from.
         source_id: SourceId,
-        /// Chunks dropped.
+        /// Number of chunks removed for the post.
         chunks_dropped: u32,
     },
     /// The bookkeeping row did not exist — either the post was
     /// never indexed (filtered out at the WS layer) or it was
     /// already deleted. No-op.
     NotFound {
-        /// Source id.
+        /// Source that was checked.
         source_id: SourceId,
     },
     /// No `SourceType::Kchat` row exists for the cache_dir.
@@ -332,11 +333,13 @@ pub enum KchatBackfillState {
     ///   walk reached the end of channel history; `None` means
     ///   the walk needs more pages (or has not started).
     Idle {
-        /// Source id.
+        /// Source eligible for backfill.
         source_id: SourceId,
-        /// Oldest post id.
+        /// Persisted cursor: oldest post seen so far, or `None`
+        /// before the first page.
         oldest_post_id: Option<String>,
-        /// Completed at.
+        /// RFC 3339 time the walk reached end-of-history, or `None`
+        /// if incomplete.
         completed_at: Option<String>,
     },
     /// No `SourceType::Kchat` row exists for the cache_dir. The
@@ -347,7 +350,7 @@ pub enum KchatBackfillState {
     /// not walk it (backfilling a revoked source would re-create
     /// the very chunks the cryptoshred just destroyed).
     AccessRevoked {
-        /// Source id.
+        /// The revoked source the orchestrator must not walk.
         source_id: SourceId,
     },
 }
@@ -365,13 +368,13 @@ pub enum KchatBackfillIngestOutcome {
     /// the renderer's progress indicator can show "X newly
     /// indexed, Y already known, Z skipped due to revocation".
     Ingested {
-        /// Source id.
+        /// Source the page was ingested into.
         source_id: SourceId,
-        /// Posts ingested.
+        /// Posts newly inserted by this page.
         posts_ingested: u32,
-        /// Posts unchanged.
+        /// Posts already known (duplicate delivery).
         posts_unchanged: u32,
-        /// Posts skipped revoked.
+        /// Posts skipped because the source was revoked.
         posts_skipped_revoked: u32,
         /// The post id the cursor was advanced to. `None` when
         /// the page was empty (the orchestrator handles the
@@ -386,7 +389,7 @@ pub enum KchatBackfillIngestOutcome {
     /// the page. The orchestrator stops the walk; the audit row
     /// reflects an aborted-mid-walk transition.
     AccessRevoked {
-        /// Source id.
+        /// The source that flipped to revoked mid-walk.
         source_id: SourceId,
     },
 }
@@ -399,7 +402,7 @@ pub enum KchatBackfillCompletionOutcome {
     /// `runBackfillKchatChannel` short-circuits at
     /// `kchat_backfill_state` from here on.
     Completed {
-        /// Source id.
+        /// Source whose backfill is now marked complete.
         source_id: SourceId,
     },
     /// No `SourceType::Kchat` row exists for the cache_dir.
@@ -408,7 +411,7 @@ pub enum KchatBackfillCompletionOutcome {
     /// is NOT set; a future re-grant will start the walk fresh
     /// (the cryptoshred path already cleared the cursor).
     AccessRevoked {
-        /// Source id.
+        /// The revoked source.
         source_id: SourceId,
     },
 }
@@ -441,27 +444,27 @@ pub enum KchatBackfillCompletionOutcome {
 ///    `chunk_hash = hash`, and the permalink as the `source_uri`.
 #[derive(Debug, Clone)]
 pub struct KchatPostSearchHit {
-    /// Source id.
+    /// Source the matched post belongs to.
     pub source_id: SourceId,
     /// The KChat-channel cache_dir; equals `channel_id` by
     /// construction (see `add_kchat_channel`). Surfaced for
     /// parity with the file-search `source_path` field.
     pub source_path: String,
-    /// Post id.
+    /// KChat post id of the match.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the post was sent in.
     pub channel_id: String,
-    /// Root id.
+    /// Thread root post id, or `None` if the post is a root.
     pub root_id: Option<String>,
-    /// Sender user id.
+    /// User id of the post's author.
     pub sender_user_id: String,
-    /// Created at ms.
+    /// Post creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds.
     pub edited_at_ms: i64,
-    /// Chunk index.
+    /// Position of the matched chunk within the post.
     pub chunk_index: usize,
-    /// Byte offset.
+    /// Byte offset of the chunk's start within the post body.
     pub byte_offset: usize,
     /// AEAD-verified plaintext content of the chunk. Bit-for-bit
     /// equal to the `chunks.content` column in the happy path
@@ -522,23 +525,25 @@ pub struct KchatPostSearchHit {
 /// for the substrate-side rationale.
 #[derive(Debug, Clone)]
 pub struct KchatThreadContextMessage {
-    /// Post id.
+    /// KChat post id of this thread message.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the message was sent in.
     pub channel_id: String,
-    /// Sender user id.
+    /// User id of the message's author.
     pub sender_user_id: String,
-    /// Created at ms.
+    /// Creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds.
     pub edited_at_ms: i64,
-    /// Content.
+    /// AEAD-verified plaintext of the message.
     pub content: String,
-    /// Is root.
+    /// Whether this message is the thread root.
     pub is_root: bool,
 }
 
-/// Source Manager.
+/// High-level facade over [`SourceStore`], the indexer, and the
+/// embedding/search pipeline; the bridge's entry point for managing
+/// sources and running retrieval.
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
@@ -566,7 +571,8 @@ pub struct SourceManager {
 }
 
 impl SourceManager {
-    /// Creates a new instance.
+    /// Opens (or creates) the store at `db_path` and builds the
+    /// default hybrid indexer/embedder/search pipeline.
     pub fn new(db_path: &str, ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open(db_path)?;
         let (indexer, embedder, hybrid_config) = build_default_hybrid_pipeline(ignore_patterns);
@@ -581,7 +587,8 @@ impl SourceManager {
         })
     }
 
-    /// New in memory.
+    /// Builds a manager backed by an ephemeral in-memory store (for
+    /// tests).
     pub fn new_in_memory(ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open_in_memory()?;
         let (indexer, embedder, hybrid_config) = build_default_hybrid_pipeline(ignore_patterns);
@@ -885,7 +892,8 @@ impl SourceManager {
         Arc::clone(&self.embedding_progress)
     }
 
-    /// Add local folder.
+    /// Registers a local folder as a source and returns the created
+    /// [`Source`] (does not index it yet).
     pub fn add_local_folder(&self, path: &str) -> Result<Source> {
         let folder_path = Path::new(path);
         if !folder_path.is_dir() {
@@ -900,7 +908,8 @@ impl SourceManager {
         self.store.get_source(&source.id)
     }
 
-    /// Add local file.
+    /// Registers a single local file as a source and returns the
+    /// created [`Source`] (does not index it yet).
     pub fn add_local_file(&self, path: &str) -> Result<Source> {
         let file_path = Path::new(path);
         if !file_path.is_file() {
@@ -1808,17 +1817,17 @@ impl SourceManager {
         self.store.list_kchat_acl(source_id)
     }
 
-    /// Remove source.
+    /// Removes a source and all of its indexed data.
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         self.store.remove_source(source_id)
     }
 
-    /// List sources.
+    /// Returns every registered [`Source`].
     pub fn list_sources(&self) -> Result<Vec<Source>> {
         self.store.list_sources()
     }
 
-    /// Get source.
+    /// Fetches a single [`Source`] by id.
     pub fn get_source(&self, source_id: &SourceId) -> Result<Source> {
         self.store.get_source(source_id)
     }
@@ -1858,7 +1867,8 @@ impl SourceManager {
         self.store.record_sync_success(source_id)
     }
 
-    /// Search.
+    /// Runs a strict (AND) hybrid search, returning up to `limit`
+    /// ranked [`SearchResult`]s.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         // Clone the snapshot under the lock and drop the guard
         // before any I/O so concurrent `update_hybrid_config` calls
@@ -1874,7 +1884,8 @@ impl SourceManager {
         engine.search(query, limit)
     }
 
-    /// Search broad.
+    /// Runs a broader (OR) hybrid search, returning up to `limit`
+    /// ranked [`SearchResult`]s.
     pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         let cfg = self
             .hybrid_config
@@ -2173,29 +2184,33 @@ impl SourceManager {
         Ok(messages)
     }
 
-    /// List indexed files.
+    /// Lists the [`IndexedFile`]s belonging to a source.
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
         self.store.list_indexed_files(source_id)
     }
 
-    /// Get current file hash.
+    /// Returns the on-disk content hash of `file_path` for staleness
+    /// checks, or `None` if unreadable.
     pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
         self.store.get_current_file_hash(file_path)
     }
 
-    /// Get detail.
+    /// Returns a source together with its indexed files, for the
+    /// source-detail view.
     pub fn get_detail(&self, source_id: &SourceId) -> Result<(Source, Vec<IndexedFile>)> {
         let source = self.store.get_source(source_id)?;
         let files = self.store.list_indexed_files(source_id)?;
         Ok((source, files))
     }
 
-    /// Get chunks for source.
+    /// Returns the plaintext content of every chunk belonging to a
+    /// source.
     pub fn get_chunks_for_source(&self, source_id: &SourceId) -> Result<Vec<String>> {
         self.store.get_chunk_contents_for_source(source_id)
     }
 
-    /// Reindex source.
+    /// Re-runs indexing for a source, refreshing its chunks and
+    /// embeddings.
     pub fn reindex_source(&self, source_id: &SourceId) -> Result<()> {
         let source = self.store.get_source(source_id)?;
         let path = Path::new(&source.path);

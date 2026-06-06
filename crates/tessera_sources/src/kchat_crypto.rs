@@ -216,7 +216,7 @@ pub struct KekProvider {
 }
 
 impl KekProvider {
-    /// Creates a new instance.
+    /// Wraps a master key for deriving per-source KEKs.
     pub fn new(master: MasterKey) -> Self {
         Self { master }
     }
@@ -244,9 +244,9 @@ impl KekProvider {
 /// and consumed by [`KchatCrypto::unwrap_dek`].
 #[derive(Debug, Clone)]
 pub struct WrappedDek {
-    /// Wrap nonce.
+    /// AES-GCM nonce used when wrapping the DEK under the source KEK.
     pub wrap_nonce: [u8; AES_GCM_NONCE_LEN],
-    /// Wrapped.
+    /// The KEK-encrypted DEK (ciphertext + tag).
     pub wrapped: [u8; WRAPPED_DEK_LEN],
 }
 
@@ -291,9 +291,9 @@ type DekBytes = Zeroizing<[u8; 32]>;
 ///   - `ciphertext`: input plaintext length + 16-byte tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedChunk {
-    /// Nonce.
+    /// 12-byte AES-GCM nonce used to seal this chunk.
     pub nonce: Vec<u8>,
-    /// Ciphertext.
+    /// Chunk ciphertext: plaintext length plus a 16-byte AEAD tag.
     pub ciphertext: Vec<u8>,
 }
 
@@ -311,7 +311,8 @@ pub struct KchatCrypto {
 }
 
 impl KchatCrypto {
-    /// Creates a new instance.
+    /// Builds the crypto facade from a master key, with an empty DEK
+    /// cache.
     pub fn new(master: MasterKey) -> Self {
         Self {
             kek_provider: KekProvider::new(master),
