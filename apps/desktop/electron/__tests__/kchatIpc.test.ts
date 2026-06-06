@@ -221,6 +221,10 @@ interface StubClient {
   // verify the catch-and-degrade posture via the rejection.
   getUsersByIds: ReturnType<typeof vi.fn>;
   getChannel: ReturnType<typeof vi.fn>;
+  // backs the `@mention` typeahead
+  // (`kchat:searchUsers`). Default returns an empty list; tests
+  // that exercise the populated path set an explicit impl.
+  searchUsers: ReturnType<typeof vi.fn>;
   scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
@@ -233,6 +237,7 @@ const clientMock: StubClient = {
   getPostsForChannel: vi.fn(),
   getUsersByIds: vi.fn(),
   getChannel: vi.fn(),
+  searchUsers: vi.fn(async () => [] as Array<unknown>),
   // Default: pass-through. Tests that need to assert scrub
   // behaviour replace this implementation in their own `beforeEach`.
   scrubMessage: vi.fn((msg: string) => msg),
@@ -4092,6 +4097,70 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
 //    (b) the substrate state read throws
 // - The handler rejects malformed channelIds at the boundary
 // =====================================================================
+describe("kchat:searchUsers — @mention typeahead (Task 2)", () => {
+  beforeEach(async () => {
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    clientMock.searchUsers.mockReset();
+    clientMock.searchUsers.mockResolvedValue([]);
+  });
+
+  it("returns [] for an empty / whitespace-only term without hitting the client", async () => {
+    const out = (await handler("kchat:searchUsers")(EVENT, "   ")) as unknown[];
+    expect(out).toEqual([]);
+    expect(clientMock.searchUsers).not.toHaveBeenCalled();
+  });
+
+  it("does NOT consume a rate-limit token on an empty term (burst preserved)", async () => {
+    // Regression: the limiter used to be consumed *before* the
+    // empty-query guard, so a burst of `@`-keystroke pauses (each
+    // an empty query) drained the typeahead's budget out from under
+    // the real search that followed. Fire many more empty queries
+    // than the burst size (12) and assert the real search that
+    // follows is NOT rate-limited.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    const consumeSpy = vi.spyOn(defaultRateLimiter, "consume");
+    for (let i = 0; i < 20; i++) {
+      await handler("kchat:searchUsers")(EVENT, "  ");
+    }
+    expect(consumeSpy).not.toHaveBeenCalled();
+
+    clientMock.searchUsers.mockResolvedValueOnce([
+      {
+        id: "u".repeat(26),
+        username: "alice",
+        first_name: "Alice",
+        last_name: "Liddell",
+      },
+    ]);
+    const out = (await handler("kchat:searchUsers")(
+      EVENT,
+      "ali",
+    )) as Array<Record<string, unknown>>;
+    expect(out).toEqual([
+      { id: "u".repeat(26), username: "alice", displayName: "Alice Liddell" },
+    ]);
+    // Exactly one token consumed — by the real (non-empty) query.
+    expect(consumeSpy).toHaveBeenCalledTimes(1);
+    expect(consumeSpy.mock.calls[0][0]).toBe("kchat:searchUsers");
+    consumeSpy.mockRestore();
+  });
+
+  it("rate-limits real (non-empty) queries per the searchUsers burst (12)", async () => {
+    // 12 burst tokens: the 13th consecutive *real* query rejects.
+    for (let i = 0; i < 12; i++) {
+      await handler("kchat:searchUsers")(EVENT, `q${i}`);
+    }
+    await expect(
+      handler("kchat:searchUsers")(EVENT, "q13"),
+    ).rejects.toThrow(/Rate limit/i);
+  });
+});
+
 describe("kchat:backfillProgress — progress projection IPC", () => {
   // 26-char channel id reused across cases. Doesn't share the
   // CHANNEL_ID constant used by the backfill orchestrator

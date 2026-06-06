@@ -637,6 +637,17 @@ export class KchatEventForwarder {
   private readonly resolveChannelName: (channelId: string) => string | null;
 
   /**
+   * Session 8 Task 3: small best-effort cache of `user_id → username`
+   * for notification titles. The WS `posted` payload carries only the
+   * sender's `user_id`, so the first notification from a given sender
+   * resolves the username via `KchatClient.getUsersByIds` and caches
+   * it; subsequent posts from the same sender reuse it. Capped so a
+   * long-lived session in a busy channel can't grow it without bound.
+   */
+  private readonly usernameCache = new Map<string, string>();
+  private static readonly USERNAME_CACHE_LIMIT = 1000;
+
+  /**
    * Session 8 Task 6: when `true`, an inbound task-like message in
    * a watched channel auto-creates a Tessera task via
    * `bridgeCreateTask`. Defaults to `true` in production; the
@@ -1781,8 +1792,47 @@ export class KchatEventForwarder {
     // auto-create. Runs after retrieval ingest and is gated on the
     // watched-channel set, so it is inert until the user opts a
     // channel in. Best-effort — failures are swallowed so they
-    // can't wedge the WS reader loop.
-    this.handlePostWatchSideEffects(view);
+    // can't wedge the WS reader loop. Fire-and-forget: the side-effect
+    // path is async (it may resolve the sender's username) but must
+    // not block ingest, and it swallows its own errors.
+    void this.handlePostWatchSideEffects(view).catch((err) => {
+      console.error(
+        "[KchatEventForwarder] post watch side-effect failed:",
+        err,
+      );
+    });
+  }
+
+  /**
+   * Best-effort resolve `userId -> username` for a notification title,
+   * caching the result. Returns `null` (so the title falls back to a
+   * channel-only form) when there is no client or the lookup fails —
+   * a missing name must never suppress the notification itself.
+   */
+  private async resolveSenderUsername(
+    userId: string,
+  ): Promise<string | null> {
+    const cached = this.usernameCache.get(userId);
+    if (cached !== undefined) return cached;
+    const client = this.client;
+    if (!client) return null;
+    try {
+      const [user] = await client.getUsersByIds([userId]);
+      const username = user?.username ?? null;
+      if (username !== null) {
+        if (
+          this.usernameCache.size >= KchatEventForwarder.USERNAME_CACHE_LIMIT
+        ) {
+          // Evict the oldest entry (insertion order) to bound growth.
+          const oldest = this.usernameCache.keys().next().value;
+          if (oldest !== undefined) this.usernameCache.delete(oldest);
+        }
+        this.usernameCache.set(userId, username);
+      }
+      return username;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1791,7 +1841,9 @@ export class KchatEventForwarder {
    * auto-create a Tessera task from an actionable message. Only
    * fires for channels in the watched set.
    */
-  private handlePostWatchSideEffects(view: KchatWebSocketEventView): void {
+  private async handlePostWatchSideEffects(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
     const channelId = view.channelId;
     if (channelId === null) return;
     if (!this.watchedChannels.has(channelId)) return;
@@ -1799,13 +1851,16 @@ export class KchatEventForwarder {
     const parsed = parsePostPayload(view.data);
     if (parsed === null) return;
 
-    // Task 3: native OS notification.
+    // Task 3: native OS notification. Resolve the sender's username
+    // (best-effort, cached) so the title can read "alice in #general"
+    // rather than the generic "New message in #general".
     try {
+      const senderUsername = await this.resolveSenderUsername(parsed.userId);
       const notification = buildPostNotification({
         channelId,
         channelName: this.resolveChannelName(channelId),
         senderUserId: parsed.userId,
-        senderUsername: null,
+        senderUsername,
         message: parsed.message,
         isEdit: false,
         selfUserId: this.client?.getUser()?.id ?? null,

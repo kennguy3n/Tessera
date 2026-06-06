@@ -196,6 +196,28 @@ describe("KchatOfflineQueue replay", () => {
     expect(q.size()).toBe(1);
   });
 
+  it("returns the EXISTING op id on a duplicate enqueue (no phantom id)", async () => {
+    // Regression: a duplicate enqueue must surface the id of the op
+    // actually stored, not the freshly-generated id that was never
+    // pushed — otherwise the renderer's `queueId` references an entry
+    // that `list()` / `kchat:offlineQueueStatus` can never find.
+    const q = makeQueue(fs, ["op1", "op2"]);
+    const payload = {
+      artifactId: "a1",
+      channelId: "c1",
+      format: "markdown",
+      includeCitations: false,
+      includeEvidencePack: false,
+    };
+    const first = await q.enqueueShareArtifact({ ...payload });
+    const second = await q.enqueueShareArtifact({ ...payload });
+    expect(first).toBe("op1");
+    // The duplicate consumed "op2" from the id factory but must NOT
+    // return it; it returns the stored op's id ("op1").
+    expect(second).toBe("op1");
+    expect(q.list().map((o) => o.id)).toEqual(["op1"]);
+  });
+
   it("does NOT collapse ops that differ in payload", async () => {
     const q = makeQueue(fs, ["op1", "op2"]);
     await q.enqueueShareArtifact({

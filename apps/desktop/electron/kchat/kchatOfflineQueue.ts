@@ -334,17 +334,23 @@ export class KchatOfflineQueue {
     // Collapse an exact duplicate already pending (same type +
     // identical payload). A double-click while offline should not
     // enqueue the same share twice — the replay would upload two
-    // identical files.
-    if (!this.hasDuplicate(op)) {
-      this.operations.push(op as KchatQueuedOperation);
-      await this.persist();
-    }
+    // identical files. When a duplicate exists we return *its* id
+    // rather than the freshly generated one: the caller surfaces the
+    // returned id to the renderer as `queueId`, and a phantom id that
+    // matches no entry in `list()` would break any subsequent
+    // `kchat:offlineQueueStatus` lookup the renderer does.
+    const existing = this.findDuplicate(op as KchatQueuedOperation);
+    if (existing) return existing.id;
+    this.operations.push(op as KchatQueuedOperation);
+    await this.persist();
     return id;
   }
 
-  private hasDuplicate(candidate: KchatQueuedOperation): boolean {
+  private findDuplicate(
+    candidate: KchatQueuedOperation,
+  ): KchatQueuedOperation | undefined {
     const key = duplicateKey(candidate);
-    return this.operations.some((op) => duplicateKey(op) === key);
+    return this.operations.find((op) => duplicateKey(op) === key);
   }
 
   /**

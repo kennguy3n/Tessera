@@ -35,6 +35,7 @@ import type {
   KchatChannelView,
   KchatConnectionStateView,
   KchatDesktopBridgeStatusView,
+  KchatPresenceStatusView,
   KchatWebSocketEventPayload,
 } from "../../../shared/types";
 
@@ -66,6 +67,14 @@ const MAX_SIDEBAR_CHANNELS = 10;
  * sidebar shares that cadence.
  */
 const SIDEBAR_BRIDGE_DOT_POLL_MS = 15_000;
+
+/**
+ * Cadence for refreshing the current user's KChat presence (Task 5).
+ * Presence (online/away/dnd) changes far less often than unread
+ * counts, so a 30 s poll keeps the dot honest without spending the
+ * `kchat:getUserStatuses` rate-limit budget unnecessarily.
+ */
+const SIDEBAR_PRESENCE_POLL_MS = 30_000;
 
 /**
  * Reconciliation poll cadence in milliseconds.
@@ -143,6 +152,15 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // Surfaced next to the presence dot so the user can tell Tessera
   // is actively pulling from KChat versus idle-connected.
   const [syncing, setSyncing] = useState(false);
+  // Current user's coarse KChat presence (Session 8 Task 5). `null`
+  // until the first `getUserStatuses` poll lands; the dot falls back
+  // to "online" in that window because the section only renders while
+  // the connection state is "connected". A connected session can
+  // still be "away"/"dnd" server-side, which is exactly what this
+  // surfaces instead of a hardcoded green dot.
+  const [presence, setPresence] = useState<KchatPresenceStatusView | null>(
+    null,
+  );
   // passive snapshot of Tessera's localhost API server +
   // last extension heartbeat. Used to render the bridge-health
   // dot and to decide whether to show per-channel "Open in
@@ -529,6 +547,42 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     };
   }, [kchat, available, state.state]);
 
+  // Poll the current user's KChat presence (Session 8 Task 5) so the
+  // dot reflects online/away/dnd rather than a hardcoded "online".
+  // Gated on `available && connected && a known self id`; resets to
+  // `null` (dot falls back to the connected-green default) whenever
+  // the gate opens so a reconnect as a different user can't show a
+  // stale status. Best-effort: a failed poll keeps the last value.
+  const selfUserId = state.user?.id ?? null;
+  useEffect(() => {
+    if (
+      !kchat ||
+      available !== true ||
+      state.state !== "connected" ||
+      selfUserId === null
+    ) {
+      setPresence(null);
+      return;
+    }
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const rows = await kchat.getUserStatuses([selfUserId]);
+        if (cancelled) return;
+        const mine = rows.find((r) => r.userId === selfUserId);
+        if (mine) setPresence(mine.status);
+      } catch {
+        /* swallow — keep last-known presence */
+      }
+    };
+    void pull();
+    const handle = window.setInterval(pull, SIDEBAR_PRESENCE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [kchat, available, state.state, selfUserId]);
+
   const handleMarkSeen = useCallback(() => {
     setLastSeen(Date.now());
     setUnread(0);
@@ -559,6 +613,40 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     if (state.state !== "connected" || !state.user) return null;
     return `@${state.user.username}`;
   }, [state]);
+
+  // Presentation for the presence dot (Session 8 Task 5). Falls back
+  // to "online" before the first poll lands — the section only renders
+  // while connected, so green is the correct provisional state.
+  const presenceDot = useMemo(() => {
+    const effective: KchatPresenceStatusView = presence ?? "online";
+    switch (effective) {
+      case "away":
+        return {
+          state: effective,
+          color: "var(--color-warning, #d4a72c)",
+          label: "Away on KChat",
+        };
+      case "dnd":
+        return {
+          state: effective,
+          color: "var(--color-danger, #cf222e)",
+          label: "Do not disturb on KChat",
+        };
+      case "offline":
+        return {
+          state: effective,
+          color: "var(--color-text-tertiary, #999)",
+          label: "Offline on KChat",
+        };
+      case "online":
+      default:
+        return {
+          state: "online" as KchatPresenceStatusView,
+          color: "var(--color-success, #2da44e)",
+          label: "Online on KChat",
+        };
+    }
+  }, [presence]);
 
   if (available !== true) return null;
   if (state.state !== "connected") return null;
@@ -623,16 +711,16 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           </strong>
           <span
             data-testid="kchat-presence-dot"
-            data-presence-state="online"
-            title="Connected to KChat — you are online"
-            aria-label="Connected to KChat — you are online"
+            data-presence-state={presenceDot.state}
+            title={presenceDot.label}
+            aria-label={presenceDot.label}
             role="img"
             style={{
               display: "inline-block",
               width: "8px",
               height: "8px",
               borderRadius: "50%",
-              backgroundColor: "var(--color-success, #2da44e)",
+              backgroundColor: presenceDot.color,
             }}
           />
           <span

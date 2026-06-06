@@ -139,6 +139,7 @@ import {
   manifestPathFor,
   writeManifest,
 } from "../kchat/kchatChannelSyncer";
+import type { PostNotification } from "../kchat/kchatNotify";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import type {
   KchatClient,
@@ -221,6 +222,30 @@ class FakeClient {
         last_update_at: 0,
       },
     ],
+  );
+
+  // Session 8 Task 3: the watch side-effect resolves the post
+  // author's username for the notification title via
+  // `getUsersByIds`, and reads the local user id via `getUser`
+  // for self-suppression. Defaults: the local user is `self`, and
+  // any looked-up id resolves to a `<id>-name` username so a test
+  // can assert the resolved name landed in the notification.
+  getUser = vi.fn(() => ({
+    id: "self",
+    username: "self-user",
+    email: "self@example.com",
+    first_name: "",
+    last_name: "",
+  }));
+
+  getUsersByIds = vi.fn(async (ids: string[]) =>
+    ids.map((id) => ({
+      id,
+      username: `${id}-name`,
+      email: `${id}@example.com`,
+      first_name: "",
+      last_name: "",
+    })),
   );
 }
 
@@ -2371,4 +2396,133 @@ describe("KchatEventForwarder", () => {
     fwd.dispose();
   });
 
+});
+
+describe("KchatEventForwarder watched-channel notifications (Task 3)", () => {
+  const WATCHED = "chan-watched";
+
+  function postedEvent(
+    overrides: { userId?: string; message?: string } = {},
+  ): KchatWebSocketEvent {
+    const userId = overrides.userId ?? "author-1";
+    const message = overrides.message ?? "ship it today";
+    return makeRawEvent({
+      event: "posted",
+      data: {
+        post: JSON.stringify({
+          id: "post-1",
+          channel_id: WATCHED,
+          user_id: userId,
+          message,
+          create_at: 1700000000000,
+          edit_at: 0,
+        }),
+      },
+      broadcast: {
+        omit_users: {},
+        channel_id: WATCHED,
+        team_id: "team-1",
+        user_id: userId,
+      },
+      seq: 900,
+    });
+  }
+
+  it("resolves the sender username for the notification title", async () => {
+    const notifications: PostNotification[] = [];
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: (n) => notifications.push(n),
+      resolveChannelName: () => "general",
+      autoCreateTasks: false,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+
+    client.triggerWsEvent(postedEvent({ userId: "author-1" }));
+    await waitForCondition(() => notifications.length > 0);
+
+    expect(client.getUsersByIds).toHaveBeenCalledWith(["author-1"]);
+    expect(notifications[0].title).toBe("author-1-name in general");
+    expect(notifications[0].body).toBe("ship it today");
+    fwd.dispose();
+  });
+
+  it("caches the username so a second post skips the lookup", async () => {
+    const notifications: PostNotification[] = [];
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: (n) => notifications.push(n),
+      resolveChannelName: () => "general",
+      autoCreateTasks: false,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+
+    client.triggerWsEvent(postedEvent({ userId: "author-1" }));
+    await waitForCondition(() => notifications.length > 0);
+    client.triggerWsEvent(postedEvent({ userId: "author-1" }));
+    await waitForCondition(() => notifications.length > 1);
+
+    // Two notifications, but only one user-resolution round-trip.
+    expect(client.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(notifications.map((n) => n.title)).toEqual([
+      "author-1-name in general",
+      "author-1-name in general",
+    ]);
+    fwd.dispose();
+  });
+
+  it("still notifies (no username) when the lookup fails", async () => {
+    const notifications: PostNotification[] = [];
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: (n) => notifications.push(n),
+      resolveChannelName: () => "general",
+      autoCreateTasks: false,
+    });
+    const client = new FakeClient();
+    client.getUsersByIds.mockRejectedValueOnce(new Error("network down"));
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+
+    client.triggerWsEvent(postedEvent({ userId: "author-1" }));
+    await waitForCondition(() => notifications.length > 0);
+
+    // Username unresolved -> title falls back to the generic
+    // "New message" sender form, but the notification is NOT
+    // suppressed (a missing name must never swallow the alert).
+    expect(notifications[0].title).toBe("New message in general");
+    fwd.dispose();
+  });
+
+  it("does not notify for posts in unwatched channels", async () => {
+    const notifications: PostNotification[] = [];
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: (n) => notifications.push(n),
+      resolveChannelName: () => "general",
+      autoCreateTasks: false,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    // No setWatchedChannels -> nothing is watched.
+
+    client.triggerWsEvent(postedEvent({ userId: "author-1" }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(notifications).toHaveLength(0);
+    expect(client.getUsersByIds).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
 });

@@ -1050,10 +1050,6 @@ export function registerKchatHandlers(): void {
       term: unknown,
       limit: unknown,
     ): Promise<RendererKchatUser[]> => {
-      defaultRateLimiter.consume(
-        "kchat:searchUsers",
-        RATE_LIMIT_PROFILES["kchat:searchUsers"],
-      );
       const q = assertString(term, "term", { maxLen: 256 });
       const lim =
         limit === undefined || limit === null
@@ -1062,7 +1058,14 @@ export function registerKchatHandlers(): void {
       // An empty / whitespace-only term has no useful prefix to
       // search; short-circuit to an empty list rather than spend a
       // rate-limit token on a server round-trip that returns noise.
+      // The rate limiter is consumed *after* this guard so a `@`
+      // keystroke pause (empty query) never drains the typeahead's
+      // burst budget out from under the real search that follows.
       if (q.trim().length === 0) return [];
+      defaultRateLimiter.consume(
+        "kchat:searchUsers",
+        RATE_LIMIT_PROFILES["kchat:searchUsers"],
+      );
       const svc = getKchatAuthService();
       try {
         const users = await svc.getClient().searchUsers(q.trim(), lim);
