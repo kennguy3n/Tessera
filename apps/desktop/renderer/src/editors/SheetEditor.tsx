@@ -11,8 +11,13 @@ import {
   type CellEdit,
   type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
-import { cellKey, isFormulaError } from "./formulaEngine";
-import type { SheetContent } from "./sheetEditorTypes";
+import { cellFormatStyle, cellKey, isFormulaError } from "./formulaEngine";
+import type {
+  ConditionalFormatRule,
+  SheetContent,
+} from "./sheetEditorTypes";
+import { conditionalStyleForCell } from "./sheetConditionalFormatting";
+import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import {
   type CellCoord,
   type Selection,
@@ -103,6 +108,8 @@ export default function SheetEditor({
     x: number;
     y: number;
   } | null>(null);
+  // Conditional-formatting rules editor visibility.
+  const [cfOpen, setCfOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -491,6 +498,22 @@ export default function SheetEditor({
     [debouncedSave],
   );
 
+  // Replace the active sheet's conditional-formatting rules and persist.
+  // An empty array drops the field entirely so a sheet with no rules
+  // stays byte-identical to its pre-feature JSON.
+  const setConditionalRules = useCallback(
+    (rules: ConditionalFormatRule[]) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (rules.length === 0) delete next.conditionalRules;
+        else next.conditionalRules = rules;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
   // ----------------------------------------------------------------
   // copy / paste via the system clipboard.
   // ----------------------------------------------------------------
@@ -865,6 +888,29 @@ export default function SheetEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet.rows.length, sheet.rowHeights]);
 
+  // When any row has been resized away from the default height, the
+  // uniform virtualization model would drift the scrollbar. Build a
+  // cumulative prefix-sum of row tops (length `rows.length + 1`,
+  // ending in the total content height) so the windowing math is exact.
+  // When every row is the default height the uniform model is already
+  // exact, so we pass `undefined` and keep the cheaper path.
+  const hasCustomRowHeights = useMemo(
+    () =>
+      !!sheet.rowHeights &&
+      sheet.rowHeights.some((h) => !!h && h !== DEFAULT_ROW_HEIGHT),
+    [sheet.rowHeights],
+  );
+  const rowOffsets = useMemo<number[] | undefined>(() => {
+    if (!hasCustomRowHeights) return undefined;
+    const out = new Array<number>(sheet.rows.length + 1);
+    out[0] = 0;
+    for (let i = 0; i < sheet.rows.length; i++) {
+      out[i + 1] = out[i] + rowHeight(i);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet.rows.length, sheet.rowHeights, hasCustomRowHeights]);
+
   // ── row virtualization ────────────────────────────────────────
   // Window the body for large sheets so only the rows near the
   // viewport are in the DOM. `useVirtualRows` reports the full range
@@ -881,6 +927,7 @@ export default function SheetEditor({
   } = useVirtualRows(gridWrapperRef, {
     rowCount: sheet.rows.length,
     rowHeight: DEFAULT_ROW_HEIGHT,
+    rowOffsets,
     enabled: virtualizeRows,
     frozenLeadingRows: frozenRowCount,
   });
@@ -950,7 +997,28 @@ export default function SheetEditor({
         >
           Import CSV
         </button>
+        <button
+          type="button"
+          className={cfOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={cfOpen}
+          data-testid="sheet-conditional-format-toggle"
+          onClick={() => setCfOpen((open) => !open)}
+        >
+          Conditional formatting
+          {sheet.conditionalRules && sheet.conditionalRules.length > 0
+            ? ` (${sheet.conditionalRules.length})`
+            : ""}
+        </button>
       </div>
+
+      {cfOpen && (
+        <ConditionalFormatPanel
+          rules={sheet.conditionalRules ?? []}
+          columns={sheet.columns}
+          onChange={setConditionalRules}
+          onClose={() => setCfOpen(false)}
+        />
+      )}
 
       <div className="sheet-formula-bar" data-testid="sheet-formula-bar">
         <span
@@ -1176,31 +1244,53 @@ export default function SheetEditor({
                       );
                       return ri === r2 && ci === c2;
                     })();
+                  const rawValue = row[ci] ?? "";
+                  const displayValue = getCellDisplay(rawValue, ri, ci);
+                  // Conditional formatting reacts to the *displayed*
+                  // value (computed result for formulas), translated
+                  // through the same `cellFormatStyle` used by manual
+                  // cell formats so styling stays consistent.
+                  const conditionalStyle = cellFormatStyle(
+                    conditionalStyleForCell(
+                      sheet.conditionalRules,
+                      ci,
+                      displayValue,
+                    ),
+                  );
                   const colFrozen = isFrozenCol(ci);
+                  // Frozen cells need an OPAQUE background so scrolled
+                  // content doesn't show through. Use the conditional-
+                  // formatting colour when a rule matches (it's a solid
+                  // colour) so the highlight stays visible on frozen
+                  // rows/cols; otherwise fall back to the page colour.
+                  // The shorthand `background` would otherwise reset the
+                  // `backgroundColor` set by `conditionalStyle`.
+                  const frozenBackground =
+                    typeof conditionalStyle.backgroundColor === "string"
+                      ? conditionalStyle.backgroundColor
+                      : "var(--color-bg-page, #ffffff)";
                   const stickyStyle: React.CSSProperties =
                     colFrozen
                       ? {
                           position: "sticky",
                           left: frozenColLefts[ci],
                           zIndex: rowFrozen ? 3 : 1,
-                          background:
-                            "var(--color-bg-page, #ffffff)",
+                          background: frozenBackground,
                         }
                       : rowFrozen
                         ? {
                             position: "sticky",
                             top: frozenRowTops[ri],
                             zIndex: 1,
-                            background:
-                              "var(--color-bg-page, #ffffff)",
+                            background: frozenBackground,
                           }
                         : {};
-                  const rawValue = row[ci] ?? "";
                   return (
                     <td
                       key={ci}
                       data-row={ri}
                       data-col={ci}
+                      data-testid={`sheet-cell-${ri}-${ci}`}
                       className={[
                         "sheet-cell",
                         isEditing ? "editing" : "",
@@ -1212,6 +1302,7 @@ export default function SheetEditor({
                       style={{
                         width: colWidth(ci),
                         position: "relative",
+                        ...conditionalStyle,
                         outline: isSelected
                           ? "1px solid var(--color-primary, #1a73e8)"
                           : isActive
@@ -1238,7 +1329,7 @@ export default function SheetEditor({
                         />
                       ) : (
                         <span className="sheet-cell-display">
-                          {getCellDisplay(rawValue, ri, ci)}
+                          {displayValue}
                         </span>
                       )}
                       {isFillHandle && (

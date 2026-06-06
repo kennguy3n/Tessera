@@ -551,7 +551,7 @@ pub fn open_shared_in_memory() -> Result<SharedConnection> {
 /// scanning every chunk row) blocks any concurrent writer for the
 /// duration of the scan, and vice-versa.
 ///
-/// WAL journal mode (enabled in [`apply_wal_pragmas`]) lets a single
+/// WAL journal mode (enabled in `apply_wal_pragmas`) lets a single
 /// writer and unlimited readers coexist at the SQLite level — but
 /// only across **different connections**. Multiple borrows of the
 /// same `Connection` still serialise inside SQLite. So unlocking the
@@ -617,7 +617,7 @@ impl SharedReadPool {
     ///    on the connection at the round-robin start index.
     ///
     /// Panics if the pool is empty — callers MUST check
-    /// [`is_empty`] (or hold the pool as `Option<SharedReadPool>`)
+    /// `is_empty` (or hold the pool as `Option<SharedReadPool>`)
     /// first.
     pub fn with_read<R>(&self, f: impl FnOnce(&Connection) -> R) -> R {
         let n = self.conns.len();

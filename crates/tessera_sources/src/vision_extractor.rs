@@ -1,7 +1,7 @@
 //! Vision-powered extraction hooks for source indexing.
 //!
 //! Adds a separate "describe the image with a VLM" path alongside the
-//! existing native [`extract_image_metadata`] extractor. The two are
+//! existing native `extract_image_metadata` extractor. The two are
 //! complementary:
 //!
 //!   * `extract_image_metadata` (in [`crate::image_metadata`]) emits a

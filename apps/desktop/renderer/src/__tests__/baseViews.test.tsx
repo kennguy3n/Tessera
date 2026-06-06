@@ -102,7 +102,7 @@ describe("BaseEditor view switcher", () => {
     renderEditor(KANBAN_BASE);
     // Grid view shows the column-header buttons (sortable field names).
     // We assert per-tab content by switching and checking.
-    expect(screen.getAllByRole("tab")).toHaveLength(5);
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
     expect(screen.getByRole("tab", { name: "Grid" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -117,6 +117,13 @@ describe("BaseEditor view switcher", () => {
     expect(screen.getByText(/Todo \(1\)/)).toBeInTheDocument();
     expect(screen.getByText(/Doing \(1\)/)).toBeInTheDocument();
     expect(screen.getByText(/Done \(0\)/)).toBeInTheDocument();
+
+    // The Form view (6th view type) is selectable alongside the others.
+    fireEvent.click(screen.getByRole("tab", { name: "Form" }));
+    expect(screen.getByRole("tab", { name: "Form" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
 

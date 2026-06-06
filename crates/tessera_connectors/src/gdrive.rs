@@ -1,3 +1,5 @@
+//! Google Drive connector: OAuth-backed file listing and download.
+
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Deserialize;
@@ -18,6 +20,7 @@ const DEFAULT_START_PAGE_TOKEN_URL: &str =
 const FILE_FIELDS: &str =
     "id,name,mimeType,size,modifiedTime,createdTime,parents,webViewLink,md5Checksum,permissions(role,type,emailAddress)";
 
+/// Google Drive Connector.
 pub struct GoogleDriveConnector {
     client: Client,
     status: ConnectorStatus,
@@ -36,6 +39,7 @@ pub struct GoogleDriveConnector {
 }
 
 impl GoogleDriveConnector {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -82,18 +86,22 @@ impl GoogleDriveConnector {
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Provider name.
     pub fn provider_name(&self) -> &'static str {
         "google_drive"
     }
 
+    /// Status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
 
+    /// Last sync time.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
 
+    /// File count.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }

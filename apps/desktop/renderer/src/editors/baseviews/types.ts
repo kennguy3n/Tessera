@@ -1,6 +1,6 @@
 /**
  * Shared types for Base view components (Grid, Kanban, Calendar,
- * Timeline, Gallery). Each view is a presentation over the same
+ * Timeline, Gallery, Form). Each view is a presentation over the same
  * `BaseContent` model — they all read records via `records[i][field]`
  * and write back via `onUpdateCell` / `onAddRecord` / `onRemoveRecord`,
  * so the underlying JSON shape is identical regardless of which view
@@ -13,7 +13,8 @@ export type BaseViewKind =
   | "kanban"
   | "calendar"
   | "timeline"
-  | "gallery";
+  | "gallery"
+  | "form";
 
 export interface BaseViewProps {
   data: BaseContent;

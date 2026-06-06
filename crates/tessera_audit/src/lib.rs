@@ -1,3 +1,6 @@
+//! Append-only audit event model, logger, and storage.
+#![warn(missing_docs)]
+
 pub mod event;
 pub mod logger;
 pub mod store;

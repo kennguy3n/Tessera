@@ -9,18 +9,35 @@ use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
+/// Task Info.
 pub struct TaskInfo {
+    /// Id.
     pub id: String,
+    /// Title.
     pub title: String,
+    /// Description.
     pub description: String,
+    /// Status.
     pub status: String,
+    /// Priority.
     pub priority: String,
+    /// Position.
     pub position: i64,
+    /// Assignee.
     pub assignee: Option<String>,
+    /// Due date.
     pub due_date: Option<String>,
+    /// Source id.
     pub source_id: Option<String>,
+    /// Extracted item id.
     pub extracted_item_id: Option<String>,
+    /// Ids of the tasks this task depends on, as UUID strings. Empty
+    /// when the task has no dependencies. The renderer uses these to
+    /// draw dependency arrows in the Gantt view.
+    pub depends_on: Vec<String>,
+    /// Created at.
     pub created_at: String,
+    /// Updated at.
     pub updated_at: String,
 }
 
@@ -37,6 +54,7 @@ impl From<Task> for TaskInfo {
             due_date: t.due_date.map(|d| d.to_rfc3339()),
             source_id: t.source_id.map(|s| s.to_string()),
             extracted_item_id: t.extracted_item_id,
+            depends_on: t.depends_on.iter().map(ToString::to_string).collect(),
             created_at: t.created_at.to_rfc3339(),
             updated_at: t.updated_at.to_rfc3339(),
         }
@@ -44,22 +62,34 @@ impl From<Task> for TaskInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Create Task Request.
 pub struct CreateTaskRequest {
+    /// Title.
     pub title: String,
     #[serde(default)]
+    /// Description.
     pub description: String,
     #[serde(default = "default_status")]
+    /// Status.
     pub status: String,
     #[serde(default = "default_priority")]
+    /// Priority.
     pub priority: String,
     #[serde(default)]
+    /// Assignee.
     pub assignee: Option<String>,
     #[serde(default)]
+    /// Due date.
     pub due_date: Option<String>,
     #[serde(default)]
+    /// Source id.
     pub source_id: Option<String>,
     #[serde(default)]
+    /// Extracted item id.
     pub extracted_item_id: Option<String>,
+    /// Task ids (UUID strings) this task depends on. Defaults to empty.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 fn default_status() -> String {
@@ -84,23 +114,35 @@ impl Default for CreateTaskRequest {
             due_date: None,
             source_id: None,
             extracted_item_id: None,
+            depends_on: Vec::new(),
         }
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Update Task Request.
 pub struct UpdateTaskRequest {
+    /// Title.
     pub title: Option<String>,
+    /// Description.
     pub description: Option<String>,
+    /// Status.
     pub status: Option<String>,
+    /// Priority.
     pub priority: Option<String>,
+    /// Position.
     pub position: Option<i64>,
     /// `Some(Some("x"))` sets assignee="x", `Some(None)` clears,
     /// `None` leaves unchanged.
     #[serde(default)]
     pub assignee: Option<Option<String>>,
     #[serde(default)]
+    /// Due date.
     pub due_date: Option<Option<String>>,
+    /// `Some(vec)` replaces the dependency set, `None` leaves it
+    /// unchanged. Pass `Some(vec![])` to clear all dependencies.
+    #[serde(default)]
+    pub depends_on: Option<Vec<String>>,
 }
 
 fn parse_status(s: &str) -> Result<TaskStatus> {
@@ -131,6 +173,10 @@ fn parse_task_id(s: &str) -> Result<TaskId> {
     Ok(TaskId(uuid::Uuid::parse_str(s).map_err(|e| {
         tessera_core::error::Error::InvalidConfig(format!("invalid task id: {e}"))
     })?))
+}
+
+fn parse_task_ids(ids: &[String]) -> Result<Vec<TaskId>> {
+    ids.iter().map(|s| parse_task_id(s)).collect()
 }
 
 /// Parse an optional RFC 3339 string into an optional `DateTime<Utc>`,
@@ -164,6 +210,7 @@ fn parse_opt_source_id(s: Option<&str>) -> Result<Option<SourceId>> {
     }
 }
 
+/// Create task.
 pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo> {
     let mut t = Task::new(
         req.title,
@@ -175,19 +222,23 @@ pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo
     t.due_date = parse_opt_rfc3339(req.due_date.as_deref())?;
     t.source_id = parse_opt_source_id(req.source_id.as_deref())?;
     t.extracted_item_id = req.extracted_item_id;
+    t.depends_on = parse_task_ids(&req.depends_on)?;
     store.create(&t)?;
     Ok(t.into())
 }
 
+/// List tasks.
 pub fn list_tasks(store: &TaskStore) -> Result<Vec<TaskInfo>> {
     Ok(store.list()?.into_iter().map(Into::into).collect())
 }
 
+/// Get task.
 pub fn get_task(store: &TaskStore, id: &str) -> Result<Option<TaskInfo>> {
     let tid = parse_task_id(id)?;
     Ok(store.get(&tid)?.map(Into::into))
 }
 
+/// Update task.
 pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Result<TaskInfo> {
     let tid = parse_task_id(id)?;
     // `req.due_date` distinguishes three states:
@@ -201,6 +252,7 @@ pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Resul
     };
     let status = req.status.as_deref().map(parse_status).transpose()?;
     let priority = req.priority.as_deref().map(parse_priority).transpose()?;
+    let depends_on = req.depends_on.as_deref().map(parse_task_ids).transpose()?;
     let update = TaskUpdate {
         title: req.title,
         description: req.description,
@@ -209,15 +261,18 @@ pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Resul
         position: req.position,
         assignee: req.assignee,
         due_date,
+        depends_on,
     };
     Ok(store.update(&tid, update)?.into())
 }
 
+/// Delete task.
 pub fn delete_task(store: &TaskStore, id: &str) -> Result<bool> {
     let tid = parse_task_id(id)?;
     store.delete(&tid)
 }
 
+/// Reorder tasks.
 pub fn reorder_tasks(store: &TaskStore, status: &str, ids: &[String]) -> Result<()> {
     let parsed: Vec<TaskId> = ids
         .iter()

@@ -14,12 +14,14 @@ import { registerArtifactsHandlers } from "./artifacts";
 import { registerAuditHandlers } from "./audit";
 import { registerCitationsHandlers } from "./citations";
 import { registerConnectorsLegacyHandlers } from "./connectorsLegacy";
+import { registerDiagnosticsHandlers } from "./diagnostics";
 import { registerDialogHandlers } from "./dialog";
 import { registerImagegenHandlers } from "./imagegen";
 import { registerKchatHandlers } from "./kchat";
 import { registerModelHandlers } from "./model";
 import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
+import { registerSlidesHandlers } from "./slides";
 import { registerSourcesHandlers } from "./sources";
 import { registerTasksHandlers } from "./tasks";
 import { registerTelemetryHandlers } from "./telemetry";
@@ -40,6 +42,7 @@ export function registerAllIpcHandlers(): void {
   registerTasksHandlers();
   registerAutomationsHandlers();
   registerDialogHandlers();
+  registerSlidesHandlers();
   registerKchatHandlers();
   registerAuditHandlers();
   // local-only telemetry event-pumping
@@ -53,4 +56,8 @@ export function registerAllIpcHandlers(): void {
   // handlers; ordering is only cosmetic since registration is
   // idempotent.
   registerAppLockHandlers();
+  // Renderer crash / error-boundary reporting. Ordering is cosmetic
+  // (registration is idempotent); kept at the end alongside the other
+  // cross-cutting diagnostic surfaces.
+  registerDiagnosticsHandlers();
 }

@@ -1,3 +1,7 @@
+//! Hardware-aware local model runtime: sidecar orchestration, model
+//! download/management, and text/vision/image generation adapters.
+#![warn(missing_docs)]
+
 pub mod adapters;
 pub mod config;
 pub mod download;

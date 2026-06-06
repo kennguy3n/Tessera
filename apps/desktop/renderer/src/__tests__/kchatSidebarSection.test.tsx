@@ -59,6 +59,10 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     ]),
     shareArtifact: vi.fn(),
     addChannelSource: vi.fn(),
+    // Session 8 Task 5: presence indicator. Default to an empty
+    // result so the dot falls back to its connected-green default;
+    // presence-specific tests override this.
+    getUserStatuses: vi.fn().mockResolvedValue([]),
     onStatusChange: vi.fn().mockReturnValue(() => {}),
     onEvent: vi.fn().mockReturnValue(() => {}),
     desktopBridgeStatus: vi.fn().mockResolvedValue({
@@ -108,6 +112,54 @@ describe("KchatSidebarSection", () => {
         "2 channels",
       ),
     );
+  });
+
+  it("defaults the presence dot to online before/without a status row", async () => {
+    const api = makeApi();
+    render(<KchatSidebarSection api={api} />);
+    const dot = await screen.findByTestId("kchat-presence-dot");
+    expect(dot).toHaveAttribute("data-presence-state", "online");
+    await waitFor(() => expect(api.getUserStatuses).toHaveBeenCalledWith(["u1"]));
+  });
+
+  it("drives the presence dot from the current user's real status", async () => {
+    const api = makeApi({
+      getUserStatuses: vi
+        .fn()
+        .mockResolvedValue([{ userId: "u1", status: "away" }]),
+    });
+    render(<KchatSidebarSection api={api} />);
+    const dot = await screen.findByTestId("kchat-presence-dot");
+    await waitFor(() =>
+      expect(dot).toHaveAttribute("data-presence-state", "away"),
+    );
+    expect(dot).toHaveAttribute("aria-label", "Away on KChat");
+  });
+
+  it("reflects a dnd status on the presence dot", async () => {
+    const api = makeApi({
+      getUserStatuses: vi
+        .fn()
+        .mockResolvedValue([{ userId: "u1", status: "dnd" }]),
+    });
+    render(<KchatSidebarSection api={api} />);
+    const dot = await screen.findByTestId("kchat-presence-dot");
+    await waitFor(() =>
+      expect(dot).toHaveAttribute("data-presence-state", "dnd"),
+    );
+  });
+
+  it("ignores status rows for other users", async () => {
+    const api = makeApi({
+      getUserStatuses: vi
+        .fn()
+        .mockResolvedValue([{ userId: "someone-else", status: "offline" }]),
+    });
+    render(<KchatSidebarSection api={api} />);
+    const dot = await screen.findByTestId("kchat-presence-dot");
+    // No row for "u1" -> dot keeps its connected-green default.
+    await waitFor(() => expect(api.getUserStatuses).toHaveBeenCalled());
+    expect(dot).toHaveAttribute("data-presence-state", "online");
   });
 
   it("shows an unread badge for new files; clicking the badge clears it", async () => {

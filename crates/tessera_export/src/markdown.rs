@@ -1,9 +1,12 @@
+//! Markdown export of an artifact and its citations.
+
 use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
 use crate::mermaid;
 
+/// Export markdown.
 pub fn export_markdown(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 

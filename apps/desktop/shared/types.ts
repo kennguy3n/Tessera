@@ -1660,6 +1660,9 @@ export interface TaskInfo {
   dueDate: string | null;
   sourceId: string | null;
   extractedItemId: string | null;
+  /** Ids of the tasks this task depends on (UUID strings). Empty when
+   *  the task has no dependencies. Drives the Gantt dependency arrows. */
+  dependsOn: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1673,6 +1676,8 @@ export interface CreateTaskRequest {
   dueDate?: string | null;
   sourceId?: string | null;
   extractedItemId?: string | null;
+  /** Task ids (UUID strings) this task depends on. Defaults to empty. */
+  dependsOn?: string[];
 }
 
 export interface UpdateTaskRequest {
@@ -1695,6 +1700,12 @@ export interface UpdateTaskRequest {
    * regression test.
    */
   dueDate?: string | null;
+  /**
+   * `undefined` (key omitted) leaves the dependency set unchanged. An
+   * array replaces it; pass `[]` to clear all dependencies. The bridge
+   * rejects an update that would introduce a dependency cycle.
+   */
+  dependsOn?: string[];
 }
 
 // -----------------------------------------------------------------
@@ -1703,7 +1714,8 @@ export interface UpdateTaskRequest {
 
 export type AutomationTrigger =
   | { kind: "schedule"; interval_seconds: number }
-  | { kind: "on_generate"; template_id: string };
+  | { kind: "on_generate"; template_id: string }
+  | { kind: "on_kchat_message_match"; channel_id: string; regex: string };
 
 export type AutomationAction =
   | { kind: "reindex_source"; source_id: string }
@@ -1711,7 +1723,10 @@ export type AutomationAction =
       kind: "generate_from_template";
       template_id: string;
       source_ids: string[];
-    };
+    }
+  /** Run an ordered list of leaf actions; a failing step is reported
+   *  but does not abort the remaining steps. */
+  | { kind: "sequence"; actions: AutomationAction[] };
 
 export interface AutomationInfo {
   id: string;
@@ -2469,6 +2484,54 @@ export interface DialogApi {
 }
 
 /**
+ * One slide as shipped to the presentation windows by
+ * `slides:startPresentation`. The renderer flattens each slide to a
+ * title, a list of plain-text body `lines`, and the speaker `notes`.
+ *
+ * Everything is plain text by design: the main process renders it with
+ * `textContent` (never `innerHTML`), so a slide body can never inject
+ * markup into the presentation window regardless of what the user
+ * typed into the deck.
+ */
+export interface PresentationSlide {
+  title: string;
+  /** Plain-text body lines (bullets / paragraphs / block labels). */
+  lines: string[];
+  /** Plain-text speaker notes, shown only in the presenter window. */
+  notes: string;
+}
+
+/** Payload for `slides:startPresentation`. */
+export interface StartPresentationRequest {
+  slides: PresentationSlide[];
+  /** Zero-based slide to open on. Clamped to range by the main process. */
+  startIndex: number;
+  /** Optional deck title used in the window chrome. */
+  deckTitle?: string;
+}
+
+/** Result of `slides:startPresentation`. */
+export interface StartPresentationResult {
+  ok: boolean;
+  /** Number of slides the presentation was opened with. */
+  slideCount: number;
+}
+
+/**
+ * Slides presenter-mode surface. The Slides editor calls
+ * `startPresentation` to open a fullscreen audience window plus a
+ * second presenter window (speaker notes + next-slide preview). The
+ * two windows share a dedicated session partition and stay in sync via
+ * `localStorage` `storage` events, so no further IPC round-trips are
+ * needed once they are open.
+ */
+export interface SlidesApi {
+  startPresentation: (
+    request: StartPresentationRequest,
+  ) => Promise<StartPresentationResult>;
+}
+
+/**
  * Auto-update integration surface. The renderer never talks to
  * `electron-updater` directly — every interaction goes through these
  * IPC channels so the main process can validate state, run the
@@ -2508,6 +2571,7 @@ export interface TesseraApi {
   tasks: TaskApi;
   automations: AutomationApi;
   dialog: DialogApi;
+  slides: SlidesApi;
   updates: UpdatesApi;
   kchat: KchatApi;
   audit: AuditApi;
@@ -2515,6 +2579,44 @@ export interface TesseraApi {
   telemetry: TelemetryApi;
   /** PIN / biometric app lock surface. */
   appLock: AppLockApi;
+  /** Crash / error-boundary reporting surface. */
+  diagnostics: DiagnosticsApi;
+}
+
+/**
+ * Crash-report payload a renderer error boundary forwards to the main
+ * process when a descendant component throws during render. The main
+ * process persists it as `crash-report.json` in the log directory (see
+ * `electron/crashReport.ts`).
+ */
+export interface RendererCrashReport {
+  /** Name of the boundary / component subtree that crashed. */
+  component: string;
+  /** `error.message` from the thrown error. */
+  error: string;
+  /**
+   * `error.stack` if present, else the React component stack. Captured
+   * as a single string so the on-disk report is self-contained.
+   */
+  stack: string;
+  /** ISO-8601 timestamp of when the boundary caught the error. */
+  timestamp: string;
+}
+
+/**
+ * Diagnostics IPC surface. Currently just crash reporting from renderer
+ * error boundaries; the main process owns the disk-backed log directory
+ * so the renderer cannot write files directly (it is the untrusted web
+ * context).
+ */
+export interface DiagnosticsApi {
+  /**
+   * Persist a renderer crash report to `crash-report.json` in the log
+   * directory and mirror it to the structured logger. Best-effort: the
+   * promise resolves even if the write fails so the error-boundary UI
+   * never blocks on disk IO.
+   */
+  reportCrash: (report: RendererCrashReport) => Promise<void>;
 }
 
 /**
@@ -2900,7 +3002,59 @@ export interface KchatWebSocketEventPayload {
   data: Record<string, unknown>;
 }
 
-/** Renderer-facing KChat API namespace. */
+/**
+ * Renderer-safe KChat user projection for the DocumentEditor
+ * `@mention` typeahead (Session 8 Task 2). Only the id, the
+ * `@`-handle, and a human display label cross the IPC boundary —
+ * never email or roles.
+ */
+export interface KchatUserSearchResultView {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+/** Coarse KChat presence value surfaced to the renderer (Task 5). */
+export type KchatPresenceStatusView = "online" | "away" | "dnd" | "offline";
+
+/** Renderer-safe presence row backing the Sidebar indicator (Task 5). */
+export interface KchatUserStatusView {
+  userId: string;
+  status: KchatPresenceStatusView;
+}
+
+/** One pending offline-queue operation, as seen by the renderer (Task 1). */
+export interface KchatOfflineQueueOpView {
+  id: string;
+  // Mirror the main-process `KchatQueuedOpType` discriminator exactly.
+  // `kchat:offlineQueueStatus` forwards `op.type` verbatim, so a value
+  // omitted here would arrive at the renderer untyped and break any
+  // exhaustive match on the discriminator.
+  type: "shareArtifact" | "ingestChannel" | "postTask";
+  attempts: number;
+  enqueuedAt: number;
+}
+
+/** Snapshot of the offline write queue surfaced to the renderer (Task 1). */
+export interface KchatOfflineQueueStatusView {
+  size: number;
+  operations: KchatOfflineQueueOpView[];
+}
+
+/**
+ * Minimal Tessera task shape the renderer posts to KChat via
+ * `kchat.postTaskToChannel` (Session 8 Task 6).
+ */
+export interface KchatPostTaskInput {
+  id: string;
+  title: string;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  dueDate?: string | null;
+  assignee?: string | null;
+}
+
 export interface KchatApi {
   isAvailable: () => Promise<boolean>;
   status: () => Promise<KchatConnectionStateView>;
@@ -2920,11 +3074,70 @@ export interface KchatApi {
     format: "markdown" | "html" | "pdf" | "docx" | "json",
     includeCitations: boolean,
     includeEvidencePack: boolean,
-  ) => Promise<{ fileId: string; fileName: string }>;
+    /**
+     * Session 8 Task 4: delivery mode. `"attachment"` (default)
+     * exports the artifact and uploads it as a file;
+     * `"deeplink"` posts a `tessera://` deeplink message instead
+     * of exporting bytes.
+     */
+    delivery?: "attachment" | "deeplink",
+  ) => Promise<{
+    fileId: string;
+    fileName: string;
+    /** Set for `deeplink` delivery — the id of the posted message. */
+    postId?: string;
+    /** True when the server was offline and the op was queued (Task 1). */
+    queued?: boolean;
+    /** The offline-queue entry id when `queued` is true. */
+    queueId?: string;
+  }>;
   addChannelSource: (
     channelId: string,
     channelName: string,
-  ) => Promise<{ sourceId: string; cacheDir: string }>;
+  ) => Promise<{
+    sourceId: string;
+    cacheDir: string;
+    /** True when the server was offline and the op was queued (Task 1). */
+    queued?: boolean;
+    /** The offline-queue entry id when `queued` is true. */
+    queueId?: string;
+  }>;
+  /**
+   * Session 8 Task 2: search KChat users for the DocumentEditor
+   * `@mention` typeahead. `limit` defaults to 10 (clamped to
+   * `[1, 50]`). An empty / whitespace term resolves to `[]`
+   * without a server round-trip.
+   */
+  searchUsers: (
+    term: string,
+    limit?: number,
+  ) => Promise<KchatUserSearchResultView[]>;
+  /**
+   * Session 8 Task 5: coarse presence for a bounded list of user
+   * ids (at most 200), backing the Sidebar presence indicator.
+   */
+  getUserStatuses: (userIds: string[]) => Promise<KchatUserStatusView[]>;
+  /**
+   * Session 8 Task 1: read-only snapshot of the offline write
+   * queue (pending `shareArtifact` / `ingestChannel` ops). Pure
+   * local read — no server round-trip.
+   */
+  offlineQueueStatus: () => Promise<KchatOfflineQueueStatusView>;
+  /**
+   * Session 8 Task 3: set which channels raise native OS
+   * notifications (and auto-create tasks) for new posts. Returns
+   * the deduped count actually applied.
+   */
+  setWatchedChannels: (channelIds: string[]) => Promise<{ count: number }>;
+  /**
+   * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
+   * channel as a formatted message. Carries the `— via Tessera`
+   * footer so the inbound detector ignores the round-trip.
+   */
+  postTaskToChannel: (
+    channelId: string,
+    task: KchatPostTaskInput,
+  ) => Promise<{ postId: string; queued?: boolean; queueId?: string }>;
   /**
    * trigger the historical-backfill
    * walk for an already-linked KChat channel. The walk paginates

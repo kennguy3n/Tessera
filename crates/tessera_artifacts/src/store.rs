@@ -1,3 +1,5 @@
+//! SQLite persistence for artifacts and their version history.
+
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
@@ -11,15 +13,18 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
         .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc))
 }
 
+/// Artifact Store.
 pub struct ArtifactStore {
     conn: SharedConnection,
 }
 
 impl ArtifactStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -62,6 +67,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// Insert.
     pub fn insert(&self, artifact: &Artifact) -> Result<()> {
         let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
@@ -86,6 +92,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// Update.
     pub fn update(&self, artifact: &Artifact) -> Result<()> {
         let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
@@ -106,6 +113,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// Get.
     pub fn get(&self, id: &ArtifactId) -> Result<Artifact> {
         self.conn
             .lock()
@@ -171,6 +179,7 @@ impl ArtifactStore {
             .map_err(|e| Error::ArtifactNotFound(e.to_string()))
     }
 
+    /// List.
     pub fn list(&self) -> Result<Vec<Artifact>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -245,6 +254,7 @@ impl ArtifactStore {
         Ok(artifacts)
     }
 
+    /// Delete.
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         // Zero-fill the freed pages so the artifact body (and its
@@ -260,6 +270,7 @@ impl ArtifactStore {
         })
     }
 
+    /// Save version.
     pub fn save_version(
         &self,
         artifact_id: &ArtifactId,
@@ -278,6 +289,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// List versions.
     pub fn list_versions(&self, artifact_id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -302,6 +314,7 @@ impl ArtifactStore {
         Ok(versions)
     }
 
+    /// Get version.
     pub fn get_version(
         &self,
         artifact_id: &ArtifactId,
@@ -327,9 +340,13 @@ impl ArtifactStore {
 }
 
 #[derive(Debug, Clone)]
+/// Artifact Version.
 pub struct ArtifactVersion {
+    /// Version number.
     pub version_number: u32,
+    /// Content snapshot.
     pub content_snapshot: String,
+    /// Created at.
     pub created_at: String,
 }
 

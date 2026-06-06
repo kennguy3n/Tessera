@@ -27,8 +27,10 @@ import {
   KchatFileUploadResponse,
   KchatPostInfo,
   KchatPostListPage,
+  KchatPresenceStatus,
   KchatTeam,
   KchatUser,
+  KchatUserStatus,
   KchatWebSocketEvent,
 } from "./kchatTypes";
 import {
@@ -402,6 +404,25 @@ function normalisePost(raw: Record<string, unknown>): KchatPostInfo {
   }
 
   return { id, channelId, rootId, userId, message, createAt, editAt };
+}
+
+/**
+ * Normalise an arbitrary server-supplied `status` value to one of
+ * the four {@link KchatPresenceStatus} states. Anything we don't
+ * recognise (a future status string, a missing field) collapses to
+ * `"offline"` so the renderer never has to handle an open-ended
+ * union.
+ */
+function normaliseUserStatus(value: unknown): KchatPresenceStatus {
+  if (
+    value === "online" ||
+    value === "away" ||
+    value === "dnd" ||
+    value === "offline"
+  ) {
+    return value;
+  }
+  return "offline";
 }
 
 /**
@@ -846,6 +867,110 @@ export class KchatClient {
       assertKchatServerObjectId(u.id, "user.id");
     }
     return users;
+  }
+
+  /**
+   * Search for users matching `term` (typeahead). Backs the
+   * DocumentEditor `@mention` extension: the renderer sends the
+   * text the user typed after `@` and gets back a small ranked
+   * list of candidate users to insert as a mention node.
+   *
+   * Uses `POST /api/v4/users/search` with `allow_inactive: false`
+   * and a server-side `limit`. The `term` is sent in the request
+   * body (not interpolated into the URL) so arbitrary user input
+   * can't alter the request path. Returned ids are re-validated at
+   * the deserialisation boundary like every other server-supplied
+   * id in this client.
+   */
+  async searchUsers(term: string, limit = 10): Promise<KchatUser[]> {
+    const trimmed = term.trim();
+    if (trimmed.length === 0) return [];
+    const cappedLimit = Math.min(Math.max(1, Math.trunc(limit)), 50);
+    const users = await this.request<KchatUser[]>(
+      "POST",
+      "/api/v4/users/search",
+      {
+        term: trimmed,
+        allow_inactive: false,
+        limit: cappedLimit,
+      },
+    );
+    if (!Array.isArray(users)) return [];
+    for (const u of users) {
+      assertKchatServerObjectId(u.id, "user.id");
+    }
+    return users;
+  }
+
+  /**
+   * Fetch presence statuses for a set of user ids via
+   * `POST /api/v4/users/status/ids`. Backs the Sidebar presence
+   * indicator. Each returned row is `{ user_id, status }` where
+   * `status` is one of `online | away | dnd | offline`. Ids are
+   * validated at the boundary in both directions.
+   */
+  async getUserStatusesByIds(
+    ids: string[],
+  ): Promise<KchatUserStatus[]> {
+    if (ids.length === 0) return [];
+    for (const id of ids) {
+      assertCallerObjectId(id, "userId");
+    }
+    const rows = await this.request<unknown>(
+      "POST",
+      "/api/v4/users/status/ids",
+      ids,
+    );
+    if (!Array.isArray(rows)) return [];
+    const out: KchatUserStatus[] = [];
+    for (const row of rows) {
+      if (row === null || typeof row !== "object") continue;
+      const rec = row as Record<string, unknown>;
+      if (typeof rec.user_id !== "string") continue;
+      assertKchatServerObjectId(rec.user_id, "status.user_id");
+      out.push({
+        user_id: rec.user_id,
+        status: normaliseUserStatus(rec.status),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Create a post (message) in a channel via
+   * `POST /api/v4/posts`. Used by:
+   *   - the `tessera://` deeplink share mode (Task 4), which posts
+   *     a short message carrying a deeplink instead of uploading a
+   *     file, and
+   *   - the bidirectional task sync (Task 6), which posts a
+   *     formatted task summary to a channel.
+   *
+   * `message` is sent in the JSON body. Post creation is a
+   * non-idempotent POST, so it opts into the narrow
+   * {@link NON_IDEMPOTENT_RETRYABLE_STATUSES} retry set — a 5xx is
+   * surfaced rather than retried so we never double-post.
+   */
+  async createPost(
+    channelId: string,
+    message: string,
+    opts: { rootId?: string } = {},
+  ): Promise<KchatPostInfo> {
+    assertCallerObjectId(channelId, "channelId");
+    const body: Record<string, unknown> = {
+      channel_id: channelId,
+      message,
+    };
+    if (typeof opts.rootId === "string" && opts.rootId.length > 0) {
+      assertCallerObjectId(opts.rootId, "rootId");
+      body.root_id = opts.rootId;
+    }
+    const resp = await this.rawRequest("POST", "/api/v4/posts", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      retryableStatuses: NON_IDEMPOTENT_RETRYABLE_STATUSES,
+    });
+    const raw = (await resp.json()) as Record<string, unknown>;
+    return normalisePost(raw);
   }
 
   /**

@@ -12,9 +12,11 @@ import type {
   ModelCapability,
   ModelDownloadProgress,
   OpenImageDialogOptions,
+  RendererCrashReport,
   ReplaceCitationRequest,
   SaveDialogOptions,
   SettingsData,
+  StartPresentationRequest,
   TesseraApi,
   UpdateStatusInfo,
 } from "../shared/types";
@@ -93,6 +95,7 @@ export type {
   SourceApi,
   SourceDetailInfo,
   SourceInfo,
+  StartPresentationRequest,
   TaskApi,
   TaskInfo,
   TaskPriority,
@@ -107,6 +110,7 @@ export type {
   UpdateTaskRequest,
   KchatConnectionStateView,
   KchatWebSocketEventPayload,
+  RendererCrashReport,
 } from "../shared/types";
 
 /**
@@ -361,6 +365,12 @@ const api: TesseraApi = {
     removeFido2: (pin: string) =>
       ipcRenderer.invoke("appLock:removeFido2", pin),
   },
+  // Renderer crash reporting from the React error boundaries. See
+  // `electron/ipc/diagnostics.ts` for the channel contract.
+  diagnostics: {
+    reportCrash: (report: RendererCrashReport) =>
+      ipcRenderer.invoke("diagnostics:reportCrash", report),
+  },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),
     set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
@@ -504,6 +514,10 @@ const api: TesseraApi = {
     pickImage: (options?: OpenImageDialogOptions) =>
       ipcRenderer.invoke("dialog:pickImage", options ?? {}),
   },
+  slides: {
+    startPresentation: (request: StartPresentationRequest) =>
+      ipcRenderer.invoke("slides:startPresentation", request),
+  },
   updates: {
     status: () => ipcRenderer.invoke("updates:status"),
     check: () => ipcRenderer.invoke("updates:check"),
@@ -539,6 +553,7 @@ const api: TesseraApi = {
       format: "markdown" | "html" | "pdf" | "docx" | "json",
       includeCitations: boolean,
       includeEvidencePack: boolean,
+      delivery?: "attachment" | "deeplink",
     ) =>
       ipcRenderer.invoke(
         "kchat:shareArtifact",
@@ -547,7 +562,52 @@ const api: TesseraApi = {
         format,
         includeCitations,
         includeEvidencePack,
+        delivery ?? null,
       ),
+    /**
+     * Session 8 Task 2: search KChat users for the DocumentEditor
+     * `@mention` typeahead. Returns a renderer-safe projection
+     * (id + username + display name).
+     */
+    searchUsers: (term: string, limit?: number) =>
+      ipcRenderer.invoke("kchat:searchUsers", term, limit ?? null),
+    /**
+     * Session 8 Task 5: coarse presence (online/away/dnd/offline)
+     * for a bounded list of user ids, backing the Sidebar presence
+     * indicator.
+     */
+    getUserStatuses: (userIds: string[]) =>
+      ipcRenderer.invoke("kchat:getUserStatuses", userIds),
+    /**
+     * Session 8 Task 1: read-only snapshot of the offline write
+     * queue (pending `shareArtifact` / `ingestChannel` ops) so the
+     * Sidebar can show a "N pending" badge.
+     */
+    offlineQueueStatus: () =>
+      ipcRenderer.invoke("kchat:offlineQueueStatus"),
+    /**
+     * Session 8 Task 3: set which channels raise native OS
+     * notifications (and auto-create tasks) for new posts.
+     */
+    setWatchedChannels: (channelIds: string[]) =>
+      ipcRenderer.invoke("kchat:setWatchedChannels", channelIds),
+    /**
+     * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
+     * channel as a formatted message. Carries the `— via Tessera`
+     * footer so the inbound detector ignores the round-trip.
+     */
+    postTaskToChannel: (
+      channelId: string,
+      task: {
+        id: string;
+        title: string;
+        description?: string | null;
+        status?: string | null;
+        priority?: string | null;
+        dueDate?: string | null;
+        assignee?: string | null;
+      },
+    ) => ipcRenderer.invoke("kchat:postTaskToChannel", channelId, task),
     addChannelSource: (channelId: string, channelName: string) =>
       ipcRenderer.invoke("sources:addKchatChannel", channelId, channelName),
     /**

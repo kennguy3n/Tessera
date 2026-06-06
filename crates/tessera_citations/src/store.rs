@@ -1,3 +1,5 @@
+//! SQLite persistence for citations.
+
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
@@ -12,15 +14,18 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
         .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc))
 }
 
+/// Citation Store.
 pub struct CitationStore {
     conn: SharedConnection,
 }
 
 impl CitationStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -59,6 +64,7 @@ impl CitationStore {
         Ok(())
     }
 
+    /// Insert.
     pub fn insert(&self, artifact_id: &ArtifactId, citation: &Citation) -> Result<()> {
         let source_type_str = serde_json::to_value(citation.source_type)
             .map_err(Error::Json)?
@@ -93,6 +99,7 @@ impl CitationStore {
         Ok(())
     }
 
+    /// Remove.
     pub fn remove(&self, citation_id: &CitationId) -> Result<()> {
         self.conn
             .lock()
@@ -168,6 +175,7 @@ impl CitationStore {
         Ok(())
     }
 
+    /// Get.
     pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -191,6 +199,7 @@ impl CitationStore {
         }
     }
 
+    /// List for artifact.
     pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Result<Vec<Citation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -220,6 +229,7 @@ impl CitationStore {
         Ok(citations)
     }
 
+    /// Count.
     pub fn count(&self) -> Result<usize> {
         let count: i64 = self
             .conn

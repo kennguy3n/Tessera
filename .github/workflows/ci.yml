@@ -88,6 +88,21 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Fold the active toolchain's `rustc --version` into the cache key
+      # so a toolchain bump (e.g. 1.88 -> 1.89, or a nightly date change)
+      # invalidates the cache. Without this, the `target/` dir cached
+      # under the old compiler would be restored on top of a new rustc,
+      # which at best wastes a full rebuild and at worst surfaces
+      # confusing "found invalid metadata" / incremental-cache errors.
+      #
+      # We write the version to a file and hash it with `hashFiles`
+      # (built into the runner, identical on Linux/macOS/Windows) rather
+      # than piping through `sha256sum` — the latter is absent on the
+      # macOS runner image's default BSD userland.
+      - name: Record rustc version
+        shell: bash
+        run: rustc --version --verbose > rustc-version.txt
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -97,8 +112,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Check formatting
         if: matrix.os == 'ubuntu-22.04'
@@ -132,6 +149,19 @@ jobs:
 
       - name: Test
         run: cargo test --all
+
+      # Rustdoc gate. `#![warn(missing_docs)]` on every public crate
+      # turns undocumented public items into rustdoc warnings;
+      # RUSTDOCFLAGS="-D warnings" promotes them (and any broken
+      # intra-doc link) to hard errors, so the published API stays
+      # fully documented. Ubuntu-only: rustdoc output is
+      # platform-independent, so running it on the required gate is
+      # enough and avoids tripling the cost on the advisory matrix legs.
+      - name: Doc (rustdoc, deny warnings)
+        if: matrix.os == 'ubuntu-22.04'
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --all-features --workspace
 
   typescript:
     name: TypeScript — ${{ matrix.os }}
@@ -196,6 +226,14 @@ jobs:
       - name: Type check
         run: npm run type-check --workspace=apps/desktop
 
+      # Drift gate for the zod → renderer-type generation. The committed
+      # `renderer/src/generated/ipcTypes.ts` must match a fresh run of the
+      # generator against `electron/ipc/schemas.ts`; if a schema changed
+      # without regenerating, this fails and prints how to fix it.
+      - name: Check generated IPC types
+        if: matrix.os == 'ubuntu-22.04'
+        run: npm run check:ipc-types --workspace=apps/desktop
+
       - name: Test
         run: npm run test --workspace=apps/desktop
 
@@ -220,6 +258,63 @@ jobs:
       # once tests pass).
       - name: Build
         run: npm run build
+
+  # Cold-start perf gate. Boots the built Electron app once in headless
+  # "perf smoke" mode and fails if boot-to-first-render exceeds the 3s
+  # budget on the ubuntu runner. This is the required perf gate
+  # (ubuntu-only, no continue-on-error): a cold-start regression blocks
+  # merge the same way a failing test does.
+  #
+  # Only runs when TypeScript/app sources changed (same path filter as
+  # the `typescript` job) — a Rust-only or docs-only PR can't move the
+  # renderer/electron boot path, so we don't pay for an Electron boot on
+  # those. The job builds the app itself (`npm run build`) rather than
+  # depending on the `typescript` job because matrix jobs don't share a
+  # workspace; reusing its artifacts would need an upload/download
+  # round-trip that costs more than the ~30s incremental build here.
+  cold-start:
+    name: Cold-start perf gate
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # xvfb provides the virtual X display the gate's `xvfb-run`
+      # wrapper needs; the rest are Electron/Chromium's shared-library
+      # runtime deps that aren't guaranteed on a bare runner. libsecret
+      # matches the other ubuntu jobs (keychain backend probe at boot).
+      - name: Install headless Electron deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libsecret-1-dev \
+            pkg-config \
+            libnss3 \
+            libgbm1 \
+            libasound2 \
+            libgtk-3-0 \
+            libxss1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The gate auto-wraps itself in `xvfb-run` and passes
+      # `--no-sandbox`; it boots the app once, reads the
+      # `TESSERA_COLD_START_MS` marker the main process prints on first
+      # paint, and exits non-zero if it exceeds the budget.
+      - name: Cold-start gate
+        run: npm run perf:cold-start
 
   # Supply-chain audit gate. Runs whenever Rust or TypeScript inputs
   # change (the `changes` filters already include this workflow file,
@@ -293,63 +388,6 @@ jobs:
         if: needs.changes.outputs.typescript == 'true'
         run: npm audit --omit=dev --audit-level=high
 
-  # Cold-start perf gate. Boots the built Electron app once in headless
-  # "perf smoke" mode and fails if boot-to-first-render exceeds the 3s
-  # budget on the ubuntu runner. This is the required perf gate
-  # (ubuntu-only, no continue-on-error): a cold-start regression blocks
-  # merge the same way a failing test does.
-  #
-  # Only runs when TypeScript/app sources changed (same path filter as
-  # the `typescript` job) — a Rust-only or docs-only PR can't move the
-  # renderer/electron boot path, so we don't pay for an Electron boot on
-  # those. The job builds the app itself (`npm run build`) rather than
-  # depending on the `typescript` job because matrix jobs don't share a
-  # workspace; reusing its artifacts would need an upload/download
-  # round-trip that costs more than the ~30s incremental build here.
-  cold-start:
-    name: Cold-start perf gate
-    needs: changes
-    if: needs.changes.outputs.typescript == 'true'
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      # xvfb provides the virtual X display the gate's `xvfb-run`
-      # wrapper needs; the rest are Electron/Chromium's shared-library
-      # runtime deps that aren't guaranteed on a bare runner. libsecret
-      # matches the other ubuntu jobs (keychain backend probe at boot).
-      - name: Install headless Electron deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            xvfb \
-            libsecret-1-dev \
-            pkg-config \
-            libnss3 \
-            libgbm1 \
-            libasound2 \
-            libgtk-3-0 \
-            libxss1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      # The gate auto-wraps itself in `xvfb-run` and passes
-      # `--no-sandbox`; it boots the app once, reads the
-      # `TESSERA_COLD_START_MS` marker the main process prints on first
-      # paint, and exits non-zero if it exceeds the budget.
-      - name: Cold-start gate
-        run: npm run perf:cold-start
-
   # Single aggregator check. This is the one to require in branch
   # protection on `main`; everything else is conditional or advisory.
   #
@@ -364,7 +402,7 @@ jobs:
   ci-success:
     name: CI
     runs-on: ubuntu-22.04
-    needs: [changes, rust, typescript, supply-chain, cold-start]
+    needs: [changes, rust, typescript, cold-start, supply-chain]
     if: always()
     steps:
       - name: Verify required job outcomes
@@ -372,14 +410,14 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           TS_RESULT: ${{ needs.typescript.result }}
-          SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
           COLD_START_RESULT: ${{ needs.cold-start.result }}
+          SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
         run: |
           echo "changes:      $CHANGES_RESULT"
           echo "rust:         $RUST_RESULT"
           echo "typescript:   $TS_RESULT"
-          echo "supply-chain: $SUPPLY_CHAIN_RESULT"
           echo "cold-start:   $COLD_START_RESULT"
+          echo "supply-chain: $SUPPLY_CHAIN_RESULT"
 
           fail=0
           if [ "$CHANGES_RESULT" != "success" ]; then
@@ -399,6 +437,10 @@ jobs:
             success|skipped) ;;
             *) echo "::error::Required TypeScript gate did not succeed (result: $TS_RESULT)."; fail=1 ;;
           esac
+          case "$COLD_START_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required cold-start perf gate did not succeed (result: $COLD_START_RESULT)."; fail=1 ;;
+          esac
           # The supply-chain job has no continue-on-error legs, so a
           # `failure` here is a hard gate (a new unvetted crate or a
           # high/critical production npm advisory). `skipped` is a pass
@@ -406,10 +448,6 @@ jobs:
           case "$SUPPLY_CHAIN_RESULT" in
             success|skipped) ;;
             *) echo "::error::Required supply-chain gate did not succeed (result: $SUPPLY_CHAIN_RESULT)."; fail=1 ;;
-          esac
-          case "$COLD_START_RESULT" in
-            success|skipped) ;;
-            *) echo "::error::Required cold-start perf gate did not succeed (result: $COLD_START_RESULT)."; fail=1 ;;
           esac
 
           if [ "$fail" -ne 0 ]; then

@@ -1,3 +1,6 @@
+//! Registry that constructs and dispatches to the available remote
+//! connectors by provider name.
+
 use std::collections::HashMap;
 
 use crate::confluence::ConfluenceConnector;
@@ -12,7 +15,7 @@ use crate::types::{ConnectorInfo, ConnectorStatus};
 
 /// Manages multiple connector instances, keyed by provider name.
 ///
-/// Each connector type lives in its own variant of [`ConnectorEntry`]
+/// Each connector type lives in its own variant of `ConnectorEntry`
 /// because their public surfaces differ (e.g. Jira knows about a
 /// `cloud_id`, Figma knows about a `team_id`). The registry stays
 /// strongly typed by exposing per-provider accessors instead of a
@@ -79,6 +82,7 @@ impl ConnectorEntry {
 }
 
 impl ConnectorRegistry {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             connectors: HashMap::new(),
@@ -87,6 +91,7 @@ impl ConnectorRegistry {
 
     // --- Google Drive --------------------------------------------------------
 
+    /// Register google drive.
     pub fn register_google_drive(&mut self, connector: GoogleDriveConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -94,6 +99,7 @@ impl ConnectorRegistry {
         );
     }
 
+    /// Get google drive.
     pub fn get_google_drive(&self) -> Option<&GoogleDriveConnector> {
         self.connectors.get("google_drive").map(|e| match e {
             ConnectorEntry::GoogleDrive(c) => c,
@@ -101,6 +107,7 @@ impl ConnectorRegistry {
         })
     }
 
+    /// Get google drive mut.
     pub fn get_google_drive_mut(&mut self) -> Option<&mut GoogleDriveConnector> {
         self.connectors.get_mut("google_drive").map(|e| match e {
             ConnectorEntry::GoogleDrive(c) => c,
@@ -110,6 +117,7 @@ impl ConnectorRegistry {
 
     // --- OneDrive ------------------------------------------------------------
 
+    /// Register onedrive.
     pub fn register_onedrive(&mut self, connector: OneDriveConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -117,6 +125,7 @@ impl ConnectorRegistry {
         );
     }
 
+    /// Get onedrive.
     pub fn get_onedrive(&self) -> Option<&OneDriveConnector> {
         self.connectors.get("onedrive").map(|e| match e {
             ConnectorEntry::OneDrive(c) => c,
@@ -124,6 +133,7 @@ impl ConnectorRegistry {
         })
     }
 
+    /// Get onedrive mut.
     pub fn get_onedrive_mut(&mut self) -> Option<&mut OneDriveConnector> {
         self.connectors.get_mut("onedrive").map(|e| match e {
             ConnectorEntry::OneDrive(c) => c,
@@ -133,6 +143,7 @@ impl ConnectorRegistry {
 
     // --- Notion --------------------------------------------------------------
 
+    /// Register notion.
     pub fn register_notion(&mut self, connector: NotionConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -140,6 +151,7 @@ impl ConnectorRegistry {
         );
     }
 
+    /// Get notion.
     pub fn get_notion(&self) -> Option<&NotionConnector> {
         self.connectors.get("notion").map(|e| match e {
             ConnectorEntry::Notion(c) => c,
@@ -147,6 +159,7 @@ impl ConnectorRegistry {
         })
     }
 
+    /// Get notion mut.
     pub fn get_notion_mut(&mut self) -> Option<&mut NotionConnector> {
         self.connectors.get_mut("notion").map(|e| match e {
             ConnectorEntry::Notion(c) => c,
@@ -156,6 +169,7 @@ impl ConnectorRegistry {
 
     // --- Jira ----------------------------------------------------------------
 
+    /// Register jira.
     pub fn register_jira(&mut self, connector: JiraConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -163,6 +177,7 @@ impl ConnectorRegistry {
         );
     }
 
+    /// Get jira.
     pub fn get_jira(&self) -> Option<&JiraConnector> {
         self.connectors.get("jira").map(|e| match e {
             ConnectorEntry::Jira(c) => c,
@@ -170,6 +185,7 @@ impl ConnectorRegistry {
         })
     }
 
+    /// Get jira mut.
     pub fn get_jira_mut(&mut self) -> Option<&mut JiraConnector> {
         self.connectors.get_mut("jira").map(|e| match e {
             ConnectorEntry::Jira(c) => c,
@@ -179,6 +195,7 @@ impl ConnectorRegistry {
 
     // --- Confluence ----------------------------------------------------------
 
+    /// Register confluence.
     pub fn register_confluence(&mut self, connector: ConfluenceConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -186,6 +203,7 @@ impl ConnectorRegistry {
         );
     }
 
+    /// Get confluence.
     pub fn get_confluence(&self) -> Option<&ConfluenceConnector> {
         self.connectors.get("confluence").map(|e| match e {
             ConnectorEntry::Confluence(c) => c,
@@ -193,6 +211,7 @@ impl ConnectorRegistry {
         })
     }
 
+    /// Get confluence mut.
     pub fn get_confluence_mut(&mut self) -> Option<&mut ConfluenceConnector> {
         self.connectors.get_mut("confluence").map(|e| match e {
             ConnectorEntry::Confluence(c) => c,
@@ -202,6 +221,7 @@ impl ConnectorRegistry {
 
     // --- Figma ---------------------------------------------------------------
 
+    /// Register figma.
     pub fn register_figma(&mut self, connector: FigmaConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -209,6 +229,7 @@ impl ConnectorRegistry {
         );
     }
 
+    /// Get figma.
     pub fn get_figma(&self) -> Option<&FigmaConnector> {
         self.connectors.get("figma").map(|e| match e {
             ConnectorEntry::Figma(c) => c,
@@ -216,6 +237,7 @@ impl ConnectorRegistry {
         })
     }
 
+    /// Get figma mut.
     pub fn get_figma_mut(&mut self) -> Option<&mut FigmaConnector> {
         self.connectors.get_mut("figma").map(|e| match e {
             ConnectorEntry::Figma(c) => c,
@@ -225,24 +247,29 @@ impl ConnectorRegistry {
 
     // --- Generic --------------------------------------------------------------
 
+    /// Remove.
     pub fn remove(&mut self, provider: &str) -> bool {
         self.connectors.remove(provider).is_some()
     }
 
+    /// Is connected.
     pub fn is_connected(&self, provider: &str) -> bool {
         self.connectors
             .get(provider)
             .is_some_and(|e| e.status() == ConnectorStatus::Connected)
     }
 
+    /// List providers.
     pub fn list_providers(&self) -> Vec<String> {
         self.connectors.keys().cloned().collect()
     }
 
+    /// List info.
     pub fn list_info(&self) -> Vec<ConnectorInfo> {
         self.connectors.values().map(ConnectorEntry::info).collect()
     }
 
+    /// Get info.
     pub fn get_info(&self, provider: &str) -> ConnectorResult<ConnectorInfo> {
         self.connectors
             .get(provider)
@@ -252,10 +279,12 @@ impl ConnectorRegistry {
             })
     }
 
+    /// Has provider.
     pub fn has_provider(&self, provider: &str) -> bool {
         self.connectors.contains_key(provider)
     }
 
+    /// Provider count.
     pub fn provider_count(&self) -> usize {
         self.connectors.len()
     }

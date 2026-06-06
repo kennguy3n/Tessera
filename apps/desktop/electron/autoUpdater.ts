@@ -111,6 +111,19 @@ export interface AutoUpdaterLogger {
 interface AutoUpdaterModule {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
+  /**
+   * When false (the electron-updater default), the updater performs a
+   * blockmap-based *differential* download: it fetches the new
+   * release's `.blockmap`, diffs it against the currently-installed
+   * artifact, and downloads only the changed blocks over HTTP range
+   * requests. We set this explicitly so the intent is visible at the
+   * call site and a future refactor can't silently flip it to a
+   * full-artifact download. Differential download is a no-op fallback
+   * to a full download when no blockmap is published or the target
+   * format doesn't support it (e.g. macOS dmg), so setting it is
+   * always safe.
+   */
+  disableDifferentialDownload: boolean;
   logger: AutoUpdaterLogger | null;
   on(event: string, cb: (...args: unknown[]) => void): void;
   checkForUpdates(): Promise<unknown>;
@@ -118,6 +131,41 @@ interface AutoUpdaterModule {
 }
 
 let cachedUpdater: AutoUpdaterModule | null = null;
+
+/**
+ * Apply Tessera's canonical electron-updater configuration to a
+ * freshly-resolved updater instance. Extracted from `getUpdater` so it
+ * can be unit-tested directly: the real module is CommonJS + packaged-
+ * only and can't be `require()`d (let alone mocked through `require`)
+ * in the test runtime, so a test that drove `getUpdater()` would just
+ * hit the catch path and assert nothing.
+ */
+function configureUpdater(updater: AutoUpdaterModule): void {
+  // electron-updater logs to a hard-coded console by default.
+  // Redirect to our structured logger so update events end up in the
+  // same file the user can ship for diagnostics.
+  const adapter: AutoUpdaterLogger = {
+    info: (m: unknown) => getLogger().info("autoUpdater", { msg: String(m) }),
+    warn: (m: unknown) => getLogger().warn("autoUpdater", { msg: String(m) }),
+    error: (m: unknown) =>
+      getLogger().error("autoUpdater", { msg: String(m) }),
+    debug: () => {
+      /* drop — we forward warn/error/info; debug-level chatter is
+         intentionally suppressed because electron-updater logs every
+         HTTP redirect at debug, which would dwarf user-actionable
+         events in `~/.tessera/logs/tessera.log`. */
+    },
+  };
+  updater.logger = adapter;
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = false;
+  // Enable blockmap-based delta updates by leaving electron-updater's
+  // differential download ON (its `disable*` flag set to false). The
+  // updater then fetches only the blocks that changed between the
+  // installed artifact and the new release, which on a patch-level bump
+  // is a small fraction of the full installer.
+  updater.disableDifferentialDownload = false;
+}
 
 /**
  * Lazily resolve `electron-updater`. Failures (e.g. running unpackaged
@@ -135,24 +183,7 @@ function getUpdater(): AutoUpdaterModule | null {
       autoUpdater: AutoUpdaterModule;
     };
     const updater = mod.autoUpdater;
-    // electron-updater logs to a hard-coded console by default.
-    // Redirect to our structured logger so update events end up in the
-    // same file the user can ship for diagnostics.
-    const adapter: AutoUpdaterLogger = {
-      info: (m: unknown) => getLogger().info("autoUpdater", { msg: String(m) }),
-      warn: (m: unknown) => getLogger().warn("autoUpdater", { msg: String(m) }),
-      error: (m: unknown) =>
-        getLogger().error("autoUpdater", { msg: String(m) }),
-      debug: () => {
-        /* drop — we forward warn/error/info; debug-level chatter is
-           intentionally suppressed because electron-updater logs every
-           HTTP redirect at debug, which would dwarf user-actionable
-           events in `~/.tessera/logs/tessera.log`. */
-      },
-    };
-    updater.logger = adapter;
-    updater.autoDownload = true;
-    updater.autoInstallOnAppQuit = false;
+    configureUpdater(updater);
     cachedUpdater = updater;
     return updater;
   } catch (err) {
@@ -505,6 +536,19 @@ export function registerAutoUpdaterIpc(): void {
 export function _injectUpdaterForTests(updater: AutoUpdaterModule): void {
   cachedUpdater = updater;
   attachListenersOnce(updater);
+}
+
+/**
+ * Test-only hook exposing the same configuration `getUpdater()` applies
+ * to the real module — used to assert the canonical updater settings
+ * (notably `disableDifferentialDownload = false`, which enables
+ * blockmap delta downloads) without `require()`-ing the packaged-only
+ * `electron-updater`.
+ *
+ * Production callers MUST NOT invoke this.
+ */
+export function _configureUpdaterForTests(updater: AutoUpdaterModule): void {
+  configureUpdater(updater);
 }
 
 /**

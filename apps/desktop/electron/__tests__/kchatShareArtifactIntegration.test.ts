@@ -193,9 +193,28 @@ const serviceMock = {
   disconnect: vi.fn(),
 };
 
+// Session 8: the share path registers offline-queue executors at
+// handler-registration time and falls back to enqueueing on an
+// offline error. This integration suite drives real HTTP against a
+// mocked KChat server and only exercises success / wire-failure
+// paths (never an offline classification), so an in-memory double
+// for the queue is sufficient; the queue's own behaviour is covered
+// by `kchatOfflineQueue.test.ts`.
+const offlineQueueMock = {
+  load: vi.fn(async () => {}),
+  size: vi.fn(() => 0),
+  list: vi.fn(() => [] as unknown[]),
+  setExecutors: vi.fn(),
+  enqueueShareArtifact: vi.fn(async () => "queued-share-id"),
+  enqueueIngestChannel: vi.fn(async () => "queued-ingest-id"),
+  enqueuePostTask: vi.fn(async () => "queued-task-id"),
+};
+
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getKchatAuthService: () => serviceMock,
+  getKchatOfflineQueue: () => offlineQueueMock,
+  getKchatEventForwarder: () => null,
   setKchatChannelResyncImpl: vi.fn(),
   setKchatBackfillImpl: vi.fn(),
 }));

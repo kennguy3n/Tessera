@@ -1,0 +1,24 @@
+# Architecture Decision Records
+
+This directory captures the significant architectural decisions behind
+Tessera using lightweight [Architecture Decision Records](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)
+(ADRs). Each record is immutable once accepted: rather than editing an
+old decision, supersede it with a new ADR and update the `Status` line.
+
+Every ADR follows the same structure — **Title**, **Status**,
+**Context**, **Decision**, **Consequences** — and is grounded in how the
+decision actually manifests in this codebase (file paths are given so
+the record stays verifiable).
+
+| ADR | Decision |
+|---|---|
+| [0001](0001-rust-core.md) | Rust for the core engine |
+| [0002](0002-electron.md) | Electron + React for the desktop shell |
+| [0003](0003-sqlcipher.md) | SQLCipher for encryption at rest |
+| [0004](0004-local-first.md) | Local-first architecture |
+| [0005](0005-kchat-collaboration.md) | KChat (Mattermost v4) as the collaboration layer |
+| [0006](0006-ternary-bonsai.md) | Ternary-Bonsai as the default local model |
+| [0007](0007-ivf-flat.md) | IVF-Flat ANN index for vector search |
+| [0008](0008-n-api-bridge.md) | N-API bridge between Electron and Rust |
+| [0009](0009-single-file-db.md) | Single shared SQLite connection / single-file DB |
+| [0010](0010-csp-nonce.md) | Per-session CSP nonce for the renderer |

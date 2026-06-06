@@ -1,14 +1,22 @@
+//! Device-tier detection and per-platform model selection for the
+//! local inference runtime.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// Device Tier.
 pub enum DeviceTier {
+    /// The `Low` variant.
     Low,
+    /// The `Medium` variant.
     Medium,
+    /// The `High` variant.
     High,
 }
 
 impl DeviceTier {
+    /// Label.
     pub fn label(&self) -> &str {
         match self {
             Self::Low => "Low (2-3 GB RAM)",
@@ -39,6 +47,7 @@ pub enum ModelCapability {
 }
 
 impl ModelCapability {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Text => "text",
@@ -47,6 +56,7 @@ impl ModelCapability {
         }
     }
 
+    /// Display label.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::Text => "Text generation",
@@ -77,11 +87,14 @@ impl ModelCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelFormat {
+    /// The `Gguf` variant.
     Gguf,
+    /// The `Mlx` variant.
     Mlx,
 }
 
 impl ModelFormat {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Gguf => "gguf",
@@ -115,14 +128,20 @@ impl ModelFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComputeBackend {
+    /// The `Cpu` variant.
     Cpu,
+    /// The `Cuda` variant.
     Cuda,
+    /// The `Vulkan` variant.
     Vulkan,
+    /// The `Metal` variant.
     Metal,
+    /// The `Rocm` variant.
     Rocm,
 }
 
 impl ComputeBackend {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
@@ -133,6 +152,7 @@ impl ComputeBackend {
         }
     }
 
+    /// Display label.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::Cpu => "CPU (AVX2 / AVX-VNNI / AVX-512 VNNI / ARM NEON)",
@@ -165,14 +185,20 @@ impl ComputeBackend {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Platform {
+    /// Macos Apple Silicon.
     MacosAppleSilicon,
+    /// Macos Intel.
     MacosIntel,
+    /// Windows X64.
     WindowsX64,
+    /// Linux X64.
     LinuxX64,
+    /// Linux Arm64.
     LinuxArm64,
 }
 
 impl Platform {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::MacosAppleSilicon => "macos-apple-silicon",
@@ -183,6 +209,7 @@ impl Platform {
         }
     }
 
+    /// Display label.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::MacosAppleSilicon => "macOS Apple Silicon",
@@ -193,6 +220,7 @@ impl Platform {
         }
     }
 
+    /// Preferred format.
     pub fn preferred_format(&self) -> ModelFormat {
         match self {
             Self::MacosAppleSilicon => ModelFormat::Mlx,
@@ -238,9 +266,13 @@ pub fn detect_platform() -> Platform {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Model Info.
 pub struct ModelInfo {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
+    /// Parameters.
     pub parameters: String,
     /// What slot this model occupies — text, vision, or image generation.
     /// Defaults to [`ModelCapability::Text`] when the manifest predates
@@ -253,21 +285,30 @@ pub struct ModelInfo {
     /// `2-bit` (Ternary-Bonsai), for vision `Q4_K_M` / `Q4_K_S` /
     /// `4-bit`, for image generation `Q4_0` / `4-bit`.
     pub quantization: String,
+    /// Format.
     pub format: ModelFormat,
+    /// Platform.
     pub platform: Platform,
+    /// Compute backends.
     pub compute_backends: Vec<ComputeBackend>,
+    /// Required ram gb.
     pub required_ram_gb: f64,
     /// Compressed download size in MB.
     pub download_size_mb: u64,
     /// On-disk size in MB once extracted (equal to `download_size_mb`
     /// for single-file GGUF, larger for archived MLX directories).
     pub disk_size_mb: u64,
+    /// Context length.
     pub context_length: u32,
+    /// Tier.
     pub tier: DeviceTier,
     /// File name written to the model cache directory on disk.
     pub filename: String,
+    /// Url.
     pub url: Option<String>,
+    /// Checksum.
     pub checksum: Option<String>,
+    /// Local path.
     pub local_path: Option<String>,
     /// Filename of the multimodal projector (mmproj) for vision-GGUF
     /// entries. Mirrors `ManifestModel.mmprojFilename` on the TS side
@@ -313,14 +354,23 @@ impl ModelInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Runtime Config.
 pub struct RuntimeConfig {
+    /// Model path.
     pub model_path: Option<String>,
+    /// Binary path.
     pub binary_path: String,
+    /// Port.
     pub port: u16,
+    /// Host.
     pub host: String,
+    /// Device tier.
     pub device_tier: DeviceTier,
+    /// Max context length.
     pub max_context_length: u32,
+    /// Parallel slots.
     pub parallel_slots: u8,
+    /// Idle timeout secs.
     pub idle_timeout_secs: u64,
 }
 
@@ -340,15 +390,22 @@ impl Default for RuntimeConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Runtime Status.
 pub enum RuntimeStatus {
+    /// The `Stopped` variant.
     Stopped,
+    /// The `Starting` variant.
     Starting,
+    /// The `Running` variant.
     Running,
+    /// The `Loading` variant.
     Loading,
+    /// The `Error` variant.
     Error,
 }
 
 impl RuntimeStatus {
+    /// As str.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Stopped => "stopped",
@@ -361,12 +418,19 @@ impl RuntimeStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Runtime State.
 pub struct RuntimeState {
+    /// Status.
     pub status: RuntimeStatus,
+    /// Model name.
     pub model_name: Option<String>,
+    /// Device tier.
     pub device_tier: DeviceTier,
+    /// Memory usage mb.
     pub memory_usage_mb: Option<u64>,
+    /// Context length.
     pub context_length: u32,
+    /// Active jobs.
     pub active_jobs: u32,
 }
 
@@ -832,7 +896,7 @@ pub fn available_models_for_platform(platform: Platform) -> Vec<ModelInfo> {
 /// model entries always include `Cpu` in their `compute_backends`,
 /// so the intersection-with-detected-backends gate is always
 /// non-empty on any host. For `ImageGeneration` the entries
-/// deliberately omit `Cpu` (see [`IMAGEGEN_GGUF_COMPUTE`] and the
+/// deliberately omit `Cpu` (see `IMAGEGEN_GGUF_COMPUTE` and the
 /// MLX variant), so a host without a GPU returns an empty list —
 /// the UI uses that to grey out the image-gen slot.
 ///
@@ -1064,6 +1128,8 @@ pub fn has_rocm() -> bool {
     std::path::Path::new("/opt/rocm").exists() || std::path::Path::new("/opt/rocm-dkms").exists()
 }
 
+/// Is ROCm installed? ROCm is Linux-only, so this always returns
+/// `false` on non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
 #[must_use]
 pub fn has_rocm() -> bool {

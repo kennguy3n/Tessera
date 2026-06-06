@@ -13,6 +13,7 @@ import { loadConfig } from "./config";
 import type { DiffusionSidecar } from "./diffusionSidecar";
 import { KchatAuthService } from "./kchat/kchatAuth";
 import { KchatEventForwarder } from "./kchat/kchatEventForwarder";
+import { KchatOfflineQueue } from "./kchat/kchatOfflineQueue";
 import {
   KchatLocalApiServer,
   type LocalApiHandlers,
@@ -404,6 +405,13 @@ export interface NativeBridge {
    *  (e.g. `"prd-v1"`). The bridge hashes the id via
    *  `TemplateId::from_string` to match the UUID5 stored on the trigger. */
   bridgeMatchingOnGenerateAutomations(templateId: string): AutomationInfo[];
+  /** Enabled `OnKchatMessageMatch` automations whose `channel_id` equals
+   *  `channelId` and whose `regex` matches `message`. Called from the
+   *  KChat event forwarder on every `posted` WebSocket event. */
+  bridgeMatchingKchatMessageAutomations(
+    channelId: string,
+    message: string,
+  ): AutomationInfo[];
   /** Persist a run result. `status` is rendered verbatim by the UI. */
   bridgeRecordAutomationRun(automationId: string, status: string): void;
   // --- Audit pass-throughs (the audit code) ---
@@ -873,6 +881,14 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
+// Offline write-queue singleton. Holds `shareArtifact` /
+// `ingestChannel` requests that were issued while the KChat
+// server was unreachable and replays them FIFO on the next
+// `connected` transition (subscription wired in
+// `getKchatAuthService`). Lazily constructed alongside the auth
+// service; the IPC layer registers the executors that actually
+// perform the deferred work via `getKchatOfflineQueue().setExecutors`.
+let kchatOfflineQueue: KchatOfflineQueue | null = null;
 // localhost HTTP server the Tessera `.kcz`
 // extension (running inside KChat Desktop) talks to. Lazily
 // started by `startKchatLocalApiServer()` from the main-process
@@ -1498,8 +1514,39 @@ export function getKchatAuthService(): KchatAuthService {
       },
     });
     kchatEventForwarder.start(kchatAuthService.getClient());
+
+    // Replay any persisted offline write-queue when the connection
+    // comes back. The subscription lives here (not in the IPC
+    // layer) because the auth service outlives every connect /
+    // disconnect cycle, so a single listener installed at
+    // construction time fires on every future reconnect. The
+    // executors are registered by the IPC layer; if a `connected`
+    // transition arrives before they are wired, `replay()` finds no
+    // executor and leaves the operations queued for the next tick.
+    const queue = getKchatOfflineQueue();
+    kchatAuthService.onStatusChange((state) => {
+      if (state.state === "connected") {
+        void queue.replay().catch((err) => {
+          console.error("[kchat] offline-queue replay failed:", err);
+        });
+      }
+    });
   }
   return kchatAuthService;
+}
+
+/**
+ * Accessor for the singleton KChat offline write-queue. Lazily
+ * constructed on first access. The IPC layer registers executors
+ * on it and enqueues `shareArtifact` / `ingestChannel` requests
+ * that hit an offline error; the {@link getKchatAuthService}
+ * status subscription drains it on reconnect.
+ */
+export function getKchatOfflineQueue(): KchatOfflineQueue {
+  if (!kchatOfflineQueue) {
+    kchatOfflineQueue = new KchatOfflineQueue();
+  }
+  return kchatOfflineQueue;
 }
 
 /**
@@ -1852,6 +1899,11 @@ export function resetKchatAuthService(
     kchatEventForwarder.dispose();
     kchatEventForwarder = null;
   }
+  // Drop the offline-queue singleton so a test that swaps the auth
+  // service starts from a clean in-memory queue (and re-registers
+  // executors against the new service). The on-disk file is left
+  // untouched — the next queue reads it back on first `load()`.
+  kchatOfflineQueue = null;
   // Block B Task 4 third-pass:
   // clear the regrant-resync slot alongside the forwarder so the
   // module-level lifecycle invariants stay coherent. The previous

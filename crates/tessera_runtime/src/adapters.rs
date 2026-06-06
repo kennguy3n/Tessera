@@ -18,7 +18,7 @@
 //! user-friendly empty state rather than hanging.
 //!
 //! This module implements the chain's *decision logic* and a tiny
-//! [`AdapterChain::generate`] entry point. Each adapter is a
+//! `AdapterChain::generate` entry point. Each adapter is a
 //! lightweight enum variant; the heavy lifting (HTTP, process
 //! management, weights loading) stays in the existing modules.
 
@@ -34,13 +34,18 @@ use crate::generation::{CompletionResponse, GenerateRequest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterKind {
+    /// The `Mlx` variant.
     Mlx,
+    /// Llama Cpp.
     LlamaCpp,
+    /// The `External` variant.
     External,
+    /// The `Fallback` variant.
     Fallback,
 }
 
 impl AdapterKind {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Mlx => "mlx",
@@ -58,7 +63,9 @@ impl AdapterKind {
 /// is "available" on its own.
 #[derive(Debug, Clone, Default)]
 pub struct AdapterAvailability {
+    /// Mlx available.
     pub mlx_available: bool,
+    /// Llamacpp available.
     pub llamacpp_available: bool,
 }
 
@@ -67,9 +74,13 @@ pub struct AdapterAvailability {
 /// optional — when missing or disabled the chain skips the
 /// External step entirely.
 pub struct ChainInputs<'a> {
+    /// Availability.
     pub availability: AdapterAvailability,
+    /// External.
     pub external: Option<&'a ExternalProviderConfig>,
+    /// External key.
     pub external_key: Option<&'a str>,
+    /// Request.
     pub request: &'a GenerateRequest,
     /// HTTP endpoint of the running local llama-server, if any.
     /// `None` means the local path is skipped.
@@ -77,8 +88,11 @@ pub struct ChainInputs<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Chain Result.
 pub struct ChainResult {
+    /// Adapter.
     pub adapter: AdapterKind,
+    /// Response.
     pub response: CompletionResponse,
 }
 
