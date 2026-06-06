@@ -4,7 +4,10 @@ use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
-/// Export csv.
+/// Renders `artifact` (plus its `citations`) as CSV text: a metadata
+/// header row followed by the artifact's tabular content. Returns the
+/// CSV as a `String` rather than writing to disk so the caller chooses
+/// the destination.
 pub fn export_csv(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 

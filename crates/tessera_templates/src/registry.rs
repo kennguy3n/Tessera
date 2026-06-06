@@ -9,7 +9,9 @@ use crate::parser::parse_template_file;
 use crate::template::Template;
 use crate::validator::validate_template;
 
-/// Template Registry.
+/// In-memory collection of validated [`Template`]s loaded from a
+/// directory tree, sorted by display name. Backs the template picker
+/// and lookups by id or artifact type.
 pub struct TemplateRegistry {
     templates: Vec<Template>,
 }
@@ -26,9 +28,12 @@ pub struct TemplateRegistry {
 /// out-of-range max_tokens) — different remediation paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TemplateLoadFailureKind {
-    /// The `Parse` variant.
+    /// The YAML did not deserialise into a [`Template`] — typically
+    /// schema drift from a hand-edited file.
     Parse,
-    /// The `Validation` variant.
+    /// The YAML deserialised but failed [`validate_template`] —
+    /// typically an authoring mistake (missing section, out-of-range
+    /// `max_tokens`, …).
     Validation,
 }
 
@@ -50,11 +55,11 @@ impl TemplateLoadFailureKind {
 /// audit log for templates that went missing from the registry.
 #[derive(Debug, Clone)]
 pub struct TemplateLoadFailure {
-    /// Path.
+    /// Path of the template file that failed to load.
     pub path: PathBuf,
-    /// Kind.
+    /// Whether it failed at parse or validation.
     pub kind: TemplateLoadFailureKind,
-    /// Error.
+    /// Human-readable description of the underlying failure.
     pub error: String,
 }
 
@@ -64,21 +69,25 @@ pub struct TemplateLoadFailure {
 /// caller can audit / report on the dropped files instead of only
 /// seeing them in stderr.
 pub struct TemplateLoadResult {
-    /// Registry.
+    /// The successfully-loaded templates (broken files excluded).
     pub registry: TemplateRegistry,
-    /// Failures.
+    /// Files dropped during load, for auditing/reporting.
     pub failures: Vec<TemplateLoadFailure>,
 }
 
 impl TemplateRegistry {
-    /// Creates a new instance.
+    /// Builds an empty registry with no templates.
     pub fn new() -> Self {
         Self {
             templates: Vec::new(),
         }
     }
 
-    /// Load from directory.
+    /// Loads and validates every template under `path`, returning only
+    /// the successful subset. Broken files are logged to stderr and
+    /// skipped; use
+    /// [`TemplateRegistry::load_from_directory_with_failures`] to also
+    /// recover the list of dropped files.
     pub fn load_from_directory(path: &Path) -> Result<Self> {
         // Preserve the historical signature (and the eprintln-based
         // operator surface) for every caller that only cares about
@@ -227,17 +236,17 @@ impl TemplateRegistry {
         Ok(TemplateLoadResult { registry, failures })
     }
 
-    /// List.
+    /// All loaded templates, sorted by display name.
     pub fn list(&self) -> &[Template] {
         &self.templates
     }
 
-    /// Get by id.
+    /// Finds a template by its slug id, or `None` if not present.
     pub fn get_by_id(&self, id: &str) -> Option<&Template> {
         self.templates.iter().find(|t| t.id == id)
     }
 
-    /// List by type.
+    /// Returns every template that produces `artifact_type`.
     pub fn list_by_type(&self, artifact_type: ArtifactType) -> Vec<&Template> {
         self.templates
             .iter()
@@ -245,7 +254,7 @@ impl TemplateRegistry {
             .collect()
     }
 
-    /// Count.
+    /// Number of loaded templates.
     pub fn count(&self) -> usize {
         self.templates.len()
     }

@@ -4,7 +4,11 @@ use tessera_core::error::{Error, Result};
 
 use crate::template::Template;
 
-/// Validate template.
+/// Checks a parsed [`Template`] against the semantic rules the schema
+/// can't fully express: non-empty id/name/description, at least one
+/// section (each with a title and prompt), per-section `max_tokens`
+/// within `50..=16384`, and at least one export format. Returns the
+/// first violation as [`Error::TemplateValidation`].
 pub fn validate_template(template: &Template) -> Result<()> {
     if template.id.is_empty() {
         return Err(Error::TemplateValidation(

@@ -6,7 +6,9 @@ use tessera_citations::citation::Citation;
 
 use crate::mermaid;
 
-/// Export markdown.
+/// Renders `artifact` as a Markdown document — an `# `-prefixed title,
+/// the artifact body, and a trailing citations list for `citations`.
+/// Returns the Markdown as a `String`.
 pub fn export_markdown(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 

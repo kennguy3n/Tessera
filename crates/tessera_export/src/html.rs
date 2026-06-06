@@ -22,7 +22,11 @@ fn is_visual_artifact_type(t: ArtifactType) -> bool {
     matches!(t, ArtifactType::Infographic | ArtifactType::LandingPage)
 }
 
-/// Export html.
+/// Renders `artifact` as a self-contained HTML document, appending a
+/// citations section for `citations`. Markdown-based artifacts may
+/// include `mermaid` fenced blocks that the renderer turns into
+/// diagrams; pre-rendered visual artifacts are emitted as-is. Returns
+/// the HTML as a `String`.
 pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 

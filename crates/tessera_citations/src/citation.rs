@@ -6,35 +6,49 @@ use serde::{Deserialize, Serialize};
 use tessera_core::{CitationId, SourceId, SourceType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Citation.
+/// A provenance record binding a span of generated artifact content to
+/// the exact source chunk it was derived from. Snapshots the source's
+/// identity and content hashes at creation time so staleness can later
+/// be detected even if the source is renamed or edited.
 pub struct Citation {
-    /// Citation id.
+    /// Unique identity of this citation.
     pub citation_id: CitationId,
-    /// Source id.
+    /// The source this content was drawn from.
     pub source_id: SourceId,
-    /// Source type.
+    /// Kind of the cited source, copied here so the citation renders
+    /// without a join back to the source row.
     pub source_type: SourceType,
-    /// Source title.
+    /// Human-readable source title at citation time (denormalised
+    /// snapshot; not kept in sync if the source is later renamed).
     pub source_title: String,
-    /// Source uri.
+    /// Locator for the cited source (file URI, document URL, …).
     pub source_uri: String,
-    /// Chunk hash.
+    /// BLAKE3 hash of the specific chunk cited — identifies the exact
+    /// passage even if surrounding content shifts.
     pub chunk_hash: String,
-    /// File-level hash at the time the citation was created, used for change detection.
+    /// BLAKE3 hash of the whole source file at citation time. Compared
+    /// against the current file hash by [`Citation::source_changed`]
+    /// to flag a citation as potentially stale.
     pub source_file_hash: String,
-    /// Page.
+    /// 1-based page number within the source, when it has pages (PDFs,
+    /// slide decks); `None` for sources without a page model.
     pub page: Option<u32>,
-    /// Confidence.
+    /// Model confidence that this source actually supports the cited
+    /// content, in `0.0..=1.0` (higher is more confident).
     pub confidence: f64,
-    /// Used for.
+    /// Short label for which part of the artifact this citation backs
+    /// (e.g. a section name).
     pub used_for: String,
-    /// Created at.
+    /// When the citation was created, in UTC.
     pub created_at: DateTime<Utc>,
 }
 
 impl Citation {
     #[allow(clippy::too_many_arguments)]
-    /// Creates a new instance.
+    /// Builds a citation from a freshly retrieved source chunk: mints
+    /// a new id, stamps the current UTC time, and leaves `page`
+    /// unset (use [`Citation::with_page`] to attach one). `confidence`
+    /// is expected in `0.0..=1.0`.
     pub fn new(
         source_id: SourceId,
         source_type: SourceType,
@@ -60,7 +74,8 @@ impl Citation {
         }
     }
 
-    /// With page.
+    /// Returns the citation with `page` recorded as its 1-based source
+    /// page number (builder-style).
     pub fn with_page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self

@@ -5,20 +5,28 @@ use tessera_core::error::{Error, Result};
 
 use crate::template::Template;
 
-/// Parse template.
+/// Deserialises a [`Template`] from a YAML string and computes its
+/// derived [`TemplateId`](tessera_core::TemplateId). Returns
+/// [`Error::TemplateValidation`] on malformed YAML.
 pub fn parse_template(yaml_content: &str) -> Result<Template> {
     let template: Template =
         serde_yaml::from_str(yaml_content).map_err(|e| Error::TemplateValidation(e.to_string()))?;
     Ok(template.with_computed_id())
 }
 
-/// Parse template file.
+/// Reads the YAML file at `path` and parses it via
+/// [`parse_template`]. Propagates IO errors if the file is
+/// unreadable.
 pub fn parse_template_file(path: &Path) -> Result<Template> {
     let content = std::fs::read_to_string(path)?;
     parse_template(&content)
 }
 
-/// Load template by id.
+/// Searches `template_dir` for the template whose slug equals
+/// `template_id`, scanning each known category directory (and nested
+/// `locales/<locale>/` variants) for `*.yaml`/`*.yml` files.
+/// Malformed files are logged and skipped rather than aborting the
+/// search; returns [`Error::TemplateNotFound`] if no file matches.
 pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Template> {
     let base = Path::new(template_dir);
     // Recurse over every template-category directory. We list the
