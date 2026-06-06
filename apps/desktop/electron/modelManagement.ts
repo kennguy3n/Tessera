@@ -1758,13 +1758,27 @@ export interface DeleteDeps {
 /**
  * Maximum number of HTTP attempts the default fetcher makes for a
  * single file before surfacing the error. The first attempt is the
- * initial request; every retry resumes from the bytes already on disk
- * via an HTTP `Range` request rather than restarting from zero. Four
- * attempts (one initial + three resumes) covers the common transient
- * blip (CDN hiccup, Wi-Fi roam, laptop sleep) without spinning forever
- * on a genuinely dead endpoint.
+ * initial request; every retry resumes from the bytes written so far
+ * *in this session* via an HTTP `Range` request rather than restarting
+ * from zero. Four attempts (one initial + three resumes) covers the
+ * common transient blip (CDN hiccup, Wi-Fi roam, laptop sleep) without
+ * spinning forever on a genuinely dead endpoint.
  */
 const DEFAULT_FETCH_MAX_ATTEMPTS = 4;
+
+/**
+ * Exponential backoff between download retries: `BASE * 2^(n-1)` before
+ * the n-th retry, capped at `MAX`. A dropped connection is often a
+ * server/CDN under load or a network mid-roam; retrying instantly in a
+ * tight loop only adds to the pressure, so we wait a beat that grows
+ * with each successive failure.
+ */
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 4000;
+
+/** Real wall-clock sleep; injected as a no-op in unit tests. */
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Parse the absolute resource length out of a `Content-Range` response
@@ -1782,36 +1796,41 @@ function parseContentRangeTotal(header: string | null): number | null {
 
 /**
  * Build the production HTTP fetcher. Split into a factory (rather than
- * a bare const) so unit tests can inject a fake `fetch` and exercise
- * the resume / retry logic against a real temp file without hitting
- * the network.
+ * a bare const) so unit tests can inject a fake `fetch` (and a no-op
+ * `sleep`) and exercise the resume / retry logic against a real temp
+ * file without hitting the network.
  *
- * Resume semantics: large model weights (multiple GB) routinely
- * outlive a flaky connection. Instead of throwing away a half-finished
- * `.partial` on the first dropped socket, the fetcher:
+ * Resume semantics: large model weights (multiple GB) routinely outlive
+ * a flaky connection. Rather than throw the whole transfer away on the
+ * first dropped socket, the fetcher retries *within the call*, each
+ * time continuing from the bytes it has already written:
  *
- *   1. Probes `destPath` for bytes left by a previous attempt and, if
- *      any exist, requests `Range: bytes=<n>-` so the server streams
- *      only the remainder.
- *   2. Appends to the existing file when the server honours the range
- *      (HTTP 206). If the server ignores the range and replays the
- *      whole body (HTTP 200), it truncates and restarts so we never
- *      concatenate a second full copy onto the prefix.
- *   3. On a 416 (range past EOF — e.g. the remote artifact was
- *      replaced with a smaller one) it discards the prefix and starts
- *      clean.
- *   4. Retries a mid-stream interruption up to `maxAttempts`,
- *      resuming from whatever landed on disk each time.
+ *   1. The first attempt is a plain GET; it truncates `destPath` and
+ *      records the response validator (ETag / Last-Modified).
+ *   2. After a mid-stream drop it re-requests `Range: bytes=<n>-`
+ *      (with `If-Range: <validator>`) and APPENDS when the server
+ *      honours it (HTTP 206).
+ *   3. If the server replies 200 (range / If-Range not honoured, or the
+ *      resource changed) it truncates and restarts so a new suffix is
+ *      never spliced onto a stale prefix.
+ *   4. A 416 (our offset is past a now-shorter resource) discards the
+ *      bytes and restarts clean.
+ *   5. Connection / mid-stream failures retry up to `maxAttempts` with
+ *      exponential backoff.
  *
- * The caller (`downloadModelLocked`) still deletes the `.partial` on a
- * *terminal* failure, so this resume behaviour is what makes a single
- * `downloadModel` call survive transient drops — and any `.partial`
- * that does survive a crash is opportunistically resumed on the next
- * download of the same file.
+ * Resume is intentionally scoped to a SINGLE call. A `.partial` only
+ * outlives the call that created it via a hard crash, and the
+ * single-file-per-slot layout reuses one filename across model
+ * versions, so a leftover partial cannot be proven to match `url`.
+ * Trusting it could splice mismatched content (silently, for the
+ * supported no-checksum case). The first attempt therefore always
+ * truncates any pre-existing partial. The caller (`downloadModelLocked`)
+ * deletes the `.partial` on a terminal failure.
  */
 export function createDefaultFetcher(
   fetchImpl?: typeof fetch,
   maxAttempts: number = DEFAULT_FETCH_MAX_ATTEMPTS,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
 ): NonNullable<DownloadDeps["fetcher"]> {
   return async (url, onProgress, destPath) => {
     // Resolve `fetch` lazily at call time (not at factory-creation
@@ -1819,22 +1838,43 @@ export function createDefaultFetcher(
     // swapped in after module load — e.g. test mocks, or a runtime
     // proxy install.
     const doFetch = fetchImpl ?? globalThis.fetch;
-    // Resume point: bytes a previous (interrupted) attempt already
-    // wrote. Zero for a fresh download.
+    // Bytes written *during this call*. We deliberately do NOT seed this
+    // from an existing on-disk `.partial`: a leftover partial can only
+    // outlive the call that wrote it via a hard crash/kill, and we
+    // cannot prove it holds the SAME content as `url` (the single
+    // file-per-slot layout reuses the filename across model versions).
+    // Trusting it would let a `Range` resume splice a new suffix onto a
+    // stale prefix and, for the supported no-checksum case, silently
+    // install a corrupt file. So the first attempt always issues a plain
+    // GET that truncates any stale partial; resume only ever continues
+    // bytes we ourselves wrote in this session.
     let downloaded = 0;
-    try {
-      const st = await fsp.stat(destPath);
-      if (st.isFile()) downloaded = st.size;
-    } catch {
-      // No partial on disk yet — start from byte 0.
-    }
+    // HTTP validator (ETag / Last-Modified) of the body we are writing,
+    // captured from the first 200. Echoed as `If-Range` on a resume so
+    // the server returns a full 200 (→ truncate + restart) instead of a
+    // 206 if the resource changed between attempts.
+    let validator: string | null = null;
 
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        // Every attempt past the first follows a failure, so back off
+        // before re-requesting. Grows exponentially, capped at the max.
+        const delay = Math.min(
+          RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+          RETRY_MAX_DELAY_MS,
+        );
+        await sleep(delay);
+      }
       const resuming = downloaded > 0;
-      const init: RequestInit = resuming
-        ? { headers: { Range: `bytes=${downloaded}-` } }
-        : {};
+      const init: RequestInit = {};
+      if (resuming) {
+        const headers: Record<string, string> = {
+          Range: `bytes=${downloaded}-`,
+        };
+        if (validator) headers["If-Range"] = validator;
+        init.headers = headers;
+      }
 
       let resp: Response;
       try {
@@ -1868,10 +1908,13 @@ export function createDefaultFetcher(
       }
 
       const isPartial = resp.status === 206;
-      if (resuming && !isPartial) {
-        // Server ignored the Range header and is sending the whole
-        // body again (200). Discard the prefix so we don't append a
-        // second full copy onto it.
+      if (!isPartial) {
+        // Full body (200): either the initial fetch, or a resume the
+        // server declined (Range/If-Range not honoured, or the resource
+        // changed). (Re)capture the validator for this content and
+        // discard any prefix so we never append a second full copy.
+        validator =
+          resp.headers.get("etag") ?? resp.headers.get("last-modified");
         downloaded = 0;
       }
 
@@ -1891,15 +1934,25 @@ export function createDefaultFetcher(
             : 0;
 
       if (!resp.body) throw new Error("Empty response body");
+      const body = resp.body;
 
       // Append when resuming a server-honoured range; otherwise
       // truncate-and-write. Open AFTER the status checks so a failed
       // open doesn't strand a locked response-body reader.
       const appendMode = isPartial && downloaded > 0;
-      const handle = await fsp.open(destPath, appendMode ? "a" : "w");
+      let handle: fsp.FileHandle;
+      try {
+        handle = await fsp.open(destPath, appendMode ? "a" : "w");
+      } catch (openErr) {
+        // A failed open (EACCES, ENOSPC, ...) is terminal. Cancel the
+        // body so undici frees the socket immediately instead of
+        // stranding it until GC, then surface the open error.
+        await body.cancel().catch(() => undefined);
+        throw openErr;
+      }
       let pumpError: unknown = null;
       try {
-        const reader = resp.body.getReader();
+        const reader = body.getReader();
         try {
           for (;;) {
             const { done, value } = await reader.read();
