@@ -404,6 +404,13 @@ export interface NativeBridge {
    *  (e.g. `"prd-v1"`). The bridge hashes the id via
    *  `TemplateId::from_string` to match the UUID5 stored on the trigger. */
   bridgeMatchingOnGenerateAutomations(templateId: string): AutomationInfo[];
+  /** Enabled `OnKchatMessageMatch` automations whose `channel_id` equals
+   *  `channelId` and whose `regex` matches `message`. Called from the
+   *  KChat event forwarder on every `posted` WebSocket event. */
+  bridgeMatchingKchatMessageAutomations(
+    channelId: string,
+    message: string,
+  ): AutomationInfo[];
   /** Persist a run result. `status` is rendered verbatim by the UI. */
   bridgeRecordAutomationRun(automationId: string, status: string): void;
   // --- Audit pass-throughs (the audit code) ---

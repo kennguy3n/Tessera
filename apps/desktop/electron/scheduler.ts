@@ -34,17 +34,25 @@ import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo
 const DEFAULT_TICK_MS = 30_000;
 
 interface AutomationTrigger {
-  kind: "schedule" | "on_generate";
+  kind: "schedule" | "on_generate" | "on_kchat_message_match";
   interval_seconds?: number;
   template_id?: string;
+  channel_id?: string;
+  regex?: string;
 }
 
 interface AutomationAction {
-  kind: "reindex_source" | "generate_from_template" | "backfill_kchat_channel";
+  kind:
+    | "reindex_source"
+    | "generate_from_template"
+    | "backfill_kchat_channel"
+    | "sequence";
   source_id?: string;
   template_id?: string;
   source_ids?: string[];
   channel_id?: string;
+  /** Present only for `kind === "sequence"`: the ordered sub-actions. */
+  actions?: AutomationAction[];
 }
 
 // Module-level state — there's exactly one scheduler per Electron main
@@ -250,6 +258,112 @@ export async function dispatchOnGenerate(
   }
 }
 
+/**
+ * Dispatch every `OnKchatMessageMatch` automation whose channel equals
+ * `channelId` and whose regex matches `message`. Called from the KChat
+ * event forwarder ({@link ./kchat/kchatEventForwarder}) on every
+ * `posted` WebSocket event.
+ *
+ * Mirrors {@link dispatchOnGenerate}: resolution failures are logged
+ * and swallowed (a malformed rule must not break KChat event handling),
+ * and each matching automation is run with per-step error isolation via
+ * {@link runAutomation}.
+ */
+export async function dispatchKchatMessage(
+  channelId: string,
+  message: string,
+  bridge: NativeBridge | null = getBridge(),
+): Promise<void> {
+  if (!bridge) return;
+  if (!channelId) return;
+  let matches: AutomationInfo[];
+  try {
+    matches = bridge.bridgeMatchingKchatMessageAutomations(channelId, message);
+  } catch (e) {
+    console.error(
+      `[scheduler] failed to resolve OnKchatMessageMatch automations for channel ${channelId}:`,
+      e,
+    );
+    return;
+  }
+  for (const a of matches) {
+    await runAutomation(bridge, a);
+  }
+}
+
+/**
+ * Flatten an action into the ordered list of leaf (non-`sequence`)
+ * actions to execute. Mirrors `AutomationAction::steps` on the Rust
+ * side: a `sequence` expands (recursively) into its children, anything
+ * else yields just itself. A `sequence` with no `actions` flattens to
+ * an empty list (a no-op automation).
+ */
+function flattenSteps(action: AutomationAction): AutomationAction[] {
+  if (action.kind === "sequence") {
+    return (action.actions ?? []).flatMap(flattenSteps);
+  }
+  return [action];
+}
+
+/**
+ * Execute a single leaf action against the bridge, throwing on failure.
+ * Multi-step orchestration and error aggregation lives in
+ * {@link runAutomation}; this only knows how to perform one action.
+ */
+async function executeLeafAction(
+  bridge: NativeBridge,
+  action: AutomationAction,
+): Promise<void> {
+  switch (action.kind) {
+    case "reindex_source": {
+      if (!action.source_id) {
+        throw new Error("reindex_source missing source_id");
+      }
+      bridge.bridgeReindexSource(action.source_id);
+      break;
+    }
+    case "generate_from_template": {
+      if (!action.template_id) {
+        throw new Error("generate_from_template missing template_id");
+      }
+      const sourceIds = action.source_ids ?? [];
+      bridge.bridgeGenerateFromTemplate(action.template_id, sourceIds);
+      break;
+    }
+    case "backfill_kchat_channel": {
+      if (!action.channel_id) {
+        throw new Error("backfill_kchat_channel missing channel_id");
+      }
+      const impl = getKchatBackfillImpl();
+      if (!impl) {
+        throw new Error(
+          "backfill_kchat_channel: KChat backfill not available (auth service not initialised)",
+        );
+      }
+      await impl(action.channel_id);
+      break;
+    }
+    case "sequence": {
+      // `runAutomation` flattens sequences before calling this, so a
+      // bare `sequence` reaching here means it was nested as a leaf —
+      // which `flattenSteps` would already have expanded. Treat it as a
+      // programmer error rather than silently no-op'ing.
+      throw new Error("sequence action must be flattened before execution");
+    }
+    default: {
+      // The Rust bridge's serde deserialization should have rejected
+      // any unknown variant at write time, so this branch is mostly
+      // defensive. Still — record the failure so a future schema
+      // addition that lands on the Rust side without a TS update
+      // surfaces visibly in the UI rather than being silently
+      // dropped.
+      throw new Error(
+        `unknown automation action kind: ${(action as { kind?: string }).kind ?? "(missing)"}`,
+      );
+    }
+  }
+}
+
 async function runAutomation(
   bridge: NativeBridge,
   a: AutomationInfo,
@@ -257,48 +371,44 @@ async function runAutomation(
   let status = "ok";
   try {
     const action = parseAction(a.actionJson);
-    switch (action.kind) {
-      case "reindex_source": {
-        if (!action.source_id) {
-          throw new Error("reindex_source missing source_id");
-        }
-        bridge.bridgeReindexSource(action.source_id);
-        break;
+    if (action.kind !== "sequence") {
+      // Single (non-sequence) action: preserve the original
+      // `failed: <msg>` status shape so a one-shot automation reads the
+      // same as it always has.
+      try {
+        await executeLeafAction(bridge, action);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        status = `failed: ${msg}`;
+        console.error(`[scheduler] automation ${a.id} (${a.name}) failed:`, e);
       }
-      case "generate_from_template": {
-        if (!action.template_id) {
-          throw new Error("generate_from_template missing template_id");
-        }
-        const sourceIds = action.source_ids ?? [];
-        bridge.bridgeGenerateFromTemplate(action.template_id, sourceIds);
-        break;
-      }
-      case "backfill_kchat_channel": {
-        if (!action.channel_id) {
-          throw new Error("backfill_kchat_channel missing channel_id");
-        }
-        const impl = getKchatBackfillImpl();
-        if (!impl) {
-          throw new Error(
-            "backfill_kchat_channel: KChat backfill not available (auth service not initialised)",
+    } else {
+      // A multi-step `sequence` runs each leaf step independently: a
+      // failing step is recorded but does NOT abort the remaining steps.
+      // This mirrors `run_action_sequence` / `SequenceReport` on the Rust
+      // side, including the aggregated status-string format so the UI
+      // renders the same shape regardless of which side computed it.
+      const steps = flattenSteps(action);
+      const failures: string[] = [];
+      for (let i = 0; i < steps.length; i++) {
+        try {
+          await executeLeafAction(bridge, steps[i]);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          failures.push(`step ${i + 1}: ${msg}`);
+          console.error(
+            `[scheduler] automation ${a.id} (${a.name}) step ${i + 1} failed:`,
+            e,
           );
         }
-        await impl(action.channel_id);
-        break;
       }
-      default: {
-        // The Rust bridge's serde deserialization should have rejected
-        // any unknown variant at write time, so this branch is mostly
-        // defensive. Still — record the failure so a future schema
-        // addition that lands on the Rust side without a TS update
-        // surfaces visibly in the UI rather than being silently
-        // dropped.
-        throw new Error(
-          `unknown automation action kind: ${(action as { kind?: string }).kind ?? "(missing)"}`,
-        );
+      if (failures.length > 0) {
+        status = `failed: ${failures.length}/${steps.length} steps failed: ${failures.join("; ")}`;
       }
     }
   } catch (e) {
+    // Reaching here means parsing the action JSON itself failed (the
+    // per-step loop above already isolates execution errors).
     const msg = e instanceof Error ? e.message : String(e);
     status = `failed: ${msg}`;
     console.error(

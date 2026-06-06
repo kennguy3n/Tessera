@@ -11,7 +11,7 @@
 //! "open the source" affordances.
 
 use chrono::{DateTime, Utc};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
@@ -62,6 +62,14 @@ pub struct Task {
     /// UI can re-open the extraction context.
     #[serde(default)]
     pub extracted_item_id: Option<String>,
+    /// Ids of tasks this task depends on (must complete first). The
+    /// set forms a directed dependency graph used by the Gantt view
+    /// and by [`topological_sort`] to detect and reject cycles.
+    /// Edges that point at unknown task ids are tolerated (they are
+    /// simply ignored for ordering) so a dependency on a not-yet-
+    /// created or already-deleted task never wedges the board.
+    #[serde(default)]
+    pub depends_on: Vec<TaskId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -80,6 +88,7 @@ impl Task {
             due_date: None,
             source_id: None,
             extracted_item_id: None,
+            depends_on: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -99,6 +108,11 @@ pub struct TaskUpdate {
     pub position: Option<i64>,
     pub assignee: Option<Option<String>>,
     pub due_date: Option<Option<DateTime<Utc>>>,
+    /// Replace the dependency set. `None` preserves the existing
+    /// edges; `Some(vec)` overwrites them (pass an empty vec to clear
+    /// all dependencies). A set that would introduce a cycle is
+    /// rejected by [`TaskStore::update`].
+    pub depends_on: Option<Vec<TaskId>>,
 }
 
 pub struct TaskStore {
@@ -123,11 +137,9 @@ impl TaskStore {
     }
 
     fn init_schema(&self) -> Result<()> {
-        self.conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS tasks (
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL DEFAULT '',
@@ -144,12 +156,41 @@ impl TaskStore {
                 CREATE INDEX IF NOT EXISTS idx_tasks_status_position
                     ON tasks(status, position);
                 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source_id);",
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Forward-only `depends_on` migration. Databases created by
+        // earlier Tessera builds have a `tasks` table WITHOUT the
+        // `depends_on` column; the CREATE TABLE above is a no-op
+        // against them. SQLite has no `ADD COLUMN IF NOT EXISTS`, so
+        // we make this idempotent by querying `pragma_table_info`
+        // FIRST and only issuing the ALTER when the column is absent —
+        // the same structurally-robust pattern used in
+        // `tessera_sources::store`. The column stores a JSON array of
+        // task-id strings; legacy rows read as NULL and are
+        // interpreted as "no dependencies".
+        let has_depends_on: bool = conn
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?1",
+                params!["depends_on"],
+                |_| Ok(()),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .optional()
+            .map_err(|e| Error::Database(format!("table_info(tasks): {e}")))?
+            .is_some();
+        if !has_depends_on {
+            conn.execute("ALTER TABLE tasks ADD COLUMN depends_on TEXT", [])
+                .map_err(|e| Error::Database(format!("failed to add tasks.depends_on: {e}")))?;
+        }
         Ok(())
     }
 
     pub fn create(&self, task: &Task) -> Result<()> {
+        // Reject a create whose dependency edges would close a cycle
+        // with the tasks already in the store. Validated BEFORE the
+        // INSERT so a rejected create leaves the table untouched.
+        self.ensure_acyclic_with(task)?;
+        let depends_on_json = encode_depends_on(&task.depends_on)?;
         self.conn
             .lock()
             .expect("connection mutex poisoned")
@@ -157,8 +198,8 @@ impl TaskStore {
                 "INSERT INTO tasks (
                     id, title, description, status, priority, position,
                     assignee, due_date, source_id, extracted_item_id,
-                    created_at, updated_at
-                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                    depends_on, created_at, updated_at
+                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
                 params![
                     task.id.to_string(),
                     task.title,
@@ -170,6 +211,7 @@ impl TaskStore {
                     task.due_date.map(|d| d.to_rfc3339()),
                     task.source_id.map(|s| s.to_string()),
                     task.extracted_item_id,
+                    depends_on_json,
                     task.created_at.to_rfc3339(),
                     task.updated_at.to_rfc3339(),
                 ],
@@ -178,13 +220,35 @@ impl TaskStore {
         Ok(())
     }
 
+    /// Validate that adding/replacing `candidate` in the store would
+    /// keep the dependency graph acyclic. Builds the post-operation
+    /// task set (every existing task, with `candidate` substituted for
+    /// any same-id row or appended if new) and runs
+    /// [`topological_sort`], surfacing its cycle error verbatim.
+    fn ensure_acyclic_with(&self, candidate: &Task) -> Result<()> {
+        // Fast path: a task with no declared dependencies can never be
+        // the edge that introduces a cycle, so skip the full-table
+        // load entirely. (An existing task that *other* tasks depend
+        // on still can't form a cycle by losing its own out-edges.)
+        if candidate.depends_on.is_empty() {
+            return Ok(());
+        }
+        let mut tasks = self.list()?;
+        if let Some(existing) = tasks.iter_mut().find(|t| t.id == candidate.id) {
+            existing.depends_on.clone_from(&candidate.depends_on);
+        } else {
+            tasks.push(candidate.clone());
+        }
+        topological_sort(&tasks).map(|_| ())
+    }
+
     pub fn get(&self, id: &TaskId) -> Result<Option<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare(
                 "SELECT id, title, description, status, priority, position,
                         assignee, due_date, source_id, extracted_item_id,
-                        created_at, updated_at FROM tasks WHERE id = ?1",
+                        depends_on, created_at, updated_at FROM tasks WHERE id = ?1",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         let mut rows = stmt
@@ -207,7 +271,7 @@ impl TaskStore {
             .prepare(
                 "SELECT id, title, description, status, priority, position,
                         assignee, due_date, source_id, extracted_item_id,
-                        created_at, updated_at FROM tasks
+                        depends_on, created_at, updated_at FROM tasks
                  ORDER BY status, position ASC, created_at DESC",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -227,7 +291,7 @@ impl TaskStore {
             .prepare(
                 "SELECT id, title, description, status, priority, position,
                         assignee, due_date, source_id, extracted_item_id,
-                        created_at, updated_at FROM tasks
+                        depends_on, created_at, updated_at FROM tasks
                  WHERE status = ?1 ORDER BY position ASC, created_at DESC",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -253,15 +317,28 @@ impl TaskStore {
         let position = update.position.unwrap_or(existing.position);
         let assignee = update.assignee.unwrap_or(existing.assignee);
         let due_date = update.due_date.unwrap_or(existing.due_date);
+        let depends_on = update.depends_on.unwrap_or(existing.depends_on);
         let updated_at = Utc::now();
+
+        // Reject an update whose new dependency set would introduce a
+        // cycle, BEFORE writing, so a rejected update is a no-op. We
+        // build a candidate carrying the post-update edges and validate
+        // the whole graph.
+        let candidate = Task {
+            id: *id,
+            depends_on: depends_on.clone(),
+            ..Task::new(title.clone(), status, priority)
+        };
+        self.ensure_acyclic_with(&candidate)?;
+        let depends_on_json = encode_depends_on(&depends_on)?;
 
         self.conn
             .lock()
             .expect("connection mutex poisoned")
             .execute(
                 "UPDATE tasks SET title=?1, description=?2, status=?3, priority=?4,
-                        position=?5, assignee=?6, due_date=?7, updated_at=?8
-                 WHERE id=?9",
+                        position=?5, assignee=?6, due_date=?7, depends_on=?8, updated_at=?9
+                 WHERE id=?10",
                 params![
                     title,
                     description,
@@ -270,6 +347,7 @@ impl TaskStore {
                     position,
                     assignee,
                     due_date.map(|d| d.to_rfc3339()),
+                    depends_on_json,
                     updated_at.to_rfc3339(),
                     id.to_string(),
                 ],
@@ -286,6 +364,7 @@ impl TaskStore {
             due_date,
             source_id: existing.source_id,
             extracted_item_id: existing.extracted_item_id,
+            depends_on,
             created_at: existing.created_at,
             updated_at,
         })
@@ -393,9 +472,111 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         due_date: parse_opt_dt(row.get::<_, Option<String>>(7)?, 7)?,
         source_id,
         extracted_item_id: row.get(9)?,
-        created_at: parse_dt(&row.get::<_, String>(10)?, 10)?,
-        updated_at: parse_dt(&row.get::<_, String>(11)?, 11)?,
+        depends_on: decode_depends_on(row.get::<_, Option<String>>(10)?, 10)?,
+        created_at: parse_dt(&row.get::<_, String>(11)?, 11)?,
+        updated_at: parse_dt(&row.get::<_, String>(12)?, 12)?,
     })
+}
+
+/// Serialize a dependency set to the JSON-array text stored in the
+/// `tasks.depends_on` column. An empty set is stored as `NULL` (via the
+/// `None` returned here) so legacy rows and dependency-free tasks share
+/// the same on-disk representation.
+fn encode_depends_on(depends_on: &[TaskId]) -> Result<Option<String>> {
+    if depends_on.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(depends_on)
+        .map(Some)
+        .map_err(|e| Error::Database(format!("failed to encode depends_on: {e}")))
+}
+
+/// Parse the JSON-array text from the `tasks.depends_on` column back
+/// into a dependency set. `NULL` (legacy rows / no dependencies) and
+/// an empty/whitespace-only string both decode to an empty vec.
+fn decode_depends_on(raw: Option<String>, col: usize) -> rusqlite::Result<Vec<TaskId>> {
+    match raw {
+        None => Ok(Vec::new()),
+        Some(s) if s.trim().is_empty() => Ok(Vec::new()),
+        Some(s) => serde_json::from_str::<Vec<TaskId>>(&s).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                col,
+                rusqlite::types::Type::Text,
+                format!("bad depends_on JSON: {e}").into(),
+            )
+        }),
+    }
+}
+
+/// Compute a dependency-respecting (topological) ordering of `tasks`,
+/// returning [`Error::InvalidConfig`] if the `depends_on` edges contain
+/// a cycle. A returned id always appears AFTER every task it depends on
+/// (that is also present in `tasks`).
+///
+/// Implemented with Kahn's algorithm. Edges whose target id is not in
+/// `tasks` are ignored for ordering (see [`Task::depends_on`]); a task
+/// that lists itself as a dependency is therefore a 1-cycle and is
+/// rejected. The output ordering is deterministic for a given input:
+/// ties (independent tasks) are broken by ascending id string so the
+/// Gantt view renders stably across reloads.
+pub fn topological_sort(tasks: &[Task]) -> Result<Vec<TaskId>> {
+    use std::collections::{BTreeMap, HashMap, HashSet};
+
+    let present: HashSet<TaskId> = tasks.iter().map(|t| t.id).collect();
+    // `remaining_deps`: unresolved in-set dependency count per task.
+    // `dependents`: reverse edges (dependency -> tasks that need it).
+    let mut remaining_deps: HashMap<TaskId, usize> = HashMap::new();
+    let mut dependents: HashMap<TaskId, Vec<TaskId>> = HashMap::new();
+    for t in tasks {
+        remaining_deps.entry(t.id).or_insert(0);
+        for dep in &t.depends_on {
+            if present.contains(dep) {
+                *remaining_deps.entry(t.id).or_insert(0) += 1;
+                dependents.entry(*dep).or_default().push(t.id);
+            }
+        }
+    }
+
+    // Seed the ready frontier with every task that has no unresolved
+    // dependency. `TaskId` is not `Ord`, so we key the frontier by id
+    // string in a `BTreeMap` — that keeps it sorted (and the output
+    // deterministic) regardless of HashMap iteration order.
+    let mut ready: BTreeMap<String, TaskId> = remaining_deps
+        .iter()
+        .filter(|(_, &d)| d == 0)
+        .map(|(&id, _)| (id.to_string(), id))
+        .collect();
+
+    let mut order = Vec::with_capacity(tasks.len());
+    while let Some((key, id)) = ready.iter().next().map(|(k, &v)| (k.clone(), v)) {
+        ready.remove(&key);
+        order.push(id);
+        if let Some(children) = dependents.get(&id) {
+            for &child in children {
+                let count = remaining_deps
+                    .get_mut(&child)
+                    .expect("dependent recorded in remaining_deps");
+                *count -= 1;
+                if *count == 0 {
+                    ready.insert(child.to_string(), child);
+                }
+            }
+        }
+    }
+
+    if order.len() != present.len() {
+        let mut cyclic: Vec<String> = remaining_deps
+            .iter()
+            .filter(|(_, &d)| d > 0)
+            .map(|(id, _)| id.to_string())
+            .collect();
+        cyclic.sort();
+        return Err(Error::InvalidConfig(format!(
+            "task dependency cycle detected involving: {}",
+            cyclic.join(", ")
+        )));
+    }
+    Ok(order)
 }
 
 #[cfg(test)]
@@ -542,5 +723,161 @@ mod tests {
         a.create(&t).unwrap();
         let loaded = b.get(&t.id).unwrap().expect("task visible via clone");
         assert_eq!(loaded.title, "Shared task");
+    }
+
+    fn task_with_deps(title: &str, deps: Vec<TaskId>) -> Task {
+        let mut t = Task::new(title, TaskStatus::Todo, TaskPriority::Medium);
+        t.depends_on = deps;
+        t
+    }
+
+    #[test]
+    fn depends_on_round_trips_through_store() {
+        let s = store();
+        let a = Task::new("A", TaskStatus::Todo, TaskPriority::Low);
+        let b = Task::new("B", TaskStatus::Todo, TaskPriority::Low);
+        s.create(&a).unwrap();
+        s.create(&b).unwrap();
+        let c = task_with_deps("C", vec![a.id, b.id]);
+        s.create(&c).unwrap();
+
+        let loaded = s.get(&c.id).unwrap().expect("present");
+        assert_eq!(loaded.depends_on, vec![a.id, b.id]);
+
+        // A dependency-free task stores NULL and decodes to an empty vec.
+        let loaded_a = s.get(&a.id).unwrap().expect("present");
+        assert!(loaded_a.depends_on.is_empty());
+    }
+
+    #[test]
+    fn update_replaces_and_clears_depends_on() {
+        let s = store();
+        let a = Task::new("A", TaskStatus::Todo, TaskPriority::Low);
+        let b = Task::new("B", TaskStatus::Todo, TaskPriority::Low);
+        s.create(&a).unwrap();
+        s.create(&b).unwrap();
+        let c = task_with_deps("C", vec![a.id]);
+        s.create(&c).unwrap();
+
+        // Replace the dependency set.
+        let updated = s
+            .update(
+                &c.id,
+                TaskUpdate {
+                    depends_on: Some(vec![b.id]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.depends_on, vec![b.id]);
+        assert_eq!(s.get(&c.id).unwrap().unwrap().depends_on, vec![b.id]);
+
+        // `None` preserves the edges; `Some(vec![])` clears them.
+        let untouched = s
+            .update(
+                &c.id,
+                TaskUpdate {
+                    title: Some("C2".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(untouched.depends_on, vec![b.id]);
+        let cleared = s
+            .update(
+                &c.id,
+                TaskUpdate {
+                    depends_on: Some(vec![]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(cleared.depends_on.is_empty());
+    }
+
+    #[test]
+    fn topological_sort_accepts_dag_and_orders_deps_first() {
+        // a <- b <- c  and  a <- d  (b,d depend on a; c depends on b)
+        let a = Task::new("a", TaskStatus::Todo, TaskPriority::Low);
+        let b = task_with_deps("b", vec![a.id]);
+        let c = task_with_deps("c", vec![b.id]);
+        let d = task_with_deps("d", vec![a.id]);
+        let tasks = vec![c.clone(), d.clone(), b.clone(), a.clone()];
+
+        let order = topological_sort(&tasks).expect("DAG accepted");
+        assert_eq!(order.len(), 4);
+        let pos = |id: TaskId| order.iter().position(|&o| o == id).unwrap();
+        // Every dependency must come before its dependent.
+        assert!(pos(a.id) < pos(b.id));
+        assert!(pos(b.id) < pos(c.id));
+        assert!(pos(a.id) < pos(d.id));
+    }
+
+    #[test]
+    fn topological_sort_rejects_cycle() {
+        // a -> b -> c -> a
+        let mut a = Task::new("a", TaskStatus::Todo, TaskPriority::Low);
+        let mut b = Task::new("b", TaskStatus::Todo, TaskPriority::Low);
+        let mut c = Task::new("c", TaskStatus::Todo, TaskPriority::Low);
+        a.depends_on = vec![c.id];
+        b.depends_on = vec![a.id];
+        c.depends_on = vec![b.id];
+        let err = topological_sort(&[a, b, c]).expect_err("cycle must be rejected");
+        assert!(
+            format!("{err}").contains("cycle"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn topological_sort_rejects_self_dependency() {
+        let mut a = Task::new("a", TaskStatus::Todo, TaskPriority::Low);
+        a.depends_on = vec![a.id];
+        let err = topological_sort(&[a]).expect_err("self-cycle must be rejected");
+        assert!(format!("{err}").contains("cycle"));
+    }
+
+    #[test]
+    fn topological_sort_ignores_unknown_dependency_ids() {
+        // Depending on an id that isn't in the set is tolerated (the
+        // edge is dropped) so a dangling dependency never looks like a
+        // cycle.
+        let dangling = TaskId::new();
+        let a = task_with_deps("a", vec![dangling]);
+        let order = topological_sort(&[a.clone()]).expect("dangling dep tolerated");
+        assert_eq!(order, vec![a.id]);
+    }
+
+    #[test]
+    fn create_rejects_dependency_cycle() {
+        let s = store();
+        let a = Task::new("A", TaskStatus::Todo, TaskPriority::Low);
+        let b = task_with_deps("B", vec![a.id]);
+        s.create(&a).unwrap();
+        s.create(&b).unwrap();
+        // Making A depend on B closes the cycle A -> B -> A.
+        let err = s
+            .update(
+                &a.id,
+                TaskUpdate {
+                    depends_on: Some(vec![b.id]),
+                    ..Default::default()
+                },
+            )
+            .expect_err("cycle-closing update must be rejected");
+        assert!(format!("{err}").contains("cycle"));
+        // The rejected update must be a no-op: A still has no deps.
+        assert!(s.get(&a.id).unwrap().unwrap().depends_on.is_empty());
+    }
+
+    #[test]
+    fn create_accepts_valid_dag() {
+        let s = store();
+        let a = Task::new("A", TaskStatus::Todo, TaskPriority::Low);
+        s.create(&a).unwrap();
+        let b = task_with_deps("B", vec![a.id]);
+        // A valid DAG edge is accepted on create.
+        s.create(&b).expect("DAG create accepted");
+        assert_eq!(s.get(&b.id).unwrap().unwrap().depends_on, vec![a.id]);
     }
 }

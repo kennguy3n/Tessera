@@ -80,6 +80,8 @@ function formatTrigger(t: AutomationTrigger | null): string {
       return `Schedule: ${formatInterval(t.interval_seconds)}`;
     case "on_generate":
       return `On generate (template ${t.template_id.slice(0, 8)}…)`;
+    case "on_kchat_message_match":
+      return `On KChat message in ${t.channel_id.slice(0, 8)}… matching /${t.regex}/`;
   }
 }
 
@@ -90,6 +92,10 @@ function formatAction(a: AutomationAction | null): string {
       return `Reindex source ${a.source_id.slice(0, 8)}…`;
     case "generate_from_template":
       return `Generate from template ${a.template_id.slice(0, 8)}… using ${a.source_ids.length} source(s)`;
+    case "sequence":
+      return a.actions.length === 0
+        ? "Sequence (no steps)"
+        : `Sequence: ${a.actions.map(formatAction).join(" → ")}`;
   }
 }
 

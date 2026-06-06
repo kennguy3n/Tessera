@@ -28,6 +28,7 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   THEMES,
+  type AutomationAction,
 } from "../../shared/types";
 
 /** Hard upper bound shared with `./validate.ts:DEFAULT_MAX_STRING_LEN`. */
@@ -84,6 +85,10 @@ export const CreateTaskSchema = z.object({
   dueDate: NullableString.optional(),
   sourceId: NullableString.optional(),
   extractedItemId: NullableString.optional(),
+  // Dependency task ids (UUID strings). The bridge validates each id
+  // parses as a UUID and rejects dependency cycles; here we only bound
+  // the shape so a malformed payload can't reach the bridge.
+  dependsOn: z.array(NonEmptyString).max(10_000).optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskSchema>;
 
@@ -106,6 +111,9 @@ export const UpdateTaskSchema = z.object({
   //   string     -> set
   assignee: NullableString.optional(),
   dueDate: NullableString.optional(),
+  // `undefined` leaves dependencies unchanged; an array replaces the
+  // set (`[]` clears). The bridge rejects cycles.
+  dependsOn: z.array(NonEmptyString).max(10_000).optional(),
 });
 export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
 
@@ -127,19 +135,39 @@ export const AutomationTriggerSchema = z.discriminatedUnion("kind", [
     kind: z.literal("on_generate"),
     template_id: NonEmptyString,
   }),
+  z.object({
+    kind: z.literal("on_kchat_message_match"),
+    channel_id: NonEmptyString,
+    // Regex source string; the bridge compiles it (and rejects an
+    // invalid pattern) — we only bound the length here.
+    regex: NonEmptyString,
+  }),
 ]);
 
-export const AutomationActionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("reindex_source"),
-    source_id: NonEmptyString,
-  }),
-  z.object({
-    kind: z.literal("generate_from_template"),
-    template_id: NonEmptyString,
-    source_ids: z.array(NonEmptyString).max(10_000),
-  }),
-]);
+// `AutomationAction` is recursive: a `sequence` wraps an ordered list
+// of sub-actions (themselves possibly sequences). zod can't express a
+// recursive `discriminatedUnion` directly, so we tie the knot with
+// `z.lazy` and an explicit `z.ZodType<AutomationAction>` annotation.
+// Leaf actions still validate by their `kind` discriminator; the
+// nested-`actions` array is bounded to keep a pathological payload from
+// exhausting the stack at validation time.
+export const AutomationActionSchema: z.ZodType<AutomationAction> = z.lazy(() =>
+  z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("reindex_source"),
+      source_id: NonEmptyString,
+    }),
+    z.object({
+      kind: z.literal("generate_from_template"),
+      template_id: NonEmptyString,
+      source_ids: z.array(NonEmptyString).max(10_000),
+    }),
+    z.object({
+      kind: z.literal("sequence"),
+      actions: z.array(AutomationActionSchema).max(1_000),
+    }),
+  ]),
+);
 
 export const CreateAutomationSchema = z.object({
   name: NonEmptyString,

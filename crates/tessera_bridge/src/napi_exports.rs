@@ -2078,6 +2078,24 @@ pub fn bridge_matching_on_generate_automations(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Return enabled `OnKchatMessageMatch` automations whose channel
+/// equals `channel_id` and whose regex matches `message`. Called from
+/// the KChat event forwarder on every `posted` WebSocket event so the
+/// scheduler can dispatch the matching automations' actions.
+#[napi]
+pub fn bridge_matching_kchat_message_automations(
+    channel_id: String,
+    message: String,
+) -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::matching_kchat_message_automations(&store, &channel_id, &message)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 /// Persist the result of an automation run. `status` is rendered
 /// verbatim in the UI (e.g. `"ok"` or `"failed: <reason>"`). Updates
 /// `last_run_at = now()` so subsequent `bridge_due_scheduled_automations`
