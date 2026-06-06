@@ -58,6 +58,7 @@ import type {
   Fido2AssertionInput,
   Fido2RegistrationInput,
 } from "../../shared/types";
+import { getLogger } from "../logger";
 
 let tmpDir: string;
 
@@ -435,5 +436,71 @@ describe("FIDO2 lifecycle", () => {
     expect(hasFido2Set()).toBe(true);
     const result = verifyFido2Assertion(makeAssertion(key));
     expect(result.kind).toBe("success");
+  });
+
+  it("logs fido2_replaced (not fido2_registered) when overwriting a credential", async () => {
+    await setPin("abc123");
+    const infoSpy = vi.spyOn(getLogger(), "info");
+
+    register(makeEs256Key());
+    expect(infoSpy).toHaveBeenCalledWith(
+      "app_lock.fido2_registered",
+      expect.anything(),
+    );
+
+    infoSpy.mockClear();
+    // Swapping in a second key supersedes the first; the audit trail
+    // must record a swap rather than a fresh first-time registration.
+    register(makeEd25519Key());
+    expect(infoSpy).toHaveBeenCalledWith(
+      "app_lock.fido2_replaced",
+      expect.anything(),
+    );
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      "app_lock.fido2_registered",
+      expect.anything(),
+    );
+
+    infoSpy.mockRestore();
+  });
+});
+
+describe("FIDO2 challenge map is bounded", () => {
+  it("evicts the oldest pending challenge once the cap is exceeded", async () => {
+    await setPin("abc123");
+    const key = makeEs256Key();
+    // C0 is the oldest pending challenge.
+    const c0 = getFido2RegistrationOptions().challenge;
+    // Flood the (intentionally un-rate-limited) option channel. The
+    // cap is 256, so issuing 256 *more* challenges pushes C0 out.
+    for (let i = 0; i < 256; i++) getFido2RegistrationOptions();
+    // C0 has been evicted, so a registration quoting it is rejected
+    // exactly as an unknown/expired challenge would be.
+    expect(() =>
+      registerFido2({
+        credentialId: CREDENTIAL_ID,
+        publicKeySpki: key.publicKeySpki,
+        alg: key.alg,
+        clientDataJson: makeClientDataJson("webauthn.create", c0),
+      }),
+    ).toThrow(/client data failed validation/);
+  });
+
+  it("still honours a freshly-issued challenge under modest churn", async () => {
+    await setPin("abc123");
+    const key = makeEs256Key();
+    // A handful of in-flight challenges stays well under the cap, so
+    // the newest one is retained and registers successfully.
+    for (let i = 0; i < 10; i++) getFido2RegistrationOptions();
+    const fresh = getFido2RegistrationOptions().challenge;
+    expect(() =>
+      registerFido2({
+        credentialId: CREDENTIAL_ID,
+        publicKeySpki: key.publicKeySpki,
+        alg: key.alg,
+        clientDataJson: makeClientDataJson("webauthn.create", fresh),
+      }),
+    ).not.toThrow();
+    expect(hasFido2Set()).toBe(true);
   });
 });

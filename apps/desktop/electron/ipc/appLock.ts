@@ -419,6 +419,28 @@ export function registerAppLockHandlers(): void {
         );
       }
       clearFido2();
+      // Keep `appLockMode` coupled to the credential lifecycle, just
+      // like `appLock:removePin` does for the PIN. The user still has
+      // their PIN root, so dropping the convenience authenticator
+      // demotes the mode `"fido2"` -> `"pin"` rather than `"off"`.
+      // Without this, the next launch would see `appLockMode ===
+      // "fido2"` while `getFido2AssertionOptions()` returns `null`
+      // (no credential), an orphaned state that the `settings:update`
+      // guard only prevents on the way *in*, not when the credential
+      // is removed underneath the mode.
+      try {
+        const config = loadConfig();
+        if (config.appLockMode === "fido2") {
+          updateConfig({ appLockMode: "pin" });
+        }
+      } catch (err) {
+        // best-effort — the credential is already gone. Log so a
+        // support trail exists; worst case the renderer falls back to
+        // the PIN prompt, which is the correct behaviour anyway.
+        getLogger().warn("app_lock.fido2_mode_reset_on_remove_failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
   );
 }

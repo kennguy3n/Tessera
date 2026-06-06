@@ -716,6 +716,20 @@ const FIDO2_FLAG_USER_PRESENT = 0x01;
  */
 const pendingFido2Challenges = new Map<string, number>();
 
+/**
+ * Hard cap on the number of concurrently-pending challenges. The
+ * option endpoints that mint challenges are intentionally NOT
+ * rate-limited (they feed an interactive ceremony), and TTL eviction
+ * only fires when the *next* challenge is issued — so a compromised
+ * renderer spinning the option channels could otherwise grow this map
+ * without bound within a single TTL window. A single local user only
+ * ever has one ceremony in flight, so a cap this large is orders of
+ * magnitude above any legitimate use; on overflow we drop the oldest
+ * (insertion-ordered) entries first, which at worst forces an
+ * abandoned ceremony to request a fresh challenge.
+ */
+const FIDO2_MAX_PENDING_CHALLENGES = 256;
+
 /** base64url-encode without padding (WebAuthn wire format). */
 function base64UrlEncode(buf: Buffer): string {
   return buf
@@ -743,6 +757,15 @@ function rpIdHashB64(): string {
 function issueChallenge(now: number = Date.now()): string {
   for (const [key, expiry] of pendingFido2Challenges) {
     if (expiry <= now) pendingFido2Challenges.delete(key);
+  }
+  // Bound the map even when nothing has expired yet: evict oldest
+  // first (Map iterates in insertion order) until there is room for
+  // the new entry. Guards against a renderer hammering the
+  // un-rate-limited option channels inside a single TTL window.
+  while (pendingFido2Challenges.size >= FIDO2_MAX_PENDING_CHALLENGES) {
+    const oldest = pendingFido2Challenges.keys().next().value;
+    if (oldest === undefined) break;
+    pendingFido2Challenges.delete(oldest);
   }
   const challenge = base64UrlEncode(crypto.randomBytes(32));
   pendingFido2Challenges.set(challenge, now + FIDO2_CHALLENGE_TTL_MS);
@@ -861,6 +884,12 @@ export function registerFido2(input: Fido2RegistrationInput): void {
       }`,
     );
   }
+  // Registering over an existing credential silently supersedes it
+  // (the user is intentionally swapping security keys). Emit a
+  // distinct event in that case so the audit trail records a swap
+  // rather than a first-time registration — useful when reconstructing
+  // who/what changed the unlock factor.
+  const replacing = persisted.fido2 !== null;
   persisted.fido2 = {
     version: 1,
     credentialId: input.credentialId,
@@ -870,7 +899,10 @@ export function registerFido2(input: Fido2RegistrationInput): void {
     createdAt: Date.now(),
   };
   writePersisted(persisted);
-  getLogger().info("app_lock.fido2_registered", { alg: input.alg });
+  getLogger().info(
+    replacing ? "app_lock.fido2_replaced" : "app_lock.fido2_registered",
+    { alg: input.alg },
+  );
 }
 
 /**
