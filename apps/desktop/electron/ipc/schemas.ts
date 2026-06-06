@@ -37,6 +37,22 @@ const NonEmptyString = z.string().min(1).max(MAX_STRING_LEN);
 const OptionalString = z.string().max(MAX_STRING_LEN).optional();
 const NullableString = z.string().max(MAX_STRING_LEN).nullable();
 
+// --- Diagnostics ---
+
+// Renderer crash reports forwarded by the React error boundaries. The
+// fields are coerced again in `crashReport.ts:normalizeCrashReport`, so
+// this schema is intentionally permissive (every field optional) — it
+// rejects only grossly malformed (non-object) payloads while letting a
+// partial report through to be defaulted and recorded. No matching
+// `z.infer` type is exported because the wire shape already lives in
+// `shared/types.ts` as `RendererCrashReport`.
+export const RendererCrashReportSchema = z.object({
+  component: z.string().max(MAX_STRING_LEN).optional(),
+  error: z.string().max(MAX_STRING_LEN).optional(),
+  stack: z.string().max(MAX_STRING_LEN).optional(),
+  timestamp: z.string().max(MAX_STRING_LEN).optional(),
+});
+
 // --- Citations ---
 
 export const AddCitationSchema = z.object({

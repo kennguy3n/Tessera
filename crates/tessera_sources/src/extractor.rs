@@ -96,6 +96,7 @@ pub fn extract_files_parallel(paths: &[PathBuf]) -> Vec<(PathBuf, Result<String>
     })
 }
 
+/// Extract text.
 pub fn extract_text(path: &Path) -> Result<String> {
     let ext = path
         .extension()
@@ -119,6 +120,7 @@ pub fn extract_text(path: &Path) -> Result<String> {
     }
 }
 
+/// Is supported extension.
 pub fn is_supported_extension(ext: &str) -> bool {
     let lower = ext.to_lowercase();
     matches!(

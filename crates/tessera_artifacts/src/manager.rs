@@ -11,6 +11,7 @@ use crate::store::{ArtifactStore, ArtifactVersion};
 /// Minimum interval between automatic version snapshots for the same artifact.
 const VERSION_RATE_LIMIT_SECS: u64 = 60;
 
+/// Artifact Manager.
 pub struct ArtifactManager {
     store: ArtifactStore,
     /// Tracks the last time a version was auto-saved per artifact for rate limiting.
@@ -18,6 +19,7 @@ pub struct ArtifactManager {
 }
 
 impl ArtifactManager {
+    /// Creates a new instance.
     pub fn new(db_path: &str) -> Result<Self> {
         let store = ArtifactStore::open(db_path)?;
         Ok(Self {
@@ -26,6 +28,7 @@ impl ArtifactManager {
         })
     }
 
+    /// New in memory.
     pub fn new_in_memory() -> Result<Self> {
         let store = ArtifactStore::open_in_memory()?;
         Ok(Self {
@@ -44,6 +47,7 @@ impl ArtifactManager {
         })
     }
 
+    /// Create.
     pub fn create(
         &self,
         title: String,
@@ -55,6 +59,7 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
+    /// Update content.
     pub fn update_content(&self, id: &ArtifactId, content: String) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
 
@@ -85,6 +90,7 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
+    /// Add citation.
     pub fn add_citation(&self, id: &ArtifactId, citation_id: CitationId) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
         artifact.add_citation(citation_id);
@@ -92,22 +98,27 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
+    /// Get.
     pub fn get(&self, id: &ArtifactId) -> Result<Artifact> {
         self.store.get(id)
     }
 
+    /// List.
     pub fn list(&self) -> Result<Vec<Artifact>> {
         self.store.list()
     }
 
+    /// Delete.
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
         self.store.delete(id)
     }
 
+    /// List versions.
     pub fn list_versions(&self, id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
         self.store.list_versions(id)
     }
 
+    /// Restore version.
     pub fn restore_version(&self, id: &ArtifactId, version_number: u32) -> Result<Artifact> {
         let version = self.store.get_version(id, version_number)?;
         // Force a version save before restoring, bypassing rate limit

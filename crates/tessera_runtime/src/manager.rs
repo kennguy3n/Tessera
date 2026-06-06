@@ -10,21 +10,29 @@ use crate::config::{
 };
 
 #[derive(thiserror::Error, Debug)]
+/// Runtime Error.
 pub enum RuntimeError {
     #[error("Model not found: {0}")]
+    /// Model not found.
     ModelNotFound(String),
     #[error("Binary not found at: {0}")]
+    /// Binary not found at.
     BinaryNotFound(String),
     #[error("Failed to start sidecar: {0}")]
+    /// Failed to start sidecar.
     StartFailed(String),
     #[error("Runtime not running")]
+    /// Runtime not running.
     NotRunning,
     #[error("IO error: {0}")]
+    /// IO error.
     Io(#[from] std::io::Error),
 }
 
+/// Result type alias.
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
+/// Runtime Manager.
 pub struct RuntimeManager {
     config: RuntimeConfig,
     state: Mutex<ManagedState>,
@@ -38,6 +46,7 @@ struct ManagedState {
 }
 
 impl RuntimeManager {
+    /// Creates a new instance.
     pub fn new(config: RuntimeConfig) -> Self {
         Self {
             config,
@@ -50,6 +59,7 @@ impl RuntimeManager {
         }
     }
 
+    /// Detect device tier.
     pub fn detect_device_tier() -> DeviceTier {
         let total_ram = sys_total_ram_gb();
         if total_ram >= 8.0 {
@@ -89,14 +99,17 @@ impl RuntimeManager {
         select_model_fn(tier, platform, capability)
     }
 
+    /// List available models.
     pub fn list_available_models() -> Vec<ModelInfo> {
         available_models_for_platform(detect_platform())
     }
 
+    /// List available models for platform.
     pub fn list_available_models_for_platform(platform: Platform) -> Vec<ModelInfo> {
         available_models_for_platform(platform)
     }
 
+    /// Start.
     pub async fn start(&self, model_path: &str) -> Result<()> {
         let mut state = self.state.lock().await;
 
@@ -147,6 +160,7 @@ impl RuntimeManager {
         Ok(())
     }
 
+    /// Stop.
     pub async fn stop(&self) -> Result<()> {
         let mut state = self.state.lock().await;
 
@@ -161,6 +175,7 @@ impl RuntimeManager {
         Ok(())
     }
 
+    /// Get status.
     pub async fn get_status(&self) -> RuntimeState {
         let state = self.state.lock().await;
         RuntimeState {
@@ -173,22 +188,26 @@ impl RuntimeManager {
         }
     }
 
+    /// Mark running.
     pub async fn mark_running(&self) {
         let mut state = self.state.lock().await;
         state.status = RuntimeStatus::Running;
         state.last_activity = Some(Instant::now());
     }
 
+    /// Mark error.
     pub async fn mark_error(&self) {
         let mut state = self.state.lock().await;
         state.status = RuntimeStatus::Error;
     }
 
+    /// Touch activity.
     pub async fn touch_activity(&self) {
         let mut state = self.state.lock().await;
         state.last_activity = Some(Instant::now());
     }
 
+    /// Check idle timeout.
     pub async fn check_idle_timeout(&self) -> bool {
         let state = self.state.lock().await;
         if state.status != RuntimeStatus::Running {
@@ -201,11 +220,13 @@ impl RuntimeManager {
         }
     }
 
+    /// Endpoint.
     pub fn endpoint(&self) -> String {
         format!("http://{}:{}", self.config.host, self.config.port)
     }
 }
 
+/// Sys total ram gb.
 pub fn sys_total_ram_gb() -> f64 {
     #[cfg(target_os = "linux")]
     {

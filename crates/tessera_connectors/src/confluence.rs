@@ -37,6 +37,7 @@ use crate::url_encode;
 const DEFAULT_AUTH_BASE: &str = "https://auth.atlassian.com";
 const DEFAULT_API_BASE: &str = "https://api.atlassian.com";
 
+/// Confluence Connector.
 pub struct ConfluenceConnector {
     client: Client,
     status: ConnectorStatus,
@@ -54,6 +55,7 @@ pub struct ConfluenceConnector {
 }
 
 impl ConfluenceConnector {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -72,6 +74,7 @@ impl ConfluenceConnector {
         }
     }
 
+    /// With base url.
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
             client: Client::new(),
@@ -90,6 +93,7 @@ impl ConfluenceConnector {
         }
     }
 
+    /// Set access token.
     pub fn set_access_token(&mut self, token: &str, expires_in_secs: i64, cloud_id: &str) {
         self.access_token = Some(token.to_string());
         self.token_expiry = Some(Utc::now() + chrono::Duration::seconds(expires_in_secs));
@@ -97,25 +101,32 @@ impl ConfluenceConnector {
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Provider name.
     pub fn provider_name(&self) -> &'static str {
         "confluence"
     }
+    /// Status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
+    /// Last sync time.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
+    /// File count.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }
+    /// Cloud id.
     pub fn cloud_id(&self) -> Option<&str> {
         self.cloud_id.as_deref()
     }
+    /// Site url.
     pub fn site_url(&self) -> Option<&str> {
         self.site_url.as_deref()
     }
 
+    /// Build auth url.
     pub fn build_auth_url(&self, config: &AuthConfig) -> String {
         let mut scopes: Vec<String> = config.scopes.clone();
         for required in [
@@ -138,6 +149,7 @@ impl ConfluenceConnector {
         )
     }
 
+    /// Authenticate.
     pub async fn authenticate(&mut self, config: &AuthConfig) -> ConnectorResult<StoredTokens> {
         self.status = ConnectorStatus::Connecting;
         self.client_id = Some(config.client_id.clone());
@@ -198,6 +210,7 @@ impl ConfluenceConnector {
         })
     }
 
+    /// Restore tokens.
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
@@ -213,6 +226,7 @@ impl ConfluenceConnector {
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Refresh access token.
     pub async fn refresh_access_token(&mut self) -> ConnectorResult<StoredTokens> {
         let refresh_token = self
             .refresh_token
@@ -288,6 +302,7 @@ impl ConfluenceConnector {
             .ok_or(ConnectorError::TokenExpired)
     }
 
+    /// List accessible resources.
     pub async fn list_accessible_resources(
         &self,
         access_token: &str,
@@ -451,6 +466,7 @@ impl ConfluenceConnector {
         Ok(body.into_bytes())
     }
 
+    /// Sync changes.
     pub async fn sync_changes(
         &mut self,
         change_token: Option<&str>,
@@ -647,12 +663,17 @@ struct AtlassianTokenResponse {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+/// Atlassian Resource.
 pub struct AtlassianResource {
+    /// Id.
     pub id: String,
+    /// Url.
     pub url: String,
     #[serde(default)]
+    /// Name.
     pub name: Option<String>,
     #[serde(default)]
+    /// Scopes.
     pub scopes: Option<Vec<String>>,
 }
 

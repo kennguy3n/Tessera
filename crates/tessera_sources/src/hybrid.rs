@@ -127,6 +127,7 @@ mod halflife_serde {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Hybrid Search Config.
 pub struct HybridSearchConfig {
     /// Weight applied to the BM25 ranking in RRF. Default 1.0.
     pub bm25_weight: f64,
@@ -139,7 +140,7 @@ pub struct HybridSearchConfig {
     /// Recency half-life in seconds. Default 30 days. Set to
     /// `f64::INFINITY` to disable recency decay (multiplier = 1.0
     /// for all chunks). On the JSON wire this is represented as
-    /// `null`; see [`halflife_serde`] for the round-trip contract.
+    /// `null`; see `halflife_serde` for the round-trip contract.
     #[serde(with = "halflife_serde")]
     pub recency_halflife_secs: f64,
     /// How many candidates to retrieve from each individual ranking
@@ -163,7 +164,7 @@ impl Default for HybridSearchConfig {
 }
 
 /// Partial-update payload accepted by
-/// [`SourceManager::update_hybrid_config`]. Fields that are `None`
+/// `SourceManager::update_hybrid_config`. Fields that are `None`
 /// keep their existing value; fields that are `Some` are validated
 /// (see [`HybridSearchConfig::apply_patch`]) and applied atomically.
 ///
@@ -175,10 +176,15 @@ impl Default for HybridSearchConfig {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct HybridSearchConfigInput {
+    /// Bm25 weight.
     pub bm25_weight: Option<f64>,
+    /// Vector weight.
     pub vector_weight: Option<f64>,
+    /// Rrf k.
     pub rrf_k: Option<f64>,
+    /// Recency halflife secs.
     pub recency_halflife_secs: Option<f64>,
+    /// Candidate pool size.
     pub candidate_pool_size: Option<usize>,
 }
 
@@ -282,7 +288,9 @@ impl HybridSearchConfig {
 /// by each individual signal (BM25, vector) before RRF.
 #[derive(Debug, Clone)]
 pub struct RankedCandidate {
+    /// Chunk id.
     pub chunk_id: i64,
+    /// Rank.
     pub rank: usize,
 }
 
@@ -291,9 +299,13 @@ pub struct RankedCandidate {
 /// `fuse_rankings` instead.
 #[derive(Debug, Default, Clone)]
 pub struct FusedScore {
+    /// Chunk id.
     pub chunk_id: i64,
+    /// Rrf score.
     pub rrf_score: f64,
+    /// Recency multiplier.
     pub recency_multiplier: f64,
+    /// Final score.
     pub final_score: f64,
 }
 

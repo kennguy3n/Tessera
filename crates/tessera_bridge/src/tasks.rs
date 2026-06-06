@@ -9,18 +9,31 @@ use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
+/// Task Info.
 pub struct TaskInfo {
+    /// Id.
     pub id: String,
+    /// Title.
     pub title: String,
+    /// Description.
     pub description: String,
+    /// Status.
     pub status: String,
+    /// Priority.
     pub priority: String,
+    /// Position.
     pub position: i64,
+    /// Assignee.
     pub assignee: Option<String>,
+    /// Due date.
     pub due_date: Option<String>,
+    /// Source id.
     pub source_id: Option<String>,
+    /// Extracted item id.
     pub extracted_item_id: Option<String>,
+    /// Created at.
     pub created_at: String,
+    /// Updated at.
     pub updated_at: String,
 }
 
@@ -44,21 +57,30 @@ impl From<Task> for TaskInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Create Task Request.
 pub struct CreateTaskRequest {
+    /// Title.
     pub title: String,
     #[serde(default)]
+    /// Description.
     pub description: String,
     #[serde(default = "default_status")]
+    /// Status.
     pub status: String,
     #[serde(default = "default_priority")]
+    /// Priority.
     pub priority: String,
     #[serde(default)]
+    /// Assignee.
     pub assignee: Option<String>,
     #[serde(default)]
+    /// Due date.
     pub due_date: Option<String>,
     #[serde(default)]
+    /// Source id.
     pub source_id: Option<String>,
     #[serde(default)]
+    /// Extracted item id.
     pub extracted_item_id: Option<String>,
 }
 
@@ -89,17 +111,24 @@ impl Default for CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Update Task Request.
 pub struct UpdateTaskRequest {
+    /// Title.
     pub title: Option<String>,
+    /// Description.
     pub description: Option<String>,
+    /// Status.
     pub status: Option<String>,
+    /// Priority.
     pub priority: Option<String>,
+    /// Position.
     pub position: Option<i64>,
     /// `Some(Some("x"))` sets assignee="x", `Some(None)` clears,
     /// `None` leaves unchanged.
     #[serde(default)]
     pub assignee: Option<Option<String>>,
     #[serde(default)]
+    /// Due date.
     pub due_date: Option<Option<String>>,
 }
 
@@ -164,6 +193,7 @@ fn parse_opt_source_id(s: Option<&str>) -> Result<Option<SourceId>> {
     }
 }
 
+/// Create task.
 pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo> {
     let mut t = Task::new(
         req.title,
@@ -179,15 +209,18 @@ pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo
     Ok(t.into())
 }
 
+/// List tasks.
 pub fn list_tasks(store: &TaskStore) -> Result<Vec<TaskInfo>> {
     Ok(store.list()?.into_iter().map(Into::into).collect())
 }
 
+/// Get task.
 pub fn get_task(store: &TaskStore, id: &str) -> Result<Option<TaskInfo>> {
     let tid = parse_task_id(id)?;
     Ok(store.get(&tid)?.map(Into::into))
 }
 
+/// Update task.
 pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Result<TaskInfo> {
     let tid = parse_task_id(id)?;
     // `req.due_date` distinguishes three states:
@@ -213,11 +246,13 @@ pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Resul
     Ok(store.update(&tid, update)?.into())
 }
 
+/// Delete task.
 pub fn delete_task(store: &TaskStore, id: &str) -> Result<bool> {
     let tid = parse_task_id(id)?;
     store.delete(&tid)
 }
 
+/// Reorder tasks.
 pub fn reorder_tasks(store: &TaskStore, status: &str, ids: &[String]) -> Result<()> {
     let parsed: Vec<TaskId> = ids
         .iter()

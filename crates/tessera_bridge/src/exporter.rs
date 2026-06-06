@@ -10,8 +10,11 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Export Result.
 pub struct ExportResult {
+    /// Content.
     pub content: String,
+    /// Format.
     pub format: String,
 }
 

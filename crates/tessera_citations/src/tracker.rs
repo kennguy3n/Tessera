@@ -12,26 +12,37 @@ use crate::store::CitationStore;
 /// preserved automatically.
 #[derive(Debug, Clone)]
 pub struct CitationReplacement {
+    /// Source id.
     pub source_id: SourceId,
+    /// Source type.
     pub source_type: SourceType,
+    /// Source title.
     pub source_title: String,
+    /// Source uri.
     pub source_uri: String,
+    /// Chunk hash.
     pub chunk_hash: String,
+    /// Source file hash.
     pub source_file_hash: String,
+    /// Page.
     pub page: Option<u32>,
+    /// Confidence.
     pub confidence: f64,
 }
 
+/// Citation Tracker.
 pub struct CitationTracker {
     store: CitationStore,
 }
 
 impl CitationTracker {
+    /// Creates a new instance.
     pub fn new(db_path: &str) -> Result<Self> {
         let store = CitationStore::open(db_path)?;
         Ok(Self { store })
     }
 
+    /// New in memory.
     pub fn new_in_memory() -> Result<Self> {
         let store = CitationStore::open_in_memory()?;
         Ok(Self { store })
@@ -44,24 +55,29 @@ impl CitationTracker {
         Ok(Self { store })
     }
 
+    /// Add.
     pub fn add(&mut self, artifact_id: ArtifactId, citation: Citation) -> Result<CitationId> {
         let id = citation.citation_id;
         self.store.insert(&artifact_id, &citation)?;
         Ok(id)
     }
 
+    /// Remove.
     pub fn remove(&mut self, _artifact_id: &ArtifactId, citation_id: &CitationId) -> Result<()> {
         self.store.remove(citation_id)
     }
 
+    /// Get.
     pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
         self.store.get(citation_id)
     }
 
+    /// List for artifact.
     pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Result<Vec<Citation>> {
         self.store.list_for_artifact(artifact_id)
     }
 
+    /// Check source changed.
     pub fn check_source_changed(
         &self,
         citation_id: &CitationId,
@@ -150,6 +166,7 @@ impl CitationTracker {
         Ok(updated)
     }
 
+    /// Count.
     pub fn count(&self) -> Result<usize> {
         self.store.count()
     }

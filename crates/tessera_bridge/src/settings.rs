@@ -3,6 +3,7 @@ use tessera_core::config::TesseraConfig;
 
 use crate::{BridgeError, BridgeResult};
 
+/// Get settings.
 pub fn get_settings(config_path: &str) -> BridgeResult<String> {
     let path = Path::new(config_path);
     let config = if path.exists() {
@@ -13,6 +14,7 @@ pub fn get_settings(config_path: &str) -> BridgeResult<String> {
     serde_json::to_string(&config).map_err(|e| BridgeError::Serialization(e.to_string()))
 }
 
+/// Update settings.
 pub fn update_settings(config_path: &str, settings_json: &str) -> BridgeResult<()> {
     let config: TesseraConfig =
         serde_json::from_str(settings_json).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;

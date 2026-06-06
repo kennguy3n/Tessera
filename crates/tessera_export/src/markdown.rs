@@ -4,6 +4,7 @@ use tessera_citations::citation::Citation;
 
 use crate::mermaid;
 
+/// Export markdown.
 pub fn export_markdown(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 

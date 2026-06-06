@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import ErrorBoundary from "../components/ErrorBoundary";
 import Breadcrumb from "../components/Breadcrumb";
 import Button from "../components/Button";
 import Card from "../components/Card";
@@ -720,41 +727,57 @@ function EditorSwitch({
   onSave: (content: string) => void;
   onDraftChange: (content: string) => void;
 }) {
+  // Each editor renders inside its own named error boundary so a crash
+  // in one editor surfaces the recovery UI (and writes a
+  // `crash-report.json` entry tagged with the editor name) without
+  // tearing down the surrounding ArtifactEditorPage chrome (header,
+  // export controls, breadcrumb).
+  let name: string;
+  let editor: ReactNode;
   switch (artifact.artifactType) {
     case "document":
-      return (
+      name = "DocumentEditor";
+      editor = (
         <DocumentEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "slides":
-      return (
+      name = "SlideEditor";
+      editor = (
         <SlideEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "sheet":
-      return (
+      name = "SheetEditor";
+      editor = (
         <SheetEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "base":
-      return (
+      name = "BaseEditor";
+      editor = (
         <BaseEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "infographic":
-      return (
+      name = "InfographicEditor";
+      editor = (
         <InfographicEditor
           content={artifact.content}
           onSave={onSave}
@@ -762,8 +785,10 @@ function EditorSwitch({
           artifactId={artifact.id}
         />
       );
+      break;
     case "landing_page":
-      return (
+      name = "LandingPageEditor";
+      editor = (
         <LandingPageEditor
           content={artifact.content}
           onSave={onSave}
@@ -771,6 +796,7 @@ function EditorSwitch({
           artifactId={artifact.id}
         />
       );
+      break;
     default:
       return (
         <Card>
@@ -778,4 +804,6 @@ function EditorSwitch({
         </Card>
       );
   }
+
+  return <ErrorBoundary name={name}>{editor}</ErrorBoundary>;
 }

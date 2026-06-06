@@ -2,6 +2,7 @@ use tessera_core::error::{Error, Result};
 
 use crate::template::Template;
 
+/// Validate template.
 pub fn validate_template(template: &Template) -> Result<()> {
     if template.id.is_empty() {
         return Err(Error::TemplateValidation(

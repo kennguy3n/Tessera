@@ -20,34 +20,55 @@ const DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE: usize = 64;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Source Info.
 pub struct SourceInfo {
+    /// Id.
     pub id: String,
+    /// Source type.
     pub source_type: String,
+    /// Path.
     pub path: String,
+    /// Status.
     pub status: String,
+    /// Created at.
     pub created_at: String,
+    /// Last indexed.
     pub last_indexed: Option<String>,
+    /// File count.
     pub file_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Search Hit Info.
 pub struct SearchHitInfo {
+    /// Content.
     pub content: String,
+    /// Excerpt.
     pub excerpt: String,
+    /// Source path.
     pub source_path: String,
+    /// Source id.
     pub source_id: String,
+    /// Chunk hash.
     pub chunk_hash: String,
+    /// Chunk index.
     pub chunk_index: i32,
+    /// Relevance.
     pub relevance: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Indexed File Info.
 pub struct IndexedFileInfo {
+    /// Path.
     pub path: String,
+    /// Hash.
     pub hash: String,
+    /// Last modified.
     pub last_modified: String,
+    /// Chunk count.
     pub chunk_count: i32,
 }
 
@@ -77,26 +98,43 @@ pub struct IndexedFileInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatPostSearchHitInfo {
+    /// Content.
     pub content: String,
+    /// Excerpt.
     pub excerpt: String,
+    /// Source path.
     pub source_path: String,
+    /// Source id.
     pub source_id: String,
+    /// Chunk hash.
     pub chunk_hash: String,
+    /// Chunk index.
     pub chunk_index: i32,
+    /// Byte offset.
     pub byte_offset: i32,
+    /// Relevance.
     pub relevance: f64,
+    /// Post id.
     pub post_id: String,
+    /// Channel id.
     pub channel_id: String,
+    /// Root id.
     pub root_id: Option<String>,
+    /// Sender user id.
     pub sender_user_id: String,
+    /// Created at ms.
     pub created_at_ms: i64,
+    /// Edited at ms.
     pub edited_at_ms: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Source Detail Info.
 pub struct SourceDetailInfo {
+    /// Source.
     pub source: SourceInfo,
+    /// Files.
     pub files: Vec<IndexedFileInfo>,
 }
 
@@ -111,7 +149,9 @@ pub struct SourceDetailInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatChannelAddOutcomeInfo {
+    /// Source.
     pub source: SourceInfo,
+    /// Newly created.
     pub newly_created: bool,
 }
 
@@ -180,12 +220,19 @@ impl From<&KchatPostSearchHit> for KchatPostSearchHitInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatThreadContextMessageInfo {
+    /// Post id.
     pub post_id: String,
+    /// Channel id.
     pub channel_id: String,
+    /// Sender user id.
     pub sender_user_id: String,
+    /// Created at ms.
     pub created_at_ms: i64,
+    /// Edited at ms.
     pub edited_at_ms: i64,
+    /// Content.
     pub content: String,
+    /// Is root.
     pub is_root: bool,
 }
 
@@ -203,11 +250,13 @@ impl From<&KchatThreadContextMessage> for KchatThreadContextMessageInfo {
     }
 }
 
+/// Add local folder.
 pub fn add_local_folder(manager: &SourceManager, path: &str) -> BridgeResult<SourceInfo> {
     let source = manager.add_local_folder(path).map_err(BridgeError::Core)?;
     Ok(SourceInfo::from(&source))
 }
 
+/// Add local file.
 pub fn add_local_file(manager: &SourceManager, path: &str) -> BridgeResult<SourceInfo> {
     let source = manager.add_local_file(path).map_err(BridgeError::Core)?;
     Ok(SourceInfo::from(&source))
@@ -264,8 +313,11 @@ pub fn add_kchat_channel(
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatFileIndexOutcomeInfo {
+    /// Was linked.
     pub was_linked: bool,
+    /// Indexed.
     pub indexed: bool,
+    /// Source id.
     pub source_id: String,
 }
 
@@ -316,7 +368,9 @@ pub fn index_kchat_file(
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatAclMemberInfo {
+    /// User id.
     pub user_id: String,
+    /// Role.
     pub role: String,
 }
 
@@ -346,8 +400,11 @@ pub struct KchatAclMemberInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatAclRefreshOutcomeInfo {
+    /// Outcome.
     pub outcome: String,
+    /// Member count.
     pub member_count: i64,
+    /// Principal present.
     pub principal_present: bool,
     /// Count of chunk rows scrubbed by the inline cryptoshred on
     /// the revoke path. Zero on all non-revoke outcomes.
@@ -395,6 +452,7 @@ pub struct KchatAclRefreshOutcomeInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatRevokeOutcomeInfo {
+    /// Outcome.
     pub outcome: String,
     /// Count of chunk rows scrubbed by the inline cryptoshred.
     pub chunks_dropped: u32,
@@ -571,11 +629,13 @@ pub fn clear_kchat_principal(manager: &SourceManager) -> BridgeResult<()> {
     manager.clear_kchat_principal().map_err(BridgeError::Core)
 }
 
+/// List sources.
 pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {
     let sources = manager.list_sources().map_err(BridgeError::Core)?;
     Ok(sources.iter().map(SourceInfo::from).collect())
 }
 
+/// Remove source.
 pub fn remove_source(manager: &SourceManager, source_id: &str) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -641,6 +701,7 @@ pub fn record_source_sync_success(manager: &SourceManager, source_id: &str) -> B
         .map_err(BridgeError::Core)
 }
 
+/// Search sources.
 pub fn search_sources(
     manager: &SourceManager,
     query: &str,
@@ -713,6 +774,7 @@ pub fn fetch_kchat_thread_context(
         .collect())
 }
 
+/// Get source detail.
 pub fn get_source_detail(
     manager: &SourceManager,
     source_id: &str,
@@ -740,6 +802,7 @@ pub fn get_source_detail(
     })
 }
 
+/// Reindex source.
 pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<SourceInfo> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -754,18 +817,29 @@ pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Indexing Progress Info.
 pub struct IndexingProgressInfo {
+    /// Status.
     pub status: String,
+    /// Scanned.
     pub scanned: u32,
+    /// Indexed.
     pub indexed: u32,
+    /// Unchanged.
     pub unchanged: u32,
+    /// Skipped.
     pub skipped: u32,
+    /// Errors.
     pub errors: u32,
+    /// Total files.
     pub total_files: u32,
+    /// Current path.
     pub current_path: Option<String>,
+    /// Last error.
     pub last_error: Option<String>,
 }
 
+/// Get indexing progress.
 pub fn get_indexing_progress(
     manager: &SourceManager,
     source_id: &str,
@@ -793,22 +867,31 @@ pub fn get_indexing_progress(
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Embedding Progress Info.
 pub struct EmbeddingProgressInfo {
+    /// Status.
     pub status: String,
+    /// Total chunks.
     pub total_chunks: u32,
+    /// Embedded.
     pub embedded: u32,
+    /// Failed.
     pub failed: u32,
+    /// Model id.
     pub model_id: Option<String>,
+    /// Last error.
     pub last_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Backfill Embeddings Result.
 pub struct BackfillEmbeddingsResult {
     /// Number of chunks newly embedded by this call. If the index
     /// already has up-to-date embeddings for the active model, this
     /// is 0 and `progress.status` flips Idle → Done immediately.
     pub embedded: u32,
+    /// Progress.
     pub progress: EmbeddingProgressInfo,
 }
 
@@ -822,8 +905,11 @@ pub struct BackfillEmbeddingsResult {
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct HybridSearchConfigInfo {
+    /// Bm25 weight.
     pub bm25_weight: f64,
+    /// Vector weight.
     pub vector_weight: f64,
+    /// Rrf k.
     pub rrf_k: f64,
     /// `true` when the active config applies temporal recency decay,
     /// `false` when decay is disabled (internally
@@ -834,6 +920,7 @@ pub struct HybridSearchConfigInfo {
     /// that mode so the renderer should keep its last-known value
     /// rather than reset the slider to a placeholder.
     pub recency_halflife_secs: Option<f64>,
+    /// Candidate pool size.
     pub candidate_pool_size: u32,
 }
 
@@ -861,15 +948,20 @@ impl From<&HybridSearchConfig> for HybridSearchConfigInfo {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[napi(object)]
 pub struct HybridSearchConfigUpdate {
+    /// Bm25 weight.
     pub bm25_weight: Option<f64>,
+    /// Vector weight.
     pub vector_weight: Option<f64>,
+    /// Rrf k.
     pub rrf_k: Option<f64>,
     /// `Some(true)` → enable decay (use the accompanying
     /// `recency_halflife_secs` if provided, else keep current);
     /// `Some(false)` → disable decay (sets internal halflife to
     /// `f64::INFINITY`); `None` → don't touch the flag.
     pub recency_decay_enabled: Option<bool>,
+    /// Recency halflife secs.
     pub recency_halflife_secs: Option<f64>,
+    /// Candidate pool size.
     pub candidate_pool_size: Option<u32>,
 }
 
@@ -1067,8 +1159,11 @@ use tessera_sources::onnx_embedder::OnnxEmbeddingProvider;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct EmbeddingModelInfo {
+    /// Slug.
     pub slug: String,
+    /// Display name.
     pub display_name: String,
+    /// Dim.
     pub dim: u32,
     /// Approximate ONNX file size in bytes — used to render the
     /// "120 MB download" hint before the user opts into the
@@ -1076,8 +1171,11 @@ pub struct EmbeddingModelInfo {
     pub model_size_bytes: f64,
     /// Approximate tokenizer.json size in bytes.
     pub tokenizer_size_bytes: f64,
+    /// Languages.
     pub languages: String,
+    /// Installed.
     pub installed: bool,
+    /// Model id.
     pub model_id: String,
 }
 
@@ -1188,6 +1286,7 @@ impl Default for DownloadProgressTracker {
 }
 
 impl DownloadProgressTracker {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(DownloadProgressInfo {
@@ -1243,6 +1342,7 @@ impl DownloadProgressTracker {
         }
     }
 
+    /// Mark done.
     pub fn mark_done(&self) {
         if let Ok(mut g) = self.inner.lock() {
             g.status = "done".to_string();
@@ -1250,6 +1350,7 @@ impl DownloadProgressTracker {
         }
     }
 
+    /// Mark failed.
     pub fn mark_failed(&self, msg: &str) {
         if let Ok(mut g) = self.inner.lock() {
             g.status = "failed".to_string();
@@ -1257,6 +1358,7 @@ impl DownloadProgressTracker {
         }
     }
 
+    /// Snapshot.
     pub fn snapshot(&self) -> DownloadProgressInfo {
         self.inner.lock().ok().map_or_else(
             || DownloadProgressInfo {

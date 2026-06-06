@@ -7,23 +7,37 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
+/// Artifact Info.
 pub struct ArtifactInfo {
+    /// Id.
     pub id: String,
+    /// Title.
     pub title: String,
+    /// Artifact type.
     pub artifact_type: String,
+    /// Template id.
     pub template_id: Option<String>,
+    /// Content.
     pub content: String,
+    /// Citation count.
     pub citation_count: i32,
+    /// Created at.
     pub created_at: String,
+    /// Updated at.
     pub updated_at: String,
+    /// Version.
     pub version: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Artifact Version Info.
 pub struct ArtifactVersionInfo {
+    /// Version.
     pub version: u32,
+    /// Content.
     pub content: String,
+    /// Created at.
     pub created_at: String,
 }
 
@@ -37,7 +51,9 @@ pub struct ArtifactVersionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct ThemeInfo {
+    /// Label.
     pub label: String,
+    /// Frequency.
     pub frequency: i32,
 }
 
@@ -50,9 +66,13 @@ pub struct ThemeInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct ComparisonInfo {
+    /// Similarity score.
     pub similarity_score: f64,
+    /// Common themes.
     pub common_themes: Vec<ThemeInfo>,
+    /// Unique to a.
     pub unique_to_a: Vec<ThemeInfo>,
+    /// Unique to b.
     pub unique_to_b: Vec<ThemeInfo>,
 }
 
@@ -66,12 +86,17 @@ pub struct ComparisonInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct CompareSourcesResult {
+    /// Artifact.
     pub artifact: ArtifactInfo,
+    /// Comparison.
     pub comparison: ComparisonInfo,
+    /// Label a.
     pub label_a: String,
+    /// Label b.
     pub label_b: String,
 }
 
+/// Create artifact.
 pub fn create_artifact(
     manager: &ArtifactManager,
     title: &str,
@@ -99,6 +124,7 @@ pub fn create_artifact(
     })
 }
 
+/// Update artifact content.
 pub fn update_artifact_content(
     manager: &ArtifactManager,
     artifact_id: &str,
@@ -123,6 +149,7 @@ pub fn update_artifact_content(
     })
 }
 
+/// Get artifact.
 pub fn get_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResult<ArtifactInfo> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -141,6 +168,7 @@ pub fn get_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResul
     })
 }
 
+/// List artifacts.
 pub fn list_artifacts(manager: &ArtifactManager) -> BridgeResult<Vec<ArtifactInfo>> {
     let artifacts = manager.list().map_err(BridgeError::Core)?;
     Ok(artifacts
@@ -159,12 +187,14 @@ pub fn list_artifacts(manager: &ArtifactManager) -> BridgeResult<Vec<ArtifactInf
         .collect())
 }
 
+/// Delete artifact.
 pub fn delete_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     manager.delete(&ArtifactId(uuid)).map_err(BridgeError::Core)
 }
 
+/// Artifact to info.
 pub fn artifact_to_info(artifact: &tessera_artifacts::Artifact) -> ArtifactInfo {
     ArtifactInfo {
         id: artifact.id.to_string(),

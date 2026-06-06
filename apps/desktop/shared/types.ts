@@ -2510,6 +2510,44 @@ export interface TesseraApi {
   telemetry: TelemetryApi;
   /** PIN / biometric app lock surface. */
   appLock: AppLockApi;
+  /** Crash / error-boundary reporting surface. */
+  diagnostics: DiagnosticsApi;
+}
+
+/**
+ * Crash-report payload a renderer error boundary forwards to the main
+ * process when a descendant component throws during render. The main
+ * process persists it as `crash-report.json` in the log directory (see
+ * `electron/crashReport.ts`).
+ */
+export interface RendererCrashReport {
+  /** Name of the boundary / component subtree that crashed. */
+  component: string;
+  /** `error.message` from the thrown error. */
+  error: string;
+  /**
+   * `error.stack` if present, else the React component stack. Captured
+   * as a single string so the on-disk report is self-contained.
+   */
+  stack: string;
+  /** ISO-8601 timestamp of when the boundary caught the error. */
+  timestamp: string;
+}
+
+/**
+ * Diagnostics IPC surface. Currently just crash reporting from renderer
+ * error boundaries; the main process owns the disk-backed log directory
+ * so the renderer cannot write files directly (it is the untrusted web
+ * context).
+ */
+export interface DiagnosticsApi {
+  /**
+   * Persist a renderer crash report to `crash-report.json` in the log
+   * directory and mirror it to the structured logger. Best-effort: the
+   * promise resolves even if the write fails so the error-boundary UI
+   * never blocks on disk IO.
+   */
+  reportCrash: (report: RendererCrashReport) => Promise<void>;
 }
 
 /**

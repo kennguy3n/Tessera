@@ -3,17 +3,20 @@ use tessera_core::error::{Error, Result};
 
 use crate::template::Template;
 
+/// Parse template.
 pub fn parse_template(yaml_content: &str) -> Result<Template> {
     let template: Template =
         serde_yaml::from_str(yaml_content).map_err(|e| Error::TemplateValidation(e.to_string()))?;
     Ok(template.with_computed_id())
 }
 
+/// Parse template file.
 pub fn parse_template_file(path: &Path) -> Result<Template> {
     let content = std::fs::read_to_string(path)?;
     parse_template(&content)
 }
 
+/// Load template by id.
 pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Template> {
     let base = Path::new(template_dir);
     // Recurse over every template-category directory. We list the

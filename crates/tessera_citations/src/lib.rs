@@ -1,6 +1,12 @@
+//! Citation tracking and storage plus source-freshness checks.
+#![warn(missing_docs)]
+
+/// The `citation` module.
 pub mod citation;
 pub mod freshness;
+/// The `store` module.
 pub mod store;
+/// The `tracker` module.
 pub mod tracker;
 
 pub use citation::Citation;

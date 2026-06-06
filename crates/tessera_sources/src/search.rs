@@ -4,6 +4,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::hybrid::{hybrid_search, HybridSearchConfig};
 use crate::store::SourceStore;
 
+/// Search Engine.
 pub struct SearchEngine<'a> {
     store: &'a SourceStore,
     provider: Option<&'a dyn EmbeddingProvider>,
@@ -11,11 +12,17 @@ pub struct SearchEngine<'a> {
 }
 
 #[derive(Debug, Clone)]
+/// Search Result.
 pub struct SearchResult {
+    /// Content.
     pub content: String,
+    /// Excerpt.
     pub excerpt: String,
+    /// Source path.
     pub source_path: String,
+    /// Source id.
     pub source_id: String,
+    /// Chunk index.
     pub chunk_index: usize,
     /// Reciprocal-rank relevance score, bounded to `(0.0, 1.0]`.
     ///
@@ -52,6 +59,7 @@ pub struct SearchResult {
     /// `search_result_relevance_is_bounded` regression test
     /// pins the new contract.
     pub relevance: f64,
+    /// Hash.
     pub hash: String,
 }
 
@@ -87,10 +95,12 @@ impl<'a> SearchEngine<'a> {
         }
     }
 
+    /// Search.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         self.search_with_mode(query, limit, false)
     }
 
+    /// Search broad.
     pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         self.search_with_mode(query, limit, true)
     }

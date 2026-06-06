@@ -3,32 +3,55 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Audit Event.
 pub struct AuditEvent {
+    /// Id.
     pub id: String,
+    /// Event type.
     pub event_type: AuditEventType,
+    /// Timestamp.
     pub timestamp: DateTime<Utc>,
+    /// Details.
     pub details: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Audit Event Type.
 pub enum AuditEventType {
+    /// Source Added.
     SourceAdded,
+    /// Source Removed.
     SourceRemoved,
+    /// Source Reindexed.
     SourceReindexed,
+    /// Artifact Created.
     ArtifactCreated,
+    /// Artifact Updated.
     ArtifactUpdated,
+    /// Artifact Deleted.
     ArtifactDeleted,
+    /// Artifact Exported.
     ArtifactExported,
+    /// Settings Changed.
     SettingsChanged,
+    /// Model Started.
     ModelStarted,
+    /// Model Stopped.
     ModelStopped,
+    /// Search Performed.
     SearchPerformed,
+    /// Connector Connected.
     ConnectorConnected,
+    /// Connector Synced.
     ConnectorSynced,
+    /// Connector Disconnected.
     ConnectorDisconnected,
+    /// Citation Added.
     CitationAdded,
+    /// Citation Replaced.
     CitationReplaced,
+    /// Citation Removed.
     CitationRemoved,
     /// A bundled or user-supplied template YAML failed parse or
     /// semantic validation when the registry was loaded. Distinct
@@ -137,8 +160,8 @@ pub enum AuditEventType {
     /// historical-backfill walk started (or resumed) for a KChat
     /// channel. Details include `resume_from=<post_id>` or
     /// `(fresh)` when the walk begins at the newest post. Pairs
-    /// 1:1 with [`KchatBackfillCompleted`] or
-    /// [`KchatBackfillAborted`] on the same `(channel,source)`.
+    /// 1:1 with `KchatBackfillCompleted` or
+    /// `KchatBackfillAborted` on the same `(channel,source)`.
     KchatBackfillStarted,
     /// one page of the historical
     /// backfill walk was processed. Details carry the 1-based
@@ -238,6 +261,7 @@ impl AuditEventType {
 }
 
 impl AuditEvent {
+    /// Creates a new instance.
     pub fn new(event_type: AuditEventType, details: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),

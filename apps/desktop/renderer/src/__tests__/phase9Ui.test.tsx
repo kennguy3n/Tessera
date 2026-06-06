@@ -112,6 +112,36 @@ describe("ErrorBoundary", () => {
       spy.mockRestore();
     }
   });
+
+  it("forwards a crash report tagged with the boundary name", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reportCrash = vi.fn().mockResolvedValue(undefined);
+    (
+      window as unknown as { tessera: { diagnostics?: unknown } }
+    ).tessera.diagnostics = { reportCrash };
+    try {
+      render(
+        <ErrorBoundary name="DocumentEditor">
+          <Boom />
+        </ErrorBoundary>,
+      );
+      expect(reportCrash).toHaveBeenCalledTimes(1);
+      const report = reportCrash.mock.calls[0][0] as {
+        component: string;
+        error: string;
+        stack: string;
+        timestamp: string;
+      };
+      expect(report.component).toBe("DocumentEditor");
+      expect(report.error).toBe("kaboom");
+      expect(typeof report.stack).toBe("string");
+      expect(Number.isNaN(Date.parse(report.timestamp))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      delete (window as unknown as { tessera: { diagnostics?: unknown } })
+        .tessera.diagnostics;
+    }
+  });
 });
 
 describe("useKeyboardShortcuts", () => {

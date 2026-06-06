@@ -12,23 +12,35 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Template Info.
 pub struct TemplateInfo {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
+    /// Artifact type.
     pub artifact_type: String,
+    /// Description.
     pub description: String,
+    /// Section count.
     pub section_count: i32,
+    /// Export formats.
     pub export_formats: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Template Section Info.
 pub struct TemplateSectionInfo {
+    /// Title.
     pub title: String,
+    /// Prompt.
     pub prompt: String,
+    /// Required sources.
     pub required_sources: bool,
 }
 
+/// List templates.
 pub fn list_templates(template_dir: &str) -> BridgeResult<Vec<TemplateInfo>> {
     // No audit logger — only the on-disk eprintln surface fires for
     // dropped templates. Used by callers that don't have an audit
@@ -93,6 +105,7 @@ fn list_templates_inner(
     Ok(templates)
 }
 
+/// Get template.
 pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Option<TemplateInfo>> {
     get_template_inner(template_dir, template_id, None)
 }

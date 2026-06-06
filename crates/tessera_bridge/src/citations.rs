@@ -10,30 +10,51 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
+/// Citation Info.
 pub struct CitationInfo {
+    /// Citation id.
     pub citation_id: String,
+    /// Source id.
     pub source_id: String,
+    /// Source type.
     pub source_type: String,
+    /// Source title.
     pub source_title: String,
+    /// Source uri.
     pub source_uri: String,
+    /// Chunk hash.
     pub chunk_hash: String,
+    /// Page.
     pub page: Option<u32>,
+    /// Confidence.
     pub confidence: f64,
+    /// Used for.
     pub used_for: String,
+    /// Created at.
     pub created_at: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[napi(object)]
+/// Add Citation Request.
 pub struct AddCitationRequest {
+    /// Artifact id.
     pub artifact_id: String,
+    /// Source id.
     pub source_id: String,
+    /// Source type.
     pub source_type: String,
+    /// Source title.
     pub source_title: String,
+    /// Source uri.
     pub source_uri: String,
+    /// Chunk hash.
     pub chunk_hash: String,
+    /// Page.
     pub page: Option<u32>,
+    /// Confidence.
     pub confidence: f64,
+    /// Used for.
     pub used_for: String,
 }
 
@@ -54,6 +75,7 @@ impl From<&Citation> for CitationInfo {
     }
 }
 
+/// List citations.
 pub fn list_citations(
     tracker: &CitationTracker,
     artifact_id: &str,
@@ -66,6 +88,7 @@ pub fn list_citations(
     Ok(citations.iter().map(CitationInfo::from).collect())
 }
 
+/// Add citation.
 pub fn add_citation(
     tracker: &mut CitationTracker,
     source_manager: &SourceManager,
@@ -108,6 +131,7 @@ pub fn add_citation(
     Ok(CitationInfo::from(&stored))
 }
 
+/// Remove citation.
 pub fn remove_citation(
     tracker: &mut CitationTracker,
     artifact_id: &str,
@@ -123,6 +147,7 @@ pub fn remove_citation(
     Ok(())
 }
 
+/// Check source changed.
 pub fn check_source_changed(
     tracker: &CitationTracker,
     source_manager: &SourceManager,
@@ -153,25 +178,39 @@ pub fn check_source_freshness(
 
 #[derive(Debug, Deserialize)]
 #[napi(object)]
+/// Replace Citation Request.
 pub struct ReplaceCitationRequest {
+    /// Artifact id.
     pub artifact_id: String,
+    /// Citation id.
     pub citation_id: String,
+    /// Source id.
     pub source_id: String,
+    /// Source type.
     pub source_type: String,
+    /// Source title.
     pub source_title: String,
+    /// Source uri.
     pub source_uri: String,
+    /// Chunk hash.
     pub chunk_hash: String,
+    /// Page.
     pub page: Option<u32>,
+    /// Confidence.
     pub confidence: f64,
 }
 
 #[derive(Debug, Serialize)]
 #[napi(object)]
+/// Replace Citation Result.
 pub struct ReplaceCitationResult {
+    /// Citation.
     pub citation: CitationInfo,
+    /// Previous source uri.
     pub previous_source_uri: String,
 }
 
+/// Replace citation.
 pub fn replace_citation(
     tracker: &mut CitationTracker,
     source_manager: &SourceManager,

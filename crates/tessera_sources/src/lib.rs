@@ -1,5 +1,11 @@
+//! Source ingestion, extraction, chunking, embedding, and hybrid
+//! (lexical + vector) search over the local knowledge substrate.
+#![warn(missing_docs)]
+
+/// The `chunker` module.
 pub mod chunker;
 pub mod embedding;
+/// The `extractor` module.
 pub mod extractor;
 // ONNX-backed semantic embedding provider + the
 // model registry that supplies its weights. Both live in
@@ -9,16 +15,21 @@ pub mod extractor;
 pub mod hybrid;
 pub mod ignore;
 pub mod image_metadata;
+/// The `indexer` module.
 pub mod indexer;
 pub mod kchat_crypto;
+/// The `manager` module.
 pub mod manager;
 pub mod mem;
 pub mod model_registry;
 pub mod onnx_embedder;
 pub mod pdf_extractor;
 pub mod progress;
+/// The `search` module.
 pub mod search;
+/// The `source` module.
 pub mod source;
+/// The `store` module.
 pub mod store;
 // in-memory IVF-Flat ANN index for hybrid
 // vector search. Built per-model on first query and cached on
@@ -27,4 +38,5 @@ pub mod store;
 // write that could change `load_embeddings_for_model` output.
 pub mod vector_index;
 pub mod vision_extractor;
+/// The `watcher` module.
 pub mod watcher;

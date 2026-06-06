@@ -268,6 +268,7 @@ fn state() -> napi::Result<&'static AppState> {
 // --- Sources ---
 
 #[napi]
+/// Bridge add local folder.
 pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
     let mgr = s
@@ -288,6 +289,7 @@ pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo
 }
 
 #[napi]
+/// Bridge add local file.
 pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
     let mgr = s
@@ -466,6 +468,7 @@ pub fn bridge_clear_kchat_principal() -> napi::Result<()> {
 }
 
 #[napi]
+/// Bridge list sources.
 pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
     let s = state()?;
     let mgr = s
@@ -476,6 +479,7 @@ pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
 }
 
 #[napi]
+/// Bridge remove source.
 pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     let s = state()?;
     let mgr = s
@@ -526,6 +530,7 @@ pub struct SourceSyncFailureStateView {
 }
 
 #[napi]
+/// Bridge get source sync failure state.
 pub fn bridge_get_source_sync_failure_state(
     source_id: String,
 ) -> napi::Result<SourceSyncFailureStateView> {
@@ -545,6 +550,7 @@ pub fn bridge_get_source_sync_failure_state(
 }
 
 #[napi]
+/// Bridge record source sync failure.
 pub fn bridge_record_source_sync_failure(
     source_id: String,
     last_sync_error_json: String,
@@ -567,6 +573,7 @@ pub fn bridge_record_source_sync_failure(
 }
 
 #[napi]
+/// Bridge record source sync success.
 pub fn bridge_record_source_sync_success(source_id: String) -> napi::Result<()> {
     let s = state()?;
     let mgr = s
@@ -578,6 +585,7 @@ pub fn bridge_record_source_sync_success(source_id: String) -> napi::Result<()> 
 }
 
 #[napi]
+/// Bridge search sources.
 pub fn bridge_search_sources(
     query: String,
     limit: u32,
@@ -638,6 +646,7 @@ pub fn bridge_fetch_kchat_thread_context(
 }
 
 #[napi]
+/// Bridge get source detail.
 pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::SourceDetailInfo> {
     let s = state()?;
     let mgr = s
@@ -649,6 +658,7 @@ pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::Sour
 }
 
 #[napi]
+/// Bridge reindex source.
 pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
     let mgr = s
@@ -1023,6 +1033,7 @@ pub fn bridge_switch_embedding_model(
 // --- Artifacts ---
 
 #[napi]
+/// Bridge create artifact.
 pub fn bridge_create_artifact(
     title: String,
     artifact_type: String,
@@ -1047,6 +1058,7 @@ pub fn bridge_create_artifact(
 }
 
 #[napi]
+/// Bridge update artifact content.
 pub fn bridge_update_artifact_content(
     artifact_id: String,
     content: String,
@@ -1068,6 +1080,7 @@ pub fn bridge_update_artifact_content(
 }
 
 #[napi]
+/// Bridge get artifact.
 pub fn bridge_get_artifact(artifact_id: String) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
     let mgr = s
@@ -1078,6 +1091,7 @@ pub fn bridge_get_artifact(artifact_id: String) -> napi::Result<artifacts::Artif
 }
 
 #[napi]
+/// Bridge list artifacts.
 pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
     let s = state()?;
     let mgr = s
@@ -1088,6 +1102,7 @@ pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
 }
 
 #[napi]
+/// Bridge delete artifact.
 pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
     let s = state()?;
     let mgr = s
@@ -1200,6 +1215,7 @@ pub fn bridge_export_artifact_to_file(
 // --- Templates ---
 
 #[napi]
+/// Bridge list templates.
 pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
     let s = state()?;
     // route every parse / validation failure
@@ -1219,6 +1235,7 @@ pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
 }
 
 #[napi]
+/// Bridge get template.
 pub fn bridge_get_template(template_id: String) -> napi::Result<Option<templates::TemplateInfo>> {
     let s = state()?;
     // Same audit posture as `bridge_list_templates`: a validation
@@ -1237,6 +1254,7 @@ pub fn bridge_get_template(template_id: String) -> napi::Result<Option<templates
 // --- Citations ---
 
 #[napi]
+/// Bridge list citations.
 pub fn bridge_list_citations(artifact_id: String) -> napi::Result<Vec<citations::CitationInfo>> {
     let s = state()?;
     let tracker = s
@@ -1248,6 +1266,7 @@ pub fn bridge_list_citations(artifact_id: String) -> napi::Result<Vec<citations:
 }
 
 #[napi]
+/// Bridge add citation.
 pub fn bridge_add_citation(
     req: citations::AddCitationRequest,
 ) -> napi::Result<citations::CitationInfo> {
@@ -1305,6 +1324,7 @@ pub fn bridge_add_citation(
 }
 
 #[napi]
+/// Bridge remove citation.
 pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi::Result<()> {
     let s = state()?;
     let mut tracker = s
@@ -1326,6 +1346,7 @@ pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi:
 }
 
 #[napi]
+/// Bridge check source changed.
 pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
     let s = state()?;
     // Acquire source_manager (lock 2) before citation_tracker (lock 4) per documented ordering
@@ -1342,6 +1363,7 @@ pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
 }
 
 #[napi]
+/// Bridge check citation freshness.
 pub fn bridge_check_citation_freshness(citation_id: String) -> napi::Result<String> {
     let s = state()?;
     let src_mgr = s
@@ -1358,6 +1380,7 @@ pub fn bridge_check_citation_freshness(citation_id: String) -> napi::Result<Stri
 }
 
 #[napi]
+/// Bridge replace citation.
 pub fn bridge_replace_citation(
     req: citations::ReplaceCitationRequest,
 ) -> napi::Result<citations::ReplaceCitationResult> {
@@ -1394,6 +1417,7 @@ pub fn bridge_replace_citation(
 // --- Version History ---
 
 #[napi]
+/// Bridge list versions.
 pub fn bridge_list_versions(
     artifact_id: String,
 ) -> napi::Result<Vec<artifacts::ArtifactVersionInfo>> {
@@ -1419,6 +1443,7 @@ pub fn bridge_list_versions(
 }
 
 #[napi]
+/// Bridge restore version.
 pub fn bridge_restore_version(
     artifact_id: String,
     version_number: u32,
@@ -1454,6 +1479,7 @@ pub fn bridge_restore_version(
 // --- Artifact Generation ---
 
 #[napi]
+/// Bridge generate from template.
 pub fn bridge_generate_from_template(
     template_id: String,
     source_ids: Vec<String>,
@@ -1529,6 +1555,7 @@ pub fn bridge_generate_from_template(
 }
 
 #[napi]
+/// Bridge extract tasks decisions.
 pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String> {
     let s = state()?;
     let src_mgr = s
@@ -1548,6 +1575,7 @@ pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String>
 }
 
 #[napi]
+/// Bridge compare sources.
 pub fn bridge_compare_sources(
     source_id_a: String,
     source_id_b: String,
@@ -1843,6 +1871,7 @@ mod compare_label_tests {
 }
 
 #[napi]
+/// Bridge export evidence pack.
 pub fn bridge_export_evidence_pack(
     artifact_id: String,
     output_path: String,
@@ -1925,6 +1954,7 @@ pub fn bridge_evidence_pack_bytes(artifact_id: String) -> napi::Result<Buffer> {
 // --- Tasks ---
 
 #[napi]
+/// Bridge create task.
 pub fn bridge_create_task(req_json: String) -> napi::Result<tasks::TaskInfo> {
     let req: tasks::CreateTaskRequest =
         serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -1937,6 +1967,7 @@ pub fn bridge_create_task(req_json: String) -> napi::Result<tasks::TaskInfo> {
 }
 
 #[napi]
+/// Bridge list tasks.
 pub fn bridge_list_tasks() -> napi::Result<Vec<tasks::TaskInfo>> {
     let s = state()?;
     let store = s
@@ -1947,6 +1978,7 @@ pub fn bridge_list_tasks() -> napi::Result<Vec<tasks::TaskInfo>> {
 }
 
 #[napi]
+/// Bridge get task.
 pub fn bridge_get_task(task_id: String) -> napi::Result<Option<tasks::TaskInfo>> {
     let s = state()?;
     let store = s
@@ -1957,6 +1989,7 @@ pub fn bridge_get_task(task_id: String) -> napi::Result<Option<tasks::TaskInfo>>
 }
 
 #[napi]
+/// Bridge update task.
 pub fn bridge_update_task(task_id: String, req_json: String) -> napi::Result<tasks::TaskInfo> {
     let req: tasks::UpdateTaskRequest =
         serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -1969,6 +2002,7 @@ pub fn bridge_update_task(task_id: String, req_json: String) -> napi::Result<tas
 }
 
 #[napi]
+/// Bridge delete task.
 pub fn bridge_delete_task(task_id: String) -> napi::Result<bool> {
     let s = state()?;
     let store = s
@@ -1979,6 +2013,7 @@ pub fn bridge_delete_task(task_id: String) -> napi::Result<bool> {
 }
 
 #[napi]
+/// Bridge reorder tasks.
 pub fn bridge_reorder_tasks(status: String, ids: Vec<String>) -> napi::Result<()> {
     let s = state()?;
     let store = s
@@ -1991,6 +2026,7 @@ pub fn bridge_reorder_tasks(status: String, ids: Vec<String>) -> napi::Result<()
 // --- Automations ---
 
 #[napi]
+/// Bridge create automation.
 pub fn bridge_create_automation(req_json: String) -> napi::Result<automations::AutomationInfo> {
     let req: automations::CreateAutomationRequest =
         serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -2003,6 +2039,7 @@ pub fn bridge_create_automation(req_json: String) -> napi::Result<automations::A
 }
 
 #[napi]
+/// Bridge list automations.
 pub fn bridge_list_automations() -> napi::Result<Vec<automations::AutomationInfo>> {
     let s = state()?;
     let store = s
@@ -2013,6 +2050,7 @@ pub fn bridge_list_automations() -> napi::Result<Vec<automations::AutomationInfo
 }
 
 #[napi]
+/// Bridge get automation.
 pub fn bridge_get_automation(
     automation_id: String,
 ) -> napi::Result<Option<automations::AutomationInfo>> {
@@ -2026,6 +2064,7 @@ pub fn bridge_get_automation(
 }
 
 #[napi]
+/// Bridge set automation enabled.
 pub fn bridge_set_automation_enabled(automation_id: String, enabled: bool) -> napi::Result<()> {
     let s = state()?;
     let store = s
@@ -2037,6 +2076,7 @@ pub fn bridge_set_automation_enabled(automation_id: String, enabled: bool) -> na
 }
 
 #[napi]
+/// Bridge delete automation.
 pub fn bridge_delete_automation(automation_id: String) -> napi::Result<bool> {
     let s = state()?;
     let store = s
@@ -2483,9 +2523,13 @@ pub fn bridge_log_kchat_source_cryptoshredded(
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostIngestOutcomeInfo {
+    /// Outcome.
     pub outcome: String,
+    /// Source id.
     pub source_id: Option<String>,
+    /// Indexed file id.
     pub indexed_file_id: Option<i64>,
+    /// Chunk count.
     pub chunk_count: u32,
     /// `chunk_ids` populated only for `outcome == "ingested"`. The
     /// Node side records this on the audit row so a search hit
@@ -2502,8 +2546,11 @@ pub struct KchatPostIngestOutcomeInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostDeleteOutcomeInfo {
+    /// Outcome.
     pub outcome: String,
+    /// Source id.
     pub source_id: Option<String>,
+    /// Chunks dropped.
     pub chunks_dropped: u32,
 }
 
@@ -2518,13 +2565,21 @@ pub struct KchatPostDeleteOutcomeInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostIngestInputInfo {
+    /// Cache dir.
     pub cache_dir: String,
+    /// Post id.
     pub post_id: String,
+    /// Channel id.
     pub channel_id: String,
+    /// Root id.
     pub root_id: Option<String>,
+    /// Sender user id.
     pub sender_user_id: String,
+    /// Body.
     pub body: String,
+    /// Created at ms.
     pub created_at_ms: i64,
+    /// Edited at ms.
     pub edited_at_ms: i64,
 }
 
@@ -2745,9 +2800,13 @@ pub fn bridge_log_kchat_post_deleted(
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatBackfillStateInfo {
+    /// Outcome.
     pub outcome: String,
+    /// Source id.
     pub source_id: Option<String>,
+    /// Oldest post id.
     pub oldest_post_id: Option<String>,
+    /// Completed at.
     pub completed_at: Option<String>,
 }
 
@@ -2761,11 +2820,17 @@ pub struct KchatBackfillStateInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatBackfillIngestOutcomeInfo {
+    /// Outcome.
     pub outcome: String,
+    /// Source id.
     pub source_id: Option<String>,
+    /// Posts ingested.
     pub posts_ingested: u32,
+    /// Posts unchanged.
     pub posts_unchanged: u32,
+    /// Posts skipped revoked.
     pub posts_skipped_revoked: u32,
+    /// Oldest post id in page.
     pub oldest_post_id_in_page: Option<String>,
 }
 
@@ -2774,7 +2839,9 @@ pub struct KchatBackfillIngestOutcomeInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatBackfillCompletionOutcomeInfo {
+    /// Outcome.
     pub outcome: String,
+    /// Source id.
     pub source_id: Option<String>,
 }
 
@@ -3063,8 +3130,11 @@ pub struct AuditEventView {
     /// TEXT-typed UUIDs, not autoincrement integers, so two
     /// processes appending concurrently can't collide.
     pub id: String,
+    /// Event type.
     pub event_type: String,
+    /// Timestamp.
     pub timestamp: String,
+    /// Details.
     pub details: String,
 }
 
@@ -3082,6 +3152,7 @@ pub struct AuditEventView {
 /// background task.
 #[napi(object)]
 pub struct AuditRotationResultView {
+    /// Archive path.
     pub archive_path: String,
     /// `u32` rather than `u64` because napi-rs does not support
     /// JS BigInt return types on every platform we ship to, and
@@ -3091,6 +3162,7 @@ pub struct AuditRotationResultView {
 }
 
 #[napi]
+/// Bridge audit rotate.
 pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRotationResultView>> {
     let s = state()?;
     // Do NOT go through the outer `Mutex<AuditLogger>` for the
@@ -3195,9 +3267,13 @@ pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<A
 /// Kept in napi-friendly form (no `Option`, no nested generics).
 #[napi(object)]
 pub struct VisionDescribeResult {
+    /// Content.
     pub content: String,
+    /// Stop.
     pub stop: bool,
+    /// Tokens predicted.
     pub tokens_predicted: u32,
+    /// Tokens evaluated.
     pub tokens_evaluated: u32,
 }
 
@@ -3219,8 +3295,11 @@ pub struct VisionDescribeResult {
 /// PascalCase its argument.
 #[napi(string_enum = "lowercase")]
 pub enum VisionMode {
+    /// The `Describe` variant.
     Describe,
+    /// The `Ocr` variant.
     Ocr,
+    /// The `Chart` variant.
     Chart,
 }
 
@@ -3333,7 +3412,9 @@ pub fn bridge_vision_describe(
 /// editor preview.
 #[napi(object)]
 pub struct GenerateImageResult {
+    /// Png bytes.
     pub png_bytes: napi::bindgen_prelude::Buffer,
+    /// Seed.
     pub seed: napi::bindgen_prelude::BigInt,
 }
 
@@ -3346,8 +3427,11 @@ pub struct GenerateImageResult {
 /// `T | null | undefined` on the renderer side.
 #[napi(object)]
 pub struct GenerateImageInput {
+    /// Prompt.
     pub prompt: String,
+    /// Width.
     pub width: u32,
+    /// Height.
     pub height: u32,
     /// Number of diffusion denoising steps. `None` defers to the
     /// `ImageGenRequest` default (20 for FLUX.2-klein).

@@ -6,7 +6,7 @@
 //! lazily on the first `TaskStore::open` call.
 //!
 //! Tasks can be created manually or extracted from source material via
-//! [`tessera_artifacts::extraction`]. The `source_id` and
+//! `tessera_artifacts::extraction`. The `source_id` and
 //! `extracted_item_id` fields preserve provenance so the UI can render
 //! "open the source" affordances.
 
@@ -41,32 +41,43 @@ fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTi
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Task.
 pub struct Task {
+    /// Id.
     pub id: TaskId,
+    /// Title.
     pub title: String,
     #[serde(default)]
+    /// Description.
     pub description: String,
+    /// Status.
     pub status: TaskStatus,
+    /// Priority.
     pub priority: TaskPriority,
     /// User-controlled ordering within the same status column.
     pub position: i64,
     #[serde(default)]
+    /// Assignee.
     pub assignee: Option<String>,
     #[serde(default)]
+    /// Due date.
     pub due_date: Option<DateTime<Utc>>,
     /// Optional source provenance — set when the task was extracted
     /// from indexed source material.
     #[serde(default)]
     pub source_id: Option<SourceId>,
-    /// Optional pointer to the originating [`ExtractedItem`] so the
+    /// Optional pointer to the originating `ExtractedItem` so the
     /// UI can re-open the extraction context.
     #[serde(default)]
     pub extracted_item_id: Option<String>,
+    /// Created at.
     pub created_at: DateTime<Utc>,
+    /// Updated at.
     pub updated_at: DateTime<Utc>,
 }
 
 impl Task {
+    /// Creates a new instance.
     pub fn new(title: impl Into<String>, status: TaskStatus, priority: TaskPriority) -> Self {
         let now = Utc::now();
         Self {
@@ -92,24 +103,34 @@ impl Task {
 /// provides `Some(None)` via the dedicated helpers below.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskUpdate {
+    /// Title.
     pub title: Option<String>,
+    /// Description.
     pub description: Option<String>,
+    /// Status.
     pub status: Option<TaskStatus>,
+    /// Priority.
     pub priority: Option<TaskPriority>,
+    /// Position.
     pub position: Option<i64>,
+    /// Assignee.
     pub assignee: Option<Option<String>>,
+    /// Due date.
     pub due_date: Option<Option<DateTime<Utc>>>,
 }
 
+/// Task Store.
 pub struct TaskStore {
     conn: SharedConnection,
 }
 
 impl TaskStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -149,6 +170,7 @@ impl TaskStore {
         Ok(())
     }
 
+    /// Create.
     pub fn create(&self, task: &Task) -> Result<()> {
         self.conn
             .lock()
@@ -178,6 +200,7 @@ impl TaskStore {
         Ok(())
     }
 
+    /// Get.
     pub fn get(&self, id: &TaskId) -> Result<Option<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -221,6 +244,7 @@ impl TaskStore {
         Ok(out)
     }
 
+    /// List by status.
     pub fn list_by_status(&self, status: TaskStatus) -> Result<Vec<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -241,6 +265,7 @@ impl TaskStore {
         Ok(out)
     }
 
+    /// Update.
     pub fn update(&self, id: &TaskId, update: TaskUpdate) -> Result<Task> {
         let existing = self
             .get(id)?
@@ -291,6 +316,7 @@ impl TaskStore {
         })
     }
 
+    /// Delete.
     pub fn delete(&self, id: &TaskId) -> Result<bool> {
         let rows = self
             .conn

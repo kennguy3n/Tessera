@@ -7,6 +7,7 @@ use crate::parser::parse_template_file;
 use crate::template::Template;
 use crate::validator::validate_template;
 
+/// Template Registry.
 pub struct TemplateRegistry {
     templates: Vec<Template>,
 }
@@ -23,7 +24,9 @@ pub struct TemplateRegistry {
 /// out-of-range max_tokens) — different remediation paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TemplateLoadFailureKind {
+    /// The `Parse` variant.
     Parse,
+    /// The `Validation` variant.
     Validation,
 }
 
@@ -45,8 +48,11 @@ impl TemplateLoadFailureKind {
 /// audit log for templates that went missing from the registry.
 #[derive(Debug, Clone)]
 pub struct TemplateLoadFailure {
+    /// Path.
     pub path: PathBuf,
+    /// Kind.
     pub kind: TemplateLoadFailureKind,
+    /// Error.
     pub error: String,
 }
 
@@ -56,17 +62,21 @@ pub struct TemplateLoadFailure {
 /// caller can audit / report on the dropped files instead of only
 /// seeing them in stderr.
 pub struct TemplateLoadResult {
+    /// Registry.
     pub registry: TemplateRegistry,
+    /// Failures.
     pub failures: Vec<TemplateLoadFailure>,
 }
 
 impl TemplateRegistry {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             templates: Vec::new(),
         }
     }
 
+    /// Load from directory.
     pub fn load_from_directory(path: &Path) -> Result<Self> {
         // Preserve the historical signature (and the eprintln-based
         // operator surface) for every caller that only cares about
@@ -215,14 +225,17 @@ impl TemplateRegistry {
         Ok(TemplateLoadResult { registry, failures })
     }
 
+    /// List.
     pub fn list(&self) -> &[Template] {
         &self.templates
     }
 
+    /// Get by id.
     pub fn get_by_id(&self, id: &str) -> Option<&Template> {
         self.templates.iter().find(|t| t.id == id)
     }
 
+    /// List by type.
     pub fn list_by_type(&self, artifact_type: ArtifactType) -> Vec<&Template> {
         self.templates
             .iter()
@@ -230,6 +243,7 @@ impl TemplateRegistry {
             .collect()
     }
 
+    /// Count.
     pub fn count(&self) -> usize {
         self.templates.len()
     }

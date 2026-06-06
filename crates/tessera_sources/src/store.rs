@@ -36,6 +36,7 @@ fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 /// full table scan to a single mutex-guarded `Instant::elapsed`.
 const NON_ASCII_CACHE_TTL: Duration = Duration::from_secs(30);
 
+/// Source Store.
 pub struct SourceStore {
     conn: SharedConnection,
     /// optional pool of read-only connections
@@ -97,8 +98,8 @@ enum CachedVectorSearchPath {
     BruteForce(Arc<Vec<ChunkEmbeddingRow>>),
 }
 
-/// Public projection of [`CachedVectorSearchPath`] that
-/// [`hybrid_search`] consumes. Borrowing semantics let the caller
+/// Public projection of `CachedVectorSearchPath` that
+/// `hybrid_search` consumes. Borrowing semantics let the caller
 /// score against the cached embedding rows without cloning.
 #[derive(Debug, Clone)]
 pub enum VectorSearchPath {
@@ -113,10 +114,12 @@ pub enum VectorSearchPath {
 }
 
 impl SourceStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -140,7 +143,7 @@ impl SourceStore {
     /// file (typically `N = 2`, surfaced via
     /// [`tessera_core::open_shared_read_pool_with_key`]). In-memory
     /// tests pass [`tessera_core::empty_read_pool`] (or just call
-    /// the legacy [`with_shared_conn`] constructor, which does the
+    /// the legacy `with_shared_conn` constructor, which does the
     /// same thing); every read then falls back to the writer
     /// connection.
     ///
@@ -628,6 +631,7 @@ impl SourceStore {
         Ok(())
     }
 
+    /// Add source.
     pub fn add_source(&self, source: &Source) -> Result<()> {
         self.conn
             .lock()
@@ -651,6 +655,7 @@ impl SourceStore {
         Ok(())
     }
 
+    /// Remove source.
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         let id_str = source_id.to_string();
         let conn = self.conn.lock().expect("connection mutex poisoned");
@@ -689,6 +694,7 @@ impl SourceStore {
         Ok(())
     }
 
+    /// List sources.
     pub fn list_sources(&self) -> Result<Vec<Source>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -746,6 +752,7 @@ impl SourceStore {
         Ok(sources)
     }
 
+    /// Get source.
     pub fn get_source(&self, source_id: &SourceId) -> Result<Source> {
         let id_str = source_id.to_string();
         self.conn
@@ -856,6 +863,7 @@ impl SourceStore {
         }
     }
 
+    /// Update source status.
     pub fn update_source_status(
         &self,
         source_id: &SourceId,
@@ -1528,6 +1536,7 @@ impl SourceStore {
         })
     }
 
+    /// Upsert indexed file.
     pub fn upsert_indexed_file(
         &self,
         source_id: &SourceId,
@@ -1571,6 +1580,7 @@ impl SourceStore {
         }
     }
 
+    /// Insert chunks.
     pub fn insert_chunks(&self, indexed_file_id: i64, chunks: &[Chunk]) -> Result<()> {
         self.insert_chunks_returning_ids(indexed_file_id, chunks)
             .map(|_| ())
@@ -1733,7 +1743,7 @@ impl SourceStore {
     ///    a future-leak in a re-ingested thread where reply
     ///    indices got reordered).
     ///
-    /// Sibling of [`find_kchat_post`] but surfaced separately so
+    /// Sibling of `find_kchat_post` but surfaced separately so
     /// the existing call sites (ingest dedupe, edit re-chunk) can
     /// stay on the cheaper two-column lookup. This shape carries
     /// the substrate-side metadata the renderer needs to build a
@@ -2161,7 +2171,7 @@ impl SourceStore {
     ///
     /// **Memoized.** The GLOB scan is O(rows) and cannot use an
     /// index — see `NON_ASCII_CACHE_TTL` above. We compute it at
-    /// most once per [`NON_ASCII_CACHE_TTL`] and serve subsequent
+    /// most once per `NON_ASCII_CACHE_TTL` and serve subsequent
     /// calls from the in-memory cache so the 1 s status poll the
     /// Settings page runs does not full-scan the `chunks` table on
     /// every tick.
@@ -2454,7 +2464,7 @@ impl SourceStore {
     /// character. A real BLAKE3 hash can therefore never produce a
     /// string that matches a `partial:`-prefixed sentinel, so a
     /// `existing_hash == new_hash` comparison in
-    /// [`upsert_indexed_file`] is guaranteed to miss and the row
+    /// `upsert_indexed_file` is guaranteed to miss and the row
     /// is re-processed (including a `DELETE FROM chunks` so the
     /// partial chunks from the previous attempt are discarded
     /// before the new pass writes its replacements).
@@ -2479,6 +2489,7 @@ impl SourceStore {
         Ok(())
     }
 
+    /// Get file hash.
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
         let result = self
             .conn
@@ -2493,6 +2504,7 @@ impl SourceStore {
         Ok(result)
     }
 
+    /// Remove indexed file.
     pub fn remove_indexed_file(&self, path: &str) -> Result<()> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         if let Ok(file_id) = conn.query_row(
@@ -2511,6 +2523,7 @@ impl SourceStore {
         Ok(())
     }
 
+    /// Search fts.
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
         // hot read path → dispatch through
         // the read pool when one is configured. WAL mode lets us
@@ -2808,7 +2821,7 @@ impl SourceStore {
     /// `query_dim` is the dimensionality of the query vector —
     /// rows whose stored vector has a different length are excluded
     /// from the index (so the IVF result is observationally
-    /// compatible with the brute-force [`rank_chunks_by_cosine`]
+    /// compatible with the brute-force `rank_chunks_by_cosine`
     /// path that also filters on dim).
     ///
     /// Below [`IVF_BRUTE_FORCE_THRESHOLD`] rows we don't pay the
@@ -2953,7 +2966,7 @@ impl SourceStore {
         self.chunks_missing_embedding_excluding(model_id, limit, &[])
     }
 
-    /// Variant of [`chunks_missing_embedding`] that filters out chunk
+    /// Variant of `chunks_missing_embedding` that filters out chunk
     /// IDs the caller has already attempted-and-failed this session.
     ///
     /// `backfill_embeddings` calls this with the running set of
@@ -3058,7 +3071,7 @@ impl SourceStore {
     /// so the renderer can show a determinate `embedded / total` bar
     /// from the first poll.
     ///
-    /// Separate from [`chunks_missing_embedding`] (which materialises
+    /// Separate from `chunks_missing_embedding` (which materialises
     /// every chunk's content) because the count case only needs an
     /// index-only scan via `COUNT(*)` — for a 100k-chunk corpus this
     /// is ~100x cheaper than building a Vec of the same length.
@@ -3125,6 +3138,7 @@ impl SourceStore {
         })
     }
 
+    /// File count for source.
     pub fn file_count_for_source(&self, source_id: &SourceId) -> Result<u64> {
         let id_str = source_id.to_string();
         let count: i64 = self
@@ -3140,6 +3154,7 @@ impl SourceStore {
         Ok(count as u64)
     }
 
+    /// Get chunk contents for source.
     pub fn get_chunk_contents_for_source(&self, source_id: &SourceId) -> Result<Vec<String>> {
         let id_str = source_id.to_string();
         let conn = self.conn.lock().expect("connection mutex poisoned");
@@ -3161,6 +3176,7 @@ impl SourceStore {
         Ok(contents)
     }
 
+    /// Get current file hash.
     pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
         let result = self
             .conn
@@ -3178,6 +3194,7 @@ impl SourceStore {
         }
     }
 
+    /// List indexed files.
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
         let id_str = source_id.to_string();
         let conn = self.conn.lock().expect("connection mutex poisoned");
@@ -3205,14 +3222,23 @@ impl SourceStore {
 }
 
 #[derive(Debug, Clone)]
+/// Search Hit.
 pub struct SearchHit {
+    /// Chunk id.
     pub chunk_id: i64,
+    /// Content.
     pub content: String,
+    /// Hash.
     pub hash: String,
+    /// Chunk index.
     pub chunk_index: usize,
+    /// Byte offset.
     pub byte_offset: usize,
+    /// Source path.
     pub source_path: String,
+    /// Source id.
     pub source_id: String,
+    /// Relevance.
     pub relevance: f64,
 }
 
@@ -3245,20 +3271,35 @@ pub struct SearchHit {
 /// verified plaintext).
 #[derive(Debug, Clone)]
 pub struct KchatPostSearchHitRow {
+    /// Chunk id.
     pub chunk_id: i64,
+    /// Content.
     pub content: String,
+    /// Content aead.
     pub content_aead: Option<Vec<u8>>,
+    /// Content aead nonce.
     pub content_aead_nonce: Option<Vec<u8>>,
+    /// Hash.
     pub hash: String,
+    /// Chunk index.
     pub chunk_index: usize,
+    /// Byte offset.
     pub byte_offset: usize,
+    /// Source id.
     pub source_id: String,
+    /// Source path.
     pub source_path: String,
+    /// Post id.
     pub post_id: String,
+    /// Channel id.
     pub channel_id: String,
+    /// Root id.
     pub root_id: Option<String>,
+    /// Sender user id.
     pub sender_user_id: String,
+    /// Created at ms.
     pub created_at_ms: i64,
+    /// Edited at ms.
     pub edited_at_ms: i64,
     /// Raw FTS5 BM25 score (`-rank` in the SQL — FTS5 reports
     /// `rank` as a non-positive log-relevance, so we negate to
@@ -3290,29 +3331,47 @@ pub struct KchatPostSearchHitRow {
 /// row.
 #[derive(Debug, Clone)]
 pub struct KchatThreadContextRow {
+    /// Post id.
     pub post_id: String,
+    /// Channel id.
     pub channel_id: String,
+    /// Root id.
     pub root_id: Option<String>,
+    /// Sender user id.
     pub sender_user_id: String,
+    /// Created at ms.
     pub created_at_ms: i64,
+    /// Edited at ms.
     pub edited_at_ms: i64,
+    /// Content.
     pub content: String,
+    /// Content aead.
     pub content_aead: Option<Vec<u8>>,
+    /// Content aead nonce.
     pub content_aead_nonce: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
+/// Chunk Embedding Row.
 pub struct ChunkEmbeddingRow {
+    /// Chunk id.
     pub chunk_id: i64,
+    /// Model id.
     pub model_id: String,
+    /// Vector.
     pub vector: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
+/// Indexed File.
 pub struct IndexedFile {
+    /// Path.
     pub path: String,
+    /// Hash.
     pub hash: String,
+    /// Last modified.
     pub last_modified: String,
+    /// Chunk count.
     pub chunk_count: u64,
 }
 

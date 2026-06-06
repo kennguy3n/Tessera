@@ -20,6 +20,7 @@ use crate::progress::{
 use crate::store::SourceStore;
 use crate::vision_extractor::{vlm_chunks_for_image, VisionExtractor};
 
+/// Indexer.
 pub struct Indexer {
     chunker_config: ChunkerConfig,
     ignore_rules: IgnoreRules,
@@ -55,6 +56,7 @@ pub struct Indexer {
 }
 
 impl Indexer {
+    /// Creates a new instance.
     pub fn new(ignore_patterns: &[String]) -> Self {
         // Always layer user patterns on TOP of the curated defaults
         // (binary files, VCS metadata, OS junk, …) so users get
@@ -111,6 +113,7 @@ impl Indexer {
         self
     }
 
+    /// With chunker config.
     pub fn with_chunker_config(mut self, config: ChunkerConfig) -> Self {
         self.chunker_config = config;
         self
@@ -152,6 +155,7 @@ impl Indexer {
         self
     }
 
+    /// Index folder.
     pub fn index_folder(
         &self,
         source_id: &SourceId,
@@ -255,6 +259,7 @@ impl Indexer {
         Ok(result)
     }
 
+    /// Index single file.
     pub fn index_single_file(
         &self,
         source_id: &SourceId,
@@ -828,7 +833,7 @@ impl Indexer {
         Ok(total)
     }
 
-    /// Variant of [`backfill_embeddings`] that reports per-chunk
+    /// Variant of `backfill_embeddings` that reports per-chunk
     /// progress into the supplied [`EmbeddingProgressSnapshot`] slot.
     ///
     /// The slot is the same mutex the IPC poll loop reads via
@@ -926,7 +931,7 @@ impl Indexer {
 /// Exit signal from [`Indexer::backfill_embeddings_with_progress`].
 ///
 /// The tracked variant of the backfill loop has two distinct
-/// successful exit paths and the caller (the [`SourceManager`])
+/// successful exit paths and the caller (the `SourceManager`)
 /// needs to flip the public embedding-progress status to a
 /// different state for each:
 ///
@@ -949,10 +954,14 @@ impl Indexer {
 /// this enum entirely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillOutcome {
+    /// The `Completed` variant.
     Completed {
+        /// Embedded.
         embedded: usize,
     },
+    /// The `Stalled` variant.
     Stalled {
+        /// Embedded.
         embedded: usize,
         /// Length of the batch in which every chunk failed. Surfaced
         /// in the failure message so users can correlate with their
@@ -979,11 +988,17 @@ impl Default for Indexer {
 }
 
 #[derive(Debug, Default)]
+/// Index Result.
 pub struct IndexResult {
+    /// Indexed.
     pub indexed: u64,
+    /// Unchanged.
     pub unchanged: u64,
+    /// Skipped.
     pub skipped: u64,
+    /// Total files.
     pub total_files: u64,
+    /// Errors.
     pub errors: Vec<String>,
     /// Number of chunks whose embedding failed to compute or persist
     /// during this indexing pass.
@@ -1002,7 +1017,7 @@ pub struct IndexResult {
     pub inline_embeddings_dropped: u64,
 }
 
-/// Per-file outcome surfaced by [`Indexer::index_file`] and
+/// Per-file outcome surfaced by `Indexer::index_file` and
 /// [`Indexer::index_single_file`].
 ///
 /// Separated from [`IndexResult`] (which is whole-pass) so the

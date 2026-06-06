@@ -105,15 +105,18 @@ fn parse_event_row(
     })
 }
 
+/// Audit Store.
 pub struct AuditStore {
     conn: SharedConnection,
 }
 
 impl AuditStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -157,6 +160,7 @@ impl AuditStore {
         Ok(())
     }
 
+    /// Append.
     pub fn append(&self, event: &AuditEvent) -> Result<()> {
         let type_str =
             serde_json::to_string(&event.event_type).map_err(|e| Error::Database(e.to_string()))?;
@@ -176,6 +180,7 @@ impl AuditStore {
         Ok(())
     }
 
+    /// Query by type.
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         let type_str =
             serde_json::to_string(event_type).map_err(|e| Error::Database(e.to_string()))?;
@@ -201,6 +206,7 @@ impl AuditStore {
         Ok(events)
     }
 
+    /// Query by date range.
     pub fn query_by_date_range(
         &self,
         from: &chrono::DateTime<chrono::Utc>,
@@ -261,6 +267,7 @@ impl AuditStore {
         Ok(events)
     }
 
+    /// Count.
     pub fn count(&self) -> Result<u64> {
         let count: i64 = self
             .conn

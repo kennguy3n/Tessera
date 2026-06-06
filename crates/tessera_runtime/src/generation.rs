@@ -1,16 +1,24 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Generate Request.
 pub struct GenerateRequest {
+    /// Prompt.
     pub prompt: String,
+    /// Max tokens.
     pub max_tokens: u32,
+    /// Temperature.
     pub temperature: f64,
+    /// Grammar.
     pub grammar: Option<String>,
+    /// Stop.
     pub stop: Option<Vec<String>>,
+    /// Stream.
     pub stream: bool,
 }
 
 impl GenerateRequest {
+    /// Creates a new instance.
     pub fn new(prompt: String) -> Self {
         Self {
             prompt,
@@ -22,21 +30,25 @@ impl GenerateRequest {
         }
     }
 
+    /// With grammar.
     pub fn with_grammar(mut self, grammar: String) -> Self {
         self.grammar = Some(grammar);
         self
     }
 
+    /// With max tokens.
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
         self
     }
 
+    /// With temperature.
     pub fn with_temperature(mut self, temperature: f64) -> Self {
         self.temperature = temperature;
         self
     }
 
+    /// Non streaming.
     pub fn non_streaming(mut self) -> Self {
         self.stream = false;
         self
@@ -53,16 +65,24 @@ impl GenerateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Generate Chunk.
 pub struct GenerateChunk {
+    /// Content.
     pub content: String,
+    /// Stop.
     pub stop: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Completion Response.
 pub struct CompletionResponse {
+    /// Content.
     pub content: String,
+    /// Stop.
     pub stop: bool,
+    /// Tokens predicted.
     pub tokens_predicted: Option<u32>,
+    /// Tokens evaluated.
     pub tokens_evaluated: Option<u32>,
 }
 
@@ -92,6 +112,7 @@ impl From<&GenerateRequest> for LlamaCompletionBody {
 }
 
 #[cfg(feature = "http")]
+/// Generate.
 pub async fn generate(
     endpoint: &str,
     request: &GenerateRequest,
@@ -117,6 +138,7 @@ pub async fn generate(
     serde_json::from_str(&text).map_err(|e| format!("Parse error: {e}"))
 }
 
+/// Parse sse chunk.
 pub fn parse_sse_chunk(line: &str) -> Option<GenerateChunk> {
     let data = line.strip_prefix("data: ")?;
     if data == "[DONE]" {

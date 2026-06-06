@@ -3,23 +3,35 @@ use serde::{Deserialize, Serialize};
 use tessera_core::{CitationId, SourceId, SourceType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Citation.
 pub struct Citation {
+    /// Citation id.
     pub citation_id: CitationId,
+    /// Source id.
     pub source_id: SourceId,
+    /// Source type.
     pub source_type: SourceType,
+    /// Source title.
     pub source_title: String,
+    /// Source uri.
     pub source_uri: String,
+    /// Chunk hash.
     pub chunk_hash: String,
     /// File-level hash at the time the citation was created, used for change detection.
     pub source_file_hash: String,
+    /// Page.
     pub page: Option<u32>,
+    /// Confidence.
     pub confidence: f64,
+    /// Used for.
     pub used_for: String,
+    /// Created at.
     pub created_at: DateTime<Utc>,
 }
 
 impl Citation {
     #[allow(clippy::too_many_arguments)]
+    /// Creates a new instance.
     pub fn new(
         source_id: SourceId,
         source_type: SourceType,
@@ -45,6 +57,7 @@ impl Citation {
         }
     }
 
+    /// With page.
     pub fn with_page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self

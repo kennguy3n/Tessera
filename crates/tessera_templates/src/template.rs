@@ -2,15 +2,23 @@ use serde::{Deserialize, Serialize};
 use tessera_core::{ArtifactType, ExportFormat, TemplateId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Template.
 pub struct Template {
+    /// Id.
     pub id: String,
     #[serde(skip)]
+    /// Template id.
     pub template_id: TemplateId,
+    /// Name.
     pub name: String,
     #[serde(rename = "type")]
+    /// Artifact type.
     pub artifact_type: ArtifactType,
+    /// Description.
     pub description: String,
+    /// Sections.
     pub sections: Vec<TemplateSection>,
+    /// Export.
     pub export: Vec<ExportFormat>,
     /// Optional output format for the template (e.g. "marp" for slide decks
     /// that should be rendered with Marp Core / Marp CLI). Mirrors the
@@ -65,10 +73,14 @@ fn default_locale() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Template Section.
 pub struct TemplateSection {
+    /// Title.
     pub title: String,
+    /// Prompt.
     pub prompt: String,
     #[serde(default)]
+    /// Required sources.
     pub required_sources: Vec<RequiredSource>,
     /// Maximum tokens the LLM should generate for this section. Mirrors
     /// the `max_tokens` field on the JSON Schema and gives the runtime
@@ -114,23 +126,29 @@ pub enum SectionOutputFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Required Source.
 pub struct RequiredSource {
     #[serde(rename = "type")]
+    /// Source type.
     pub source_type: String,
     #[serde(default)]
+    /// Min.
     pub min: Option<u32>,
 }
 
 impl Template {
+    /// With computed id.
     pub fn with_computed_id(mut self) -> Self {
         self.template_id = TemplateId::from_string(&self.id);
         self
     }
 
+    /// Section count.
     pub fn section_count(&self) -> usize {
         self.sections.len()
     }
 
+    /// Export formats.
     pub fn export_formats(&self) -> &[ExportFormat] {
         &self.export
     }

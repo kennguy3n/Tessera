@@ -2,9 +2,9 @@
 //!
 //! A citation's [`crate::citation::Citation`] stores the file-level
 //! hash of the source at the time the citation was created. Once a
-//! source is re-indexed (by [`tessera_sources::indexer::Indexer`])
+//! source is re-indexed (by `tessera_sources::indexer::Indexer`)
 //! the hash will change if the bytes on disk changed. The
-//! [`FreshnessChecker`] consumes a callback that maps a `source_uri`
+//! `FreshnessChecker` consumes a callback that maps a `source_uri`
 //! to the current file hash and produces a typed [`FreshnessStatus`]
 //! so callers can distinguish three cases:
 //!
@@ -23,13 +23,18 @@ use crate::citation::Citation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Freshness Status.
 pub enum FreshnessStatus {
+    /// The `Fresh` variant.
     Fresh,
+    /// The `Changed` variant.
     Changed,
+    /// Source Missing.
     SourceMissing,
 }
 
 impl FreshnessStatus {
+    /// Is stale.
     pub fn is_stale(self) -> bool {
         !matches!(self, Self::Fresh)
     }

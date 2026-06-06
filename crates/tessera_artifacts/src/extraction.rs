@@ -3,16 +3,23 @@ use serde::{Deserialize, Serialize};
 /// An extracted actionable item from source material.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedItem {
+    /// Item type.
     pub item_type: ItemType,
+    /// Text.
     pub text: String,
+    /// Source citation.
     pub source_citation: String,
+    /// Confidence.
     pub confidence: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Item Type.
 pub enum ItemType {
+    /// The `Task` variant.
     Task,
+    /// The `Decision` variant.
     Decision,
 }
 

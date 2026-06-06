@@ -3,6 +3,13 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 interface Props {
   children: ReactNode;
   /**
+   * Name of the subtree this boundary guards (e.g. "HomePage",
+   * "DocumentEditor"). Included verbatim in the crash report so a
+   * `crash-report.json` entry points at the exact page/editor that
+   * threw. Defaults to "renderer" for the top-level boundary.
+   */
+  name?: string;
+  /**
    * Optional override for the fallback UI. When omitted we render
    * the default Tessera error screen with Reload / Report controls.
    */
@@ -35,11 +42,32 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // The Electron main process owns the disk-backed log file; the
-    // renderer just logs to its own console for now. Including the
-    // component stack here is essential for diagnosing crashes from
-    // user bug reports.
-    console.error("Tessera renderer error:", error, info.componentStack);
+    const component = this.props.name ?? "renderer";
+    // Including the component stack is essential for diagnosing crashes
+    // from user bug reports.
+    console.error(
+      `Tessera renderer error [${component}]:`,
+      error,
+      info.componentStack,
+    );
+
+    // Forward to the main process, which owns the disk-backed log
+    // directory and persists `crash-report.json` (the renderer is the
+    // untrusted web context and cannot write files itself). Best-effort:
+    // the `tessera` bridge is absent in unit tests and a rejected
+    // promise here would be noise while the fallback UI is already up.
+    try {
+      void window.tessera?.diagnostics?.reportCrash({
+        component,
+        error: error.message,
+        // Prefer the JS stack; fall back to React's component stack so
+        // the report is never empty.
+        stack: error.stack ?? info.componentStack ?? "",
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      // Swallow — reporting a crash must never cause another crash.
+    }
   }
 
   reset = (): void => {

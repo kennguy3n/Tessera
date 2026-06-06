@@ -216,6 +216,7 @@ pub struct KekProvider {
 }
 
 impl KekProvider {
+    /// Creates a new instance.
     pub fn new(master: MasterKey) -> Self {
         Self { master }
     }
@@ -243,7 +244,9 @@ impl KekProvider {
 /// and consumed by [`KchatCrypto::unwrap_dek`].
 #[derive(Debug, Clone)]
 pub struct WrappedDek {
+    /// Wrap nonce.
     pub wrap_nonce: [u8; AES_GCM_NONCE_LEN],
+    /// Wrapped.
     pub wrapped: [u8; WRAPPED_DEK_LEN],
 }
 
@@ -288,7 +291,9 @@ type DekBytes = Zeroizing<[u8; 32]>;
 ///   - `ciphertext`: input plaintext length + 16-byte tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedChunk {
+    /// Nonce.
     pub nonce: Vec<u8>,
+    /// Ciphertext.
     pub ciphertext: Vec<u8>,
 }
 
@@ -306,6 +311,7 @@ pub struct KchatCrypto {
 }
 
 impl KchatCrypto {
+    /// Creates a new instance.
     pub fn new(master: MasterKey) -> Self {
         Self {
             kek_provider: KekProvider::new(master),

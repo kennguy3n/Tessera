@@ -1,15 +1,24 @@
+//! Cloud connector integrations (Notion, Google Drive, OneDrive,
+//! Confluence, Jira, Figma) with shared retry and failure-state handling.
+#![warn(missing_docs)]
+
 pub mod confluence;
+/// The `error` module.
 pub mod error;
 pub mod failure_state;
 pub mod figma;
+/// The `gdrive` module.
 pub mod gdrive;
 pub mod jira;
 pub mod notion;
 pub mod onedrive;
+/// The `registry` module.
 pub mod registry;
 pub mod retry;
+/// The `token` module.
 pub mod token;
 pub mod traits;
+/// The `types` module.
 pub mod types;
 pub mod url_encode;
 

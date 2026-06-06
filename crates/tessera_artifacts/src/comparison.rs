@@ -5,15 +5,22 @@ use std::fmt::Write;
 /// Result of comparing two sources' content.
 #[derive(Debug, Clone)]
 pub struct ComparisonResult {
+    /// Common themes.
     pub common_themes: Vec<Theme>,
+    /// Unique to a.
     pub unique_to_a: Vec<Theme>,
+    /// Unique to b.
     pub unique_to_b: Vec<Theme>,
+    /// Similarity score.
     pub similarity_score: f64,
 }
 
 #[derive(Debug, Clone)]
+/// Theme.
 pub struct Theme {
+    /// Label.
     pub label: String,
+    /// Frequency.
     pub frequency: usize,
 }
 
@@ -75,6 +82,7 @@ pub fn compare_sources(chunks_a: &[String], chunks_b: &[String]) -> ComparisonRe
 }
 
 impl ComparisonResult {
+    /// To markdown.
     pub fn to_markdown(&self, label_a: &str, label_b: &str) -> String {
         let mut md = String::from("# Source Comparison\n\n");
         let _ = write!(

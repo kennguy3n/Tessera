@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Source Id.
 pub struct SourceId(pub Uuid);
 
 impl SourceId {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -24,9 +26,11 @@ impl std::fmt::Display for SourceId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Artifact Id.
 pub struct ArtifactId(pub Uuid);
 
 impl ArtifactId {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -45,13 +49,16 @@ impl std::fmt::Display for ArtifactId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Template Id.
 pub struct TemplateId(pub Uuid);
 
 impl TemplateId {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
+    /// From string.
     pub fn from_string(s: &str) -> Self {
         Self(Uuid::new_v5(&Uuid::NAMESPACE_OID, s.as_bytes()))
     }
@@ -70,9 +77,11 @@ impl std::fmt::Display for TemplateId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Citation Id.
 pub struct CitationId(pub Uuid);
 
 impl CitationId {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -91,9 +100,11 @@ impl std::fmt::Display for CitationId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Task Id.
 pub struct TaskId(pub Uuid);
 
 impl TaskId {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -112,9 +123,11 @@ impl std::fmt::Display for TaskId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Automation Id.
 pub struct AutomationId(pub Uuid);
 
 impl AutomationId {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -134,10 +147,15 @@ impl std::fmt::Display for AutomationId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Task Status.
 pub enum TaskStatus {
+    /// The `Todo` variant.
     Todo,
+    /// In Progress.
     InProgress,
+    /// The `Done` variant.
     Done,
+    /// The `Blocked` variant.
     Blocked,
 }
 
@@ -154,10 +172,15 @@ impl std::fmt::Display for TaskStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Task Priority.
 pub enum TaskPriority {
+    /// The `Low` variant.
     Low,
+    /// The `Medium` variant.
     Medium,
+    /// The `High` variant.
     High,
+    /// The `Critical` variant.
     Critical,
 }
 
@@ -172,18 +195,28 @@ impl std::fmt::Display for TaskPriority {
     }
 }
 
+/// Timestamp type alias.
 pub type Timestamp = DateTime<Utc>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Source Type.
 pub enum SourceType {
+    /// Local Folder.
     LocalFolder,
+    /// Local File.
     LocalFile,
+    /// Google Drive.
     GoogleDrive,
+    /// One Drive.
     OneDrive,
+    /// The `Notion` variant.
     Notion,
+    /// The `Jira` variant.
     Jira,
+    /// The `Confluence` variant.
     Confluence,
+    /// The `Figma` variant.
     Figma,
     /// KChat channel connector — files shared into a KChat channel
     /// surface as an indexed source. The renderer downloads the
@@ -196,11 +229,17 @@ pub enum SourceType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Source Status.
 pub enum SourceStatus {
+    /// The `Connected` variant.
     Connected,
+    /// The `Indexing` variant.
     Indexing,
+    /// The `Indexed` variant.
     Indexed,
+    /// The `Error` variant.
     Error,
+    /// The `Disconnected` variant.
     Disconnected,
     /// The local user has lost authorisation to read this source.
     /// Block B Task 3 introduces this state for
@@ -281,12 +320,19 @@ impl SourceStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Artifact Type.
 pub enum ArtifactType {
+    /// The `Document` variant.
     Document,
+    /// The `Slides` variant.
     Slides,
+    /// The `Sheet` variant.
     Sheet,
+    /// The `Base` variant.
     Base,
+    /// The `Infographic` variant.
     Infographic,
+    /// Landing Page.
     LandingPage,
 }
 
@@ -305,14 +351,23 @@ impl std::fmt::Display for ArtifactType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Export Format.
 pub enum ExportFormat {
+    /// The `Markdown` variant.
     Markdown,
+    /// The `Html` variant.
     Html,
+    /// The `Csv` variant.
     Csv,
+    /// The `Pdf` variant.
     Pdf,
+    /// The `Docx` variant.
     Docx,
+    /// The `Pptx` variant.
     Pptx,
+    /// The `Xlsx` variant.
     Xlsx,
+    /// The `Json` variant.
     Json,
 }
 

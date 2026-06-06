@@ -3,17 +3,26 @@ use serde::{Deserialize, Serialize};
 use tessera_core::{SourceId, SourceStatus, SourceType};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Source.
 pub struct Source {
+    /// Id.
     pub id: SourceId,
+    /// Source type.
     pub source_type: SourceType,
+    /// Path.
     pub path: String,
+    /// Status.
     pub status: SourceStatus,
+    /// Created at.
     pub created_at: DateTime<Utc>,
+    /// Last indexed.
     pub last_indexed: Option<DateTime<Utc>>,
+    /// File count.
     pub file_count: u64,
 }
 
 impl Source {
+    /// New local folder.
     pub fn new_local_folder(path: String) -> Self {
         Self {
             id: SourceId::new(),
@@ -26,6 +35,7 @@ impl Source {
         }
     }
 
+    /// New local file.
     pub fn new_local_file(path: String) -> Self {
         Self {
             id: SourceId::new(),
