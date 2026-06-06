@@ -145,29 +145,50 @@ export const AutomationTriggerSchema = z.discriminatedUnion("kind", [
 ]);
 
 // `AutomationAction` is recursive: a `sequence` wraps an ordered list
-// of sub-actions (themselves possibly sequences). zod can't express a
-// recursive `discriminatedUnion` directly, so we tie the knot with
-// `z.lazy` and an explicit `z.ZodType<AutomationAction>` annotation.
-// Leaf actions still validate by their `kind` discriminator; the
-// nested-`actions` array is bounded to keep a pathological payload from
-// exhausting the stack at validation time.
-export const AutomationActionSchema: z.ZodType<AutomationAction> = z.lazy(() =>
-  z.discriminatedUnion("kind", [
-    z.object({
-      kind: z.literal("reindex_source"),
-      source_id: NonEmptyString,
-    }),
-    z.object({
-      kind: z.literal("generate_from_template"),
-      template_id: NonEmptyString,
-      source_ids: z.array(NonEmptyString).max(10_000),
-    }),
+// of sub-actions (themselves possibly sequences). The leaf variants
+// validate by their `kind` discriminator.
+const ReindexSourceActionSchema = z.object({
+  kind: z.literal("reindex_source"),
+  source_id: NonEmptyString,
+});
+const GenerateFromTemplateActionSchema = z.object({
+  kind: z.literal("generate_from_template"),
+  template_id: NonEmptyString,
+  source_ids: z.array(NonEmptyString).max(10_000),
+});
+
+// Maximum `sequence` nesting depth. A naive `z.lazy` recursion has no
+// depth bound, so a payload nested a few thousand levels deep
+// (`{sequence:[{sequence:[…]}]}`) overflows the call stack *during
+// validation* and crashes the main process — the `.max()` breadth cap
+// does not constrain depth. Instead we build a finite, depth-bounded
+// schema: at depth 0 a `sequence` is no longer an accepted variant, so
+// an over-deep payload fails the discriminator with a normal zod error
+// rather than recursing unboundedly. Kept well under serde_json's
+// default 128-deep recursion limit on the Rust side, so anything the
+// IPC layer accepts the bridge can also deserialize. Real automations
+// nest only a handful of levels.
+const MAX_ACTION_DEPTH = 32;
+
+function buildActionSchema(depth: number): z.ZodType<AutomationAction> {
+  if (depth <= 0) {
+    return z.discriminatedUnion("kind", [
+      ReindexSourceActionSchema,
+      GenerateFromTemplateActionSchema,
+    ]) as z.ZodType<AutomationAction>;
+  }
+  return z.discriminatedUnion("kind", [
+    ReindexSourceActionSchema,
+    GenerateFromTemplateActionSchema,
     z.object({
       kind: z.literal("sequence"),
-      actions: z.array(AutomationActionSchema).max(1_000),
+      actions: z.array(buildActionSchema(depth - 1)).max(1_000),
     }),
-  ]),
-);
+  ]) as z.ZodType<AutomationAction>;
+}
+
+export const AutomationActionSchema: z.ZodType<AutomationAction> =
+  buildActionSchema(MAX_ACTION_DEPTH);
 
 export const CreateAutomationSchema = z.object({
   name: NonEmptyString,

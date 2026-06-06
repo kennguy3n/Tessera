@@ -298,6 +298,19 @@ describe("AutomationActionSchema", () => {
     ).toThrow();
   });
 
+  it("rejects pathologically deep nesting without overflowing the stack", () => {
+    // A naive z.lazy recursion would blow the call stack here and crash
+    // the main process; the depth-bounded schema must instead return a
+    // normal validation failure.
+    const deepNest = (n: number): unknown => {
+      let a: unknown = { kind: "reindex_source", source_id: "s" };
+      for (let i = 0; i < n; i++) a = { kind: "sequence", actions: [a] };
+      return a;
+    };
+    const res = AutomationActionSchema.safeParse(deepNest(5_000));
+    expect(res.success).toBe(false);
+  });
+
   it("rejects an unknown action kind", () => {
     expect(() =>
       AutomationActionSchema.parse({ kind: "bogus" }),

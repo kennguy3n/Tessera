@@ -187,12 +187,19 @@ export default function AutomationsPage() {
         kind: "schedule",
         interval_seconds: Math.round(draft.intervalSeconds),
       };
-    } else {
+    } else if (draft.triggerKind === "on_generate") {
       if (!draft.triggerTemplateId) {
         setSubmitError("Pick a template for the on-generate trigger");
         return;
       }
       trigger = { kind: "on_generate", template_id: draft.triggerTemplateId };
+    } else {
+      // Exhaustive guard: the dropdown only exposes the kinds handled
+      // above, so reaching here means a new `TriggerKind` was wired into
+      // the UI without a create branch. Fail loudly instead of silently
+      // building the wrong trigger.
+      setSubmitError(`Unsupported trigger kind: ${draft.triggerKind}`);
+      return;
     }
 
     let action: AutomationAction;
@@ -202,7 +209,7 @@ export default function AutomationsPage() {
         return;
       }
       action = { kind: "reindex_source", source_id: draft.actionSourceId };
-    } else {
+    } else if (draft.actionKind === "generate_from_template") {
       if (!draft.actionTemplateId) {
         setSubmitError("Pick a template to generate from");
         return;
@@ -212,6 +219,12 @@ export default function AutomationsPage() {
         template_id: draft.actionTemplateId,
         source_ids: draft.actionSourceIds,
       };
+    } else {
+      // Exhaustive guard (see trigger branch above): the dropdown only
+      // exposes the kinds handled here, so a new `ActionKind` reaching
+      // this point is a wiring bug, not a valid create.
+      setSubmitError(`Unsupported action kind: ${draft.actionKind}`);
+      return;
     }
 
     setSubmitting(true);
