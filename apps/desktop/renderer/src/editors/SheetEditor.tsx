@@ -108,6 +108,13 @@ export default function SheetEditor({
   const formulaBarRef = useRef<HTMLInputElement>(null);
   const gridWrapperRef = useRef<HTMLDivElement>(null);
   const lastSavedRef = useRef(content);
+  // Teardown callbacks for in-flight pointer drags (column/row resize,
+  // auto-fill). Each drag attaches window-level mousemove/mouseup
+  // listeners that normally detach on mouseup; if the editor unmounts
+  // mid-drag those would otherwise stay bound to `window` and keep
+  // firing against a torn-down grid. We register each drag's teardown
+  // here and run any still-pending ones on unmount.
+  const dragTeardownsRef = useRef<Set<() => void>>(new Set());
 
   const debouncedSave = useCallback(
     (data: SheetContent) => {
@@ -125,8 +132,14 @@ export default function SheetEditor({
   );
 
   useEffect(() => {
+    const dragTeardowns = dragTeardownsRef.current;
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      // Detach any drag listeners left bound to `window` by an
+      // interaction that was still in progress when the editor
+      // unmounted (e.g. mouse button held while navigating away).
+      for (const teardown of [...dragTeardowns]) teardown();
+      dragTeardowns.clear();
     };
   }, []);
 
@@ -573,6 +586,31 @@ export default function SheetEditor({
   // column / row resize via drag handles.
   // ----------------------------------------------------------------
 
+  // Wire up a window-level pointer drag with guaranteed teardown.
+  // `onMove` runs for every mousemove; `onCommit` (optional) runs once
+  // on mouseup after the listeners are detached. The teardown is also
+  // registered in `dragTeardownsRef` so an unmount mid-drag tears the
+  // listeners down too — preventing a zombie handler from firing
+  // against an unmounted grid.
+  const beginPointerDrag = useCallback(
+    (onMove: (ev: MouseEvent) => void, onCommit?: () => void) => {
+      const teardown = () => {
+        window.removeEventListener("mousemove", handleMove);
+        window.removeEventListener("mouseup", handleUp);
+        dragTeardownsRef.current.delete(teardown);
+      };
+      const handleMove = (ev: MouseEvent) => onMove(ev);
+      const handleUp = () => {
+        teardown();
+        onCommit?.();
+      };
+      window.addEventListener("mousemove", handleMove);
+      window.addEventListener("mouseup", handleUp);
+      dragTeardownsRef.current.add(teardown);
+    },
+    [],
+  );
+
   const beginColumnResize = useCallback(
     (colIdx: number, e: React.MouseEvent) => {
       e.preventDefault();
@@ -594,14 +632,9 @@ export default function SheetEditor({
           return updated;
         });
       };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      beginPointerDrag(onMove);
     },
-    [sheet.columnWidths, debouncedSave],
+    [sheet.columnWidths, debouncedSave, beginPointerDrag],
   );
 
   const beginRowResize = useCallback(
@@ -625,14 +658,9 @@ export default function SheetEditor({
           return updated;
         });
       };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      beginPointerDrag(onMove);
     },
-    [sheet.rowHeights, debouncedSave],
+    [sheet.rowHeights, debouncedSave, beginPointerDrag],
   );
 
   // ----------------------------------------------------------------
@@ -691,6 +719,11 @@ export default function SheetEditor({
       let hoverRow = r2;
       let hoverCol = c2;
       const onMove = (ev: MouseEvent) => {
+        // `elementFromPoint` is a layout-dependent DOM API that isn't
+        // available in every environment (e.g. jsdom). Guard so a
+        // mousemove that arrives without it simply doesn't update the
+        // hover target rather than throwing.
+        if (typeof document.elementFromPoint !== "function") return;
         const target = document.elementFromPoint(
           ev.clientX,
           ev.clientY,
@@ -703,9 +736,7 @@ export default function SheetEditor({
         hoverRow = row;
         hoverCol = col;
       };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
+      const onCommit = () => {
         // Determine fill direction + length from the hover target.
         let direction: FillDirection | null = null;
         let length = 0;
@@ -725,8 +756,7 @@ export default function SheetEditor({
         if (!direction || length === 0) return;
         applyAutoFill(direction, length);
       };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      beginPointerDrag(onMove, onCommit);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selection, sheet, debouncedSave],
