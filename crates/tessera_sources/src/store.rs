@@ -10,8 +10,9 @@ use rusqlite::params;
 use rusqlite::Connection;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
-    empty_read_pool, open_shared, open_shared_in_memory, with_secure_delete, SharedConnection,
-    SharedReadPool, SourceId, SourceStatus, SourceType,
+    empty_read_pool, open_shared, open_shared_in_memory, with_secure_delete,
+    with_secure_delete_transaction, SharedConnection, SharedReadPool, SourceId, SourceStatus,
+    SourceType,
 };
 
 use crate::chunker::Chunk;
@@ -267,46 +268,57 @@ impl SourceStore {
     /// Remove source.
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         let id_str = source_id.to_string();
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-
-        let file_ids: Vec<i64> = conn
-            .prepare("SELECT id FROM indexed_files WHERE source_id = ?1")
-            .map_err(Error::Sqlite)?
-            .query_map(params![id_str], |row| row.get(0))
-            .map_err(Error::Sqlite)?
-            .filter_map(std::result::Result::ok)
-            .collect();
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
 
         // Scrub under `secure_delete = ON` so the freed chunk / file /
         // source pages are zero-filled at delete time — a removed
         // source's indexed text must not be recoverable from a later
         // forensic image of the SQLCipher file.
-        with_secure_delete(&conn, |conn| {
-            for fid in &file_ids {
-                conn.execute(
-                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                    params![fid],
+        //
+        // The chunk / file / source DELETEs run inside a single
+        // `BEGIN IMMEDIATE` transaction so crash-recovery returns either
+        // the full pre-remove state or the full post-remove state, never
+        // a partial removal (e.g. chunks gone but the `indexed_files` /
+        // `sources` rows still present).
+        let deleted_chunks = with_secure_delete_transaction(&mut conn, |txn| {
+            // One set-based DELETE rather than a per-file loop: it
+            // scrubs every chunk for the source in a single statement
+            // (firing the `chunks_ad` / `chunks_ad_embeddings` triggers
+            // per removed row), which keeps the writer-lock hold short
+            // even for a source with many indexed files.
+            let deleted = txn
+                .execute(
+                    "DELETE FROM chunks
+                 WHERE indexed_file_id IN
+                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
+                    params![id_str],
                 )
                 .map_err(Error::Sqlite)?;
-            }
 
-            conn.execute(
+            txn.execute(
                 "DELETE FROM indexed_files WHERE source_id = ?1",
                 params![id_str],
             )
             .map_err(Error::Sqlite)?;
 
-            conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
+            txn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
                 .map_err(Error::Sqlite)?;
-            Ok(())
+            Ok(deleted)
         })?;
 
-        // removing a source cascades through
-        // chunks_ad_embeddings, so the cached IVF index for any
-        // model_id may now point at deleted chunk rows. Bump so the
-        // next search rebuilds against the post-delete row set.
+        // Same post-chunk-delete bookkeeping as
+        // `delete_chunks_for_indexed_file` / `remove_indexed_file`: the
+        // removed chunks changed the corpus's non-ASCII ratio, so always
+        // drop the multilingual-hint cache; and the delete cascades
+        // through `chunks_ad_embeddings` (stale cached IVF index), so bump
+        // the embedding generation — but only when chunks were actually
+        // removed, to avoid forcing a gratuitous index rebuild when the
+        // source had none.
         drop(conn);
-        self.bump_embedding_generation();
+        self.invalidate_non_ascii_cache();
+        if deleted_chunks > 0 {
+            self.bump_embedding_generation();
+        }
         Ok(())
     }
 
@@ -1736,16 +1748,22 @@ impl SourceStore {
         indexed_file_id: i64,
     ) -> Result<()> {
         let id_str = source_id.to_string();
-        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
         // Scrub the post bookkeeping + indexed_file rows under
-        // `secure_delete = ON` so the freed pages are zero-filled.
-        with_secure_delete(&conn, |conn| {
-            conn.execute(
+        // `secure_delete = ON` so the freed pages are zero-filled. Both
+        // DELETEs run in one `BEGIN IMMEDIATE` transaction: the
+        // `kchat_posts` row carries a non-cascading FK to
+        // `indexed_files.id`, so a crash after the first DELETE but
+        // before the second (or the reverse ordering) could otherwise
+        // leave an orphaned `indexed_files` row whose post bookkeeping
+        // is gone.
+        with_secure_delete_transaction(&mut conn, |txn| {
+            txn.execute(
                 "DELETE FROM kchat_posts WHERE source_id = ?1 AND post_id = ?2",
                 params![id_str, post_id],
             )
             .map_err(Error::Sqlite)?;
-            conn.execute(
+            txn.execute(
                 "DELETE FROM indexed_files WHERE id = ?1",
                 params![indexed_file_id],
             )
@@ -2132,25 +2150,49 @@ impl SourceStore {
 
     /// Remove indexed file.
     pub fn remove_indexed_file(&self, path: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-        if let Ok(file_id) = conn.query_row(
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
+        // A missing row is a legitimate no-op, but any *other* error from
+        // the lookup (e.g. a corrupted index or I/O error) must propagate
+        // rather than be silently swallowed as "file not found".
+        let file_id = match conn.query_row(
             "SELECT id FROM indexed_files WHERE path = ?1",
             params![path],
             |row| row.get::<_, i64>(0),
         ) {
-            // Zero-fill the freed chunk / indexed_file pages so the
-            // removed file's indexed text is unrecoverable from the
-            // freelist.
-            with_secure_delete(&conn, |conn| {
-                conn.execute(
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(Error::Sqlite(e)),
+        };
+
+        // Zero-fill the freed chunk / indexed_file pages so the
+        // removed file's indexed text is unrecoverable from the
+        // freelist. Both DELETEs run in one `BEGIN IMMEDIATE`
+        // transaction so a crash between them can't strand the
+        // `indexed_files` row with its chunks already gone (or vice
+        // versa).
+        let deleted_chunks = with_secure_delete_transaction(&mut conn, |txn| {
+            let deleted = txn
+                .execute(
                     "DELETE FROM chunks WHERE indexed_file_id = ?1",
                     params![file_id],
                 )
                 .map_err(Error::Sqlite)?;
-                conn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
-                    .map_err(Error::Sqlite)?;
-                Ok(())
-            })?;
+            txn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
+                .map_err(Error::Sqlite)?;
+            Ok(deleted)
+        })?;
+        // Same post-chunk-delete bookkeeping as
+        // `delete_chunks_for_indexed_file`: the removed chunks changed
+        // the corpus's non-ASCII ratio, so always drop the
+        // multilingual-hint cache; and the delete cascades through
+        // `chunks_ad_embeddings` (stale cached IVF index), so bump the
+        // embedding generation — but only when chunks were actually
+        // removed, to avoid forcing a gratuitous index rebuild for a
+        // file that had none.
+        drop(conn);
+        self.invalidate_non_ascii_cache();
+        if deleted_chunks > 0 {
+            self.bump_embedding_generation();
         }
         Ok(())
     }
@@ -3167,6 +3209,99 @@ mod tests {
 
         let sources = store.list_sources().unwrap();
         assert!(sources.is_empty());
+    }
+
+    /// `remove_source` deletes the source's chunks, its `indexed_files`
+    /// rows, and the `sources` row as one `BEGIN IMMEDIATE` unit, so a
+    /// successful call must leave NO orphaned chunk or indexed_file rows
+    /// behind for that source — across multiple indexed files. This pins
+    /// the all-or-nothing contract the transactional wrapper provides
+    /// (a partial scrub would leave `indexed_files`/`chunks` rows whose
+    /// parent `sources` row is gone, the failure mode the flag called
+    /// out).
+    #[test]
+    fn remove_source_leaves_no_orphaned_files_or_chunks() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/multi".to_string());
+        store.add_source(&source).unwrap();
+
+        // Two indexed files, each with chunks, so the chunk delete spans
+        // more than one file (the path the old per-file loop walked).
+        // Capture the file ids so the orphan check can query `chunks`
+        // directly by id rather than through an `indexed_files` subquery
+        // (which empties once the parent rows are deleted, making the
+        // assertion trivially pass even if chunks were stranded).
+        let mut file_ids = Vec::new();
+        for (path, hash) in [("/tmp/multi/a.txt", "h-a"), ("/tmp/multi/b.txt", "h-b")] {
+            let fid = store
+                .upsert_indexed_file(&source.id, path, hash, "2026-01-01")
+                .unwrap();
+            store
+                .insert_chunks(
+                    fid,
+                    &[crate::chunker::Chunk {
+                        source_path: path.to_string(),
+                        chunk_index: 0,
+                        byte_offset: 0,
+                        content: format!("sentinel for {path}"),
+                        hash: format!("{hash}-0"),
+                        extraction_method: None,
+                        extraction_model_id: None,
+                    }],
+                )
+                .unwrap();
+            file_ids.push(fid);
+        }
+
+        let id_str = source.id.to_string();
+        let count_by_source = |sql: &str| -> i64 {
+            let conn = store.conn.lock().expect("conn poisoned");
+            conn.query_row(sql, params![id_str], |row| row.get::<_, i64>(0))
+                .expect("count query should return a row")
+        };
+        // Count chunks by the captured file ids directly, independent of
+        // whether the `indexed_files` rows still exist.
+        let count_chunks_for_files = || -> i64 {
+            let conn = store.conn.lock().expect("conn poisoned");
+            let placeholders = vec!["?"; file_ids.len()].join(", ");
+            let sql =
+                format!("SELECT COUNT(*) FROM chunks WHERE indexed_file_id IN ({placeholders})");
+            conn.query_row(&sql, rusqlite::params_from_iter(file_ids.iter()), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count query should return a row")
+        };
+
+        assert_eq!(
+            count_by_source("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
+            2,
+            "precondition: both files indexed",
+        );
+        assert_eq!(
+            count_chunks_for_files(),
+            2,
+            "precondition: both files' chunks present",
+        );
+
+        store.remove_source(&source.id).unwrap();
+
+        assert!(
+            store.list_sources().unwrap().is_empty(),
+            "the source row must be gone",
+        );
+        assert_eq!(
+            count_by_source("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
+            0,
+            "no orphaned indexed_files rows may survive remove_source",
+        );
+        // Direct by-id check: even though the `indexed_files` rows are
+        // gone, the chunk rows keyed to those ids must also be gone — a
+        // partial scrub would leave them stranded here.
+        assert_eq!(
+            count_chunks_for_files(),
+            0,
+            "no orphaned chunk rows may survive remove_source",
+        );
     }
 
     #[test]
@@ -4599,5 +4734,48 @@ mod tests {
         // Phase 4: delete_chunks_for_indexed_file also invalidates.
         store.delete_chunks_for_indexed_file(file_id).unwrap();
         assert_eq!(store.count_non_ascii_chunks().unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn remove_source_and_remove_indexed_file_invalidate_non_ascii_cache() {
+        // Devin Review (Info): remove_source / remove_indexed_file delete
+        // chunks but historically skipped invalidate_non_ascii_cache, so
+        // the memoized multilingual-hint counts could stay stale for up to
+        // NON_ASCII_CACHE_TTL after a removal. Pin that both removal paths
+        // now invalidate, matching delete_chunks_for_indexed_file.
+        for use_remove_source in [true, false] {
+            let store = SourceStore::open_in_memory().unwrap();
+            let source = Source::new_local_folder("/tmp/test".to_string());
+            store.add_source(&source).unwrap();
+
+            // Seed one non-ASCII chunk and prime the cache to (1, 1).
+            let file_id = store
+                .upsert_indexed_file(&source.id, "/tmp/test/a.txt", "hashA", "2026-01-01")
+                .unwrap();
+            {
+                let conn = store.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash) \
+                     VALUES (?1, 0, 0, '財務報告', 'h1')",
+                    params![file_id],
+                )
+                .unwrap();
+            }
+            assert_eq!(store.count_non_ascii_chunks().unwrap(), (1, 1));
+
+            // Remove via the path under test. The cache MUST be dropped so
+            // the next poll re-scans the now-empty corpus instead of
+            // returning the stale (1, 1).
+            if use_remove_source {
+                store.remove_source(&source.id).unwrap();
+            } else {
+                store.remove_indexed_file("/tmp/test/a.txt").unwrap();
+            }
+            assert_eq!(
+                store.count_non_ascii_chunks().unwrap(),
+                (0, 0),
+                "removal path must invalidate the multilingual-hint cache"
+            );
+        }
     }
 }
