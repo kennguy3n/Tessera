@@ -1557,11 +1557,20 @@ impl SourceStore {
             if old_hash == hash {
                 return Ok(file_id);
             }
-            conn.execute(
-                "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                params![file_id],
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            // Re-indexing a changed file drops the previous revision's
+            // chunks, which hold its indexed plaintext. Zero-fill the
+            // freed pages so the superseded content cannot be recovered
+            // from the freelist — same guarantee as the explicit
+            // `delete_chunks_for_indexed_file` / `remove_indexed_file`
+            // paths. Only the DELETE needs the pragma; the metadata
+            // UPDATE below carries no freed plaintext.
+            with_secure_delete(&conn, |conn| {
+                conn.execute(
+                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                    params![file_id],
+                )
+                .map_err(|e| Error::Database(e.to_string()))
+            })?;
             conn.execute(
                 "UPDATE indexed_files SET hash = ?1, last_modified = ?2, chunk_count = 0 WHERE id = ?3",
                 params![hash, last_modified, file_id],
@@ -4280,6 +4289,49 @@ mod tests {
             read_secure_delete(),
             0,
             "remove_source must restore secure_delete=OFF",
+        );
+
+        // --- upsert_indexed_file re-index (hash change) -------------
+        // Re-indexing a file whose content changed drops the previous
+        // revision's chunks. That superseded plaintext must be
+        // zero-filled too, and the pragma restored to OFF.
+        let source2 = Source::new_local_folder("/tmp/reindex".to_string());
+        store.add_source(&source2).unwrap();
+        let rid = store
+            .upsert_indexed_file(&source2.id, "/tmp/reindex/c.txt", "rev-1", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                rid,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/reindex/c.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "secret sentinel delta".to_string(),
+                    hash: "rev-1-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        // Same path, NEW hash → the existing-row branch deletes the old
+        // chunks before resetting chunk_count.
+        let rid_again = store
+            .upsert_indexed_file(&source2.id, "/tmp/reindex/c.txt", "rev-2", "2026-01-02")
+            .unwrap();
+        assert_eq!(rid_again, rid, "re-index keeps the same indexed_file row");
+        assert_eq!(
+            store
+                .all_chunks_for_path("/tmp/reindex/c.txt")
+                .unwrap()
+                .len(),
+            0,
+            "re-index must drop the superseded revision's chunks",
+        );
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "upsert_indexed_file re-index must restore secure_delete=OFF",
         );
     }
 
