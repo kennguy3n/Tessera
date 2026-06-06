@@ -1154,6 +1154,28 @@ export function registerKchatHandlers(): void {
     },
   );
 
+  // Session 8 Task 6: toggle inbound task auto-create. Decoupled
+  // from `kchat:setWatchedChannels` on purpose — auto-create writes
+  // persistent Tessera tasks (a higher-consequence side-effect than
+  // a transient notification), so it is opt-in and the renderer
+  // controls it independently of the watch list. Defaults to off in
+  // the forwarder; this handler is the only path that turns it on.
+  idempotentHandle(
+    "kchat:setAutoCreateTasks",
+    async (_event, enabled: unknown): Promise<{ enabled: boolean }> => {
+      if (typeof enabled !== "boolean") {
+        throw new Error("enabled must be a boolean");
+      }
+      const forwarder = getKchatEventForwarder();
+      // Like `setWatchedChannels`, the forwarder is lazily
+      // constructed alongside the auth service; if the user hasn't
+      // connected yet there's nothing to toggle. Echo the requested
+      // state so the renderer can reflect the intent regardless.
+      forwarder?.setAutoCreateTasks(enabled);
+      return { enabled };
+    },
+  );
+
   // Session 8 Task 6 (Tessera → KChat direction): post a Tessera
   // task to a channel as a formatted message carrying the
   // `— via Tessera` footer so the inbound detector ignores the

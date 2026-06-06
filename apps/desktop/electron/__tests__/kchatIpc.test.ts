@@ -419,6 +419,7 @@ describe("kchat IPC registration", () => {
     "kchat:getUserStatuses", // presence indicator (Task 5)
     "kchat:offlineQueueStatus", // offline-queue depth surface (Task 1)
     "kchat:setWatchedChannels", // notification bridge watch-list (Task 3)
+    "kchat:setAutoCreateTasks", // inbound task auto-create opt-in (Task 6)
     "kchat:postTaskToChannel", // bidirectional task sync (Task 6)
   ];
 
@@ -1253,6 +1254,28 @@ describe("kchat:postTaskToChannel", () => {
       handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK),
     ).rejects.toThrow();
     expect(offlineQueueMock.enqueuePostTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("kchat:setAutoCreateTasks", () => {
+  it("echoes the applied state for a boolean argument", async () => {
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, true),
+    ).resolves.toEqual({ enabled: true });
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, false),
+    ).resolves.toEqual({ enabled: false });
+  });
+
+  it("rejects a non-boolean argument", async () => {
+    // The renderer toggle is a checkbox; anything else is a contract
+    // violation and must not silently coerce to on/off.
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, "yes"),
+    ).rejects.toThrow(/boolean/);
+    await expect(
+      handler("kchat:setAutoCreateTasks")(EVENT, 1),
+    ).rejects.toThrow(/boolean/);
   });
 });
 

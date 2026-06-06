@@ -650,11 +650,17 @@ export class KchatEventForwarder {
   /**
    * Session 8 Task 6: when `true`, an inbound task-like message in
    * a watched channel auto-creates a Tessera task via
-   * `bridgeCreateTask`. Defaults to `true` in production; the
+   * `bridgeCreateTask`. Defaults to `false` (opt-in): auto-create
+   * mutates persistent state (it writes a Tessera task), a
+   * higher-consequence side-effect than a transient OS
+   * notification, so watching a channel for notifications must not
+   * silently also write tasks. Toggled at runtime via
+   * {@link setAutoCreateTasks} (the `kchat:setAutoCreateTasks` IPC
+   * handler), independently of the watched-channel set; the
    * watched-channel gate keeps it inert until the user opts a
-   * channel in.
+   * channel in regardless.
    */
-  private readonly autoCreateTasks: boolean;
+  private autoCreateTasks: boolean;
 
   constructor(
     options: {
@@ -682,7 +688,10 @@ export class KchatEventForwarder {
     this.resolveCacheDir = options.getCacheDir ?? kchatChannelCacheDir;
     this.notify = options.notify ?? defaultNotify;
     this.resolveChannelName = options.resolveChannelName ?? (() => null);
-    this.autoCreateTasks = options.autoCreateTasks ?? true;
+    // Opt-in by default: see the field docstring — auto-create
+    // writes persistent Tessera tasks, so it stays off until the
+    // user (or a test) explicitly enables it.
+    this.autoCreateTasks = options.autoCreateTasks ?? false;
   }
 
   /**
@@ -699,6 +708,22 @@ export class KchatEventForwarder {
   /** Snapshot of the currently watched channel ids (Task 3). */
   getWatchedChannels(): string[] {
     return [...this.watchedChannels];
+  }
+
+  /**
+   * Session 8 Task 6: enable/disable inbound task auto-create at
+   * runtime. Off by default (opt-in); the renderer flips it through
+   * the `kchat:setAutoCreateTasks` IPC handler independently of the
+   * watched-channel set, so a user can watch a channel purely for
+   * notifications without also auto-creating Tessera tasks from it.
+   */
+  setAutoCreateTasks(enabled: boolean): void {
+    this.autoCreateTasks = enabled;
+  }
+
+  /** Whether inbound task auto-create is currently enabled (Task 6). */
+  getAutoCreateTasks(): boolean {
+    return this.autoCreateTasks;
   }
 
   /**
