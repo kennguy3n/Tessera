@@ -234,6 +234,28 @@ describe("FIDO2 registration", () => {
     ).toThrow(/client data failed validation/);
   });
 
+  it("rejects an expired registration challenge", async () => {
+    await setPin("abc123");
+    const key = makeEs256Key();
+    const opts = getFido2RegistrationOptions();
+    // Register "two and a half minutes later" — past the 2-minute TTL —
+    // by threading an injected `now`, mirroring how the assertion path
+    // verifies challenge expiry.
+    const future = Date.now() + 150_000;
+    expect(() =>
+      registerFido2(
+        {
+          credentialId: CREDENTIAL_ID,
+          publicKeySpki: key.publicKeySpki,
+          alg: key.alg,
+          clientDataJson: makeClientDataJson("webauthn.create", opts.challenge),
+        },
+        future,
+      ),
+    ).toThrow(/client data failed validation/);
+    expect(hasFido2Set()).toBe(false);
+  });
+
   it("rejects a malformed SPKI public key", async () => {
     await setPin("abc123");
     const opts = getFido2RegistrationOptions();

@@ -848,7 +848,10 @@ function verifyClientData(
  * user. Requires a PIN to already be set — FIDO2 is a convenience
  * layer over the PIN root credential, never a replacement.
  */
-export function registerFido2(input: Fido2RegistrationInput): void {
+export function registerFido2(
+  input: Fido2RegistrationInput,
+  now: number = Date.now(),
+): void {
   const persisted = readPersisted();
   if (persisted.pin === null) {
     throw new Error(
@@ -866,7 +869,7 @@ export function registerFido2(input: Fido2RegistrationInput): void {
       `FIDO2 registration: unsupported algorithm ${input.alg} (supported: ${FIDO2_SUPPORTED_ALGS.join(", ")})`,
     );
   }
-  if (verifyClientData(input.clientDataJson, "webauthn.create") === null) {
+  if (verifyClientData(input.clientDataJson, "webauthn.create", now) === null) {
     throw new Error(
       "FIDO2 registration: client data failed validation (bad/expired challenge or wrong ceremony type)",
     );
