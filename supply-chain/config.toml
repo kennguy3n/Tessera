@@ -1,27 +1,5 @@
 
 # cargo-vet config file
-#
-# Baseline policy (Session 6 — Security & Privacy)
-# ------------------------------------------------
-# `cargo vet` is a supply-chain gate: every crate in the dependency
-# graph must either be audited (recorded in `audits.toml`), imported
-# from a trusted external audit set, or explicitly exempted below.
-#
-# This file was bootstrapped with `cargo vet init`, which records the
-# *entire current* dependency graph as `[[exemptions.*]]` entries.
-# That is the intentional baseline: we are NOT claiming to have
-# hand-audited all ~580 transitive crates. The value of the gate is
-# forward-looking — a PR that pulls in a NEW crate (or bumps one to a
-# version outside its exemption) makes `cargo vet` fail in CI until a
-# human either audits it (`cargo vet certify`) or consciously exempts
-# it (`cargo vet add-exemption`). That turns "a dependency silently
-# appeared" into a reviewable event.
-#
-# To re-baseline after an intentional dependency change:
-#   cargo vet            # see what's unvetted
-#   cargo vet certify    # record a real audit, OR
-#   cargo vet add-exemption <crate> <version>   # baseline it
-# Prune exemptions that are no longer needed with `cargo vet prune`.
 
 [cargo-vet]
 version = "0.10"
