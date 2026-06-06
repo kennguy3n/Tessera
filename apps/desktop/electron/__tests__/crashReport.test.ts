@@ -150,6 +150,33 @@ describe("recordCrashReport", () => {
     expect(reports[0].component).toBe("X");
   });
 
+  it("lifts a legacy single-object file into the array", () => {
+    const file = path.join(dir, CRASH_REPORT_FILENAME);
+    // Older format: a single report object rather than an array.
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ component: "Legacy", error: "old" }),
+      "utf8",
+    );
+    recordCrashReport({ component: "New", error: "new" }, dir);
+    const reports = readReports();
+    expect(reports.map((r: { component: string }) => r.component)).toEqual([
+      "Legacy",
+      "New",
+    ]);
+  });
+
+  it("drops a malformed legacy single object that is not report-shaped", () => {
+    const file = path.join(dir, CRASH_REPORT_FILENAME);
+    // A non-array object with no `component` field must be filtered out
+    // by the same guard the array path uses, not lifted in unchecked.
+    fs.writeFileSync(file, JSON.stringify({ junk: true }), "utf8");
+    recordCrashReport({ component: "New", error: "new" }, dir);
+    const reports = readReports();
+    expect(reports).toHaveLength(1);
+    expect(reports[0].component).toBe("New");
+  });
+
   it("leaves no .tmp debris after writing", () => {
     recordCrashReport({ component: "A", error: "1" }, dir);
     const debris = fs.readdirSync(dir).filter((f) => f.includes(".tmp"));

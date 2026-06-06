@@ -60,19 +60,22 @@ export function normalizeCrashReport(
   };
 }
 
+function isReportShaped(e: unknown): e is RendererCrashReport {
+  return typeof e === "object" && e !== null && "component" in e;
+}
+
 function readExisting(filePath: string): RendererCrashReport[] {
   try {
     const text = fs.readFileSync(filePath, "utf8");
     const parsed: unknown = JSON.parse(text);
     if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (e): e is RendererCrashReport =>
-          typeof e === "object" && e !== null && "component" in e,
-      );
+      return parsed.filter(isReportShaped);
     }
-    // Tolerate an older single-object file by lifting it into the array.
-    if (typeof parsed === "object" && parsed !== null) {
-      return [parsed as RendererCrashReport];
+    // Tolerate an older single-object file by lifting it into the array,
+    // applying the same report-shape guard the array path uses so a
+    // malformed legacy object can't slip past unfiltered.
+    if (isReportShaped(parsed)) {
+      return [parsed];
     }
   } catch {
     // Missing or corrupt file — start fresh.
