@@ -2469,6 +2469,54 @@ export interface DialogApi {
 }
 
 /**
+ * One slide as shipped to the presentation windows by
+ * `slides:startPresentation`. The renderer flattens each slide to a
+ * title, a list of plain-text body `lines`, and the speaker `notes`.
+ *
+ * Everything is plain text by design: the main process renders it with
+ * `textContent` (never `innerHTML`), so a slide body can never inject
+ * markup into the presentation window regardless of what the user
+ * typed into the deck.
+ */
+export interface PresentationSlide {
+  title: string;
+  /** Plain-text body lines (bullets / paragraphs / block labels). */
+  lines: string[];
+  /** Plain-text speaker notes, shown only in the presenter window. */
+  notes: string;
+}
+
+/** Payload for `slides:startPresentation`. */
+export interface StartPresentationRequest {
+  slides: PresentationSlide[];
+  /** Zero-based slide to open on. Clamped to range by the main process. */
+  startIndex: number;
+  /** Optional deck title used in the window chrome. */
+  deckTitle?: string;
+}
+
+/** Result of `slides:startPresentation`. */
+export interface StartPresentationResult {
+  ok: boolean;
+  /** Number of slides the presentation was opened with. */
+  slideCount: number;
+}
+
+/**
+ * Slides presenter-mode surface. The Slides editor calls
+ * `startPresentation` to open a fullscreen audience window plus a
+ * second presenter window (speaker notes + next-slide preview). The
+ * two windows share a dedicated session partition and stay in sync via
+ * `localStorage` `storage` events, so no further IPC round-trips are
+ * needed once they are open.
+ */
+export interface SlidesApi {
+  startPresentation: (
+    request: StartPresentationRequest,
+  ) => Promise<StartPresentationResult>;
+}
+
+/**
  * Auto-update integration surface. The renderer never talks to
  * `electron-updater` directly — every interaction goes through these
  * IPC channels so the main process can validate state, run the
@@ -2508,6 +2556,7 @@ export interface TesseraApi {
   tasks: TaskApi;
   automations: AutomationApi;
   dialog: DialogApi;
+  slides: SlidesApi;
   updates: UpdatesApi;
   kchat: KchatApi;
   audit: AuditApi;
