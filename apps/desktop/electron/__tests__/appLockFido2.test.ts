@@ -276,6 +276,23 @@ describe("FIDO2 assertion verification", () => {
     expect(result.kind).toBe("success");
   });
 
+  it("does NOT emit the unlock_success audit event itself (the IPC handler does)", async () => {
+    await setPin("abc123");
+    const key = makeEs256Key();
+    register(key);
+    const infoSpy = vi.spyOn(getLogger(), "info");
+    // A successful assertion must not double-log: the audit event is
+    // owned by the appLock:verifyFido2 IPC handler, exactly like the
+    // PIN path leaves app_lock.unlock_success to its handler.
+    expect(verifyFido2Assertion(makeAssertion(key)).kind).toBe("success");
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      "app_lock.fido2_unlock_success",
+      expect.anything(),
+    );
+    expect(infoSpy).not.toHaveBeenCalledWith("app_lock.fido2_unlock_success");
+    infoSpy.mockRestore();
+  });
+
   it("returns no_pin_set when no credential is registered", async () => {
     await setPin("abc123");
     // Build an assertion-shaped payload without registering.

@@ -938,12 +938,16 @@ function verifyAssertionSignature(
     .update(base64UrlDecode(clientDataJsonB64))
     .digest();
   const signedData = Buffer.concat([authenticatorData, clientDataHash]);
-  const publicKey = crypto.createPublicKey({
-    key: Buffer.from(record.publicKeySpki, "base64"),
-    format: "der",
-    type: "spki",
-  });
   try {
+    // `createPublicKey` is inside the try: the SPKI is validated at
+    // registration, but a stored key corrupted afterwards (e.g. blob
+    // damage) must surface as a clean verification `failure`, not an
+    // uncaught throw that propagates out of `verifyFido2Assertion`.
+    const publicKey = crypto.createPublicKey({
+      key: Buffer.from(record.publicKeySpki, "base64"),
+      format: "der",
+      type: "spki",
+    });
     switch (record.alg) {
       case -7: // ES256: ECDSA P-256 + SHA-256 (DER-encoded signature).
       case -257: // RS256: RSA PKCS#1 v1.5 + SHA-256.
@@ -1031,7 +1035,10 @@ export function verifyFido2Assertion(
 
   persisted.attempt = emptyAttempt();
   writePersisted(persisted);
-  getLogger().info("app_lock.fido2_unlock_success");
+  // The `app_lock.fido2_unlock_success` audit event is emitted by the
+  // `appLock:verifyFido2` IPC handler, mirroring how `attemptUnlock`
+  // leaves `app_lock.unlock_success` to its handler. Logging it here
+  // too would double-count every FIDO2 unlock in the audit trail.
   return { kind: "success" };
 }
 
