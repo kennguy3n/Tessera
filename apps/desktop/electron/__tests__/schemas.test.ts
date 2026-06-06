@@ -213,6 +213,31 @@ describe("AutomationTriggerSchema", () => {
     expect(parsed.kind).toBe("on_generate");
   });
 
+  it("accepts an on_kchat_message_match trigger", () => {
+    const parsed = AutomationTriggerSchema.parse({
+      kind: "on_kchat_message_match",
+      channel_id: "chan-1",
+      regex: "deploy",
+    });
+    expect(parsed.kind).toBe("on_kchat_message_match");
+  });
+
+  it("rejects on_kchat_message_match missing channel_id/regex", () => {
+    expect(() =>
+      AutomationTriggerSchema.parse({
+        kind: "on_kchat_message_match",
+        channel_id: "chan-1",
+      }),
+    ).toThrow();
+    expect(() =>
+      AutomationTriggerSchema.parse({
+        kind: "on_kchat_message_match",
+        channel_id: "",
+        regex: "x",
+      }),
+    ).toThrow();
+  });
+
   it("rejects an unknown trigger kind", () => {
     expect(() =>
       AutomationTriggerSchema.parse({ kind: "bogus" }),
@@ -242,6 +267,35 @@ describe("AutomationActionSchema", () => {
       source_ids: ["src-1", "src-2"],
     });
     expect(parsed.kind).toBe("generate_from_template");
+  });
+
+  it("accepts a (recursively) nested sequence action", () => {
+    const parsed = AutomationActionSchema.parse({
+      kind: "sequence",
+      actions: [
+        { kind: "reindex_source", source_id: "s1" },
+        {
+          kind: "sequence",
+          actions: [
+            {
+              kind: "generate_from_template",
+              template_id: "t1",
+              source_ids: ["s2"],
+            },
+          ],
+        },
+      ],
+    });
+    expect(parsed.kind).toBe("sequence");
+  });
+
+  it("rejects a sequence containing an invalid leaf action", () => {
+    expect(() =>
+      AutomationActionSchema.parse({
+        kind: "sequence",
+        actions: [{ kind: "bogus" }],
+      }),
+    ).toThrow();
   });
 
   it("rejects an unknown action kind", () => {
