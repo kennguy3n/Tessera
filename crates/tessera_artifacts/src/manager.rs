@@ -1,3 +1,6 @@
+//! The `ArtifactManager`: create, update and query artifacts, with
+//! rate-limited automatic version snapshots.
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;

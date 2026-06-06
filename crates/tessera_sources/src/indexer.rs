@@ -1,3 +1,6 @@
+//! Crawls a source tree, extracts and chunks its files, and feeds the
+//! chunks into the store and vector index.
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tessera_core::error::Result;

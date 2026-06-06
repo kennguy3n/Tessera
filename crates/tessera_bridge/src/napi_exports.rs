@@ -1,3 +1,6 @@
+//! Top-level N-API entry points wiring the Rust core managers to the
+//! desktop app, including async tasks shared across bridge modules.
+
 use std::sync::{Arc, Mutex};
 
 use napi::bindgen_prelude::{AsyncTask, Buffer};

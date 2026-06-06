@@ -2,21 +2,14 @@
 //! application.
 #![warn(missing_docs)]
 
-/// The `artifacts` module.
 pub mod artifacts;
 pub mod automations;
-/// The `citations` module.
 pub mod citations;
-/// The `exporter` module.
 pub mod exporter;
-/// The `napi_exports` module.
 pub mod napi_exports;
-/// The `settings` module.
 pub mod settings;
-/// The `sources` module.
 pub mod sources;
 pub mod tasks;
-/// The `templates` module.
 pub mod templates;
 
 use serde::{Deserialize, Serialize};

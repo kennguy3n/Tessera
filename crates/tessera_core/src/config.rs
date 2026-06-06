@@ -1,3 +1,6 @@
+//! The `TesseraConfig` application configuration and its on-disk
+//! load/save handling.
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

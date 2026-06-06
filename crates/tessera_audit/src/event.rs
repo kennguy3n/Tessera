@@ -1,3 +1,5 @@
+//! The `AuditEvent` model and the taxonomy of audited actions.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

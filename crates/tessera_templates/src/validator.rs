@@ -1,3 +1,5 @@
+//! Validation of `Template` definitions before use.
+
 use tessera_core::error::{Error, Result};
 
 use crate::template::Template;

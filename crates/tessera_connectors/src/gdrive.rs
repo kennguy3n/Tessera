@@ -1,3 +1,5 @@
+//! Google Drive connector: OAuth-backed file listing and download.
+
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Deserialize;

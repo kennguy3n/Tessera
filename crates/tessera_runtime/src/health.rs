@@ -1,3 +1,5 @@
+//! Health/status types reported by the inference sidecar.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

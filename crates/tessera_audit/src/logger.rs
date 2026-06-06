@@ -1,3 +1,5 @@
+//! The `AuditLogger`: records `AuditEvent`s into the audit store.
+
 use tessera_core::error::Result;
 use tessera_core::SharedConnection;
 

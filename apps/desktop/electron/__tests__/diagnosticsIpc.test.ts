@@ -71,10 +71,30 @@ describe("diagnostics:reportCrash IPC handler", () => {
   it("passes null for a non-object payload so it is defaulted", async () => {
     await invoke("diagnostics:reportCrash", 42);
     expect(recordCrashReport).toHaveBeenCalledWith(null);
+    recordCrashReport.mockClear();
+    await invoke("diagnostics:reportCrash", null);
+    expect(recordCrashReport).toHaveBeenCalledWith(null);
   });
 
   it("accepts a partial report (all fields optional)", async () => {
     await invoke("diagnostics:reportCrash", { component: "HomePage" });
     expect(recordCrashReport).toHaveBeenCalledWith({ component: "HomePage" });
+  });
+
+  it("salvages an oversized-but-structured payload instead of dropping it", async () => {
+    // A stack larger than the schema's per-field bound fails validation,
+    // but the report is an object with a valid component/error. The
+    // handler must forward the raw object so normalization can truncate
+    // the stack rather than recording the whole crash as "unknown".
+    const report = {
+      component: "DocumentEditor",
+      error: "boom",
+      stack: "x".repeat(64 * 1024 + 1),
+      timestamp: "2026-02-03T04:05:06.000Z",
+    };
+    await invoke("diagnostics:reportCrash", report);
+    expect(recordCrashReport).toHaveBeenCalledTimes(1);
+    // Forwarded the raw object (not null) so component/error survive.
+    expect(recordCrashReport).toHaveBeenCalledWith(report);
   });
 });

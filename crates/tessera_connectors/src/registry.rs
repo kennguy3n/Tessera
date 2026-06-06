@@ -1,3 +1,6 @@
+//! Registry that constructs and dispatches to the available remote
+//! connectors by provider name.
+
 use std::collections::HashMap;
 
 use crate::confluence::ConfluenceConnector;

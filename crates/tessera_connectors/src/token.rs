@@ -1,3 +1,6 @@
+//! The `TokenStore` abstraction for secure, per-provider OAuth token
+//! storage.
+
 use crate::error::{ConnectorError, ConnectorResult};
 use crate::types::StoredTokens;
 

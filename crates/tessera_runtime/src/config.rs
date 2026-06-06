@@ -1,3 +1,6 @@
+//! Device-tier detection and per-platform model selection for the
+//! local inference runtime.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1125,6 +1128,8 @@ pub fn has_rocm() -> bool {
     std::path::Path::new("/opt/rocm").exists() || std::path::Path::new("/opt/rocm-dkms").exists()
 }
 
+/// Is ROCm installed? ROCm is Linux-only, so this always returns
+/// `false` on non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
 #[must_use]
 pub fn has_rocm() -> bool {

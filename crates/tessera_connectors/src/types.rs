@@ -1,3 +1,5 @@
+//! Shared data types for connector auth, status and remote files.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

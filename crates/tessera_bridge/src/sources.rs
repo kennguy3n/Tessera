@@ -1,3 +1,5 @@
+//! N-API surface for source ingestion, indexing and search.
+
 use std::sync::Arc;
 
 use napi_derive::napi;

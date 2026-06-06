@@ -1,3 +1,6 @@
+//! Cross-source comparison: distils two sources into common and
+//! source-unique themes plus an overall similarity score.
+
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;

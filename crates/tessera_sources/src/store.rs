@@ -1,3 +1,6 @@
+//! SQLite persistence for sources and their chunks, backed by a small
+//! pool of read connections.
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

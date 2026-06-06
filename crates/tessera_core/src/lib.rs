@@ -2,12 +2,9 @@
 //! database layer shared across all Tessera crates.
 #![warn(missing_docs)]
 
-/// The `config` module.
 pub mod config;
 pub mod db;
-/// The `error` module.
 pub mod error;
-/// The `types` module.
 pub mod types;
 
 pub use config::TesseraConfig;

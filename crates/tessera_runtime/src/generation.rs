@@ -1,3 +1,5 @@
+//! Request/response types for text generation against the runtime.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

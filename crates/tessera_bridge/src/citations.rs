@@ -1,3 +1,5 @@
+//! N-API surface for citation tracking and freshness checks.
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_citations::citation::Citation;

@@ -1,3 +1,6 @@
+//! SQLite-backed audit-log storage with row-count-based rotation and
+//! gzip archival of rotated segments.
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

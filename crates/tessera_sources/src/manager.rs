@@ -1,3 +1,6 @@
+//! The `SourceManager`: the top-level facade for ingesting, indexing
+//! and searching sources.
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tessera_core::error::{Error, Result};

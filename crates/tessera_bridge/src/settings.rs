@@ -1,3 +1,6 @@
+//! N-API surface for reading and writing application settings backed
+//! by `tessera_core::config`.
+
 use std::path::Path;
 use tessera_core::config::TesseraConfig;
 

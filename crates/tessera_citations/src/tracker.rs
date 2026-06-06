@@ -1,3 +1,6 @@
+//! The `CitationTracker`: keeps artifact citations in sync with their
+//! sources, including freshness checks and re-binding.
+
 use tessera_core::error::{Error, Result};
 use tessera_core::{ArtifactId, CitationId, SharedConnection, SourceId, SourceType};
 

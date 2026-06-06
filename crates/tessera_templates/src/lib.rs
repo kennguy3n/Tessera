@@ -1,13 +1,9 @@
 //! Loading, parsing, and validation of artifact templates.
 #![warn(missing_docs)]
 
-/// The `parser` module.
 pub mod parser;
-/// The `registry` module.
 pub mod registry;
-/// The `template` module.
 pub mod template;
-/// The `validator` module.
 pub mod validator;
 
 pub use registry::{

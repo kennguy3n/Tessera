@@ -1,3 +1,6 @@
+//! Text extraction from supported file types (txt, md, csv, json, html,
+//! xlsx and image metadata).
+
 use calamine::Reader;
 use std::io::Read;
 use std::path::{Path, PathBuf};

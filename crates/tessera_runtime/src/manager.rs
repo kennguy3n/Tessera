@@ -1,3 +1,6 @@
+//! The runtime manager: spawns and supervises the local inference
+//! sidecar process and brokers generation requests to it.
+
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::{Child, Command};

@@ -1,3 +1,5 @@
+//! Parsing of YAML template definitions into `Template` values.
+
 use std::path::Path;
 use tessera_core::error::{Error, Result};
 

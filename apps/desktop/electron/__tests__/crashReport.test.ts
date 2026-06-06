@@ -46,6 +46,36 @@ describe("normalizeCrashReport", () => {
       timestamp: "2026-01-01T00:00:00.000Z",
     });
   });
+
+  it("clamps oversized fields to the storage caps", () => {
+    // An oversized stack must be truncated, never dropped, and the rest
+    // of the report must survive — this is the salvage path the IPC
+    // handler relies on when a payload exceeds the schema bound.
+    const r = normalizeCrashReport({
+      component: "C".repeat(1000),
+      error: "boom",
+      stack: "x".repeat(200_000),
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+    expect(r.component.length).toBe(256);
+    expect(r.stack.length).toBe(16 * 1024);
+    expect(r.error).toBe("boom");
+    expect(r.timestamp).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("defaults non-string fields rather than trusting them", () => {
+    const r = normalizeCrashReport({
+      // Simulate a hostile renderer sending wrong types.
+      component: 123 as unknown as string,
+      error: { toString: () => "nope" } as unknown as string,
+      stack: undefined,
+      timestamp: 0 as unknown as string,
+    });
+    expect(r.component).toBe("unknown");
+    expect(r.error).toBe("");
+    expect(r.stack).toBe("");
+    expect(Number.isNaN(Date.parse(r.timestamp))).toBe(false);
+  });
 });
 
 describe("recordCrashReport", () => {

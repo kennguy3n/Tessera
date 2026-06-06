@@ -1,3 +1,6 @@
+//! Splitting extracted source text into overlapping, provenance-tagged
+//! chunks ready for embedding and indexing.
+
 use serde::{Deserialize, Serialize};
 
 /// Provenance tag for a chunk's content. `None` means the chunk

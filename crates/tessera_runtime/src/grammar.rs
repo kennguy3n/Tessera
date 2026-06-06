@@ -1,3 +1,5 @@
+//! Constrained-decoding grammars selected per artifact type.
+
 use tessera_core::ArtifactType;
 
 /// Load grammar.

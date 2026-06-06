@@ -1,3 +1,7 @@
+//! The `Artifact` domain model: a versioned unit of generated content
+//! (its id, title, type, body and citation links) as persisted and
+//! exchanged across the crate.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tessera_core::{ArtifactId, ArtifactType, CitationId, TemplateId};

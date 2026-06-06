@@ -1,3 +1,6 @@
+//! Assembly of source context into prompt-ready "source packs" that
+//! drive artifact generation.
+
 use std::fmt::Write;
 use tessera_core::error::Result;
 use tessera_core::ArtifactType;

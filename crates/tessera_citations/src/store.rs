@@ -1,3 +1,5 @@
+//! SQLite persistence for citations.
+
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
 use tessera_core::{

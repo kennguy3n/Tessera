@@ -1,3 +1,5 @@
+//! Discovery and loading of templates from a directory tree.
+
 use std::path::{Path, PathBuf};
 use tessera_core::error::Result;
 use tessera_core::ArtifactType;

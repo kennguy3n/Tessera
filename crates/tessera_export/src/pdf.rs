@@ -1,3 +1,6 @@
+//! PDF export of an artifact (via the optional `typst` backend, with an
+//! HTML-based fallback otherwise).
+
 use std::fmt::Write;
 
 use tessera_artifacts::Artifact;

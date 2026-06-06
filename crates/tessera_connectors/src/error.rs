@@ -1,3 +1,5 @@
+//! The connector error type shared by every remote connector.
+
 use thiserror::Error;
 
 /// All connector-related errors.

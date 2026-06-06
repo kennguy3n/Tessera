@@ -1,3 +1,5 @@
+//! N-API surface for loading, listing and validating templates.
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use std::path::Path;

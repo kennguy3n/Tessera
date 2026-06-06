@@ -1,3 +1,6 @@
+//! The `Template` model describing an artifact template and its
+//! sections.
+
 use serde::{Deserialize, Serialize};
 use tessera_core::{ArtifactType, ExportFormat, TemplateId};
 

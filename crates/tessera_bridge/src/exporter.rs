@@ -1,3 +1,5 @@
+//! N-API surface for exporting artifacts to the supported formats.
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_artifacts::manager::ArtifactManager;

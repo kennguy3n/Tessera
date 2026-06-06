@@ -1,3 +1,6 @@
+//! Extraction of actionable items (tasks, decisions, risks, …) from
+//! source material, each tagged with its kind and a confidence score.
+
 use serde::{Deserialize, Serialize};
 
 /// An extracted actionable item from source material.

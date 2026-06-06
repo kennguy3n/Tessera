@@ -1,3 +1,6 @@
+//! N-API surface for artifact operations, marshalling between the
+//! desktop app and `tessera_artifacts`.
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_artifacts::manager::ArtifactManager;

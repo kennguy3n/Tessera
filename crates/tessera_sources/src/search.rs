@@ -1,3 +1,6 @@
+//! The search engine: hybrid lexical + vector retrieval over indexed
+//! source chunks.
+
 use tessera_core::error::Result;
 
 use crate::embedding::EmbeddingProvider;

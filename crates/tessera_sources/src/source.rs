@@ -1,3 +1,6 @@
+//! The `Source` model describing an ingested file or remote item and
+//! its indexing status.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tessera_core::{SourceId, SourceStatus, SourceType};

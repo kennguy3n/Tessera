@@ -1,3 +1,5 @@
+//! Markdown export of an artifact and its citations.
+
 use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;

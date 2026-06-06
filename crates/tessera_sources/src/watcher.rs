@@ -1,3 +1,6 @@
+//! Filesystem watcher that debounces change events to trigger
+//! re-indexing of sources on disk.
+
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

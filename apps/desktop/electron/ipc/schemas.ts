@@ -39,18 +39,31 @@ const NullableString = z.string().max(MAX_STRING_LEN).nullable();
 
 // --- Diagnostics ---
 
+// Per-field caps for a crash report. These are deliberately far above
+// any realistic value (a component name, an error message, a JS stack,
+// an ISO timestamp) so a legitimate report is never rejected, but far
+// below `MAX_STRING_LEN` so a buggy or hostile renderer cannot make the
+// main process retain a multi-megabyte string. `crashReport.ts` clamps
+// again to its own (smaller) storage caps; this schema bound is the
+// outer envelope that keeps a pathological payload from getting that
+// far. (The IPC payload is already deserialized by Electron before we
+// see it, so this bounds retention/processing, not the initial copy.)
+const CRASH_COMPONENT_MAX = 1024;
+const CRASH_TEXT_MAX = 64 * 1024;
+const CRASH_TIMESTAMP_MAX = 64;
+
 // Renderer crash reports forwarded by the React error boundaries. The
 // fields are coerced again in `crashReport.ts:normalizeCrashReport`, so
 // this schema is intentionally permissive (every field optional) — it
-// rejects only grossly malformed (non-object) payloads while letting a
-// partial report through to be defaulted and recorded. No matching
-// `z.infer` type is exported because the wire shape already lives in
-// `shared/types.ts` as `RendererCrashReport`.
+// rejects only grossly malformed (non-object) or oversized payloads
+// while letting a partial report through to be defaulted and recorded.
+// No matching `z.infer` type is exported because the wire shape already
+// lives in `shared/types.ts` as `RendererCrashReport`.
 export const RendererCrashReportSchema = z.object({
-  component: z.string().max(MAX_STRING_LEN).optional(),
-  error: z.string().max(MAX_STRING_LEN).optional(),
-  stack: z.string().max(MAX_STRING_LEN).optional(),
-  timestamp: z.string().max(MAX_STRING_LEN).optional(),
+  component: z.string().max(CRASH_COMPONENT_MAX).optional(),
+  error: z.string().max(CRASH_TEXT_MAX).optional(),
+  stack: z.string().max(CRASH_TEXT_MAX).optional(),
+  timestamp: z.string().max(CRASH_TIMESTAMP_MAX).optional(),
 });
 
 // --- Citations ---

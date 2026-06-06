@@ -1,3 +1,6 @@
+//! The `Citation` model linking an artifact back to the source span it
+//! was derived from.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tessera_core::{CitationId, SourceId, SourceType};

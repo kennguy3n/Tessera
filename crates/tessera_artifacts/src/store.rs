@@ -1,3 +1,5 @@
+//! SQLite persistence for artifacts and their version history.
+
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
 use tessera_core::{open_shared, open_shared_in_memory, ArtifactId, SharedConnection};

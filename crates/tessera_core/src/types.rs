@@ -1,3 +1,6 @@
+//! Core domain identifiers and enums shared across every crate
+//! (source/artifact/citation ids, types and statuses).
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
