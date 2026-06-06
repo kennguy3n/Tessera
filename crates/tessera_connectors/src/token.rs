@@ -6,13 +6,13 @@ use crate::types::StoredTokens;
 
 /// Abstraction for secure token storage. Implementations back onto OS keychains.
 pub trait TokenStore: Send + Sync {
-    /// Store tokens.
+    /// Persists `tokens` for `provider`, replacing any existing entry.
     fn store_tokens(&self, provider: &str, tokens: &StoredTokens) -> ConnectorResult<()>;
-    /// Get tokens.
+    /// Returns the stored tokens for `provider`, or `None` if absent.
     fn get_tokens(&self, provider: &str) -> ConnectorResult<Option<StoredTokens>>;
-    /// Delete tokens.
+    /// Removes any stored tokens for `provider` (no-op if absent).
     fn delete_tokens(&self, provider: &str) -> ConnectorResult<()>;
-    /// Has tokens.
+    /// Whether tokens are currently stored for `provider`.
     fn has_tokens(&self, provider: &str) -> ConnectorResult<bool>;
 }
 
@@ -22,7 +22,7 @@ pub struct InMemoryTokenStore {
 }
 
 impl InMemoryTokenStore {
-    /// Creates a new instance.
+    /// Creates an empty in-memory token store.
     pub fn new() -> Self {
         Self {
             tokens: std::sync::Mutex::new(std::collections::HashMap::new()),

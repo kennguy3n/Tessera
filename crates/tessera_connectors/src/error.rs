@@ -26,19 +26,23 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ConnectorError {
     #[error("Authentication failed: {0}")]
-    /// Authentication failed.
+    /// The OAuth/credential handshake was rejected (e.g. a 401).
+    /// Classified [`FailureKind::Permanent`]; needs re-auth.
     AuthenticationFailed(String),
 
     #[error("OAuth token has expired")]
-    /// OAuth token has expired.
+    /// The access token is past its expiry. Transient: the refresh
+    /// path can recover automatically on the next sync.
     TokenExpired,
 
     #[error("OAuth token has been revoked")]
-    /// OAuth token has been revoked.
+    /// The user/provider revoked authorization. Permanent; needs
+    /// re-auth.
     TokenRevoked,
 
     #[error("Network error: {0}")]
-    /// Network error.
+    /// Transport-layer failure (DNS, TLS, timeout, connection reset);
+    /// `reqwest::Error`s flatten into this variant. Transient.
     NetworkError(String),
 
     #[error("Rate limited, retry after {retry_after_secs}s")]
@@ -49,11 +53,12 @@ pub enum ConnectorError {
     },
 
     #[error("File not found: {0}")]
-    /// File not found.
+    /// The requested remote file/resource does not exist (404).
     FileNotFound(String),
 
     #[error("Permission denied: {0}")]
-    /// Permission denied.
+    /// The granted scopes don't permit the operation (403).
+    /// Permanent; needs re-grant.
     PermissionDenied(String),
 
     #[error("{provider} error: {message}")]
@@ -66,19 +71,22 @@ pub enum ConnectorError {
     },
 
     #[error("Invalid config: {0}")]
-    /// Invalid config.
+    /// The connector configuration is malformed or incomplete (e.g.
+    /// missing client id/secret). Permanent until fixed.
     InvalidConfig(String),
 
     #[error("Storage error: {0}")]
-    /// Storage error.
+    /// Failure persisting connector state (tokens, file index) to
+    /// local storage.
     StorageError(String),
 
     #[error("Sync conflict: {0}")]
-    /// Sync conflict.
+    /// A concurrent change made the sync delta inconsistent and the
+    /// sync should be retried from a fresh cursor.
     SyncConflict(String),
 
     #[error("IO error: {0}")]
-    /// IO error.
+    /// A local I/O error, lifted from [`std::io::Error`] via `?`.
     Io(#[from] std::io::Error),
 }
 
@@ -91,7 +99,8 @@ impl From<reqwest::Error> for ConnectorError {
     }
 }
 
-/// Connector Result type alias.
+/// `Result` specialized to [`ConnectorError`], returned by all
+/// connector operations.
 pub type ConnectorResult<T> = std::result::Result<T, ConnectorError>;
 
 /// classification of a `ConnectorError` for the

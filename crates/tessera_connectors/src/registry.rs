@@ -82,7 +82,7 @@ impl ConnectorEntry {
 }
 
 impl ConnectorRegistry {
-    /// Creates a new instance.
+    /// Creates an empty registry with no connectors registered.
     pub fn new() -> Self {
         Self {
             connectors: HashMap::new(),
@@ -91,7 +91,8 @@ impl ConnectorRegistry {
 
     // --- Google Drive --------------------------------------------------------
 
-    /// Register google drive.
+    /// Registers (or replaces) the Google Drive connector under its
+    /// provider key.
     pub fn register_google_drive(&mut self, connector: GoogleDriveConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -99,7 +100,7 @@ impl ConnectorRegistry {
         );
     }
 
-    /// Get google drive.
+    /// Borrows the registered Google Drive connector, if any.
     pub fn get_google_drive(&self) -> Option<&GoogleDriveConnector> {
         self.connectors.get("google_drive").map(|e| match e {
             ConnectorEntry::GoogleDrive(c) => c,
@@ -107,7 +108,7 @@ impl ConnectorRegistry {
         })
     }
 
-    /// Get google drive mut.
+    /// Mutably borrows the registered Google Drive connector, if any.
     pub fn get_google_drive_mut(&mut self) -> Option<&mut GoogleDriveConnector> {
         self.connectors.get_mut("google_drive").map(|e| match e {
             ConnectorEntry::GoogleDrive(c) => c,
@@ -117,7 +118,8 @@ impl ConnectorRegistry {
 
     // --- OneDrive ------------------------------------------------------------
 
-    /// Register onedrive.
+    /// Registers (or replaces) the OneDrive connector under its
+    /// provider key.
     pub fn register_onedrive(&mut self, connector: OneDriveConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -125,7 +127,7 @@ impl ConnectorRegistry {
         );
     }
 
-    /// Get onedrive.
+    /// Borrows the registered OneDrive connector, if any.
     pub fn get_onedrive(&self) -> Option<&OneDriveConnector> {
         self.connectors.get("onedrive").map(|e| match e {
             ConnectorEntry::OneDrive(c) => c,
@@ -133,7 +135,7 @@ impl ConnectorRegistry {
         })
     }
 
-    /// Get onedrive mut.
+    /// Mutably borrows the registered OneDrive connector, if any.
     pub fn get_onedrive_mut(&mut self) -> Option<&mut OneDriveConnector> {
         self.connectors.get_mut("onedrive").map(|e| match e {
             ConnectorEntry::OneDrive(c) => c,
@@ -143,7 +145,8 @@ impl ConnectorRegistry {
 
     // --- Notion --------------------------------------------------------------
 
-    /// Register notion.
+    /// Registers (or replaces) the Notion connector under its
+    /// provider key.
     pub fn register_notion(&mut self, connector: NotionConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -151,7 +154,7 @@ impl ConnectorRegistry {
         );
     }
 
-    /// Get notion.
+    /// Borrows the registered Notion connector, if any.
     pub fn get_notion(&self) -> Option<&NotionConnector> {
         self.connectors.get("notion").map(|e| match e {
             ConnectorEntry::Notion(c) => c,
@@ -159,7 +162,7 @@ impl ConnectorRegistry {
         })
     }
 
-    /// Get notion mut.
+    /// Mutably borrows the registered Notion connector, if any.
     pub fn get_notion_mut(&mut self) -> Option<&mut NotionConnector> {
         self.connectors.get_mut("notion").map(|e| match e {
             ConnectorEntry::Notion(c) => c,
@@ -169,7 +172,8 @@ impl ConnectorRegistry {
 
     // --- Jira ----------------------------------------------------------------
 
-    /// Register jira.
+    /// Registers (or replaces) the Jira connector under its provider
+    /// key.
     pub fn register_jira(&mut self, connector: JiraConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -177,7 +181,7 @@ impl ConnectorRegistry {
         );
     }
 
-    /// Get jira.
+    /// Borrows the registered Jira connector, if any.
     pub fn get_jira(&self) -> Option<&JiraConnector> {
         self.connectors.get("jira").map(|e| match e {
             ConnectorEntry::Jira(c) => c,
@@ -185,7 +189,7 @@ impl ConnectorRegistry {
         })
     }
 
-    /// Get jira mut.
+    /// Mutably borrows the registered Jira connector, if any.
     pub fn get_jira_mut(&mut self) -> Option<&mut JiraConnector> {
         self.connectors.get_mut("jira").map(|e| match e {
             ConnectorEntry::Jira(c) => c,
@@ -195,7 +199,8 @@ impl ConnectorRegistry {
 
     // --- Confluence ----------------------------------------------------------
 
-    /// Register confluence.
+    /// Registers (or replaces) the Confluence connector under its
+    /// provider key.
     pub fn register_confluence(&mut self, connector: ConfluenceConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -203,7 +208,7 @@ impl ConnectorRegistry {
         );
     }
 
-    /// Get confluence.
+    /// Borrows the registered Confluence connector, if any.
     pub fn get_confluence(&self) -> Option<&ConfluenceConnector> {
         self.connectors.get("confluence").map(|e| match e {
             ConnectorEntry::Confluence(c) => c,
@@ -211,7 +216,7 @@ impl ConnectorRegistry {
         })
     }
 
-    /// Get confluence mut.
+    /// Mutably borrows the registered Confluence connector, if any.
     pub fn get_confluence_mut(&mut self) -> Option<&mut ConfluenceConnector> {
         self.connectors.get_mut("confluence").map(|e| match e {
             ConnectorEntry::Confluence(c) => c,
@@ -221,7 +226,8 @@ impl ConnectorRegistry {
 
     // --- Figma ---------------------------------------------------------------
 
-    /// Register figma.
+    /// Registers (or replaces) the Figma connector under its provider
+    /// key.
     pub fn register_figma(&mut self, connector: FigmaConnector) {
         self.connectors.insert(
             connector.provider_name().to_string(),
@@ -229,7 +235,7 @@ impl ConnectorRegistry {
         );
     }
 
-    /// Get figma.
+    /// Borrows the registered Figma connector, if any.
     pub fn get_figma(&self) -> Option<&FigmaConnector> {
         self.connectors.get("figma").map(|e| match e {
             ConnectorEntry::Figma(c) => c,
@@ -237,7 +243,7 @@ impl ConnectorRegistry {
         })
     }
 
-    /// Get figma mut.
+    /// Mutably borrows the registered Figma connector, if any.
     pub fn get_figma_mut(&mut self) -> Option<&mut FigmaConnector> {
         self.connectors.get_mut("figma").map(|e| match e {
             ConnectorEntry::Figma(c) => c,
@@ -247,29 +253,32 @@ impl ConnectorRegistry {
 
     // --- Generic --------------------------------------------------------------
 
-    /// Remove.
+    /// Unregisters the connector for `provider`, returning whether one
+    /// was present.
     pub fn remove(&mut self, provider: &str) -> bool {
         self.connectors.remove(provider).is_some()
     }
 
-    /// Is connected.
+    /// True if `provider` is registered and in
+    /// [`ConnectorStatus::Connected`].
     pub fn is_connected(&self, provider: &str) -> bool {
         self.connectors
             .get(provider)
             .is_some_and(|e| e.status() == ConnectorStatus::Connected)
     }
 
-    /// List providers.
+    /// Provider keys of every currently registered connector.
     pub fn list_providers(&self) -> Vec<String> {
         self.connectors.keys().cloned().collect()
     }
 
-    /// List info.
+    /// [`ConnectorInfo`] summaries for every registered connector.
     pub fn list_info(&self) -> Vec<ConnectorInfo> {
         self.connectors.values().map(ConnectorEntry::info).collect()
     }
 
-    /// Get info.
+    /// [`ConnectorInfo`] for `provider`, or [`ConnectorError::InvalidConfig`]
+    /// if it isn't registered.
     pub fn get_info(&self, provider: &str) -> ConnectorResult<ConnectorInfo> {
         self.connectors
             .get(provider)
@@ -279,12 +288,12 @@ impl ConnectorRegistry {
             })
     }
 
-    /// Has provider.
+    /// Whether `provider` is currently registered.
     pub fn has_provider(&self, provider: &str) -> bool {
         self.connectors.contains_key(provider)
     }
 
-    /// Provider count.
+    /// Number of registered connectors.
     pub fn provider_count(&self) -> usize {
         self.connectors.len()
     }
