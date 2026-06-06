@@ -80,7 +80,11 @@ impl Artifact {
         }
     }
 
-    /// Unlinks `citation_id` if present and touches `updated_at`.
+    /// Unlinks `citation_id` from this artifact. Always touches
+    /// `updated_at` (even when `citation_id` was absent and nothing
+    /// changed), unlike [`add_citation`](Self::add_citation) which only
+    /// does so when a link is actually added. Does not bump `version` —
+    /// citation links are metadata, not content revisions.
     pub fn remove_citation(&mut self, citation_id: &CitationId) {
         self.citations.retain(|c| c != citation_id);
         self.updated_at = Utc::now();
