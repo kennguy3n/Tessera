@@ -259,39 +259,83 @@ impl SourceStore {
 
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         let id_str = source_id.to_string();
-        let conn = self.conn.lock().expect("connection mutex poisoned");
-
-        let file_ids: Vec<i64> = conn
-            .prepare("SELECT id FROM indexed_files WHERE source_id = ?1")
-            .map_err(Error::Sqlite)?
-            .query_map(params![id_str], |row| row.get(0))
-            .map_err(Error::Sqlite)?
-            .filter_map(std::result::Result::ok)
-            .collect();
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
 
         // Scrub under `secure_delete = ON` so the freed chunk / file /
         // source pages are zero-filled at delete time — a removed
         // source's indexed text must not be recoverable from a later
         // forensic image of the SQLCipher file.
-        with_secure_delete(&conn, |conn| {
-            for fid in &file_ids {
-                conn.execute(
-                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                    params![fid],
-                )
-                .map_err(Error::Sqlite)?;
-            }
+        //
+        // The chunk / file / source DELETEs run inside a single
+        // `BEGIN IMMEDIATE` transaction so crash-recovery returns either
+        // the full pre-remove state or the full post-remove state, never
+        // a partial removal (e.g. chunks gone but the `indexed_files` /
+        // `sources` rows still present). This mirrors
+        // `cryptoshred_kchat_source_evidence`; we can't reuse
+        // `with_secure_delete` here because it borrows `&Connection`
+        // while a `rusqlite` transaction needs `&mut Connection`.
+        //
+        // `secure_delete` is a connection-scoped pragma on the shared
+        // process-wide connection, so it MUST be reset to OFF on every
+        // exit path (including errors) or every subsequent steady-state
+        // write pays the page-zero-fill cost for the rest of the process
+        // lifetime. The fallible work runs in an immediately-invoked
+        // closure whose `?` early-returns from the *closure* (not the
+        // function), guaranteeing the OFF reset below always runs.
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(Error::Sqlite)?;
 
-            conn.execute(
+        let scrub_result: Result<()> = (|| {
+            let txn = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(Error::Sqlite)?;
+
+            // One set-based DELETE rather than a per-file loop: it
+            // scrubs every chunk for the source in a single statement
+            // (firing the `chunks_ad` / `chunks_ad_embeddings` triggers
+            // per removed row), which keeps the writer-lock hold short
+            // even for a source with many indexed files.
+            txn.execute(
+                "DELETE FROM chunks
+                 WHERE indexed_file_id IN
+                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
+                params![id_str],
+            )
+            .map_err(Error::Sqlite)?;
+
+            txn.execute(
                 "DELETE FROM indexed_files WHERE source_id = ?1",
                 params![id_str],
             )
             .map_err(Error::Sqlite)?;
 
-            conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
+            txn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
                 .map_err(Error::Sqlite)?;
+
+            txn.commit().map_err(Error::Sqlite)?;
             Ok(())
-        })?;
+        })();
+
+        // ALWAYS restore the connection's default delete mode, even when
+        // the scrub failed — propagating without resetting would leave
+        // the shared connection stuck in `secure_delete = ON`. The reset
+        // diagnostic is emitted before the scrub error is propagated so a
+        // rare scrub-failed + reset-failed double-failure doesn't lose
+        // the (only) operator-visible signal that the connection is now
+        // degraded.
+        let reset_result = conn
+            .execute_batch("PRAGMA secure_delete = OFF;")
+            .map_err(Error::Sqlite);
+        if let Err(e) = reset_result.as_ref() {
+            eprintln!(
+                "[secure_delete] failed to reset secure_delete=OFF on shared \
+                 connection after remove_source; steady-state writes will pay \
+                 zero-fill overhead until process restart: {e}"
+            );
+        }
+
+        scrub_result?;
+        reset_result?;
 
         // removing a source cascades through
         // chunks_ad_embeddings, so the cached IVF index for any
@@ -3105,6 +3149,86 @@ mod tests {
 
         let sources = store.list_sources().unwrap();
         assert!(sources.is_empty());
+    }
+
+    /// `remove_source` deletes the source's chunks, its `indexed_files`
+    /// rows, and the `sources` row as one `BEGIN IMMEDIATE` unit, so a
+    /// successful call must leave NO orphaned chunk or indexed_file rows
+    /// behind for that source — across multiple indexed files. This pins
+    /// the all-or-nothing contract the transactional wrapper provides
+    /// (a partial scrub would leave `indexed_files`/`chunks` rows whose
+    /// parent `sources` row is gone, the failure mode the flag called
+    /// out).
+    #[test]
+    fn remove_source_leaves_no_orphaned_files_or_chunks() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/multi".to_string());
+        store.add_source(&source).unwrap();
+
+        // Two indexed files, each with chunks, so the chunk delete spans
+        // more than one file (the path the old per-file loop walked).
+        for (path, hash) in [("/tmp/multi/a.txt", "h-a"), ("/tmp/multi/b.txt", "h-b")] {
+            let fid = store
+                .upsert_indexed_file(&source.id, path, hash, "2026-01-01")
+                .unwrap();
+            store
+                .insert_chunks(
+                    fid,
+                    &[crate::chunker::Chunk {
+                        source_path: path.to_string(),
+                        chunk_index: 0,
+                        byte_offset: 0,
+                        content: format!("sentinel for {path}"),
+                        hash: format!("{hash}-0"),
+                        extraction_method: None,
+                        extraction_model_id: None,
+                    }],
+                )
+                .unwrap();
+        }
+
+        let id_str = source.id.to_string();
+        let count = |sql: &str| -> i64 {
+            let conn = store.conn.lock().expect("conn poisoned");
+            conn.query_row(sql, params![id_str], |row| row.get::<_, i64>(0))
+                .expect("count query should return a row")
+        };
+
+        assert_eq!(
+            count("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
+            2,
+            "precondition: both files indexed",
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM chunks
+                 WHERE indexed_file_id IN
+                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
+            ),
+            2,
+            "precondition: both files' chunks present",
+        );
+
+        store.remove_source(&source.id).unwrap();
+
+        assert!(
+            store.list_sources().unwrap().is_empty(),
+            "the source row must be gone",
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1"),
+            0,
+            "no orphaned indexed_files rows may survive remove_source",
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM chunks
+                 WHERE indexed_file_id IN
+                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
+            ),
+            0,
+            "no orphaned chunk rows may survive remove_source",
+        );
     }
 
     #[test]
