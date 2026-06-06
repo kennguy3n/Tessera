@@ -1,3 +1,6 @@
+//! Evidence-pack export: a zip archive bundling an artifact with the
+//! sources backing each of its citations.
+
 use std::io::{Cursor, Seek, Write};
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;

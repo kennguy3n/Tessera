@@ -64,12 +64,16 @@ use crate::generation::{GenerateChunk, GenerateRequest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalProviderType {
+    /// Open AI Compatible.
     OpenAICompatible,
+    /// The `Anthropic` variant.
     Anthropic,
+    /// The `Custom` variant.
     Custom,
 }
 
 impl ExternalProviderType {
+    /// As str.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAICompatible => "openai_compatible",
@@ -78,6 +82,7 @@ impl ExternalProviderType {
         }
     }
 
+    /// Display label.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::OpenAICompatible => "OpenAI-compatible (OpenAI / Ollama / vLLM / LM Studio)",
@@ -95,14 +100,20 @@ impl ExternalProviderType {
 /// part of [`ExternalGenerateInputs`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExternalProviderConfig {
+    /// Enabled.
     pub enabled: bool,
+    /// Provider type.
     pub provider_type: ExternalProviderType,
+    /// Api url.
     pub api_url: String,
     /// Keychain entry name (e.g. `"tessera.external_provider.openai"`).
     /// Not the secret itself.
     pub api_key_ref: String,
+    /// Model name.
     pub model_name: String,
+    /// Max tokens.
     pub max_tokens: u32,
+    /// Temperature.
     pub temperature: f32,
     /// Per-request timeout in seconds. Defaults to 60 — covers slow
     /// providers without leaving the UI hanging forever if the
@@ -174,8 +185,11 @@ impl ExternalProviderConfig {
 /// state.
 #[derive(Debug, Clone)]
 pub struct ExternalGenerateInputs<'a> {
+    /// Config.
     pub config: &'a ExternalProviderConfig,
+    /// Api key.
     pub api_key: &'a str,
+    /// Request.
     pub request: &'a GenerateRequest,
 }
 
@@ -693,6 +707,7 @@ mod http_impl {
         }
     }
 
+    /// Endpoint url.
     pub fn endpoint_url(api_url: &str, provider_type: ExternalProviderType) -> String {
         // Avoid double-suffixing: if the configured URL already ends
         // in the expected path, use it verbatim. Otherwise append.

@@ -12,6 +12,7 @@ import type {
   ModelCapability,
   ModelDownloadProgress,
   OpenImageDialogOptions,
+  RendererCrashReport,
   ReplaceCitationRequest,
   SaveDialogOptions,
   SettingsData,
@@ -107,6 +108,7 @@ export type {
   UpdateTaskRequest,
   KchatConnectionStateView,
   KchatWebSocketEventPayload,
+  RendererCrashReport,
 } from "../shared/types";
 
 /**
@@ -360,6 +362,12 @@ const api: TesseraApi = {
       ipcRenderer.invoke("appLock:verifyFido2", input),
     removeFido2: (pin: string) =>
       ipcRenderer.invoke("appLock:removeFido2", pin),
+  },
+  // Renderer crash reporting from the React error boundaries. See
+  // `electron/ipc/diagnostics.ts` for the channel contract.
+  diagnostics: {
+    reportCrash: (report: RendererCrashReport) =>
+      ipcRenderer.invoke("diagnostics:reportCrash", report),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),

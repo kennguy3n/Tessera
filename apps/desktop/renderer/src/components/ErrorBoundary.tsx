@@ -3,6 +3,22 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 interface Props {
   children: ReactNode;
   /**
+   * Name of the subtree this boundary guards (e.g. "HomePage",
+   * "DocumentEditor"). Included verbatim in the crash report so a
+   * `crash-report.json` entry points at the exact page/editor that
+   * threw. Defaults to "renderer" for the top-level boundary.
+   */
+  name?: string;
+  /**
+   * Values that, when any of them changes, clear a caught error so the
+   * boundary re-renders its children. Use this to auto-recover on a
+   * context change the crashed subtree depends on — e.g. the route
+   * pathname or the edited artifact's id — so the user isn't left
+   * staring at a stale crash screen for resource A after navigating to
+   * resource B. Compared element-wise with `Object.is`.
+   */
+  resetKeys?: readonly unknown[];
+  /**
    * Optional override for the fallback UI. When omitted we render
    * the default Tessera error screen with Reload / Report controls.
    */
@@ -11,6 +27,16 @@ interface Props {
 
 interface State {
   error: Error | null;
+}
+
+function resetKeysChanged(
+  prev: readonly unknown[] = [],
+  next: readonly unknown[] = [],
+): boolean {
+  return (
+    prev.length !== next.length ||
+    prev.some((value, i) => !Object.is(value, next[i]))
+  );
 }
 
 /**
@@ -35,11 +61,45 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // The Electron main process owns the disk-backed log file; the
-    // renderer just logs to its own console for now. Including the
-    // component stack here is essential for diagnosing crashes from
-    // user bug reports.
-    console.error("Tessera renderer error:", error, info.componentStack);
+    const component = this.props.name ?? "renderer";
+    // Including the component stack is essential for diagnosing crashes
+    // from user bug reports.
+    console.error(
+      `Tessera renderer error [${component}]:`,
+      error,
+      info.componentStack,
+    );
+
+    // Forward to the main process, which owns the disk-backed log
+    // directory and persists `crash-report.json` (the renderer is the
+    // untrusted web context and cannot write files itself). Best-effort:
+    // the `tessera` bridge is absent in unit tests and a rejected
+    // promise here would be noise while the fallback UI is already up.
+    try {
+      void window.tessera?.diagnostics?.reportCrash({
+        component,
+        error: error.message,
+        // Prefer the JS stack; fall back to React's component stack so
+        // the report is never empty.
+        stack: error.stack ?? info.componentStack ?? "",
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      // Swallow — reporting a crash must never cause another crash.
+    }
+  }
+
+  componentDidUpdate(prevProps: Props): void {
+    // Auto-recover once the boundary is guarding a different context
+    // (e.g. a new route or artifact id). Without this, a static-keyed
+    // boundary keeps showing the crash UI from the previous resource
+    // after the user navigates to a new one.
+    if (
+      this.state.error !== null &&
+      resetKeysChanged(prevProps.resetKeys, this.props.resetKeys)
+    ) {
+      this.reset();
+    }
   }
 
   reset = (): void => {

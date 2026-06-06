@@ -66,6 +66,7 @@ const NOTION_VERSION: &str = "2022-06-28";
 /// still dominates.
 const DEFAULT_FULL_WALK_INTERVAL: u32 = 10;
 
+/// Notion Connector.
 pub struct NotionConnector {
     client: Client,
     status: ConnectorStatus,
@@ -98,6 +99,7 @@ pub struct NotionConnector {
 }
 
 impl NotionConnector {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -118,6 +120,7 @@ impl NotionConnector {
         }
     }
 
+    /// With base url.
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
             client: Client::new(),
@@ -148,30 +151,38 @@ impl NotionConnector {
         self.full_walk_interval = interval.max(1);
     }
 
+    /// Set access token.
     pub fn set_access_token(&mut self, token: &str) {
         self.access_token = Some(token.to_string());
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Provider name.
     pub fn provider_name(&self) -> &'static str {
         "notion"
     }
+    /// Status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
+    /// Last sync time.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
+    /// File count.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }
+    /// Workspace id.
     pub fn workspace_id(&self) -> Option<&str> {
         self.workspace_id.as_deref()
     }
+    /// Bot id.
     pub fn bot_id(&self) -> Option<&str> {
         self.bot_id.as_deref()
     }
 
+    /// Build auth url.
     pub fn build_auth_url(&self, config: &AuthConfig) -> String {
         // Notion has no scope concept — integrations declare capabilities
         // up-front in the integration settings page. The auth URL just
@@ -184,6 +195,7 @@ impl NotionConnector {
         )
     }
 
+    /// Authenticate.
     pub async fn authenticate(&mut self, config: &AuthConfig) -> ConnectorResult<StoredTokens> {
         self.status = ConnectorStatus::Connecting;
         self.client_id = Some(config.client_id.clone());
@@ -235,6 +247,7 @@ impl NotionConnector {
         })
     }
 
+    /// Restore tokens.
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
         // The workspace id lives in `provider_metadata`. We do not
@@ -463,7 +476,7 @@ impl NotionConnector {
     /// calls (and on the very first sync per connector instance, even
     /// when a `change_token` was restored from disk) we instead do a
     /// full workspace walk and set-diff the returned ids against
-    /// `known_file_ids`. See [`Self::sync_full_walk`] and the
+    /// `known_file_ids`. See `Self::sync_full_walk` and the
     /// module-level "Deletion detection" notes.
     pub async fn sync_changes(
         &mut self,

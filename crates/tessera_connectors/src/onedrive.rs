@@ -52,6 +52,7 @@ const DEFAULT_TENANT: &str = "common";
 const DRIVE_ITEM_FIELDS: &str =
     "id,name,size,file,folder,deleted,parentReference,webUrl,createdDateTime,lastModifiedDateTime";
 
+/// One Drive Connector.
 pub struct OneDriveConnector {
     client: Client,
     status: ConnectorStatus,
@@ -72,6 +73,7 @@ pub struct OneDriveConnector {
 }
 
 impl OneDriveConnector {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -129,18 +131,22 @@ impl OneDriveConnector {
         self
     }
 
+    /// Set access token.
     pub fn set_access_token(&mut self, token: &str, expires_in_secs: i64) {
         self.access_token = Some(token.to_string());
         self.token_expiry = Some(Utc::now() + chrono::Duration::seconds(expires_in_secs));
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Provider name.
     pub fn provider_name(&self) -> &'static str {
         "onedrive"
     }
+    /// Status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
+    /// Last sync time.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
@@ -166,6 +172,7 @@ impl OneDriveConnector {
         format!("{}/{}/oauth2/v2.0/authorize", self.authority, self.tenant)
     }
 
+    /// Build auth url.
     pub fn build_auth_url(&self, config: &AuthConfig) -> String {
         // Microsoft requires `offline_access` for refresh tokens; we
         // always include it alongside the caller's scopes so the user
@@ -187,6 +194,7 @@ impl OneDriveConnector {
         )
     }
 
+    /// Authenticate.
     pub async fn authenticate(&mut self, config: &AuthConfig) -> ConnectorResult<StoredTokens> {
         self.status = ConnectorStatus::Connecting;
         self.client_id = Some(config.client_id.clone());
@@ -243,6 +251,7 @@ impl OneDriveConnector {
         })
     }
 
+    /// Restore tokens.
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
@@ -252,6 +261,7 @@ impl OneDriveConnector {
         self.status = ConnectorStatus::Connected;
     }
 
+    /// Refresh access token.
     pub async fn refresh_access_token(&mut self) -> ConnectorResult<StoredTokens> {
         let refresh_token = self
             .refresh_token

@@ -25,13 +25,13 @@
 //!      cells (defaults: `MIN_CENTROIDS = 8`, `MAX_CENTROIDS = 256`),
 //!      deterministically seeded so two builds over the same input
 //!      produce the same index (matters for test stability and for
-//!      the cache contract below). See [`pick_k`] for the exact
+//!      the cache contract below). See `pick_k` for the exact
 //!      formula.
 //!   2. Each vector is assigned to its nearest centroid; the
 //!      assignments form `K` inverted lists.
 //!   3. To answer a top-k query, rank centroids by cosine to the
 //!      query, probe the top `nprobe = ⌈√K⌉.max(1).min(K)` cells
-//!      (see [`pick_nprobe`]), and brute-force inside the probed
+//!      (see `pick_nprobe`), and brute-force inside the probed
 //!      cells only.
 //!
 //! Total query work: `O(K * D + nprobe * (N/K) * D)`. With
@@ -166,7 +166,9 @@ pub struct IvfIndex {
 /// can ignore it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IndexHit {
+    /// Chunk id.
     pub chunk_id: i64,
+    /// Score.
     pub score: f32,
 }
 
@@ -265,6 +267,7 @@ impl IvfIndex {
         self.vectors.len()
     }
 
+    /// Is empty.
     pub fn is_empty(&self) -> bool {
         self.vectors.is_empty()
     }

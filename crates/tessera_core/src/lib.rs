@@ -1,3 +1,7 @@
+//! Core types, configuration, error handling, and the SQLCipher-backed
+//! database layer shared across all Tessera crates.
+#![warn(missing_docs)]
+
 pub mod config;
 pub mod db;
 pub mod error;

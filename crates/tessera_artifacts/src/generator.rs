@@ -1,3 +1,6 @@
+//! Assembly of source context into prompt-ready "source packs" that
+//! drive artifact generation.
+
 use std::fmt::Write;
 use tessera_core::error::Result;
 use tessera_core::ArtifactType;
@@ -5,23 +8,33 @@ use tessera_core::ArtifactType;
 /// A section of source context assembled for generation.
 #[derive(Debug, Clone)]
 pub struct SourcePack {
+    /// Section title.
     pub section_title: String,
+    /// Prompt.
     pub prompt: String,
+    /// Chunks.
     pub chunks: Vec<SourceChunk>,
 }
 
 #[derive(Debug, Clone)]
+/// Source Chunk.
 pub struct SourceChunk {
+    /// Content.
     pub content: String,
+    /// Source path.
     pub source_path: String,
+    /// Relevance.
     pub relevance: f64,
 }
 
 /// Assembled artifact content produced by a generator pipeline.
 #[derive(Debug, Clone)]
 pub struct GeneratedContent {
+    /// Title.
     pub title: String,
+    /// Artifact type.
     pub artifact_type: ArtifactType,
+    /// Sections.
     pub sections: Vec<GeneratedSection>,
 }
 
@@ -35,15 +48,20 @@ pub struct GeneratedContent {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SectionKind {
     #[default]
+    /// The `Normal` variant.
     Normal,
     /// Verbatim front-matter content emitted before the title with no heading.
     Frontmatter,
 }
 
 #[derive(Debug, Clone)]
+/// Generated Section.
 pub struct GeneratedSection {
+    /// Heading.
     pub heading: String,
+    /// Body.
     pub body: String,
+    /// Citation refs.
     pub citation_refs: Vec<String>,
     /// Rendering kind. Defaults to `SectionKind::Normal`; use
     /// `GeneratedSection::frontmatter(body)` to construct a verbatim
@@ -75,6 +93,7 @@ impl GeneratedSection {
 }
 
 impl GeneratedContent {
+    /// To markdown.
     pub fn to_markdown(&self) -> String {
         let mut md = String::new();
         let mut title_emitted = false;

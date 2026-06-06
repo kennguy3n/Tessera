@@ -19,6 +19,7 @@ use std::fmt::Write as _;
 /// Parsed diagram block extracted from artifact content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MermaidBlock {
+    /// Dsl.
     pub dsl: String,
     /// Best-effort detected diagram type (e.g. "flowchart", "pie"). Mirrors
     /// the renderer-side `detectDiagramType` heuristic.

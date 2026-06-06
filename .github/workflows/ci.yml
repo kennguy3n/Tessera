@@ -150,6 +150,19 @@ jobs:
       - name: Test
         run: cargo test --all
 
+      # Rustdoc gate. `#![warn(missing_docs)]` on every public crate
+      # turns undocumented public items into rustdoc warnings;
+      # RUSTDOCFLAGS="-D warnings" promotes them (and any broken
+      # intra-doc link) to hard errors, so the published API stays
+      # fully documented. Ubuntu-only: rustdoc output is
+      # platform-independent, so running it on the required gate is
+      # enough and avoids tripling the cost on the advisory matrix legs.
+      - name: Doc (rustdoc, deny warnings)
+        if: matrix.os == 'ubuntu-22.04'
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --all-features --workspace
+
   typescript:
     name: TypeScript — ${{ matrix.os }}
     needs: changes
@@ -212,6 +225,14 @@ jobs:
 
       - name: Type check
         run: npm run type-check --workspace=apps/desktop
+
+      # Drift gate for the zod → renderer-type generation. The committed
+      # `renderer/src/generated/ipcTypes.ts` must match a fresh run of the
+      # generator against `electron/ipc/schemas.ts`; if a schema changed
+      # without regenerating, this fails and prints how to fix it.
+      - name: Check generated IPC types
+        if: matrix.os == 'ubuntu-22.04'
+        run: npm run check:ipc-types --workspace=apps/desktop
 
       - name: Test
         run: npm run test --workspace=apps/desktop
