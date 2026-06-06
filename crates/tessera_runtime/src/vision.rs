@@ -75,16 +75,17 @@ fn shared_http_client() -> &'static reqwest::Client {
 /// include `[img-1]` themselves.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionRequest {
-    /// Image path.
+    /// Filesystem path to the image to analyze.
     pub image_path: String,
-    /// Prompt.
+    /// Instruction prompt; must contain the `[img-1]` placeholder.
     pub prompt: String,
-    /// Max tokens.
+    /// Maximum number of tokens to generate.
     pub max_tokens: u32,
 }
 
 impl VisionRequest {
-    /// Creates a new instance.
+    /// Builds a request for `image_path` and `prompt` with a
+    /// 512-token default budget.
     pub fn new(image_path: String, prompt: String) -> Self {
         Self {
             image_path,
@@ -93,7 +94,7 @@ impl VisionRequest {
         }
     }
 
-    /// With max tokens.
+    /// Overrides the maximum number of tokens to generate.
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
         self
@@ -106,13 +107,13 @@ impl VisionRequest {
 /// citation / chunk creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionResponse {
-    /// Content.
+    /// Generated text describing/answering about the image.
     pub content: String,
-    /// Stop.
+    /// Whether generation stopped naturally (vs. truncated).
     pub stop: bool,
-    /// Tokens predicted.
+    /// Tokens generated, if reported by the backend.
     pub tokens_predicted: Option<u32>,
-    /// Tokens evaluated.
+    /// Prompt tokens evaluated, if reported by the backend.
     pub tokens_evaluated: Option<u32>,
 }
 
@@ -124,12 +125,12 @@ pub struct VisionResponse {
 #[derive(thiserror::Error, Debug)]
 pub enum VisionError {
     #[error("Failed to read image file {path}: {source}")]
-    /// Failed to read image file.
+    /// The image file could not be read from disk.
     ImageIo {
-        /// Path.
+        /// Path of the image that failed to load.
         path: String,
         #[source]
-        /// Source.
+        /// Underlying I/O error.
         source: std::io::Error,
     },
 }

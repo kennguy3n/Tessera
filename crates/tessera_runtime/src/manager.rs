@@ -13,29 +13,30 @@ use crate::config::{
 };
 
 #[derive(thiserror::Error, Debug)]
-/// Runtime Error.
+/// Failure managing the `llama-server` runtime process.
 pub enum RuntimeError {
     #[error("Model not found: {0}")]
-    /// Model not found.
+    /// The requested model file does not exist on disk.
     ModelNotFound(String),
     #[error("Binary not found at: {0}")]
-    /// Binary not found at.
+    /// The `llama-server` binary could not be located.
     BinaryNotFound(String),
     #[error("Failed to start sidecar: {0}")]
-    /// Failed to start sidecar.
+    /// Spawning the sidecar process failed.
     StartFailed(String),
     #[error("Runtime not running")]
-    /// Runtime not running.
+    /// An operation required a running runtime, but none was up.
     NotRunning,
     #[error("IO error: {0}")]
-    /// IO error.
+    /// An underlying I/O operation failed.
     Io(#[from] std::io::Error),
 }
 
-/// Result type alias.
+/// Convenience `Result` alias for runtime-manager operations.
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
-/// Runtime Manager.
+/// Owns the `llama-server` child process and tracks its lifecycle
+/// state behind a mutex.
 pub struct RuntimeManager {
     config: RuntimeConfig,
     state: Mutex<ManagedState>,
@@ -49,7 +50,7 @@ struct ManagedState {
 }
 
 impl RuntimeManager {
-    /// Creates a new instance.
+    /// Builds a stopped manager from the given runtime config.
     pub fn new(config: RuntimeConfig) -> Self {
         Self {
             config,
@@ -62,7 +63,7 @@ impl RuntimeManager {
         }
     }
 
-    /// Detect device tier.
+    /// Detects the device tier from total system RAM.
     pub fn detect_device_tier() -> DeviceTier {
         let total_ram = sys_total_ram_gb();
         if total_ram >= 8.0 {
@@ -102,17 +103,18 @@ impl RuntimeManager {
         select_model_fn(tier, platform, capability)
     }
 
-    /// List available models.
+    /// Lists models available for the detected platform.
     pub fn list_available_models() -> Vec<ModelInfo> {
         available_models_for_platform(detect_platform())
     }
 
-    /// List available models for platform.
+    /// Lists models available for an explicit platform.
     pub fn list_available_models_for_platform(platform: Platform) -> Vec<ModelInfo> {
         available_models_for_platform(platform)
     }
 
-    /// Start.
+    /// Spawns the sidecar with the given model; no-op if already
+    /// running.
     pub async fn start(&self, model_path: &str) -> Result<()> {
         let mut state = self.state.lock().await;
 
@@ -163,7 +165,7 @@ impl RuntimeManager {
         Ok(())
     }
 
-    /// Stop.
+    /// Kills the sidecar (if any) and resets state to stopped.
     pub async fn stop(&self) -> Result<()> {
         let mut state = self.state.lock().await;
 
@@ -178,7 +180,7 @@ impl RuntimeManager {
         Ok(())
     }
 
-    /// Get status.
+    /// Returns a snapshot of the current runtime state.
     pub async fn get_status(&self) -> RuntimeState {
         let state = self.state.lock().await;
         RuntimeState {
@@ -191,26 +193,27 @@ impl RuntimeManager {
         }
     }
 
-    /// Mark running.
+    /// Transitions the runtime to `Running` and records activity.
     pub async fn mark_running(&self) {
         let mut state = self.state.lock().await;
         state.status = RuntimeStatus::Running;
         state.last_activity = Some(Instant::now());
     }
 
-    /// Mark error.
+    /// Transitions the runtime to the `Error` state.
     pub async fn mark_error(&self) {
         let mut state = self.state.lock().await;
         state.status = RuntimeStatus::Error;
     }
 
-    /// Touch activity.
+    /// Records activity now, deferring the idle-timeout shutdown.
     pub async fn touch_activity(&self) {
         let mut state = self.state.lock().await;
         state.last_activity = Some(Instant::now());
     }
 
-    /// Check idle timeout.
+    /// Returns `true` when a running runtime has been idle past
+    /// its configured timeout.
     pub async fn check_idle_timeout(&self) -> bool {
         let state = self.state.lock().await;
         if state.status != RuntimeStatus::Running {
@@ -223,13 +226,13 @@ impl RuntimeManager {
         }
     }
 
-    /// Endpoint.
+    /// Returns the base HTTP URL the runtime listens on.
     pub fn endpoint(&self) -> String {
         format!("http://{}:{}", self.config.host, self.config.port)
     }
 }
 
-/// Sys total ram gb.
+/// Returns total system RAM in GB (best-effort, platform-specific).
 pub fn sys_total_ram_gb() -> f64 {
     #[cfg(target_os = "linux")]
     {

@@ -56,15 +56,15 @@ fn shared_http_client() -> &'static reqwest::Client {
 /// sampling internals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageGenRequest {
-    /// Prompt.
+    /// Text prompt describing the desired image.
     pub prompt: String,
-    /// Width.
+    /// Output image width in pixels.
     pub width: u32,
-    /// Height.
+    /// Output image height in pixels.
     pub height: u32,
-    /// Steps.
+    /// Number of diffusion sampling steps.
     pub steps: u32,
-    /// Cfg scale.
+    /// Classifier-free guidance scale (prompt adherence).
     pub cfg_scale: f32,
     /// Optional negative prompt — concepts the model should
     /// actively avoid. Defaults to a generic quality-floor
@@ -77,7 +77,8 @@ pub struct ImageGenRequest {
 }
 
 impl ImageGenRequest {
-    /// Creates a new instance.
+    /// Builds a request for `prompt` at the given dimensions with
+    /// FLUX.2-klein defaults (20 steps, CFG 3.5).
     pub fn new(prompt: String, width: u32, height: u32) -> Self {
         Self {
             prompt,
@@ -97,25 +98,25 @@ impl ImageGenRequest {
         }
     }
 
-    /// With steps.
+    /// Overrides the number of diffusion steps.
     pub fn with_steps(mut self, steps: u32) -> Self {
         self.steps = steps;
         self
     }
 
-    /// With cfg scale.
+    /// Overrides the classifier-free guidance scale.
     pub fn with_cfg_scale(mut self, cfg_scale: f32) -> Self {
         self.cfg_scale = cfg_scale;
         self
     }
 
-    /// With seed.
+    /// Pins the RNG seed for reproducible output.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
         self
     }
 
-    /// With negative prompt.
+    /// Sets a negative prompt of concepts to avoid.
     pub fn with_negative_prompt(mut self, prompt: String) -> Self {
         self.negative_prompt = Some(prompt);
         self
@@ -128,9 +129,9 @@ impl ImageGenRequest {
 /// style"). PNG bytes are owned; the caller writes them out.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageGenResponse {
-    /// Png bytes.
+    /// Generated image encoded as PNG bytes.
     pub png_bytes: Vec<u8>,
-    /// Seed.
+    /// Seed the server actually used (for reproducibility).
     pub seed: u64,
 }
 
@@ -142,13 +143,13 @@ pub struct ImageGenResponse {
 #[derive(thiserror::Error, Debug)]
 pub enum ImageGenError {
     #[error("Image generation request failed: {0}")]
-    /// Image generation request failed.
+    /// The HTTP request to sd-server failed.
     Http(String),
     #[error("sd-server returned no image data")]
-    /// Sd-server returned no image data.
+    /// sd-server responded without any image entry.
     MissingImage,
     #[error("sd-server returned malformed base64 image: {0}")]
-    /// Sd-server returned malformed base64 image.
+    /// The returned image was not valid base64.
     Base64Decode(#[from] base64::DecodeError),
 }
 

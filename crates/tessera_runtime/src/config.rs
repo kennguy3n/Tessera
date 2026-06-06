@@ -5,18 +5,19 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-/// Device Tier.
+/// Coarse hardware capability bucket used to pick model variants
+/// and runtime defaults.
 pub enum DeviceTier {
-    /// The `Low` variant.
+    /// 2–3 GB RAM hosts; smallest models only.
     Low,
-    /// The `Medium` variant.
+    /// 4–6 GB RAM hosts.
     Medium,
-    /// The `High` variant.
+    /// 8+ GB RAM hosts; largest models permitted.
     High,
 }
 
 impl DeviceTier {
-    /// Label.
+    /// Human-readable tier label with its RAM range.
     pub fn label(&self) -> &str {
         match self {
             Self::Low => "Low (2-3 GB RAM)",
@@ -47,7 +48,8 @@ pub enum ModelCapability {
 }
 
 impl ModelCapability {
-    /// As str.
+    /// Lowercase wire identifier (`"text"` / `"vision"` /
+    /// `"imagegen"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Text => "text",
@@ -56,7 +58,7 @@ impl ModelCapability {
         }
     }
 
-    /// Display label.
+    /// Human-readable capability name for the Settings UI.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::Text => "Text generation",
@@ -87,14 +89,14 @@ impl ModelCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelFormat {
-    /// The `Gguf` variant.
+    /// GGUF quantized weights (llama.cpp / sd-server family).
     Gguf,
-    /// The `Mlx` variant.
+    /// MLX quantized weights for Apple Silicon.
     Mlx,
 }
 
 impl ModelFormat {
-    /// As str.
+    /// Lowercase wire identifier (`"gguf"` / `"mlx"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Gguf => "gguf",
@@ -128,20 +130,20 @@ impl ModelFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComputeBackend {
-    /// The `Cpu` variant.
+    /// CPU SIMD kernels (AVX/NEON).
     Cpu,
-    /// The `Cuda` variant.
+    /// NVIDIA CUDA acceleration.
     Cuda,
-    /// The `Vulkan` variant.
+    /// Cross-vendor Vulkan acceleration.
     Vulkan,
-    /// The `Metal` variant.
+    /// Apple Metal acceleration.
     Metal,
-    /// The `Rocm` variant.
+    /// AMD ROCm acceleration.
     Rocm,
 }
 
 impl ComputeBackend {
-    /// As str.
+    /// Lowercase wire identifier (`"cpu"`, `"cuda"`, …).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
@@ -152,7 +154,7 @@ impl ComputeBackend {
         }
     }
 
-    /// Display label.
+    /// Human-readable backend label for the Settings UI.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::Cpu => "CPU (AVX2 / AVX-VNNI / AVX-512 VNNI / ARM NEON)",
@@ -185,20 +187,20 @@ impl ComputeBackend {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Platform {
-    /// Macos Apple Silicon.
+    /// macOS on Apple Silicon (arm64).
     MacosAppleSilicon,
-    /// Macos Intel.
+    /// macOS on Intel (x86-64).
     MacosIntel,
-    /// Windows X64.
+    /// Windows on x86-64.
     WindowsX64,
-    /// Linux X64.
+    /// Linux on x86-64.
     LinuxX64,
-    /// Linux Arm64.
+    /// Linux on arm64.
     LinuxArm64,
 }
 
 impl Platform {
-    /// As str.
+    /// Kebab-case wire identifier (`"macos-apple-silicon"`, …).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::MacosAppleSilicon => "macos-apple-silicon",
@@ -209,7 +211,7 @@ impl Platform {
         }
     }
 
-    /// Display label.
+    /// Human-readable platform label for the Settings UI.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::MacosAppleSilicon => "macOS Apple Silicon",
@@ -220,7 +222,8 @@ impl Platform {
         }
     }
 
-    /// Preferred format.
+    /// Weight format preferred on this platform (MLX on Apple
+    /// Silicon, GGUF elsewhere).
     pub fn preferred_format(&self) -> ModelFormat {
         match self {
             Self::MacosAppleSilicon => ModelFormat::Mlx,
@@ -266,13 +269,13 @@ pub fn detect_platform() -> Platform {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Model Info.
+/// Catalogue entry describing one downloadable model variant.
 pub struct ModelInfo {
-    /// Id.
+    /// Stable model id / slug.
     pub id: String,
-    /// Name.
+    /// Human-readable model name.
     pub name: String,
-    /// Parameters.
+    /// Parameter count label (e.g. `"1.5B"`).
     pub parameters: String,
     /// What slot this model occupies — text, vision, or image generation.
     /// Defaults to [`ModelCapability::Text`] when the manifest predates
@@ -285,30 +288,31 @@ pub struct ModelInfo {
     /// `2-bit` (Ternary-Bonsai), for vision `Q4_K_M` / `Q4_K_S` /
     /// `4-bit`, for image generation `Q4_0` / `4-bit`.
     pub quantization: String,
-    /// Format.
+    /// Weight format (GGUF or MLX).
     pub format: ModelFormat,
-    /// Platform.
+    /// Platform this variant targets.
     pub platform: Platform,
-    /// Compute backends.
+    /// Compute backends the variant can run on.
     pub compute_backends: Vec<ComputeBackend>,
-    /// Required ram gb.
+    /// Minimum RAM the variant needs, in GB.
     pub required_ram_gb: f64,
     /// Compressed download size in MB.
     pub download_size_mb: u64,
-    /// On-disk size in MB once extracted (equal to `download_size_mb`
+    /// on-disk size in MB once extracted (equal to `download_size_mb`
     /// for single-file GGUF, larger for archived MLX directories).
     pub disk_size_mb: u64,
-    /// Context length.
+    /// Maximum context window the variant supports, in tokens.
     pub context_length: u32,
-    /// Tier.
+    /// Minimum device tier this variant is offered to.
     pub tier: DeviceTier,
     /// File name written to the model cache directory on disk.
     pub filename: String,
-    /// Url.
+    /// HTTPS download URL, or `None` for built-in/bundled models.
     pub url: Option<String>,
-    /// Checksum.
+    /// Expected sha256 of the weights; `None` skips verification.
     pub checksum: Option<String>,
-    /// Local path.
+    /// Resolved on-disk path once downloaded; `None` if not
+    /// installed.
     pub local_path: Option<String>,
     /// Filename of the multimodal projector (mmproj) for vision-GGUF
     /// entries. Mirrors `ManifestModel.mmprojFilename` on the TS side
@@ -354,23 +358,25 @@ impl ModelInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Runtime Config.
+/// Configuration for launching and addressing the local
+/// `llama-server` runtime.
 pub struct RuntimeConfig {
-    /// Model path.
+    /// Path to the model weights to load; `None` until one is
+    /// selected.
     pub model_path: Option<String>,
-    /// Binary path.
+    /// Path to the `llama-server` binary to spawn.
     pub binary_path: String,
-    /// Port.
+    /// TCP port the runtime listens on.
     pub port: u16,
-    /// Host.
+    /// Host/interface the runtime binds to.
     pub host: String,
-    /// Device tier.
+    /// Detected device tier driving default sizing.
     pub device_tier: DeviceTier,
-    /// Max context length.
+    /// Maximum context window, in tokens.
     pub max_context_length: u32,
-    /// Parallel slots.
+    /// Number of concurrent decode slots.
     pub parallel_slots: u8,
-    /// Idle timeout secs.
+    /// Seconds of inactivity before the runtime is shut down.
     pub idle_timeout_secs: u64,
 }
 
@@ -390,22 +396,22 @@ impl Default for RuntimeConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-/// Runtime Status.
+/// Lifecycle state of the local inference runtime process.
 pub enum RuntimeStatus {
-    /// The `Stopped` variant.
+    /// Not running.
     Stopped,
-    /// The `Starting` variant.
+    /// Process spawned, not yet accepting requests.
     Starting,
-    /// The `Running` variant.
+    /// Up and serving requests.
     Running,
-    /// The `Loading` variant.
+    /// Loading model weights into memory.
     Loading,
-    /// The `Error` variant.
+    /// Stopped due to an error.
     Error,
 }
 
 impl RuntimeStatus {
-    /// As str.
+    /// Lowercase wire identifier (`"stopped"`, `"running"`, …).
     pub fn as_str(&self) -> &str {
         match self {
             Self::Stopped => "stopped",
@@ -418,19 +424,19 @@ impl RuntimeStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Runtime State.
+/// Live snapshot of the runtime's status and resource usage.
 pub struct RuntimeState {
-    /// Status.
+    /// Current lifecycle status.
     pub status: RuntimeStatus,
-    /// Model name.
+    /// Name of the loaded model, if any.
     pub model_name: Option<String>,
-    /// Device tier.
+    /// Device tier the runtime is configured for.
     pub device_tier: DeviceTier,
-    /// Memory usage mb.
+    /// Resident memory usage in MB, if known.
     pub memory_usage_mb: Option<u64>,
-    /// Context length.
+    /// Active context window in tokens (0 when stopped).
     pub context_length: u32,
-    /// Active jobs.
+    /// Number of in-flight inference jobs.
     pub active_jobs: u32,
 }
 

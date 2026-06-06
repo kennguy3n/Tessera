@@ -34,18 +34,18 @@ use crate::generation::{CompletionResponse, GenerateRequest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterKind {
-    /// The `Mlx` variant.
+    /// Local MLX backend (Apple Silicon).
     Mlx,
-    /// Llama Cpp.
+    /// Local `llama-server` (GGUF) backend.
     LlamaCpp,
-    /// The `External` variant.
+    /// Configured external provider endpoint.
     External,
-    /// The `Fallback` variant.
+    /// No backend available; returns a clear error.
     Fallback,
 }
 
 impl AdapterKind {
-    /// As str.
+    /// Snake_case wire identifier (`"mlx"`, `"llama_cpp"`, …).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Mlx => "mlx",
@@ -63,9 +63,9 @@ impl AdapterKind {
 /// is "available" on its own.
 #[derive(Debug, Clone, Default)]
 pub struct AdapterAvailability {
-    /// Mlx available.
+    /// Whether the local MLX backend can serve requests.
     pub mlx_available: bool,
-    /// Llamacpp available.
+    /// Whether the local `llama-server` backend is running.
     pub llamacpp_available: bool,
 }
 
@@ -74,13 +74,13 @@ pub struct AdapterAvailability {
 /// optional — when missing or disabled the chain skips the
 /// External step entirely.
 pub struct ChainInputs<'a> {
-    /// Availability.
+    /// Which local backends are currently available.
     pub availability: AdapterAvailability,
-    /// External.
+    /// External provider config, or `None` when disabled.
     pub external: Option<&'a ExternalProviderConfig>,
-    /// External key.
+    /// External provider API key from the OS keychain, if set.
     pub external_key: Option<&'a str>,
-    /// Request.
+    /// The generation request to satisfy.
     pub request: &'a GenerateRequest,
     /// HTTP endpoint of the running local llama-server, if any.
     /// `None` means the local path is skipped.
@@ -88,11 +88,12 @@ pub struct ChainInputs<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Chain Result.
+/// Outcome of a chain-driven generation: which adapter answered
+/// and the completion it produced.
 pub struct ChainResult {
-    /// Adapter.
+    /// Adapter that satisfied the request.
     pub adapter: AdapterKind,
-    /// Response.
+    /// Completion returned by that adapter.
     pub response: CompletionResponse,
 }
 

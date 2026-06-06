@@ -3,46 +3,48 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Health Response.
+/// Parsed body of the sidecar's `/health` endpoint.
 pub struct HealthResponse {
-    /// Status.
+    /// Status string (`"ok"` or `"loading model"`).
     pub status: String,
-    /// Slots idle.
+    /// Number of idle decode slots, if reported.
     pub slots_idle: Option<u32>,
-    /// Slots processing.
+    /// Number of busy decode slots, if reported.
     pub slots_processing: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Model Props.
+/// Parsed body of the sidecar's `/props` endpoint describing the
+/// loaded model.
 pub struct ModelProps {
-    /// Model.
+    /// Name/path of the loaded model, if reported.
     pub model: Option<String>,
-    /// Ctx size.
+    /// Configured context size in tokens, if reported.
     pub ctx_size: Option<u32>,
-    /// N predict.
+    /// Default max tokens per request, if reported.
     pub n_predict: Option<u32>,
 }
 
 #[derive(thiserror::Error, Debug)]
-/// Health Error.
+/// Failure querying or interpreting the sidecar's health.
 pub enum HealthError {
     #[error("Health check failed: {0}")]
-    /// Health check failed.
+    /// The HTTP request to the sidecar failed.
     RequestFailed(String),
     #[error("Unhealthy: {0}")]
-    /// Unhealthy.
+    /// The sidecar responded but reported an unhealthy state.
     Unhealthy(String),
     #[error("Parse error: {0}")]
-    /// Parse error.
+    /// The response body could not be parsed.
     ParseError(String),
 }
 
-/// Result type alias.
+/// Convenience `Result` alias for health operations.
 pub type Result<T> = std::result::Result<T, HealthError>;
 
 #[cfg(feature = "http")]
-/// Check health.
+/// Queries the sidecar's `/health` endpoint and returns the
+/// parsed status.
 pub async fn check_health(endpoint: &str) -> Result<HealthResponse> {
     let url = format!("{endpoint}/health");
     let resp = reqwest::get(&url)
@@ -63,7 +65,8 @@ pub async fn check_health(endpoint: &str) -> Result<HealthResponse> {
 }
 
 #[cfg(feature = "http")]
-/// Get model info.
+/// Queries the sidecar's `/props` endpoint for the loaded model's
+/// properties.
 pub async fn get_model_info(endpoint: &str) -> Result<ModelProps> {
     let url = format!("{endpoint}/props");
     let resp = reqwest::get(&url)
@@ -78,12 +81,12 @@ pub async fn get_model_info(endpoint: &str) -> Result<ModelProps> {
     serde_json::from_str(&body).map_err(|e| HealthError::ParseError(e.to_string()))
 }
 
-/// Parse health response.
+/// Parses a `/health` JSON body into a [`HealthResponse`].
 pub fn parse_health_response(json: &str) -> Result<HealthResponse> {
     serde_json::from_str(json).map_err(|e| HealthError::ParseError(e.to_string()))
 }
 
-/// Is healthy.
+/// Returns `true` when the response reports `status == "ok"`.
 pub fn is_healthy(response: &HealthResponse) -> bool {
     response.status == "ok"
 }

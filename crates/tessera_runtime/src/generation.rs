@@ -3,24 +3,25 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Generate Request.
+/// Parameters for a single text-generation call.
 pub struct GenerateRequest {
-    /// Prompt.
+    /// The full prompt text to complete.
     pub prompt: String,
-    /// Max tokens.
+    /// Maximum number of tokens to generate.
     pub max_tokens: u32,
-    /// Temperature.
+    /// Sampling temperature; higher is more random.
     pub temperature: f64,
-    /// Grammar.
+    /// Optional GBNF grammar constraining the output.
     pub grammar: Option<String>,
-    /// Stop.
+    /// Optional stop sequences that end generation early.
     pub stop: Option<Vec<String>>,
-    /// Stream.
+    /// Whether to stream tokens as they are produced.
     pub stream: bool,
 }
 
 impl GenerateRequest {
-    /// Creates a new instance.
+    /// Builds a request for `prompt` with streaming defaults
+    /// (2048 tokens, temperature 0.7).
     pub fn new(prompt: String) -> Self {
         Self {
             prompt,
@@ -32,25 +33,25 @@ impl GenerateRequest {
         }
     }
 
-    /// With grammar.
+    /// Sets a GBNF grammar to constrain the output.
     pub fn with_grammar(mut self, grammar: String) -> Self {
         self.grammar = Some(grammar);
         self
     }
 
-    /// With max tokens.
+    /// Overrides the maximum number of tokens to generate.
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
         self
     }
 
-    /// With temperature.
+    /// Overrides the sampling temperature.
     pub fn with_temperature(mut self, temperature: f64) -> Self {
         self.temperature = temperature;
         self
     }
 
-    /// Non streaming.
+    /// Disables streaming so the call returns a single response.
     pub fn non_streaming(mut self) -> Self {
         self.stream = false;
         self
@@ -67,24 +68,24 @@ impl GenerateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Generate Chunk.
+/// One streamed token/segment of a generation response.
 pub struct GenerateChunk {
-    /// Content.
+    /// Text content of this chunk (empty on the final chunk).
     pub content: String,
-    /// Stop.
+    /// `true` on the final chunk of the stream.
     pub stop: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Completion Response.
+/// Full result of a non-streaming completion.
 pub struct CompletionResponse {
-    /// Content.
+    /// Generated text.
     pub content: String,
-    /// Stop.
+    /// Whether generation stopped naturally (vs. truncated).
     pub stop: bool,
-    /// Tokens predicted.
+    /// Tokens generated, if reported by the backend.
     pub tokens_predicted: Option<u32>,
-    /// Tokens evaluated.
+    /// Prompt tokens evaluated, if reported by the backend.
     pub tokens_evaluated: Option<u32>,
 }
 
@@ -114,7 +115,8 @@ impl From<&GenerateRequest> for LlamaCompletionBody {
 }
 
 #[cfg(feature = "http")]
-/// Generate.
+/// Runs a completion against the runtime's `/completion` endpoint
+/// and returns the parsed response.
 pub async fn generate(
     endpoint: &str,
     request: &GenerateRequest,
@@ -140,7 +142,8 @@ pub async fn generate(
     serde_json::from_str(&text).map_err(|e| format!("Parse error: {e}"))
 }
 
-/// Parse sse chunk.
+/// Parses one `data:` line of a llama-server SSE stream into a
+/// [`GenerateChunk`], or `None` if the line carries no content.
 pub fn parse_sse_chunk(line: &str) -> Option<GenerateChunk> {
     let data = line.strip_prefix("data: ")?;
     if data == "[DONE]" {
