@@ -29,7 +29,9 @@ import { shell } from "electron";
 import {
   getBridge,
   getKchatAuthService,
+  getKchatEventForwarder,
   getKchatLocalApiServer,
+  getKchatOfflineQueue,
   setKchatBackfillImpl,
   setKchatChannelResyncImpl,
 } from "../appState";
@@ -65,8 +67,22 @@ import {
   KchatChannelMember,
   KchatConnectionState,
   KchatFileInfo,
+  KchatPresenceStatus,
   KchatTeam,
+  KchatUser,
 } from "../kchat/kchatTypes";
+import {
+  isOfflineError,
+  type KchatQueuedOpType,
+  type KchatShareArtifactRequest,
+} from "../kchat/kchatOfflineQueue";
+import { selectShareDelivery } from "../kchat/kchatShareFormat";
+import { buildDeeplink } from "../kchat/kchatDeeplinkBridge";
+import {
+  formatTaskForKchat,
+  type TaskForKchat,
+} from "../kchat/kchatTaskSync";
+import { TASK_PRIORITIES, TASK_STATUSES } from "../../shared/types";
 
 /** Subset of `KchatTeam` the renderer is allowed to read. */
 type RendererTeam = Pick<
@@ -102,6 +118,90 @@ type RendererFileInfo = Pick<
 > & {
   uploaderUsername: string | null;
 };
+
+/**
+ * Renderer-safe projection of a KChat user for the `@mention`
+ * typeahead (Session 8 Task 2). Only the id, the `@`-handle, and a
+ * human display label cross the boundary — never email or roles.
+ */
+interface RendererKchatUser {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+/** Renderer-safe presence row (Session 8 Task 5). */
+interface RendererKchatUserStatus {
+  userId: string;
+  status: KchatPresenceStatus;
+}
+
+/** Renderer-safe view of one queued offline operation (Task 1). */
+interface KchatQueuedOpView {
+  id: string;
+  type: KchatQueuedOpType;
+  attempts: number;
+  enqueuedAt: number;
+}
+
+function sanitizeUser(u: KchatUser): RendererKchatUser {
+  const full = `${u.first_name ?? ""} ${u.last_name ?? ""}`.trim();
+  return {
+    id: u.id,
+    username: u.username,
+    displayName: full.length > 0 ? full : u.username,
+  };
+}
+
+/**
+ * Validate the renderer-supplied task payload for
+ * `kchat:postTaskToChannel` into the {@link TaskForKchat} the
+ * formatter expects. Status / priority are validated against the
+ * canonical enums when present; the formatter falls back to its
+ * defaults for null/omitted values.
+ */
+function assertTaskForKchat(value: unknown): TaskForKchat {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("task must be an object");
+  }
+  const rec = value as Record<string, unknown>;
+  const id = assertString(rec.id, "task.id", { maxLen: 128 });
+  const title = assertString(rec.title, "task.title", { maxLen: 512 });
+  const out: TaskForKchat = { id, title };
+
+  if (rec.description !== undefined && rec.description !== null) {
+    out.description = assertString(rec.description, "task.description", {
+      maxLen: 10_000,
+    });
+  }
+  if (rec.status !== undefined && rec.status !== null) {
+    const s = assertString(rec.status, "task.status", { maxLen: 32 });
+    if (!(TASK_STATUSES as readonly string[]).includes(s)) {
+      throw new Error(
+        `task.status must be one of: ${TASK_STATUSES.join(", ")}`,
+      );
+    }
+    out.status = s;
+  }
+  if (rec.priority !== undefined && rec.priority !== null) {
+    const p = assertString(rec.priority, "task.priority", { maxLen: 32 });
+    if (!(TASK_PRIORITIES as readonly string[]).includes(p)) {
+      throw new Error(
+        `task.priority must be one of: ${TASK_PRIORITIES.join(", ")}`,
+      );
+    }
+    out.priority = p;
+  }
+  if (rec.dueDate !== undefined && rec.dueDate !== null) {
+    out.dueDate = assertString(rec.dueDate, "task.dueDate", { maxLen: 64 });
+  }
+  if (rec.assignee !== undefined && rec.assignee !== null) {
+    out.assignee = assertString(rec.assignee, "task.assignee", {
+      maxLen: 256,
+    });
+  }
+  return out;
+}
 
 // `KchatChannelManifest` + `manifestPathFor` + `readManifest` +
 // `writeManifest` live in `../kchat/kchatChannelSyncer` so the
@@ -940,6 +1040,158 @@ export function registerKchatHandlers(): void {
     },
   );
 
+  // Session 8 Task 2: typeahead user search backing the
+  // DocumentEditor `@mention` extension. Returns a renderer-safe
+  // projection (id + username + display name) — no email, no roles.
+  idempotentHandle(
+    "kchat:searchUsers",
+    async (
+      _event,
+      term: unknown,
+      limit: unknown,
+    ): Promise<RendererKchatUser[]> => {
+      const q = assertString(term, "term", { maxLen: 256 });
+      const lim =
+        limit === undefined || limit === null
+          ? 10
+          : assertNumber(limit, "limit", { integer: true, min: 1, max: 50 });
+      // An empty / whitespace-only term has no useful prefix to
+      // search; short-circuit to an empty list rather than spend a
+      // rate-limit token on a server round-trip that returns noise.
+      // The rate limiter is consumed *after* this guard so a `@`
+      // keystroke pause (empty query) never drains the typeahead's
+      // burst budget out from under the real search that follows.
+      if (q.trim().length === 0) return [];
+      defaultRateLimiter.consume(
+        "kchat:searchUsers",
+        RATE_LIMIT_PROFILES["kchat:searchUsers"],
+      );
+      const svc = getKchatAuthService();
+      try {
+        const users = await svc.getClient().searchUsers(q.trim(), lim);
+        return users.map(sanitizeUser);
+      } catch (err) {
+        throw toIpcError(err);
+      }
+    },
+  );
+
+  // Session 8 Task 5: presence lookup backing the Sidebar online/
+  // offline indicators. Accepts a bounded list of user ids and
+  // returns each id's coarse status.
+  idempotentHandle(
+    "kchat:getUserStatuses",
+    async (_event, userIds: unknown): Promise<RendererKchatUserStatus[]> => {
+      defaultRateLimiter.consume(
+        "kchat:getUserStatuses",
+        RATE_LIMIT_PROFILES["kchat:getUserStatuses"],
+      );
+      if (!Array.isArray(userIds)) {
+        throw new Error("userIds must be an array");
+      }
+      if (userIds.length > 200) {
+        throw new Error("userIds must contain at most 200 ids");
+      }
+      const ids = userIds.map((v, i) => assertKchatId(v, `userIds[${i}]`));
+      if (ids.length === 0) return [];
+      const svc = getKchatAuthService();
+      try {
+        const statuses = await svc.getClient().getUserStatusesByIds(ids);
+        return statuses.map((s) => ({
+          userId: s.user_id,
+          status: s.status,
+        }));
+      } catch (err) {
+        throw toIpcError(err);
+      }
+    },
+  );
+
+  // Session 8 Task 1: read-only snapshot of the offline queue so
+  // the Sidebar can show a "N pending" badge alongside the sync
+  // indicator. Pure local read — no server round-trip, no rate
+  // limit needed.
+  idempotentHandle(
+    "kchat:offlineQueueStatus",
+    async (): Promise<{ size: number; operations: KchatQueuedOpView[] }> => {
+      const queue = getKchatOfflineQueue();
+      await queue.load();
+      return {
+        size: queue.size(),
+        operations: queue.list().map((op) => ({
+          id: op.id,
+          type: op.type,
+          attempts: op.attempts,
+          enqueuedAt: op.enqueuedAt,
+        })),
+      };
+    },
+  );
+
+  // Session 8 Task 3: set the channels whose new posts raise
+  // native OS notifications (and, when enabled, auto-create tasks).
+  // The renderer owns the watch list; this handler forwards the
+  // validated set to the live event forwarder.
+  idempotentHandle(
+    "kchat:setWatchedChannels",
+    async (_event, channelIds: unknown): Promise<{ count: number }> => {
+      if (!Array.isArray(channelIds)) {
+        throw new Error("channelIds must be an array");
+      }
+      if (channelIds.length > 500) {
+        throw new Error("channelIds must contain at most 500 ids");
+      }
+      const ids = channelIds.map((v, i) =>
+        assertKchatId(v, `channelIds[${i}]`),
+      );
+      const forwarder = getKchatEventForwarder();
+      // The forwarder is lazily constructed alongside the auth
+      // service; if the user hasn't connected yet there's nothing
+      // to watch. Report success with the dedupe count so the
+      // renderer can reflect the intended state regardless.
+      forwarder?.setWatchedChannels(ids);
+      return { count: new Set(ids).size };
+    },
+  );
+
+  // Session 8 Task 6 (Tessera → KChat direction): post a Tessera
+  // task to a channel as a formatted message carrying the
+  // `— via Tessera` footer so the inbound detector ignores the
+  // round-trip and never re-creates the task it just posted.
+  idempotentHandle(
+    "kchat:postTaskToChannel",
+    async (
+      _event,
+      channelId: unknown,
+      task: unknown,
+    ): Promise<{ postId: string; queued?: boolean; queueId?: string }> => {
+      const channel = assertKchatId(channelId, "channelId");
+      const normalised = assertTaskForKchat(task);
+      const message = formatTaskForKchat(normalised);
+      const svc = getKchatAuthService();
+      try {
+        const post = await svc.getClient().createPost(channel, message);
+        return { postId: post.id };
+      } catch (err) {
+        // Server unreachable → persist for replay on reconnect,
+        // matching the offline-resilience contract of
+        // `kchat:shareArtifact` and `sources:addKchatChannel`. A
+        // deterministic failure (validation, missing channel) is
+        // surfaced normally. We queue the normalised task, not the
+        // rendered message, so the replay re-renders the current
+        // footer/format via `formatTaskForKchat`.
+        if (isOfflineError(err)) {
+          const queueId = await getKchatOfflineQueue().enqueuePostTask({
+            channelId: channel,
+            task: normalised,
+          });
+          return { postId: "", queued: true, queueId };
+        }
+        throw toIpcError(err);
+      }
+    },
+  );
+
   idempotentHandle(
     "kchat:listChannelFiles",
     async (
@@ -998,6 +1250,15 @@ export function registerKchatHandlers(): void {
   );
 
   // --- Sharing ---
+  //
+  // Session 8 Task 4: the share path now supports two delivery
+  // modes — `attachment` (export the artifact and upload the bytes,
+  // covering markdown/html/json AND the new DOCX/PDF binaries) and
+  // `deeplink` (post a `tessera://artifact/<id>` message instead of
+  // a frozen file). Session 8 Task 1: when the server is
+  // unreachable, the request is persisted to the offline queue and
+  // replayed on the next reconnect rather than failing the user's
+  // share outright.
   idempotentHandle(
     "kchat:shareArtifact",
     async (
@@ -1007,7 +1268,14 @@ export function registerKchatHandlers(): void {
       format: unknown,
       includeCitations: unknown,
       includeEvidencePack: unknown,
-    ): Promise<{ fileId: string; fileName: string }> => {
+      delivery: unknown,
+    ): Promise<{
+      fileId: string;
+      fileName: string;
+      postId?: string;
+      queued?: boolean;
+      queueId?: string;
+    }> => {
       const artifact = assertId(artifactId, "artifactId");
       const channel = assertKchatId(channelId, "channelId");
       const fmt = assertString(format, "format", { maxLen: 32 });
@@ -1024,83 +1292,43 @@ export function registerKchatHandlers(): void {
         includeEvidencePack,
         "includeEvidencePack",
       );
+      // `delivery` is optional for backward-compatibility: a caller
+      // that omits it (or passes null/undefined) gets the original
+      // `attachment` behaviour. `selectShareDelivery` throws on any
+      // unrecognised value, which surfaces to the renderer as a
+      // validation error.
+      const deliveryMode =
+        delivery === undefined || delivery === null
+          ? "attachment"
+          : assertString(delivery, "delivery", { maxLen: 32 });
+      selectShareDelivery({ format: fmt, delivery: deliveryMode });
 
-      const bridge = getBridge();
-      if (!bridge) throw new Error("Native bridge not available");
+      const req: KchatShareArtifactRequest = {
+        artifactId: artifact,
+        channelId: channel,
+        format: fmt,
+        includeCitations: wantCitations,
+        includeEvidencePack: wantEvidence,
+        delivery: deliveryMode,
+      };
 
-      const svc = getKchatAuthService();
       try {
-        // Phase 1: produce the export bytes.
-        const exportResult = await produceExportBytes(
-          bridge,
-          artifact,
-          fmt,
-          wantCitations,
-        );
-
-        // Phase 2: upload primary export.
-        const primary = await svc
-          .getClient()
-          .uploadFile(
-            channel,
-            exportResult.filename,
-            exportResult.bytes,
-            exportResult.mimeType,
-          );
-
-        // Phase 3: optionally upload evidence pack.
-        //
-        // Audit-trail integrity: the primary export is already in the
-        // channel by this point. If the evidence-pack upload below
-        // fails (rate-limit, network blip, KChat quota, etc.), we
-        // must NOT leave the primary share unaudited — that would
-        // produce a silent inconsistency where the channel contains
-        // a file the audit log has no record of, defeating the
-        // tamper-evidence guarantee operators rely on. We track the
-        // evidence outcome separately and the audit row records
-        // what actually landed in the channel, not what the user
-        // requested. On evidence-pack failure we still emit the
-        // audit row (with `evidenceShared=false`) before
-        // re-throwing so the renderer surfaces the partial-failure
-        // error and operators can see the divergence between
-        // "requested" and "delivered".
-        let evidenceShared = false;
-        if (wantEvidence) {
-          try {
-            const packBytes = bridge.bridgeEvidencePackBytes(artifact);
-            await svc
-              .getClient()
-              .uploadFile(
-                channel,
-                `${exportResult.basename}-evidence.zip`,
-                packBytes,
-                "application/zip",
-              );
-            evidenceShared = true;
-          } catch (err) {
-            // Primary already in channel — audit it with the
-            // actual (failed) evidence outcome and re-throw so the
-            // renderer learns about the partial failure.
-            bridge.bridgeLogKchatArtifactShared(
-              artifact,
-              channel,
-              fmt,
-              wantCitations,
-              false,
-            );
-            throw err;
-          }
-        }
-
-        bridge.bridgeLogKchatArtifactShared(
-          artifact,
-          channel,
-          fmt,
-          wantCitations,
-          evidenceShared,
-        );
-        return { fileId: primary.id, fileName: primary.name };
+        const result = await runShareArtifactOperation(req);
+        return {
+          fileId: result.fileId,
+          fileName: result.fileName,
+          ...(result.postId ? { postId: result.postId } : {}),
+        };
       } catch (err) {
+        // Server unreachable → persist for replay on reconnect
+        // instead of failing the user's share. A deterministic
+        // failure (missing artifact, validation, etc.) is surfaced
+        // normally.
+        if (isOfflineError(err)) {
+          const queueId =
+            await getKchatOfflineQueue().enqueueShareArtifact(req);
+          return { fileId: "", fileName: "", queued: true, queueId };
+        }
         throw toIpcError(err);
       }
     },
@@ -1453,7 +1681,12 @@ export function registerKchatHandlers(): void {
       _event,
       channelId: unknown,
       channelName: unknown,
-    ): Promise<{ sourceId: string; cacheDir: string }> => {
+    ): Promise<{
+      sourceId: string;
+      cacheDir: string;
+      queued?: boolean;
+      queueId?: string;
+    }> => {
       const id = assertKchatId(channelId, "channelId");
       const name = assertString(channelName, "channelName", { maxLen: 256 });
 
@@ -1464,8 +1697,33 @@ export function registerKchatHandlers(): void {
       // *before* the dedupe lookup so a malformed `channelId` is
       // rejected with the same error shape whether or not another
       // sync is running.
+      // Session 8 Task 1: if the sync fails because the server is
+      // unreachable, persist an `ingestChannel` request to the
+      // offline queue and report `queued` instead of failing. The
+      // queue dedupes identical payloads, so concurrent dedupe
+      // callers that all observe the same offline error collapse to
+      // a single queued entry. A deterministic failure (revoked
+      // access, bridge error) is surfaced normally.
+      const withOfflineEnqueue = (
+        p: Promise<{ sourceId: string; cacheDir: string }>,
+      ): Promise<{
+        sourceId: string;
+        cacheDir: string;
+        queued?: boolean;
+        queueId?: string;
+      }> =>
+        p.catch(async (err) => {
+          if (isOfflineError(err)) {
+            const queueId = await getKchatOfflineQueue().enqueueIngestChannel(
+              { channelId: id, channelName: name },
+            );
+            return { sourceId: "", cacheDir: "", queued: true, queueId };
+          }
+          throw err;
+        });
+
       const existing = inFlightAddKchatChannel.get(id);
-      if (existing) return existing;
+      if (existing) return withOfflineEnqueue(existing);
       // Wrap the full-sync work in the per-channel sync lock so a
       // WS-driven single-file sync (`KchatEventForwarder.handle-
       // FileAdded`) and the full sync cannot interleave their
@@ -1485,9 +1743,39 @@ export function registerKchatHandlers(): void {
         }
       });
       inFlightAddKchatChannel.set(id, work);
-      return work;
+      return withOfflineEnqueue(work);
     },
   );
+
+  // Session 8 Task 1: register the executors the offline queue uses
+  // to replay deferred operations on reconnect. The `shareArtifact`
+  // executor re-runs the exact same `runShareArtifactOperation` the
+  // live handler uses; the `ingestChannel` executor re-runs the
+  // full channel sync under the per-channel lock. Both let errors
+  // propagate so the queue can distinguish a still-offline server
+  // (stop + keep) from a deterministic failure (count + dead-letter
+  // past the cap). `setExecutors` merges, so a re-mount of the IPC
+  // layer (HMR / test harness) simply rebinds them.
+  getKchatOfflineQueue().setExecutors({
+    shareArtifact: async (payload) => {
+      await runShareArtifactOperation(payload);
+    },
+    ingestChannel: async (payload) => {
+      await withChannelSyncLock(payload.channelId, () =>
+        runAddKchatChannel(payload.channelId, payload.channelName),
+      );
+    },
+    // Re-render the task from the persisted envelope (not a stale
+    // pre-rendered body) and re-post it. Errors propagate so the
+    // queue distinguishes still-offline (stop + keep) from a
+    // deterministic failure (count + dead-letter past the cap).
+    postTask: async (payload) => {
+      const body = formatTaskForKchat(payload.task);
+      await getKchatAuthService()
+        .getClient()
+        .createPost(payload.channelId, body);
+    },
+  });
 
   // Block B Task 4 second-pass:
   // populate the auto-resync slot the `KchatEventForwarder` reads
@@ -2415,4 +2703,151 @@ function mimeForFormat(format: string): string {
     default:
       return "application/octet-stream";
   }
+}
+
+/**
+ * Raised when a share operation has already committed an irreversible
+ * side-effect (the primary file upload landed in the channel) but a
+ * later phase — the evidence-pack upload — then failed.
+ *
+ * Such a failure must NOT be treated as offline-retryable. The offline
+ * queue replays the *entire* `KchatShareArtifactRequest`, which would
+ * re-upload the primary file and leave a duplicate in the channel. By
+ * carrying the `nonReplayableCommit` marker (which {@link isOfflineError}
+ * short-circuits on), this wrapper forces the IPC handler down the
+ * `throw toIpcError(err)` path so the renderer surfaces a partial
+ * failure and the user can retry manually — matching the pre-offline-
+ * queue behaviour where evidence-pack failures were surfaced, not
+ * swallowed.
+ */
+class KchatPartialShareError extends Error {
+  /** Marker read by `isOfflineError` to refuse offline-queueing. */
+  readonly nonReplayableCommit = true;
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "KchatPartialShareError";
+    this.cause = cause;
+  }
+}
+
+/** Outcome of a single share operation (attachment or deeplink). */
+interface ShareArtifactResult {
+  /** File id when delivered as an attachment; `""` for deeplink. */
+  fileId: string;
+  /** File name when delivered as an attachment; `""` for deeplink. */
+  fileName: string;
+  /** Post id when delivered as a deeplink; `null` for attachment. */
+  postId: string | null;
+}
+
+/**
+ * Perform a share operation end-to-end. Shared by the
+ * `kchat:shareArtifact` IPC handler and the offline-queue executor
+ * so the deferred replay runs exactly the same logic as the live
+ * path. Throws on failure (network or deterministic); the caller
+ * decides whether the error is offline-retryable.
+ *
+ * `attachment` delivery exports the artifact bytes (markdown / html
+ * / json / pdf / docx) and uploads them, optionally followed by the
+ * evidence pack. `deeplink` delivery posts a `tessera://artifact/`
+ * message and uploads nothing.
+ */
+async function runShareArtifactOperation(
+  req: KchatShareArtifactRequest,
+): Promise<ShareArtifactResult> {
+  const bridge = getBridge();
+  if (!bridge) throw new Error("Native bridge not available");
+  const svc = getKchatAuthService();
+  const plan = selectShareDelivery({
+    format: req.format,
+    delivery: req.delivery,
+  });
+
+  if (plan.delivery === "deeplink") {
+    const deeplink = buildDeeplink({
+      kind: "artifact",
+      artifactId: req.artifactId,
+    });
+    // Best-effort title for a friendlier message; a failed metadata
+    // read must not block a deeplink share.
+    let title = "";
+    try {
+      title = (bridge.bridgeGetArtifact(req.artifactId).title ?? "").trim();
+    } catch {
+      title = "";
+    }
+    const message =
+      title.length > 0
+        ? `Shared a Tessera artifact: **${title}**\n${deeplink}`
+        : `Shared a Tessera artifact:\n${deeplink}`;
+    const post = await svc.getClient().createPost(req.channelId, message);
+    // A deeplink carries no exported bytes and no evidence pack, so
+    // the audit row records `evidenceShared=false`.
+    bridge.bridgeLogKchatArtifactShared(
+      req.artifactId,
+      req.channelId,
+      plan.format,
+      req.includeCitations,
+      false,
+    );
+    return { fileId: "", fileName: "", postId: post.id };
+  }
+
+  // attachment delivery (original behaviour, now also DOCX/PDF).
+  const exportResult = await produceExportBytes(
+    bridge,
+    req.artifactId,
+    plan.format,
+    req.includeCitations,
+  );
+  const primary = await svc
+    .getClient()
+    .uploadFile(
+      req.channelId,
+      exportResult.filename,
+      exportResult.bytes,
+      exportResult.mimeType,
+    );
+
+  let evidenceShared = false;
+  if (req.includeEvidencePack) {
+    try {
+      const packBytes = bridge.bridgeEvidencePackBytes(req.artifactId);
+      await svc
+        .getClient()
+        .uploadFile(
+          req.channelId,
+          `${exportResult.basename}-evidence.zip`,
+          packBytes,
+          "application/zip",
+        );
+      evidenceShared = true;
+    } catch (err) {
+      // Primary already in channel — audit the actual (failed)
+      // evidence outcome before re-throwing so the renderer learns
+      // about the partial failure.
+      bridge.bridgeLogKchatArtifactShared(
+        req.artifactId,
+        req.channelId,
+        plan.format,
+        req.includeCitations,
+        false,
+      );
+      // The primary upload has already landed, so this operation can no
+      // longer be replayed atomically. Wrap the failure (even a genuine
+      // offline one) so `isOfflineError` refuses it and the IPC handler
+      // surfaces a partial failure instead of offline-queueing the whole
+      // request — which would duplicate the primary file on replay.
+      throw new KchatPartialShareError(err);
+    }
+  }
+
+  bridge.bridgeLogKchatArtifactShared(
+    req.artifactId,
+    req.channelId,
+    plan.format,
+    req.includeCitations,
+    evidenceShared,
+  );
+  return { fileId: primary.id, fileName: primary.name, postId: null };
 }
