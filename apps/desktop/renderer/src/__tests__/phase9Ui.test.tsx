@@ -143,6 +143,35 @@ describe("ErrorBoundary", () => {
     }
   });
 
+  it("does not raise an unhandled rejection if reportCrash rejects", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandled = vi.fn();
+    window.addEventListener("unhandledrejection", unhandled);
+    const reportCrash = vi.fn().mockRejectedValue(new Error("ipc down"));
+    (
+      window as unknown as { tessera: { diagnostics?: unknown } }
+    ).tessera.diagnostics = { reportCrash };
+    try {
+      render(
+        <ErrorBoundary name="DocumentEditor">
+          <Boom />
+        </ErrorBoundary>,
+      );
+      expect(reportCrash).toHaveBeenCalledTimes(1);
+      // The boundary attaches a no-op `.catch`, so the rejection is
+      // settled. Flush microtasks and a macrotask so any unhandled
+      // rejection would have fired by now.
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("unhandledrejection", unhandled);
+      spy.mockRestore();
+      delete (window as unknown as { tessera: { diagnostics?: unknown } })
+        .tessera.diagnostics;
+    }
+  });
+
   // A child that throws on its first render only, so that after the
   // boundary resets (clears its error) the re-render succeeds — this is
   // what happens in practice when navigating to a different, healthy
