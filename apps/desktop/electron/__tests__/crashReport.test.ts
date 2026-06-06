@@ -179,9 +179,11 @@ describe("recordCrashReport", () => {
 
   it("drops persisted entries whose `component` is not a string", () => {
     const file = path.join(dir, CRASH_REPORT_FILENAME);
-    // Existing entries are re-serialized as-is (only the appended report
-    // is normalized), so the read guard must reject a wrong-typed
-    // `component` to keep malformed data from persisting across writes.
+    // `readExisting` normalizes each survivor, so the read guard isn't
+    // what keeps wrong-typed fields out — it decides what counts as a
+    // report at all. A `{component: 42}` entry has no recoverable
+    // identity, so the guard drops it rather than letting normalization
+    // manufacture an "unknown" junk entry from it.
     fs.writeFileSync(
       file,
       JSON.stringify([

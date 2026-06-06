@@ -61,11 +61,14 @@ export function normalizeCrashReport(
 }
 
 function isReportShaped(e: unknown): e is RendererCrashReport {
-  // Require a string `component`, not merely the key's presence: existing
-  // entries are returned to the caller and re-serialized as-is (only the
-  // freshly appended report is normalized), so a malformed `{component:
-  // 42}` would otherwise persist unnormalized. Every report this module
-  // writes has a string `component` (see `normalizeCrashReport`).
+  // Defense-in-depth filter that runs before `readExisting` normalizes
+  // each survivor: it decides whether a parsed value is a report at all,
+  // not whether its fields are well-typed (normalization handles that).
+  // Require a string `component` — the field that anchors a real report
+  // and that `normalizeCrashReport` always writes. A bare `{}`, a
+  // primitive, or a `{component: 42}` carries no recoverable identity, so
+  // normalizing it would only manufacture an "unknown" junk entry; drop
+  // it instead.
   return (
     typeof e === "object" &&
     e !== null &&
