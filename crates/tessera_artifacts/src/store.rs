@@ -56,13 +56,12 @@ impl ArtifactStore {
                 );
                 CREATE INDEX IF NOT EXISTS idx_versions_artifact ON artifact_versions(artifact_id, version_number);",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
     pub fn insert(&self, artifact: &Artifact) -> Result<()> {
-        let citations_json = serde_json::to_string(&artifact.citations)
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
             .lock()
             .expect("connection mutex poisoned")
@@ -72,7 +71,7 @@ impl ArtifactStore {
                 params![
                     artifact.id.to_string(),
                     artifact.title,
-                    serde_json::to_string(&artifact.artifact_type).map_err(|e| Error::Database(e.to_string()))?,
+                    serde_json::to_string(&artifact.artifact_type).map_err(Error::Json)?,
                     artifact.template_id.map(|t| t.to_string()),
                     artifact.content,
                     citations_json,
@@ -81,13 +80,12 @@ impl ArtifactStore {
                     artifact.version,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
     pub fn update(&self, artifact: &Artifact) -> Result<()> {
-        let citations_json = serde_json::to_string(&artifact.citations)
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
             .lock()
             .expect("connection mutex poisoned")
@@ -102,7 +100,7 @@ impl ArtifactStore {
                     artifact.id.to_string(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -177,7 +175,7 @@ impl ArtifactStore {
             .prepare(
                 "SELECT id, title, artifact_type, template_id, content, citations, created_at, updated_at, version FROM artifacts ORDER BY updated_at DESC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let artifacts = stmt
             .query_map([], |row| {
@@ -238,9 +236,9 @@ impl ArtifactStore {
                     version: row.get(8)?,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Database(format!("corrupted row: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("corrupted row: {e}")))?;
 
         Ok(artifacts)
     }
@@ -253,7 +251,7 @@ impl ArtifactStore {
                 "DELETE FROM artifacts WHERE id = ?1",
                 params![id.to_string()],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -271,7 +269,7 @@ impl ArtifactStore {
                 "INSERT INTO artifact_versions (artifact_id, version_number, content_snapshot, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![artifact_id.to_string(), version_number, content, now],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -281,7 +279,7 @@ impl ArtifactStore {
             .prepare(
                 "SELECT version_number, content_snapshot, created_at FROM artifact_versions WHERE artifact_id = ?1 ORDER BY version_number DESC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let versions = stmt
             .query_map(params![artifact_id.to_string()], |row| {
@@ -292,9 +290,9 @@ impl ArtifactStore {
                     created_at: created_str,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Sqlite)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Database(format!("failed to read version row: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("failed to read version row: {e}")))?;
 
         Ok(versions)
     }
@@ -319,7 +317,7 @@ impl ArtifactStore {
                     })
                 },
             )
-            .map_err(|e| Error::Database(e.to_string()))
+            .map_err(Error::Sqlite)
     }
 }
 
