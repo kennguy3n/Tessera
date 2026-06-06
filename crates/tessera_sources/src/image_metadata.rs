@@ -8,7 +8,8 @@
 //!   header decoder (no full-image decode — we only need the
 //!   metadata block).
 //! - EXIF tags (camera make/model, ISO, exposure time, capture date,
-//!   GPS coordinates, …) via [`kamadak-exif`].
+//!   GPS coordinates, …) via the [`exif`] crate (the `kamadak-exif`
+//!   package).
 //!
 //! The extracted metadata is serialised into a human-readable text
 //! representation that the chunker can split like any other source.
@@ -33,6 +34,7 @@ pub fn image_extension(path: &Path) -> Option<String> {
     }
 }
 
+/// Is image extension.
 pub fn is_image_extension(ext: &str) -> bool {
     matches!(
         ext.to_lowercase().as_str(),

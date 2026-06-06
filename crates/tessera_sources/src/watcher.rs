@@ -1,3 +1,6 @@
+//! Filesystem watcher that debounces change events to trigger
+//! re-indexing of sources on disk.
+
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,9 +19,13 @@ use tessera_core::error::{Error, Result};
 pub const DEFAULT_COALESCE_WINDOW: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// File Event.
 pub enum FileEvent {
+    /// The `Created` variant.
     Created(PathBuf),
+    /// The `Modified` variant.
     Modified(PathBuf),
+    /// The `Removed` variant.
     Removed(PathBuf),
 }
 
@@ -34,12 +41,14 @@ impl FileEvent {
     }
 }
 
+/// File Watcher.
 pub struct FileWatcher {
     _watcher: RecommendedWatcher,
     receiver: mpsc::Receiver<FileEvent>,
 }
 
 impl FileWatcher {
+    /// Creates a new instance.
     pub fn new(path: &Path) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
 
@@ -64,6 +73,7 @@ impl FileWatcher {
         })
     }
 
+    /// Poll events.
     pub fn poll_events(&self) -> Vec<FileEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.receiver.try_recv() {
@@ -72,6 +82,7 @@ impl FileWatcher {
         events
     }
 
+    /// Recv event.
     pub fn recv_event(&self, timeout: std::time::Duration) -> Option<FileEvent> {
         self.receiver.recv_timeout(timeout).ok()
     }

@@ -579,3 +579,124 @@ describe("KchatOfflineQueue replay", () => {
     expect(q.list()[0].id).toBe("ok");
   });
 });
+
+/**
+ * `persist()` is a single writer: enqueue and replay both persist but
+ * are not serialised against each other at the call site, so without an
+ * internal write lock a replay's stale post-drain snapshot can `rename`
+ * over a concurrent enqueue's write and silently drop the just-queued op
+ * from disk (it survives in memory until the next write). These tests
+ * pin the on-disk file to the in-memory queue across that race.
+ */
+describe("KchatOfflineQueue persist single-writer", () => {
+  /** MemoryFs that holds the FIRST `rename` until the test releases it. */
+  class GatedRenameFs extends MemoryFs {
+    private gate: Promise<void> | null = null;
+    private release: (() => void) | null = null;
+    private enteredResolve: (() => void) | null = null;
+    /** Resolves the moment the first gated rename is entered. */
+    readonly firstRenameEntered: Promise<void>;
+
+    constructor() {
+      super();
+      this.firstRenameEntered = new Promise<void>((resolve) => {
+        this.enteredResolve = resolve;
+      });
+    }
+
+    armFirstRename(): void {
+      this.gate = new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+
+    releaseGate(): void {
+      this.release?.();
+      this.release = null;
+      this.gate = null;
+    }
+
+    override async rename(from: string, to: string): Promise<void> {
+      if (this.gate) {
+        const pending = this.gate;
+        // Gate only the first rename so the second (the racing write)
+        // proceeds and would clobber the queue file under the old code.
+        this.gate = null;
+        this.enteredResolve?.();
+        this.enteredResolve = null;
+        await pending;
+      }
+      await super.rename(from, to);
+    }
+  }
+
+  const share = (artifactId: string) => ({
+    artifactId,
+    channelId: `chan-${artifactId}`,
+    format: "markdown",
+    includeCitations: false,
+    includeEvidencePack: false,
+  });
+
+  function diskOps(fs: MemoryFs): string[] {
+    const raw = fs.files.get(QUEUE_PATH);
+    if (raw === undefined) return [];
+    const parsed = JSON.parse(raw) as {
+      operations: { payload: { artifactId?: string } }[];
+    };
+    return parsed.operations
+      .map((o) => o.payload.artifactId ?? "")
+      .sort();
+  }
+
+  function memOps(q: KchatOfflineQueue): string[] {
+    return q
+      .list()
+      .map((o) => (o.payload as { artifactId?: string }).artifactId ?? "")
+      .sort();
+  }
+
+  it("does not lose an enqueue that races a replay's final persist", async () => {
+    const fs = new GatedRenameFs();
+    const q = makeQueue(fs, ["a", "b", "c", "d"]);
+    q.setExecutors({ shareArtifact: async () => undefined });
+
+    // One op already queued; it will replay successfully, leaving the
+    // post-drain snapshot empty.
+    await q.enqueueShareArtifact(share("art-1"));
+
+    // Hold replay's post-drain rename so a concurrent enqueue can land
+    // its own write inside that window.
+    fs.armFirstRename();
+    const replayP = q.replay();
+    // Park until replay has drained art-1 and reached its gated rename;
+    // only then enqueue art-2, so replay's drain loop cannot consume it.
+    await fs.firstRenameEntered;
+    const enqueueP = q.enqueueShareArtifact(share("art-2"));
+    // Let the enqueue push art-2 and schedule its (chained) persist.
+    await Promise.resolve();
+    await Promise.resolve();
+    fs.releaseGate();
+    await Promise.all([replayP, enqueueP]);
+
+    // The racing op must be on disk, and disk must match memory exactly.
+    expect(memOps(q)).toContain("art-2");
+    expect(diskOps(fs)).toEqual(memOps(q));
+  });
+
+  it("keeps disk consistent with memory under interleaved writes", async () => {
+    const fs = new MemoryFs();
+    const q = makeQueue(
+      fs,
+      Array.from({ length: 10 }, (_, i) => `id-${i}`),
+    );
+    // Fire several enqueues without awaiting so their persists overlap.
+    await Promise.all([
+      q.enqueueShareArtifact(share("x1")),
+      q.enqueueShareArtifact(share("x2")),
+      q.enqueueShareArtifact(share("x3")),
+    ]);
+    expect(diskOps(fs)).toEqual(memOps(q));
+    expect(memOps(q)).toEqual(["x1", "x2", "x3"]);
+  });
+});

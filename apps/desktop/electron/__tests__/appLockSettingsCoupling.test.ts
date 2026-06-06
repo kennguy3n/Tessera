@@ -21,6 +21,7 @@
  * real IPC handlers (no shortcuts into `appLock.ts`'s internals).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -80,12 +81,49 @@ import { registerSettingsHandlers } from "../ipc/settings";
 import { registerAppLockHandlers } from "../ipc/appLock";
 import {
   hasPinSet,
+  hasFido2Set,
   setPin,
   clearPin,
+  clearFido2,
+  registerFido2,
+  getFido2RegistrationOptions,
   _setAppLockPathForTests,
   _resetAttemptCounterForTests,
+  _resetFido2ChallengesForTests,
 } from "../appLock";
 import { defaultRateLimiter } from "../ipc/rateLimiter";
+
+/**
+ * Register a test FIDO2 credential through the real `registerFido2`
+ * path (issue a challenge, synthesise the `clientDataJSON` an
+ * authenticator would post back, mint a P-256 SPKI key). Used only
+ * for set-up; the contract under test is the `appLock:removeFido2`
+ * handler's mode coupling.
+ */
+function registerTestFido2Credential(): void {
+  const opts = getFido2RegistrationOptions();
+  const { publicKey } = crypto.generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+  });
+  const publicKeySpki = (
+    publicKey.export({ type: "spki", format: "der" }) as Buffer
+  ).toString("base64");
+  const clientDataJson = Buffer.from(
+    JSON.stringify({
+      type: "webauthn.create",
+      challenge: opts.challenge,
+      origin: "https://app.tessera.local",
+      crossOrigin: false,
+    }),
+    "utf-8",
+  ).toString("base64");
+  registerFido2({
+    credentialId: "dGVzdC1jcmVkZW50aWFsLWlk",
+    publicKeySpki,
+    alg: -7,
+    clientDataJson,
+  });
+}
 
 function getHandler(
   channel: string,
@@ -111,6 +149,16 @@ beforeEach(() => {
 
 afterEach(() => {
   _setAppLockPathForTests(null);
+  try {
+    if (hasFido2Set()) clearFido2();
+  } catch {
+    /* best-effort */
+  }
+  try {
+    _resetFido2ChallengesForTests();
+  } catch {
+    /* best-effort */
+  }
   try {
     if (hasPinSet()) clearPin();
   } catch {
@@ -259,5 +307,61 @@ describe("appLock:removePin resets appLockMode to 'off'", () => {
 
     expect(hasPinSet()).toBe(false);
     expect(loadConfig().appLockMode).toBe("off");
+  });
+});
+
+describe("appLock:removeFido2 demotes appLockMode 'fido2' -> 'pin'", () => {
+  it("demotes mode to 'pin' (NOT 'off') and keeps the PIN root after a successful removeFido2", async () => {
+    // Set up: PIN root + registered credential + mode='fido2'.
+    await setPin("alpha123");
+    registerTestFido2Credential();
+    updateConfig({ appLockMode: "fido2" });
+    expect(hasFido2Set()).toBe(true);
+    expect(loadConfig().appLockMode).toBe("fido2");
+
+    registerSettingsHandlers();
+    registerAppLockHandlers();
+    const handler = getHandler("appLock:removeFido2");
+    await handler({}, "alpha123");
+
+    // The credential is gone, but the user still has their PIN, so the
+    // mode demotes to "pin" rather than orphaning at "fido2" (which
+    // would leave the next launch with mode='fido2' and no credential).
+    expect(hasFido2Set()).toBe(false);
+    expect(hasPinSet()).toBe(true);
+    expect(loadConfig().appLockMode).toBe("pin");
+  });
+
+  it("does not change mode or clear the credential when removeFido2 fails PIN verification", async () => {
+    await setPin("alpha123");
+    registerTestFido2Credential();
+    updateConfig({ appLockMode: "fido2" });
+
+    registerSettingsHandlers();
+    registerAppLockHandlers();
+    const handler = getHandler("appLock:removeFido2");
+    await expect(handler({}, "wrong-pin999")).rejects.toThrow(
+      /PIN verification failed/,
+    );
+
+    expect(hasFido2Set()).toBe(true);
+    expect(loadConfig().appLockMode).toBe("fido2");
+  });
+
+  it("leaves mode='pin' as-is when removeFido2 is called from 'pin' mode", async () => {
+    // The credential exists as a convenience layer but the active
+    // mode is already "pin"; removing the credential must not rewrite
+    // the mode.
+    await setPin("alpha123");
+    registerTestFido2Credential();
+    updateConfig({ appLockMode: "pin" });
+
+    registerSettingsHandlers();
+    registerAppLockHandlers();
+    const handler = getHandler("appLock:removeFido2");
+    await handler({}, "alpha123");
+
+    expect(hasFido2Set()).toBe(false);
+    expect(loadConfig().appLockMode).toBe("pin");
   });
 });

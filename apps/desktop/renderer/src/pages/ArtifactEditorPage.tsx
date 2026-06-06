@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import ErrorBoundary from "../components/ErrorBoundary";
 import Breadcrumb from "../components/Breadcrumb";
 import Button from "../components/Button";
 import Card from "../components/Card";
@@ -720,17 +727,27 @@ function EditorSwitch({
   onSave: (content: string) => void;
   onDraftChange: (content: string) => void;
 }) {
+  // Each editor renders inside its own named error boundary so a crash
+  // in one editor surfaces the recovery UI (and writes a
+  // `crash-report.json` entry tagged with the editor name) without
+  // tearing down the surrounding ArtifactEditorPage chrome (header,
+  // export controls, breadcrumb).
+  let name: string;
+  let editor: ReactNode;
   switch (artifact.artifactType) {
     case "document":
-      return (
+      name = "DocumentEditor";
+      editor = (
         <DocumentEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "slides":
-      return (
+      name = "SlideEditor";
+      editor = (
         <SlideEditor
           content={artifact.content}
           onSave={onSave}
@@ -738,24 +755,30 @@ function EditorSwitch({
           deckTitle={artifact.title}
         />
       );
+      break;
     case "sheet":
-      return (
+      name = "SheetEditor";
+      editor = (
         <SheetEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "base":
-      return (
+      name = "BaseEditor";
+      editor = (
         <BaseEditor
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
         />
       );
+      break;
     case "infographic":
-      return (
+      name = "InfographicEditor";
+      editor = (
         <InfographicEditor
           content={artifact.content}
           onSave={onSave}
@@ -763,8 +786,10 @@ function EditorSwitch({
           artifactId={artifact.id}
         />
       );
+      break;
     case "landing_page":
-      return (
+      name = "LandingPageEditor";
+      editor = (
         <LandingPageEditor
           content={artifact.content}
           onSave={onSave}
@@ -772,6 +797,7 @@ function EditorSwitch({
           artifactId={artifact.id}
         />
       );
+      break;
     default:
       return (
         <Card>
@@ -779,4 +805,16 @@ function EditorSwitch({
         </Card>
       );
   }
+
+  // `resetKeys` clears a caught editor crash when the boundary starts
+  // guarding a different artifact (id) or editor type (name), so opening
+  // another artifact of the same type doesn't leave the recovery UI from
+  // the previous one on screen. ArtifactEditorPage reuses this subtree
+  // across artifacts (it refetches by route id rather than remounting),
+  // so a static key would not reset on an id-only change.
+  return (
+    <ErrorBoundary name={name} resetKeys={[artifact.id, name]}>
+      {editor}
+    </ErrorBoundary>
+  );
 }

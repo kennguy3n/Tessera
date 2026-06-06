@@ -30,10 +30,15 @@ use tessera_core::SourceId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Index Status.
 pub enum IndexStatus {
+    /// The `Idle` variant.
     Idle,
+    /// The `Running` variant.
     Running,
+    /// The `Done` variant.
     Done,
+    /// The `Failed` variant.
     Failed,
 }
 
@@ -64,12 +69,19 @@ pub enum IndexPhase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Progress Snapshot.
 pub struct ProgressSnapshot {
+    /// Status.
     pub status: IndexStatus,
+    /// Scanned.
     pub scanned: u64,
+    /// Indexed.
     pub indexed: u64,
+    /// Unchanged.
     pub unchanged: u64,
+    /// Skipped.
     pub skipped: u64,
+    /// Errors.
     pub errors: u64,
     /// Final file count when `status == Done`. Zero while running.
     pub total_files: u64,
@@ -105,11 +117,13 @@ impl Default for ProgressSnapshot {
 }
 
 #[derive(Default, Debug)]
+/// Progress Tracker.
 pub struct ProgressTracker {
     inner: Mutex<HashMap<SourceId, Arc<Mutex<ProgressSnapshot>>>>,
 }
 
 impl ProgressTracker {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self::default()
     }
@@ -156,21 +170,25 @@ pub fn record_scanned(slot: &Arc<Mutex<ProgressSnapshot>>, path: &str) {
     s.current_path = Some(path.to_string());
 }
 
+/// Record indexed.
 pub fn record_indexed(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.indexed = s.indexed.saturating_add(1);
 }
 
+/// Record unchanged.
 pub fn record_unchanged(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.unchanged = s.unchanged.saturating_add(1);
 }
 
+/// Record skipped.
 pub fn record_skipped(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.skipped = s.skipped.saturating_add(1);
 }
 
+/// Record error.
 pub fn record_error(slot: &Arc<Mutex<ProgressSnapshot>>) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.errors = s.errors.saturating_add(1);
@@ -192,6 +210,7 @@ pub fn record_phase(slot: &Arc<Mutex<ProgressSnapshot>>, phase: IndexPhase) {
     s.phase = phase;
 }
 
+/// Finish.
 pub fn finish(slot: &Arc<Mutex<ProgressSnapshot>>, total_files: u64) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.status = IndexStatus::Done;
@@ -200,6 +219,7 @@ pub fn finish(slot: &Arc<Mutex<ProgressSnapshot>>, total_files: u64) {
     s.phase = IndexPhase::Scanning;
 }
 
+/// Mark failed.
 pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.status = IndexStatus::Failed;
@@ -237,15 +257,22 @@ pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Embedding Status.
 pub enum EmbeddingStatus {
+    /// The `Idle` variant.
     Idle,
+    /// The `Running` variant.
     Running,
+    /// The `Done` variant.
     Done,
+    /// The `Failed` variant.
     Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Embedding Progress Snapshot.
 pub struct EmbeddingProgressSnapshot {
+    /// Status.
     pub status: EmbeddingStatus,
     /// Total chunks the current backfill pass intended to embed at
     /// the moment `start` was called. Snapshotted once and kept
@@ -284,11 +311,13 @@ impl Default for EmbeddingProgressSnapshot {
 }
 
 #[derive(Default, Debug)]
+/// Embedding Progress Tracker.
 pub struct EmbeddingProgressTracker {
     inner: Mutex<EmbeddingProgressSnapshot>,
 }
 
 impl EmbeddingProgressTracker {
+    /// Creates a new instance.
     pub fn new() -> Self {
         Self::default()
     }
@@ -313,10 +342,10 @@ impl EmbeddingProgressTracker {
     /// Pre-flight reset called *before* a backfill is dispatched to a
     /// worker thread. Flips status to `Running` and zeroes the
     /// counters, but does NOT require `total_chunks` / `model_id` —
-    /// the worker thread will overwrite those via [`start`] once it
+    /// the worker thread will overwrite those via `start` once it
     /// has acquired its locks and computed the real numbers.
     ///
-    /// The reason this method exists, despite [`start`] doing
+    /// The reason this method exists, despite `start` doing
     /// strictly more, is a race condition in the napi bridge's
     /// `AsyncTask` flow:
     ///
@@ -327,7 +356,7 @@ impl EmbeddingProgressTracker {
     ///    and starts hitting `bridge_get_embedding_progress` on the
     ///    JS main thread.
     /// 3. Before the worker thread has had a chance to acquire the
-    ///    `SourceManager` lock and call [`start`], the first poll
+    ///    `SourceManager` lock and call `start`, the first poll
     ///    response observes the *previous* run's terminal state
     ///    (`Done` or `Failed`) — because that's still what's in the
     ///    snapshot from last time.

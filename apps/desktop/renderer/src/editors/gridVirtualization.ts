@@ -14,11 +14,14 @@
  * free of React / DOM makes the (fiddly) arithmetic unit-testable
  * without a renderer.
  *
- * Coordinate model: every row is treated as `rowHeight` pixels tall
- * for the purpose of spacing, so the total virtual content height is
- * `rowCount * rowHeight`. Grids with per-row custom heights trade a
- * little scroll-position precision for this uniform model — an
- * acceptable deal in the 10K+ regime virtualization targets.
+ * Coordinate model: by default every row is treated as `rowHeight`
+ * pixels tall, so the total virtual content height is
+ * `rowCount * rowHeight`. Grids with per-row custom heights (e.g. a
+ * Sheet with resized rows) can instead pass `rowOffsets` — a
+ * cumulative prefix-sum of row tops — and the windowing math becomes
+ * exact: the rendered slice and spacer heights are derived from the
+ * real geometry via binary search, so the scrollbar position no
+ * longer drifts for resized rows.
  *
  * Frozen leading rows (a Sheet feature) are always rendered so they
  * can stay pinned via CSS `position: sticky`; the window therefore
@@ -38,8 +41,18 @@ export interface VirtualWindowInput {
   viewportHeight: number;
   /** Total number of rows in the dataset. */
   rowCount: number;
-  /** Uniform row height used for spacing math, in pixels. Must be > 0. */
+  /** Uniform row height used for spacing math, in pixels. Must be > 0.
+   * Ignored when a valid `rowOffsets` is supplied. */
   rowHeight: number;
+  /**
+   * Optional cumulative prefix-sum of row tops for variable-height
+   * grids. Must have length `rowCount + 1`: `rowOffsets[i]` is the
+   * pixel offset of the top of row `i`, `rowOffsets[0]` is `0`, and
+   * `rowOffsets[rowCount]` is the total content height. When present
+   * (and well-formed) the window is computed exactly from this
+   * geometry; otherwise the uniform `rowHeight` model is used.
+   */
+  rowOffsets?: readonly number[];
   /** Extra rows rendered above and below the viewport. */
   overscan?: number;
   /** Leading rows that are always rendered (e.g. frozen Sheet rows). */
@@ -62,6 +75,77 @@ function clamp(value: number, lo: number, hi: number): number {
   if (value < lo) return lo;
   if (value > hi) return hi;
   return value;
+}
+
+/**
+ * Largest index `i` in `[0, hi]` whose offset is `<= value`, via
+ * binary search over the monotonically non-decreasing `offsets`.
+ * Returns `0` when even `offsets[0]` exceeds `value` (offsets[0] is
+ * always 0, so this only happens for negative `value`). Used to find
+ * the row that contains a given pixel coordinate.
+ */
+function lastIndexAtOrBelow(
+  offsets: readonly number[],
+  value: number,
+  hi: number,
+): number {
+  let lo = 0;
+  let best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid] <= value) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/**
+ * `rowOffsets` is only usable when it is a well-formed prefix-sum for
+ * the dataset: length `rowCount + 1`. A mismatch (stale array mid-
+ * resize) falls back to the uniform model rather than indexing out of
+ * bounds.
+ */
+function hasValidOffsets(
+  rowOffsets: readonly number[] | undefined,
+  rowCount: number,
+): rowOffsets is readonly number[] {
+  return Array.isArray(rowOffsets) && rowOffsets.length === rowCount + 1;
+}
+
+/**
+ * Variable-height window: derive the rendered slice and spacer heights
+ * directly from the cumulative `rowOffsets`, so the scrollbar geometry
+ * is exact for grids with resized rows.
+ */
+function computeVariableWindow(
+  scrollTop: number,
+  viewportHeight: number,
+  rowCount: number,
+  rowOffsets: readonly number[],
+  overscan: number,
+  frozen: number,
+): VirtualWindow {
+  const lastIndex = rowCount - 1;
+  const total = rowOffsets[rowCount];
+
+  const firstVisible = lastIndexAtOrBelow(rowOffsets, scrollTop, lastIndex);
+  const lastVisible = lastIndexAtOrBelow(
+    rowOffsets,
+    scrollTop + viewportHeight,
+    lastIndex,
+  );
+
+  const startIndex = clamp(firstVisible - overscan, frozen, lastIndex);
+  const endIndex = clamp(lastVisible + overscan, startIndex, lastIndex);
+
+  const topPad = rowOffsets[startIndex] - rowOffsets[frozen];
+  const bottomPad = total - rowOffsets[endIndex + 1];
+
+  return { startIndex, endIndex, topPad, bottomPad };
 }
 
 /**
@@ -97,10 +181,28 @@ export function computeVirtualWindow(input: VirtualWindowInput): VirtualWindow {
 
   const lastIndex = rowCount - 1;
 
-  // Can't (or needn't) window: render everything from the first
-  // non-frozen row to the end. Padding is purely the trailing/leading
-  // gaps, which are both zero here.
-  if (viewportHeight <= 0 || rowHeight <= 0) {
+  // Can't window without a measured viewport: render everything from
+  // the first non-frozen row to the end (common under jsdom / a
+  // display:none container). Both pads are zero here.
+  if (viewportHeight <= 0) {
+    return { startIndex: frozen, endIndex: lastIndex, topPad: 0, bottomPad: 0 };
+  }
+
+  // Variable-height grids supply a cumulative prefix-sum; use the exact
+  // geometry so the scrollbar does not drift for resized rows.
+  if (hasValidOffsets(input.rowOffsets, rowCount)) {
+    return computeVariableWindow(
+      scrollTop,
+      viewportHeight,
+      rowCount,
+      input.rowOffsets,
+      overscan,
+      frozen,
+    );
+  }
+
+  // Uniform model: can't divide by a non-positive height.
+  if (rowHeight <= 0) {
     return { startIndex: frozen, endIndex: lastIndex, topPad: 0, bottomPad: 0 };
   }
 

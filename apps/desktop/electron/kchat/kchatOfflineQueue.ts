@@ -316,6 +316,12 @@ export class KchatOfflineQueue {
   private loaded = false;
   /** Serialises replays so a reconnect storm can't double-drain. */
   private replayInFlight: Promise<KchatReplaySummary> | null = null;
+  /**
+   * Tail of the persist chain. Every {@link persist} call appends to
+   * this promise so writes run strictly one-at-a-time (single writer),
+   * even though `enqueue` and `replay` invoke `persist` independently.
+   */
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(options: KchatOfflineQueueOptions = {}) {
     this.filePath = options.filePath ?? defaultOfflineQueuePath();
@@ -518,20 +524,61 @@ export class KchatOfflineQueue {
     this.operations = [];
     this.loaded = false;
     this.replayInFlight = null;
+    this.persistChain = Promise.resolve();
   }
 
   /**
-   * Persist the queue with an atomic write (tmp + rename) so a
-   * crash mid-write cannot truncate the queue file.
+   * Persist the queue with an atomic write (tmp + rename) so a crash
+   * mid-write cannot truncate the queue file.
+   *
+   * `enqueue` and `replay` both call `persist` and are not serialised
+   * against each other, which exposes two distinct hazards that a
+   * single shared `.tmp` path cannot solve on its own:
+   *
+   *   1. **Interleaved writes.** Two overlapping `writeFile` + `rename`
+   *      sequences sharing one temp path can move the wrong content.
+   *   2. **Stale-snapshot lost update.** Even with distinct temp paths,
+   *      if `replay` serialises its post-drain snapshot and an
+   *      `enqueue` then appends + persists before `replay`'s `rename`
+   *      lands, `replay`'s later `rename` overwrites the queue file
+   *      with the stale snapshot — the just-enqueued op survives in
+   *      memory but is lost on disk until the next write.
+   *
+   * Both are eliminated by making persistence a strict single writer:
+   * each call appends to {@link persistChain} and only snapshots
+   * `this.operations` once its turn actually runs, so the last write
+   * always reflects the latest in-memory state and no two writes
+   * overlap. The unique temp suffix (`pid` + random token) is kept as
+   * defence-in-depth (e.g. a second process pointed at the same file)
+   * and uses `randomUUID` directly — not the injectable `randomId` —
+   * so it never perturbs the operation-id sequence tests depend on.
    */
-  private async persist(): Promise<void> {
+  private persist(): Promise<void> {
+    const run = this.persistChain.then(() => this.writeSnapshot());
+    // Keep the chain alive even when a write rejects so a single failed
+    // persist does not wedge every subsequent one; the rejection is
+    // still surfaced to *this* caller via the returned `run`.
+    this.persistChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * Serialise the current in-memory queue to disk atomically. Always
+   * invoked from within the {@link persistChain} turn, so `JSON.stringify`
+   * captures a consistent snapshot of `this.operations` at the moment
+   * this write runs.
+   */
+  private async writeSnapshot(): Promise<void> {
     const payload: PersistedQueueFile = {
       version: QUEUE_SCHEMA_VERSION,
       operations: this.operations,
     };
     const serialized = JSON.stringify(payload, null, 2);
     await this.fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.tmp`;
+    const tmp = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     await this.fs.writeFile(tmp, serialized, "utf8");
     await this.fs.rename(tmp, this.filePath);
   }

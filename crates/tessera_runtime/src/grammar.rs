@@ -1,5 +1,8 @@
+//! Constrained-decoding grammars selected per artifact type.
+
 use tessera_core::ArtifactType;
 
+/// Load grammar.
 pub fn load_grammar(artifact_type: ArtifactType) -> String {
     match artifact_type {
         ArtifactType::Document => DOCUMENT_GRAMMAR.to_string(),

@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "vitest run renderer/src/__tests__/smoke/featureVerification.test.ts",
+    "generate:ipc-types": "node scripts/generate-ipc-types.mjs",
+    "check:ipc-types": "node scripts/generate-ipc-types.mjs --check",
     "lint": "eslint .",
     "type-check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json"
   },

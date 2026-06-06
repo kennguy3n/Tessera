@@ -306,6 +306,20 @@ export function captureBackendAtBoot(): KeychainBackendDescriptor {
     per_app_acl: bootBackend.perAppAcl,
     platform: bootBackend.platform,
   });
+  // Surface a loud, dedicated WARN the moment we detect the
+  // `basic_text` fallback at boot — independent of the
+  // `enforceKeychainAcl` setting. On a Linux box with no secret-store
+  // daemon this is the user's earliest signal that at-rest protection
+  // is XOR-with-a-hardcoded-key (i.e. none), well before they trip the
+  // write-time gate in `assertSafeEncrypt`.
+  if (bootBackend.name === "basic_text") {
+    getLogger().warn("keychain.backend.basic_text_fallback_detected", {
+      backend: bootBackend.name,
+      platform: bootBackend.platform,
+      reason:
+        "Electron's `basic_text` secret-store fallback is active (Linux, no gnome-keyring / kwallet daemon reachable). At-rest secret protection is XOR with a hardcoded key — NOT real encryption. Start a secret-store daemon and restart Tessera, or accept the reduced protection in Settings → Security.",
+    });
+  }
   // Telemetry: one counter per backend variant. The local-only sink
   // records this when telemetry is opted in; otherwise it is a no-op.
   // Useful for fleet-wide audit ("how many installs are running on
@@ -386,6 +400,18 @@ export function assertSafeEncrypt(options: { enforce: boolean }): void {
   // the right fix is to add a case here, not to widen the gate to
   // every unknown variant.
   if (current.name === "basic_text") {
+    // Emit a runtime warning EVERY time we are about to touch the
+    // insecure fallback, regardless of the enforce setting. In enforce
+    // mode this WARN precedes the block (so the security event is
+    // recorded even though the write is refused); in non-enforce mode
+    // the more specific `unenforced_basic_text` WARN below documents
+    // that the user opted into the reduced protection.
+    getLogger().warn("keychain.acl.basic_text_fallback_detected", {
+      backend: current.name,
+      enforce: options.enforce,
+      reason:
+        "Secret write attempted while Electron's `basic_text` fallback is active — at-rest protection is XOR with a hardcoded key, NOT real encryption.",
+    });
     if (options.enforce) {
       throw new KeychainAclError(
         "Keychain ACL policy: refusing to encrypt secrets under Electron's `basic_text` fallback (XOR with a hardcoded key, NOT real encryption). " +

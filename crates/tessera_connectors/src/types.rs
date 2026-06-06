@@ -1,20 +1,31 @@
+//! Shared data types for connector auth, status and remote files.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for authenticating a connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
+    /// Client id.
     pub client_id: String,
+    /// Client secret.
     pub client_secret: String,
+    /// Redirect uri.
     pub redirect_uri: String,
+    /// Auth code.
     pub auth_code: Option<String>,
+    /// Access token.
     pub access_token: Option<String>,
+    /// Refresh token.
     pub refresh_token: Option<String>,
+    /// Scopes.
     pub scopes: Vec<String>,
+    /// Token expiry.
     pub token_expiry: Option<DateTime<Utc>>,
 }
 
 impl AuthConfig {
+    /// Creates a new instance.
     pub fn new(client_id: String, client_secret: String, redirect_uri: String) -> Self {
         Self {
             client_id,
@@ -28,16 +39,19 @@ impl AuthConfig {
         }
     }
 
+    /// With scopes.
     pub fn with_scopes(mut self, scopes: Vec<String>) -> Self {
         self.scopes = scopes;
         self
     }
 
+    /// With auth code.
     pub fn with_auth_code(mut self, code: String) -> Self {
         self.auth_code = Some(code);
         self
     }
 
+    /// Is token expired.
     pub fn is_token_expired(&self) -> bool {
         self.token_expiry.is_none_or(|expiry| Utc::now() >= expiry)
     }
@@ -46,37 +60,58 @@ impl AuthConfig {
 /// Metadata for a remote file from a connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteFile {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
+    /// Mime type.
     pub mime_type: String,
+    /// Size bytes.
     pub size_bytes: u64,
+    /// Modified time.
     pub modified_time: DateTime<Utc>,
+    /// Created time.
     pub created_time: Option<DateTime<Utc>>,
+    /// Parent id.
     pub parent_id: Option<String>,
+    /// Web view link.
     pub web_view_link: Option<String>,
+    /// Is folder.
     pub is_folder: bool,
+    /// Md5 checksum.
     pub md5_checksum: Option<String>,
+    /// Permissions.
     pub permissions: Vec<FilePermission>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// File Permission.
 pub struct FilePermission {
+    /// Role.
     pub role: String,
+    /// Permission type.
     pub permission_type: String,
+    /// Email.
     pub email: Option<String>,
 }
 
 /// Result of a sync operation from a connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResult {
+    /// New change token.
     pub new_change_token: Option<String>,
+    /// Added.
     pub added: Vec<RemoteFile>,
+    /// Modified.
     pub modified: Vec<RemoteFile>,
+    /// Removed.
     pub removed: Vec<String>,
+    /// Has more.
     pub has_more: bool,
 }
 
 impl SyncResult {
+    /// Empty.
     pub fn empty() -> Self {
         Self {
             new_change_token: None,
@@ -87,6 +122,7 @@ impl SyncResult {
         }
     }
 
+    /// Total changes.
     pub fn total_changes(&self) -> usize {
         self.added.len() + self.modified.len() + self.removed.len()
     }
@@ -136,10 +172,15 @@ impl SyncResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorStatus {
+    /// The `Disconnected` variant.
     Disconnected,
+    /// The `Connecting` variant.
     Connecting,
+    /// The `Connected` variant.
     Connected,
+    /// The `Syncing` variant.
     Syncing,
+    /// The `Error` variant.
     Error,
 }
 
@@ -158,11 +199,17 @@ impl std::fmt::Display for ConnectorStatus {
 /// Summary information about a connector for UI display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectorInfo {
+    /// Provider.
     pub provider: String,
+    /// Status.
     pub status: ConnectorStatus,
+    /// Last sync.
     pub last_sync: Option<DateTime<Utc>>,
+    /// File count.
     pub file_count: u64,
+    /// Error message.
     pub error_message: Option<String>,
+    /// Connected at.
     pub connected_at: Option<DateTime<Utc>>,
 }
 
@@ -176,9 +223,13 @@ pub struct ConnectorInfo {
 /// Notion `workspace_id`), it uses [`StoredTokens::provider_metadata`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTokens {
+    /// Access token.
     pub access_token: String,
+    /// Refresh token.
     pub refresh_token: Option<String>,
+    /// Expiry.
     pub expiry: Option<DateTime<Utc>>,
+    /// Scopes.
     pub scopes: Vec<String>,
     /// Opaque provider-specific metadata that needs to be persisted
     /// alongside the tokens — for example the Atlassian

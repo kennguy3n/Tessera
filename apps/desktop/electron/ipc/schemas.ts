@@ -28,6 +28,7 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   THEMES,
+  type AutomationAction,
 } from "../../shared/types";
 
 /** Hard upper bound shared with `./validate.ts:DEFAULT_MAX_STRING_LEN`. */
@@ -36,6 +37,35 @@ const MAX_STRING_LEN = 1_000_000;
 const NonEmptyString = z.string().min(1).max(MAX_STRING_LEN);
 const OptionalString = z.string().max(MAX_STRING_LEN).optional();
 const NullableString = z.string().max(MAX_STRING_LEN).nullable();
+
+// --- Diagnostics ---
+
+// Per-field caps for a crash report. These are deliberately far above
+// any realistic value (a component name, an error message, a JS stack,
+// an ISO timestamp) so a legitimate report is never rejected, but far
+// below `MAX_STRING_LEN` so a buggy or hostile renderer cannot make the
+// main process retain a multi-megabyte string. `crashReport.ts` clamps
+// again to its own (smaller) storage caps; this schema bound is the
+// outer envelope that keeps a pathological payload from getting that
+// far. (The IPC payload is already deserialized by Electron before we
+// see it, so this bounds retention/processing, not the initial copy.)
+const CRASH_COMPONENT_MAX = 1024;
+const CRASH_TEXT_MAX = 64 * 1024;
+const CRASH_TIMESTAMP_MAX = 64;
+
+// Renderer crash reports forwarded by the React error boundaries. The
+// fields are coerced again in `crashReport.ts:normalizeCrashReport`, so
+// this schema is intentionally permissive (every field optional) — it
+// rejects only grossly malformed (non-object) or oversized payloads
+// while letting a partial report through to be defaulted and recorded.
+// No matching `z.infer` type is exported because the wire shape already
+// lives in `shared/types.ts` as `RendererCrashReport`.
+export const RendererCrashReportSchema = z.object({
+  component: z.string().max(CRASH_COMPONENT_MAX).optional(),
+  error: z.string().max(CRASH_TEXT_MAX).optional(),
+  stack: z.string().max(CRASH_TEXT_MAX).optional(),
+  timestamp: z.string().max(CRASH_TIMESTAMP_MAX).optional(),
+});
 
 // --- Citations ---
 
@@ -84,6 +114,10 @@ export const CreateTaskSchema = z.object({
   dueDate: NullableString.optional(),
   sourceId: NullableString.optional(),
   extractedItemId: NullableString.optional(),
+  // Dependency task ids (UUID strings). The bridge validates each id
+  // parses as a UUID and rejects dependency cycles; here we only bound
+  // the shape so a malformed payload can't reach the bridge.
+  dependsOn: z.array(NonEmptyString).max(10_000).optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskSchema>;
 
@@ -106,6 +140,9 @@ export const UpdateTaskSchema = z.object({
   //   string     -> set
   assignee: NullableString.optional(),
   dueDate: NullableString.optional(),
+  // `undefined` leaves dependencies unchanged; an array replaces the
+  // set (`[]` clears). The bridge rejects cycles.
+  dependsOn: z.array(NonEmptyString).max(10_000).optional(),
 });
 export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
 
@@ -127,19 +164,60 @@ export const AutomationTriggerSchema = z.discriminatedUnion("kind", [
     kind: z.literal("on_generate"),
     template_id: NonEmptyString,
   }),
+  z.object({
+    kind: z.literal("on_kchat_message_match"),
+    channel_id: NonEmptyString,
+    // Regex source string; the bridge compiles it (and rejects an
+    // invalid pattern) — we only bound the length here.
+    regex: NonEmptyString,
+  }),
 ]);
 
-export const AutomationActionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("reindex_source"),
-    source_id: NonEmptyString,
-  }),
-  z.object({
-    kind: z.literal("generate_from_template"),
-    template_id: NonEmptyString,
-    source_ids: z.array(NonEmptyString).max(10_000),
-  }),
-]);
+// `AutomationAction` is recursive: a `sequence` wraps an ordered list
+// of sub-actions (themselves possibly sequences). The leaf variants
+// validate by their `kind` discriminator.
+const ReindexSourceActionSchema = z.object({
+  kind: z.literal("reindex_source"),
+  source_id: NonEmptyString,
+});
+const GenerateFromTemplateActionSchema = z.object({
+  kind: z.literal("generate_from_template"),
+  template_id: NonEmptyString,
+  source_ids: z.array(NonEmptyString).max(10_000),
+});
+
+// Maximum `sequence` nesting depth. A naive `z.lazy` recursion has no
+// depth bound, so a payload nested a few thousand levels deep
+// (`{sequence:[{sequence:[…]}]}`) overflows the call stack *during
+// validation* and crashes the main process — the `.max()` breadth cap
+// does not constrain depth. Instead we build a finite, depth-bounded
+// schema: at depth 0 a `sequence` is no longer an accepted variant, so
+// an over-deep payload fails the discriminator with a normal zod error
+// rather than recursing unboundedly. Kept well under serde_json's
+// default 128-deep recursion limit on the Rust side, so anything the
+// IPC layer accepts the bridge can also deserialize. Real automations
+// nest only a handful of levels.
+const MAX_ACTION_DEPTH = 32;
+
+function buildActionSchema(depth: number): z.ZodType<AutomationAction> {
+  if (depth <= 0) {
+    return z.discriminatedUnion("kind", [
+      ReindexSourceActionSchema,
+      GenerateFromTemplateActionSchema,
+    ]) as z.ZodType<AutomationAction>;
+  }
+  return z.discriminatedUnion("kind", [
+    ReindexSourceActionSchema,
+    GenerateFromTemplateActionSchema,
+    z.object({
+      kind: z.literal("sequence"),
+      actions: z.array(buildActionSchema(depth - 1)).max(1_000),
+    }),
+  ]) as z.ZodType<AutomationAction>;
+}
+
+export const AutomationActionSchema: z.ZodType<AutomationAction> =
+  buildActionSchema(MAX_ACTION_DEPTH);
 
 export const CreateAutomationSchema = z.object({
   name: NonEmptyString,

@@ -1,24 +1,38 @@
+//! The `TesseraConfig` application configuration and its on-disk
+//! load/save handling.
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Tessera Config.
 pub struct TesseraConfig {
+    /// Data dir.
     pub data_dir: PathBuf,
+    /// Template dir.
     pub template_dir: PathBuf,
+    /// Theme.
     pub theme: Theme,
+    /// Default export format.
     pub default_export_format: String,
+    /// Ignore patterns.
     pub ignore_patterns: Vec<String>,
+    /// Watch patterns.
     pub watch_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Theme.
 pub enum Theme {
     #[default]
+    /// The `Light` variant.
     Light,
+    /// The `Dark` variant.
     Dark,
+    /// The `System` variant.
     System,
 }
 
@@ -55,6 +69,7 @@ fn default_ignore_patterns() -> Vec<String> {
 }
 
 impl TesseraConfig {
+    /// Load.
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_json::from_str(&content)?;
@@ -62,6 +77,7 @@ impl TesseraConfig {
         Ok(config)
     }
 
+    /// Save.
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -71,6 +87,7 @@ impl TesseraConfig {
         Ok(())
     }
 
+    /// Validate.
     pub fn validate(&self) -> Result<()> {
         if self.default_export_format.is_empty() {
             return Err(Error::InvalidConfig(
