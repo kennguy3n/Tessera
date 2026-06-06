@@ -53,6 +53,37 @@
  * `pin` -> `biometric` does NOT delete the PIN; switching to
  * `off` does delete the PIN (the user has explicitly opted out
  * of lock).
+ *
+ * FIDO2 / WebAuthn path
+ * ---------------------
+ * `appLockMode === "fido2"` lets the user unlock with a registered
+ * FIDO2 authenticator (a platform authenticator like TouchID /
+ * Windows Hello surfaced through WebAuthn, or a roaming security
+ * key). Like biometric, it is a CONVENIENCE unlock layered on top
+ * of the PIN root credential — registering a key does not delete
+ * the PIN, and the renderer falls back to the PIN whenever the
+ * authenticator is unavailable.
+ *
+ * The actual `navigator.credentials.{create,get}` calls happen in
+ * the renderer (only Chromium exposes the WebAuthn API). This
+ * module owns the trust-bearing half:
+ *   - It mints single-use, expiring challenges (anti-replay).
+ *   - On registration it records the credential ID + the SPKI
+ *     public key the renderer extracted via
+ *     `response.getPublicKey()` (so we never CBOR-decode the
+ *     attestation object) + the COSE alg, and pins
+ *     `rpIdHash = SHA-256(rpId)` itself rather than trusting the
+ *     renderer.
+ *   - On unlock it verifies the assertion signature over
+ *     `authenticatorData || SHA-256(clientDataJSON)` against the
+ *     stored public key, checks the rpIdHash + User-Present flag,
+ *     and consumes the challenge.
+ *
+ * A FIDO2 verification failure never increments the PIN
+ * brute-force counter (there is no low-entropy secret to guess —
+ * forging an assertion means breaking the authenticator's
+ * signature), but an *existing* PIN lockout is still honoured so
+ * the FIDO2 channel cannot be used to side-step a backoff.
  */
 
 import * as crypto from "crypto";
@@ -73,6 +104,11 @@ import {
   APP_LOCK_LOCKOUT_THRESHOLD,
   APP_LOCK_PIN_MAX_LENGTH,
   APP_LOCK_PIN_MIN_LENGTH,
+  FIDO2_SUPPORTED_ALGS,
+  type Fido2AssertionInput,
+  type Fido2AssertionOptions,
+  type Fido2RegistrationInput,
+  type Fido2RegistrationOptions,
 } from "../shared/types";
 
 /**
@@ -127,10 +163,50 @@ interface AttemptRecord {
   nextAttemptAt: number;
 }
 
+/**
+ * A registered FIDO2 / WebAuthn credential. We persist only the
+ * public half — the private key never leaves the authenticator —
+ * plus the metadata needed to verify a later assertion.
+ */
+interface Fido2Record {
+  /** Always 1 for the current schema. */
+  version: 1;
+  /** base64url credential ID returned by the authenticator. */
+  credentialId: string;
+  /**
+   * COSE algorithm identifier the credential signs with (e.g. `-7`
+   * ES256). Constrained to {@link FIDO2_SUPPORTED_ALGS} at
+   * registration so `verifyFido2Assertion` always knows the scheme.
+   */
+  alg: number;
+  /**
+   * DER-encoded SubjectPublicKeyInfo, base64. The renderer extracts
+   * this from the `PublicKeyCredential` via `response.getPublicKey()`
+   * so the main process never has to CBOR-decode the COSE key out of
+   * the attestation object.
+   */
+  publicKeySpki: string;
+  /**
+   * `SHA-256(rpId)`, base64. Computed by the main process at
+   * registration (NOT trusted from the renderer) and re-checked
+   * against the first 32 bytes of `authenticatorData` on every
+   * assertion.
+   */
+  rpIdHash: string;
+  /** Epoch milliseconds when the credential was registered. */
+  createdAt: number;
+}
+
 /** Schema version persisted to disk in the encrypted blob. */
 interface PersistedAppLock {
   pin: PinRecord | null;
   attempt: AttemptRecord;
+  /**
+   * Registered FIDO2 credential, or `null` when none is set. Absent
+   * in blobs written before the FIDO2 feature shipped; `readPersisted`
+   * heals those to `null` so old installs keep loading.
+   */
+  fido2: Fido2Record | null;
 }
 
 function emptyAttempt(): AttemptRecord {
@@ -138,7 +214,7 @@ function emptyAttempt(): AttemptRecord {
 }
 
 function emptyPersisted(): PersistedAppLock {
-  return { pin: null, attempt: emptyAttempt() };
+  return { pin: null, attempt: emptyAttempt(), fido2: null };
 }
 
 /**
@@ -182,6 +258,17 @@ function readPersisted(): PersistedAppLock {
   }
   try {
     const parsed = JSON.parse(json) as unknown;
+    // Heal blobs written before the FIDO2 field existed: a missing
+    // `fido2` key is a valid old schema, normalised to `null` so the
+    // rest of the module (and the validator) can treat `fido2` as
+    // an always-present `Fido2Record | null`.
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !("fido2" in parsed)
+    ) {
+      (parsed as Record<string, unknown>).fido2 = null;
+    }
     if (!isValidPersisted(parsed)) {
       return emptyPersisted();
     }
@@ -223,6 +310,16 @@ function isValidPersisted(value: unknown): value is PersistedAppLock {
     ) {
       return false;
     }
+  }
+  if (!("fido2" in v)) return false;
+  if (v.fido2 !== null) {
+    const f = v.fido2 as Record<string, unknown>;
+    if (f.version !== 1) return false;
+    if (typeof f.credentialId !== "string") return false;
+    if (typeof f.alg !== "number") return false;
+    if (typeof f.publicKeySpki !== "string") return false;
+    if (typeof f.rpIdHash !== "string") return false;
+    if (typeof f.createdAt !== "number") return false;
   }
   return true;
 }
@@ -339,11 +436,18 @@ export async function setPin(pin: string): Promise<void> {
  * Public API: clear the PIN entirely. Called when the user
  * switches `appLockMode` to `"off"`. Caller is responsible for
  * having already authenticated (the IPC handler enforces that).
+ *
+ * Also drops any registered FIDO2 credential: the PIN is the root
+ * credential and FIDO2 is a convenience layer on top of it, so
+ * removing the root must not leave an orphaned authenticator that
+ * could unlock an app the user believes is lock-free. "off" means
+ * zero retained credentials.
  */
 export function clearPin(): void {
   const persisted = readPersisted();
   persisted.pin = null;
   persisted.attempt = emptyAttempt();
+  persisted.fido2 = null;
   writePersisted(persisted);
   getLogger().info("app_lock.pin_cleared");
 }
@@ -573,6 +677,348 @@ async function attemptWindowsHelloUnlock(reason: string): Promise<boolean> {
     });
     return false;
   }
+}
+
+// --- FIDO2 / WebAuthn ----------------------------------------------
+
+/**
+ * Relying-Party identity for the FIDO2 credential. `FIDO2_RP_ID`
+ * must be a registrable domain the renderer's WebAuthn origin is a
+ * suffix of; Tessera serves its renderer from the fixed
+ * `app.tessera.local` virtual origin, so the authenticator scopes
+ * the credential to that. The main process pins
+ * `SHA-256(FIDO2_RP_ID)` into the stored record and re-checks it on
+ * every assertion, so a credential minted for a different RP can
+ * never be replayed to unlock Tessera.
+ */
+const FIDO2_RP_ID = "app.tessera.local";
+const FIDO2_RP_NAME = "Tessera";
+
+/**
+ * Challenge lifetime. A WebAuthn ceremony is interactive (the user
+ * taps a key / approves a prompt) so 2 minutes is comfortably long
+ * for a human while still bounding the replay window of a leaked
+ * challenge.
+ */
+const FIDO2_CHALLENGE_TTL_MS = 2 * 60 * 1000;
+const FIDO2_TIMEOUT_MS = 60 * 1000;
+
+/** WebAuthn User-Present flag (bit 0 of the authenticatorData flags byte). */
+const FIDO2_FLAG_USER_PRESENT = 0x01;
+
+/**
+ * Pending, single-use challenges keyed by their base64url value,
+ * mapped to their expiry epoch-ms. A challenge is consumed (removed)
+ * the first time it is presented for verification, so a captured
+ * `clientDataJSON` cannot be replayed. Kept in process memory only —
+ * a challenge that does not survive a restart simply forces the
+ * renderer to request a fresh one, which is the correct behaviour.
+ */
+const pendingFido2Challenges = new Map<string, number>();
+
+/** base64url-encode without padding (WebAuthn wire format). */
+function base64UrlEncode(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** Decode a base64url (or base64) string to a Buffer. */
+function base64UrlDecode(s: string): Buffer {
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+function rpIdHashB64(): string {
+  return crypto.createHash("sha256").update(FIDO2_RP_ID).digest("base64");
+}
+
+/**
+ * Mint a fresh single-use challenge, register it with its expiry,
+ * and opportunistically evict any expired entries so the map cannot
+ * grow without bound if a renderer requests challenges it never
+ * completes.
+ */
+function issueChallenge(now: number = Date.now()): string {
+  for (const [key, expiry] of pendingFido2Challenges) {
+    if (expiry <= now) pendingFido2Challenges.delete(key);
+  }
+  const challenge = base64UrlEncode(crypto.randomBytes(32));
+  pendingFido2Challenges.set(challenge, now + FIDO2_CHALLENGE_TTL_MS);
+  return challenge;
+}
+
+/**
+ * Validate that `challenge` was issued by us, is unexpired, and has
+ * not been used before — then consume it (single-use). Returns
+ * `true` on success.
+ */
+function consumeChallenge(challenge: string, now: number = Date.now()): boolean {
+  const expiry = pendingFido2Challenges.get(challenge);
+  if (expiry === undefined) return false;
+  pendingFido2Challenges.delete(challenge);
+  return expiry > now;
+}
+
+/** Public API: whether a FIDO2 credential is currently registered. */
+export function hasFido2Set(): boolean {
+  return readPersisted().fido2 !== null;
+}
+
+/**
+ * Public API: build the options the renderer passes to
+ * `navigator.credentials.create()`. The returned `challenge` is
+ * single-use and expires after {@link FIDO2_CHALLENGE_TTL_MS}.
+ */
+export function getFido2RegistrationOptions(): Fido2RegistrationOptions {
+  return {
+    challenge: issueChallenge(),
+    rpId: FIDO2_RP_ID,
+    rpName: FIDO2_RP_NAME,
+    // Stable per-install user handle. The value is opaque to the
+    // authenticator; we use a fixed label because Tessera has a
+    // single local user per install.
+    userId: base64UrlEncode(Buffer.from("tessera-local-user")),
+    userName: "tessera",
+    userDisplayName: "Tessera user",
+    pubKeyCredParams: [...FIDO2_SUPPORTED_ALGS],
+    timeoutMs: FIDO2_TIMEOUT_MS,
+  };
+}
+
+/**
+ * Decode `clientDataJSON` and assert it is a well-formed WebAuthn
+ * client-data object of the expected ceremony `type` whose
+ * `challenge` we issued (and have not seen before). Returns the
+ * parsed object on success, or `null` on any validation failure.
+ */
+function verifyClientData(
+  clientDataJsonB64: string,
+  expectedType: "webauthn.create" | "webauthn.get",
+  now: number = Date.now(),
+): { type: string; challenge: string; origin?: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(base64UrlDecode(clientDataJsonB64).toString("utf-8"));
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object") return null;
+  const cd = parsed as Record<string, unknown>;
+  if (cd.type !== expectedType) return null;
+  if (typeof cd.challenge !== "string") return null;
+  // The challenge in clientDataJSON is base64url of the bytes we
+  // issued; our issued value is already base64url, so compare
+  // directly after consuming it (single-use, unexpired).
+  if (!consumeChallenge(cd.challenge, now)) return null;
+  return {
+    type: expectedType,
+    challenge: cd.challenge,
+    origin: typeof cd.origin === "string" ? cd.origin : undefined,
+  };
+}
+
+/**
+ * Public API: persist a freshly-created FIDO2 credential. Throws on
+ * any validation failure so the renderer surfaces the error to the
+ * user. Requires a PIN to already be set — FIDO2 is a convenience
+ * layer over the PIN root credential, never a replacement.
+ */
+export function registerFido2(input: Fido2RegistrationInput): void {
+  const persisted = readPersisted();
+  if (persisted.pin === null) {
+    throw new Error(
+      "Set a PIN before registering a security key — FIDO2 is a convenience unlock layered on the PIN.",
+    );
+  }
+  if (
+    typeof input.credentialId !== "string" ||
+    input.credentialId.length === 0
+  ) {
+    throw new Error("FIDO2 registration: missing credential ID");
+  }
+  if (!(FIDO2_SUPPORTED_ALGS as readonly number[]).includes(input.alg)) {
+    throw new Error(
+      `FIDO2 registration: unsupported algorithm ${input.alg} (supported: ${FIDO2_SUPPORTED_ALGS.join(", ")})`,
+    );
+  }
+  if (verifyClientData(input.clientDataJson, "webauthn.create") === null) {
+    throw new Error(
+      "FIDO2 registration: client data failed validation (bad/expired challenge or wrong ceremony type)",
+    );
+  }
+  // Parse the SPKI key to reject a malformed public key at
+  // registration rather than at first-unlock (when the user is
+  // locked out). `createPublicKey` throws on garbage.
+  const spki = base64UrlDecode(input.publicKeySpki);
+  try {
+    crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+  } catch (err) {
+    throw new Error(
+      `FIDO2 registration: invalid SPKI public key: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  persisted.fido2 = {
+    version: 1,
+    credentialId: input.credentialId,
+    alg: input.alg,
+    publicKeySpki: spki.toString("base64"),
+    rpIdHash: rpIdHashB64(),
+    createdAt: Date.now(),
+  };
+  writePersisted(persisted);
+  getLogger().info("app_lock.fido2_registered", { alg: input.alg });
+}
+
+/**
+ * Public API: build the options the renderer passes to
+ * `navigator.credentials.get()`. Returns `null` when no credential
+ * is registered (the renderer should fall back to the PIN prompt).
+ */
+export function getFido2AssertionOptions(): Fido2AssertionOptions | null {
+  const persisted = readPersisted();
+  if (persisted.fido2 === null) return null;
+  return {
+    challenge: issueChallenge(),
+    rpId: FIDO2_RP_ID,
+    allowCredentialIds: [persisted.fido2.credentialId],
+    timeoutMs: FIDO2_TIMEOUT_MS,
+  };
+}
+
+/**
+ * Verify a WebAuthn assertion signature over
+ * `authenticatorData || SHA-256(clientDataJSON)` using the stored
+ * public key. Returns `true` only when the signature is valid for
+ * the credential's COSE algorithm.
+ */
+function verifyAssertionSignature(
+  record: Fido2Record,
+  authenticatorData: Buffer,
+  clientDataJsonB64: string,
+  signature: Buffer,
+): boolean {
+  const clientDataHash = crypto
+    .createHash("sha256")
+    .update(base64UrlDecode(clientDataJsonB64))
+    .digest();
+  const signedData = Buffer.concat([authenticatorData, clientDataHash]);
+  const publicKey = crypto.createPublicKey({
+    key: Buffer.from(record.publicKeySpki, "base64"),
+    format: "der",
+    type: "spki",
+  });
+  try {
+    switch (record.alg) {
+      case -7: // ES256: ECDSA P-256 + SHA-256 (DER-encoded signature).
+      case -257: // RS256: RSA PKCS#1 v1.5 + SHA-256.
+        return crypto.verify("sha256", signedData, publicKey, signature);
+      case -8: // EdDSA (Ed25519): pre-hash-free, digest algorithm is null.
+        return crypto.verify(null, signedData, publicKey, signature);
+      default:
+        return false;
+    }
+  } catch (err) {
+    getLogger().warn("app_lock.fido2_verify_error", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
+/**
+ * Public API: verify a FIDO2 assertion and, on success, unlock the
+ * app. Mirrors the `UnlockResult` contract of {@link attemptUnlock}:
+ *
+ *   - `no_pin_set` if no FIDO2 credential is registered (the
+ *     renderer should fall back to the PIN prompt).
+ *   - `locked_out` if a PIN backoff window is currently active —
+ *     the FIDO2 channel does NOT let the user bypass a PIN lockout.
+ *   - `failure` on any validation/signature failure. Unlike the PIN
+ *     path this does NOT advance the brute-force counter: an
+ *     assertion is a public-key signature, not a guessable secret,
+ *     so repeated FIDO2 failures (a flaky key, a wrong device) must
+ *     not escalate the PIN backoff and lock the user out of their
+ *     fallback.
+ *   - `success` resets the attempt counter, exactly like a correct
+ *     PIN.
+ */
+export function verifyFido2Assertion(
+  input: Fido2AssertionInput,
+  now: number = Date.now(),
+): UnlockResult {
+  const persisted = readPersisted();
+  if (persisted.fido2 === null) {
+    return { kind: "no_pin_set" };
+  }
+  if (persisted.attempt.nextAttemptAt > now) {
+    return { kind: "locked_out", nextAttemptAt: persisted.attempt.nextAttemptAt };
+  }
+
+  const record = persisted.fido2;
+  const fail = (): UnlockResult => ({
+    kind: "failure",
+    failures: persisted.attempt.failures,
+  });
+
+  if (input.credentialId !== record.credentialId) return fail();
+
+  // clientData must be a `webauthn.get` whose challenge we issued
+  // and have not consumed. This is the anti-replay gate, so it runs
+  // before the (more expensive) signature check.
+  if (verifyClientData(input.clientDataJson, "webauthn.get", now) === null) {
+    return fail();
+  }
+
+  let authData: Buffer;
+  let signature: Buffer;
+  try {
+    authData = base64UrlDecode(input.authenticatorData);
+    signature = base64UrlDecode(input.signature);
+  } catch {
+    return fail();
+  }
+  // authenticatorData layout: rpIdHash (32) || flags (1) || counter (4) || ...
+  if (authData.length < 37) return fail();
+  if (!authData.subarray(0, 32).equals(Buffer.from(record.rpIdHash, "base64"))) {
+    return fail();
+  }
+  if ((authData[32] & FIDO2_FLAG_USER_PRESENT) === 0) {
+    // The authenticator did not assert user presence — reject.
+    return fail();
+  }
+
+  if (
+    !verifyAssertionSignature(record, authData, input.clientDataJson, signature)
+  ) {
+    return fail();
+  }
+
+  persisted.attempt = emptyAttempt();
+  writePersisted(persisted);
+  getLogger().info("app_lock.fido2_unlock_success");
+  return { kind: "success" };
+}
+
+/**
+ * Public API: remove the registered FIDO2 credential. Caller
+ * (the IPC handler) is responsible for having verified the PIN
+ * first. The PIN itself is untouched — the user is dropping the
+ * convenience authenticator, not the lock.
+ */
+export function clearFido2(): void {
+  const persisted = readPersisted();
+  persisted.fido2 = null;
+  writePersisted(persisted);
+  getLogger().info("app_lock.fido2_cleared");
+}
+
+/** Test-only: drop all pending FIDO2 challenges from process memory. */
+export function _resetFido2ChallengesForTests(): void {
+  pendingFido2Challenges.clear();
 }
 
 /**

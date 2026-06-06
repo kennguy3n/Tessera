@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{AutomationId, SourceId, TemplateId};
-use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
+use tessera_core::{open_shared, open_shared_in_memory, with_secure_delete, SharedConnection};
 
 /// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
 /// a `rusqlite::Error` instead of silently substituting the current time.
@@ -270,15 +270,16 @@ impl AutomationStore {
     }
 
     pub fn delete(&self, id: &AutomationId) -> Result<bool> {
-        let rows = self
-            .conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute(
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Zero-fill the freed page so the deleted automation rule
+        // (trigger/action config) is unrecoverable from the freelist.
+        let rows = with_secure_delete(&conn, |conn| {
+            conn.execute(
                 "DELETE FROM automations WHERE id = ?1",
                 params![id.to_string()],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::Database(e.to_string()))
+        })?;
         Ok(rows > 0)
     }
 

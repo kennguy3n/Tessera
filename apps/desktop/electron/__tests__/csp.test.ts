@@ -122,6 +122,39 @@ describe("CSP — buildCsp (production mode)", () => {
     expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
   });
 
+  it("defines frame-src as 'none' (renderer embeds no iframes)", () => {
+    expect(directives.get("frame-src")).toEqual(["'none'"]);
+  });
+
+  it("defines media-src as 'none' (no audio/video elements)", () => {
+    expect(directives.get("media-src")).toEqual(["'none'"]);
+  });
+
+  it("contains no bare wildcard origin (`*`, `https:`, or `http:`) in ANY directive", () => {
+    // Host-scoped leftmost-subdomain wildcards (`https://*.host`) are
+    // permitted — they are bound to a specific registrable domain. A
+    // bare `*` or a scheme-only `https:` / `http:` source, by
+    // contrast, matches arbitrary hosts and is exactly the
+    // exfiltration surface this task removes. This guard fails if any
+    // such open wildcard creeps back into the policy.
+    for (const [directive, sources] of directives) {
+      for (const src of sources) {
+        expect(
+          src,
+          `directive ${directive} must not use a bare wildcard origin`,
+        ).not.toBe("*");
+        expect(
+          src,
+          `directive ${directive} must not use a scheme-only https: wildcard`,
+        ).not.toBe("https:");
+        expect(
+          src,
+          `directive ${directive} must not use a scheme-only http: wildcard`,
+        ).not.toBe("http:");
+      }
+    }
+  });
+
   it("includes the custom asset scheme on img-src", () => {
     const imgSrc = directives.get("img-src");
     expect(imgSrc).toContain(`${TEST_ASSET_SCHEME}:`);

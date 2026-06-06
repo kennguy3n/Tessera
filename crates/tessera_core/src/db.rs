@@ -123,6 +123,68 @@ fn apply_default_pragmas(conn: &Connection) -> Result<()> {
         .map_err(|e| Error::Database(e.to_string()))
 }
 
+/// Run `op` with `PRAGMA secure_delete = ON` active on `conn`, then
+/// always restore `PRAGMA secure_delete = OFF` afterwards — on the
+/// success path *and* on every error path.
+///
+/// # Why this exists
+///
+/// SQLite's default `secure_delete = OFF` leaves the *content* of
+/// deleted rows on the freed b-tree pages until those pages are
+/// reused, so a forensic image (or a synced backup that captured the
+/// raw file) can still recover the bytes after a `DELETE`. For
+/// content-bearing deletion paths — source evidence chunks, indexed
+/// files, artifacts, tasks, automations — we want the freed pages
+/// zero-filled at delete time so the deletion is durable against that
+/// recovery. Wrapping the `DELETE`(s) in `secure_delete = ON`
+/// achieves exactly that.
+///
+/// # The connection-scoped pragma hazard
+///
+/// `secure_delete` is a *connection*-scoped pragma, and Tessera shares
+/// one [`SharedConnection`] across every store in the process (see the
+/// module docs). If we set it `ON` and then early-return via `?` on a
+/// failing statement, the pragma would stay `ON` for the remaining
+/// process lifetime — every steady-state chunk insert / FTS trigger
+/// fire / audit append would then pay the page-zero-fill write
+/// amplification. So this helper guarantees the `OFF` reset runs on
+/// every exit path, returning the operation's value only after the
+/// reset has been attempted. A reset failure is surfaced to stderr
+/// (the connection is in a degraded state an operator needs to know
+/// about) and then propagated, but the original `op` error always
+/// takes precedence as the return value.
+///
+/// `op` receives the same `&Connection` so it can issue its `DELETE`s
+/// (and any surrounding logic) directly. It intentionally does **not**
+/// receive a `&mut Connection`, so callers that need an explicit
+/// `rusqlite` transaction must set the pragma manually around the
+/// `&mut`-borrowing transaction instead (see
+/// `SourceStore::cryptoshred_kchat_source_evidence` for that pattern).
+pub fn with_secure_delete<T>(
+    conn: &Connection,
+    op: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("PRAGMA secure_delete = ON;")
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+    let op_result = op(conn);
+
+    let reset_result = conn
+        .execute_batch("PRAGMA secure_delete = OFF;")
+        .map_err(|e| Error::Database(e.to_string()));
+    if let Err(e) = reset_result.as_ref() {
+        eprintln!(
+            "[secure_delete] failed to reset secure_delete=OFF on shared \
+             connection; steady-state writes will pay zero-fill overhead \
+             until process restart: {e}"
+        );
+    }
+
+    let value = op_result?;
+    reset_result?;
+    Ok(value)
+}
+
 /// switch the database journal to WAL mode and tune
 /// fsync to `NORMAL`.
 ///
@@ -758,6 +820,57 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn with_secure_delete_sets_on_during_op_and_restores_off() {
+        let db = open_shared_in_memory().expect("in-memory");
+        let conn = db.lock().expect("lock");
+
+        // Baseline: secure_delete defaults to OFF on a fresh connection.
+        let before: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, 0, "secure_delete should default to OFF");
+
+        let observed_inside = with_secure_delete(&conn, |conn| {
+            conn.query_row("PRAGMA secure_delete", [], |r| r.get::<_, i64>(0))
+                .map_err(|e| Error::Database(e.to_string()))
+        })
+        .expect("op should succeed");
+
+        assert_eq!(
+            observed_inside, 1,
+            "secure_delete must be ON for the duration of the op"
+        );
+
+        let after: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after, 0,
+            "secure_delete must be restored to OFF after with_secure_delete returns"
+        );
+    }
+
+    #[test]
+    fn with_secure_delete_restores_off_even_on_error() {
+        let db = open_shared_in_memory().expect("in-memory");
+        let conn = db.lock().expect("lock");
+
+        let result: Result<()> = with_secure_delete(&conn, |_conn| {
+            Err(Error::Database("simulated failure mid-scrub".to_string()))
+        });
+        assert!(result.is_err(), "the op error must propagate");
+
+        let after: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after, 0,
+            "secure_delete must be reset to OFF even when the op returns Err — \
+             otherwise the shared connection stays in ON for the process lifetime"
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
-use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
+use tessera_core::{open_shared, open_shared_in_memory, with_secure_delete, SharedConnection};
 
 /// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
 /// a `rusqlite::Error` instead of silently substituting the current time.
@@ -292,12 +292,13 @@ impl TaskStore {
     }
 
     pub fn delete(&self, id: &TaskId) -> Result<bool> {
-        let rows = self
-            .conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Zero-fill the freed page so the deleted task (title, notes,
+        // assignee) is unrecoverable from the freelist.
+        let rows = with_secure_delete(&conn, |conn| {
+            conn.execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])
+                .map_err(|e| Error::Database(e.to_string()))
+        })?;
         Ok(rows > 0)
     }
 

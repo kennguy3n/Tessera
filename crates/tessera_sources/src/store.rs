@@ -7,8 +7,8 @@ use rusqlite::params;
 use rusqlite::Connection;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
-    empty_read_pool, open_shared, open_shared_in_memory, SharedConnection, SharedReadPool,
-    SourceId, SourceStatus, SourceType,
+    empty_read_pool, open_shared, open_shared_in_memory, with_secure_delete, SharedConnection,
+    SharedReadPool, SourceId, SourceStatus, SourceType,
 };
 
 use crate::chunker::Chunk;
@@ -663,22 +663,29 @@ impl SourceStore {
             .filter_map(std::result::Result::ok)
             .collect();
 
-        for fid in &file_ids {
+        // Scrub under `secure_delete = ON` so the freed chunk / file /
+        // source pages are zero-filled at delete time — a removed
+        // source's indexed text must not be recoverable from a later
+        // forensic image of the SQLCipher file.
+        with_secure_delete(&conn, |conn| {
+            for fid in &file_ids {
+                conn.execute(
+                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                    params![fid],
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+            }
+
             conn.execute(
-                "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                params![fid],
+                "DELETE FROM indexed_files WHERE source_id = ?1",
+                params![id_str],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
-        }
 
-        conn.execute(
-            "DELETE FROM indexed_files WHERE source_id = ?1",
-            params![id_str],
-        )
-        .map_err(|e| Error::Database(e.to_string()))?;
-
-        conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
-            .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
+                .map_err(|e| Error::Database(e.to_string()))?;
+            Ok(())
+        })?;
 
         // removing a source cascades through
         // chunks_ad_embeddings, so the cached IVF index for any
@@ -2066,12 +2073,16 @@ impl SourceStore {
     /// the `chunk_count` aggregate.
     pub fn delete_chunks_for_indexed_file(&self, indexed_file_id: i64) -> Result<u32> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
-        let deleted = conn
-            .execute(
+        // Zero-fill the freed chunk pages at delete time so the indexed
+        // plaintext cannot be recovered from the freelist after the row
+        // is dropped.
+        let deleted = with_secure_delete(&conn, |conn| {
+            conn.execute(
                 "DELETE FROM chunks WHERE indexed_file_id = ?1",
                 params![indexed_file_id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::Database(e.to_string()))
+        })?;
         conn.execute(
             "UPDATE indexed_files SET chunk_count = 0 WHERE id = ?1",
             params![indexed_file_id],
@@ -2105,17 +2116,21 @@ impl SourceStore {
     ) -> Result<()> {
         let id_str = source_id.to_string();
         let conn = self.conn.lock().expect("connection mutex poisoned");
-        conn.execute(
-            "DELETE FROM kchat_posts WHERE source_id = ?1 AND post_id = ?2",
-            params![id_str, post_id],
-        )
-        .map_err(|e| Error::Database(e.to_string()))?;
-        conn.execute(
-            "DELETE FROM indexed_files WHERE id = ?1",
-            params![indexed_file_id],
-        )
-        .map_err(|e| Error::Database(e.to_string()))?;
-        Ok(())
+        // Scrub the post bookkeeping + indexed_file rows under
+        // `secure_delete = ON` so the freed pages are zero-filled.
+        with_secure_delete(&conn, |conn| {
+            conn.execute(
+                "DELETE FROM kchat_posts WHERE source_id = ?1 AND post_id = ?2",
+                params![id_str, post_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute(
+                "DELETE FROM indexed_files WHERE id = ?1",
+                params![indexed_file_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+            Ok(())
+        })
     }
 
     /// Count the number of chunks currently indexed for a
@@ -2500,13 +2515,19 @@ impl SourceStore {
             params![path],
             |row| row.get::<_, i64>(0),
         ) {
-            conn.execute(
-                "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                params![file_id],
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
-            conn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
+            // Zero-fill the freed chunk / indexed_file pages so the
+            // removed file's indexed text is unrecoverable from the
+            // freelist.
+            with_secure_delete(&conn, |conn| {
+                conn.execute(
+                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                    params![file_id],
+                )
                 .map_err(|e| Error::Database(e.to_string()))?;
+                conn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -4150,6 +4171,115 @@ mod tests {
             read_secure_delete(),
             0,
             "secure_delete must be restored to OFF after a successful shred + VACUUM",
+        );
+    }
+
+    /// Every content-bearing deletion path must (a) actually remove
+    /// the rows and (b) leave the connection-scoped `secure_delete`
+    /// pragma restored to OFF — leaving it ON would silently impose
+    /// page-zero-fill write amplification on every steady-state
+    /// indexer insert for the rest of the process lifetime. This
+    /// pins the contract for `remove_source`,
+    /// `delete_chunks_for_indexed_file`, and `remove_indexed_file`,
+    /// which now route their DELETEs through `with_secure_delete`.
+    #[test]
+    fn deletion_paths_scrub_rows_and_restore_secure_delete_off() {
+        let store = SourceStore::open_in_memory().unwrap();
+
+        let read_secure_delete = || -> i64 {
+            let conn = store.conn.lock().expect("conn poisoned");
+            conn.query_row("PRAGMA secure_delete", [], |row| row.get::<_, i64>(0))
+                .expect("PRAGMA secure_delete should always return a row")
+        };
+
+        assert_eq!(read_secure_delete(), 0, "control: defaults to OFF");
+
+        // --- delete_chunks_for_indexed_file -----------------------
+        let source = Source::new_local_folder("/tmp/scrub".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/scrub/a.txt", "h-a", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/scrub/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "secret sentinel alpha".to_string(),
+                    hash: "h-a-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        let dropped = store.delete_chunks_for_indexed_file(file_id).unwrap();
+        assert_eq!(dropped, 1, "the chunk should have been deleted");
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "delete_chunks_for_indexed_file must restore secure_delete=OFF",
+        );
+
+        // --- remove_indexed_file -----------------------------------
+        store
+            .insert_chunks(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/scrub/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "secret sentinel bravo".to_string(),
+                    hash: "h-a-1".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        store.remove_indexed_file("/tmp/scrub/a.txt").unwrap();
+        assert_eq!(
+            store.all_chunks_for_path("/tmp/scrub/a.txt").unwrap().len(),
+            0,
+            "remove_indexed_file should drop the file's chunks",
+        );
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "remove_indexed_file must restore secure_delete=OFF",
+        );
+
+        // --- remove_source -----------------------------------------
+        let file_id2 = store
+            .upsert_indexed_file(&source.id, "/tmp/scrub/b.txt", "h-b", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id2,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/scrub/b.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "secret sentinel charlie".to_string(),
+                    hash: "h-b-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        store.remove_source(&source.id).unwrap();
+        assert!(
+            !store
+                .list_sources()
+                .unwrap()
+                .iter()
+                .any(|s| s.id == source.id),
+            "remove_source should delete the source row",
+        );
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "remove_source must restore secure_delete=OFF",
         );
     }
 

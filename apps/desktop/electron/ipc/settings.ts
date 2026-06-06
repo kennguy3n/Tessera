@@ -27,7 +27,7 @@ import {
   enableTelemetry,
   disableTelemetry,
 } from "../telemetrySink";
-import { hasPinSet, clearPin } from "../appLock";
+import { hasPinSet, hasFido2Set, clearPin } from "../appLock";
 import { getLogger } from "../logger";
 import type {
   EmbeddingDownloadProgressInfo,
@@ -303,11 +303,23 @@ export function registerSettingsHandlers(): void {
     // renderer's Settings UI MUST set up a PIN via `appLock:setPin`
     // before flipping the mode.
     if (
-      (parsed.appLockMode === "pin" || parsed.appLockMode === "biometric") &&
+      (parsed.appLockMode === "pin" ||
+        parsed.appLockMode === "biometric" ||
+        parsed.appLockMode === "fido2") &&
       !hasPinSet()
     ) {
       throw new Error(
         `Cannot set appLockMode to "${parsed.appLockMode}" without a PIN. Call appLock:setPin first.`,
+      );
+    }
+    // `"fido2"` additionally requires a registered authenticator —
+    // flipping to it without one would render the lock overlay's
+    // FIDO2 prompt unusable (the renderer would have to immediately
+    // fall back to PIN every launch). Force the user to register a
+    // credential via `appLock:registerFido2` first.
+    if (parsed.appLockMode === "fido2" && !hasFido2Set()) {
+      throw new Error(
+        'Cannot set appLockMode to "fido2" without a registered security key. Call appLock:registerFido2 first.',
       );
     }
     // Return value is read from `loadConfig()` *after* the write so the
