@@ -6,11 +6,17 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// Source Id.
+/// Stable identity of an indexed [`SourceType`] connection (a local
+/// folder, cloud drive, KChat channel, …). Wraps a [`Uuid`] so ids are
+/// globally unique without a central allocator and are safe to mint
+/// offline on any device. Used as the foreign key that ties chunks,
+/// indexed files, and citations back to their origin.
 pub struct SourceId(pub Uuid);
 
 impl SourceId {
-    /// Creates a new instance.
+    /// Mints a fresh, random identity (UUIDv4). Collisions are
+    /// cryptographically improbable, so callers never need to consult
+    /// the database to guarantee uniqueness.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -29,11 +35,14 @@ impl std::fmt::Display for SourceId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// Artifact Id.
+/// Stable identity of a generated [`ArtifactType`] (document, slides,
+/// sheet, …). A random [`Uuid`] minted at creation time and never
+/// reused, so an artifact keeps the same id across edits, exports, and
+/// version history.
 pub struct ArtifactId(pub Uuid);
 
 impl ArtifactId {
-    /// Creates a new instance.
+    /// Mints a fresh, random identity (UUIDv4) for a new artifact.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -52,16 +61,24 @@ impl std::fmt::Display for ArtifactId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// Template Id.
+/// Identity of an artifact-generation template. Unlike the other ids,
+/// a template id may be either random (user-authored templates) or
+/// *derived deterministically from a name* (built-in templates) — see
+/// [`TemplateId::from_string`] — so the same built-in always resolves to
+/// the same id across installs.
 pub struct TemplateId(pub Uuid);
 
 impl TemplateId {
-    /// Creates a new instance.
+    /// Mints a fresh, random identity (UUIDv4) for a user-authored
+    /// template.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
-    /// From string.
+    /// Derives a *deterministic* id from a stable template name via
+    /// UUIDv5 (OID namespace). The same `s` always yields the same id,
+    /// letting built-in templates ship with fixed ids that survive
+    /// reinstalls and stay identical across every device.
     pub fn from_string(s: &str) -> Self {
         Self(Uuid::new_v5(&Uuid::NAMESPACE_OID, s.as_bytes()))
     }
@@ -80,11 +97,14 @@ impl std::fmt::Display for TemplateId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// Citation Id.
+/// Identity of a single citation — the link binding a span of
+/// generated artifact content back to the source chunk it was drawn
+/// from. A random [`Uuid`] so citations can be minted during generation
+/// without coordinating with storage.
 pub struct CitationId(pub Uuid);
 
 impl CitationId {
-    /// Creates a new instance.
+    /// Mints a fresh, random identity (UUIDv4) for a new citation.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -103,11 +123,13 @@ impl std::fmt::Display for CitationId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// Task Id.
+/// Identity of a task in the planning/automation layer. A random
+/// [`Uuid`] minted at creation and used to reference the task from
+/// dependencies, automations, and the Gantt view.
 pub struct TaskId(pub Uuid);
 
 impl TaskId {
-    /// Creates a new instance.
+    /// Mints a fresh, random identity (UUIDv4) for a new task.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -126,11 +148,12 @@ impl std::fmt::Display for TaskId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-/// Automation Id.
+/// Identity of an automation rule (a trigger/action pairing that runs
+/// in the runtime). A random [`Uuid`] minted when the rule is defined.
 pub struct AutomationId(pub Uuid);
 
 impl AutomationId {
-    /// Creates a new instance.
+    /// Mints a fresh, random identity (UUIDv4) for a new automation.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -150,15 +173,16 @@ impl std::fmt::Display for AutomationId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Task Status.
+/// Lifecycle state of a task. Serialised to `snake_case` for storage
+/// and the IPC wire (`todo`, `in_progress`, `done`, `blocked`).
 pub enum TaskStatus {
-    /// The `Todo` variant.
+    /// Not yet started — the default state of a freshly created task.
     Todo,
-    /// In Progress.
+    /// Actively being worked on.
     InProgress,
-    /// The `Done` variant.
+    /// Completed; counts as finished work in progress rollups.
     Done,
-    /// The `Blocked` variant.
+    /// Cannot progress until an external dependency or blocker clears.
     Blocked,
 }
 
@@ -175,15 +199,17 @@ impl std::fmt::Display for TaskStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Task Priority.
+/// Relative urgency of a task. Ordered low → critical: the derived
+/// [`Ord`] follows declaration order, so `Low < Medium < High <
+/// Critical` and tasks can be sorted by priority directly.
 pub enum TaskPriority {
-    /// The `Low` variant.
+    /// Nice-to-have; no schedule pressure.
     Low,
-    /// The `Medium` variant.
+    /// Default priority for ordinary work.
     Medium,
-    /// The `High` variant.
+    /// Should be addressed ahead of medium/low work.
     High,
-    /// The `Critical` variant.
+    /// Must be addressed immediately; sorts above all other levels.
     Critical,
 }
 
@@ -198,28 +224,38 @@ impl std::fmt::Display for TaskPriority {
     }
 }
 
-/// Timestamp type alias.
+/// Wall-clock instant in UTC used for every stored time field
+/// (created/updated/indexed timestamps). Storing every instant in UTC
+/// keeps the whole workspace time zone-independent; conversion to local
+/// time happens only at the presentation layer.
+///
+/// Aliased to [`chrono::DateTime`]`<`[`chrono::Utc`]`>`.
 pub type Timestamp = DateTime<Utc>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Source Type.
+/// Kind of backend a [`SourceId`] connects to. Determines which
+/// connector drives sync and how `Source.path` is interpreted.
+/// Serialised to `snake_case` for storage and IPC.
 pub enum SourceType {
-    /// Local Folder.
+    /// A directory on the local filesystem, indexed recursively;
+    /// `Source.path` is the folder path.
     LocalFolder,
-    /// Local File.
+    /// A single file on the local filesystem; `Source.path` is the
+    /// file path.
     LocalFile,
-    /// Google Drive.
+    /// A Google Drive account/folder synced via the Drive connector.
     GoogleDrive,
-    /// One Drive.
+    /// A Microsoft OneDrive account/folder synced via the OneDrive
+    /// connector.
     OneDrive,
-    /// The `Notion` variant.
+    /// A Notion workspace synced via the Notion connector.
     Notion,
-    /// The `Jira` variant.
+    /// A Jira project synced via the Jira connector.
     Jira,
-    /// The `Confluence` variant.
+    /// A Confluence space synced via the Confluence connector.
     Confluence,
-    /// The `Figma` variant.
+    /// A Figma project synced via the Figma connector.
     Figma,
     /// KChat channel connector — files shared into a KChat channel
     /// surface as an indexed source. The renderer downloads the
@@ -232,17 +268,22 @@ pub enum SourceType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Source Status.
+/// Where a source sits in the connect → index lifecycle. Serialised to
+/// `snake_case`; retrieval paths use [`SourceStatus::as_stored_json`]
+/// to filter on the persisted form.
 pub enum SourceStatus {
-    /// The `Connected` variant.
+    /// Authenticated and reachable, but its corpus has not been
+    /// indexed yet (also the state a source returns to after an ACL
+    /// regrant, until a full re-sync runs).
     Connected,
-    /// The `Indexing` variant.
+    /// A sync/index pass is currently in flight.
     Indexing,
-    /// The `Indexed` variant.
+    /// Fully indexed and searchable.
     Indexed,
-    /// The `Error` variant.
+    /// The last sync failed; see the connector's failure state for the
+    /// reason.
     Error,
-    /// The `Disconnected` variant.
+    /// Intentionally disconnected by the user; retained but not synced.
     Disconnected,
     /// The local user has lost authorisation to read this source.
     /// Block B Task 3 introduces this state for
@@ -323,19 +364,20 @@ impl SourceStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Artifact Type.
+/// Kind of artifact a generator produces. Selects the editor and the
+/// set of valid export formats. Serialised to `snake_case`.
 pub enum ArtifactType {
-    /// The `Document` variant.
+    /// Long-form rich-text document.
     Document,
-    /// The `Slides` variant.
+    /// Slide deck / presentation.
     Slides,
-    /// The `Sheet` variant.
+    /// Tabular spreadsheet.
     Sheet,
-    /// The `Base` variant.
+    /// Structured database (records + fields), Tessera's "base".
     Base,
-    /// The `Infographic` variant.
+    /// Single-canvas infographic.
     Infographic,
-    /// Landing Page.
+    /// Standalone HTML landing page.
     LandingPage,
 }
 
@@ -354,23 +396,25 @@ impl std::fmt::Display for ArtifactType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Export Format.
+/// Target file format for exporting an artifact. Which formats are
+/// valid depends on the [`ArtifactType`] being exported. Serialised to
+/// `snake_case`.
 pub enum ExportFormat {
-    /// The `Markdown` variant.
+    /// CommonMark Markdown text.
     Markdown,
-    /// The `Html` variant.
+    /// Self-contained HTML.
     Html,
-    /// The `Csv` variant.
+    /// Comma-separated values (tabular artifacts).
     Csv,
-    /// The `Pdf` variant.
+    /// Portable Document Format.
     Pdf,
-    /// The `Docx` variant.
+    /// Microsoft Word document.
     Docx,
-    /// The `Pptx` variant.
+    /// Microsoft PowerPoint presentation.
     Pptx,
-    /// The `Xlsx` variant.
+    /// Microsoft Excel workbook.
     Xlsx,
-    /// The `Json` variant.
+    /// Raw JSON serialisation of the artifact.
     Json,
 }
 
