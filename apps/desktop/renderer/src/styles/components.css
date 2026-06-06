@@ -1119,3 +1119,217 @@
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Inline comments (mark + side panel) ──────────────────────── */
+
+.document-editor-content .ProseMirror .doc-comment {
+  background: rgba(250, 204, 21, 0.28);
+  border-bottom: 2px solid rgba(202, 138, 4, 0.8);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.document-editor-content .ProseMirror .doc-comment-resolved {
+  background: transparent;
+  border-bottom: 2px dotted var(--color-border);
+}
+
+.comments-panel {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  bottom: var(--spacing-sm);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  width: 320px;
+  padding: var(--spacing-sm);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card-hover);
+  overflow: hidden;
+}
+
+.comments-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.comments-panel-title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+.comments-panel-count {
+  margin-left: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.comments-panel-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.comment-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
+.comment-item-resolved {
+  border-left-color: var(--color-border);
+  opacity: 0.7;
+}
+
+.comment-item-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+}
+
+.comment-item-author {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+.comment-item-time {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.comment-item-quote {
+  padding: 0;
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.comment-item-quote:hover {
+  color: var(--color-primary);
+}
+
+.comment-item-body {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.comment-item-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+
+/* ── Sheet conditional formatting panel ───────────────────────── */
+
+.sheet-cf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sheet-cf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sheet-cf-title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+.sheet-cf-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.sheet-cf-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sheet-cf-rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.sheet-cf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+}
+
+.sheet-cf-label {
+  color: var(--color-text-secondary);
+}
+
+.sheet-cf-style {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.sheet-cf-color {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.sheet-cf-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.sheet-cf-remove {
+  margin-left: auto;
+}

@@ -88,6 +88,24 @@ export class RateLimiter {
     this.buckets.clear();
   }
 
+  /**
+   * Override the clock (used by tests). Pass `null` to restore the
+   * real `Date.now`.
+   *
+   * The shared {@link defaultRateLimiter} singleton captures
+   * `Date.now` by reference at module load, so `vi.spyOn(Date, "now")`
+   * can't reach it after the fact — this seam is the supported way to
+   * make the singleton's window math deterministic. Tests that assert
+   * "two back-to-back calls hit the same window" freeze the clock so a
+   * slow first call (e.g. the scrypt KDF on the `appLock:*` channels,
+   * which can exceed the 250ms window under CPU contention) can't let
+   * the bucket refill between the two calls and mask the rate-limit
+   * assertion.
+   */
+  _setNowForTests(now: (() => number) | null): void {
+    this.now = now ?? Date.now;
+  }
+
   /** Visible state for tests. */
   inspect(key: string): { tokens: number; lastRefillMs: number } | undefined {
     return this.buckets.get(key);

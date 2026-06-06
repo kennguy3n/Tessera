@@ -12,6 +12,7 @@ import {
   markEnd,
   markStart,
   logStartupPerfTable,
+  coldStartTotalMs,
 } from "./startupPerf";
 // `./autoUpdater` is loaded dynamically inside `whenReady()` (see
 // `initAutoUpdater()` call site). Task 1: it pulls in
@@ -216,6 +217,29 @@ export function getCspNonce(): string {
   return cspNonce;
 }
 
+/**
+ * Cold-start perf smoke mode, toggled by `TESSERA_PERF_SMOKE=1`.
+ *
+ * Used only by the CI cold-start gate (`scripts/coldStartGate.mjs` →
+ * `.github/workflows/ci.yml`) to measure boot-to-first-render without
+ * a human at the keyboard. When enabled the boot path:
+ *
+ *   - loads the *built* renderer bundle (`renderer-dist/index.html`)
+ *     instead of the Vite dev server, since the gate runs against a
+ *     production `npm run build` and there is no dev server to attach
+ *     to (see `createWindow`); and
+ *   - skips the interactive password-vault prompt that would
+ *     otherwise block forever on a headless runner with no OS keyring
+ *     (see `maybeInitPasswordVault`); and
+ *   - prints a single machine-readable `TESSERA_COLD_START_MS=<n>`
+ *     line and quits once the first frame is shown (see the
+ *     `ready-to-show` handler in `createWindow`).
+ *
+ * It changes NOTHING in a normal run — every guard is behind this
+ * env check — so it cannot affect production startup behaviour.
+ */
+const PERF_SMOKE = process.env.TESSERA_PERF_SMOKE === "1";
+
 function installContentSecurityPolicy(): void {
   // The CSP `img-src` widening below includes `tessera-asset:` as a
   // recognised source. Chromium will silently strip that source if
@@ -343,9 +367,35 @@ function createWindow(): void {
         err instanceof Error ? err.message : String(err),
       );
     }
+    if (PERF_SMOKE) {
+      // First frame is on screen: this is the boot-to-first-render
+      // instant. Emit the total cold-start duration on a single
+      // machine-readable line for `scripts/coldStartGate.cjs` to
+      // parse, then tear the process down.
+      //
+      // `app.exit(0)`, NOT `app.quit()`: quit runs the async
+      // `will-quit` sidecar-cleanup path (event.preventDefault() +
+      // deferred re-quit). On a headless runner with no bridge and no
+      // sidecars that path can leave the process lingering after the
+      // marker is already on stdout, so the gate would sit out its
+      // whole timeout waiting for an exit that comes minutes later.
+      // `app.exit` skips before-quit/will-quit and terminates at once
+      // — the right semantics for a one-shot boot probe. The write
+      // callback flushes the marker to the pipe before we exit so the
+      // line is never truncated.
+      const totalMs = coldStartTotalMs();
+      process.stdout.write(
+        `TESSERA_COLD_START_MS=${totalMs === null ? "null" : totalMs.toFixed(2)}\n`,
+        () => app.exit(0),
+      );
+    }
   });
 
-  const isDev = !app.isPackaged;
+  // In perf-smoke mode load the built renderer bundle, not the Vite
+  // dev server: the cold-start gate runs against `npm run build`
+  // output with no dev server listening on :5173, and pointing at a
+  // dead URL would never fire `ready-to-show`.
+  const isDev = !app.isPackaged && !PERF_SMOKE;
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
@@ -422,6 +472,12 @@ function createWindow(): void {
  *     unavailable) before they start.
  */
 async function maybeInitPasswordVault(): Promise<void> {
+  // The cold-start gate runs on a headless runner with no OS keyring,
+  // so `safeStorage` is unavailable and the prompt below would open a
+  // BrowserWindow and block forever waiting for input. Skip it: the
+  // gate only measures boot-to-first-render and never touches a
+  // vault-encrypted secret.
+  if (PERF_SMOKE) return;
   if (safeStorage.isEncryptionAvailable()) return;
   try {
     // Inspect the `{ active, reason? }` result rather than treating

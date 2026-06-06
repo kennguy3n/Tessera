@@ -11,7 +11,8 @@ use tessera_audit::logger::AuditLogger;
 use tessera_audit::store::AuditStore;
 use tessera_citations::tracker::CitationTracker;
 use tessera_core::{
-    empty_read_pool, open_shared_read_pool_with_key, open_shared_with_key, SharedReadPool,
+    default_read_pool_size, empty_read_pool, open_shared_read_pool_with_key, open_shared_with_key,
+    SharedReadPool,
 };
 use tessera_sources::manager::SourceManager;
 use tessera_sources::progress::EmbeddingProgressTracker;
@@ -148,25 +149,25 @@ pub fn init_bridge(
     tessera_core::db::integrity_check_with_retry(&conn)
         .map_err(|e| napi::Error::from_reason(format!("database integrity check failed: {e}")))?;
 
-    // open a small pool of read-only
-    // connections backing the SourceStore's hot read paths (BM25
-    // FTS5, embedding-row scan, chunk hydration, age lookup).
-    // Pool size 2 is the minimum that exercises the
-    // try_lock-round-robin path; it's small enough that we don't
-    // burn N OS file descriptors on every install but large
-    // enough to keep search latency off the writer mutex when a
-    // writer is mid-transaction (WAL gives readers a snapshot
-    // without blocking the writer).
+    // open a pool of read-only connections backing the
+    // SourceStore's hot read paths (BM25 FTS5, embedding-row scan,
+    // chunk hydration, age lookup). The size is auto-tuned from the
+    // host CPU count and capped at `MAX_READ_POOL_SIZE` (4) via
+    // `default_read_pool_size` — large enough to keep search latency
+    // off the writer mutex when a writer is mid-transaction (WAL
+    // gives readers a snapshot without blocking the writer), small
+    // enough that we don't burn an unbounded number of OS file
+    // descriptors on a many-core host.
     //
     // For `:memory:` test paths the pool is unconditionally
     // empty (in-memory DBs can't be shared across connections);
     // SourceStore transparently falls back to the writer
     // connection in that case so behaviour is identical.
-    const READ_POOL_SIZE: usize = 2;
+    let read_pool_size = default_read_pool_size();
     let read_pool: SharedReadPool = match open_shared_read_pool_with_key(
         &db_path,
         key_ref,
-        READ_POOL_SIZE,
+        read_pool_size,
     ) {
         Ok(pool) => pool,
         Err(e) => {
@@ -181,6 +182,13 @@ pub fn init_bridge(
             empty_read_pool()
         }
     };
+
+    // Pre-warm the freshly-opened pool so the first user-facing read
+    // (initial search / source list) doesn't pay the per-connection
+    // cold-cache + SQLCipher schema-decrypt cost on its critical
+    // path. Best-effort and a no-op on the empty (in-memory / failed)
+    // pool; see `SharedReadPool::prewarm`.
+    read_pool.prewarm();
 
     let mut source_manager =
         SourceManager::with_shared_conn_and_read_pool(conn.clone(), read_pool, &[])

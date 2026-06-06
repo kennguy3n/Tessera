@@ -55,13 +55,13 @@ impl CitationStore {
                 CREATE INDEX IF NOT EXISTS idx_citations_artifact
                     ON citations(artifact_id);",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
     pub fn insert(&self, artifact_id: &ArtifactId, citation: &Citation) -> Result<()> {
         let source_type_str = serde_json::to_value(citation.source_type)
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Json)?
             .as_str()
             .unwrap_or("LocalFile")
             .to_string();
@@ -89,7 +89,7 @@ impl CitationStore {
                     citation.created_at.to_rfc3339(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -101,7 +101,7 @@ impl CitationStore {
                 "DELETE FROM citations WHERE citation_id = ?1",
                 params![citation_id.0.to_string()],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -109,7 +109,7 @@ impl CitationStore {
     /// preserving the original `citation_id`, `artifact_id`,
     /// `used_for`, and `created_at` so the citation continues to
     /// refer to the same artifact section. Returns
-    /// [`Error::Database`] with a `"not found"` message when the
+    /// [`Error::DatabaseState`] with a `"not found"` message when the
     /// citation does not exist.
     #[allow(clippy::too_many_arguments)]
     pub fn replace_source(
@@ -125,7 +125,7 @@ impl CitationStore {
         confidence: f64,
     ) -> Result<()> {
         let source_type_str = serde_json::to_value(source_type)
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(Error::Json)?
             .as_str()
             .unwrap_or("LocalFile")
             .to_string();
@@ -157,10 +157,10 @@ impl CitationStore {
                     citation_id.0.to_string(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         if updated == 0 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "citation not found: {}",
                 citation_id.0
             )));
@@ -176,14 +176,14 @@ impl CitationStore {
                         chunk_hash, source_file_hash, page, confidence, used_for, created_at
                  FROM citations WHERE citation_id = ?1",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let result = stmt
             .query_row(params![citation_id.0.to_string()], |row| {
                 Ok(Self::row_to_citation(row))
             })
             .optional()
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         match result {
             Some(c) => Ok(Some(c?)),
@@ -200,19 +200,21 @@ impl CitationStore {
                  FROM citations WHERE artifact_id = ?1
                  ORDER BY created_at ASC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let rows = stmt
             .query_map(params![artifact_id.0.to_string()], |row| {
                 Ok(Self::row_to_citation(row))
             })
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
 
         let mut citations = Vec::new();
         for row in rows {
-            let citation = row
-                .map_err(|e| Error::Database(e.to_string()))?
-                .map_err(|e| Error::Database(e.to_string()))?;
+            // `row` is `Result<Result<Citation, Error>, rusqlite::Error>`:
+            // the outer `?` surfaces a row-iteration failure (wrapped as
+            // `Error::Sqlite`), the inner `?` surfaces a
+            // `row_to_citation` decode failure (already an `Error`).
+            let citation = row.map_err(Error::Sqlite)??;
             citations.push(citation);
         }
         Ok(citations)
@@ -224,7 +226,7 @@ impl CitationStore {
             .lock()
             .expect("connection mutex poisoned")
             .query_row("SELECT COUNT(*) FROM citations", [], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(count as usize)
     }
 
@@ -237,39 +239,39 @@ impl CitationStore {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare("SELECT artifact_id FROM citations WHERE citation_id = ?1")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let row: std::result::Result<String, rusqlite::Error> =
             stmt.query_row(params![citation_id.0.to_string()], |row| row.get(0));
         match row {
             Ok(s) => {
                 let uuid = uuid::Uuid::parse_str(&s)
-                    .map_err(|e| Error::Database(format!("Invalid artifact UUID: {e}")))?;
+                    .map_err(|e| Error::DatabaseState(format!("Invalid artifact UUID: {e}")))?;
                 Ok(Some(tessera_core::ArtifactId(uuid)))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(Error::Database(e.to_string())),
+            Err(e) => Err(Error::Sqlite(e)),
         }
     }
 
     fn row_to_citation(row: &rusqlite::Row) -> Result<Citation> {
-        let cid_str: String = row.get(0).map_err(|e| Error::Database(e.to_string()))?;
-        let sid_str: String = row.get(1).map_err(|e| Error::Database(e.to_string()))?;
-        let stype_str: String = row.get(2).map_err(|e| Error::Database(e.to_string()))?;
-        let source_title: String = row.get(3).map_err(|e| Error::Database(e.to_string()))?;
-        let source_uri: String = row.get(4).map_err(|e| Error::Database(e.to_string()))?;
-        let chunk_hash: String = row.get(5).map_err(|e| Error::Database(e.to_string()))?;
-        let source_file_hash: String = row.get(6).map_err(|e| Error::Database(e.to_string()))?;
-        let page: Option<i64> = row.get(7).map_err(|e| Error::Database(e.to_string()))?;
-        let confidence: f64 = row.get(8).map_err(|e| Error::Database(e.to_string()))?;
-        let used_for: String = row.get(9).map_err(|e| Error::Database(e.to_string()))?;
-        let created_at_str: String = row.get(10).map_err(|e| Error::Database(e.to_string()))?;
+        let cid_str: String = row.get(0).map_err(Error::Sqlite)?;
+        let sid_str: String = row.get(1).map_err(Error::Sqlite)?;
+        let stype_str: String = row.get(2).map_err(Error::Sqlite)?;
+        let source_title: String = row.get(3).map_err(Error::Sqlite)?;
+        let source_uri: String = row.get(4).map_err(Error::Sqlite)?;
+        let chunk_hash: String = row.get(5).map_err(Error::Sqlite)?;
+        let source_file_hash: String = row.get(6).map_err(Error::Sqlite)?;
+        let page: Option<i64> = row.get(7).map_err(Error::Sqlite)?;
+        let confidence: f64 = row.get(8).map_err(Error::Sqlite)?;
+        let used_for: String = row.get(9).map_err(Error::Sqlite)?;
+        let created_at_str: String = row.get(10).map_err(Error::Sqlite)?;
 
         let citation_id = uuid::Uuid::parse_str(&cid_str)
-            .map_err(|e| Error::Database(format!("Invalid citation UUID: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("Invalid citation UUID: {e}")))?;
         let source_id = uuid::Uuid::parse_str(&sid_str)
-            .map_err(|e| Error::Database(format!("Invalid source UUID: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("Invalid source UUID: {e}")))?;
         let source_type: SourceType = serde_json::from_str(&format!("\"{stype_str}\""))
-            .map_err(|e| Error::Database(format!("Invalid source type: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("Invalid source type: {e}")))?;
 
         Ok(Citation {
             citation_id: CitationId(citation_id),

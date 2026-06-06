@@ -13,6 +13,7 @@ import type {
   ReplaceCitationRequest,
   SaveDialogOptions,
   SettingsData,
+  StartPresentationRequest,
   TesseraApi,
   UpdateStatusInfo,
 } from "../shared/types";
@@ -87,6 +88,7 @@ export type {
   SourceApi,
   SourceDetailInfo,
   SourceInfo,
+  StartPresentationRequest,
   TaskApi,
   TaskInfo,
   TaskPriority,
@@ -487,6 +489,10 @@ const api: TesseraApi = {
       ipcRenderer.invoke("dialog:showSaveDialog", options),
     pickImage: (options?: OpenImageDialogOptions) =>
       ipcRenderer.invoke("dialog:pickImage", options ?? {}),
+  },
+  slides: {
+    startPresentation: (request: StartPresentationRequest) =>
+      ipcRenderer.invoke("slides:startPresentation", request),
   },
   updates: {
     status: () => ipcRenderer.invoke("updates:status"),

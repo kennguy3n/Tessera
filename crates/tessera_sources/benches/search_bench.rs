@@ -245,11 +245,17 @@ fn bench_at_size(c: &mut Criterion, label: &str, chunk_count: usize) {
 fn search_bench(c: &mut Criterion) {
     bench_at_size(c, "1k", 1_000);
     bench_at_size(c, "10k", 10_000);
-    // 100K is gated behind an env var because seeding 100K chunks
-    // takes ~30 s and bloats the default `cargo bench` run. Set
-    // `TESSERA_BENCH_100K=1` to enable it for a focused run.
+    // 100K and 500K are gated behind env vars because seeding a
+    // corpus that large takes tens of seconds to minutes and would
+    // bloat every default `cargo bench` run. Enable them for focused
+    // large-corpus / scaling profiling:
+    //   TESSERA_BENCH_100K=1 cargo bench -p tessera_sources --bench search_bench
+    //   TESSERA_BENCH_500K=1 cargo bench -p tessera_sources --bench search_bench
     if std::env::var("TESSERA_BENCH_100K").is_ok() {
         bench_at_size(c, "100k", 100_000);
+    }
+    if std::env::var("TESSERA_BENCH_500K").is_ok() {
+        bench_at_size(c, "500k", 500_000);
     }
 }
 
