@@ -48,7 +48,7 @@
 //!
 //! If a key is supplied but does not match the on-disk database
 //! (and the file is not plaintext we can migrate), the function
-//! returns an `Error::Database` describing a decryption failure.
+//! returns an `Error::DatabaseState` describing a decryption failure.
 //! The bridge surfaces this to the renderer and `appState.ts`
 //! refuses to bring up the rest of the application — the user
 //! either restores their `db.key` from backup or accepts data loss
@@ -120,7 +120,7 @@ pub type SharedConnection = Arc<Mutex<Connection>>;
 /// and both run on every connection.
 fn apply_default_pragmas(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")
-        .map_err(|e| Error::Database(e.to_string()))
+        .map_err(Error::Sqlite)
 }
 
 /// Run `op` with `PRAGMA secure_delete = ON` active on `conn`, then
@@ -165,13 +165,13 @@ pub fn with_secure_delete<T>(
     op: impl FnOnce(&Connection) -> Result<T>,
 ) -> Result<T> {
     conn.execute_batch("PRAGMA secure_delete = ON;")
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
     let op_result = op(conn);
 
     let reset_result = conn
         .execute_batch("PRAGMA secure_delete = OFF;")
-        .map_err(|e| Error::Database(e.to_string()));
+        .map_err(Error::Sqlite);
     if let Err(e) = reset_result.as_ref() {
         eprintln!(
             "[secure_delete] failed to reset secure_delete=OFF on shared \
@@ -223,15 +223,15 @@ pub fn with_secure_delete<T>(
 fn apply_wal_pragmas(conn: &Connection) -> Result<String> {
     let mode: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
-        .map_err(|e| Error::Database(format!("PRAGMA journal_mode = WAL failed: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("PRAGMA journal_mode = WAL failed: {e}")))?;
     conn.execute_batch("PRAGMA synchronous = NORMAL;")
-        .map_err(|e| Error::Database(format!("PRAGMA synchronous = NORMAL failed: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("PRAGMA synchronous = NORMAL failed: {e}")))?;
     Ok(mode)
 }
 
 /// run `PRAGMA integrity_check` and return `Ok` only
 /// when SQLite reports `ok`. Any other row content is surfaced as a
-/// structured `Error::Database` so the bridge can present a crisp
+/// structured `Error::DatabaseState` so the bridge can present a crisp
 /// "your database is corrupt — restore from backup" message to the
 /// renderer rather than letting the next `SELECT` fail with an
 /// opaque "database disk image is malformed".
@@ -243,19 +243,20 @@ fn apply_wal_pragmas(conn: &Connection) -> Result<String> {
 fn run_integrity_check(conn: &Connection) -> Result<()> {
     let mut stmt = conn
         .prepare("PRAGMA integrity_check")
-        .map_err(|e| Error::Database(format!("prepare integrity_check failed: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("prepare integrity_check failed: {e}")))?;
     let rows = stmt
         .query_map([], |r| r.get::<_, String>(0))
-        .map_err(|e| Error::Database(format!("integrity_check query failed: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("integrity_check query failed: {e}")))?;
     let mut messages: Vec<String> = Vec::new();
     for row in rows {
-        let msg = row.map_err(|e| Error::Database(format!("integrity_check row failed: {e}")))?;
+        let msg =
+            row.map_err(|e| Error::DatabaseState(format!("integrity_check row failed: {e}")))?;
         messages.push(msg);
     }
     if messages.len() == 1 && messages[0] == "ok" {
         return Ok(());
     }
-    Err(Error::Database(format!(
+    Err(Error::DatabaseState(format!(
         "integrity_check reported corruption: {}",
         messages.join("; ")
     )))
@@ -288,7 +289,7 @@ fn run_integrity_check(conn: &Connection) -> Result<()> {
 pub fn wal_checkpoint_truncate(conn: &SharedConnection) -> Result<(i64, i64, i64)> {
     let guard = conn
         .lock()
-        .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("connection lock poisoned: {e}")))?;
     guard
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
             Ok((
@@ -297,7 +298,7 @@ pub fn wal_checkpoint_truncate(conn: &SharedConnection) -> Result<(i64, i64, i64
                 r.get::<_, i64>(2)?,
             ))
         })
-        .map_err(|e| Error::Database(format!("wal_checkpoint(TRUNCATE) failed: {e}")))
+        .map_err(|e| Error::DatabaseState(format!("wal_checkpoint(TRUNCATE) failed: {e}")))
 }
 
 /// Run `PRAGMA integrity_check` against a [`SharedConnection`],
@@ -318,7 +319,7 @@ pub fn integrity_check_with_retry(conn: &SharedConnection) -> Result<()> {
     let first_err = {
         let guard = conn
             .lock()
-            .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("connection lock poisoned: {e}")))?;
         match run_integrity_check(&guard) {
             Ok(()) => return Ok(()),
             Err(e) => e,
@@ -331,9 +332,9 @@ pub fn integrity_check_with_retry(conn: &SharedConnection) -> Result<()> {
     let _ = wal_checkpoint_truncate(conn);
     let guard = conn
         .lock()
-        .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
+        .map_err(|e| Error::DatabaseState(format!("connection lock poisoned: {e}")))?;
     run_integrity_check(&guard).map_err(|second| {
-        Error::Database(format!(
+        Error::DatabaseState(format!(
             "integrity_check failed on retry after checkpoint; first error: {first_err}; second error: {second}"
         ))
     })
@@ -384,7 +385,7 @@ pub fn open_shared(path: &str) -> Result<SharedConnection> {
 /// catching early at init time.
 pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConnection> {
     let Some(key) = key else {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+        let conn = Connection::open(path).map_err(Error::Sqlite)?;
         apply_default_pragmas(&conn)?;
         // WAL pragmas go after the open + FK pragma
         // and before the sqlite_master probe so the probe runs under
@@ -409,7 +410,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
         // `CREATE TABLE` produce an opaque error.
         conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
             .map_err(|e| {
-                Error::Database(format!(
+                Error::DatabaseState(format!(
                     "opening db without an encryption key failed; the file at {path} may be SQLCipher-encrypted (restore `db.key` from backup, or delete the database to start fresh — data loss): {e}"
                 ))
             })?;
@@ -417,7 +418,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
     };
     validate_hex_key(key)?;
 
-    let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+    let conn = Connection::open(path).map_err(Error::Sqlite)?;
     apply_pragma_key(&conn, key)?;
     apply_default_pragmas(&conn)?;
     // SQLCipher requires the PRAGMA key to be
@@ -445,7 +446,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
             drop(conn);
             if file_looks_like_plaintext_sqlite(path) {
                 migrate_plaintext_in_place(path, key)?;
-                let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+                let conn = Connection::open(path).map_err(Error::Sqlite)?;
                 apply_pragma_key(&conn, key)?;
                 apply_default_pragmas(&conn)?;
                 // WAL pragmas on the post-migration
@@ -457,13 +458,13 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
                 // wrong and we should not pretend the DB is usable.
                 conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
                     .map_err(|e| {
-                        Error::Database(format!(
+                        Error::DatabaseState(format!(
                             "db migration completed but post-key probe failed: {e}"
                         ))
                     })?;
                 Ok(Arc::new(Mutex::new(conn)))
             } else {
-                Err(Error::Database(format!(
+                Err(Error::DatabaseState(format!(
                     "db decryption failed (wrong key, corrupted file, or incompatible cipher settings): {e}"
                 )))
             }
@@ -479,7 +480,7 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
 /// store's `open_in_memory()` helper instead. The returned connection
 /// has `PRAGMA foreign_keys = ON` already applied, matching production.
 pub fn open_shared_in_memory() -> Result<SharedConnection> {
-    let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+    let conn = Connection::open_in_memory().map_err(Error::Sqlite)?;
     apply_default_pragmas(&conn)?;
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -586,6 +587,33 @@ impl SharedReadPool {
     }
 }
 
+/// Upper bound on the number of read-only connections
+/// [`default_read_pool_size`] will provision, regardless of CPU count.
+///
+/// SQLite's WAL mode lets a single writer and many readers coexist, but
+/// each pool connection costs an OS file descriptor and a cached page
+/// pool, and Tessera's hot read paths (BM25 FTS5, embedding-row scan,
+/// chunk hydration, age lookup) are at most a handful of concurrent
+/// queries. Past four readers the round-robin in [`SharedReadPool`] sees
+/// diminishing returns while the per-connection memory grows linearly,
+/// so we clamp the auto-sized pool here.
+pub const MAX_READ_POOL_SIZE: usize = 4;
+
+/// Auto-size the read pool from the host CPU count, capped at
+/// [`MAX_READ_POOL_SIZE`].
+///
+/// Returns `min(available_parallelism, MAX_READ_POOL_SIZE)`. When the
+/// host parallelism cannot be determined (e.g. a sandbox that denies the
+/// query) we fall back to a single reader, which is always safe — the
+/// store transparently routes reads through the writer connection when
+/// the pool is small or empty.
+pub fn default_read_pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(MAX_READ_POOL_SIZE)
+}
+
 /// Build an empty [`SharedReadPool`]. Used as a sentinel when the
 /// underlying database cannot be opened with separate read
 /// connections (e.g. `:memory:` paths in tests, or when the bridge
@@ -653,7 +681,7 @@ pub fn open_shared_read_pool_with_key(
 
     let mut conns: Vec<Mutex<Connection>> = Vec::with_capacity(size);
     for _ in 0..size {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+        let conn = Connection::open(path).map_err(Error::Sqlite)?;
         if let Some(k) = key {
             apply_pragma_key(&conn, k)?;
         }
@@ -670,13 +698,13 @@ pub fn open_shared_read_pool_with_key(
         // routing obvious rather than letting them succeed and
         // bypass the writer's serialisation.
         conn.execute_batch("PRAGMA query_only = ON;")
-            .map_err(|e| Error::Database(format!("PRAGMA query_only = ON failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("PRAGMA query_only = ON failed: {e}")))?;
         // Final sanity probe: confirms the connection actually
         // decrypts and that schema reads work. Mirrors the writer
         // probe in `open_shared_with_key`.
         conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
             .map_err(|e| {
-                Error::Database(format!("read-pool connection probe failed for {path}: {e}"))
+                Error::DatabaseState(format!("read-pool connection probe failed for {path}: {e}"))
             })?;
         conns.push(Mutex::new(conn));
     }
@@ -694,13 +722,13 @@ pub fn open_shared_read_pool_with_key(
 /// KDF (which would derive a different key from the same bytes).
 fn validate_hex_key(key: &str) -> Result<()> {
     if key.len() != DB_KEY_HEX_LEN {
-        return Err(Error::Database(format!(
+        return Err(Error::DatabaseState(format!(
             "db key must be {DB_KEY_HEX_LEN} hex characters, got {}",
             key.len()
         )));
     }
     if !key.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::Database(
+        return Err(Error::DatabaseState(
             "db key must be ASCII hex digits only".to_string(),
         ));
     }
@@ -713,7 +741,7 @@ fn validate_hex_key(key: &str) -> Result<()> {
 /// embedding it in the PRAGMA literal is not a SQL-injection risk.
 fn apply_pragma_key(conn: &Connection, key: &str) -> Result<()> {
     conn.execute_batch(&format!("PRAGMA key = \"x'{key}'\";"))
-        .map_err(|e| Error::Database(format!("PRAGMA key failed: {e}")))
+        .map_err(|e| Error::DatabaseState(format!("PRAGMA key failed: {e}")))
 }
 
 /// Cheap heuristic to decide whether `path` is a plaintext SQLite
@@ -765,13 +793,13 @@ fn migrate_plaintext_in_place(path: &str, key: &str) -> Result<()> {
     // can't be removed, the ATTACH below will tell us.
     let _ = std::fs::remove_file(&encrypted_path);
 
-    let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+    let conn = Connection::open(path).map_err(Error::Sqlite)?;
     // Sanity-check the source is the plaintext DB we expect. A
     // failure here means our header heuristic was wrong and we
     // shouldn't proceed.
     conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
         .map_err(|e| {
-            Error::Database(format!(
+            Error::DatabaseState(format!(
                 "plaintext probe failed during migration; aborting to avoid data loss: {e}"
             ))
         })?;
@@ -788,13 +816,13 @@ fn migrate_plaintext_in_place(path: &str, key: &str) -> Result<()> {
         // Try to clean up the half-written encrypted file before
         // bubbling up.
         let _ = std::fs::remove_file(&encrypted_path);
-        Error::Database(format!("sqlcipher_export failed: {e}"))
+        Error::DatabaseState(format!("sqlcipher_export failed: {e}"))
     })?;
     drop(conn);
 
     std::fs::rename(&encrypted_path, path).map_err(|e| {
         let _ = std::fs::remove_file(&encrypted_path);
-        Error::Database(format!("rename encrypted db over plaintext failed: {e}"))
+        Error::DatabaseState(format!("rename encrypted db over plaintext failed: {e}"))
     })?;
 
     Ok(())
@@ -835,7 +863,7 @@ mod tests {
 
         let observed_inside = with_secure_delete(&conn, |conn| {
             conn.query_row("PRAGMA secure_delete", [], |r| r.get::<_, i64>(0))
-                .map_err(|e| Error::Database(e.to_string()))
+                .map_err(Error::Sqlite)
         })
         .expect("op should succeed");
 
@@ -859,7 +887,9 @@ mod tests {
         let conn = db.lock().expect("lock");
 
         let result: Result<()> = with_secure_delete(&conn, |_conn| {
-            Err(Error::Database("simulated failure mid-scrub".to_string()))
+            Err(Error::DatabaseState(
+                "simulated failure mid-scrub".to_string(),
+            ))
         });
         assert!(result.is_err(), "the op error must propagate");
 
@@ -990,11 +1020,11 @@ mod tests {
         // so the migration path is skipped and we get a clean error.
         let err = open_shared_with_key(db_path_str, Some(OTHER_KEY)).expect_err("wrong key");
         match err {
-            Error::Database(msg) => assert!(
+            Error::DatabaseState(msg) => assert!(
                 msg.contains("decryption failed") || msg.contains("file is not a database"),
                 "unexpected error message: {msg}"
             ),
-            other => panic!("expected Error::Database, got {other:?}"),
+            other => panic!("expected Error::DatabaseState, got {other:?}"),
         }
     }
 
@@ -1021,7 +1051,7 @@ mod tests {
         // Diagnostic message points the user at the recovery path
         // (restore db.key or accept data loss).
         match result.unwrap_err() {
-            crate::error::Error::Database(msg) => {
+            crate::error::Error::DatabaseState(msg) => {
                 assert!(
                     msg.contains("SQLCipher-encrypted") || msg.contains("db.key"),
                     "diagnostic should mention SQLCipher / db.key, got: {msg}"
@@ -1118,11 +1148,11 @@ mod tests {
         let err = open_shared_with_key(db_path_str, Some(OTHER_KEY))
             .expect_err("wrong key after migration");
         match err {
-            Error::Database(msg) => assert!(
+            Error::DatabaseState(msg) => assert!(
                 msg.contains("decryption failed") || msg.contains("file is not a database"),
                 "unexpected error after migration with wrong key: {msg}"
             ),
-            other => panic!("expected Error::Database, got {other:?}"),
+            other => panic!("expected Error::DatabaseState, got {other:?}"),
         }
 
         // No leftover `.encrypted` file from the migration.
@@ -1178,11 +1208,11 @@ mod tests {
         let db_path_str = db_path.to_str().unwrap();
         let err = open_shared_with_key(db_path_str, Some("nope")).expect_err("bad key");
         match err {
-            Error::Database(msg) => assert!(
+            Error::DatabaseState(msg) => assert!(
                 msg.contains("64") || msg.contains("hex"),
                 "expected validator error, got: {msg}"
             ),
-            other => panic!("expected Error::Database, got {other:?}"),
+            other => panic!("expected Error::DatabaseState, got {other:?}"),
         }
         assert!(
             !db_path.exists(),
@@ -1405,7 +1435,7 @@ mod tests {
     }
 
     /// `integrity_check_with_retry` surfaces a structured
-    /// `Error::Database` when SQLite reports corruption. We can't
+    /// `Error::DatabaseState` when SQLite reports corruption. We can't
     /// easily produce real corruption in a unit test, but we can
     /// pin the message shape via a synthetic injection — see
     /// `run_integrity_check_reports_non_ok_rows_as_error` below for
@@ -1425,12 +1455,12 @@ mod tests {
         // The error format check: build a fake corruption message
         // by reusing the same format string the production path
         // would produce.
-        let synthetic = Error::Database(format!(
+        let synthetic = Error::DatabaseState(format!(
             "integrity_check reported corruption: {}",
             ["row 17 page 4 is corrupted", "row 18 page 4 is corrupted"].join("; ")
         ));
         match synthetic {
-            Error::Database(msg) => {
+            Error::DatabaseState(msg) => {
                 assert!(msg.contains("integrity_check reported corruption"));
                 assert!(msg.contains("row 17"));
                 assert!(msg.contains("row 18"));
@@ -1440,6 +1470,24 @@ mod tests {
     }
 
     // ===== SharedReadPool tests =====
+
+    #[test]
+    fn default_read_pool_size_is_clamped_to_cpu_count() {
+        let size = default_read_pool_size();
+        // Always at least one reader (the `available_parallelism`
+        // failure fallback) and never more than the documented cap.
+        assert!(size >= 1, "expected at least one reader, got {size}");
+        assert!(
+            size <= MAX_READ_POOL_SIZE,
+            "expected at most {MAX_READ_POOL_SIZE} readers, got {size}"
+        );
+        // When the host parallelism is observable it must equal
+        // min(cpus, cap) exactly — i.e. the cap only ever lowers the
+        // count, never raises it above the available CPUs.
+        if let Ok(cpus) = std::thread::available_parallelism() {
+            assert_eq!(size, cpus.get().min(MAX_READ_POOL_SIZE));
+        }
+    }
 
     #[test]
     fn empty_read_pool_reports_empty() {
