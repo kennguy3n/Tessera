@@ -168,7 +168,7 @@ impl MasterKey {
     /// guarantee.
     pub fn from_hex(hex: &str) -> Result<Self> {
         if hex.len() != 64 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "MasterKey::from_hex: expected 64 hex chars, got {}",
                 hex.len()
             )));
@@ -198,7 +198,7 @@ fn decode_hex_nibble(b: u8) -> Result<u8> {
         b'0'..=b'9' => Ok(b - b'0'),
         b'a'..=b'f' => Ok(b - b'a' + 10),
         b'A'..=b'F' => Ok(b - b'A' + 10),
-        _ => Err(Error::Database(format!(
+        _ => Err(Error::DatabaseState(format!(
             "MasterKey::from_hex: non-hex byte 0x{b:02x}"
         ))),
     }
@@ -255,13 +255,13 @@ impl WrappedDek {
     /// boundary rather than silently producing garbage decryption.
     pub fn from_blobs(wrap_nonce: &[u8], wrapped: &[u8]) -> Result<Self> {
         if wrap_nonce.len() != AES_GCM_NONCE_LEN {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "WrappedDek::from_blobs: wrap_nonce expected {AES_GCM_NONCE_LEN} bytes, got {}",
                 wrap_nonce.len()
             )));
         }
         if wrapped.len() != WRAPPED_DEK_LEN {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "WrappedDek::from_blobs: wrapped expected {WRAPPED_DEK_LEN} bytes, got {}",
                 wrapped.len()
             )));
@@ -324,7 +324,7 @@ impl KchatCrypto {
 
         let kek = self.kek_provider.derive_source_kek(source_id);
         let cipher = Aes256Gcm::new_from_slice(kek.as_ref())
-            .map_err(|e| Error::Database(format!("KEK init failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("KEK init failed: {e}")))?;
 
         let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
@@ -339,10 +339,10 @@ impl KchatCrypto {
                     aad: aad.as_bytes(),
                 },
             )
-            .map_err(|e| Error::Database(format!("DEK wrap failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("DEK wrap failed: {e}")))?;
 
         if ciphertext.len() != WRAPPED_DEK_LEN {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "DEK wrap produced unexpected ciphertext length {}, expected {WRAPPED_DEK_LEN}",
                 ciphertext.len()
             )));
@@ -371,7 +371,7 @@ impl KchatCrypto {
     pub fn unwrap_dek(&self, source_id: &SourceId, wrapped: &WrappedDek) -> Result<()> {
         let kek = self.kek_provider.derive_source_kek(source_id);
         let cipher = Aes256Gcm::new_from_slice(kek.as_ref())
-            .map_err(|e| Error::Database(format!("KEK init failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("KEK init failed: {e}")))?;
         let nonce = Nonce::from_slice(&wrapped.wrap_nonce);
         let aad = wrap_aad(source_id);
         let dek_bytes = cipher
@@ -382,9 +382,9 @@ impl KchatCrypto {
                     aad: aad.as_bytes(),
                 },
             )
-            .map_err(|e| Error::Database(format!("DEK unwrap failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("DEK unwrap failed: {e}")))?;
         if dek_bytes.len() != 32 {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "DEK unwrap produced unexpected length {}, expected 32",
                 dek_bytes.len()
             )));
@@ -404,12 +404,12 @@ impl KchatCrypto {
     pub fn seal_chunk(&self, source_id: &SourceId, plaintext: &[u8]) -> Result<SealedChunk> {
         let guard = self.dek_cache.lock().expect("dek_cache mutex poisoned");
         let dek = guard.get(&source_id.to_string()).ok_or_else(|| {
-            Error::Database(format!(
+            Error::DatabaseState(format!(
                 "seal_chunk: DEK for source {source_id} not loaded; call generate_and_wrap_dek or unwrap_dek first"
             ))
         })?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref())
-            .map_err(|e| Error::Database(format!("DEK init failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("DEK init failed: {e}")))?;
         let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
@@ -422,7 +422,7 @@ impl KchatCrypto {
                     aad: aad.as_bytes(),
                 },
             )
-            .map_err(|e| Error::Database(format!("chunk seal failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("chunk seal failed: {e}")))?;
         Ok(SealedChunk {
             nonce: nonce_bytes.to_vec(),
             ciphertext,
@@ -434,19 +434,19 @@ impl KchatCrypto {
     /// AAD).
     pub fn open_chunk(&self, source_id: &SourceId, sealed: &SealedChunk) -> Result<Vec<u8>> {
         if sealed.nonce.len() != AES_GCM_NONCE_LEN {
-            return Err(Error::Database(format!(
+            return Err(Error::DatabaseState(format!(
                 "open_chunk: nonce expected {AES_GCM_NONCE_LEN} bytes, got {}",
                 sealed.nonce.len()
             )));
         }
         let guard = self.dek_cache.lock().expect("dek_cache mutex poisoned");
         let dek = guard.get(&source_id.to_string()).ok_or_else(|| {
-            Error::Database(format!(
+            Error::DatabaseState(format!(
                 "open_chunk: DEK for source {source_id} not loaded; call unwrap_dek first"
             ))
         })?;
         let cipher = Aes256Gcm::new_from_slice(dek.as_ref())
-            .map_err(|e| Error::Database(format!("DEK init failed: {e}")))?;
+            .map_err(|e| Error::DatabaseState(format!("DEK init failed: {e}")))?;
         let nonce = Nonce::from_slice(&sealed.nonce);
         let aad = chunk_aad(source_id);
         cipher
@@ -457,7 +457,7 @@ impl KchatCrypto {
                     aad: aad.as_bytes(),
                 },
             )
-            .map_err(|e| Error::Database(format!("chunk open failed: {e}")))
+            .map_err(|e| Error::DatabaseState(format!("chunk open failed: {e}")))
     }
 
     /// Drop the cached DEK for `source_id` and overwrite the bytes
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn from_hex_rejects_short_input() {
         let err = MasterKey::from_hex("dead").unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 
     #[test]
@@ -543,7 +543,7 @@ mod tests {
         let err =
             MasterKey::from_hex("ZZZZ456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
                 .unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 
     #[test]
@@ -618,7 +618,7 @@ mod tests {
         crypto.generate_and_wrap_dek(&source_b).unwrap();
         let sealed = crypto.seal_chunk(&source_a, b"secret-a").unwrap();
         let err = crypto.open_chunk(&source_b, &sealed).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 
     #[test]
@@ -632,7 +632,7 @@ mod tests {
         let sealed = crypto.seal_chunk(&source, b"top secret").unwrap();
         crypto.forget_dek(&source);
         let err = crypto.open_chunk(&source, &sealed).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
         assert_eq!(crypto.cache_size(), 0);
     }
 
@@ -648,7 +648,7 @@ mod tests {
         let mid = sealed.ciphertext.len() / 2;
         sealed.ciphertext[mid] ^= 0x01;
         let err = crypto.open_chunk(&source, &sealed).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 
     #[test]
@@ -657,9 +657,9 @@ mod tests {
         // length type guard, so a future schema migration that
         // changes the column widths must be caught at the boundary.
         let err = WrappedDek::from_blobs(&[0u8; 8], &[0u8; WRAPPED_DEK_LEN]).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
         let err = WrappedDek::from_blobs(&[0u8; AES_GCM_NONCE_LEN], &[0u8; 10]).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 
     #[test]
@@ -672,7 +672,7 @@ mod tests {
             ciphertext: vec![0u8; 16],
         };
         let err = crypto.open_chunk(&source, &bad).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 
     #[test]
@@ -691,6 +691,6 @@ mod tests {
         }
         let crypto_b = KchatCrypto::new(MasterKey::from_bytes(other));
         let err = crypto_b.unwrap_dek(&source, &wrapped).unwrap_err();
-        assert!(matches!(err, Error::Database(_)));
+        assert!(matches!(err, Error::DatabaseState(_)));
     }
 }

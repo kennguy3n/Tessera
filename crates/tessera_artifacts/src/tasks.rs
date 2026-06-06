@@ -157,7 +157,7 @@ impl TaskStore {
                     ON tasks(status, position);
                 CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source_id);",
         )
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(Error::Sqlite)?;
 
         // Forward-only `depends_on` migration. Databases created by
         // earlier Tessera builds have a `tasks` table WITHOUT the
@@ -176,11 +176,11 @@ impl TaskStore {
                 |_| Ok(()),
             )
             .optional()
-            .map_err(|e| Error::Database(format!("table_info(tasks): {e}")))?
+            .map_err(Error::Sqlite)?
             .is_some();
         if !has_depends_on {
             conn.execute("ALTER TABLE tasks ADD COLUMN depends_on TEXT", [])
-                .map_err(|e| Error::Database(format!("failed to add tasks.depends_on: {e}")))?;
+                .map_err(Error::Sqlite)?;
         }
         Ok(())
     }
@@ -216,7 +216,7 @@ impl TaskStore {
                     task.updated_at.to_rfc3339(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(())
     }
 
@@ -250,14 +250,10 @@ impl TaskStore {
                         assignee, due_date, source_id, extracted_item_id,
                         depends_on, created_at, updated_at FROM tasks WHERE id = ?1",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let mut rows = stmt
-            .query(params![id.to_string()])
-            .map_err(|e| Error::Database(e.to_string()))?;
-        if let Some(row) = rows.next().map_err(|e| Error::Database(e.to_string()))? {
-            Ok(Some(
-                row_to_task(row).map_err(|e| Error::Database(e.to_string()))?,
-            ))
+            .map_err(Error::Sqlite)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(Error::Sqlite)?;
+        if let Some(row) = rows.next().map_err(Error::Sqlite)? {
+            Ok(Some(row_to_task(row).map_err(Error::Sqlite)?))
         } else {
             Ok(None)
         }
@@ -274,13 +270,11 @@ impl TaskStore {
                         depends_on, created_at, updated_at FROM tasks
                  ORDER BY status, position ASC, created_at DESC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let rows = stmt
-            .query_map([], row_to_task)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
+        let rows = stmt.query_map([], row_to_task).map_err(Error::Sqlite)?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.map_err(|e| Error::Database(e.to_string()))?);
+            out.push(r.map_err(Error::Sqlite)?);
         }
         Ok(out)
     }
@@ -294,13 +288,13 @@ impl TaskStore {
                         depends_on, created_at, updated_at FROM tasks
                  WHERE status = ?1 ORDER BY position ASC, created_at DESC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let rows = stmt
             .query_map(params![status.to_string()], row_to_task)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.map_err(|e| Error::Database(e.to_string()))?);
+            out.push(r.map_err(Error::Sqlite)?);
         }
         Ok(out)
     }
@@ -352,7 +346,7 @@ impl TaskStore {
                     id.to_string(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(Task {
             id: *id,
             title,
@@ -376,7 +370,7 @@ impl TaskStore {
             .lock()
             .expect("connection mutex poisoned")
             .execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         Ok(rows > 0)
     }
 
@@ -390,9 +384,7 @@ impl TaskStore {
     /// so write-serialisation is unchanged.
     pub fn reorder_in_status(&self, status: TaskStatus, ordered_ids: &[TaskId]) -> Result<()> {
         let mut conn = self.conn.lock().expect("connection mutex poisoned");
-        let tx = conn
-            .transaction()
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let tx = conn.transaction().map_err(Error::Sqlite)?;
         for (idx, tid) in ordered_ids.iter().enumerate() {
             tx.execute(
                 "UPDATE tasks SET position = ?1, updated_at = ?2
@@ -404,9 +396,9 @@ impl TaskStore {
                     status.to_string(),
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(Error::Sqlite)?;
         }
-        tx.commit().map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().map_err(Error::Sqlite)?;
         Ok(())
     }
 }
@@ -488,7 +480,7 @@ fn encode_depends_on(depends_on: &[TaskId]) -> Result<Option<String>> {
     }
     serde_json::to_string(depends_on)
         .map(Some)
-        .map_err(|e| Error::Database(format!("failed to encode depends_on: {e}")))
+        .map_err(Error::Json)
 }
 
 /// Parse the JSON-array text from the `tasks.depends_on` column back
