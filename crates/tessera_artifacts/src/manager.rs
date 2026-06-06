@@ -14,7 +14,9 @@ use crate::store::{ArtifactStore, ArtifactVersion};
 /// Minimum interval between automatic version snapshots for the same artifact.
 const VERSION_RATE_LIMIT_SECS: u64 = 60;
 
-/// Artifact Manager.
+/// High-level API over an [`ArtifactStore`] that adds version-history
+/// management: it snapshots a prior revision on content updates (at
+/// most once per minute per artifact) so edits are recoverable.
 pub struct ArtifactManager {
     store: ArtifactStore,
     /// Tracks the last time a version was auto-saved per artifact for rate limiting.
@@ -22,7 +24,7 @@ pub struct ArtifactManager {
 }
 
 impl ArtifactManager {
-    /// Creates a new instance.
+    /// Opens (creating if needed) the artifact database at `db_path`.
     pub fn new(db_path: &str) -> Result<Self> {
         let store = ArtifactStore::open(db_path)?;
         Ok(Self {
@@ -31,7 +33,7 @@ impl ArtifactManager {
         })
     }
 
-    /// New in memory.
+    /// Builds a manager over an ephemeral in-memory store (for tests).
     pub fn new_in_memory() -> Result<Self> {
         let store = ArtifactStore::open_in_memory()?;
         Ok(Self {
@@ -50,7 +52,7 @@ impl ArtifactManager {
         })
     }
 
-    /// Create.
+    /// Creates and persists a new empty artifact, returning it.
     pub fn create(
         &self,
         title: String,
@@ -62,7 +64,10 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
-    /// Update content.
+    /// Replaces the artifact's body, first snapshotting the current
+    /// revision as a version (rate-limited to once per minute per
+    /// artifact; the first update always snapshots). Returns the
+    /// updated artifact.
     pub fn update_content(&self, id: &ArtifactId, content: String) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
 
@@ -93,7 +98,8 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
-    /// Add citation.
+    /// Links a citation to the artifact and persists it, returning the
+    /// updated artifact.
     pub fn add_citation(&self, id: &ArtifactId, citation_id: CitationId) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
         artifact.add_citation(citation_id);
@@ -101,27 +107,29 @@ impl ArtifactManager {
         Ok(artifact)
     }
 
-    /// Get.
+    /// Fetches the artifact by id; errors if it does not exist.
     pub fn get(&self, id: &ArtifactId) -> Result<Artifact> {
         self.store.get(id)
     }
 
-    /// List.
+    /// Returns all artifacts.
     pub fn list(&self) -> Result<Vec<Artifact>> {
         self.store.list()
     }
 
-    /// Delete.
+    /// Deletes the artifact and its version history.
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
         self.store.delete(id)
     }
 
-    /// List versions.
+    /// Returns the saved version snapshots for the artifact.
     pub fn list_versions(&self, id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
         self.store.list_versions(id)
     }
 
-    /// Restore version.
+    /// Restores the artifact's content from a saved version snapshot,
+    /// snapshotting the current revision first (bypassing the rate
+    /// limit) so the restore itself is undoable.
     pub fn restore_version(&self, id: &ArtifactId, version_number: u32) -> Result<Artifact> {
         let version = self.store.get_version(id, version_number)?;
         // Force a version save before restoring, bypassing rate limit

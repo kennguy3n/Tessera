@@ -13,18 +13,19 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
         .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc))
 }
 
-/// Artifact Store.
+/// SQLite-backed persistence for [`Artifact`]s and their version
+/// snapshots.
 pub struct ArtifactStore {
     conn: SharedConnection,
 }
 
 impl ArtifactStore {
-    /// Open.
+    /// Opens (creating if needed) the artifact database at `path`.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
-    /// Open in memory.
+    /// Opens an ephemeral in-memory artifact database (for tests).
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -67,7 +68,7 @@ impl ArtifactStore {
         Ok(())
     }
 
-    /// Insert.
+    /// Inserts a new artifact row (citations stored as a JSON array).
     pub fn insert(&self, artifact: &Artifact) -> Result<()> {
         let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
@@ -92,7 +93,8 @@ impl ArtifactStore {
         Ok(())
     }
 
-    /// Update.
+    /// Overwrites the title, content, citations, `updated_at`, and
+    /// `version` of an existing artifact row.
     pub fn update(&self, artifact: &Artifact) -> Result<()> {
         let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
@@ -113,7 +115,8 @@ impl ArtifactStore {
         Ok(())
     }
 
-    /// Get.
+    /// Fetches an artifact by id; errors with
+    /// [`Error::DatabaseState`] if no such row exists.
     pub fn get(&self, id: &ArtifactId) -> Result<Artifact> {
         self.conn
             .lock()
@@ -179,7 +182,7 @@ impl ArtifactStore {
             .map_err(|e| Error::ArtifactNotFound(e.to_string()))
     }
 
-    /// List.
+    /// Returns all stored artifacts.
     pub fn list(&self) -> Result<Vec<Artifact>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -254,7 +257,8 @@ impl ArtifactStore {
         Ok(artifacts)
     }
 
-    /// Delete.
+    /// Deletes the artifact and (via `ON DELETE CASCADE`) its version
+    /// snapshots.
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         // Zero-fill the freed pages so the artifact body (and its
@@ -270,7 +274,8 @@ impl ArtifactStore {
         })
     }
 
-    /// Save version.
+    /// Appends a version snapshot recording `content` at
+    /// `version_number` for the artifact.
     pub fn save_version(
         &self,
         artifact_id: &ArtifactId,
@@ -289,7 +294,8 @@ impl ArtifactStore {
         Ok(())
     }
 
-    /// List versions.
+    /// Returns the saved version snapshots for an artifact, newest
+    /// version first.
     pub fn list_versions(&self, artifact_id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -314,7 +320,7 @@ impl ArtifactStore {
         Ok(versions)
     }
 
-    /// Get version.
+    /// Fetches a single version snapshot by its version number.
     pub fn get_version(
         &self,
         artifact_id: &ArtifactId,
@@ -340,13 +346,14 @@ impl ArtifactStore {
 }
 
 #[derive(Debug, Clone)]
-/// Artifact Version.
+/// A point-in-time snapshot of an artifact's body, retained so prior
+/// revisions can be listed and restored.
 pub struct ArtifactVersion {
-    /// Version number.
+    /// The artifact `version` this snapshot was taken at.
     pub version_number: u32,
-    /// Content snapshot.
+    /// The artifact body as it stood at that version.
     pub content_snapshot: String,
-    /// Created at.
+    /// When the snapshot was taken, as an RFC 3339 string.
     pub created_at: String,
 }
 

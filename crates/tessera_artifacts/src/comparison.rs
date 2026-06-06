@@ -8,22 +8,27 @@ use std::fmt::Write;
 /// Result of comparing two sources' content.
 #[derive(Debug, Clone)]
 pub struct ComparisonResult {
-    /// Common themes.
+    /// Themes that appear in both sources, most frequent first
+    /// (capped at 30).
     pub common_themes: Vec<Theme>,
-    /// Unique to a.
+    /// Themes found only in the first source, most frequent first
+    /// (capped at 20).
     pub unique_to_a: Vec<Theme>,
-    /// Unique to b.
+    /// Themes found only in the second source, most frequent first
+    /// (capped at 20).
     pub unique_to_b: Vec<Theme>,
-    /// Similarity score.
+    /// Sørensen–Dice overlap of the two key-phrase sets, in
+    /// `0.0..=1.0` (`2·|A∩B| / (|A|+|B|)`); 0 when both are empty.
     pub similarity_score: f64,
 }
 
 #[derive(Debug, Clone)]
-/// Theme.
+/// A key phrase extracted from source text together with how often it
+/// occurred.
 pub struct Theme {
-    /// Label.
+    /// The extracted key phrase (n-gram).
     pub label: String,
-    /// Frequency.
+    /// Number of occurrences contributing to its ranking.
     pub frequency: usize,
 }
 
@@ -85,7 +90,9 @@ pub fn compare_sources(chunks_a: &[String], chunks_b: &[String]) -> ComparisonRe
 }
 
 impl ComparisonResult {
-    /// To markdown.
+    /// Renders the comparison as a Markdown report — a similarity
+    /// percentage plus sections for common and source-unique themes,
+    /// using `label_a`/`label_b` as the source headings.
     pub fn to_markdown(&self, label_a: &str, label_b: &str) -> String {
         let mut md = String::from("# Source Comparison\n\n");
         let _ = write!(

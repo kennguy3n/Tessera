@@ -21,18 +21,19 @@ use crate::generator::{GeneratedContent, GeneratedSection, SectionKind, SourcePa
 use tessera_core::ArtifactType;
 
 #[derive(Debug, Clone, Copy)]
-/// Infographic Layout.
+/// How infographic sections are arranged on the page.
 pub enum InfographicLayout {
-    /// The `Vertical` variant.
+    /// Sections stacked top-to-bottom in a single column.
     Vertical,
-    /// The `Horizontal` variant.
+    /// Sections laid out left-to-right in a single row.
     Horizontal,
-    /// The `Grid` variant.
+    /// Sections tiled into a multi-column grid.
     Grid,
 }
 
 impl InfographicLayout {
-    /// As str.
+    /// Lowercase string form (`"vertical"`/`"horizontal"`/`"grid"`)
+    /// emitted into the artifact front-matter.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Vertical => "vertical",
@@ -43,46 +44,52 @@ impl InfographicLayout {
 }
 
 #[derive(Debug, Clone, Default)]
-/// Infographic Color Scheme.
+/// Optional brand colours for an infographic. Each is an optional hex
+/// string (e.g. `"#7C3AED"`); `None` falls back to the renderer
+/// default.
 pub struct InfographicColorScheme {
-    /// Primary.
+    /// Dominant colour (headings, primary fills).
     pub primary: Option<String>, // hex e.g. "#7C3AED"
-    /// Secondary.
+    /// Supporting colour.
     pub secondary: Option<String>, // hex
-    /// Accent.
+    /// Highlight colour for emphasis.
     pub accent: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-/// Infographic Spec.
+/// Inputs for [`generate_infographic`]: the title/subtitle, layout and
+/// colours, and the source packs that become sections. Borrows its
+/// inputs for the duration of generation.
 pub struct InfographicSpec<'a> {
-    /// Title.
+    /// Infographic title.
     pub title: &'a str,
-    /// Subtitle.
+    /// Optional subtitle rendered as an overview blurb.
     pub subtitle: Option<&'a str>,
-    /// Layout.
+    /// Section arrangement.
     pub layout: InfographicLayout,
-    /// Color scheme.
+    /// Brand colours.
     pub color_scheme: InfographicColorScheme,
     /// Optional default icon set ("lucide" or "phosphor") used when a
     /// section doesn't specify one. Defaults to "lucide".
     pub default_icon_set: Option<&'a str>,
-    /// Source packs.
+    /// Source context; each pack becomes one infographic section.
     pub source_packs: &'a [SourcePack],
 }
 
 #[derive(Debug, Clone)]
-/// Landing Page Spec.
+/// Inputs for generating a landing page: hero copy plus the feature
+/// packs and stats that fill the body. Borrows its inputs for the
+/// duration of generation.
 pub struct LandingPageSpec<'a> {
-    /// Title.
+    /// Page/document title.
     pub title: &'a str,
-    /// Hero headline.
+    /// Large hero headline.
     pub hero_headline: &'a str,
-    /// Hero subheadline.
+    /// Supporting hero subheadline.
     pub hero_subheadline: &'a str,
-    /// Hero cta.
+    /// Optional call-to-action button label.
     pub hero_cta: Option<&'a str>,
-    /// Features.
+    /// Source packs rendered as feature sections.
     pub features: &'a [SourcePack],
     /// Optional stats (number, label).
     pub stats: &'a [(String, String)],

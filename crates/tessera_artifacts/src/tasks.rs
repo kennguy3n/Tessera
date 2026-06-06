@@ -41,26 +41,27 @@ fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTi
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-/// Task.
+/// A unit of work on the task board, optionally linked to the source
+/// material it was extracted from and to other tasks it depends on.
 pub struct Task {
-    /// Id.
+    /// Stable unique identity of the task.
     pub id: TaskId,
-    /// Title.
+    /// Short task title shown on the board card.
     pub title: String,
     #[serde(default)]
-    /// Description.
+    /// Longer free-form description; empty when unset.
     pub description: String,
-    /// Status.
+    /// Lifecycle/board column the task sits in.
     pub status: TaskStatus,
-    /// Priority.
+    /// Relative importance, used for sorting and styling.
     pub priority: TaskPriority,
     /// User-controlled ordering within the same status column.
     pub position: i64,
     #[serde(default)]
-    /// Assignee.
+    /// Person responsible for the task, if assigned.
     pub assignee: Option<String>,
     #[serde(default)]
-    /// Due date.
+    /// Optional deadline, in UTC.
     pub due_date: Option<DateTime<Utc>>,
     /// Optional source provenance — set when the task was extracted
     /// from indexed source material.
@@ -85,7 +86,9 @@ pub struct Task {
 }
 
 impl Task {
-    /// Creates a new instance.
+    /// Creates a task with the given title/status/priority, a fresh
+    /// id, empty optional fields, `position` 0, and both timestamps
+    /// stamped to now.
     pub fn new(title: impl Into<String>, status: TaskStatus, priority: TaskPriority) -> Self {
         let now = Utc::now();
         Self {
@@ -112,19 +115,21 @@ impl Task {
 /// provides `Some(None)` via the dedicated helpers below.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskUpdate {
-    /// Title.
+    /// New title, or `None` to keep the existing one.
     pub title: Option<String>,
-    /// Description.
+    /// New description, or `None` to keep the existing one.
     pub description: Option<String>,
-    /// Status.
+    /// New status, or `None` to keep the existing one.
     pub status: Option<TaskStatus>,
-    /// Priority.
+    /// New priority, or `None` to keep the existing one.
     pub priority: Option<TaskPriority>,
-    /// Position.
+    /// New board position, or `None` to keep the existing one.
     pub position: Option<i64>,
-    /// Assignee.
+    /// Assignee change: `None` preserves it, `Some(None)` clears it,
+    /// `Some(Some(name))` sets it.
     pub assignee: Option<Option<String>>,
-    /// Due date.
+    /// Due-date change with the same `Some(None)`-clears convention as
+    /// `assignee`.
     pub due_date: Option<Option<DateTime<Utc>>>,
     /// Replace the dependency set. `None` preserves the existing
     /// edges; `Some(vec)` overwrites them (pass an empty vec to clear
@@ -133,18 +138,19 @@ pub struct TaskUpdate {
     pub depends_on: Option<Vec<TaskId>>,
 }
 
-/// Task Store.
+/// SQLite-backed persistence for [`Task`]s and their dependency
+/// edges.
 pub struct TaskStore {
     conn: SharedConnection,
 }
 
 impl TaskStore {
-    /// Open.
+    /// Opens (creating if needed) the task database at `path`.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
-    /// Open in memory.
+    /// Opens an ephemeral in-memory task database (for tests).
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -208,7 +214,7 @@ impl TaskStore {
         Ok(())
     }
 
-    /// Create.
+    /// Inserts a new task row.
     pub fn create(&self, task: &Task) -> Result<()> {
         // Reject a create whose dependency edges would close a cycle
         // with the tasks already in the store. Validated BEFORE the
@@ -266,7 +272,7 @@ impl TaskStore {
         topological_sort(&tasks).map(|_| ())
     }
 
-    /// Get.
+    /// Fetches a single task by id, or `None` if absent.
     pub fn get(&self, id: &TaskId) -> Result<Option<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -304,7 +310,8 @@ impl TaskStore {
         Ok(out)
     }
 
-    /// List by status.
+    /// Returns the tasks in `status`, ordered by their board
+    /// `position`.
     pub fn list_by_status(&self, status: TaskStatus) -> Result<Vec<Task>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -325,7 +332,9 @@ impl TaskStore {
         Ok(out)
     }
 
-    /// Update.
+    /// Applies a partial [`TaskUpdate`] to the task, touching
+    /// `updated_at`, and returns the updated task. Rejects a
+    /// `depends_on` change that would introduce a dependency cycle.
     pub fn update(&self, id: &TaskId, update: TaskUpdate) -> Result<Task> {
         let existing = self
             .get(id)?
@@ -391,7 +400,7 @@ impl TaskStore {
         })
     }
 
-    /// Delete.
+    /// Deletes the task `id`, returning whether a row was removed.
     pub fn delete(&self, id: &TaskId) -> Result<bool> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         // Zero-fill the freed page so the deleted task (title, notes,

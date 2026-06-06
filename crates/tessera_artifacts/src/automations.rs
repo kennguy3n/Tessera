@@ -72,18 +72,20 @@ fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTi
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-/// Automation Trigger.
+/// What causes an [`Automation`] to fire. Serialised as an internally
+/// tagged (`kind`) `snake_case` enum so the wire/storage form is
+/// stable.
 pub enum AutomationTrigger {
     /// Run every `interval_seconds` seconds. The runner schedules the
     /// next run from `last_run_at + interval_seconds`, or `created_at`
     /// for the first run.
     Schedule {
-        /// Interval seconds.
+        /// Fixed interval between runs, in seconds.
         interval_seconds: i64,
     },
     /// Run when an artifact is generated from `template_id`.
     OnGenerate {
-        /// Template id.
+        /// Template whose generation fires this automation.
         template_id: TemplateId,
     },
     /// Run when the KChat WebSocket delivers a post in `channel_id`
@@ -107,18 +109,20 @@ pub enum AutomationTrigger {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-/// Automation Action.
+/// What an [`Automation`] does when it fires. Serialised as an
+/// internally tagged (`kind`) `snake_case` enum.
 pub enum AutomationAction {
-    /// Reindex Source.
+    /// Re-index the source identified by `source_id`.
     ReindexSource {
-        /// Source id.
+        /// Source to re-index.
         source_id: SourceId,
     },
-    /// Generate From Template.
+    /// Generate a new artifact from `template_id` using the listed
+    /// sources as input.
     GenerateFromTemplate {
-        /// Template id.
+        /// Template to generate from.
         template_id: TemplateId,
-        /// Source ids.
+        /// Sources fed into the generation.
         source_ids: Vec<SourceId>,
     },
     /// Run several actions in order as a single automation. Steps
@@ -240,30 +244,36 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-/// Automation.
+/// A persisted automation rule: a [`AutomationTrigger`] paired with an
+/// [`AutomationAction`], plus enable flag and last-run bookkeeping.
 pub struct Automation {
-    /// Id.
+    /// Stable unique identity of the rule.
     pub id: AutomationId,
-    /// Name.
+    /// User-facing name for the rule.
     pub name: String,
-    /// Trigger.
+    /// Condition that fires the rule.
     pub trigger: AutomationTrigger,
-    /// Action.
+    /// Work performed when the rule fires.
     pub action: AutomationAction,
-    /// Enabled.
+    /// Whether the rule is active; disabled rules never fire and are
+    /// never "due".
     pub enabled: bool,
-    /// Created at.
+    /// Creation time, in UTC.
     pub created_at: DateTime<Utc>,
-    /// Updated at.
+    /// Last-modification time, in UTC.
     pub updated_at: DateTime<Utc>,
-    /// Last run at.
+    /// When the rule last ran, or `None` if it has never run — used as
+    /// the schedule anchor for the next run.
     pub last_run_at: Option<DateTime<Utc>>,
-    /// Last run status.
+    /// Status string from the most recent run (`"ok"` or
+    /// `"failed: …"`), or `None` if it has never run.
     pub last_run_status: Option<String>,
 }
 
 impl Automation {
-    /// Creates a new instance.
+    /// Builds an enabled rule from `name`/`trigger`/`action`: mints a
+    /// new id, stamps both timestamps to now, and leaves the last-run
+    /// fields unset.
     pub fn new(
         name: impl Into<String>,
         trigger: AutomationTrigger,
@@ -306,18 +316,18 @@ impl Automation {
     }
 }
 
-/// Automation Store.
+/// SQLite-backed persistence for [`Automation`] rules.
 pub struct AutomationStore {
     conn: SharedConnection,
 }
 
 impl AutomationStore {
-    /// Open.
+    /// Opens (creating if needed) the automation database at `path`.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
-    /// Open in memory.
+    /// Opens an ephemeral in-memory automation database (for tests).
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -351,7 +361,8 @@ impl AutomationStore {
         Ok(())
     }
 
-    /// Create.
+    /// Inserts a new automation row, serialising the trigger and
+    /// action to JSON columns.
     pub fn create(&self, a: &Automation) -> Result<()> {
         let trigger_json = serde_json::to_string(&a.trigger)?;
         let action_json = serde_json::to_string(&a.action)?;
@@ -379,7 +390,7 @@ impl AutomationStore {
         Ok(())
     }
 
-    /// Get.
+    /// Fetches a single automation by id, or `None` if absent.
     pub fn get(&self, id: &AutomationId) -> Result<Option<Automation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -397,7 +408,7 @@ impl AutomationStore {
         }
     }
 
-    /// List.
+    /// Returns all automations, newest first (by creation time).
     pub fn list(&self) -> Result<Vec<Automation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -417,7 +428,7 @@ impl AutomationStore {
         Ok(out)
     }
 
-    /// Set enabled.
+    /// Toggles the `enabled` flag for `id` and touches `updated_at`.
     pub fn set_enabled(&self, id: &AutomationId, enabled: bool) -> Result<()> {
         self.conn
             .lock()
@@ -430,7 +441,9 @@ impl AutomationStore {
         Ok(())
     }
 
-    /// Delete.
+    /// Deletes the automation `id`, zero-filling the freed page so the
+    /// rule's trigger/action config can't be recovered from the
+    /// freelist. Returns whether a row was removed.
     pub fn delete(&self, id: &AutomationId) -> Result<bool> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         // Zero-fill the freed page so the deleted automation rule
