@@ -217,6 +217,12 @@ vi.mock("../appState", () => ({
   getKchatEventForwarder: () => null,
   setKchatChannelResyncImpl: vi.fn(),
   setKchatBackfillImpl: vi.fn(),
+  // `ipc/kchat.ts` imports these for the `kchat:setWatchedChannels` /
+  // `kchat:setAutoCreateTasks` handlers. This file doesn't exercise
+  // those handlers, but stub them so a future test that does won't
+  // crash on `undefined is not a function`.
+  setKchatWatchedChannels: vi.fn(),
+  setKchatAutoCreateTasks: vi.fn(),
 }));
 
 import { registerKchatHandlers } from "../ipc/kchat";
