@@ -14,35 +14,38 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Template Info.
+/// JS-facing summary of a [`Template`]: identity plus the metadata
+/// the template picker needs without loading section bodies.
 pub struct TemplateInfo {
-    /// Id.
+    /// Template id, stringified.
     pub id: String,
-    /// Name.
+    /// Human-readable template name.
     pub name: String,
-    /// Artifact type.
+    /// Artifact kind the template produces (`"document"`, …).
     pub artifact_type: String,
-    /// Description.
+    /// Short description shown in the picker.
     pub description: String,
-    /// Section count.
+    /// Number of sections the template defines.
     pub section_count: i32,
-    /// Export formats.
+    /// Export formats the template supports (e.g. `"pdf"`,
+    /// `"docx"`).
     pub export_formats: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Template Section Info.
+/// JS-facing view of one section within a template.
 pub struct TemplateSectionInfo {
-    /// Title.
+    /// Heading shown for this section in the template.
     pub title: String,
-    /// Prompt.
+    /// Generation prompt used to fill this section.
     pub prompt: String,
-    /// Required sources.
+    /// Whether the section requires at least one bound source.
     pub required_sources: bool,
 }
 
-/// List templates.
+/// Lists every template found under `template_dir` (no audit
+/// logging; broken templates are skipped).
 pub fn list_templates(template_dir: &str) -> BridgeResult<Vec<TemplateInfo>> {
     // No audit logger — only the on-disk eprintln surface fires for
     // dropped templates. Used by callers that don't have an audit
@@ -107,7 +110,8 @@ fn list_templates_inner(
     Ok(templates)
 }
 
-/// Get template.
+/// Loads a single template by id, or `None` if not found (no
+/// audit logging).
 pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Option<TemplateInfo>> {
     get_template_inner(template_dir, template_id, None)
 }

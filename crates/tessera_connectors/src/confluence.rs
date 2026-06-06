@@ -37,7 +37,9 @@ use crate::url_encode;
 const DEFAULT_AUTH_BASE: &str = "https://auth.atlassian.com";
 const DEFAULT_API_BASE: &str = "https://api.atlassian.com";
 
-/// Confluence Connector.
+/// Connector for Atlassian Confluence Cloud: holds OAuth state, the
+/// `cloud_id`/`site_url` of the authorized site, and the API
+/// endpoints, syncing pages via the content API.
 pub struct ConfluenceConnector {
     client: Client,
     status: ConnectorStatus,
@@ -55,7 +57,8 @@ pub struct ConfluenceConnector {
 }
 
 impl ConfluenceConnector {
-    /// Creates a new instance.
+    /// Creates a disconnected connector pointed at the live Atlassian
+    /// OAuth and API endpoints.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -74,7 +77,8 @@ impl ConfluenceConnector {
         }
     }
 
-    /// With base url.
+    /// Creates a connector targeting a custom base URL (for tests
+    /// against a mock server).
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
             client: Client::new(),
@@ -93,7 +97,9 @@ impl ConfluenceConnector {
         }
     }
 
-    /// Set access token.
+    /// Sets the access token, its lifetime (seconds) and the target
+    /// `cloud_id`, marking the connector connected. For restoring a
+    /// session or testing.
     pub fn set_access_token(&mut self, token: &str, expires_in_secs: i64, cloud_id: &str) {
         self.access_token = Some(token.to_string());
         self.token_expiry = Some(Utc::now() + chrono::Duration::seconds(expires_in_secs));
@@ -101,32 +107,34 @@ impl ConfluenceConnector {
         self.status = ConnectorStatus::Connected;
     }
 
-    /// Provider name.
+    /// Stable provider key for this connector (`"confluence"`).
     pub fn provider_name(&self) -> &'static str {
         "confluence"
     }
-    /// Status.
+    /// Current connection status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
-    /// Last sync time.
+    /// When the last successful sync completed, if ever.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
-    /// File count.
+    /// Number of pages indexed from this connector.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }
-    /// Cloud id.
+    /// Atlassian `cloud_id` of the authorized site, once connected;
+    /// required to build API URLs.
     pub fn cloud_id(&self) -> Option<&str> {
         self.cloud_id.as_deref()
     }
-    /// Site url.
+    /// Canonical URL of the authorized Confluence site, once known.
     pub fn site_url(&self) -> Option<&str> {
         self.site_url.as_deref()
     }
 
-    /// Build auth url.
+    /// Builds the Atlassian OAuth 2.0 (3LO) consent URL the user
+    /// visits to authorize the connector.
     pub fn build_auth_url(&self, config: &AuthConfig) -> String {
         let mut scopes: Vec<String> = config.scopes.clone();
         for required in [
@@ -149,7 +157,9 @@ impl ConfluenceConnector {
         )
     }
 
-    /// Authenticate.
+    /// Exchanges the authorization code for access + refresh tokens,
+    /// resolves the accessible site (`cloud_id`/`site_url`), and
+    /// transitions to [`ConnectorStatus::Connected`].
     pub async fn authenticate(&mut self, config: &AuthConfig) -> ConnectorResult<StoredTokens> {
         self.status = ConnectorStatus::Connecting;
         self.client_id = Some(config.client_id.clone());
@@ -210,7 +220,8 @@ impl ConfluenceConnector {
         })
     }
 
-    /// Restore tokens.
+    /// Re-hydrates a persisted session: loads tokens, the `cloud_id`
+    /// from provider metadata, and the client credentials.
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
@@ -226,7 +237,8 @@ impl ConfluenceConnector {
         self.status = ConnectorStatus::Connected;
     }
 
-    /// Refresh access token.
+    /// Uses the stored refresh token to obtain a fresh access token,
+    /// updating the stored token and expiry.
     pub async fn refresh_access_token(&mut self) -> ConnectorResult<StoredTokens> {
         let refresh_token = self
             .refresh_token
@@ -302,7 +314,8 @@ impl ConfluenceConnector {
             .ok_or(ConnectorError::TokenExpired)
     }
 
-    /// List accessible resources.
+    /// Calls Atlassian's `accessible-resources` endpoint to list the
+    /// sites this token can reach (used to resolve `cloud_id`).
     pub async fn list_accessible_resources(
         &self,
         access_token: &str,
@@ -466,7 +479,8 @@ impl ConfluenceConnector {
         Ok(body.into_bytes())
     }
 
-    /// Sync changes.
+    /// Fetches pages changed since `change_token` (or all pages on
+    /// the first sync), returning the delta and advancing the cursor.
     pub async fn sync_changes(
         &mut self,
         change_token: Option<&str>,
@@ -663,17 +677,18 @@ struct AtlassianTokenResponse {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-/// Atlassian Resource.
+/// One entry from Atlassian's `accessible-resources` response — a
+/// site the authorized token can access.
 pub struct AtlassianResource {
-    /// Id.
+    /// The site's `cloud_id`, used to build API URLs.
     pub id: String,
-    /// Url.
+    /// Canonical site URL (e.g. `https://acme.atlassian.net/wiki`).
     pub url: String,
     #[serde(default)]
-    /// Name.
+    /// Human-readable site name, when provided.
     pub name: Option<String>,
     #[serde(default)]
-    /// Scopes.
+    /// OAuth scopes granted for this site, when provided.
     pub scopes: Option<Vec<String>>,
 }
 

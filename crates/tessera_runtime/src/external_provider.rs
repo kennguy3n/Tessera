@@ -64,16 +64,17 @@ use crate::generation::{GenerateChunk, GenerateRequest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalProviderType {
-    /// Open AI Compatible.
+    /// OpenAI `/v1/chat/completions` wire format (OpenAI, Ollama,
+    /// vLLM, LM Studio, …).
     OpenAICompatible,
-    /// The `Anthropic` variant.
+    /// Anthropic `/v1/messages` SSE endpoint.
     Anthropic,
-    /// The `Custom` variant.
+    /// User-supplied endpoint speaking the OpenAI wire format.
     Custom,
 }
 
 impl ExternalProviderType {
-    /// As str.
+    /// Snake_case wire identifier (`"openai_compatible"`, …).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAICompatible => "openai_compatible",
@@ -82,7 +83,7 @@ impl ExternalProviderType {
         }
     }
 
-    /// Display label.
+    /// Human-readable provider label for the Settings UI.
     pub fn display_label(&self) -> &'static str {
         match self {
             Self::OpenAICompatible => "OpenAI-compatible (OpenAI / Ollama / vLLM / LM Studio)",
@@ -100,20 +101,20 @@ impl ExternalProviderType {
 /// part of [`ExternalGenerateInputs`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExternalProviderConfig {
-    /// Enabled.
+    /// Whether the external provider is enabled as a fallback.
     pub enabled: bool,
-    /// Provider type.
+    /// Which provider protocol family to speak.
     pub provider_type: ExternalProviderType,
-    /// Api url.
+    /// Base API URL of the remote endpoint.
     pub api_url: String,
     /// Keychain entry name (e.g. `"tessera.external_provider.openai"`).
     /// Not the secret itself.
     pub api_key_ref: String,
-    /// Model name.
+    /// Remote model name to request (e.g. `"gpt-4o"`).
     pub model_name: String,
-    /// Max tokens.
+    /// Default max tokens to generate per request.
     pub max_tokens: u32,
-    /// Temperature.
+    /// Default sampling temperature in `[0.0, 2.0]`.
     pub temperature: f32,
     /// Per-request timeout in seconds. Defaults to 60 — covers slow
     /// providers without leaving the UI hanging forever if the
@@ -185,11 +186,11 @@ impl ExternalProviderConfig {
 /// state.
 #[derive(Debug, Clone)]
 pub struct ExternalGenerateInputs<'a> {
-    /// Config.
+    /// The persisted provider configuration.
     pub config: &'a ExternalProviderConfig,
-    /// Api key.
+    /// The secret API key fetched from the keychain.
     pub api_key: &'a str,
-    /// Request.
+    /// The generation request to forward.
     pub request: &'a GenerateRequest,
 }
 
@@ -707,7 +708,8 @@ mod http_impl {
         }
     }
 
-    /// Endpoint url.
+    /// Resolves the full request URL for `provider_type`, appending
+    /// the expected path unless `api_url` already ends with it.
     pub fn endpoint_url(api_url: &str, provider_type: ExternalProviderType) -> String {
         // Avoid double-suffixing: if the configured URL already ends
         // in the expected path, use it verbatim. Otherwise append.

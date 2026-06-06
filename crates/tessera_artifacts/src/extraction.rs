@@ -6,23 +6,25 @@ use serde::{Deserialize, Serialize};
 /// An extracted actionable item from source material.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedItem {
-    /// Item type.
+    /// Which kind of actionable item this is.
     pub item_type: ItemType,
-    /// Text.
+    /// The extracted item text, as surfaced to the user.
     pub text: String,
-    /// Source citation.
+    /// Human-readable pointer to where in the source this was found
+    /// (e.g. a quoted snippet or location label).
     pub source_citation: String,
-    /// Confidence.
+    /// Extraction confidence in `0.0..=1.0` (higher is more certain).
     pub confidence: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Item Type.
+/// Kind of [`ExtractedItem`]. Serialised to `snake_case` (`task`,
+/// `decision`).
 pub enum ItemType {
-    /// The `Task` variant.
+    /// An actionable to-do surfaced from the source.
     Task,
-    /// The `Decision` variant.
+    /// A decision recorded in the source.
     Decision,
 }
 

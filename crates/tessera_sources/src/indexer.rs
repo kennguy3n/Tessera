@@ -23,7 +23,8 @@ use crate::progress::{
 use crate::store::SourceStore;
 use crate::vision_extractor::{vlm_chunks_for_image, VisionExtractor};
 
-/// Indexer.
+/// Walks sources, extracts and chunks file content, and (when an
+/// embedder is configured) computes and stores embeddings.
 pub struct Indexer {
     chunker_config: ChunkerConfig,
     ignore_rules: IgnoreRules,
@@ -59,7 +60,8 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    /// Creates a new instance.
+    /// Creates an indexer with default chunking and the given ignore
+    /// globs, and no embedding provider.
     pub fn new(ignore_patterns: &[String]) -> Self {
         // Always layer user patterns on TOP of the curated defaults
         // (binary files, VCS metadata, OS junk, …) so users get
@@ -116,7 +118,8 @@ impl Indexer {
         self
     }
 
-    /// With chunker config.
+    /// Returns this indexer with its [`ChunkerConfig`] replaced
+    /// (builder style).
     pub fn with_chunker_config(mut self, config: ChunkerConfig) -> Self {
         self.chunker_config = config;
         self
@@ -158,7 +161,8 @@ impl Indexer {
         self
     }
 
-    /// Index folder.
+    /// Recursively walks a folder, indexing each non-ignored file
+    /// and returning an aggregate [`IndexResult`].
     pub fn index_folder(
         &self,
         source_id: &SourceId,
@@ -262,7 +266,8 @@ impl Indexer {
         Ok(result)
     }
 
-    /// Index single file.
+    /// Indexes a single file (extract → chunk → store → optionally
+    /// embed), returning an [`IndexResult`] for the one file.
     pub fn index_single_file(
         &self,
         source_id: &SourceId,
@@ -957,14 +962,16 @@ impl Indexer {
 /// this enum entirely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillOutcome {
-    /// The `Completed` variant.
+    /// The backfill drained the work-set normally; status should
+    /// flip to `Done`.
     Completed {
-        /// Embedded.
+        /// Chunks embedded during this pass.
         embedded: usize,
     },
-    /// The `Stalled` variant.
+    /// The stall detector tripped (a whole batch failed); status
+    /// should flip to `Failed`.
     Stalled {
-        /// Embedded.
+        /// Chunks embedded before the stall.
         embedded: usize,
         /// Length of the batch in which every chunk failed. Surfaced
         /// in the failure message so users can correlate with their
@@ -991,17 +998,17 @@ impl Default for Indexer {
 }
 
 #[derive(Debug, Default)]
-/// Index Result.
+/// Aggregate result of an indexing pass over a source or file.
 pub struct IndexResult {
-    /// Indexed.
+    /// Files (re)indexed because they were new or changed.
     pub indexed: u64,
-    /// Unchanged.
+    /// Files skipped because their content hash was unchanged.
     pub unchanged: u64,
-    /// Skipped.
+    /// Files skipped (ignored or unsupported type).
     pub skipped: u64,
-    /// Total files.
+    /// Total files visited during the pass.
     pub total_files: u64,
-    /// Errors.
+    /// Per-file error messages collected during the pass.
     pub errors: Vec<String>,
     /// Number of chunks whose embedding failed to compute or persist
     /// during this indexing pass.

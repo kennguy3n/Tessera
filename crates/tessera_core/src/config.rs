@@ -7,32 +7,43 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Tessera Config.
+/// User-level application configuration, persisted as JSON and loaded
+/// at startup. All paths are absolute (or resolved relative to the app
+/// working directory) by the time they reach the rest of the system.
 pub struct TesseraConfig {
-    /// Data dir.
+    /// Root directory holding the SQLCipher database and all indexed
+    /// caches; the local-first store lives entirely under here.
     pub data_dir: PathBuf,
-    /// Template dir.
+    /// Directory scanned for artifact-generation templates.
     pub template_dir: PathBuf,
-    /// Theme.
+    /// Active UI colour theme.
     pub theme: Theme,
-    /// Default export format.
+    /// Export format pre-selected in the UI, as the `snake_case`
+    /// [`ExportFormat`](crate::types::ExportFormat) string (e.g.
+    /// `"markdown"`). Must be non-empty — enforced by
+    /// [`TesseraConfig::validate`].
     pub default_export_format: String,
-    /// Ignore patterns.
+    /// Glob patterns excluded when indexing local sources (build
+    /// artifacts, VCS metadata, binaries, …). Defaults cover common
+    /// noise like `.git`, `node_modules`, `target`, and compiled
+    /// binaries.
     pub ignore_patterns: Vec<String>,
-    /// Watch patterns.
+    /// Glob patterns whose matching files trigger re-indexing on
+    /// change; `["*"]` (the default) watches everything not ignored.
     pub watch_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Theme.
+/// UI colour theme. Serialised to `snake_case`; `Light` is the
+/// default.
 pub enum Theme {
     #[default]
-    /// The `Light` variant.
+    /// Always use the light palette.
     Light,
-    /// The `Dark` variant.
+    /// Always use the dark palette.
     Dark,
-    /// The `System` variant.
+    /// Follow the operating system's light/dark preference.
     System,
 }
 
@@ -69,7 +80,9 @@ fn default_ignore_patterns() -> Vec<String> {
 }
 
 impl TesseraConfig {
-    /// Load.
+    /// Reads and parses the JSON config at `path`, then runs
+    /// [`TesseraConfig::validate`]. Returns an error if the file is
+    /// missing, malformed, or fails validation.
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_json::from_str(&content)?;
@@ -77,7 +90,8 @@ impl TesseraConfig {
         Ok(config)
     }
 
-    /// Save.
+    /// Serialises the config to pretty JSON and writes it to `path`,
+    /// creating parent directories as needed.
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -87,7 +101,9 @@ impl TesseraConfig {
         Ok(())
     }
 
-    /// Validate.
+    /// Checks invariants the rest of the system relies on — currently
+    /// that `default_export_format` is non-empty. Called automatically
+    /// by [`TesseraConfig::load`].
     pub fn validate(&self) -> Result<()> {
         if self.default_export_format.is_empty() {
             return Err(Error::InvalidConfig(

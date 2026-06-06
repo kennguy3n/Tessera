@@ -181,11 +181,13 @@ impl SyncBackoffPolicy {
 ///     broken provider.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncFailureState {
-    /// Last error.
+    /// The most recent failure, or `None` after a successful sync.
     pub last_error: Option<PersistedSyncError>,
-    /// Retry count.
+    /// Number of consecutive failed attempts; drives the backoff
+    /// schedule and reset to 0 on success.
     pub retry_count: u32,
-    /// Failed permanently.
+    /// Sticky bit: once set, retries stop until the user explicitly
+    /// re-triggers the sync.
     pub failed_permanently: bool,
 }
 
@@ -202,19 +204,21 @@ pub struct SyncFailureState {
 /// only confuse a user looking at a 4-hour-old failure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PersistedSyncError {
-    /// Kind.
+    /// Transient/permanent classification, so the renderer can branch
+    /// without re-classifying.
     pub kind: PersistedFailureKind,
-    /// Message.
+    /// Human-readable detail from the original error's `Display`.
     pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-/// Persisted Failure Kind.
+/// Serialisable mirror of [`FailureKind`] persisted on the source
+/// row. Stored `lowercase` (`transient`/`permanent`).
 pub enum PersistedFailureKind {
-    /// The `Transient` variant.
+    /// Likely to clear on its own; the source will be retried.
     Transient,
-    /// The `Permanent` variant.
+    /// Requires user action; retries stop until re-triggered.
     Permanent,
 }
 

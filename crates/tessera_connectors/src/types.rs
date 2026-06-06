@@ -6,26 +6,30 @@ use serde::{Deserialize, Serialize};
 /// Configuration for authenticating a connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
-    /// Client id.
+    /// OAuth client identifier issued by the provider.
     pub client_id: String,
-    /// Client secret.
+    /// OAuth client secret paired with `client_id`.
     pub client_secret: String,
-    /// Redirect uri.
+    /// Redirect URI the provider calls back after authorization;
+    /// must match the one registered with the provider.
     pub redirect_uri: String,
-    /// Auth code.
+    /// One-time authorization code from the redirect, exchanged for
+    /// tokens. Cleared once exchanged.
     pub auth_code: Option<String>,
-    /// Access token.
+    /// Current OAuth access token, if the flow has completed.
     pub access_token: Option<String>,
-    /// Refresh token.
+    /// Long-lived refresh token used to mint new access tokens.
     pub refresh_token: Option<String>,
-    /// Scopes.
+    /// OAuth scopes requested/granted for this connection.
     pub scopes: Vec<String>,
-    /// Token expiry.
+    /// When `access_token` expires; `None` means unknown/never set
+    /// and is treated as already expired.
     pub token_expiry: Option<DateTime<Utc>>,
 }
 
 impl AuthConfig {
-    /// Creates a new instance.
+    /// Builds a config with the OAuth client credentials and redirect
+    /// URI; tokens, scopes, and expiry start empty.
     pub fn new(client_id: String, client_secret: String, redirect_uri: String) -> Self {
         Self {
             client_id,
@@ -39,19 +43,20 @@ impl AuthConfig {
         }
     }
 
-    /// With scopes.
+    /// Builder setter for the requested OAuth scopes.
     pub fn with_scopes(mut self, scopes: Vec<String>) -> Self {
         self.scopes = scopes;
         self
     }
 
-    /// With auth code.
+    /// Builder setter for the one-time authorization code.
     pub fn with_auth_code(mut self, code: String) -> Self {
         self.auth_code = Some(code);
         self
     }
 
-    /// Is token expired.
+    /// True if the access token is expired or its expiry is unknown
+    /// (`token_expiry` is `None`), signalling a refresh is needed.
     pub fn is_token_expired(&self) -> bool {
         self.token_expiry.is_none_or(|expiry| Utc::now() >= expiry)
     }
@@ -60,58 +65,59 @@ impl AuthConfig {
 /// Metadata for a remote file from a connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteFile {
-    /// Id.
+    /// Provider-assigned file identifier (opaque, provider-scoped).
     pub id: String,
-    /// Name.
+    /// Display name of the file as shown by the provider.
     pub name: String,
-    /// Mime type.
+    /// MIME type reported by the provider.
     pub mime_type: String,
-    /// Size bytes.
+    /// File size in bytes (0 for folders or when unknown).
     pub size_bytes: u64,
-    /// Modified time.
+    /// Last-modified timestamp reported by the provider.
     pub modified_time: DateTime<Utc>,
-    /// Created time.
+    /// Creation timestamp, when the provider exposes one.
     pub created_time: Option<DateTime<Utc>>,
-    /// Parent id.
+    /// Id of the containing folder, if any (root items have none).
     pub parent_id: Option<String>,
-    /// Web view link.
+    /// URL to open the file in the provider's web UI.
     pub web_view_link: Option<String>,
-    /// Is folder.
+    /// Whether this entry is a folder rather than a file.
     pub is_folder: bool,
-    /// Md5 checksum.
+    /// MD5 content checksum, used to detect changes when available.
     pub md5_checksum: Option<String>,
-    /// Permissions.
+    /// Access-control entries for the file.
     pub permissions: Vec<FilePermission>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// File Permission.
+/// A single access-control entry on a [`RemoteFile`].
 pub struct FilePermission {
-    /// Role.
+    /// Role granted (e.g. `owner`, `writer`, `reader`).
     pub role: String,
-    /// Permission type.
+    /// Grantee type (e.g. `user`, `group`, `domain`, `anyone`).
     pub permission_type: String,
-    /// Email.
+    /// Grantee email address, when the type is a specific user.
     pub email: Option<String>,
 }
 
 /// Result of a sync operation from a connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResult {
-    /// New change token.
+    /// Opaque cursor to resume the next incremental sync from this
+    /// point; `None` when the provider gave no new token.
     pub new_change_token: Option<String>,
-    /// Added.
+    /// Files newly created since the last sync.
     pub added: Vec<RemoteFile>,
-    /// Modified.
+    /// Files whose content/metadata changed since the last sync.
     pub modified: Vec<RemoteFile>,
-    /// Removed.
+    /// Ids of files deleted since the last sync.
     pub removed: Vec<String>,
-    /// Has more.
+    /// Whether more changes remain to be fetched in another page.
     pub has_more: bool,
 }
 
 impl SyncResult {
-    /// Empty.
+    /// An empty result: no changes, no token, no more pages.
     pub fn empty() -> Self {
         Self {
             new_change_token: None,
@@ -122,7 +128,7 @@ impl SyncResult {
         }
     }
 
-    /// Total changes.
+    /// Count of added + modified + removed entries in this result.
     pub fn total_changes(&self) -> usize {
         self.added.len() + self.modified.len() + self.removed.len()
     }
@@ -172,15 +178,15 @@ impl SyncResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorStatus {
-    /// The `Disconnected` variant.
+    /// No active connection; not authenticated.
     Disconnected,
-    /// The `Connecting` variant.
+    /// OAuth/handshake in progress.
     Connecting,
-    /// The `Connected` variant.
+    /// Authenticated and idle, ready to sync.
     Connected,
-    /// The `Syncing` variant.
+    /// A sync is currently running.
     Syncing,
-    /// The `Error` variant.
+    /// The connector is in a failed state; see the recorded error.
     Error,
 }
 
@@ -199,17 +205,18 @@ impl std::fmt::Display for ConnectorStatus {
 /// Summary information about a connector for UI display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectorInfo {
-    /// Provider.
+    /// Provider key (e.g. `gdrive`, `notion`, `jira`).
     pub provider: String,
-    /// Status.
+    /// Current connection status.
     pub status: ConnectorStatus,
-    /// Last sync.
+    /// When the last successful sync completed, if ever.
     pub last_sync: Option<DateTime<Utc>>,
-    /// File count.
+    /// Number of files currently indexed from this connector.
     pub file_count: u64,
-    /// Error message.
+    /// Human-readable error from the last failure, when in
+    /// [`ConnectorStatus::Error`].
     pub error_message: Option<String>,
-    /// Connected at.
+    /// When the connector was first connected.
     pub connected_at: Option<DateTime<Utc>>,
 }
 
@@ -223,13 +230,14 @@ pub struct ConnectorInfo {
 /// Notion `workspace_id`), it uses [`StoredTokens::provider_metadata`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTokens {
-    /// Access token.
+    /// OAuth access token used to authorize API calls.
     pub access_token: String,
-    /// Refresh token.
+    /// Refresh token to mint new access tokens, if the provider
+    /// issued one.
     pub refresh_token: Option<String>,
-    /// Expiry.
+    /// When `access_token` expires, if known.
     pub expiry: Option<DateTime<Utc>>,
-    /// Scopes.
+    /// OAuth scopes the provider granted with these tokens.
     pub scopes: Vec<String>,
     /// Opaque provider-specific metadata that needs to be persisted
     /// alongside the tokens — for example the Atlassian

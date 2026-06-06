@@ -5,23 +5,32 @@ use serde::{Deserialize, Serialize};
 use tessera_core::{ArtifactType, ExportFormat, TemplateId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Template.
+/// A declarative recipe for generating one artifact: an ordered list
+/// of [`TemplateSection`]s plus rendering/export metadata. Loaded from
+/// YAML on disk; the canonical schema lives in
+/// `schemas/template.schema.json`.
 pub struct Template {
-    /// Id.
+    /// Stable, human-authored slug (e.g. `"prd-v1"`). Unique within the
+    /// registry and used to derive [`Template::template_id`].
     pub id: String,
     #[serde(skip)]
-    /// Template id.
+    /// Deterministic [`TemplateId`] derived from [`Template::id`] via
+    /// UUIDv5. Not serialised — recomputed on load by
+    /// [`Template::with_computed_id`] so it is always consistent with
+    /// `id`.
     pub template_id: TemplateId,
-    /// Name.
+    /// Display name shown in the template picker.
     pub name: String,
     #[serde(rename = "type")]
-    /// Artifact type.
+    /// Kind of artifact this template produces (document, slides, …).
     pub artifact_type: ArtifactType,
-    /// Description.
+    /// One-line summary shown under the name in the UI.
     pub description: String,
-    /// Sections.
+    /// Ordered sections generated in sequence; their order is the
+    /// order they appear in the finished artifact.
     pub sections: Vec<TemplateSection>,
-    /// Export.
+    /// Export formats this template's output is valid for / offered in
+    /// the export menu.
     pub export: Vec<ExportFormat>,
     /// Optional output format for the template (e.g. "marp" for slide decks
     /// that should be rendered with Marp Core / Marp CLI). Mirrors the
@@ -76,14 +85,17 @@ fn default_locale() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Template Section.
+/// One section of a [`Template`]: a heading plus the LLM prompt used
+/// to generate its body, with optional source requirements and a
+/// generation budget.
 pub struct TemplateSection {
-    /// Title.
+    /// Heading rendered for this section in the artifact.
     pub title: String,
-    /// Prompt.
+    /// Instruction handed to the LLM to generate this section's body.
     pub prompt: String,
     #[serde(default)]
-    /// Required sources.
+    /// Source-type/count constraints that must be satisfied before
+    /// this section can be generated; empty means no requirement.
     pub required_sources: Vec<RequiredSource>,
     /// Maximum tokens the LLM should generate for this section. Mirrors
     /// the `max_tokens` field on the JSON Schema and gives the runtime
@@ -129,29 +141,35 @@ pub enum SectionOutputFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Required Source.
+/// A constraint that a section requires at least `min` connected
+/// sources of a given type before it can be generated.
 pub struct RequiredSource {
     #[serde(rename = "type")]
-    /// Source type.
+    /// Source type that satisfies this requirement, as the
+    /// `snake_case` source-type string (e.g. `"local_folder"`).
     pub source_type: String,
     #[serde(default)]
-    /// Min.
+    /// Minimum number of matching sources required; `None` means “at
+    /// least one”.
     pub min: Option<u32>,
 }
 
 impl Template {
-    /// With computed id.
+    /// Recomputes [`Template::template_id`] from [`Template::id`] and
+    /// returns the updated template. Called after deserialising (the
+    /// id field is `#[serde(skip)]`) so the derived id always matches
+    /// the slug.
     pub fn with_computed_id(mut self) -> Self {
         self.template_id = TemplateId::from_string(&self.id);
         self
     }
 
-    /// Section count.
+    /// Number of sections in this template.
     pub fn section_count(&self) -> usize {
         self.sections.len()
     }
 
-    /// Export formats.
+    /// Export formats this template supports.
     pub fn export_formats(&self) -> &[ExportFormat] {
         &self.export
     }

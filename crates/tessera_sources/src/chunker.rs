@@ -77,17 +77,18 @@ impl ExtractionMethod {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Chunk.
+/// A contiguous slice of a source's extracted text, the unit that
+/// gets embedded and searched.
 pub struct Chunk {
-    /// Source path.
+    /// Path of the source file this chunk came from.
     pub source_path: String,
-    /// Chunk index.
+    /// Zero-based position of this chunk within the source.
     pub chunk_index: usize,
-    /// Byte offset.
+    /// Byte offset of this chunk's start within the source text.
     pub byte_offset: usize,
-    /// Content.
+    /// The chunk's text content.
     pub content: String,
-    /// Hash.
+    /// Content hash, used to detect changes and dedupe.
     pub hash: String,
     /// Provenance of this chunk's content. `None` for legacy /
     /// native extraction; `Some(_)` for VLM-derived content.
@@ -102,11 +103,14 @@ pub struct Chunk {
 }
 
 #[derive(Debug, Clone)]
-/// Chunker Config.
+/// Tuning for [`chunk_text`]: target chunk size and the overlap
+/// carried between consecutive chunks.
 pub struct ChunkerConfig {
-    /// Chunk size.
+    /// Target chunk length in bytes (chunks are cut at char
+    /// boundaries near this size).
     pub chunk_size: usize,
-    /// Chunk overlap.
+    /// Number of bytes each chunk re-includes from the previous one,
+    /// so context isn't lost at boundaries.
     pub chunk_overlap: usize,
 }
 
@@ -135,7 +139,8 @@ fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
     idx
 }
 
-/// Chunk text.
+/// Splits `text` into overlapping [`Chunk`]s per `config`, cutting at
+/// UTF-8 char boundaries and skipping whitespace-only output.
 pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
     if text.is_empty() {
         return Vec::new();

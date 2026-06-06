@@ -10,37 +10,38 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
-/// Artifact Info.
+/// JS-facing view of an artifact: identity, type, content body and
+/// version metadata.
 pub struct ArtifactInfo {
-    /// Id.
+    /// Artifact id, stringified.
     pub id: String,
-    /// Title.
+    /// Human-readable artifact title.
     pub title: String,
-    /// Artifact type.
+    /// Artifact kind (`"document"`, `"sheet"`, …).
     pub artifact_type: String,
-    /// Template id.
+    /// Id of the template this artifact was generated from, if any.
     pub template_id: Option<String>,
-    /// Content.
+    /// Full artifact content (markdown or type-specific body).
     pub content: String,
-    /// Citation count.
+    /// Number of citations attached to the artifact.
     pub citation_count: i32,
-    /// Created at.
+    /// When the artifact was created, RFC 3339.
     pub created_at: String,
-    /// Updated at.
+    /// When the artifact was last updated, RFC 3339.
     pub updated_at: String,
-    /// Version.
+    /// Monotonic version number, bumped on each content update.
     pub version: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Artifact Version Info.
+/// JS-facing view of one entry in an artifact's version history.
 pub struct ArtifactVersionInfo {
-    /// Version.
+    /// Version number of this snapshot.
     pub version: u32,
-    /// Content.
+    /// Artifact content as of this version.
     pub content: String,
-    /// Created at.
+    /// When this version was created, RFC 3339.
     pub created_at: String,
 }
 
@@ -54,9 +55,9 @@ pub struct ArtifactVersionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct ThemeInfo {
-    /// Label.
+    /// Key phrase that names the theme.
     pub label: String,
-    /// Frequency.
+    /// Number of occurrences across the compared chunks.
     pub frequency: i32,
 }
 
@@ -69,13 +70,14 @@ pub struct ThemeInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct ComparisonInfo {
-    /// Similarity score.
+    /// Symmetric-overlap fraction in `[0.0, 1.0]`.
     pub similarity_score: f64,
-    /// Common themes.
+    /// Themes present in both sources (≤ 30, truncation order
+    /// preserved).
     pub common_themes: Vec<ThemeInfo>,
-    /// Unique to a.
+    /// Themes unique to the first source (≤ 20).
     pub unique_to_a: Vec<ThemeInfo>,
-    /// Unique to b.
+    /// Themes unique to the second source (≤ 20).
     pub unique_to_b: Vec<ThemeInfo>,
 }
 
@@ -89,17 +91,17 @@ pub struct ComparisonInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct CompareSourcesResult {
-    /// Artifact.
+    /// The persisted comparison artifact.
     pub artifact: ArtifactInfo,
-    /// Comparison.
+    /// Structured comparison data (similarity + theme breakdown).
     pub comparison: ComparisonInfo,
-    /// Label a.
+    /// Human-readable label for the first source.
     pub label_a: String,
-    /// Label b.
+    /// Human-readable label for the second source.
     pub label_b: String,
 }
 
-/// Create artifact.
+/// Creates a new artifact of the given type and returns it.
 pub fn create_artifact(
     manager: &ArtifactManager,
     title: &str,
@@ -127,7 +129,8 @@ pub fn create_artifact(
     })
 }
 
-/// Update artifact content.
+/// Replaces an artifact's content, bumping its version, and
+/// returns the updated artifact.
 pub fn update_artifact_content(
     manager: &ArtifactManager,
     artifact_id: &str,
@@ -152,7 +155,7 @@ pub fn update_artifact_content(
     })
 }
 
-/// Get artifact.
+/// Fetches a single artifact by id.
 pub fn get_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResult<ArtifactInfo> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -171,7 +174,7 @@ pub fn get_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResul
     })
 }
 
-/// List artifacts.
+/// Returns every artifact as [`ArtifactInfo`].
 pub fn list_artifacts(manager: &ArtifactManager) -> BridgeResult<Vec<ArtifactInfo>> {
     let artifacts = manager.list().map_err(BridgeError::Core)?;
     Ok(artifacts
@@ -190,14 +193,15 @@ pub fn list_artifacts(manager: &ArtifactManager) -> BridgeResult<Vec<ArtifactInf
         .collect())
 }
 
-/// Delete artifact.
+/// Deletes an artifact by id.
 pub fn delete_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     manager.delete(&ArtifactId(uuid)).map_err(BridgeError::Core)
 }
 
-/// Artifact to info.
+/// Converts a core [`Artifact`](tessera_artifacts::Artifact) into
+/// its JS-facing [`ArtifactInfo`].
 pub fn artifact_to_info(artifact: &tessera_artifacts::Artifact) -> ArtifactInfo {
     ArtifactInfo {
         id: artifact.id.to_string(),

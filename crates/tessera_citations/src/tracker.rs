@@ -15,37 +15,40 @@ use crate::store::CitationStore;
 /// preserved automatically.
 #[derive(Debug, Clone)]
 pub struct CitationReplacement {
-    /// Source id.
+    /// Id of the source to re-bind the citation to.
     pub source_id: SourceId,
-    /// Source type.
+    /// Kind of the replacement source.
     pub source_type: SourceType,
-    /// Source title.
+    /// Display title of the replacement source.
     pub source_title: String,
-    /// Source uri.
+    /// Locator (URI) of the replacement source.
     pub source_uri: String,
-    /// Chunk hash.
+    /// BLAKE3 hash of the replacement chunk to cite.
     pub chunk_hash: String,
-    /// Source file hash.
+    /// BLAKE3 hash of the replacement source file, snapshotted for
+    /// future freshness checks.
     pub source_file_hash: String,
-    /// Page.
+    /// 1-based page in the replacement source, if applicable.
     pub page: Option<u32>,
-    /// Confidence.
+    /// Confidence in the new binding, in `0.0..=1.0`.
     pub confidence: f64,
 }
 
-/// Citation Tracker.
+/// High-level API over a [`CitationStore`] that keeps an artifact's
+/// citations in sync with their sources: adding/removing bindings,
+/// re-pointing a citation to a new source, and computing freshness.
 pub struct CitationTracker {
     store: CitationStore,
 }
 
 impl CitationTracker {
-    /// Creates a new instance.
+    /// Opens (creating if needed) the citation database at `db_path`.
     pub fn new(db_path: &str) -> Result<Self> {
         let store = CitationStore::open(db_path)?;
         Ok(Self { store })
     }
 
-    /// New in memory.
+    /// Builds a tracker over an ephemeral in-memory store (for tests).
     pub fn new_in_memory() -> Result<Self> {
         let store = CitationStore::open_in_memory()?;
         Ok(Self { store })
@@ -58,29 +61,33 @@ impl CitationTracker {
         Ok(Self { store })
     }
 
-    /// Add.
+    /// Persists `citation` for `artifact_id` and returns its id.
     pub fn add(&mut self, artifact_id: ArtifactId, citation: Citation) -> Result<CitationId> {
         let id = citation.citation_id;
         self.store.insert(&artifact_id, &citation)?;
         Ok(id)
     }
 
-    /// Remove.
+    /// Deletes the citation with `citation_id`. The artifact id is
+    /// accepted for API symmetry but not required for the lookup.
     pub fn remove(&mut self, _artifact_id: &ArtifactId, citation_id: &CitationId) -> Result<()> {
         self.store.remove(citation_id)
     }
 
-    /// Get.
+    /// Fetches a single citation by id, or `None` if absent.
     pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
         self.store.get(citation_id)
     }
 
-    /// List for artifact.
+    /// Returns all citations for `artifact_id`, oldest first.
     pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Result<Vec<Citation>> {
         self.store.list_for_artifact(artifact_id)
     }
 
-    /// Check source changed.
+    /// Compares the stored file hash for `citation_id` against
+    /// `current_hash`. Returns `Ok(Some(true))` if the source changed,
+    /// `Ok(Some(false))` if unchanged, or `Ok(None)` if the citation
+    /// does not exist.
     pub fn check_source_changed(
         &self,
         citation_id: &CitationId,
@@ -167,7 +174,7 @@ impl CitationTracker {
         Ok(updated)
     }
 
-    /// Count.
+    /// Returns the total number of tracked citations.
     pub fn count(&self) -> Result<usize> {
         self.store.count()
     }

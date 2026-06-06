@@ -66,7 +66,9 @@ const NOTION_VERSION: &str = "2022-06-28";
 /// still dominates.
 const DEFAULT_FULL_WALK_INTERVAL: u32 = 10;
 
-/// Notion Connector.
+/// Connector for Notion: holds OAuth state, the workspace/bot ids and
+/// API endpoints, and tracks full-vs-incremental sync cadence so
+/// deletions are eventually detected.
 pub struct NotionConnector {
     client: Client,
     status: ConnectorStatus,
@@ -99,7 +101,8 @@ pub struct NotionConnector {
 }
 
 impl NotionConnector {
-    /// Creates a new instance.
+    /// Creates a disconnected connector pointed at the live Notion API
+    /// endpoints, with the default full-walk interval.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -120,7 +123,8 @@ impl NotionConnector {
         }
     }
 
-    /// With base url.
+    /// Creates a connector targeting a custom base URL (for tests
+    /// against a mock server).
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
             client: Client::new(),
@@ -151,38 +155,40 @@ impl NotionConnector {
         self.full_walk_interval = interval.max(1);
     }
 
-    /// Set access token.
+    /// Sets the access token and marks the connector connected. For
+    /// restoring a session or testing.
     pub fn set_access_token(&mut self, token: &str) {
         self.access_token = Some(token.to_string());
         self.status = ConnectorStatus::Connected;
     }
 
-    /// Provider name.
+    /// Stable provider key for this connector (`"notion"`).
     pub fn provider_name(&self) -> &'static str {
         "notion"
     }
-    /// Status.
+    /// Current connection status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
-    /// Last sync time.
+    /// When the last successful sync completed, if ever.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
-    /// File count.
+    /// Number of pages indexed from this connector.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }
-    /// Workspace id.
+    /// Id of the authorized Notion workspace, once connected.
     pub fn workspace_id(&self) -> Option<&str> {
         self.workspace_id.as_deref()
     }
-    /// Bot id.
+    /// Id of the integration's bot user, once connected.
     pub fn bot_id(&self) -> Option<&str> {
         self.bot_id.as_deref()
     }
 
-    /// Build auth url.
+    /// Builds the Notion OAuth consent URL the user visits to
+    /// authorize the integration.
     pub fn build_auth_url(&self, config: &AuthConfig) -> String {
         // Notion has no scope concept — integrations declare capabilities
         // up-front in the integration settings page. The auth URL just
@@ -195,7 +201,9 @@ impl NotionConnector {
         )
     }
 
-    /// Authenticate.
+    /// Exchanges the authorization code for an access token (and the
+    /// workspace/bot ids), transitioning to
+    /// [`ConnectorStatus::Connected`] on success.
     pub async fn authenticate(&mut self, config: &AuthConfig) -> ConnectorResult<StoredTokens> {
         self.status = ConnectorStatus::Connecting;
         self.client_id = Some(config.client_id.clone());
@@ -247,7 +255,9 @@ impl NotionConnector {
         })
     }
 
-    /// Restore tokens.
+    /// Re-hydrates a persisted session: loads the token, the
+    /// workspace/bot ids from provider metadata, and the client
+    /// credentials.
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
         // The workspace id lives in `provider_metadata`. We do not

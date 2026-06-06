@@ -2,7 +2,8 @@
 
 use tessera_core::ArtifactType;
 
-/// Load grammar.
+/// Returns the GBNF grammar that constrains generation to the
+/// JSON schema for the given artifact type.
 pub fn load_grammar(artifact_type: ArtifactType) -> String {
     match artifact_type {
         ArtifactType::Document => DOCUMENT_GRAMMAR.to_string(),

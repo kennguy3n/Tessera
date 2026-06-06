@@ -34,7 +34,8 @@ pub fn image_extension(path: &Path) -> Option<String> {
     }
 }
 
-/// Is image extension.
+/// Returns `true` for the raster image extensions this module can
+/// extract metadata from.
 pub fn is_image_extension(ext: &str) -> bool {
     matches!(
         ext.to_lowercase().as_str(),

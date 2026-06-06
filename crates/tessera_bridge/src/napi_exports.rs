@@ -279,7 +279,8 @@ fn state() -> napi::Result<&'static AppState> {
 // --- Sources ---
 
 #[napi]
-/// Bridge add local folder.
+/// N-API entry point: registers a local folder source and emits a
+/// `SourceAdded` audit row on success.
 pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
     let mgr = s
@@ -300,7 +301,8 @@ pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo
 }
 
 #[napi]
-/// Bridge add local file.
+/// N-API entry point: registers a single local file source and
+/// emits a `SourceAdded` audit row on success.
 pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
     let mgr = s
@@ -479,7 +481,7 @@ pub fn bridge_clear_kchat_principal() -> napi::Result<()> {
 }
 
 #[napi]
-/// Bridge list sources.
+/// N-API entry point: returns every registered source.
 pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
     let s = state()?;
     let mgr = s
@@ -490,7 +492,8 @@ pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
 }
 
 #[napi]
-/// Bridge remove source.
+/// N-API entry point: removes a source and its indexed data,
+/// emitting a `SourceRemoved` audit row.
 pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     let s = state()?;
     let mgr = s
@@ -596,7 +599,7 @@ pub fn bridge_record_source_sync_success(source_id: String) -> napi::Result<()> 
 }
 
 #[napi]
-/// Bridge search sources.
+/// N-API entry point: hybrid-searches file sources for the query.
 pub fn bridge_search_sources(
     query: String,
     limit: u32,
@@ -657,7 +660,7 @@ pub fn bridge_fetch_kchat_thread_context(
 }
 
 #[napi]
-/// Bridge get source detail.
+/// N-API entry point: returns a source plus its indexed files.
 pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::SourceDetailInfo> {
     let s = state()?;
     let mgr = s
@@ -669,7 +672,8 @@ pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::Sour
 }
 
 #[napi]
-/// Bridge reindex source.
+/// N-API entry point: re-runs indexing for a source and returns
+/// its refreshed info.
 pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
     let mgr = s
@@ -1044,7 +1048,7 @@ pub fn bridge_switch_embedding_model(
 // --- Artifacts ---
 
 #[napi]
-/// Bridge create artifact.
+/// N-API entry point: creates a new artifact and returns it.
 pub fn bridge_create_artifact(
     title: String,
     artifact_type: String,
@@ -1069,7 +1073,8 @@ pub fn bridge_create_artifact(
 }
 
 #[napi]
-/// Bridge update artifact content.
+/// N-API entry point: replaces an artifact's content, creating a
+/// new version.
 pub fn bridge_update_artifact_content(
     artifact_id: String,
     content: String,
@@ -1091,7 +1096,7 @@ pub fn bridge_update_artifact_content(
 }
 
 #[napi]
-/// Bridge get artifact.
+/// N-API entry point: fetches a single artifact by id.
 pub fn bridge_get_artifact(artifact_id: String) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
     let mgr = s
@@ -1102,7 +1107,7 @@ pub fn bridge_get_artifact(artifact_id: String) -> napi::Result<artifacts::Artif
 }
 
 #[napi]
-/// Bridge list artifacts.
+/// N-API entry point: lists all artifacts.
 pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
     let s = state()?;
     let mgr = s
@@ -1113,7 +1118,7 @@ pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
 }
 
 #[napi]
-/// Bridge delete artifact.
+/// N-API entry point: deletes an artifact by id.
 pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
     let s = state()?;
     let mgr = s
@@ -1226,7 +1231,7 @@ pub fn bridge_export_artifact_to_file(
 // --- Templates ---
 
 #[napi]
-/// Bridge list templates.
+/// N-API entry point: lists all registered templates.
 pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
     let s = state()?;
     // route every parse / validation failure
@@ -1246,7 +1251,7 @@ pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
 }
 
 #[napi]
-/// Bridge get template.
+/// N-API entry point: fetches a single template by id.
 pub fn bridge_get_template(template_id: String) -> napi::Result<Option<templates::TemplateInfo>> {
     let s = state()?;
     // Same audit posture as `bridge_list_templates`: a validation
@@ -1265,7 +1270,7 @@ pub fn bridge_get_template(template_id: String) -> napi::Result<Option<templates
 // --- Citations ---
 
 #[napi]
-/// Bridge list citations.
+/// N-API entry point: lists citations for an artifact.
 pub fn bridge_list_citations(artifact_id: String) -> napi::Result<Vec<citations::CitationInfo>> {
     let s = state()?;
     let tracker = s
@@ -1277,7 +1282,7 @@ pub fn bridge_list_citations(artifact_id: String) -> napi::Result<Vec<citations:
 }
 
 #[napi]
-/// Bridge add citation.
+/// N-API entry point: attaches a citation to an artifact.
 pub fn bridge_add_citation(
     req: citations::AddCitationRequest,
 ) -> napi::Result<citations::CitationInfo> {
@@ -1335,7 +1340,7 @@ pub fn bridge_add_citation(
 }
 
 #[napi]
-/// Bridge remove citation.
+/// N-API entry point: detaches a citation from an artifact.
 pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi::Result<()> {
     let s = state()?;
     let mut tracker = s
@@ -1357,7 +1362,8 @@ pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi:
 }
 
 #[napi]
-/// Bridge check source changed.
+/// N-API entry point: reports whether a cited source has changed
+/// since the citation was captured.
 pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
     let s = state()?;
     // Acquire source_manager (lock 2) before citation_tracker (lock 4) per documented ordering
@@ -1374,7 +1380,8 @@ pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
 }
 
 #[napi]
-/// Bridge check citation freshness.
+/// N-API entry point: recomputes a citation's freshness against
+/// the current source state.
 pub fn bridge_check_citation_freshness(citation_id: String) -> napi::Result<String> {
     let s = state()?;
     let src_mgr = s
@@ -1391,7 +1398,8 @@ pub fn bridge_check_citation_freshness(citation_id: String) -> napi::Result<Stri
 }
 
 #[napi]
-/// Bridge replace citation.
+/// N-API entry point: swaps a citation's target for an updated
+/// source snapshot.
 pub fn bridge_replace_citation(
     req: citations::ReplaceCitationRequest,
 ) -> napi::Result<citations::ReplaceCitationResult> {
@@ -1428,7 +1436,7 @@ pub fn bridge_replace_citation(
 // --- Version History ---
 
 #[napi]
-/// Bridge list versions.
+/// N-API entry point: lists an artifact's version history.
 pub fn bridge_list_versions(
     artifact_id: String,
 ) -> napi::Result<Vec<artifacts::ArtifactVersionInfo>> {
@@ -1454,7 +1462,7 @@ pub fn bridge_list_versions(
 }
 
 #[napi]
-/// Bridge restore version.
+/// N-API entry point: restores an artifact to a prior version.
 pub fn bridge_restore_version(
     artifact_id: String,
     version_number: u32,
@@ -1490,7 +1498,8 @@ pub fn bridge_restore_version(
 // --- Artifact Generation ---
 
 #[napi]
-/// Bridge generate from template.
+/// N-API entry point: generates a new artifact from a template
+/// and its source bindings.
 pub fn bridge_generate_from_template(
     template_id: String,
     source_ids: Vec<String>,
@@ -1566,7 +1575,8 @@ pub fn bridge_generate_from_template(
 }
 
 #[napi]
-/// Bridge extract tasks decisions.
+/// N-API entry point: extracts tasks and decisions from a source's
+/// text.
 pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String> {
     let s = state()?;
     let src_mgr = s
@@ -1586,7 +1596,8 @@ pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String>
 }
 
 #[napi]
-/// Bridge compare sources.
+/// N-API entry point: computes a structured comparison between two
+/// sources.
 pub fn bridge_compare_sources(
     source_id_a: String,
     source_id_b: String,
@@ -1882,7 +1893,8 @@ mod compare_label_tests {
 }
 
 #[napi]
-/// Bridge export evidence pack.
+/// N-API entry point: exports an artifact and its citations as an
+/// evidence pack.
 pub fn bridge_export_evidence_pack(
     artifact_id: String,
     output_path: String,
@@ -1965,7 +1977,7 @@ pub fn bridge_evidence_pack_bytes(artifact_id: String) -> napi::Result<Buffer> {
 // --- Tasks ---
 
 #[napi]
-/// Bridge create task.
+/// N-API entry point: creates a task and returns it.
 pub fn bridge_create_task(req_json: String) -> napi::Result<tasks::TaskInfo> {
     let req: tasks::CreateTaskRequest =
         serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -1978,7 +1990,7 @@ pub fn bridge_create_task(req_json: String) -> napi::Result<tasks::TaskInfo> {
 }
 
 #[napi]
-/// Bridge list tasks.
+/// N-API entry point: lists tasks.
 pub fn bridge_list_tasks() -> napi::Result<Vec<tasks::TaskInfo>> {
     let s = state()?;
     let store = s
@@ -1989,7 +2001,7 @@ pub fn bridge_list_tasks() -> napi::Result<Vec<tasks::TaskInfo>> {
 }
 
 #[napi]
-/// Bridge get task.
+/// N-API entry point: fetches a single task by id.
 pub fn bridge_get_task(task_id: String) -> napi::Result<Option<tasks::TaskInfo>> {
     let s = state()?;
     let store = s
@@ -2000,7 +2012,7 @@ pub fn bridge_get_task(task_id: String) -> napi::Result<Option<tasks::TaskInfo>>
 }
 
 #[napi]
-/// Bridge update task.
+/// N-API entry point: updates a task's fields and returns it.
 pub fn bridge_update_task(task_id: String, req_json: String) -> napi::Result<tasks::TaskInfo> {
     let req: tasks::UpdateTaskRequest =
         serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -2013,7 +2025,7 @@ pub fn bridge_update_task(task_id: String, req_json: String) -> napi::Result<tas
 }
 
 #[napi]
-/// Bridge delete task.
+/// N-API entry point: deletes a task by id.
 pub fn bridge_delete_task(task_id: String) -> napi::Result<bool> {
     let s = state()?;
     let store = s
@@ -2024,7 +2036,7 @@ pub fn bridge_delete_task(task_id: String) -> napi::Result<bool> {
 }
 
 #[napi]
-/// Bridge reorder tasks.
+/// N-API entry point: persists a new ordering for a task list.
 pub fn bridge_reorder_tasks(status: String, ids: Vec<String>) -> napi::Result<()> {
     let s = state()?;
     let store = s
@@ -2037,7 +2049,7 @@ pub fn bridge_reorder_tasks(status: String, ids: Vec<String>) -> napi::Result<()
 // --- Automations ---
 
 #[napi]
-/// Bridge create automation.
+/// N-API entry point: creates an automation rule and returns it.
 pub fn bridge_create_automation(req_json: String) -> napi::Result<automations::AutomationInfo> {
     let req: automations::CreateAutomationRequest =
         serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -2050,7 +2062,7 @@ pub fn bridge_create_automation(req_json: String) -> napi::Result<automations::A
 }
 
 #[napi]
-/// Bridge list automations.
+/// N-API entry point: lists all automation rules.
 pub fn bridge_list_automations() -> napi::Result<Vec<automations::AutomationInfo>> {
     let s = state()?;
     let store = s
@@ -2061,7 +2073,7 @@ pub fn bridge_list_automations() -> napi::Result<Vec<automations::AutomationInfo
 }
 
 #[napi]
-/// Bridge get automation.
+/// N-API entry point: fetches a single automation by id.
 pub fn bridge_get_automation(
     automation_id: String,
 ) -> napi::Result<Option<automations::AutomationInfo>> {
@@ -2075,7 +2087,7 @@ pub fn bridge_get_automation(
 }
 
 #[napi]
-/// Bridge set automation enabled.
+/// N-API entry point: enables or disables an automation rule.
 pub fn bridge_set_automation_enabled(automation_id: String, enabled: bool) -> napi::Result<()> {
     let s = state()?;
     let store = s
@@ -2087,7 +2099,7 @@ pub fn bridge_set_automation_enabled(automation_id: String, enabled: bool) -> na
 }
 
 #[napi]
-/// Bridge delete automation.
+/// N-API entry point: deletes an automation by id.
 pub fn bridge_delete_automation(automation_id: String) -> napi::Result<bool> {
     let s = state()?;
     let store = s
@@ -2552,13 +2564,14 @@ pub fn bridge_log_kchat_source_cryptoshredded(
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostIngestOutcomeInfo {
-    /// Outcome.
+    /// Ingest result (`ingested` / `unchanged` / `unlinked` /
+    /// `access_revoked`).
     pub outcome: String,
-    /// Source id.
+    /// Resolved source id on success outcomes; `None` otherwise.
     pub source_id: Option<String>,
-    /// Indexed file id.
+    /// Row id of the indexed_files entry, on success outcomes.
     pub indexed_file_id: Option<i64>,
-    /// Chunk count.
+    /// Number of chunks sealed for this post (0 on non-success).
     pub chunk_count: u32,
     /// `chunk_ids` populated only for `outcome == "ingested"`. The
     /// Node side records this on the audit row so a search hit
@@ -2575,11 +2588,12 @@ pub struct KchatPostIngestOutcomeInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostDeleteOutcomeInfo {
-    /// Outcome.
+    /// Delete result (`deleted` / `not_found` / `unlinked` /
+    /// `access_revoked`).
     pub outcome: String,
-    /// Source id.
+    /// Resolved source id on success outcomes; `None` otherwise.
     pub source_id: Option<String>,
-    /// Chunks dropped.
+    /// Number of chunk rows scrubbed for the deleted post.
     pub chunks_dropped: u32,
 }
 
@@ -2594,21 +2608,21 @@ pub struct KchatPostDeleteOutcomeInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatPostIngestInputInfo {
-    /// Cache dir.
+    /// Channel cache dir (equals the channel id) the post belongs to.
     pub cache_dir: String,
-    /// Post id.
+    /// KChat post id being ingested.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the post was sent in.
     pub channel_id: String,
-    /// Root id.
+    /// Thread root post id, or `None` if the post is a root.
     pub root_id: Option<String>,
-    /// Sender user id.
+    /// User id of the post's author.
     pub sender_user_id: String,
-    /// Body.
+    /// Raw post body to chunk and index.
     pub body: String,
-    /// Created at ms.
+    /// Post creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds.
     pub edited_at_ms: i64,
 }
 
@@ -2829,13 +2843,15 @@ pub fn bridge_log_kchat_post_deleted(
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatBackfillStateInfo {
-    /// Outcome.
+    /// Backfill state (`idle` / `unlinked` / `access_revoked`).
     pub outcome: String,
-    /// Source id.
+    /// Resolved source id when `outcome == "idle"`.
     pub source_id: Option<String>,
-    /// Oldest post id.
+    /// Persisted walk cursor (oldest post seen), or `None` on the
+    /// first call.
     pub oldest_post_id: Option<String>,
-    /// Completed at.
+    /// RFC 3339 completion sentinel; `None` while more pages
+    /// remain.
     pub completed_at: Option<String>,
 }
 
@@ -2849,17 +2865,17 @@ pub struct KchatBackfillStateInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatBackfillIngestOutcomeInfo {
-    /// Outcome.
+    /// Page result (`ingested` / `unlinked` / `access_revoked`).
     pub outcome: String,
-    /// Source id.
+    /// Resolved source id when `outcome == "ingested"`.
     pub source_id: Option<String>,
-    /// Posts ingested.
+    /// Posts newly indexed by this page.
     pub posts_ingested: u32,
-    /// Posts unchanged.
+    /// Posts already known (content hash matched).
     pub posts_unchanged: u32,
-    /// Posts skipped revoked.
+    /// Posts skipped because access was revoked mid-walk.
     pub posts_skipped_revoked: u32,
-    /// Oldest post id in page.
+    /// Cursor the substrate advanced to; `None` on an empty page.
     pub oldest_post_id_in_page: Option<String>,
 }
 
@@ -2868,9 +2884,10 @@ pub struct KchatBackfillIngestOutcomeInfo {
 #[derive(Debug)]
 #[napi(object)]
 pub struct KchatBackfillCompletionOutcomeInfo {
-    /// Outcome.
+    /// Completion result (`completed` / `unlinked` /
+    /// `access_revoked`).
     pub outcome: String,
-    /// Source id.
+    /// Resolved source id on success.
     pub source_id: Option<String>,
 }
 
@@ -3159,11 +3176,12 @@ pub struct AuditEventView {
     /// TEXT-typed UUIDs, not autoincrement integers, so two
     /// processes appending concurrently can't collide.
     pub id: String,
-    /// Event type.
+    /// Event type as a snake_case string (matches the serde form
+    /// of `AuditEventType`).
     pub event_type: String,
-    /// Timestamp.
+    /// When the event was recorded, RFC 3339.
     pub timestamp: String,
-    /// Details.
+    /// Event-specific detail payload (JSON-encoded string).
     pub details: String,
 }
 
@@ -3181,7 +3199,7 @@ pub struct AuditEventView {
 /// background task.
 #[napi(object)]
 pub struct AuditRotationResultView {
-    /// Archive path.
+    /// Absolute path of the gzip archive the rotation wrote.
     pub archive_path: String,
     /// `u32` rather than `u64` because napi-rs does not support
     /// JS BigInt return types on every platform we ship to, and
@@ -3191,7 +3209,8 @@ pub struct AuditRotationResultView {
 }
 
 #[napi]
-/// Bridge audit rotate.
+/// N-API entry point: rotates the audit log, archiving the current
+/// segment.
 pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRotationResultView>> {
     let s = state()?;
     // Do NOT go through the outer `Mutex<AuditLogger>` for the
@@ -3296,13 +3315,14 @@ pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<A
 /// Kept in napi-friendly form (no `Option`, no nested generics).
 #[napi(object)]
 pub struct VisionDescribeResult {
-    /// Content.
+    /// Generated completion text from the vision model.
     pub content: String,
-    /// Stop.
+    /// Whether generation stopped naturally (vs. hitting the token
+    /// budget).
     pub stop: bool,
-    /// Tokens predicted.
+    /// Number of tokens the model generated.
     pub tokens_predicted: u32,
-    /// Tokens evaluated.
+    /// Number of prompt/image tokens the model evaluated.
     pub tokens_evaluated: u32,
 }
 
@@ -3324,11 +3344,12 @@ pub struct VisionDescribeResult {
 /// PascalCase its argument.
 #[napi(string_enum = "lowercase")]
 pub enum VisionMode {
-    /// The `Describe` variant.
+    /// Free-form natural-language description of the image.
     Describe,
-    /// The `Ocr` variant.
+    /// Verbatim transcription of every visible character.
     Ocr,
-    /// The `Chart` variant.
+    /// Structured chart/diagram summary (axes, data points,
+    /// conclusion).
     Chart,
 }
 
@@ -3441,9 +3462,10 @@ pub fn bridge_vision_describe(
 /// editor preview.
 #[napi(object)]
 pub struct GenerateImageResult {
-    /// Png bytes.
+    /// Rendered image as PNG bytes.
     pub png_bytes: napi::bindgen_prelude::Buffer,
-    /// Seed.
+    /// Sampler seed actually used (echoed so the renderer can
+    /// reproduce the result).
     pub seed: napi::bindgen_prelude::BigInt,
 }
 
@@ -3456,11 +3478,11 @@ pub struct GenerateImageResult {
 /// `T | null | undefined` on the renderer side.
 #[napi(object)]
 pub struct GenerateImageInput {
-    /// Prompt.
+    /// Text prompt describing the desired image.
     pub prompt: String,
-    /// Width.
+    /// Output width in pixels.
     pub width: u32,
-    /// Height.
+    /// Output height in pixels.
     pub height: u32,
     /// Number of diffusion denoising steps. `None` defers to the
     /// `ImageGenRequest` default (20 for FLUX.2-klein).

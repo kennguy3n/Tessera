@@ -23,39 +23,42 @@ use crate::config::{
 };
 
 #[derive(thiserror::Error, Debug)]
-/// Manifest Error.
+/// Failure parsing or reading a `models.json` manifest.
 pub enum ManifestError {
     #[error("IO error reading manifest: {0}")]
-    /// IO error reading manifest.
+    /// The manifest file could not be read from disk.
     Io(#[from] std::io::Error),
     #[error("JSON parse error: {0}")]
-    /// JSON parse error.
+    /// The manifest was not valid JSON.
     Json(#[from] serde_json::Error),
     #[error("Unknown platform in manifest: {0}")]
-    /// Unknown platform in manifest.
+    /// A `platform` string did not map to a known [`Platform`].
     UnknownPlatform(String),
     #[error("Unknown format in manifest: {0}")]
-    /// Unknown format in manifest.
+    /// A `format` string did not map to a known [`ModelFormat`].
     UnknownFormat(String),
     #[error("Unknown tier in manifest: {0}")]
-    /// Unknown tier in manifest.
+    /// A `tier` string did not map to a known [`DeviceTier`].
     UnknownTier(String),
     #[error("Unknown compute backend in manifest: {0}")]
-    /// Unknown compute backend in manifest.
+    /// A `compute` entry did not map to a known
+    /// [`ComputeBackend`].
     UnknownCompute(String),
     #[error("Unknown capability in manifest: {0}")]
-    /// Unknown capability in manifest.
+    /// A `capability` string did not map to a known
+    /// [`ModelCapability`].
     UnknownCapability(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Manifest Model.
+/// One model entry as it appears in the on-disk `models.json`
+/// manifest (string-typed fields parsed into typed [`ModelInfo`]).
 pub struct ManifestModel {
-    /// Id.
+    /// Stable model id / slug.
     pub id: String,
-    /// Name.
+    /// Human-readable model name.
     pub name: String,
-    /// Parameters.
+    /// Parameter count label (e.g. `"1.5B"`).
     pub parameters: String,
     /// What slot this entry occupies in the multi-capability registry.
     /// Optional in the wire format so older manifest copies (predating
@@ -63,33 +66,34 @@ pub struct ManifestModel {
     /// is `"text"`, matching the historical single-capability behavior.
     #[serde(default = "default_manifest_capability_string")]
     pub capability: String,
-    /// Format.
+    /// Weight format string (`"gguf"` / `"mlx"`).
     pub format: String,
-    /// Quantization.
+    /// Quantization label (e.g. `"Q4_K_M"`).
     pub quantization: String,
-    /// Platform.
+    /// Target platform string (e.g. `"linux-x64"`).
     pub platform: String,
-    /// Compute.
+    /// Compute backend strings the entry supports.
     pub compute: Vec<String>,
-    /// Tier.
+    /// Minimum device tier string (`"low"` / `"medium"` /
+    /// `"high"`).
     pub tier: String,
     #[serde(rename = "downloadSizeMb")]
-    /// Download size mb.
+    /// Compressed download size, in MB.
     pub download_size_mb: u64,
     #[serde(rename = "diskSizeMb")]
-    /// Disk size mb.
+    /// Extracted on-disk size, in MB.
     pub disk_size_mb: u64,
     #[serde(rename = "requiredRamGb")]
-    /// Required ram gb.
+    /// Minimum RAM required, in GB.
     pub required_ram_gb: f64,
     #[serde(rename = "contextLength")]
-    /// Context length.
+    /// Maximum context window, in tokens.
     pub context_length: u32,
-    /// Filename.
+    /// File name to write into the model cache.
     pub filename: String,
-    /// Url.
+    /// HTTPS download URL for the weights.
     pub url: String,
-    /// Sha256.
+    /// Expected sha256 of the weights; `None` skips verification.
     pub sha256: Option<String>,
     /// Filename of the multimodal projector for vision-GGUF entries.
     /// Always populated together with `mmproj_url`; the TS-side
@@ -113,41 +117,44 @@ fn default_manifest_capability_string() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Manifest Llama Server Variant.
+/// One pre-built `llama-server` binary archive in the manifest,
+/// keyed by platform + compute backend.
 pub struct ManifestLlamaServerVariant {
-    /// Platform.
+    /// Target platform string (e.g. `"linux-x64"`).
     pub platform: String,
-    /// Compute.
+    /// Compute backend string (e.g. `"cuda"`).
     pub compute: String,
-    /// Url.
+    /// HTTPS download URL for the binary archive.
     pub url: String,
-    /// Sha256.
+    /// Expected sha256 of the archive; `None` skips verification.
     pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Manifest Llama Server.
+/// `llama-server` binary section of the manifest: a version tag
+/// plus the per-platform download variants.
 pub struct ManifestLlamaServer {
-    /// Version.
+    /// `llama-server` release version string.
     pub version: String,
     #[serde(default)]
-    /// Note.
+    /// Free-form maintainer note, if any.
     pub note: Option<String>,
-    /// Variants.
+    /// Downloadable binary variants, one per platform/backend.
     pub variants: Vec<ManifestLlamaServerVariant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Model Manifest.
+/// Top-level deserialized `models.json`: the catalogue of models
+/// plus the optional `llama-server` binary section.
 pub struct ModelManifest {
-    /// Format version.
+    /// Manifest schema version, bumped on breaking changes.
     pub format_version: u32,
     #[serde(default)]
-    /// Note.
+    /// Free-form maintainer note, if any.
     pub note: Option<String>,
-    /// Models.
+    /// Catalogue of downloadable models.
     pub models: Vec<ManifestModel>,
-    /// Llama server.
+    /// `llama-server` binary section, if present.
     pub llama_server: Option<ManifestLlamaServer>,
 }
 
@@ -209,7 +216,8 @@ fn parse_platform(s: &str, target: Platform) -> Result<Platform, ManifestError> 
 }
 
 impl ManifestModel {
-    /// Into model info.
+    /// Parses this string-typed manifest entry into a typed
+    /// [`ModelInfo`] resolved for `target`.
     pub fn into_model_info(self, target: Platform) -> Result<ModelInfo, ManifestError> {
         let format = parse_format(&self.format)?;
         let tier = parse_tier(&self.tier)?;
@@ -326,7 +334,7 @@ pub fn pick_llama_server_variant(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledModel {
-    /// Model id.
+    /// Id of the installed model.
     pub model_id: String,
     /// Capability slot this record belongs to. Mirrors the TS-side
     /// `InstalledModelRecord.capability` field which the Electron main
@@ -337,11 +345,11 @@ pub struct InstalledModel {
     /// the legacy-migration target slot.
     #[serde(default = "default_installed_capability")]
     pub capability: ModelCapability,
-    /// Format.
+    /// Weight format of the installed file.
     pub format: ModelFormat,
-    /// Filename.
+    /// File name of the weights in the cache directory.
     pub filename: String,
-    /// Path.
+    /// Absolute on-disk path to the weights.
     pub path: String,
     /// Bytes pulled over the wire when this model was installed.
     pub download_size_mb: u64,
@@ -386,7 +394,7 @@ pub struct InstalledModel {
     /// Settings UI per-slot disk display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mmproj_size_mb: Option<u64>,
-    /// Downloaded at.
+    /// When the model was installed, RFC 3339.
     pub downloaded_at: String,
 }
 
@@ -413,47 +421,50 @@ impl InstalledModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Swap Decision.
+/// Plan to replace the currently installed model with another:
+/// what to evict, what to install, and the net disk impact.
 pub struct SwapDecision {
-    /// Evict model id.
+    /// Id of the model to evict.
     pub evict_model_id: String,
-    /// Evict filename.
+    /// File name of the model to evict.
     pub evict_filename: String,
-    /// Evict size mb.
+    /// On-disk size of the evicted model, in MB.
     pub evict_size_mb: u64,
-    /// Install model id.
+    /// Id of the model to install.
     pub install_model_id: String,
-    /// Install filename.
+    /// File name of the model to install.
     pub install_filename: String,
-    /// Install size mb.
+    /// Download size of the new model, in MB.
     pub install_size_mb: u64,
-    /// Net disk delta mb.
+    /// Net change in disk usage after the swap, in MB (may be
+    /// negative).
     pub net_disk_delta_mb: i64,
-    /// Message.
+    /// Human-readable summary of the swap for the UI.
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-/// Download Plan.
+/// What [`plan_download`] decided to do for an install request.
 pub enum DownloadPlan {
-    /// Already Installed.
+    /// The requested model is already installed; nothing to do.
     AlreadyInstalled {
-        /// Model id.
+        /// Id of the already-installed model.
         model_id: String,
     },
-    /// Direct Download.
+    /// No model is installed; download the requested one directly.
     DirectDownload {
-        /// Model id.
+        /// Id of the model to download.
         model_id: String,
-        /// Filename.
+        /// File name to write into the cache.
         filename: String,
-        /// Download size mb.
+        /// Compressed download size, in MB.
         download_size_mb: u64,
-        /// Message.
+        /// Human-readable summary for the UI.
         message: String,
     },
-    /// The `Swap` variant.
+    /// A different model is installed; evict it and install the
+    /// requested one (single-model storage invariant).
     Swap(SwapDecision),
 }
 

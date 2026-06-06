@@ -12,51 +12,52 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Citation Info.
+/// JS-facing view of a [`Citation`]: source provenance plus the
+/// captured snapshot used for freshness checks.
 pub struct CitationInfo {
-    /// Citation id.
+    /// Citation id, stringified.
     pub citation_id: String,
-    /// Source id.
+    /// Id of the cited source, stringified.
     pub source_id: String,
-    /// Source type.
+    /// Source kind (`"local_file"`, `"kchat"`, …).
     pub source_type: String,
-    /// Source title.
+    /// Human-readable source title for display.
     pub source_title: String,
-    /// Source uri.
+    /// URI/path locating the cited source.
     pub source_uri: String,
-    /// Chunk hash.
+    /// Hash of the cited chunk, captured at citation time.
     pub chunk_hash: String,
-    /// Page.
+    /// 1-based page number for paginated sources, if applicable.
     pub page: Option<u32>,
-    /// Confidence.
+    /// Extraction confidence in `[0, 1]`.
     pub confidence: f64,
-    /// Used for.
+    /// Which artifact section the citation supports.
     pub used_for: String,
-    /// Created at.
+    /// When the citation was created, RFC 3339.
     pub created_at: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[napi(object)]
-/// Add Citation Request.
+/// Renderer request to attach a new citation to an artifact.
 pub struct AddCitationRequest {
-    /// Artifact id.
+    /// Id of the artifact to cite into, stringified.
     pub artifact_id: String,
-    /// Source id.
+    /// Id of the source being cited, stringified.
     pub source_id: String,
-    /// Source type.
+    /// Source kind (`"local_file"`, `"kchat"`, …).
     pub source_type: String,
-    /// Source title.
+    /// Human-readable source title for display.
     pub source_title: String,
-    /// Source uri.
+    /// URI/path locating the cited source.
     pub source_uri: String,
-    /// Chunk hash.
+    /// Hash of the cited chunk.
     pub chunk_hash: String,
-    /// Page.
+    /// 1-based page number for paginated sources, if applicable.
     pub page: Option<u32>,
-    /// Confidence.
+    /// Extraction confidence in `[0, 1]`.
     pub confidence: f64,
-    /// Used for.
+    /// Which artifact section the citation supports.
     pub used_for: String,
 }
 
@@ -77,7 +78,7 @@ impl From<&Citation> for CitationInfo {
     }
 }
 
-/// List citations.
+/// Returns every citation attached to the given artifact.
 pub fn list_citations(
     tracker: &CitationTracker,
     artifact_id: &str,
@@ -90,7 +91,8 @@ pub fn list_citations(
     Ok(citations.iter().map(CitationInfo::from).collect())
 }
 
-/// Add citation.
+/// Attaches a new citation to an artifact, capturing the source's
+/// current file hash for later freshness checks.
 pub fn add_citation(
     tracker: &mut CitationTracker,
     source_manager: &SourceManager,
@@ -133,7 +135,7 @@ pub fn add_citation(
     Ok(CitationInfo::from(&stored))
 }
 
-/// Remove citation.
+/// Detaches a citation from an artifact.
 pub fn remove_citation(
     tracker: &mut CitationTracker,
     artifact_id: &str,
@@ -149,7 +151,9 @@ pub fn remove_citation(
     Ok(())
 }
 
-/// Check source changed.
+/// Returns `true` if the cited source has changed since the
+/// citation was captured (legacy boolean form of
+/// [`check_source_freshness`]).
 pub fn check_source_changed(
     tracker: &CitationTracker,
     source_manager: &SourceManager,
@@ -180,39 +184,42 @@ pub fn check_source_freshness(
 
 #[derive(Debug, Deserialize)]
 #[napi(object)]
-/// Replace Citation Request.
+/// Renderer request to repoint an existing citation at a new
+/// source snapshot.
 pub struct ReplaceCitationRequest {
-    /// Artifact id.
+    /// Id of the owning artifact, stringified.
     pub artifact_id: String,
-    /// Citation id.
+    /// Id of the citation to replace, stringified.
     pub citation_id: String,
-    /// Source id.
+    /// Id of the new source, stringified.
     pub source_id: String,
-    /// Source type.
+    /// New source kind (`"local_file"`, `"kchat"`, …).
     pub source_type: String,
-    /// Source title.
+    /// New source title for display.
     pub source_title: String,
-    /// Source uri.
+    /// New source URI/path.
     pub source_uri: String,
-    /// Chunk hash.
+    /// Hash of the new cited chunk.
     pub chunk_hash: String,
-    /// Page.
+    /// 1-based page number for paginated sources, if applicable.
     pub page: Option<u32>,
-    /// Confidence.
+    /// Extraction confidence in `[0, 1]`.
     pub confidence: f64,
 }
 
 #[derive(Debug, Serialize)]
 #[napi(object)]
-/// Replace Citation Result.
+/// Result of a citation replacement: the updated citation plus the
+/// URI it previously pointed at.
 pub struct ReplaceCitationResult {
-    /// Citation.
+    /// The citation after the swap.
     pub citation: CitationInfo,
-    /// Previous source uri.
+    /// URI the citation pointed at before the swap.
     pub previous_source_uri: String,
 }
 
-/// Replace citation.
+/// Repoints a citation at a new source snapshot, returning the
+/// updated citation and its previous URI.
 pub fn replace_citation(
     tracker: &mut CitationTracker,
     source_manager: &SourceManager,

@@ -40,7 +40,8 @@ fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 /// full table scan to a single mutex-guarded `Instant::elapsed`.
 const NON_ASCII_CACHE_TTL: Duration = Duration::from_secs(30);
 
-/// Source Store.
+/// SQLite-backed store for sources, their indexed files, chunks, and
+/// the FTS5 / vector indexes used for retrieval.
 pub struct SourceStore {
     conn: SharedConnection,
     /// optional pool of read-only connections
@@ -118,12 +119,13 @@ pub enum VectorSearchPath {
 }
 
 impl SourceStore {
-    /// Open.
+    /// Opens (creating if needed) the on-disk store at `path`,
+    /// running migrations to bring the schema up to date.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
-    /// Open in memory.
+    /// Opens an ephemeral in-memory store (for tests).
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -241,7 +243,7 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Add source.
+    /// Inserts a new [`Source`] row.
     pub fn add_source(&self, source: &Source) -> Result<()> {
         self.conn
             .lock()
@@ -265,7 +267,8 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Remove source.
+    /// Deletes a source and all of its indexed files, chunks, and
+    /// index entries.
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         let id_str = source_id.to_string();
         let mut conn = self.conn.lock().expect("connection mutex poisoned");
@@ -322,7 +325,7 @@ impl SourceStore {
         Ok(())
     }
 
-    /// List sources.
+    /// Returns every registered [`Source`].
     pub fn list_sources(&self) -> Result<Vec<Source>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -380,7 +383,8 @@ impl SourceStore {
         Ok(sources)
     }
 
-    /// Get source.
+    /// Fetches a single [`Source`] by id, erroring if it doesn't
+    /// exist.
     pub fn get_source(&self, source_id: &SourceId) -> Result<Source> {
         let id_str = source_id.to_string();
         self.conn
@@ -487,7 +491,7 @@ impl SourceStore {
         }
     }
 
-    /// Update source status.
+    /// Updates a source's [`SourceStatus`] (and related bookkeeping).
     pub fn update_source_status(
         &self,
         source_id: &SourceId,
@@ -1157,7 +1161,8 @@ impl SourceStore {
         })
     }
 
-    /// Upsert indexed file.
+    /// Inserts or updates the `indexed_files` row for a file,
+    /// returning its row id.
     pub fn upsert_indexed_file(
         &self,
         source_id: &SourceId,
@@ -1210,7 +1215,8 @@ impl SourceStore {
         }
     }
 
-    /// Insert chunks.
+    /// Persists the chunks of an indexed file, populating the FTS
+    /// index.
     pub fn insert_chunks(&self, indexed_file_id: i64, chunks: &[Chunk]) -> Result<()> {
         self.insert_chunks_returning_ids(indexed_file_id, chunks)
             .map(|_| ())
@@ -2133,7 +2139,8 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Get file hash.
+    /// Returns the stored content hash for `path`, or `None` if the
+    /// file isn't indexed.
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
         let result = self
             .conn
@@ -2148,7 +2155,7 @@ impl SourceStore {
         Ok(result)
     }
 
-    /// Remove indexed file.
+    /// Removes an indexed file and its chunks/index entries by path.
     pub fn remove_indexed_file(&self, path: &str) -> Result<()> {
         let mut conn = self.conn.lock().expect("connection mutex poisoned");
         // A missing row is a legitimate no-op, but any *other* error from
@@ -2197,7 +2204,8 @@ impl SourceStore {
         Ok(())
     }
 
-    /// Search fts.
+    /// Runs a raw FTS5 (BM25) query, returning up to `limit` ranked
+    /// [`SearchHit`]s.
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
         // hot read path → dispatch through
         // the read pool when one is configured. WAL mode lets us
@@ -2806,7 +2814,7 @@ impl SourceStore {
         })
     }
 
-    /// File count for source.
+    /// Counts the indexed files belonging to `source_id`.
     pub fn file_count_for_source(&self, source_id: &SourceId) -> Result<u64> {
         let id_str = source_id.to_string();
         let count: i64 = self
@@ -2844,7 +2852,8 @@ impl SourceStore {
         Ok(contents)
     }
 
-    /// Get current file hash.
+    /// Reads `file_path` from disk and returns its current content
+    /// hash (for staleness checks), or `None` if unreadable.
     pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
         let result = self
             .conn
@@ -2862,7 +2871,7 @@ impl SourceStore {
         }
     }
 
-    /// List indexed files.
+    /// Lists the [`IndexedFile`]s belonging to `source_id`.
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
         let id_str = source_id.to_string();
         let conn = self.conn.lock().expect("connection mutex poisoned");
@@ -2890,23 +2899,24 @@ impl SourceStore {
 }
 
 #[derive(Debug, Clone)]
-/// Search Hit.
+/// A raw FTS hit returned by [`SourceStore::search_fts`]: the matched
+/// chunk plus its provenance and relevance score.
 pub struct SearchHit {
-    /// Chunk id.
+    /// Row id of the matched chunk.
     pub chunk_id: i64,
-    /// Content.
+    /// Full text of the matched chunk.
     pub content: String,
-    /// Hash.
+    /// Content hash of the matched chunk.
     pub hash: String,
-    /// Chunk index.
+    /// Position of the chunk within its source.
     pub chunk_index: usize,
-    /// Byte offset.
+    /// Byte offset of the chunk's start within the source text.
     pub byte_offset: usize,
-    /// Source path.
+    /// Path of the source the chunk came from.
     pub source_path: String,
-    /// Source id.
+    /// Id of the source the chunk came from.
     pub source_id: String,
-    /// Relevance.
+    /// BM25-derived relevance score (higher is more relevant).
     pub relevance: f64,
 }
 
@@ -2939,35 +2949,37 @@ pub struct SearchHit {
 /// verified plaintext).
 #[derive(Debug, Clone)]
 pub struct KchatPostSearchHitRow {
-    /// Chunk id.
+    /// Row id of the matched chunk.
     pub chunk_id: i64,
-    /// Content.
+    /// Indexed plaintext of the chunk (compared against the decrypted
+    /// ciphertext during AEAD verification).
     pub content: String,
-    /// Content aead.
+    /// AEAD ciphertext of the chunk content, when encrypted.
     pub content_aead: Option<Vec<u8>>,
-    /// Content aead nonce.
+    /// Nonce used for `content_aead`.
     pub content_aead_nonce: Option<Vec<u8>>,
-    /// Hash.
+    /// Content hash of the matched chunk.
     pub hash: String,
-    /// Chunk index.
+    /// Position of the chunk within its source.
     pub chunk_index: usize,
-    /// Byte offset.
+    /// Byte offset of the chunk's start within the source text.
     pub byte_offset: usize,
-    /// Source id.
+    /// Id of the source the chunk came from.
     pub source_id: String,
-    /// Source path.
+    /// Path of the source the chunk came from.
     pub source_path: String,
-    /// Post id.
+    /// KChat post id this chunk belongs to.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the post was sent in.
     pub channel_id: String,
-    /// Root id.
+    /// Thread root post id, or `None` if the post is a root.
     pub root_id: Option<String>,
-    /// Sender user id.
+    /// User id of the post's author.
     pub sender_user_id: String,
-    /// Created at ms.
+    /// Post creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds (equals
+    /// `created_at_ms` if never edited).
     pub edited_at_ms: i64,
     /// Raw FTS5 BM25 score (`-rank` in the SQL — FTS5 reports
     /// `rank` as a non-positive log-relevance, so we negate to
@@ -2999,47 +3011,48 @@ pub struct KchatPostSearchHitRow {
 /// row.
 #[derive(Debug, Clone)]
 pub struct KchatThreadContextRow {
-    /// Post id.
+    /// KChat post id for this context row.
     pub post_id: String,
-    /// Channel id.
+    /// KChat channel id the post was sent in.
     pub channel_id: String,
-    /// Root id.
+    /// Thread root post id, or `None` if the post is a root.
     pub root_id: Option<String>,
-    /// Sender user id.
+    /// User id of the post's author.
     pub sender_user_id: String,
-    /// Created at ms.
+    /// Post creation time, Unix epoch milliseconds.
     pub created_at_ms: i64,
-    /// Edited at ms.
+    /// Last-edit time, Unix epoch milliseconds.
     pub edited_at_ms: i64,
-    /// Content.
+    /// Indexed plaintext of the post (compared against the decrypted
+    /// ciphertext during AEAD verification).
     pub content: String,
-    /// Content aead.
+    /// AEAD ciphertext of the post content, when encrypted.
     pub content_aead: Option<Vec<u8>>,
-    /// Content aead nonce.
+    /// Nonce used for `content_aead`.
     pub content_aead_nonce: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
-/// Chunk Embedding Row.
+/// A stored embedding vector for one chunk under a given model.
 pub struct ChunkEmbeddingRow {
-    /// Chunk id.
+    /// Row id of the chunk this vector embeds.
     pub chunk_id: i64,
-    /// Model id.
+    /// Manifest id of the embedding model that produced `vector`.
     pub model_id: String,
-    /// Vector.
+    /// The embedding, as raw `f32` components.
     pub vector: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
-/// Indexed File.
+/// Summary of one file the indexer has processed for a source.
 pub struct IndexedFile {
-    /// Path.
+    /// Absolute path of the file.
     pub path: String,
-    /// Hash.
+    /// Content hash at the time it was last indexed.
     pub hash: String,
-    /// Last modified.
+    /// Filesystem last-modified timestamp (RFC 3339 string).
     pub last_modified: String,
-    /// Chunk count.
+    /// Number of chunks produced from this file.
     pub chunk_count: u64,
 }
 

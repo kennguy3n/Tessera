@@ -7,7 +7,8 @@ use crate::embedding::EmbeddingProvider;
 use crate::hybrid::{hybrid_search, HybridSearchConfig};
 use crate::store::SourceStore;
 
-/// Search Engine.
+/// Runs full-text (BM25) and optional hybrid vector/recency search
+/// over a [`SourceStore`], producing ranked [`SearchResult`]s.
 pub struct SearchEngine<'a> {
     store: &'a SourceStore,
     provider: Option<&'a dyn EmbeddingProvider>,
@@ -15,17 +16,18 @@ pub struct SearchEngine<'a> {
 }
 
 #[derive(Debug, Clone)]
-/// Search Result.
+/// A single ranked hit: the matching chunk plus enough provenance to
+/// build a citation and a relevance score for display.
 pub struct SearchResult {
-    /// Content.
+    /// Full text of the matching chunk.
     pub content: String,
-    /// Excerpt.
+    /// Short snippet around the match, for preview in the UI.
     pub excerpt: String,
-    /// Source path.
+    /// Path of the source the chunk came from.
     pub source_path: String,
-    /// Source id.
+    /// Id of the source the chunk came from.
     pub source_id: String,
-    /// Chunk index.
+    /// Position of the chunk within its source.
     pub chunk_index: usize,
     /// Reciprocal-rank relevance score, bounded to `(0.0, 1.0]`.
     ///
@@ -62,7 +64,7 @@ pub struct SearchResult {
     /// `search_result_relevance_is_bounded` regression test
     /// pins the new contract.
     pub relevance: f64,
-    /// Hash.
+    /// Content hash of the matched chunk.
     pub hash: String,
 }
 
@@ -98,12 +100,14 @@ impl<'a> SearchEngine<'a> {
         }
     }
 
-    /// Search.
+    /// Runs an AND-joined query (all terms must match), returning up
+    /// to `limit` ranked results.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         self.search_with_mode(query, limit, false)
     }
 
-    /// Search broad.
+    /// Runs an OR-joined (broader) query, returning up to `limit`
+    /// ranked results — useful when the strict query is too narrow.
     pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         self.search_with_mode(query, limit, true)
     }

@@ -76,13 +76,23 @@ export default class ErrorBoundary extends Component<Props, State> {
     // the `tessera` bridge is absent in unit tests and a rejected
     // promise here would be noise while the fallback UI is already up.
     try {
-      void window.tessera?.diagnostics?.reportCrash({
-        component,
-        error: error.message,
-        // Prefer the JS stack; fall back to React's component stack so
-        // the report is never empty.
-        stack: error.stack ?? info.componentStack ?? "",
-        timestamp: new Date().toISOString(),
+      // `reportCrash` returns a promise (or `undefined` when the bridge
+      // is absent). Route it through `Promise.resolve(...).catch` so an
+      // async rejection — should a future handler ever reject — is
+      // swallowed rather than surfacing as an unhandled rejection. The
+      // synchronous `try/catch` only covers a throw while *invoking* the
+      // call (e.g. the bridge getter throwing), not the returned promise.
+      void Promise.resolve(
+        window.tessera?.diagnostics?.reportCrash({
+          component,
+          error: error.message,
+          // Prefer the JS stack; fall back to React's component stack so
+          // the report is never empty.
+          stack: error.stack ?? info.componentStack ?? "",
+          timestamp: new Date().toISOString(),
+        }),
+      ).catch(() => {
+        // Swallow — reporting a crash must never cause another crash.
       });
     } catch {
       // Swallow — reporting a crash must never cause another crash.

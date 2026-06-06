@@ -8,33 +8,36 @@ use tessera_core::ArtifactType;
 /// A section of source context assembled for generation.
 #[derive(Debug, Clone)]
 pub struct SourcePack {
-    /// Section title.
+    /// Title of the template section this context feeds.
     pub section_title: String,
-    /// Prompt.
+    /// The generation prompt for the section.
     pub prompt: String,
-    /// Chunks.
+    /// Retrieved source chunks supplying the context, typically
+    /// ordered by descending relevance.
     pub chunks: Vec<SourceChunk>,
 }
 
 #[derive(Debug, Clone)]
-/// Source Chunk.
+/// A single retrieved passage of source text with provenance and a
+/// relevance weight.
 pub struct SourceChunk {
-    /// Content.
+    /// The passage text included in the prompt.
     pub content: String,
-    /// Source path.
+    /// Path/URI of the source the passage came from.
     pub source_path: String,
-    /// Relevance.
+    /// Relevance of this chunk to the section, in `0.0..=1.0` (higher
+    /// ranks first).
     pub relevance: f64,
 }
 
 /// Assembled artifact content produced by a generator pipeline.
 #[derive(Debug, Clone)]
 pub struct GeneratedContent {
-    /// Title.
+    /// Title of the generated artifact.
     pub title: String,
-    /// Artifact type.
+    /// Kind of artifact produced, which drives Markdown rendering.
     pub artifact_type: ArtifactType,
-    /// Sections.
+    /// Generated sections in output order.
     pub sections: Vec<GeneratedSection>,
 }
 
@@ -48,20 +51,22 @@ pub struct GeneratedContent {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SectionKind {
     #[default]
-    /// The `Normal` variant.
+    /// Standard section rendered as `## <heading>` followed by the
+    /// body.
     Normal,
     /// Verbatim front-matter content emitted before the title with no heading.
     Frontmatter,
 }
 
 #[derive(Debug, Clone)]
-/// Generated Section.
+/// One section of [`GeneratedContent`]: a heading, body, and the
+/// citation references that back it.
 pub struct GeneratedSection {
-    /// Heading.
+    /// Section heading (unused for [`SectionKind::Frontmatter`]).
     pub heading: String,
-    /// Body.
+    /// Section body text.
     pub body: String,
-    /// Citation refs.
+    /// Identifiers of citations supporting this section's claims.
     pub citation_refs: Vec<String>,
     /// Rendering kind. Defaults to `SectionKind::Normal`; use
     /// `GeneratedSection::frontmatter(body)` to construct a verbatim
@@ -93,7 +98,9 @@ impl GeneratedSection {
 }
 
 impl GeneratedContent {
-    /// To markdown.
+    /// Assembles the sections into a single Markdown document: any
+    /// front-matter section is emitted verbatim first, then the
+    /// title, then each `Normal` section as `## <heading>` plus body.
     pub fn to_markdown(&self) -> String {
         let mut md = String::new();
         let mut title_emitted = false;

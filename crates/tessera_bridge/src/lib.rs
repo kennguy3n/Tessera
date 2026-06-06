@@ -16,41 +16,43 @@ use serde::{Deserialize, Serialize};
 use tessera_core::error::Error;
 
 #[derive(Debug, thiserror::Error)]
-/// Bridge Error.
+/// Error type for bridge operations, surfaced to JS as the
+/// rejection message of the calling promise.
 pub enum BridgeError {
     #[error("Core error: {0}")]
-    /// Core error.
+    /// An error propagated from the Tessera core layer.
     Core(#[from] Error),
 
     #[error("Invalid arguments: {0}")]
-    /// Invalid arguments.
+    /// Caller passed malformed input (e.g. an unparseable id).
     InvalidArgs(String),
 
     #[error("Serialization error: {0}")]
-    /// Serialization error.
+    /// A value failed to (de)serialize across the bridge.
     Serialization(String),
 
     #[error("Not initialized")]
-    /// Not initialized.
+    /// The global bridge state was used before initialization.
     NotInitialized,
 }
 
-/// Bridge Result type alias.
+/// Convenience `Result` alias for bridge operations.
 pub type BridgeResult<T> = std::result::Result<T, BridgeError>;
 
 #[derive(Debug, Serialize, Deserialize)]
-/// Bridge Response.
+/// Envelope wrapping a bridge result for the JS side: exactly one
+/// of `data` / `error` is populated depending on `success`.
 pub struct BridgeResponse<T: Serialize> {
-    /// Success.
+    /// `true` when the operation succeeded (`data` is populated).
     pub success: bool,
-    /// Data.
+    /// Payload on success; `None` on failure.
     pub data: Option<T>,
-    /// Error.
+    /// Error message on failure; `None` on success.
     pub error: Option<String>,
 }
 
 impl<T: Serialize> BridgeResponse<T> {
-    /// Ok.
+    /// Builds a success envelope carrying `data`.
     pub fn ok(data: T) -> Self {
         Self {
             success: true,
@@ -59,7 +61,7 @@ impl<T: Serialize> BridgeResponse<T> {
         }
     }
 
-    /// Err.
+    /// Builds a failure envelope carrying `message`.
     pub fn err(message: String) -> Self {
         Self {
             success: false,

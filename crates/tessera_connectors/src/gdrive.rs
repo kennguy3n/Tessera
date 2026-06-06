@@ -20,7 +20,8 @@ const DEFAULT_START_PAGE_TOKEN_URL: &str =
 const FILE_FIELDS: &str =
     "id,name,mimeType,size,modifiedTime,createdTime,parents,webViewLink,md5Checksum,permissions(role,type,emailAddress)";
 
-/// Google Drive Connector.
+/// Connector for Google Drive: holds OAuth state plus the API
+/// endpoints, and syncs file metadata via Drive's changes feed.
 pub struct GoogleDriveConnector {
     client: Client,
     status: ConnectorStatus,
@@ -39,7 +40,8 @@ pub struct GoogleDriveConnector {
 }
 
 impl GoogleDriveConnector {
-    /// Creates a new instance.
+    /// Creates a disconnected connector pointed at the live Google
+    /// API endpoints.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -86,22 +88,22 @@ impl GoogleDriveConnector {
         self.status = ConnectorStatus::Connected;
     }
 
-    /// Provider name.
+    /// Stable provider key for this connector (`"google_drive"`).
     pub fn provider_name(&self) -> &'static str {
         "google_drive"
     }
 
-    /// Status.
+    /// Current connection status.
     pub fn status(&self) -> ConnectorStatus {
         self.status
     }
 
-    /// Last sync time.
+    /// When the last successful sync completed, if ever.
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
 
-    /// File count.
+    /// Number of files indexed from this connector.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }

@@ -12,11 +12,11 @@ use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
-/// Export Result.
+/// In-memory result of an artifact export.
 pub struct ExportResult {
-    /// Content.
+    /// Exported document body in the requested format.
     pub content: String,
-    /// Format.
+    /// Format the content was rendered in (`"pdf"`, `"docx"`, …).
     pub format: String,
 }
 

@@ -23,18 +23,23 @@ use crate::citation::Citation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Freshness Status.
+/// Whether a citation still matches its underlying source. Computed by
+/// comparing the file hash snapshotted on the [`Citation`] against the
+/// source's current state. Serialised to `snake_case`.
 pub enum FreshnessStatus {
-    /// The `Fresh` variant.
+    /// Source is present and unchanged since the citation was created.
     Fresh,
-    /// The `Changed` variant.
+    /// Source still exists but its content hash differs — the citation
+    /// may no longer support the cited claim and should be re-checked.
     Changed,
-    /// Source Missing.
+    /// The source can no longer be found (deleted/disconnected); the
+    /// citation is dangling.
     SourceMissing,
 }
 
 impl FreshnessStatus {
-    /// Is stale.
+    /// True when the citation needs attention — i.e. anything other
+    /// than [`FreshnessStatus::Fresh`].
     pub fn is_stale(self) -> bool {
         !matches!(self, Self::Fresh)
     }

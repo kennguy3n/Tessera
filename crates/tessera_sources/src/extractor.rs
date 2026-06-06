@@ -99,7 +99,8 @@ pub fn extract_files_parallel(paths: &[PathBuf]) -> Vec<(PathBuf, Result<String>
     })
 }
 
-/// Extract text.
+/// Extracts plain text from a file, dispatching on its extension to
+/// the appropriate format-specific extractor.
 pub fn extract_text(path: &Path) -> Result<String> {
     let ext = path
         .extension()
@@ -123,7 +124,8 @@ pub fn extract_text(path: &Path) -> Result<String> {
     }
 }
 
-/// Is supported extension.
+/// Returns `true` if files with this extension can be extracted by
+/// [`extract_text`].
 pub fn is_supported_extension(ext: &str) -> bool {
     let lower = ext.to_lowercase();
     matches!(
