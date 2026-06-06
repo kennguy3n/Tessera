@@ -98,6 +98,18 @@ const MAX_CENTROIDS: usize = 256;
 /// the threshold-to-64-cell range.
 const MIN_CENTROIDS: usize = 8;
 
+/// Corpus-churn fraction beyond which incremental maintenance is
+/// abandoned in favour of a fresh k-means rebuild. "Churn" is the
+/// cumulative number of vectors inserted or removed incrementally
+/// since the last full [`IvfIndex::build`], expressed as a fraction
+/// of the corpus size at that build. Above this threshold the frozen
+/// centroids have drifted far enough from the true cluster means that
+/// incremental assignment recall degrades, so the caller should pay
+/// for a full rebuild. `0.20` (20%) is the standard heuristic used by
+/// libraries like FAISS / hnswlib for "rebuild after one-fifth of the
+/// index has changed".
+pub const IVF_REBUILD_DRIFT_THRESHOLD: f64 = 0.20;
+
 /// Fixed RNG seed used by k-means++ initialisation. Pinning
 /// this makes index builds deterministic — two builds over
 /// the same input produce the same centroids, the same cell
@@ -137,6 +149,15 @@ pub struct IvfIndex {
     /// FAISS default and gives roughly 95% recall@10 on uniform
     /// distributions.
     nprobe: usize,
+    /// Number of vectors present immediately after the last full
+    /// k-means [`Self::build`]. The denominator for [`Self::drift_ratio`].
+    /// Frozen across incremental [`Self::insert`] / [`Self::remove`]
+    /// calls; only a fresh `build` resets it.
+    base_count: usize,
+    /// Cumulative count of vectors inserted or removed incrementally
+    /// since the last full rebuild. Numerator for [`Self::drift_ratio`].
+    /// Reset to zero by [`Self::build`].
+    churn_since_rebuild: usize,
 }
 
 /// A single (chunk_id, similarity) pair emitted by
@@ -208,8 +229,10 @@ impl IvfIndex {
             dim,
             centroids,
             cells,
+            base_count: filtered.len(),
             vectors: filtered,
             nprobe,
+            churn_since_rebuild: 0,
         }
     }
 
@@ -224,6 +247,8 @@ impl IvfIndex {
             cells: Vec::new(),
             vectors: Vec::new(),
             nprobe: 0,
+            base_count: 0,
+            churn_since_rebuild: 0,
         }
     }
 
@@ -242,6 +267,162 @@ impl IvfIndex {
 
     pub fn is_empty(&self) -> bool {
         self.vectors.is_empty()
+    }
+
+    /// Number of cells (centroids / inverted lists) in the index.
+    /// Zero for an empty index.
+    pub fn num_cells(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// Corpus size captured at the last full [`Self::build`]. Used as
+    /// the denominator for [`Self::drift_ratio`].
+    pub fn base_count(&self) -> usize {
+        self.base_count
+    }
+
+    /// Cumulative inserts + removes applied incrementally since the
+    /// last full rebuild.
+    pub fn churn_since_rebuild(&self) -> usize {
+        self.churn_since_rebuild
+    }
+
+    /// Fraction of the corpus that has churned (incremental inserts +
+    /// removes) since the last full [`Self::build`].
+    ///
+    /// `0.0` for a freshly-built index. Returns [`f64::INFINITY`] when
+    /// the index was built empty (`base_count == 0`) but has since
+    /// accumulated churn — there is no meaningful baseline to compare
+    /// against, so any growth should force a real k-means build.
+    pub fn drift_ratio(&self) -> f64 {
+        if self.base_count == 0 {
+            return if self.churn_since_rebuild == 0 {
+                0.0
+            } else {
+                f64::INFINITY
+            };
+        }
+        self.churn_since_rebuild as f64 / self.base_count as f64
+    }
+
+    /// Whether accumulated drift has crossed
+    /// [`IVF_REBUILD_DRIFT_THRESHOLD`]. When this returns `true` the
+    /// caller should discard the index and call [`Self::build`] over
+    /// the current row set rather than continuing to maintain it
+    /// incrementally — the frozen centroids no longer track the
+    /// corpus closely enough for the cell-probe recall guarantee.
+    pub fn needs_rebuild(&self) -> bool {
+        self.drift_ratio() > IVF_REBUILD_DRIFT_THRESHOLD
+    }
+
+    /// Incrementally add new embedding rows to the index by assigning
+    /// each to its nearest existing centroid — **without** re-running
+    /// k-means. Returns the number of rows actually inserted.
+    ///
+    /// Rows whose `model_id` doesn't match `model_id` or whose vector
+    /// length doesn't equal [`Self::dim`] are skipped, mirroring the
+    /// build-time filter so the incremental path stays observationally
+    /// compatible with the brute-force scan.
+    ///
+    /// Cost is `O(added * K * D)`: each new vector is scored against
+    /// the `K` frozen centroids and dropped into the nearest cell.
+    /// Centroids are **not** moved, so a long run of incremental
+    /// inserts gradually pulls the true cluster means away from the
+    /// frozen centroids and erodes recall. Callers must therefore
+    /// watch [`Self::needs_rebuild`] and fall back to [`Self::build`]
+    /// once drift crosses [`IVF_REBUILD_DRIFT_THRESHOLD`].
+    ///
+    /// On an empty index (no centroids exist yet) there is nothing to
+    /// assign against, so no rows are inserted and `0` is returned;
+    /// the matching candidates are still counted as churn so
+    /// [`Self::needs_rebuild`] fires and the caller rebuilds. Callers
+    /// holding a possibly-empty index should branch on
+    /// [`Self::is_empty`] and call [`Self::build`] directly instead.
+    pub fn insert(&mut self, rows: &[ChunkEmbeddingRow], model_id: &str) -> usize {
+        if self.centroids.is_empty() {
+            // No centroids to assign against. Count the would-be
+            // additions as churn so the next `needs_rebuild` check
+            // forces a full build, but don't silently add unindexed
+            // vectors to a degenerate index.
+            let candidates = rows
+                .iter()
+                .filter(|r| r.model_id == model_id && r.vector.len() == self.dim)
+                .count();
+            self.churn_since_rebuild = self.churn_since_rebuild.saturating_add(candidates);
+            return 0;
+        }
+
+        let k = self.cells.len();
+        let mut inserted = 0usize;
+        for r in rows {
+            if r.model_id != model_id || r.vector.len() != self.dim {
+                continue;
+            }
+            let normalised = l2_normalise(&r.vector);
+            let best_c = nearest_centroid(&normalised, &self.centroids, k, self.dim);
+            let vec_idx = self.vectors.len();
+            self.vectors.push(IndexedVector {
+                chunk_id: r.chunk_id,
+                normalised,
+            });
+            self.cells[best_c].push(vec_idx);
+            inserted += 1;
+        }
+        self.churn_since_rebuild = self.churn_since_rebuild.saturating_add(inserted);
+        inserted
+    }
+
+    /// Incrementally remove vectors by `chunk_id`. Returns the number
+    /// of vectors actually removed.
+    ///
+    /// Because [`Self::cells`] stores positional indices into
+    /// [`Self::vectors`], removing entries shifts every later index;
+    /// rather than patch the inverted lists in place we filter the
+    /// surviving vectors and re-derive the cell assignments against
+    /// the **existing** (frozen) centroids with a single
+    /// nearest-centroid pass. That keeps centroids fixed (so this is
+    /// still an incremental op, not a rebuild) at `O(remaining * K * D)`.
+    ///
+    /// Removals count toward drift exactly like inserts, so a corpus
+    /// that loses >20% of its rows since the last build will also trip
+    /// [`Self::needs_rebuild`].
+    pub fn remove(&mut self, chunk_ids: &[i64]) -> usize {
+        if chunk_ids.is_empty() || self.vectors.is_empty() {
+            return 0;
+        }
+        let remove_set: std::collections::HashSet<i64> = chunk_ids.iter().copied().collect();
+        let before = self.vectors.len();
+        let retained: Vec<IndexedVector> = std::mem::take(&mut self.vectors)
+            .into_iter()
+            .filter(|v| !remove_set.contains(&v.chunk_id))
+            .collect();
+        let removed = before - retained.len();
+        self.vectors = retained;
+        if removed == 0 {
+            return 0;
+        }
+
+        // Re-derive inverted lists against the frozen centroids. Cell
+        // count is unchanged; cells that end up empty are tolerated by
+        // the query path exactly as they are after a build.
+        let k = self.cells.len();
+        if k > 0 {
+            let mut assignments = vec![0usize; self.vectors.len()];
+            assign_to_nearest(
+                &self.vectors,
+                &self.centroids,
+                k,
+                self.dim,
+                &mut assignments,
+            );
+            let mut cells: Vec<Vec<usize>> = vec![Vec::new(); k];
+            for (vec_idx, &cell_idx) in assignments.iter().enumerate() {
+                cells[cell_idx].push(vec_idx);
+            }
+            self.cells = cells;
+        }
+        self.churn_since_rebuild = self.churn_since_rebuild.saturating_add(removed);
+        removed
     }
 
     /// Top-`k` cosine matches against `query`. Returns at most
@@ -519,18 +700,26 @@ fn assign_to_nearest(
 ) {
     debug_assert_eq!(assignments.len(), vectors.len());
     for (vec_idx, v) in vectors.iter().enumerate() {
-        let mut best_c = 0usize;
-        let mut best_score = f32::NEG_INFINITY;
-        for c in 0..k {
-            let centroid = &centroids[c * dim..(c + 1) * dim];
-            let score = dot(&v.normalised, centroid);
-            if score > best_score {
-                best_score = score;
-                best_c = c;
-            }
-        }
-        assignments[vec_idx] = best_c;
+        assignments[vec_idx] = nearest_centroid(&v.normalised, centroids, k, dim);
     }
+}
+
+/// Index of the centroid with the highest dot product against
+/// `normalised` (i.e. nearest by cosine, since both are unit
+/// vectors). Shared by the build-time assignment pass and the
+/// incremental [`IvfIndex::insert`] / [`IvfIndex::remove`] paths.
+fn nearest_centroid(normalised: &[f32], centroids: &[f32], k: usize, dim: usize) -> usize {
+    let mut best_c = 0usize;
+    let mut best_score = f32::NEG_INFINITY;
+    for c in 0..k {
+        let centroid = &centroids[c * dim..(c + 1) * dim];
+        let score = dot(normalised, centroid);
+        if score > best_score {
+            best_score = score;
+            best_c = c;
+        }
+    }
+    best_c
 }
 
 /// Update centroids to the mean (then L2-renormalised) of their
@@ -899,5 +1088,246 @@ mod tests {
         let query: Vec<f32> = (0..dim).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
         let hits = idx.top_k_cosine(&query, 5);
         assert_eq!(hits.len(), 5);
+    }
+
+    // ── incremental update (insert / remove / drift) ──────────────
+
+    #[test]
+    fn fresh_build_has_zero_drift() {
+        let rows = vec![
+            row(1, "m", vec![1.0, 0.0]),
+            row(2, "m", vec![0.0, 1.0]),
+            row(3, "m", vec![-1.0, 0.0]),
+        ];
+        let idx = IvfIndex::build(&rows, "m", 2);
+        assert_eq!(idx.base_count(), 3);
+        assert_eq!(idx.churn_since_rebuild(), 0);
+        // Zero churn → zero drift. Epsilon compare (not `assert_eq!`
+        // on floats) to satisfy `clippy::float_cmp`, matching the
+        // drift assertions in the churn tests below.
+        assert!(idx.drift_ratio().abs() < 1e-9);
+        assert!(!idx.needs_rebuild());
+    }
+
+    #[test]
+    fn insert_adds_vectors_and_keeps_them_searchable() {
+        let rows = vec![
+            row(1, "m", vec![1.0, 0.0, 0.0]),
+            row(2, "m", vec![0.0, 1.0, 0.0]),
+            row(3, "m", vec![0.0, 0.0, 1.0]),
+        ];
+        let mut idx = IvfIndex::build(&rows, "m", 3);
+        let n_cells_before = idx.num_cells();
+        // A direction distinct from every existing (axis-aligned)
+        // vector so a query pointing exactly at it must rank the new
+        // vector first.
+        let added = idx.insert(&[row(42, "m", vec![0.6, 0.8, 0.0])], "m");
+        assert_eq!(added, 1);
+        assert_eq!(idx.len(), 4);
+        // Incremental insert must NOT change the centroid count
+        // (no k-means re-run).
+        assert_eq!(idx.num_cells(), n_cells_before);
+        // The new vector is the closest match to a query aligned
+        // with it, proving it landed in a probed cell.
+        let hits = idx.top_k_cosine(&[0.6, 0.8, 0.0], 1);
+        assert_eq!(hits[0].chunk_id, 42);
+    }
+
+    #[test]
+    fn insert_skips_dim_and_model_mismatches() {
+        let rows = vec![row(1, "m", vec![1.0, 0.0]), row(2, "m", vec![0.0, 1.0])];
+        let mut idx = IvfIndex::build(&rows, "m", 2);
+        let added = idx.insert(
+            &[
+                row(3, "m", vec![1.0, 0.0, 0.0]), // wrong dim
+                row(4, "other", vec![1.0, 0.0]),  // wrong model
+                row(5, "m", vec![0.5, 0.5]),      // ok
+            ],
+            "m",
+        );
+        assert_eq!(added, 1);
+        assert_eq!(idx.len(), 3);
+        assert_eq!(idx.churn_since_rebuild(), 1);
+    }
+
+    #[test]
+    fn remove_drops_vectors_and_excludes_them_from_results() {
+        let rows = vec![
+            row(1, "m", vec![1.0, 0.0, 0.0]),
+            row(2, "m", vec![0.0, 1.0, 0.0]),
+            row(3, "m", vec![0.0, 0.0, 1.0]),
+        ];
+        let mut idx = IvfIndex::build(&rows, "m", 3);
+        let removed = idx.remove(&[1]);
+        assert_eq!(removed, 1);
+        assert_eq!(idx.len(), 2);
+        // chunk 1 must no longer surface even for a query aligned
+        // with it.
+        let hits = idx.top_k_cosine(&[1.0, 0.0, 0.0], 10);
+        assert!(hits.iter().all(|h| h.chunk_id != 1));
+    }
+
+    #[test]
+    fn remove_unknown_ids_is_a_noop() {
+        let rows = vec![row(1, "m", vec![1.0, 0.0]), row(2, "m", vec![0.0, 1.0])];
+        let mut idx = IvfIndex::build(&rows, "m", 2);
+        assert_eq!(idx.remove(&[999]), 0);
+        assert_eq!(idx.len(), 2);
+        assert_eq!(idx.churn_since_rebuild(), 0);
+    }
+
+    #[test]
+    fn drift_crosses_threshold_after_twenty_percent_churn() {
+        // 100 base vectors. 20 inserts == exactly 20% → not yet over
+        // the strictly-greater-than threshold; the 21st insert tips
+        // it over.
+        let dim = 8;
+        let mut rng = StdRng::seed_from_u64(99);
+        let base: Vec<ChunkEmbeddingRow> = (0..100)
+            .map(|i| {
+                let v: Vec<f32> = (0..dim).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
+                row(i as i64, "m", v)
+            })
+            .collect();
+        let mut idx = IvfIndex::build(&base, "m", dim);
+        assert_eq!(idx.base_count(), 100);
+
+        for i in 0..20 {
+            let v: Vec<f32> = (0..dim).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
+            idx.insert(&[row(1000 + i, "m", v)], "m");
+        }
+        assert_eq!(idx.churn_since_rebuild(), 20);
+        assert!((idx.drift_ratio() - 0.20).abs() < 1e-9);
+        assert!(
+            !idx.needs_rebuild(),
+            "exactly 20% should not yet trip the strictly-greater-than gate"
+        );
+
+        let v: Vec<f32> = (0..dim).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
+        idx.insert(&[row(2000, "m", v)], "m");
+        assert!(idx.drift_ratio() > IVF_REBUILD_DRIFT_THRESHOLD);
+        assert!(idx.needs_rebuild());
+    }
+
+    #[test]
+    fn removals_also_count_toward_drift() {
+        let dim = 4;
+        let mut rng = StdRng::seed_from_u64(5);
+        let base: Vec<ChunkEmbeddingRow> = (0..50)
+            .map(|i| {
+                let v: Vec<f32> = (0..dim).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
+                row(i as i64, "m", v)
+            })
+            .collect();
+        let mut idx = IvfIndex::build(&base, "m", dim);
+        // Remove 11 of 50 (22%) → over the 20% gate.
+        let ids: Vec<i64> = (0..11).collect();
+        assert_eq!(idx.remove(&ids), 11);
+        assert_eq!(idx.churn_since_rebuild(), 11);
+        assert!(idx.drift_ratio() > IVF_REBUILD_DRIFT_THRESHOLD);
+        assert!(idx.needs_rebuild());
+    }
+
+    #[test]
+    fn rebuild_resets_drift_accounting() {
+        let rows = vec![
+            row(1, "m", vec![1.0, 0.0]),
+            row(2, "m", vec![0.0, 1.0]),
+            row(3, "m", vec![-1.0, 0.0]),
+            row(4, "m", vec![0.0, -1.0]),
+        ];
+        let mut idx = IvfIndex::build(&rows, "m", 2);
+        idx.insert(&[row(5, "m", vec![0.5, 0.5])], "m");
+        assert!(idx.churn_since_rebuild() > 0);
+
+        // Simulate the caller's rebuild path: collect the live rows
+        // and rebuild from scratch.
+        let all = vec![
+            row(1, "m", vec![1.0, 0.0]),
+            row(2, "m", vec![0.0, 1.0]),
+            row(3, "m", vec![-1.0, 0.0]),
+            row(4, "m", vec![0.0, -1.0]),
+            row(5, "m", vec![0.5, 0.5]),
+        ];
+        let rebuilt = IvfIndex::build(&all, "m", 2);
+        assert_eq!(rebuilt.base_count(), 5);
+        assert_eq!(rebuilt.churn_since_rebuild(), 0);
+        assert!(!rebuilt.needs_rebuild());
+    }
+
+    #[test]
+    fn insert_into_empty_index_reports_rebuild_needed() {
+        // An index built from zero rows has no centroids; inserts
+        // can't be assigned, so they're counted as churn and
+        // `needs_rebuild` fires to force the caller down the build
+        // path.
+        let mut idx = IvfIndex::empty(4);
+        let added = idx.insert(&[row(1, "m", vec![1.0, 0.0, 0.0, 0.0])], "m");
+        assert_eq!(added, 0);
+        assert_eq!(idx.len(), 0);
+        assert!(idx.drift_ratio().is_infinite());
+        assert!(idx.needs_rebuild());
+    }
+
+    #[test]
+    fn incremental_inserts_preserve_recall_against_brute_force() {
+        // Build over half a clustered corpus, then stream the other
+        // half in via `insert`. As long as drift stays under the
+        // threshold the incremental index should still recover most
+        // of the brute-force top-10 — proving nearest-centroid
+        // assignment places new vectors in sensible cells.
+        let dim = 32;
+        let n_clusters = 12;
+        let mut rng = StdRng::seed_from_u64(0x0BAD_F00D_1234_5678);
+
+        let centres: Vec<Vec<f32>> = (0..n_clusters)
+            .map(|_| {
+                let mut v: Vec<f32> = (0..dim).map(|_| rng.gen_range(-1.0f32..1.0)).collect();
+                let nrm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if nrm > 0.0 {
+                    for x in &mut v {
+                        *x /= nrm;
+                    }
+                }
+                v
+            })
+            .collect();
+        let make = |i: usize, rng: &mut StdRng| -> ChunkEmbeddingRow {
+            let centre = &centres[i % n_clusters];
+            let mut v: Vec<f32> = centre
+                .iter()
+                .map(|c| c + (rng.gen_range(-1.0f32..1.0) + rng.gen_range(-1.0f32..1.0)) * 0.12)
+                .collect();
+            let nrm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if nrm > 0.0 {
+                for x in &mut v {
+                    *x /= nrm;
+                }
+            }
+            row(i as i64, "m", v)
+        };
+
+        let all: Vec<ChunkEmbeddingRow> = (0..1500).map(|i| make(i, &mut rng)).collect();
+        let (base, extra) = all.split_at(1300);
+
+        let mut idx = IvfIndex::build(base, "m", dim);
+        // ~200/1300 ≈ 15% churn — deliberately under the 20% gate.
+        let added = idx.insert(extra, "m");
+        assert_eq!(added, extra.len());
+        assert!(!idx.needs_rebuild());
+        assert_eq!(idx.len(), all.len());
+
+        let query = make(3, &mut rng);
+        let ivf_hits: Vec<i64> = idx
+            .top_k_cosine(&query.vector, 10)
+            .into_iter()
+            .map(|h| h.chunk_id)
+            .collect();
+        let brute = brute_force_top_k(&all, "m", &query.vector, 10);
+        let overlap = ivf_hits.iter().filter(|id| brute.contains(id)).count();
+        assert!(
+            overlap >= 6,
+            "incremental recall@10 too low: overlap={overlap}, ivf={ivf_hits:?}, brute={brute:?}"
+        );
     }
 }

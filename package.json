@@ -19,6 +19,7 @@
     "test:smoke": "npm run test:smoke --workspace=apps/desktop && npm run test:smoke:rust",
     "test:smoke:rust": "cargo test -p tessera_templates --test smoke_templates && cargo test -p tessera_connectors --test smoke_connectors && cargo test -p tessera_export --test smoke_export",
     "test:smoke:linux": "bash scripts/smoke-test-linux.sh",
+    "perf:cold-start": "node scripts/coldStartGate.cjs",
     "verify:package:windows": "pwsh -File scripts/verify-windows-package.ps1",
     "verify:package:macos": "bash scripts/verify-macos-package.sh",
     "lint": "npm run lint --workspace=apps/desktop",

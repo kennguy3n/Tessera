@@ -182,6 +182,13 @@ pub fn init_bridge(
         }
     };
 
+    // Pre-warm the freshly-opened pool so the first user-facing read
+    // (initial search / source list) doesn't pay the per-connection
+    // cold-cache + SQLCipher schema-decrypt cost on its critical
+    // path. Best-effort and a no-op on the empty (in-memory / failed)
+    // pool; see `SharedReadPool::prewarm`.
+    read_pool.prewarm();
+
     let mut source_manager =
         SourceManager::with_shared_conn_and_read_pool(conn.clone(), read_pool, &[])
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
