@@ -280,19 +280,20 @@ impl SourceStore {
         // the full pre-remove state or the full post-remove state, never
         // a partial removal (e.g. chunks gone but the `indexed_files` /
         // `sources` rows still present).
-        with_secure_delete_transaction(&mut conn, |txn| {
+        let deleted_chunks = with_secure_delete_transaction(&mut conn, |txn| {
             // One set-based DELETE rather than a per-file loop: it
             // scrubs every chunk for the source in a single statement
             // (firing the `chunks_ad` / `chunks_ad_embeddings` triggers
             // per removed row), which keeps the writer-lock hold short
             // even for a source with many indexed files.
-            txn.execute(
-                "DELETE FROM chunks
+            let deleted = txn
+                .execute(
+                    "DELETE FROM chunks
                  WHERE indexed_file_id IN
                      (SELECT id FROM indexed_files WHERE source_id = ?1)",
-                params![id_str],
-            )
-            .map_err(Error::Sqlite)?;
+                    params![id_str],
+                )
+                .map_err(Error::Sqlite)?;
 
             txn.execute(
                 "DELETE FROM indexed_files WHERE source_id = ?1",
@@ -302,19 +303,22 @@ impl SourceStore {
 
             txn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
                 .map_err(Error::Sqlite)?;
-            Ok(())
+            Ok(deleted)
         })?;
 
-        // removing a source cascades through
-        // chunks_ad_embeddings, so the cached IVF index for any
-        // model_id may now point at deleted chunk rows. Bump so the
-        // next search rebuilds against the post-delete row set. The
-        // removed chunks also changed the corpus's non-ASCII ratio, so
-        // drop the multilingual-hint cache too — same post-chunk-delete
-        // bookkeeping as `delete_chunks_for_indexed_file`.
+        // Same post-chunk-delete bookkeeping as
+        // `delete_chunks_for_indexed_file` / `remove_indexed_file`: the
+        // removed chunks changed the corpus's non-ASCII ratio, so always
+        // drop the multilingual-hint cache; and the delete cascades
+        // through `chunks_ad_embeddings` (stale cached IVF index), so bump
+        // the embedding generation — but only when chunks were actually
+        // removed, to avoid forcing a gratuitous index rebuild when the
+        // source had none.
         drop(conn);
         self.invalidate_non_ascii_cache();
-        self.bump_embedding_generation();
+        if deleted_chunks > 0 {
+            self.bump_embedding_generation();
+        }
         Ok(())
     }
 
@@ -2147,41 +2151,48 @@ impl SourceStore {
     /// Remove indexed file.
     pub fn remove_indexed_file(&self, path: &str) -> Result<()> {
         let mut conn = self.conn.lock().expect("connection mutex poisoned");
-        if let Ok(file_id) = conn.query_row(
+        // A missing row is a legitimate no-op, but any *other* error from
+        // the lookup (e.g. a corrupted index or I/O error) must propagate
+        // rather than be silently swallowed as "file not found".
+        let file_id = match conn.query_row(
             "SELECT id FROM indexed_files WHERE path = ?1",
             params![path],
             |row| row.get::<_, i64>(0),
         ) {
-            // Zero-fill the freed chunk / indexed_file pages so the
-            // removed file's indexed text is unrecoverable from the
-            // freelist. Both DELETEs run in one `BEGIN IMMEDIATE`
-            // transaction so a crash between them can't strand the
-            // `indexed_files` row with its chunks already gone (or vice
-            // versa).
-            let deleted_chunks = with_secure_delete_transaction(&mut conn, |txn| {
-                let deleted = txn
-                    .execute(
-                        "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                        params![file_id],
-                    )
-                    .map_err(Error::Sqlite)?;
-                txn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
-                    .map_err(Error::Sqlite)?;
-                Ok(deleted)
-            })?;
-            // Same post-chunk-delete bookkeeping as
-            // `delete_chunks_for_indexed_file`: the removed chunks changed
-            // the corpus's non-ASCII ratio, so always drop the
-            // multilingual-hint cache; and the delete cascades through
-            // `chunks_ad_embeddings` (stale cached IVF index), so bump the
-            // embedding generation — but only when chunks were actually
-            // removed, to avoid forcing a gratuitous index rebuild for a
-            // file that had none.
-            drop(conn);
-            self.invalidate_non_ascii_cache();
-            if deleted_chunks > 0 {
-                self.bump_embedding_generation();
-            }
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(Error::Sqlite(e)),
+        };
+
+        // Zero-fill the freed chunk / indexed_file pages so the
+        // removed file's indexed text is unrecoverable from the
+        // freelist. Both DELETEs run in one `BEGIN IMMEDIATE`
+        // transaction so a crash between them can't strand the
+        // `indexed_files` row with its chunks already gone (or vice
+        // versa).
+        let deleted_chunks = with_secure_delete_transaction(&mut conn, |txn| {
+            let deleted = txn
+                .execute(
+                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                    params![file_id],
+                )
+                .map_err(Error::Sqlite)?;
+            txn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
+                .map_err(Error::Sqlite)?;
+            Ok(deleted)
+        })?;
+        // Same post-chunk-delete bookkeeping as
+        // `delete_chunks_for_indexed_file`: the removed chunks changed
+        // the corpus's non-ASCII ratio, so always drop the
+        // multilingual-hint cache; and the delete cascades through
+        // `chunks_ad_embeddings` (stale cached IVF index), so bump the
+        // embedding generation — but only when chunks were actually
+        // removed, to avoid forcing a gratuitous index rebuild for a
+        // file that had none.
+        drop(conn);
+        self.invalidate_non_ascii_cache();
+        if deleted_chunks > 0 {
+            self.bump_embedding_generation();
         }
         Ok(())
     }
