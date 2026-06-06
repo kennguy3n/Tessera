@@ -188,6 +188,17 @@ describe("buildPresentationHtml", () => {
     );
   });
 
+  it("escapes the index key so a hostile key cannot break out of the script", () => {
+    // The key is exported API: a future caller could feed it
+    // attacker-influenced input, so embedding it must be escaped too.
+    const html = buildPresentationHtml(
+      normalizePresentation(SAMPLE),
+      'evil</script><script>alert(1)</script>',
+    );
+    expect(html).not.toContain("</script><script>alert(1)");
+    expect(html).toContain("\\u003c/script\\u003e");
+  });
+
   it("escapes a hostile title so it cannot break out of the doc", () => {
     const html = buildPresentationHtml(
       normalizePresentation({

@@ -193,7 +193,7 @@ export function buildPresentationHtml(
   var deck = JSON.parse(document.getElementById("deck-data").textContent);
   var slides = Array.isArray(deck.slides) ? deck.slides : [];
   var total = slides.length;
-  var KEY = ${JSON.stringify(indexKey)};
+  var KEY = ${escapeJsonForScript(JSON.stringify(indexKey))};
   var role = location.hash.replace("#", "") === "presenter" ? "presenter" : "audience";
   document.body.classList.add(role);
   document.getElementById("role-label").textContent =
