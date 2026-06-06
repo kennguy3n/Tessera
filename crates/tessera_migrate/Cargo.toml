@@ -1,0 +1,20 @@
+[package]
+name = "tessera_migrate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Versioned, forward-only SQL migration runner for Tessera's SQLite stores."
+
+[dependencies]
+tessera_core = { path = "../tessera_core" }
+rusqlite = { workspace = true }
+chrono = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

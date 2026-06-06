@@ -9,6 +9,7 @@ description = "Source management, file indexing, text extraction, chunking, and 
 
 [dependencies]
 tessera_core = { path = "../tessera_core" }
+tessera_migrate = { path = "../tessera_migrate" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
