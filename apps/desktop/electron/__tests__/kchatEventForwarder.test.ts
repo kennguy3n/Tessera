@@ -2646,3 +2646,86 @@ describe("KchatEventForwarder inbound task auto-create (Task 6)", () => {
     fwd.dispose();
   });
 });
+
+describe("KchatEventForwarder dispose() clears session-scoped state", () => {
+  const WATCHED = "chan-dispose";
+
+  function postedEvent(userId: string): KchatWebSocketEvent {
+    return makeRawEvent({
+      event: "posted",
+      data: {
+        post: JSON.stringify({
+          id: `post-${userId}`,
+          channel_id: WATCHED,
+          user_id: userId,
+          message: "ship it",
+          create_at: 1700000000000,
+          edit_at: 0,
+        }),
+      },
+      broadcast: {
+        omit_users: {},
+        channel_id: WATCHED,
+        team_id: "team-1",
+        user_id: userId,
+      },
+      seq: 1000,
+    });
+  }
+
+  it("clears the watched-channel set and auto-create toggle", () => {
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: () => {},
+      resolveChannelName: () => "general",
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED, "chan-other"]);
+    fwd.setAutoCreateTasks(true);
+    expect(fwd.getWatchedChannels()).toHaveLength(2);
+    expect(fwd.getAutoCreateTasks()).toBe(true);
+
+    fwd.dispose();
+
+    // dispose() + start() is a supported lifecycle that may bind a
+    // different account; the previous session's watch list and
+    // toggle must not survive into the re-start.
+    expect(fwd.getWatchedChannels()).toEqual([]);
+    expect(fwd.getAutoCreateTasks()).toBe(false);
+  });
+
+  it("clears the username cache so a re-start re-resolves the same id", async () => {
+    const notifications: PostNotification[] = [];
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      notify: (n) => notifications.push(n),
+      resolveChannelName: () => "general",
+      autoCreateTasks: false,
+    });
+
+    const client1 = new FakeClient();
+    fwd.start(client1 as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    client1.triggerWsEvent(postedEvent("author-1"));
+    await waitForCondition(() => notifications.length > 0);
+    expect(client1.getUsersByIds).toHaveBeenCalledTimes(1);
+
+    fwd.dispose();
+
+    // Re-start against a *different* client/account. Without
+    // clearing the cache, `author-1` would reuse the stale name
+    // resolved from the first connection instead of looking it up
+    // again on the new server.
+    const client2 = new FakeClient();
+    fwd.start(client2 as unknown as KchatClient);
+    fwd.setWatchedChannels([WATCHED]);
+    client2.triggerWsEvent(postedEvent("author-1"));
+    await waitForCondition(() => notifications.length > 1);
+    expect(client2.getUsersByIds).toHaveBeenCalledTimes(1);
+
+    fwd.dispose();
+  });
+});

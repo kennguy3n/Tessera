@@ -29,11 +29,12 @@ import { shell } from "electron";
 import {
   getBridge,
   getKchatAuthService,
-  getKchatEventForwarder,
   getKchatLocalApiServer,
   getKchatOfflineQueue,
+  setKchatAutoCreateTasks,
   setKchatBackfillImpl,
   setKchatChannelResyncImpl,
+  setKchatWatchedChannels,
 } from "../appState";
 import type {
   KchatBackfillRunOutcome,
@@ -1130,8 +1131,12 @@ export function registerKchatHandlers(): void {
 
   // Session 8 Task 3: set the channels whose new posts raise
   // native OS notifications (and, when enabled, auto-create tasks).
-  // The renderer owns the watch list; this handler forwards the
-  // validated set to the live event forwarder.
+  // The renderer owns the watch list; `setKchatWatchedChannels`
+  // persists the validated set as module-level intent and pushes it
+  // to the live forwarder. Storing the intent (rather than poking a
+  // possibly-null forwarder) means the echoed success is truthful:
+  // the set is honoured even when applied before the forwarder is
+  // first constructed or after a reconnect reconstructs it.
   idempotentHandle(
     "kchat:setWatchedChannels",
     async (_event, channelIds: unknown): Promise<{ count: number }> => {
@@ -1144,12 +1149,7 @@ export function registerKchatHandlers(): void {
       const ids = channelIds.map((v, i) =>
         assertKchatId(v, `channelIds[${i}]`),
       );
-      const forwarder = getKchatEventForwarder();
-      // The forwarder is lazily constructed alongside the auth
-      // service; if the user hasn't connected yet there's nothing
-      // to watch. Report success with the dedupe count so the
-      // renderer can reflect the intended state regardless.
-      forwarder?.setWatchedChannels(ids);
+      setKchatWatchedChannels(ids);
       return { count: new Set(ids).size };
     },
   );
@@ -1158,20 +1158,18 @@ export function registerKchatHandlers(): void {
   // from `kchat:setWatchedChannels` on purpose — auto-create writes
   // persistent Tessera tasks (a higher-consequence side-effect than
   // a transient notification), so it is opt-in and the renderer
-  // controls it independently of the watch list. Defaults to off in
-  // the forwarder; this handler is the only path that turns it on.
+  // controls it independently of the watch list. `setKchatAutoCreateTasks`
+  // persists the toggle as module-level intent and applies it to the
+  // live forwarder, so toggling ON before connecting (or before a
+  // reconnect reconstructs the forwarder) is not silently lost — the
+  // intent is re-applied on the next construction.
   idempotentHandle(
     "kchat:setAutoCreateTasks",
     async (_event, enabled: unknown): Promise<{ enabled: boolean }> => {
       if (typeof enabled !== "boolean") {
         throw new Error("enabled must be a boolean");
       }
-      const forwarder = getKchatEventForwarder();
-      // Like `setWatchedChannels`, the forwarder is lazily
-      // constructed alongside the auth service; if the user hasn't
-      // connected yet there's nothing to toggle. Echo the requested
-      // state so the renderer can reflect the intent regardless.
-      forwarder?.setAutoCreateTasks(enabled);
+      setKchatAutoCreateTasks(enabled);
       return { enabled };
     },
   );

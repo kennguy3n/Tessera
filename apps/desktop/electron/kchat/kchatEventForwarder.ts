@@ -801,6 +801,19 @@ export class KchatEventForwarder {
     this.windowDestroyHandlers = [];
     this.windowStates.clear();
     this.client = null;
+    // Drop session-scoped state too. `dispose()` + `start()` is a
+    // supported lifecycle, and a re-start may bind a *different*
+    // KChat client/account. `usernameCache` maps `user_id ->
+    // username`, but ids are only unique within a server, so a
+    // stale entry could mislabel a notification after reconnecting
+    // elsewhere; `watchedChannels` ids and the `autoCreateTasks`
+    // toggle likewise belong to the previous session. Clearing them
+    // here keeps the re-start contract a genuine clean slate (in
+    // production the watch list + toggle are re-applied from the
+    // persisted intent in `appState` on reconnect).
+    this.usernameCache.clear();
+    this.watchedChannels = new Set();
+    this.autoCreateTasks = false;
   }
 
   /**

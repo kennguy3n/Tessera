@@ -167,6 +167,15 @@ export interface KchatOfflineQueueOptions {
  */
 export const MAX_REPLAY_ATTEMPTS = 5;
 
+/**
+ * Maximum `cause`-chain depth {@link isOfflineError} walks. Node's
+ * `fetch` nests the transport errno at most ~2 levels deep; the cap
+ * bounds the recursion so a corrupted or adversarial cyclic chain
+ * can't run away even though the `cause !== err` self-reference
+ * guard catches the trivial single-hop loop.
+ */
+const MAX_CAUSE_DEPTH = 5;
+
 /** Current on-disk schema version for the queue file. */
 const QUEUE_SCHEMA_VERSION = 1;
 
@@ -226,7 +235,7 @@ export function isNonReplayableCommit(err: unknown): boolean {
  * body that happens to contain a word like "offline" from being
  * misclassified as a connectivity failure.
  */
-export function isOfflineError(err: unknown): boolean {
+export function isOfflineError(err: unknown, depth = 0): boolean {
   if (err == null) return false;
 
   // A post-commit failure is not safely replayable — surface it to the
@@ -271,8 +280,14 @@ export function isOfflineError(err: unknown): boolean {
   if (offlineNeedles.some((needle) => message.includes(needle))) return true;
 
   // Inspect a wrapped `cause` (Node's fetch nests the errno here).
+  // Node's `fetch` nests at most ~2 levels, so cap the recursion to
+  // stay robust against a corrupted/adversarial cyclic cause chain
+  // (e.g. `a.cause = b; b.cause = a`) that the `cause !== err`
+  // self-reference guard alone wouldn't catch.
   const cause = (err as { cause?: unknown }).cause;
-  if (cause && cause !== err) return isOfflineError(cause);
+  if (cause && cause !== err && depth < MAX_CAUSE_DEPTH) {
+    return isOfflineError(cause, depth + 1);
+  }
 
   // AbortError surfaced by an aborted/timed-out request.
   const name = (err as { name?: unknown }).name;
