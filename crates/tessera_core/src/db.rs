@@ -585,6 +585,38 @@ impl SharedReadPool {
             .expect("SharedReadPool connection mutex poisoned");
         f(&guard)
     }
+
+    /// Pre-warm every connection in the pool at boot so the first
+    /// real read on each one doesn't pay the cold-cache cost.
+    ///
+    /// A freshly-opened SQLite connection has an empty page cache and
+    /// no parsed schema: the first query against it faults the
+    /// `sqlite_master` b-tree (and, under SQLCipher, decrypts those
+    /// pages) on the critical path of whatever user-facing read
+    /// happens to land first — typically the initial search or
+    /// source-list render right after launch. Running a tiny schema
+    /// read on each connection up front moves that one-time cost into
+    /// the boot window, where it overlaps with the rest of init and
+    /// is invisible to the user.
+    ///
+    /// This is intentionally additive and self-contained: it only
+    /// issues read-only probes through the already-constructed pool
+    /// and touches no other `db.rs` state, so it composes cleanly
+    /// with independent read-pool changes (e.g. auto-sizing the pool
+    /// count). A no-op on an empty pool. Probe failures are swallowed
+    /// — pre-warming is a best-effort latency optimisation and must
+    /// never turn into a boot-blocking error.
+    pub fn prewarm(&self) {
+        for conn in self.conns.iter() {
+            let Ok(guard) = conn.lock() else { continue };
+            // `sqlite_master` is the catalog every later query
+            // consults to resolve table/index names; reading it
+            // faults the schema pages into the cache and forces the
+            // SQLCipher codec to decrypt them once, up front.
+            let _ = guard
+                .query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0));
+        }
+    }
 }
 
 /// Upper bound on the number of read-only connections
@@ -1525,6 +1557,47 @@ mod tests {
         let _writer = open_shared(db_path_str).expect("writer");
         let pool = open_shared_read_pool(db_path_str, 3).expect("pool");
         assert_eq!(pool.len(), 3);
+    }
+
+    #[test]
+    fn prewarm_is_a_noop_on_empty_pool() {
+        // The empty pool (in-memory / size-0 / failed-open sentinel)
+        // must tolerate `prewarm()` without panicking.
+        let pool = empty_read_pool();
+        pool.prewarm();
+        assert!(pool.is_empty());
+    }
+
+    #[test]
+    fn prewarm_leaves_pool_fully_usable() {
+        // After pre-warming, every connection must still serve real
+        // reads (and observe writer state), proving the warm-up
+        // probe doesn't leave any connection in a bad state.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("prewarm.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let writer = open_shared(db_path_str).expect("writer");
+        {
+            let conn = writer.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO t (id, v) VALUES (?1, ?2)",
+                rusqlite::params![1, "warm"],
+            )
+            .unwrap();
+        }
+        let pool = open_shared_read_pool(db_path_str, 2).expect("pool");
+        // Pre-warm twice to confirm it is idempotent.
+        pool.prewarm();
+        pool.prewarm();
+        for _ in 0..pool.len() {
+            let v: String = pool.with_read(|c| {
+                c.query_row("SELECT v FROM t WHERE id = 1", [], |r| r.get(0))
+                    .unwrap()
+            });
+            assert_eq!(v, "warm");
+        }
     }
 
     #[test]
