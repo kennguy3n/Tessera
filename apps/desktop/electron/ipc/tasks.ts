@@ -31,6 +31,7 @@ export function registerTasksHandlers(): void {
       due_date: parsed.dueDate ?? null,
       source_id: parsed.sourceId ?? null,
       extracted_item_id: parsed.extractedItemId ?? null,
+      depends_on: parsed.dependsOn ?? [],
     };
     return bridge.bridgeCreateTask(JSON.stringify(payload));
   });
@@ -69,6 +70,10 @@ export function registerTasksHandlers(): void {
       //   string                  -> set            -> Some(Some(s))
       if (parsed.assignee !== undefined) payload.assignee = parsed.assignee;
       if (parsed.dueDate !== undefined) payload.due_date = parsed.dueDate;
+      // `undefined` leaves dependencies unchanged; an array (incl. `[]`
+      // to clear) replaces the set. Mirrors the bridge's
+      // `Option<Vec<TaskId>>` semantics.
+      if (parsed.dependsOn !== undefined) payload.depends_on = parsed.dependsOn;
       return bridge.bridgeUpdateTask(id, JSON.stringify(payload));
     },
   );

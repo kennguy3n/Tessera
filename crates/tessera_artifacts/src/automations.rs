@@ -37,6 +37,7 @@
 //! deferred to a follow-up rather than mixing into the current scope.
 
 use chrono::{DateTime, Utc};
+use regex::Regex;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -85,6 +86,23 @@ pub enum AutomationTrigger {
         /// Template id.
         template_id: TemplateId,
     },
+    /// Run when the KChat WebSocket delivers a post in `channel_id`
+    /// whose body matches `regex`. The KChat event path
+    /// (`apps/desktop/electron/kchat/kchatEventForwarder`) calls into
+    /// [`AutomationStore::matching_kchat_message`] on every `posted`
+    /// event to resolve the firing automations.
+    ///
+    /// `channel_id` is a KChat (Mattermost) channel id — a 26-char
+    /// base32 string, not a Tessera UUID — so it is stored as a plain
+    /// `String`. `regex` is an unanchored Rust `regex`-crate pattern;
+    /// an invalid pattern is rejected at creation time by the bridge
+    /// and, defensively, treated as "never matches" at dispatch time.
+    OnKchatMessageMatch {
+        /// KChat (Mattermost) channel id to watch.
+        channel_id: String,
+        /// Unanchored `regex`-crate pattern matched against post bodies.
+        regex: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,6 +121,122 @@ pub enum AutomationAction {
         /// Source ids.
         source_ids: Vec<SourceId>,
     },
+    /// Run several actions in order as a single automation. Steps
+    /// execute sequentially and independently: a failing step is
+    /// reported but does NOT abort the remaining steps (see
+    /// [`run_action_sequence`]). Nesting is flattened by
+    /// [`AutomationAction::steps`] so a `Sequence` of `Sequence`s
+    /// behaves as one flat ordered list of leaf actions.
+    Sequence {
+        /// Ordered child actions executed sequentially.
+        actions: Vec<AutomationAction>,
+    },
+}
+
+impl AutomationAction {
+    /// Flatten this action into the ordered list of leaf (non-sequence)
+    /// actions to execute. A non-`Sequence` action yields just itself;
+    /// a `Sequence` expands recursively so callers always iterate a
+    /// flat list regardless of how the steps were nested on write.
+    pub fn steps(&self) -> Vec<&AutomationAction> {
+        match self {
+            AutomationAction::Sequence { actions } => {
+                actions.iter().flat_map(AutomationAction::steps).collect()
+            }
+            other => vec![other],
+        }
+    }
+}
+
+/// Outcome of executing a single step within a multi-step action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepOutcome {
+    /// Zero-based index of the step within the flattened action list.
+    pub index: usize,
+    /// `None` if the step succeeded; `Some(message)` if its executor
+    /// returned an error.
+    pub error: Option<String>,
+}
+
+impl StepOutcome {
+    /// True when the step executed without error.
+    pub fn succeeded(&self) -> bool {
+        self.error.is_none()
+    }
+}
+
+/// Aggregate result of running a multi-step action via
+/// [`run_action_sequence`]. Carries one [`StepOutcome`] per executed
+/// step, in execution order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceReport {
+    /// One outcome per executed step, in execution order.
+    pub steps: Vec<StepOutcome>,
+}
+
+impl SequenceReport {
+    /// True when every step succeeded.
+    pub fn all_succeeded(&self) -> bool {
+        self.steps.iter().all(StepOutcome::succeeded)
+    }
+
+    /// The steps that failed, in execution order.
+    pub fn failures(&self) -> impl Iterator<Item = &StepOutcome> {
+        self.steps.iter().filter(|s| !s.succeeded())
+    }
+
+    /// Render a UI/audit status string with the same `"ok"` /
+    /// `"failed: ..."` convention the scheduler records via
+    /// `record_run`. Returns `"ok"` when all steps succeeded, otherwise
+    /// `"failed: K/N steps failed: step <i>: <msg>; ..."` (1-based step
+    /// numbers) so a partial failure is visible without hiding which
+    /// steps broke.
+    pub fn status_string(&self) -> String {
+        let failures: Vec<&StepOutcome> = self.failures().collect();
+        if failures.is_empty() {
+            return "ok".to_string();
+        }
+        let detail = failures
+            .iter()
+            .map(|s| {
+                format!(
+                    "step {}: {}",
+                    s.index + 1,
+                    s.error.as_deref().unwrap_or("unknown error")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!(
+            "failed: {}/{} steps failed: {}",
+            failures.len(),
+            self.steps.len(),
+            detail
+        )
+    }
+}
+
+/// Execute a multi-step action by invoking `exec` once per leaf step,
+/// in order. Each step is independent: when a step's executor returns
+/// `Err(message)` the failure is recorded in the returned
+/// [`SequenceReport`] and execution CONTINUES with the next step — a
+/// single failing step never aborts the rest of the chain. `exec`
+/// receives the zero-based step index and the leaf action, returning
+/// `Ok(())` on success or `Err(message)` to record a failure.
+///
+/// `actions` is the flat list of leaf steps; callers typically pass
+/// [`AutomationAction::steps`] so nested `Sequence`s are flattened
+/// first.
+pub fn run_action_sequence<F>(actions: &[&AutomationAction], mut exec: F) -> SequenceReport
+where
+    F: FnMut(usize, &AutomationAction) -> std::result::Result<(), String>,
+{
+    let mut steps = Vec::with_capacity(actions.len());
+    for (index, action) in actions.iter().enumerate() {
+        let error = exec(index, action).err();
+        steps.push(StepOutcome { index, error });
+    }
+    SequenceReport { steps }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -354,6 +488,44 @@ impl AutomationStore {
             })
             .collect())
     }
+
+    /// Return all enabled `OnKchatMessageMatch` automations whose
+    /// `channel_id` equals `channel_id` AND whose `regex` matches
+    /// `message`. Called from the KChat event path on every `posted`
+    /// WebSocket event.
+    ///
+    /// The pattern is matched unanchored (i.e. "contains a match"),
+    /// mirroring `Regex::is_match`. An automation whose stored pattern
+    /// fails to compile is skipped defensively — it can never match, so
+    /// it is treated as a non-match rather than aborting the whole
+    /// resolution (a single corrupt rule must not silence every other
+    /// automation on the channel). The bridge validates the pattern at
+    /// creation time, so a compile failure here implies an externally
+    /// edited database.
+    pub fn matching_kchat_message(
+        &self,
+        channel_id: &str,
+        message: &str,
+    ) -> Result<Vec<Automation>> {
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|a| {
+                if !a.enabled {
+                    return false;
+                }
+                match &a.trigger {
+                    AutomationTrigger::OnKchatMessageMatch {
+                        channel_id: cid,
+                        regex,
+                    } if cid == channel_id => {
+                        Regex::new(regex).is_ok_and(|re| re.is_match(message))
+                    }
+                    _ => false,
+                }
+            })
+            .collect())
+    }
 }
 
 fn row_to_automation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> {
@@ -592,5 +764,186 @@ mod tests {
         let list = b.list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "shared");
+    }
+
+    // --- OnKchatMessageMatch trigger ---
+
+    fn kchat_match_automation(name: &str, channel_id: &str, regex: &str) -> Automation {
+        Automation::new(
+            name,
+            AutomationTrigger::OnKchatMessageMatch {
+                channel_id: channel_id.into(),
+                regex: regex.into(),
+            },
+            AutomationAction::ReindexSource {
+                source_id: SourceId::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn kchat_trigger_round_trips_through_store() {
+        let s = store();
+        let a = kchat_match_automation("deploys", "chan-ops", r"deploy\s+prod");
+        s.create(&a).unwrap();
+        let got = s.get(&a.id).unwrap().expect("present");
+        assert_eq!(
+            got.trigger,
+            AutomationTrigger::OnKchatMessageMatch {
+                channel_id: "chan-ops".into(),
+                regex: r"deploy\s+prod".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn matching_kchat_message_matches_channel_and_regex() {
+        let s = store();
+        let ops = kchat_match_automation("ops", "chan-ops", r"(?i)deploy");
+        let eng = kchat_match_automation("eng", "chan-eng", r"(?i)deploy");
+        s.create(&ops).unwrap();
+        s.create(&eng).unwrap();
+
+        // Right channel + body matches the (case-insensitive) pattern.
+        let hits = s
+            .matching_kchat_message("chan-ops", "Please DEPLOY now")
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "ops");
+
+        // Right channel but body doesn't match the pattern.
+        let none = s
+            .matching_kchat_message("chan-ops", "just chatting")
+            .unwrap();
+        assert!(none.is_empty());
+
+        // Pattern matches but the channel id differs → no fire.
+        let wrong_channel = s
+            .matching_kchat_message("chan-other", "deploy please")
+            .unwrap();
+        assert!(wrong_channel.is_empty());
+    }
+
+    #[test]
+    fn matching_kchat_message_skips_disabled_and_uncompilable() {
+        let s = store();
+        let disabled = kchat_match_automation("disabled", "c1", "hello");
+        s.create(&disabled).unwrap();
+        s.set_enabled(&disabled.id, false).unwrap();
+        // Disabled automations never fire even on a clear match.
+        assert!(s
+            .matching_kchat_message("c1", "hello there")
+            .unwrap()
+            .is_empty());
+
+        // A rule whose stored regex can't compile is skipped (treated as
+        // a non-match) rather than erroring out the whole resolution.
+        let bad = kchat_match_automation("bad", "c1", "(unclosed");
+        s.create(&bad).unwrap();
+        let good = kchat_match_automation("good", "c1", "hello");
+        s.create(&good).unwrap();
+        let hits = s.matching_kchat_message("c1", "well hello").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "good");
+    }
+
+    // --- Multi-step (Sequence) actions ---
+
+    fn reindex() -> AutomationAction {
+        AutomationAction::ReindexSource {
+            source_id: SourceId::new(),
+        }
+    }
+
+    #[test]
+    fn sequence_action_round_trips_and_flattens() {
+        let s = store();
+        let seq = AutomationAction::Sequence {
+            actions: vec![
+                reindex(),
+                // A nested sequence flattens into the parent's step list.
+                AutomationAction::Sequence {
+                    actions: vec![reindex(), reindex()],
+                },
+            ],
+        };
+        let a = Automation::new(
+            "multi",
+            AutomationTrigger::Schedule {
+                interval_seconds: 60,
+            },
+            seq,
+        );
+        s.create(&a).unwrap();
+        let got = s.get(&a.id).unwrap().expect("present");
+        // 1 leaf + 2 nested leaves = 3 flattened steps; no Sequence
+        // appears in the flattened list.
+        let steps = got.action.steps();
+        assert_eq!(steps.len(), 3);
+        assert!(steps
+            .iter()
+            .all(|s| !matches!(s, AutomationAction::Sequence { .. })));
+    }
+
+    #[test]
+    fn run_action_sequence_runs_all_steps_in_order_on_success() {
+        let actions = [reindex(), reindex(), reindex()];
+        let refs: Vec<&AutomationAction> = actions.iter().collect();
+        let mut seen = Vec::new();
+        let report = run_action_sequence(&refs, |i, _| {
+            seen.push(i);
+            Ok(())
+        });
+        assert_eq!(seen, vec![0, 1, 2]);
+        assert!(report.all_succeeded());
+        assert_eq!(report.status_string(), "ok");
+    }
+
+    #[test]
+    fn run_action_sequence_continues_past_a_failing_step() {
+        let actions = [reindex(), reindex(), reindex()];
+        let refs: Vec<&AutomationAction> = actions.iter().collect();
+        let mut seen = Vec::new();
+        // Middle step fails; the chain must NOT abort — step 2 (index 2)
+        // still runs, and the failure is reported.
+        let report = run_action_sequence(&refs, |i, _| {
+            seen.push(i);
+            if i == 1 {
+                Err("boom".to_string())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(
+            seen,
+            vec![0, 1, 2],
+            "every step must run despite the failure"
+        );
+        assert!(!report.all_succeeded());
+        let failures: Vec<&StepOutcome> = report.failures().collect();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].index, 1);
+        assert_eq!(failures[0].error.as_deref(), Some("boom"));
+        let status = report.status_string();
+        assert!(status.starts_with("failed: 1/3 steps failed"));
+        assert!(status.contains("step 2: boom"));
+    }
+
+    #[test]
+    fn run_action_sequence_reports_multiple_failures() {
+        let actions = [reindex(), reindex(), reindex()];
+        let refs: Vec<&AutomationAction> = actions.iter().collect();
+        let report = run_action_sequence(&refs, |i, _| {
+            if i == 0 || i == 2 {
+                Err(format!("err{i}"))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(report.failures().count(), 2);
+        let status = report.status_string();
+        assert!(status.contains("2/3 steps failed"));
+        assert!(status.contains("step 1: err0"));
+        assert!(status.contains("step 3: err2"));
     }
 }

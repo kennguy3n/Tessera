@@ -105,6 +105,7 @@ import {
   writeManifest,
 } from "./kchatChannelSyncer";
 import { kchatChannelCacheDir } from "./kchatPaths";
+import { dispatchKchatMessage } from "../scheduler";
 import type {
   KchatConnectionState,
   KchatWebSocketEvent,
@@ -801,6 +802,18 @@ export class KchatEventForwarder {
       this.handlePostedEvent(view).catch((err) => {
         console.error(
           "[KchatEventForwarder] posted side-effect failed:",
+          err,
+        );
+      });
+      // Independently of ingestion, fire any `OnKchatMessageMatch`
+      // automations whose channel + regex match this post. This is
+      // intentionally decoupled from the linked-channel ingest path
+      // above: an automation can watch a channel that isn't indexed
+      // as a source. Failures are swallowed inside the handler so a
+      // bad rule can't break event forwarding.
+      this.handleMessageMatchAutomations(view).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] message-match automation dispatch failed:",
           err,
         );
       });
@@ -1698,6 +1711,29 @@ export class KchatEventForwarder {
     view: KchatWebSocketEventView,
   ): Promise<void> {
     await this.handlePostIngestEvent(view, /* isEdit */ false);
+  }
+
+  /**
+   * Fire `OnKchatMessageMatch` automations for a `posted` event.
+   *
+   * Resolution (channel-id equality + regex match) and action dispatch
+   * both live behind the bridge / scheduler so this only has to extract
+   * the channel id and message body from the WS payload and hand them
+   * off. Unlike {@link handlePostIngestEvent} it does NOT gate on the
+   * channel being linked as a source — automations may watch any
+   * channel. All failure paths are swallowed by the caller's `.catch`.
+   */
+  private async handleMessageMatchAutomations(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
+    const bridge = this.getBridgeFn();
+    if (!bridge) return;
+    const parsed = parsePostPayload(view.data);
+    if (parsed === null) return;
+    // Use the post envelope's own `channel_id` (authoritative for the
+    // message) rather than the broadcast channel, matching what the
+    // ingest path keys on.
+    await dispatchKchatMessage(parsed.channelId, parsed.message, bridge);
   }
 
   /**

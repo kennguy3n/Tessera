@@ -1660,6 +1660,9 @@ export interface TaskInfo {
   dueDate: string | null;
   sourceId: string | null;
   extractedItemId: string | null;
+  /** Ids of the tasks this task depends on (UUID strings). Empty when
+   *  the task has no dependencies. Drives the Gantt dependency arrows. */
+  dependsOn: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1673,6 +1676,8 @@ export interface CreateTaskRequest {
   dueDate?: string | null;
   sourceId?: string | null;
   extractedItemId?: string | null;
+  /** Task ids (UUID strings) this task depends on. Defaults to empty. */
+  dependsOn?: string[];
 }
 
 export interface UpdateTaskRequest {
@@ -1695,6 +1700,12 @@ export interface UpdateTaskRequest {
    * regression test.
    */
   dueDate?: string | null;
+  /**
+   * `undefined` (key omitted) leaves the dependency set unchanged. An
+   * array replaces it; pass `[]` to clear all dependencies. The bridge
+   * rejects an update that would introduce a dependency cycle.
+   */
+  dependsOn?: string[];
 }
 
 // -----------------------------------------------------------------
@@ -1703,7 +1714,8 @@ export interface UpdateTaskRequest {
 
 export type AutomationTrigger =
   | { kind: "schedule"; interval_seconds: number }
-  | { kind: "on_generate"; template_id: string };
+  | { kind: "on_generate"; template_id: string }
+  | { kind: "on_kchat_message_match"; channel_id: string; regex: string };
 
 export type AutomationAction =
   | { kind: "reindex_source"; source_id: string }
@@ -1711,7 +1723,10 @@ export type AutomationAction =
       kind: "generate_from_template";
       template_id: string;
       source_ids: string[];
-    };
+    }
+  /** Run an ordered list of leaf actions; a failing step is reported
+   *  but does not abort the remaining steps. */
+  | { kind: "sequence"; actions: AutomationAction[] };
 
 export interface AutomationInfo {
   id: string;
