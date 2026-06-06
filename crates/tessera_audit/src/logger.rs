@@ -6,19 +6,23 @@ use tessera_core::SharedConnection;
 use crate::event::{AuditEvent, AuditEventType};
 use crate::store::AuditStore;
 
-/// Audit Logger.
+/// Front door for recording audit events. Wraps an [`AuditStore`] and
+/// exposes typed `log_*` helpers so call sites never hand-format event
+/// strings or pick the wrong [`AuditEventType`].
 pub struct AuditLogger {
     store: AuditStore,
 }
 
 impl AuditLogger {
-    /// Creates a new instance.
+    /// Opens (creating if needed) the audit store at `db_path` and
+    /// wraps it in a logger.
     pub fn new(db_path: &str) -> Result<Self> {
         let store = AuditStore::open(db_path)?;
         Ok(Self { store })
     }
 
-    /// New in memory.
+    /// Builds a logger over an ephemeral in-memory store. Intended for
+    /// tests; nothing is persisted across process restarts.
     pub fn new_in_memory() -> Result<Self> {
         let store = AuditStore::open_in_memory()?;
         Ok(Self { store })
@@ -31,18 +35,20 @@ impl AuditLogger {
         Ok(Self { store })
     }
 
-    /// Log.
+    /// Lowest-level recorder: stamps `event_type` + `details` with a
+    /// fresh id and current time and appends it. The typed `log_*`
+    /// helpers all funnel through here.
     pub fn log(&self, event_type: AuditEventType, details: String) -> Result<()> {
         let event = AuditEvent::new(event_type, details);
         self.store.append(&event)
     }
 
-    /// Log source added.
+    /// Records that a source rooted at `path` was connected.
     pub fn log_source_added(&self, path: &str) -> Result<()> {
         self.log(AuditEventType::SourceAdded, format!("Source added: {path}"))
     }
 
-    /// Log source removed.
+    /// Records that the source identified by `source_id` was removed.
     pub fn log_source_removed(&self, source_id: &str) -> Result<()> {
         self.log(
             AuditEventType::SourceRemoved,
@@ -60,7 +66,7 @@ impl AuditLogger {
         )
     }
 
-    /// Log artifact created.
+    /// Records creation of an artifact, captured by `title`.
     pub fn log_artifact_created(&self, title: &str) -> Result<()> {
         self.log(
             AuditEventType::ArtifactCreated,
@@ -89,7 +95,8 @@ impl AuditLogger {
         )
     }
 
-    /// Log artifact exported.
+    /// Records that artifact `title` was exported to `format` (the
+    /// `snake_case` export-format string).
     pub fn log_artifact_exported(&self, title: &str, format: &str) -> Result<()> {
         self.log(
             AuditEventType::ArtifactExported,
@@ -119,7 +126,7 @@ impl AuditLogger {
         )
     }
 
-    /// Log settings changed.
+    /// Records that the user setting `setting` was changed to `value`.
     pub fn log_settings_changed(&self, setting: &str, value: &str) -> Result<()> {
         self.log(
             AuditEventType::SettingsChanged,
@@ -127,7 +134,7 @@ impl AuditLogger {
         )
     }
 
-    /// Log connector connected.
+    /// Records that the cloud connector `provider` authenticated.
     pub fn log_connector_connected(&self, provider: &str) -> Result<()> {
         self.log(
             AuditEventType::ConnectorConnected,
@@ -135,7 +142,8 @@ impl AuditLogger {
         )
     }
 
-    /// Log connector synced.
+    /// Records a completed sync pass for `provider`, capturing how
+    /// many items were `added`, `updated`, and `removed`.
     pub fn log_connector_synced(
         &self,
         provider: &str,
@@ -151,7 +159,8 @@ impl AuditLogger {
         )
     }
 
-    /// Log connector disconnected.
+    /// Records disconnection of `provider`, noting how many cached
+    /// `files_removed` were purged from disk.
     pub fn log_connector_disconnected(&self, provider: &str, files_removed: usize) -> Result<()> {
         self.log(
             AuditEventType::ConnectorDisconnected,
@@ -601,7 +610,8 @@ impl AuditLogger {
         )
     }
 
-    /// Log citation added.
+    /// Records that `citation_id` was attached to `artifact_id`,
+    /// pointing at `source_uri`.
     pub fn log_citation_added(
         &self,
         artifact_id: &str,
@@ -616,7 +626,8 @@ impl AuditLogger {
         )
     }
 
-    /// Log citation replaced.
+    /// Records that `citation_id` on `artifact_id` was repointed from
+    /// `old_source_uri` to `new_source_uri`.
     pub fn log_citation_replaced(
         &self,
         artifact_id: &str,
@@ -633,7 +644,7 @@ impl AuditLogger {
         )
     }
 
-    /// Log citation removed.
+    /// Records that `citation_id` was removed from `artifact_id`.
     pub fn log_citation_removed(&self, artifact_id: &str, citation_id: &str) -> Result<()> {
         self.log(
             AuditEventType::CitationRemoved,
@@ -662,7 +673,7 @@ impl AuditLogger {
         )
     }
 
-    /// Query by type.
+    /// Returns every recorded event of the given `event_type`.
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         self.store.query_by_type(event_type)
     }
@@ -676,7 +687,7 @@ impl AuditLogger {
         self.store.query_by_date_range(from, to)
     }
 
-    /// Event count.
+    /// Returns the total number of audit rows currently stored.
     pub fn event_count(&self) -> Result<u64> {
         self.store.count()
     }

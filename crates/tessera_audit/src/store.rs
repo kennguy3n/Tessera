@@ -108,18 +108,23 @@ fn parse_event_row(
     })
 }
 
-/// Audit Store.
+/// SQLite-backed persistence for [`AuditEvent`]s. The table is
+/// strictly append-only — `BEFORE UPDATE`/`BEFORE DELETE` triggers
+/// (installed by `init_schema`) abort any attempt to mutate or remove
+/// rows, so the audit trail is tamper-evident at the database level.
 pub struct AuditStore {
     conn: SharedConnection,
 }
 
 impl AuditStore {
-    /// Open.
+    /// Opens (creating if needed) the audit database at `path` and
+    /// ensures the schema/triggers exist.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
-    /// Open in memory.
+    /// Opens an ephemeral in-memory audit database. For tests; nothing
+    /// survives the process.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -163,7 +168,8 @@ impl AuditStore {
         Ok(())
     }
 
-    /// Append.
+    /// Inserts `event` as a new row. The only write path — the
+    /// append-only triggers reject everything else.
     pub fn append(&self, event: &AuditEvent) -> Result<()> {
         let type_str = serde_json::to_string(&event.event_type).map_err(Error::Json)?;
         self.conn
@@ -182,7 +188,7 @@ impl AuditStore {
         Ok(())
     }
 
-    /// Query by type.
+    /// Returns all events of `event_type`, newest first.
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         let type_str = serde_json::to_string(event_type).map_err(Error::Json)?;
         let conn = self.conn.lock().expect("connection mutex poisoned");
@@ -268,7 +274,7 @@ impl AuditStore {
         Ok(events)
     }
 
-    /// Count.
+    /// Returns the total number of stored audit rows.
     pub fn count(&self) -> Result<u64> {
         let count: i64 = self
             .conn

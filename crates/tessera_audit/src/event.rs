@@ -5,55 +5,61 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Audit Event.
+/// A single immutable entry in the local audit trail — one recorded
+/// user- or system-initiated action. Appended only; never mutated
+/// after creation.
 pub struct AuditEvent {
-    /// Id.
+    /// Random UUIDv4 (as a string) uniquely identifying this entry.
     pub id: String,
-    /// Event type.
+    /// Which kind of action occurred; drives filtering and reporting.
     pub event_type: AuditEventType,
-    /// Timestamp.
+    /// When the action occurred, in UTC.
     pub timestamp: DateTime<Utc>,
-    /// Details.
+    /// Free-form human-readable context for the action (e.g. the
+    /// affected source/artifact id or a short description). Not
+    /// machine-parsed.
     pub details: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Audit Event Type.
+/// Taxonomy of audited actions. Serialised to `snake_case` for
+/// storage; the matching string form is also produced by
+/// `as_snake_case` (kept in sync by a test).
 pub enum AuditEventType {
-    /// Source Added.
+    /// A new source was connected/registered.
     SourceAdded,
-    /// Source Removed.
+    /// A source was disconnected and removed from the workspace.
     SourceRemoved,
-    /// Source Reindexed.
+    /// A source was re-indexed (manual or watch-triggered re-sync).
     SourceReindexed,
-    /// Artifact Created.
+    /// A new artifact was generated/created.
     ArtifactCreated,
-    /// Artifact Updated.
+    /// An existing artifact's content was edited.
     ArtifactUpdated,
-    /// Artifact Deleted.
+    /// An artifact was deleted.
     ArtifactDeleted,
-    /// Artifact Exported.
+    /// An artifact was exported to a file format.
     ArtifactExported,
-    /// Settings Changed.
+    /// A user setting / configuration value was changed.
     SettingsChanged,
-    /// Model Started.
+    /// The local inference model/runtime was started.
     ModelStarted,
-    /// Model Stopped.
+    /// The local inference model/runtime was stopped.
     ModelStopped,
-    /// Search Performed.
+    /// A search query was executed against the index.
     SearchPerformed,
-    /// Connector Connected.
+    /// A cloud connector completed authentication.
     ConnectorConnected,
-    /// Connector Synced.
+    /// A cloud connector finished a sync pass.
     ConnectorSynced,
-    /// Connector Disconnected.
+    /// A cloud connector was disconnected.
     ConnectorDisconnected,
-    /// Citation Added.
+    /// A citation was attached to artifact content.
     CitationAdded,
-    /// Citation Replaced.
+    /// An existing citation was repointed to a different source.
     CitationReplaced,
-    /// Citation Removed.
+    /// A citation was removed from artifact content.
     CitationRemoved,
     /// A bundled or user-supplied template YAML failed parse or
     /// semantic validation when the registry was loaded. Distinct
@@ -263,7 +269,8 @@ impl AuditEventType {
 }
 
 impl AuditEvent {
-    /// Creates a new instance.
+    /// Builds an entry for `event_type` with the given `details`,
+    /// minting a fresh id and stamping the current UTC time.
     pub fn new(event_type: AuditEventType, details: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
