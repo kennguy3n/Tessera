@@ -156,10 +156,11 @@ fn apply_default_pragmas(conn: &Connection) -> Result<()> {
 ///
 /// `op` receives the same `&Connection` so it can issue its `DELETE`s
 /// (and any surrounding logic) directly. It intentionally does **not**
-/// receive a `&mut Connection`, so callers that need an explicit
-/// `rusqlite` transaction must set the pragma manually around the
-/// `&mut`-borrowing transaction instead (see
-/// `SourceStore::cryptoshred_kchat_source_evidence` for that pattern).
+/// receive a `&mut Connection`, so it is for **single-statement**
+/// (already-atomic) deletions. Callers that issue more than one `DELETE`
+/// for a single logical removal want all-or-nothing crash semantics and
+/// should use [`with_secure_delete_transaction`] instead, which wraps
+/// the work in a `BEGIN IMMEDIATE` transaction.
 pub fn with_secure_delete<T>(
     conn: &Connection,
     op: impl FnOnce(&Connection) -> Result<T>,
@@ -177,6 +178,60 @@ pub fn with_secure_delete<T>(
             "[secure_delete] failed to reset secure_delete=OFF on shared \
              connection; steady-state writes will pay zero-fill overhead \
              until process restart: {e}"
+        );
+    }
+
+    let value = op_result?;
+    reset_result?;
+    Ok(value)
+}
+
+/// Like [`with_secure_delete`], but runs `op` inside a single
+/// `BEGIN IMMEDIATE` transaction so the wrapped mutations are **atomic**
+/// (all-or-nothing under crash recovery) in addition to being
+/// zero-filled.
+///
+/// Use this for deletion paths that issue more than one `DELETE` for a
+/// single logical removal (e.g. a source's chunks + `indexed_files` +
+/// `sources` rows). Without a transaction each statement auto-commits
+/// individually, so a crash between them can leave orphaned rows whose
+/// parent row is already gone. `BEGIN IMMEDIATE` also takes a `RESERVED`
+/// lock up front so a concurrent reader can't observe a half-applied
+/// scrub.
+///
+/// This requires `&mut Connection` because opening a `rusqlite`
+/// transaction needs a mutable borrow — which is exactly why
+/// [`with_secure_delete`] (taking `&Connection`) cannot offer this and
+/// its doc comment points multi-statement callers here. The transaction
+/// is committed iff `op` returns `Ok`; any `Err` from `op` or from the
+/// `commit` rolls it back. `secure_delete` is set `ON` before the
+/// transaction and reset to `OFF` on every exit path (success or
+/// error), with the same connection-scoped-pragma reasoning and stderr
+/// degraded-state diagnostic as [`with_secure_delete`].
+pub fn with_secure_delete_transaction<T>(
+    conn: &mut Connection,
+    op: impl FnOnce(&rusqlite::Transaction) -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("PRAGMA secure_delete = ON;")
+        .map_err(Error::Sqlite)?;
+
+    let op_result: Result<T> = (|| {
+        let txn = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(Error::Sqlite)?;
+        let value = op(&txn)?;
+        txn.commit().map_err(Error::Sqlite)?;
+        Ok(value)
+    })();
+
+    let reset_result = conn
+        .execute_batch("PRAGMA secure_delete = OFF;")
+        .map_err(Error::Sqlite);
+    if let Err(e) = reset_result.as_ref() {
+        eprintln!(
+            "[secure_delete] failed to reset secure_delete=OFF on shared \
+             connection after a transactional scrub; steady-state writes \
+             will pay zero-fill overhead until process restart: {e}"
         );
     }
 
@@ -932,6 +987,74 @@ mod tests {
             after, 0,
             "secure_delete must be reset to OFF even when the op returns Err — \
              otherwise the shared connection stays in ON for the process lifetime"
+        );
+    }
+
+    #[test]
+    fn with_secure_delete_transaction_commits_on_ok_and_restores_off() {
+        let db = open_shared_in_memory().expect("in-memory");
+        let mut conn = db.lock().expect("lock");
+        conn.execute("CREATE TABLE t (id INTEGER)", []).unwrap();
+        conn.execute("INSERT INTO t (id) VALUES (1), (2), (3)", [])
+            .unwrap();
+
+        let observed_inside = with_secure_delete_transaction(&mut conn, |txn| {
+            let on: i64 = txn
+                .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+                .map_err(Error::Sqlite)?;
+            txn.execute("DELETE FROM t WHERE id = 2", [])
+                .map_err(Error::Sqlite)?;
+            Ok(on)
+        })
+        .expect("op should succeed and commit");
+
+        assert_eq!(
+            observed_inside, 1,
+            "secure_delete must be ON inside the transaction"
+        );
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 2, "the committed DELETE must persist");
+        let after: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, 0, "secure_delete must be reset to OFF after commit");
+    }
+
+    #[test]
+    fn with_secure_delete_transaction_rolls_back_on_error_and_restores_off() {
+        let db = open_shared_in_memory().expect("in-memory");
+        let mut conn = db.lock().expect("lock");
+        conn.execute("CREATE TABLE t (id INTEGER)", []).unwrap();
+        conn.execute("INSERT INTO t (id) VALUES (1), (2), (3)", [])
+            .unwrap();
+
+        // Delete a row, then return Err: the transaction must roll the
+        // delete back so the failure is all-or-nothing.
+        let result: Result<()> = with_secure_delete_transaction(&mut conn, |txn| {
+            txn.execute("DELETE FROM t WHERE id = 2", [])
+                .map_err(Error::Sqlite)?;
+            Err(Error::DatabaseState(
+                "simulated mid-scrub failure".to_string(),
+            ))
+        });
+        assert!(result.is_err(), "the op error must propagate");
+
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            remaining, 3,
+            "an Err from the op must roll back the transaction's DELETE — \
+             a partial scrub would leave orphaned rows"
+        );
+        let after: i64 = conn
+            .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after, 0,
+            "secure_delete must be reset to OFF even when the transaction rolls back"
         );
     }
 

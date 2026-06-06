@@ -7,8 +7,9 @@ use rusqlite::params;
 use rusqlite::Connection;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
-    empty_read_pool, open_shared, open_shared_in_memory, with_secure_delete, SharedConnection,
-    SharedReadPool, SourceId, SourceStatus, SourceType,
+    empty_read_pool, open_shared, open_shared_in_memory, with_secure_delete,
+    with_secure_delete_transaction, SharedConnection, SharedReadPool, SourceId, SourceStatus,
+    SourceType,
 };
 
 use crate::chunker::Chunk;
@@ -270,26 +271,8 @@ impl SourceStore {
         // `BEGIN IMMEDIATE` transaction so crash-recovery returns either
         // the full pre-remove state or the full post-remove state, never
         // a partial removal (e.g. chunks gone but the `indexed_files` /
-        // `sources` rows still present). This mirrors
-        // `cryptoshred_kchat_source_evidence`; we can't reuse
-        // `with_secure_delete` here because it borrows `&Connection`
-        // while a `rusqlite` transaction needs `&mut Connection`.
-        //
-        // `secure_delete` is a connection-scoped pragma on the shared
-        // process-wide connection, so it MUST be reset to OFF on every
-        // exit path (including errors) or every subsequent steady-state
-        // write pays the page-zero-fill cost for the rest of the process
-        // lifetime. The fallible work runs in an immediately-invoked
-        // closure whose `?` early-returns from the *closure* (not the
-        // function), guaranteeing the OFF reset below always runs.
-        conn.execute_batch("PRAGMA secure_delete = ON;")
-            .map_err(Error::Sqlite)?;
-
-        let scrub_result: Result<()> = (|| {
-            let txn = conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-                .map_err(Error::Sqlite)?;
-
+        // `sources` rows still present).
+        with_secure_delete_transaction(&mut conn, |txn| {
             // One set-based DELETE rather than a per-file loop: it
             // scrubs every chunk for the source in a single statement
             // (firing the `chunks_ad` / `chunks_ad_embeddings` triggers
@@ -311,31 +294,8 @@ impl SourceStore {
 
             txn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
                 .map_err(Error::Sqlite)?;
-
-            txn.commit().map_err(Error::Sqlite)?;
             Ok(())
-        })();
-
-        // ALWAYS restore the connection's default delete mode, even when
-        // the scrub failed — propagating without resetting would leave
-        // the shared connection stuck in `secure_delete = ON`. The reset
-        // diagnostic is emitted before the scrub error is propagated so a
-        // rare scrub-failed + reset-failed double-failure doesn't lose
-        // the (only) operator-visible signal that the connection is now
-        // degraded.
-        let reset_result = conn
-            .execute_batch("PRAGMA secure_delete = OFF;")
-            .map_err(Error::Sqlite);
-        if let Err(e) = reset_result.as_ref() {
-            eprintln!(
-                "[secure_delete] failed to reset secure_delete=OFF on shared \
-                 connection after remove_source; steady-state writes will pay \
-                 zero-fill overhead until process restart: {e}"
-            );
-        }
-
-        scrub_result?;
-        reset_result?;
+        })?;
 
         // removing a source cascades through
         // chunks_ad_embeddings, so the cached IVF index for any
@@ -1767,16 +1727,22 @@ impl SourceStore {
         indexed_file_id: i64,
     ) -> Result<()> {
         let id_str = source_id.to_string();
-        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
         // Scrub the post bookkeeping + indexed_file rows under
-        // `secure_delete = ON` so the freed pages are zero-filled.
-        with_secure_delete(&conn, |conn| {
-            conn.execute(
+        // `secure_delete = ON` so the freed pages are zero-filled. Both
+        // DELETEs run in one `BEGIN IMMEDIATE` transaction: the
+        // `kchat_posts` row carries a non-cascading FK to
+        // `indexed_files.id`, so a crash after the first DELETE but
+        // before the second (or the reverse ordering) could otherwise
+        // leave an orphaned `indexed_files` row whose post bookkeeping
+        // is gone.
+        with_secure_delete_transaction(&mut conn, |txn| {
+            txn.execute(
                 "DELETE FROM kchat_posts WHERE source_id = ?1 AND post_id = ?2",
                 params![id_str, post_id],
             )
             .map_err(Error::Sqlite)?;
-            conn.execute(
+            txn.execute(
                 "DELETE FROM indexed_files WHERE id = ?1",
                 params![indexed_file_id],
             )
@@ -2161,7 +2127,7 @@ impl SourceStore {
     }
 
     pub fn remove_indexed_file(&self, path: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
         if let Ok(file_id) = conn.query_row(
             "SELECT id FROM indexed_files WHERE path = ?1",
             params![path],
@@ -2169,14 +2135,17 @@ impl SourceStore {
         ) {
             // Zero-fill the freed chunk / indexed_file pages so the
             // removed file's indexed text is unrecoverable from the
-            // freelist.
-            with_secure_delete(&conn, |conn| {
-                conn.execute(
+            // freelist. Both DELETEs run in one `BEGIN IMMEDIATE`
+            // transaction so a crash between them can't strand the
+            // `indexed_files` row with its chunks already gone (or vice
+            // versa).
+            with_secure_delete_transaction(&mut conn, |txn| {
+                txn.execute(
                     "DELETE FROM chunks WHERE indexed_file_id = ?1",
                     params![file_id],
                 )
                 .map_err(Error::Sqlite)?;
-                conn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
+                txn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
                     .map_err(Error::Sqlite)?;
                 Ok(())
             })?;
