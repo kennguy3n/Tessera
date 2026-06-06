@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import HomePage from "./pages/HomePage";
@@ -26,17 +26,31 @@ type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
  * taking down the whole app shell. The sidebar and command palette
  * live outside the boundary and stay interactive.
  *
- * The `key={name}` makes the per-route remount explicit: navigating to a
- * different page swaps the boundary's key, so React unmounts the crashed
- * subtree (clearing its caught-error state) instead of relying on React
- * Router's internal route keying to do so.
+ * `resetKeys={[pathname]}` clears a caught error whenever the URL
+ * changes. A static key alone is not enough: parameterized routes like
+ * `/sources/:id` reuse the same boundary instance across ids, so a crash
+ * on `/sources/a` would otherwise keep showing the recovery screen after
+ * navigating to `/sources/b`. Keying on the full pathname covers both
+ * cross-page and same-route-different-param navigation without
+ * force-remounting healthy pages on unrelated re-renders.
  */
-function page(name: string, node: ReactNode): ReactNode {
+function PageBoundary({
+  name,
+  children,
+}: {
+  name: string;
+  children: ReactNode;
+}): ReactNode {
+  const { pathname } = useLocation();
   return (
-    <ErrorBoundary key={name} name={name}>
-      {node}
+    <ErrorBoundary name={name} resetKeys={[pathname]}>
+      {children}
     </ErrorBoundary>
   );
+}
+
+function page(name: string, node: ReactNode): ReactNode {
+  return <PageBoundary name={name}>{node}</PageBoundary>;
 }
 
 export default function App() {

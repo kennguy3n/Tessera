@@ -805,12 +805,14 @@ function EditorSwitch({
       );
   }
 
-  // `key={name}` ties the boundary's identity to the editor it wraps, so
-  // switching artifact type (e.g. document -> slides) remounts the
-  // boundary and clears any error caught for the previous editor rather
-  // than leaving the recovery UI stuck on the new one.
+  // `resetKeys` clears a caught editor crash when the boundary starts
+  // guarding a different artifact (id) or editor type (name), so opening
+  // another artifact of the same type doesn't leave the recovery UI from
+  // the previous one on screen. ArtifactEditorPage reuses this subtree
+  // across artifacts (it refetches by route id rather than remounting),
+  // so a static key would not reset on an id-only change.
   return (
-    <ErrorBoundary key={name} name={name}>
+    <ErrorBoundary name={name} resetKeys={[artifact.id, name]}>
       {editor}
     </ErrorBoundary>
   );

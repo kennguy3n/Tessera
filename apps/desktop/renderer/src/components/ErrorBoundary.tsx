@@ -10,6 +10,15 @@ interface Props {
    */
   name?: string;
   /**
+   * Values that, when any of them changes, clear a caught error so the
+   * boundary re-renders its children. Use this to auto-recover on a
+   * context change the crashed subtree depends on — e.g. the route
+   * pathname or the edited artifact's id — so the user isn't left
+   * staring at a stale crash screen for resource A after navigating to
+   * resource B. Compared element-wise with `Object.is`.
+   */
+  resetKeys?: readonly unknown[];
+  /**
    * Optional override for the fallback UI. When omitted we render
    * the default Tessera error screen with Reload / Report controls.
    */
@@ -18,6 +27,16 @@ interface Props {
 
 interface State {
   error: Error | null;
+}
+
+function resetKeysChanged(
+  prev: readonly unknown[] = [],
+  next: readonly unknown[] = [],
+): boolean {
+  return (
+    prev.length !== next.length ||
+    prev.some((value, i) => !Object.is(value, next[i]))
+  );
 }
 
 /**
@@ -67,6 +86,19 @@ export default class ErrorBoundary extends Component<Props, State> {
       });
     } catch {
       // Swallow — reporting a crash must never cause another crash.
+    }
+  }
+
+  componentDidUpdate(prevProps: Props): void {
+    // Auto-recover once the boundary is guarding a different context
+    // (e.g. a new route or artifact id). Without this, a static-keyed
+    // boundary keeps showing the crash UI from the previous resource
+    // after the user navigates to a new one.
+    if (
+      this.state.error !== null &&
+      resetKeysChanged(prevProps.resetKeys, this.props.resetKeys)
+    ) {
+      this.reset();
     }
   }
 

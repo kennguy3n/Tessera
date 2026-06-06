@@ -142,6 +142,65 @@ describe("ErrorBoundary", () => {
         .tessera.diagnostics;
     }
   });
+
+  // A child that throws on its first render only, so that after the
+  // boundary resets (clears its error) the re-render succeeds — this is
+  // what happens in practice when navigating to a different, healthy
+  // resource.
+  function ThrowOnce({ label }: { label: string }) {
+    if (label === "crash") throw new Error("kaboom");
+    return <div>safe: {label}</div>;
+  }
+
+  it("clears a caught error when resetKeys change (e.g. route/id change)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { rerender } = render(
+        <ErrorBoundary resetKeys={["/sources/a"]}>
+          <ThrowOnce label="crash" />
+        </ErrorBoundary>,
+      );
+      // Crashed on /sources/a.
+      expect(screen.getByText("Something went wrong.")).toBeInTheDocument();
+
+      // Navigate to /sources/b: resetKeys change, so the boundary clears
+      // its error and renders the now-healthy child instead of the stale
+      // crash screen.
+      rerender(
+        <ErrorBoundary resetKeys={["/sources/b"]}>
+          <ThrowOnce label="ok" />
+        </ErrorBoundary>,
+      );
+      expect(screen.queryByText("Something went wrong.")).not.toBeInTheDocument();
+      expect(screen.getByText("safe: ok")).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps showing the crash screen when resetKeys are unchanged", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { rerender } = render(
+        <ErrorBoundary resetKeys={["/sources/a"]}>
+          <ThrowOnce label="crash" />
+        </ErrorBoundary>,
+      );
+      expect(screen.getByText("Something went wrong.")).toBeInTheDocument();
+
+      // Unrelated re-render with the same resetKeys: the error must
+      // persist (we don't silently retry the still-crashing subtree).
+      rerender(
+        <ErrorBoundary resetKeys={["/sources/a"]}>
+          <ThrowOnce label="ok" />
+        </ErrorBoundary>,
+      );
+      expect(screen.getByText("Something went wrong.")).toBeInTheDocument();
+      expect(screen.queryByText("safe: ok")).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe("useKeyboardShortcuts", () => {
