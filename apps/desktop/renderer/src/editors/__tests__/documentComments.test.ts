@@ -147,3 +147,49 @@ describe("CommentMark — HTML persistence round-trip", () => {
     });
   });
 });
+
+describe("CommentMark — overlapping / nested comments", () => {
+  // A comment fully contained inside another's range used to be
+  // swallowed: every text node in the overlap carried both marks, and
+  // collection only looked at the first mark per node, so the inner
+  // comment vanished from the panel and could never be resolved or
+  // removed. Collection now visits every comment mark on a node.
+  it("collects an inner comment fully nested inside an outer one", () => {
+    const editor = makeEditor("<p>Hello world</p>");
+    // Outer comment spans the whole paragraph text "Hello world".
+    editor.commands.setTextSelection({ from: 1, to: 12 });
+    editor.commands.addComment(attrs({ commentId: "outer", text: "outer" }));
+    // Inner comment spans just "world" — entirely within the outer.
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    editor.commands.addComment(attrs({ commentId: "inner", text: "inner" }));
+
+    const comments = collectCommentsFromDoc(editor.state.doc);
+    expect(comments.map((c) => c.id).sort()).toEqual(["inner", "outer"]);
+    const byId = Object.fromEntries(comments.map((c) => [c.id, c]));
+    expect(byId.outer.quotedText).toBe("Hello world");
+    expect(byId.inner.quotedText).toBe("world");
+  });
+
+  it("resolves and removes the inner comment without touching the outer", () => {
+    const editor = makeEditor("<p>Hello world</p>");
+    editor.commands.setTextSelection({ from: 1, to: 12 });
+    editor.commands.addComment(attrs({ commentId: "outer", text: "outer" }));
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    editor.commands.addComment(attrs({ commentId: "inner", text: "inner" }));
+
+    expect(editor.commands.setCommentResolved("inner", true)).toBe(true);
+    let byId = Object.fromEntries(
+      collectCommentsFromDoc(editor.state.doc).map((c) => [c.id, c]),
+    );
+    expect(byId.inner.resolved).toBe(true);
+    expect(byId.outer.resolved).toBe(false);
+
+    expect(editor.commands.removeComment("inner")).toBe(true);
+    byId = Object.fromEntries(
+      collectCommentsFromDoc(editor.state.doc).map((c) => [c.id, c]),
+    );
+    expect(byId.inner).toBeUndefined();
+    // The outer comment still anchors the full original range.
+    expect(byId.outer.quotedText).toBe("Hello world");
+  });
+});

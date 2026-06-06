@@ -20,7 +20,10 @@
  */
 
 import { Mark, mergeAttributes } from "@tiptap/core";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type {
+  Mark as ProseMirrorMark,
+  Node as ProseMirrorNode,
+} from "@tiptap/pm/model";
 import type { DocumentComment } from "../documentCommentsHelpers";
 
 /** Attributes persisted on every `comment` mark. */
@@ -78,32 +81,37 @@ export function collectCommentsFromDoc(
 
   doc.descendants((node, pos) => {
     if (!node.isText || !node.text) return;
-    const mark = node.marks.find((m) => m.type.name === "comment");
-    if (!mark) return;
-    const attrs = mark.attrs as Partial<CommentMarkAttributes>;
-    const commentId = attrs.commentId;
-    if (!commentId) return;
     const from = pos;
     const to = pos + node.nodeSize;
-    const existing = byId.get(commentId);
-    if (existing) {
-      existing.quoted.push(node.text);
-      existing.comment.to = to;
-    } else {
-      order.push(commentId);
-      byId.set(commentId, {
-        quoted: [node.text],
-        comment: {
-          id: commentId,
-          author: attrs.author ?? "",
-          createdAt: attrs.createdAt ?? "",
-          text: attrs.text ?? "",
-          resolved: attrs.resolved === true,
-          quotedText: "",
-          from,
-          to,
-        },
-      });
+    // A single text node can carry MULTIPLE distinct comment marks
+    // (the mark `excludes` nothing, so comments may overlap or nest).
+    // Visit every one so a fully-nested comment is never swallowed by
+    // the comment it sits inside.
+    for (const mark of node.marks) {
+      if (mark.type.name !== "comment") continue;
+      const attrs = mark.attrs as Partial<CommentMarkAttributes>;
+      const commentId = attrs.commentId;
+      if (!commentId) continue;
+      const existing = byId.get(commentId);
+      if (existing) {
+        existing.quoted.push(node.text);
+        existing.comment.to = to;
+      } else {
+        order.push(commentId);
+        byId.set(commentId, {
+          quoted: [node.text],
+          comment: {
+            id: commentId,
+            author: attrs.author ?? "",
+            createdAt: attrs.createdAt ?? "",
+            text: attrs.text ?? "",
+            resolved: attrs.resolved === true,
+            quotedText: "",
+            from,
+            to,
+          },
+        });
+      }
     }
   });
 
@@ -210,8 +218,10 @@ export const CommentMark = Mark.create({
             for (const range of ranges) {
               // Re-create the mark with every attribute preserved so the
               // author/timestamp/body survive a resolve toggle — only
-              // `resolved` flips.
-              tr.removeMark(range.from, range.to, this.type);
+              // `resolved` flips. Remove the SPECIFIC mark instance (not
+              // the whole `comment` type) so an overlapping comment's
+              // mark in the same range is left untouched.
+              tr.removeMark(range.from, range.to, range.mark);
               tr.addMark(
                 range.from,
                 range.to,
@@ -231,7 +241,9 @@ export const CommentMark = Mark.create({
           if (dispatch) {
             const { tr } = state;
             for (const range of ranges) {
-              tr.removeMark(range.from, range.to, this.type);
+              // Remove only this comment's mark instance; a different
+              // comment overlapping the same range keeps its mark.
+              tr.removeMark(range.from, range.to, range.mark);
             }
             dispatch(tr);
           }
@@ -245,6 +257,8 @@ interface CommentRange {
   from: number;
   to: number;
   attrs: CommentMarkAttributes;
+  /** The exact mark instance, so callers can remove just this comment. */
+  mark: ProseMirrorMark;
 }
 
 /**
@@ -267,6 +281,7 @@ function findCommentRanges(
       from: pos,
       to: pos + node.nodeSize,
       attrs: mark.attrs as CommentMarkAttributes,
+      mark,
     });
   });
   return ranges;
