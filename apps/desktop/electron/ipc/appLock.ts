@@ -33,20 +33,80 @@ import { loadConfig, updateConfig } from "../config";
 import {
   attemptBiometricUnlock,
   attemptUnlock,
+  clearFido2,
   clearPin,
+  getFido2AssertionOptions,
+  getFido2RegistrationOptions,
+  hasFido2Set,
   hasPinSet,
+  registerFido2,
   setPin,
   validatePinPolicy,
+  verifyFido2Assertion,
   type UnlockResult,
 } from "../appLock";
 import { defaultRateLimiter } from "./rateLimiter";
 import { RateLimitError } from "./rateLimiter";
 import { getLogger } from "../logger";
-import type { AppLockMode } from "../../shared/types";
+import type {
+  AppLockMode,
+  Fido2AssertionInput,
+  Fido2AssertionOptions,
+  Fido2RegistrationInput,
+  Fido2RegistrationOptions,
+} from "../../shared/types";
 
 interface AppLockStatusInfo {
   hasPinSet: boolean;
+  hasFido2Set: boolean;
   mode: AppLockMode;
+}
+
+/**
+ * Shape-check a renderer-supplied FIDO2 registration payload. The
+ * renderer is the only caller, but it crosses the IPC boundary as
+ * `unknown`, so we validate field types before handing it to the
+ * crypto layer (which does the semantic validation).
+ */
+function parseFido2RegistrationInput(raw: unknown): Fido2RegistrationInput {
+  if (raw === null || typeof raw !== "object") {
+    throw new Error("FIDO2 registration payload must be an object");
+  }
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.credentialId !== "string" ||
+    typeof r.publicKeySpki !== "string" ||
+    typeof r.alg !== "number" ||
+    typeof r.clientDataJson !== "string"
+  ) {
+    throw new Error("FIDO2 registration payload has invalid fields");
+  }
+  return {
+    credentialId: r.credentialId,
+    publicKeySpki: r.publicKeySpki,
+    alg: r.alg,
+    clientDataJson: r.clientDataJson,
+  };
+}
+
+/** Shape-check a renderer-supplied FIDO2 assertion payload. */
+function parseFido2AssertionInput(raw: unknown): Fido2AssertionInput | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.credentialId !== "string" ||
+    typeof r.authenticatorData !== "string" ||
+    typeof r.clientDataJson !== "string" ||
+    typeof r.signature !== "string"
+  ) {
+    return null;
+  }
+  return {
+    credentialId: r.credentialId,
+    authenticatorData: r.authenticatorData,
+    clientDataJson: r.clientDataJson,
+    signature: r.signature,
+  };
 }
 
 export function registerAppLockHandlers(): void {
@@ -56,6 +116,7 @@ export function registerAppLockHandlers(): void {
       const config = loadConfig();
       return {
         hasPinSet: hasPinSet(),
+        hasFido2Set: hasFido2Set(),
         mode: config.appLockMode,
       };
     },
@@ -261,6 +322,125 @@ export function registerAppLockHandlers(): void {
           : "Unlock Tessera";
       const success = await attemptBiometricUnlock(reason);
       return { success };
+    },
+  );
+
+  // --- FIDO2 / WebAuthn -------------------------------------------
+  //
+  // Registration/assertion *option* channels are cheap (a random
+  // challenge + a memory-map insert) and feed an interactive
+  // WebAuthn ceremony, so they are not rate-limited. The
+  // verify/register/remove channels touch persisted state and the
+  // crypto layer, so they share the same 250ms/token budget as the
+  // PIN + biometric channels to keep a compromised renderer from
+  // hammering them.
+
+  idempotentHandle(
+    "appLock:getFido2RegistrationOptions",
+    async (): Promise<Fido2RegistrationOptions> => {
+      return getFido2RegistrationOptions();
+    },
+  );
+
+  idempotentHandle(
+    "appLock:registerFido2",
+    async (_event, inputRaw: unknown): Promise<{ success: boolean }> => {
+      defaultRateLimiter.consume("appLock:registerFido2", {
+        tokensPerInterval: 1,
+        intervalMs: 250,
+      });
+      const input = parseFido2RegistrationInput(inputRaw);
+      registerFido2(input);
+      return { success: true };
+    },
+  );
+
+  idempotentHandle(
+    "appLock:getFido2AssertionOptions",
+    async (): Promise<Fido2AssertionOptions | null> => {
+      return getFido2AssertionOptions();
+    },
+  );
+
+  idempotentHandle(
+    "appLock:verifyFido2",
+    async (_event, inputRaw: unknown): Promise<UnlockResult> => {
+      // Mirror the attemptUnlock rate-limit: a hard requests/sec cap
+      // on the crypto-bearing channel. On rate-limit we surface a
+      // `locked_out` kind so the renderer reuses its wait-countdown
+      // UI, identical to the PIN path.
+      try {
+        defaultRateLimiter.consume("appLock:verifyFido2", {
+          tokensPerInterval: 1,
+          intervalMs: 250,
+        });
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          return {
+            kind: "locked_out",
+            nextAttemptAt: Date.now() + err.retryAfterMs,
+          };
+        }
+        throw err;
+      }
+      const input = parseFido2AssertionInput(inputRaw);
+      if (input === null) {
+        return { kind: "failure", failures: 0 };
+      }
+      const result = verifyFido2Assertion(input);
+      if (result.kind === "success") {
+        getLogger().info("app_lock.fido2_unlock_success");
+      } else if (result.kind === "failure") {
+        getLogger().info("app_lock.fido2_unlock_failure");
+      }
+      return result;
+    },
+  );
+
+  idempotentHandle(
+    "appLock:removeFido2",
+    async (_event, pinRaw: unknown): Promise<void> => {
+      // Removing the convenience authenticator requires proving
+      // knowledge of the PIN root credential — otherwise someone at
+      // an unlocked machine could strip the second factor. Rate-limit
+      // because this verifies the PIN via attemptUnlock (scrypt).
+      defaultRateLimiter.consume("appLock:removeFido2", {
+        tokensPerInterval: 1,
+        intervalMs: 250,
+      });
+      if (typeof pinRaw !== "string") {
+        throw new Error("PIN payload must be a string");
+      }
+      const verify = await attemptUnlock(pinRaw);
+      if (verify.kind !== "success") {
+        throw Object.assign(
+          new Error("PIN verification failed; cannot remove security key"),
+          { result: verify },
+        );
+      }
+      clearFido2();
+      // Keep `appLockMode` coupled to the credential lifecycle, just
+      // like `appLock:removePin` does for the PIN. The user still has
+      // their PIN root, so dropping the convenience authenticator
+      // demotes the mode `"fido2"` -> `"pin"` rather than `"off"`.
+      // Without this, the next launch would see `appLockMode ===
+      // "fido2"` while `getFido2AssertionOptions()` returns `null`
+      // (no credential), an orphaned state that the `settings:update`
+      // guard only prevents on the way *in*, not when the credential
+      // is removed underneath the mode.
+      try {
+        const config = loadConfig();
+        if (config.appLockMode === "fido2") {
+          updateConfig({ appLockMode: "pin" });
+        }
+      } catch (err) {
+        // best-effort — the credential is already gone. Log so a
+        // support trail exists; worst case the renderer falls back to
+        // the PIN prompt, which is the correct behaviour anyway.
+        getLogger().warn("app_lock.fido2_mode_reset_on_remove_failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
   );
 }

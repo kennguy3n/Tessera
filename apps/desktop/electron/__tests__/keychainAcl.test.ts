@@ -217,6 +217,29 @@ describe("captureBackendAtBoot", () => {
     expect(counterCalls).toEqual(["keychain.backend.basic_text"]);
   });
 
+  it("emits a dedicated WARN at boot when the basic_text fallback is detected", () => {
+    _setPlatformForTests("linux");
+    fakeSafeStorage.getSelectedStorageBackend = () => "basic_text";
+    captureBackendAtBoot();
+    const warns = logCalls.filter(
+      (l) => l.msg === "keychain.backend.basic_text_fallback_detected",
+    );
+    expect(warns).toHaveLength(1);
+    expect(warns[0].level).toBe("warn");
+    expect(warns[0].meta).toMatchObject({ backend: "basic_text" });
+  });
+
+  it("does NOT emit the basic_text WARN at boot for a healthy backend", () => {
+    _setPlatformForTests("linux");
+    fakeSafeStorage.getSelectedStorageBackend = () => "kwallet6";
+    captureBackendAtBoot();
+    expect(
+      logCalls.filter(
+        (l) => l.msg === "keychain.backend.basic_text_fallback_detected",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("getBootBackend returns null before capture, the descriptor after", () => {
     expect(getBootBackend()).toBe(null);
     _setPlatformForTests("darwin");
@@ -254,6 +277,38 @@ describe("assertSafeEncrypt enforcement policy", () => {
       (l) => l.msg === "keychain.acl.unenforced_basic_text",
     );
     expect(warns).toHaveLength(1);
+  });
+
+  it("emits the basic_text detection WARN in BOTH enforce modes", () => {
+    _setPlatformForTests("linux");
+    fakeSafeStorage.getSelectedStorageBackend = () => "basic_text";
+
+    // enforce=false: warns and proceeds.
+    assertSafeEncrypt({ enforce: false });
+    let detect = logCalls.filter(
+      (l) => l.msg === "keychain.acl.basic_text_fallback_detected",
+    );
+    expect(detect).toHaveLength(1);
+    expect(detect[0].meta).toMatchObject({
+      backend: "basic_text",
+      enforce: false,
+    });
+
+    // enforce=true: warns THEN throws (the warning precedes the block
+    // so the security event is recorded even when the write is
+    // refused).
+    logCalls.length = 0;
+    expect(() => assertSafeEncrypt({ enforce: true })).toThrow(
+      KeychainAclError,
+    );
+    detect = logCalls.filter(
+      (l) => l.msg === "keychain.acl.basic_text_fallback_detected",
+    );
+    expect(detect).toHaveLength(1);
+    expect(detect[0].meta).toMatchObject({
+      backend: "basic_text",
+      enforce: true,
+    });
   });
 
   it("is a no-op for os_managed regardless of enforce flag", () => {

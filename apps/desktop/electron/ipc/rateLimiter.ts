@@ -88,6 +88,24 @@ export class RateLimiter {
     this.buckets.clear();
   }
 
+  /**
+   * Override the clock (used by tests). Pass `null` to restore the
+   * real `Date.now`.
+   *
+   * The shared {@link defaultRateLimiter} singleton captures
+   * `Date.now` by reference at module load, so `vi.spyOn(Date, "now")`
+   * can't reach it after the fact — this seam is the supported way to
+   * make the singleton's window math deterministic. Tests that assert
+   * "two back-to-back calls hit the same window" freeze the clock so a
+   * slow first call (e.g. the scrypt KDF on the `appLock:*` channels,
+   * which can exceed the 250ms window under CPU contention) can't let
+   * the bucket refill between the two calls and mask the rate-limit
+   * assertion.
+   */
+  _setNowForTests(now: (() => number) | null): void {
+    this.now = now ?? Date.now;
+  }
+
   /** Visible state for tests. */
   inspect(key: string): { tokens: number; lastRefillMs: number } | undefined {
     return this.buckets.get(key);
@@ -306,6 +324,25 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 5,
     intervalMs: 1_000,
     burst: 10,
+  },
+  // `kchat:searchUsers` backs the `@mention` typeahead in the
+  // DocumentEditor. The renderer debounces keystrokes, but each
+  // accepted keystroke fires a server-side user search; 8/s with
+  // burst 12 keeps fast typing smooth while bounding a runaway
+  // component that re-fires the query on every render.
+  "kchat:searchUsers": {
+    tokensPerInterval: 8,
+    intervalMs: 1_000,
+    burst: 12,
+  },
+  // `kchat:getUserStatuses` backs the Sidebar presence indicator,
+  // which polls on a timer and on reconnect. 2/s with burst 5 lets
+  // the indicator refresh promptly after a reconnect without
+  // letting a misbehaving poll loop hammer the status endpoint.
+  "kchat:getUserStatuses": {
+    tokensPerInterval: 2,
+    intervalMs: 1_000,
+    burst: 5,
   },
 } satisfies Record<string, RateLimitConfig>;
 

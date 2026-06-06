@@ -1,5 +1,17 @@
 appId: com.tessera.desktop
 productName: Tessera
+
+# Ship only the en-US Electron/Chromium locale pack. Tessera has no
+# in-app internationalization framework (no i18next / react-intl /
+# lingui dependency, no locale catalogs) and renders an English-only
+# UI, so the ~50 other `locales/*.pak` files Electron bundles by
+# default are dead weight in every installer. `electronLanguages`
+# prunes them at pack time, trimming the installed footprint with no
+# user-visible behaviour change. Applies to all platforms (on macOS it
+# filters `*.lproj`; on Windows/Linux it filters `locales/*.pak`).
+electronLanguages:
+  - en-US
+
 directories:
   buildResources: build
   output: dist
@@ -75,6 +87,15 @@ nsis:
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
   deleteAppDataOnUninstall: false
+  # Emit the per-installer `.blockmap` (and a differential-capable
+  # package) alongside the NSIS `.exe`. electron-updater reads the
+  # published blockmap to perform a delta download on update. This is
+  # the default, but we set it explicitly so the delta-update path
+  # (paired with `disableDifferentialDownload = false` in
+  # apps/desktop/electron/autoUpdater.ts) is documented and can't be
+  # turned off implicitly. (AppImage embeds its blockmap into the
+  # binary automatically, so no equivalent Linux knob is needed.)
+  differentialPackage: true
 
 linux:
   target:

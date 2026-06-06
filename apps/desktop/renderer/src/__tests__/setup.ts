@@ -429,6 +429,14 @@ const mockApi = {
       .fn()
       .mockResolvedValue({ canceled: true, filePath: null }),
   },
+  slides: {
+    // Default mock: presentation "opens" with whatever slide count
+    // the caller passed. Tests that assert on the request payload
+    // inspect this spy's calls.
+    startPresentation: vi
+      .fn()
+      .mockResolvedValue({ ok: true, slideCount: 0 }),
+  },
   tasks: {
     create: vi.fn().mockResolvedValue({
       id: "task-1",
@@ -441,6 +449,7 @@ const mockApi = {
       dueDate: null,
       sourceId: null,
       extractedItemId: null,
+      dependsOn: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }),
@@ -457,6 +466,7 @@ const mockApi = {
       dueDate: null,
       sourceId: null,
       extractedItemId: null,
+      dependsOn: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })),

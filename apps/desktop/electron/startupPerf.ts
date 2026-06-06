@@ -120,6 +120,22 @@ export function collectStartupPerf(): PerfMark[] {
 }
 
 /**
+ * Total cold-start duration in ms: the span from the earliest Tessera
+ * boot mark (`app-ready` start, anchored at main-bundle module load)
+ * to the latest one (`window-show` end, recorded on the main window's
+ * `ready-to-show`). This is the boot-to-first-render number the CI
+ * cold-start gate asserts against.
+ *
+ * Returns `null` when instrumentation is disabled or no marks have
+ * been recorded yet.
+ */
+export function coldStartTotalMs(): number | null {
+  const marks = collectStartupPerf();
+  if (marks.length === 0) return null;
+  return marks[marks.length - 1].endMs - marks[0].startMs;
+}
+
+/**
  * Write the boot perf table to the supplied log sink. The sink is the
  * jsonl-emitting logger from `./logger.ts` in production, and a
  * vitest-friendly recorder in tests. Always emitted as a single

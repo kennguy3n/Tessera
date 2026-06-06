@@ -589,11 +589,12 @@ tessera/
 │           │   └── styles/              # Design tokens, theme
 │           └── index.html
 ├── crates/                          # Rust core engine
-│   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage)
+│   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage); typed DB errors (`Error::Sqlite` wrapping `rusqlite`, `Error::DatabaseState` for semantic failures); CPU-count-auto-sized + pre-warmed read pool in `db.rs`
+│   ├── tessera_migrate/             # Versioned, forward-only SQL migration runner — numbered `.sql` files in `migrations/` tracked in a `_migrations` table (with rollback stubs); replaces the ad-hoc migration blocks formerly inlined in `tessera_sources`
 │   ├── tessera_bridge/              # N-API bindings for Electron
 │   ├── tessera_sources/             # Source management, file indexing, `.gitignore`-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker, `embedding.rs` (EmbeddingProvider trait + HashTrickEmbedding), `onnx_embedder.rs` + `model_registry.rs` (ONNX Runtime sentence-transformer providers — `all-MiniLM-L6-v2` and `paraphrase-multilingual-MiniLM-L12-v2`, both 384-dim, SHA-256-verified, resumable downloads), `hybrid.rs` (BM25 + vector + RRF + recency), `vector_index.rs` (IVF-Flat ANN with k-means centroids), `search.rs` (engine entry point), `progress.rs`, `kchat_crypto.rs` (per-source DEK + column-level AES-256-GCM for `kchat_posts`), `vision_extractor.rs` / `pdf_extractor.rs` (VLM-powered image / PDF / chart extraction), `fetch_kchat_thread_context` on `SourceStore` (parent-thread retrieval up to 3 levels)
 │   ├── tessera_templates/           # Template parsing and validation (Create / Analyze / Plan / Approve categories)
-│   ├── tessera_artifacts/           # Artifact creation, version history, storage, tasks model
+│   ├── tessera_artifacts/           # Artifact creation, version history, storage; tasks model with `depends_on` dependency graph + topological cycle detection; automations with `on_kchat_message_match` trigger and multi-step `sequence` actions; all deletion paths wrapped in `with_secure_delete`
 │   ├── tessera_export/              # csv.rs, markdown.rs, html.rs, pdf.rs, typst.rs, docx.rs, xlsx.rs, mermaid.rs, evidence_pack.rs
 │   ├── tessera_citations/           # Citation tracking, freshness checks, replace/remove flows, audit-event integration
 │   ├── tessera_connectors/          # gdrive.rs, onedrive.rs, notion.rs, jira.rs, confluence.rs, figma.rs + registry/token/types

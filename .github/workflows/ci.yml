@@ -88,6 +88,21 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Fold the active toolchain's `rustc --version` into the cache key
+      # so a toolchain bump (e.g. 1.88 -> 1.89, or a nightly date change)
+      # invalidates the cache. Without this, the `target/` dir cached
+      # under the old compiler would be restored on top of a new rustc,
+      # which at best wastes a full rebuild and at worst surfaces
+      # confusing "found invalid metadata" / incremental-cache errors.
+      #
+      # We write the version to a file and hash it with `hashFiles`
+      # (built into the runner, identical on Linux/macOS/Windows) rather
+      # than piping through `sha256sum` — the latter is absent on the
+      # macOS runner image's default BSD userland.
+      - name: Record rustc version
+        shell: bash
+        run: rustc --version --verbose > rustc-version.txt
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -97,8 +112,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Check formatting
         if: matrix.os == 'ubuntu-22.04'
@@ -242,6 +259,135 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Cold-start perf gate. Boots the built Electron app once in headless
+  # "perf smoke" mode and fails if boot-to-first-render exceeds the 3s
+  # budget on the ubuntu runner. This is the required perf gate
+  # (ubuntu-only, no continue-on-error): a cold-start regression blocks
+  # merge the same way a failing test does.
+  #
+  # Only runs when TypeScript/app sources changed (same path filter as
+  # the `typescript` job) — a Rust-only or docs-only PR can't move the
+  # renderer/electron boot path, so we don't pay for an Electron boot on
+  # those. The job builds the app itself (`npm run build`) rather than
+  # depending on the `typescript` job because matrix jobs don't share a
+  # workspace; reusing its artifacts would need an upload/download
+  # round-trip that costs more than the ~30s incremental build here.
+  cold-start:
+    name: Cold-start perf gate
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # xvfb provides the virtual X display the gate's `xvfb-run`
+      # wrapper needs; the rest are Electron/Chromium's shared-library
+      # runtime deps that aren't guaranteed on a bare runner. libsecret
+      # matches the other ubuntu jobs (keychain backend probe at boot).
+      - name: Install headless Electron deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libsecret-1-dev \
+            pkg-config \
+            libnss3 \
+            libgbm1 \
+            libasound2 \
+            libgtk-3-0 \
+            libxss1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The gate auto-wraps itself in `xvfb-run` and passes
+      # `--no-sandbox`; it boots the app once, reads the
+      # `TESSERA_COLD_START_MS` marker the main process prints on first
+      # paint, and exits non-zero if it exceeds the budget.
+      - name: Cold-start gate
+        run: npm run perf:cold-start
+
+  # Supply-chain audit gate. Runs whenever Rust or TypeScript inputs
+  # change (the `changes` filters already include this workflow file,
+  # so editing CI re-runs it). Two independent checks share one job:
+  #
+  #   * cargo vet      — every crate in the Cargo graph must be vetted
+  #     or exempted in `supply-chain/`. A PR that introduces a NEW
+  #     dependency fails here until a human audits/exempts it. See
+  #     `supply-chain/config.toml` for the baseline-exemptions policy.
+  #
+  #   * npm audit      — production (shipped) dependencies must carry
+  #     no high/critical advisories. We scope to `--omit=dev` on
+  #     purpose: dev/build-only tooling (electron-builder, node-gyp,
+  #     and their cacache/tar transitive deps) currently has advisories
+  #     that only have breaking-change fixes and never ship in the
+  #     packaged app, so blocking PRs on them would be a spurious gate.
+  #     The production graph is the supply-chain surface that reaches
+  #     users, and it must stay clean at --audit-level=high.
+  supply-chain:
+    name: Supply-chain audit
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: needs.changes.outputs.rust == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Install Rust toolchain
+        if: needs.changes.outputs.rust == 'true'
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Cache cargo
+        if: needs.changes.outputs.rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-vet-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-vet-
+
+      - name: Install cargo-vet
+        if: needs.changes.outputs.rust == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet@0.10
+
+      - name: cargo vet (supply-chain audit)
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo vet --locked
+
+      - name: Setup Node.js
+        if: needs.changes.outputs.typescript == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        if: needs.changes.outputs.typescript == 'true'
+        run: npm ci
+
+      - name: npm audit (production dependencies)
+        if: needs.changes.outputs.typescript == 'true'
+        run: npm audit --omit=dev --audit-level=high
+
   # Single aggregator check. This is the one to require in branch
   # protection on `main`; everything else is conditional or advisory.
   #
@@ -256,7 +402,7 @@ jobs:
   ci-success:
     name: CI
     runs-on: ubuntu-22.04
-    needs: [changes, rust, typescript]
+    needs: [changes, rust, typescript, cold-start, supply-chain]
     if: always()
     steps:
       - name: Verify required job outcomes
@@ -264,10 +410,14 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           TS_RESULT: ${{ needs.typescript.result }}
+          COLD_START_RESULT: ${{ needs.cold-start.result }}
+          SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
         run: |
-          echo "changes:    $CHANGES_RESULT"
-          echo "rust:       $RUST_RESULT"
-          echo "typescript: $TS_RESULT"
+          echo "changes:      $CHANGES_RESULT"
+          echo "rust:         $RUST_RESULT"
+          echo "typescript:   $TS_RESULT"
+          echo "cold-start:   $COLD_START_RESULT"
+          echo "supply-chain: $SUPPLY_CHAIN_RESULT"
 
           fail=0
           if [ "$CHANGES_RESULT" != "success" ]; then
@@ -286,6 +436,18 @@ jobs:
           case "$TS_RESULT" in
             success|skipped) ;;
             *) echo "::error::Required TypeScript gate did not succeed (result: $TS_RESULT)."; fail=1 ;;
+          esac
+          case "$COLD_START_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required cold-start perf gate did not succeed (result: $COLD_START_RESULT)."; fail=1 ;;
+          esac
+          # The supply-chain job has no continue-on-error legs, so a
+          # `failure` here is a hard gate (a new unvetted crate or a
+          # high/critical production npm advisory). `skipped` is a pass
+          # (path filters excluded both subsystems).
+          case "$SUPPLY_CHAIN_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required supply-chain gate did not succeed (result: $SUPPLY_CHAIN_RESULT)."; fail=1 ;;
           esac
 
           if [ "$fail" -ne 0 ]; then

@@ -752,6 +752,7 @@ function EditorSwitch({
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
+          deckTitle={artifact.title}
         />
       );
       break;

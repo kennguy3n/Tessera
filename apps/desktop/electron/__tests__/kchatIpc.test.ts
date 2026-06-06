@@ -221,6 +221,13 @@ interface StubClient {
   // verify the catch-and-degrade posture via the rejection.
   getUsersByIds: ReturnType<typeof vi.fn>;
   getChannel: ReturnType<typeof vi.fn>;
+  // backs the `@mention` typeahead
+  // (`kchat:searchUsers`). Default returns an empty list; tests
+  // that exercise the populated path set an explicit impl.
+  searchUsers: ReturnType<typeof vi.fn>;
+  // backs `kchat:postTaskToChannel` (Task 6): posts a formatted
+  // task body to a channel. Default resolves a stub post id.
+  createPost: ReturnType<typeof vi.fn>;
   scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
@@ -233,6 +240,8 @@ const clientMock: StubClient = {
   getPostsForChannel: vi.fn(),
   getUsersByIds: vi.fn(),
   getChannel: vi.fn(),
+  searchUsers: vi.fn(async () => [] as Array<unknown>),
+  createPost: vi.fn(async () => ({ id: "post0000000000000000abcd" })),
   // Default: pass-through. Tests that need to assert scrub
   // behaviour replace this implementation in their own `beforeEach`.
   scrubMessage: vi.fn((msg: string) => msg),
@@ -249,9 +258,30 @@ const serviceMock = {
   disconnect: vi.fn(),
 };
 
+// Session 8: `registerKchatHandlers` wires offline-queue executors
+// at registration time and the `kchat:offlineQueueStatus` handler
+// reads the queue. The IPC suite does not exercise offline-queue
+// behaviour (that lives in `kchatOfflineQueue.test.ts`), so we stub
+// the singleton with an in-memory double that satisfies the surface
+// the IPC layer touches. `getKchatEventForwarder` returns null here
+// because the forwarder is constructed alongside the auth service,
+// which this suite mocks away — the `kchat:setWatchedChannels`
+// handler tolerates a null forwarder by design.
+const offlineQueueMock = {
+  load: vi.fn(async () => {}),
+  size: vi.fn(() => 0),
+  list: vi.fn(() => [] as unknown[]),
+  setExecutors: vi.fn(),
+  enqueueShareArtifact: vi.fn(async () => "queued-share-id"),
+  enqueueIngestChannel: vi.fn(async () => "queued-ingest-id"),
+  enqueuePostTask: vi.fn(async () => "queued-task-id"),
+};
+
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getKchatAuthService: () => serviceMock,
+  getKchatOfflineQueue: () => offlineQueueMock,
+  getKchatEventForwarder: () => null,
   // Block B Task 4 second-pass Devin Review: `registerKchatHandlers` populates this slot
   // with the auto-resync closure that powers the forwarder's
   // `outcome=regranted` re-sync hook. The IPC test suite
@@ -342,6 +372,9 @@ beforeEach(() => {
   // explicitly. The redundant per-test invocations elsewhere in
   // the file are intentionally kept as documentation that the
   // test exercises cache state.
+  offlineQueueMock.enqueueShareArtifact.mockClear();
+  offlineQueueMock.enqueueIngestChannel.mockClear();
+  offlineQueueMock.enqueuePostTask.mockClear();
   _resetKchatNameCachesForTest();
   registerKchatHandlers();
 });
@@ -381,6 +414,12 @@ describe("kchat IPC registration", () => {
     "kchat:backfillProgress",
     "kchat:searchPosts",
     "kchat:fetchThreadContext",
+    // Session 8 (KChat Collaboration Depth) additions:
+    "kchat:searchUsers", // @mention autocomplete (Task 2)
+    "kchat:getUserStatuses", // presence indicator (Task 5)
+    "kchat:offlineQueueStatus", // offline-queue depth surface (Task 1)
+    "kchat:setWatchedChannels", // notification bridge watch-list (Task 3)
+    "kchat:postTaskToChannel", // bidirectional task sync (Task 6)
   ];
 
   it("registers every kchat:* / sources:* channel from the master list", () => {
@@ -1167,6 +1206,56 @@ describe("toIpcError redaction", () => {
   });
 });
 
+describe("kchat:postTaskToChannel", () => {
+  const CHANNEL = "chid0000000000000000abcd";
+  const TASK = { id: "t1", title: "Ship the release", priority: "high" };
+
+  it("posts the formatted task and returns the post id", async () => {
+    clientMock.createPost.mockResolvedValue({ id: "post0000000000000000abcd" });
+    const out = await handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK);
+    expect(clientMock.createPost).toHaveBeenCalledTimes(1);
+    expect(clientMock.createPost.mock.calls[0][0]).toBe(CHANNEL);
+    // The body is the rendered task markdown, not the raw object.
+    expect(clientMock.createPost.mock.calls[0][1]).toContain(
+      "Ship the release",
+    );
+    expect(out).toEqual({ postId: "post0000000000000000abcd" });
+    expect(offlineQueueMock.enqueuePostTask).not.toHaveBeenCalled();
+  });
+
+  it("queues the task for replay when the server is unreachable", async () => {
+    // Transport-level failure → offline. Matches the shareArtifact /
+    // addKchatChannel offline-resilience contract instead of hard-
+    // failing the user's post.
+    clientMock.createPost.mockRejectedValue(
+      new Error("connect ECONNREFUSED 127.0.0.1:443"),
+    );
+    const out = await handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK);
+    expect(offlineQueueMock.enqueuePostTask).toHaveBeenCalledTimes(1);
+    expect(offlineQueueMock.enqueuePostTask.mock.calls[0][0]).toEqual({
+      channelId: CHANNEL,
+      task: expect.objectContaining({ id: "t1", title: "Ship the release" }),
+    });
+    expect(out).toEqual({
+      postId: "",
+      queued: true,
+      queueId: "queued-task-id",
+    });
+  });
+
+  it("propagates a non-offline server error without queuing", async () => {
+    // A reachable server returning an error must surface to the user,
+    // never be silently swallowed into the offline queue.
+    clientMock.createPost.mockRejectedValue(
+      Object.assign(new Error("KChat 403"), { status: 403 }),
+    );
+    await expect(
+      handler("kchat:postTaskToChannel")(EVENT, CHANNEL, TASK),
+    ).rejects.toThrow();
+    expect(offlineQueueMock.enqueuePostTask).not.toHaveBeenCalled();
+  });
+});
+
 describe("kchat:shareArtifact", () => {
   it("uploads markdown export and audits the share", async () => {
     clientMock.uploadFile.mockResolvedValue({
@@ -1324,6 +1413,48 @@ describe("kchat:shareArtifact", () => {
       "markdown",
       true, // wantCitations (user request, threaded through)
       false, // evidenceShared (actual on-channel outcome)
+    );
+  });
+
+  it("does NOT offline-queue when the evidence pack fails offline after the primary already landed", async () => {
+    // Regression: the offline queue replays the ENTIRE
+    // KchatShareArtifactRequest. If the primary upload succeeds and
+    // only the evidence-pack upload then fails with a transport-level
+    // (offline) error, enqueueing the whole request would re-upload
+    // the primary on replay — duplicating it in the channel. The
+    // handler must instead surface the partial failure (re-throw) and
+    // NOT enqueue, leaving the already-delivered primary in place for
+    // the user to retry the pack manually.
+    clientMock.uploadFile
+      .mockResolvedValueOnce({
+        id: "fidprimary00000000000abc",
+        name: "Quarterly-Roadmap.md",
+      })
+      .mockRejectedValueOnce(
+        new Error("fetch failed: connect ECONNREFUSED 127.0.0.1:443"),
+      );
+    await expect(
+      handler("kchat:shareArtifact")(
+        EVENT,
+        "550e8400-e29b-41d4-a716-446655440000",
+        "chid0000000000000000abcd",
+        "markdown",
+        true,
+        true, // includeEvidencePack — primary succeeds, pack fails offline
+      ),
+    ).rejects.toThrow();
+    // The critical assertion: the whole request was NOT queued, so a
+    // reconnect can't re-upload the primary file.
+    expect(offlineQueueMock.enqueueShareArtifact).not.toHaveBeenCalled();
+    // Both uploads were attempted (primary then pack) and the audit
+    // row still records the actual on-channel outcome.
+    expect(clientMock.uploadFile).toHaveBeenCalledTimes(2);
+    expect(bridgeMock.bridgeLogKchatArtifactShared).toHaveBeenCalledWith(
+      "550e8400-e29b-41d4-a716-446655440000",
+      "chid0000000000000000abcd",
+      "markdown",
+      true,
+      false,
     );
   });
 
@@ -4066,6 +4197,70 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
 //    (b) the substrate state read throws
 // - The handler rejects malformed channelIds at the boundary
 // =====================================================================
+describe("kchat:searchUsers — @mention typeahead (Task 2)", () => {
+  beforeEach(async () => {
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    clientMock.searchUsers.mockReset();
+    clientMock.searchUsers.mockResolvedValue([]);
+  });
+
+  it("returns [] for an empty / whitespace-only term without hitting the client", async () => {
+    const out = (await handler("kchat:searchUsers")(EVENT, "   ")) as unknown[];
+    expect(out).toEqual([]);
+    expect(clientMock.searchUsers).not.toHaveBeenCalled();
+  });
+
+  it("does NOT consume a rate-limit token on an empty term (burst preserved)", async () => {
+    // Regression: the limiter used to be consumed *before* the
+    // empty-query guard, so a burst of `@`-keystroke pauses (each
+    // an empty query) drained the typeahead's budget out from under
+    // the real search that followed. Fire many more empty queries
+    // than the burst size (12) and assert the real search that
+    // follows is NOT rate-limited.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    const consumeSpy = vi.spyOn(defaultRateLimiter, "consume");
+    for (let i = 0; i < 20; i++) {
+      await handler("kchat:searchUsers")(EVENT, "  ");
+    }
+    expect(consumeSpy).not.toHaveBeenCalled();
+
+    clientMock.searchUsers.mockResolvedValueOnce([
+      {
+        id: "u".repeat(26),
+        username: "alice",
+        first_name: "Alice",
+        last_name: "Liddell",
+      },
+    ]);
+    const out = (await handler("kchat:searchUsers")(
+      EVENT,
+      "ali",
+    )) as Array<Record<string, unknown>>;
+    expect(out).toEqual([
+      { id: "u".repeat(26), username: "alice", displayName: "Alice Liddell" },
+    ]);
+    // Exactly one token consumed — by the real (non-empty) query.
+    expect(consumeSpy).toHaveBeenCalledTimes(1);
+    expect(consumeSpy.mock.calls[0][0]).toBe("kchat:searchUsers");
+    consumeSpy.mockRestore();
+  });
+
+  it("rate-limits real (non-empty) queries per the searchUsers burst (12)", async () => {
+    // 12 burst tokens: the 13th consecutive *real* query rejects.
+    for (let i = 0; i < 12; i++) {
+      await handler("kchat:searchUsers")(EVENT, `q${i}`);
+    }
+    await expect(
+      handler("kchat:searchUsers")(EVENT, "q13"),
+    ).rejects.toThrow(/Rate limit/i);
+  });
+});
+
 describe("kchat:backfillProgress — progress projection IPC", () => {
   // 26-char channel id reused across cases. Doesn't share the
   // CHANNEL_ID constant used by the backfill orchestrator

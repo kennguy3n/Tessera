@@ -10,6 +10,7 @@
 
 use chrono::{DateTime, Utc};
 use napi_derive::napi;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tessera_artifacts::automations::{
     Automation, AutomationAction, AutomationStore, AutomationTrigger,
@@ -26,11 +27,12 @@ pub struct AutomationInfo {
     /// Name.
     pub name: String,
     /// `AutomationTrigger` encoded as JSON. Discriminator key `kind`
-    /// is `schedule` or `on_generate` (matches the tagged-enum
-    /// representation in the core crate).
+    /// is `schedule`, `on_generate`, or `on_kchat_message_match`
+    /// (matches the tagged-enum representation in the core crate).
     pub trigger_json: String,
     /// `AutomationAction` encoded as JSON. Discriminator key `kind`
-    /// is `reindex_source` or `generate_from_template`.
+    /// is `reindex_source`, `generate_from_template`, or `sequence`
+    /// (a `sequence` wraps an ordered `actions` array of leaf actions).
     pub action_json: String,
     /// Enabled.
     pub enabled: bool,
@@ -98,12 +100,27 @@ fn parse_automation_id(s: &str) -> Result<AutomationId> {
 fn parse_trigger(s: &str) -> Result<AutomationTrigger> {
     let trigger: AutomationTrigger = serde_json::from_str(s)
         .map_err(|e| Error::InvalidConfig(format!("invalid trigger json: {e}")))?;
-    if let AutomationTrigger::Schedule { interval_seconds } = &trigger {
-        if *interval_seconds <= 0 {
-            return Err(Error::InvalidConfig(
-                "schedule interval_seconds must be positive".into(),
-            ));
+    match &trigger {
+        AutomationTrigger::Schedule { interval_seconds } => {
+            if *interval_seconds <= 0 {
+                return Err(Error::InvalidConfig(
+                    "schedule interval_seconds must be positive".into(),
+                ));
+            }
         }
+        AutomationTrigger::OnKchatMessageMatch { channel_id, regex } => {
+            // Validate up-front so a bad rule is rejected at creation
+            // time rather than silently never matching at dispatch.
+            if channel_id.trim().is_empty() {
+                return Err(Error::InvalidConfig(
+                    "on_kchat_message_match requires a non-empty channel_id".into(),
+                ));
+            }
+            Regex::new(regex).map_err(|e| {
+                Error::InvalidConfig(format!("on_kchat_message_match regex is invalid: {e}"))
+            })?;
+        }
+        AutomationTrigger::OnGenerate { .. } => {}
     }
     Ok(trigger)
 }
@@ -193,6 +210,28 @@ pub fn matching_on_generate_automations(
         .collect())
 }
 
+/// Return all enabled `OnKchatMessageMatch` automations whose channel
+/// equals `channel_id` and whose regex matches `message`. Called from
+/// the KChat event path (`apps/desktop/electron/kchat`) on every
+/// `posted` WebSocket event so the scheduler can dispatch the matching
+/// automations' actions.
+pub fn matching_kchat_message_automations(
+    store: &AutomationStore,
+    channel_id: &str,
+    message: &str,
+) -> Result<Vec<AutomationInfo>> {
+    if channel_id.is_empty() {
+        return Err(Error::InvalidConfig(
+            "channel_id is required for matching_kchat_message".into(),
+        ));
+    }
+    Ok(store
+        .matching_kchat_message(channel_id, message)?
+        .into_iter()
+        .map(Into::into)
+        .collect())
+}
+
 /// Record the result of an automation run. `status` is a short string
 /// the UI renders verbatim (`"ok"` / `"failed: <reason>"`). `ran_at`
 /// defaults to `Utc::now()` on the Rust side; the Electron scheduler
@@ -235,7 +274,7 @@ mod tests {
             AutomationTrigger::Schedule { interval_seconds } => {
                 assert_eq!(interval_seconds, 3600);
             }
-            AutomationTrigger::OnGenerate { .. } => panic!("expected Schedule, got OnGenerate"),
+            other => panic!("expected Schedule, got {other:?}"),
         }
     }
 
@@ -370,5 +409,79 @@ mod tests {
         let store = open_store();
         let due = due_scheduled_automations(&store, Utc::now()).expect("due");
         assert!(due.is_empty());
+    }
+
+    #[test]
+    fn parse_trigger_accepts_on_kchat_message_match() {
+        let json = r#"{"kind":"on_kchat_message_match","channel_id":"chan-1","regex":"deploy"}"#;
+        let trigger = parse_trigger(json).expect("valid kchat trigger should parse");
+        assert!(matches!(
+            trigger,
+            AutomationTrigger::OnKchatMessageMatch { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_trigger_rejects_invalid_kchat_regex() {
+        let json = r#"{"kind":"on_kchat_message_match","channel_id":"chan-1","regex":"(unclosed"}"#;
+        let err = parse_trigger(json).expect_err("invalid regex must fail");
+        assert!(format!("{err}").contains("regex is invalid"));
+    }
+
+    #[test]
+    fn parse_trigger_rejects_empty_kchat_channel() {
+        let json = r#"{"kind":"on_kchat_message_match","channel_id":"","regex":"deploy"}"#;
+        let err = parse_trigger(json).expect_err("empty channel must fail");
+        assert!(format!("{err}").contains("non-empty channel_id"));
+    }
+
+    #[test]
+    fn matching_kchat_message_automations_resolves_matches() {
+        let store = open_store();
+        let info = create_automation(
+            &store,
+            CreateAutomationRequest {
+                name: "ops".into(),
+                trigger_json:
+                    r#"{"kind":"on_kchat_message_match","channel_id":"chan-ops","regex":"(?i)deploy"}"#
+                        .into(),
+                action_json: sample_reindex_action_json(),
+                enabled: true,
+            },
+        )
+        .expect("create");
+
+        let hits = matching_kchat_message_automations(&store, "chan-ops", "Time to DEPLOY")
+            .expect("matching");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, info.id);
+
+        let misses =
+            matching_kchat_message_automations(&store, "chan-ops", "nothing here").expect("none");
+        assert!(misses.is_empty());
+    }
+
+    #[test]
+    fn create_automation_accepts_sequence_action() {
+        let store = open_store();
+        let action_json = format!(
+            r#"{{"kind":"sequence","actions":[{},{}]}}"#,
+            sample_reindex_action_json(),
+            sample_reindex_action_json()
+        );
+        let info = create_automation(
+            &store,
+            CreateAutomationRequest {
+                name: "multi".into(),
+                trigger_json: r#"{"kind":"schedule","interval_seconds":3600}"#.into(),
+                action_json,
+                enabled: true,
+            },
+        )
+        .expect("sequence action should round-trip");
+        let action: AutomationAction =
+            serde_json::from_str(&info.action_json).expect("action_json parses");
+        assert!(matches!(action, AutomationAction::Sequence { .. }));
+        assert_eq!(action.steps().len(), 2);
     }
 }

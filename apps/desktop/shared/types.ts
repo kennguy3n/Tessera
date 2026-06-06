@@ -1061,12 +1061,17 @@ export interface SettingsData {
    * is required to open the app. `"pin"` prompts a PIN. `"biometric"`
    * uses the platform biometric (TouchID on macOS, Windows Hello on
    * Windows) and falls back to PIN if biometric is unavailable.
+   * `"fido2"` uses a registered FIDO2/WebAuthn authenticator
+   * (platform authenticator or roaming security key) and likewise
+   * falls back to PIN if the authenticator is unavailable.
    *
    * Setup of a PIN is gated behind a separate IPC
    * (`appLock:setPin`) so flipping the mode to `"pin"` /
-   * `"biometric"` without first setting a PIN is rejected at the
-   * IPC boundary. Defaults to `"off"` so a fresh install does not
-   * surprise the user with a lock prompt.
+   * `"biometric"` / `"fido2"` without first setting a PIN is
+   * rejected at the IPC boundary. `"fido2"` additionally requires a
+   * registered credential (`appLock:registerFido2`). Defaults to
+   * `"off"` so a fresh install does not surprise the user with a
+   * lock prompt.
    */
   appLockMode: AppLockMode;
   /**
@@ -1113,7 +1118,7 @@ export interface SettingsData {
  * fixed enum so the renderer's lock-mode selector, the IPC schema,
  * and the persisted config all reference the same tuple.
  */
-export const APP_LOCK_MODES = ["off", "pin", "biometric"] as const;
+export const APP_LOCK_MODES = ["off", "pin", "biometric", "fido2"] as const;
 export type AppLockMode = (typeof APP_LOCK_MODES)[number];
 
 /**
@@ -1655,6 +1660,9 @@ export interface TaskInfo {
   dueDate: string | null;
   sourceId: string | null;
   extractedItemId: string | null;
+  /** Ids of the tasks this task depends on (UUID strings). Empty when
+   *  the task has no dependencies. Drives the Gantt dependency arrows. */
+  dependsOn: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1668,6 +1676,8 @@ export interface CreateTaskRequest {
   dueDate?: string | null;
   sourceId?: string | null;
   extractedItemId?: string | null;
+  /** Task ids (UUID strings) this task depends on. Defaults to empty. */
+  dependsOn?: string[];
 }
 
 export interface UpdateTaskRequest {
@@ -1690,6 +1700,12 @@ export interface UpdateTaskRequest {
    * regression test.
    */
   dueDate?: string | null;
+  /**
+   * `undefined` (key omitted) leaves the dependency set unchanged. An
+   * array replaces it; pass `[]` to clear all dependencies. The bridge
+   * rejects an update that would introduce a dependency cycle.
+   */
+  dependsOn?: string[];
 }
 
 // -----------------------------------------------------------------
@@ -1698,7 +1714,8 @@ export interface UpdateTaskRequest {
 
 export type AutomationTrigger =
   | { kind: "schedule"; interval_seconds: number }
-  | { kind: "on_generate"; template_id: string };
+  | { kind: "on_generate"; template_id: string }
+  | { kind: "on_kchat_message_match"; channel_id: string; regex: string };
 
 export type AutomationAction =
   | { kind: "reindex_source"; source_id: string }
@@ -1706,7 +1723,10 @@ export type AutomationAction =
       kind: "generate_from_template";
       template_id: string;
       source_ids: string[];
-    };
+    }
+  /** Run an ordered list of leaf actions; a failing step is reported
+   *  but does not abort the remaining steps. */
+  | { kind: "sequence"; actions: AutomationAction[] };
 
 export interface AutomationInfo {
   id: string;
@@ -2464,6 +2484,54 @@ export interface DialogApi {
 }
 
 /**
+ * One slide as shipped to the presentation windows by
+ * `slides:startPresentation`. The renderer flattens each slide to a
+ * title, a list of plain-text body `lines`, and the speaker `notes`.
+ *
+ * Everything is plain text by design: the main process renders it with
+ * `textContent` (never `innerHTML`), so a slide body can never inject
+ * markup into the presentation window regardless of what the user
+ * typed into the deck.
+ */
+export interface PresentationSlide {
+  title: string;
+  /** Plain-text body lines (bullets / paragraphs / block labels). */
+  lines: string[];
+  /** Plain-text speaker notes, shown only in the presenter window. */
+  notes: string;
+}
+
+/** Payload for `slides:startPresentation`. */
+export interface StartPresentationRequest {
+  slides: PresentationSlide[];
+  /** Zero-based slide to open on. Clamped to range by the main process. */
+  startIndex: number;
+  /** Optional deck title used in the window chrome. */
+  deckTitle?: string;
+}
+
+/** Result of `slides:startPresentation`. */
+export interface StartPresentationResult {
+  ok: boolean;
+  /** Number of slides the presentation was opened with. */
+  slideCount: number;
+}
+
+/**
+ * Slides presenter-mode surface. The Slides editor calls
+ * `startPresentation` to open a fullscreen audience window plus a
+ * second presenter window (speaker notes + next-slide preview). The
+ * two windows share a dedicated session partition and stay in sync via
+ * `localStorage` `storage` events, so no further IPC round-trips are
+ * needed once they are open.
+ */
+export interface SlidesApi {
+  startPresentation: (
+    request: StartPresentationRequest,
+  ) => Promise<StartPresentationResult>;
+}
+
+/**
  * Auto-update integration surface. The renderer never talks to
  * `electron-updater` directly — every interaction goes through these
  * IPC channels so the main process can validate state, run the
@@ -2503,6 +2571,7 @@ export interface TesseraApi {
   tasks: TaskApi;
   automations: AutomationApi;
   dialog: DialogApi;
+  slides: SlidesApi;
   updates: UpdatesApi;
   kchat: KchatApi;
   audit: AuditApi;
@@ -2592,17 +2661,110 @@ export interface AppLockApi {
   attemptBiometric: (
     reason?: string,
   ) => Promise<{ success: boolean }>;
+  /**
+   * Options the renderer hands to `navigator.credentials.create()`
+   * to register a new FIDO2 authenticator. The challenge is
+   * single-use and expires; the renderer must call
+   * `registerFido2` with the resulting credential before it lapses.
+   */
+  getFido2RegistrationOptions: () => Promise<Fido2RegistrationOptions>;
+  /**
+   * Persist a freshly-created FIDO2 credential. The renderer
+   * extracts the SPKI public key and COSE algorithm from the
+   * `PublicKeyCredential` (via `response.getPublicKey()` /
+   * `response.getPublicKeyAlgorithm()`) so the main process never
+   * has to CBOR-decode the attestation object.
+   */
+  registerFido2: (
+    input: Fido2RegistrationInput,
+  ) => Promise<{ success: boolean }>;
+  /**
+   * Options the renderer hands to `navigator.credentials.get()` to
+   * produce an assertion that unlocks the app. Returns `null` when
+   * no credential is registered (the renderer should fall back to
+   * PIN).
+   */
+  getFido2AssertionOptions: () => Promise<Fido2AssertionOptions | null>;
+  /** Verify a FIDO2 assertion and, on success, unlock the app. */
+  verifyFido2: (input: Fido2AssertionInput) => Promise<AppLockUnlockResult>;
+  /** Remove the registered FIDO2 credential (requires the PIN). */
+  removeFido2: (pin: string) => Promise<void>;
 }
 
 /**
  * Status snapshot returned by `appLock:getStatus`. The renderer
  * uses `hasPinSet` to decide whether the Settings UI should show
- * "Set up a PIN" or "Change PIN", and `mode` to decide whether
- * to render the lock overlay at all.
+ * "Set up a PIN" or "Change PIN", `hasFido2Set` to decide whether
+ * to offer "Register a security key" vs "Remove security key", and
+ * `mode` to decide whether to render the lock overlay at all.
  */
 export interface AppLockStatus {
   hasPinSet: boolean;
+  hasFido2Set: boolean;
   mode: AppLockMode;
+}
+
+/**
+ * COSE algorithm identifiers Tessera accepts for FIDO2 unlock.
+ * `-7` = ES256 (ECDSA P-256 + SHA-256, the platform-authenticator
+ * default), `-257` = RS256 (RSA PKCS#1 v1.5 + SHA-256), `-8` =
+ * EdDSA (Ed25519). These are the three the main process knows how
+ * to verify in `appLock.ts`.
+ */
+export const FIDO2_SUPPORTED_ALGS = [-7, -257, -8] as const;
+
+/**
+ * Registration options surfaced to the renderer. Mirrors the
+ * subset of `PublicKeyCredentialCreationOptions` the renderer
+ * needs; binary fields are base64url so they cross the IPC
+ * boundary as JSON.
+ */
+export interface Fido2RegistrationOptions {
+  /** base64url, single-use, server-issued. */
+  challenge: string;
+  rpId: string;
+  rpName: string;
+  /** base64url stable per-install user handle. */
+  userId: string;
+  userName: string;
+  userDisplayName: string;
+  /** COSE alg ids, most-preferred first. */
+  pubKeyCredParams: readonly number[];
+  timeoutMs: number;
+}
+
+/** Payload the renderer posts back after `credentials.create()`. */
+export interface Fido2RegistrationInput {
+  /** base64url credential ID from the authenticator. */
+  credentialId: string;
+  /** base64 DER SPKI public key (`response.getPublicKey()`). */
+  publicKeySpki: string;
+  /** COSE alg (`response.getPublicKeyAlgorithm()`). */
+  alg: number;
+  /** base64 of the raw `response.clientDataJSON`. */
+  clientDataJson: string;
+}
+
+/** Assertion options surfaced to the renderer for unlock. */
+export interface Fido2AssertionOptions {
+  /** base64url, single-use, server-issued. */
+  challenge: string;
+  rpId: string;
+  /** base64url credential IDs the renderer may use. */
+  allowCredentialIds: readonly string[];
+  timeoutMs: number;
+}
+
+/** Payload the renderer posts back after `credentials.get()`. */
+export interface Fido2AssertionInput {
+  /** base64url credential ID used for the assertion. */
+  credentialId: string;
+  /** base64 of `response.authenticatorData`. */
+  authenticatorData: string;
+  /** base64 of `response.clientDataJSON`. */
+  clientDataJson: string;
+  /** base64 of `response.signature`. */
+  signature: string;
 }
 
 /**
@@ -2840,7 +3002,59 @@ export interface KchatWebSocketEventPayload {
   data: Record<string, unknown>;
 }
 
-/** Renderer-facing KChat API namespace. */
+/**
+ * Renderer-safe KChat user projection for the DocumentEditor
+ * `@mention` typeahead (Session 8 Task 2). Only the id, the
+ * `@`-handle, and a human display label cross the IPC boundary —
+ * never email or roles.
+ */
+export interface KchatUserSearchResultView {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+/** Coarse KChat presence value surfaced to the renderer (Task 5). */
+export type KchatPresenceStatusView = "online" | "away" | "dnd" | "offline";
+
+/** Renderer-safe presence row backing the Sidebar indicator (Task 5). */
+export interface KchatUserStatusView {
+  userId: string;
+  status: KchatPresenceStatusView;
+}
+
+/** One pending offline-queue operation, as seen by the renderer (Task 1). */
+export interface KchatOfflineQueueOpView {
+  id: string;
+  // Mirror the main-process `KchatQueuedOpType` discriminator exactly.
+  // `kchat:offlineQueueStatus` forwards `op.type` verbatim, so a value
+  // omitted here would arrive at the renderer untyped and break any
+  // exhaustive match on the discriminator.
+  type: "shareArtifact" | "ingestChannel" | "postTask";
+  attempts: number;
+  enqueuedAt: number;
+}
+
+/** Snapshot of the offline write queue surfaced to the renderer (Task 1). */
+export interface KchatOfflineQueueStatusView {
+  size: number;
+  operations: KchatOfflineQueueOpView[];
+}
+
+/**
+ * Minimal Tessera task shape the renderer posts to KChat via
+ * `kchat.postTaskToChannel` (Session 8 Task 6).
+ */
+export interface KchatPostTaskInput {
+  id: string;
+  title: string;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  dueDate?: string | null;
+  assignee?: string | null;
+}
+
 export interface KchatApi {
   isAvailable: () => Promise<boolean>;
   status: () => Promise<KchatConnectionStateView>;
@@ -2860,11 +3074,70 @@ export interface KchatApi {
     format: "markdown" | "html" | "pdf" | "docx" | "json",
     includeCitations: boolean,
     includeEvidencePack: boolean,
-  ) => Promise<{ fileId: string; fileName: string }>;
+    /**
+     * Session 8 Task 4: delivery mode. `"attachment"` (default)
+     * exports the artifact and uploads it as a file;
+     * `"deeplink"` posts a `tessera://` deeplink message instead
+     * of exporting bytes.
+     */
+    delivery?: "attachment" | "deeplink",
+  ) => Promise<{
+    fileId: string;
+    fileName: string;
+    /** Set for `deeplink` delivery — the id of the posted message. */
+    postId?: string;
+    /** True when the server was offline and the op was queued (Task 1). */
+    queued?: boolean;
+    /** The offline-queue entry id when `queued` is true. */
+    queueId?: string;
+  }>;
   addChannelSource: (
     channelId: string,
     channelName: string,
-  ) => Promise<{ sourceId: string; cacheDir: string }>;
+  ) => Promise<{
+    sourceId: string;
+    cacheDir: string;
+    /** True when the server was offline and the op was queued (Task 1). */
+    queued?: boolean;
+    /** The offline-queue entry id when `queued` is true. */
+    queueId?: string;
+  }>;
+  /**
+   * Session 8 Task 2: search KChat users for the DocumentEditor
+   * `@mention` typeahead. `limit` defaults to 10 (clamped to
+   * `[1, 50]`). An empty / whitespace term resolves to `[]`
+   * without a server round-trip.
+   */
+  searchUsers: (
+    term: string,
+    limit?: number,
+  ) => Promise<KchatUserSearchResultView[]>;
+  /**
+   * Session 8 Task 5: coarse presence for a bounded list of user
+   * ids (at most 200), backing the Sidebar presence indicator.
+   */
+  getUserStatuses: (userIds: string[]) => Promise<KchatUserStatusView[]>;
+  /**
+   * Session 8 Task 1: read-only snapshot of the offline write
+   * queue (pending `shareArtifact` / `ingestChannel` ops). Pure
+   * local read — no server round-trip.
+   */
+  offlineQueueStatus: () => Promise<KchatOfflineQueueStatusView>;
+  /**
+   * Session 8 Task 3: set which channels raise native OS
+   * notifications (and auto-create tasks) for new posts. Returns
+   * the deduped count actually applied.
+   */
+  setWatchedChannels: (channelIds: string[]) => Promise<{ count: number }>;
+  /**
+   * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
+   * channel as a formatted message. Carries the `— via Tessera`
+   * footer so the inbound detector ignores the round-trip.
+   */
+  postTaskToChannel: (
+    channelId: string,
+    task: KchatPostTaskInput,
+  ) => Promise<{ postId: string; queued?: boolean; queueId?: string }>;
   /**
    * trigger the historical-backfill
    * walk for an already-linked KChat channel. The walk paginates

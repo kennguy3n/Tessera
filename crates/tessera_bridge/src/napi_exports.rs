@@ -186,6 +186,13 @@ pub fn init_bridge(
         }
     };
 
+    // Pre-warm the freshly-opened pool so the first user-facing read
+    // (initial search / source list) doesn't pay the per-connection
+    // cold-cache + SQLCipher schema-decrypt cost on its critical
+    // path. Best-effort and a no-op on the empty (in-memory / failed)
+    // pool; see `SharedReadPool::prewarm`.
+    read_pool.prewarm();
+
     let mut source_manager =
         SourceManager::with_shared_conn_and_read_pool(conn.clone(), read_pool, &[])
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -2119,6 +2126,24 @@ pub fn bridge_matching_on_generate_automations(
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     automations::matching_on_generate_automations(&store, &template_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Return enabled `OnKchatMessageMatch` automations whose channel
+/// equals `channel_id` and whose regex matches `message`. Called from
+/// the KChat event forwarder on every `posted` WebSocket event so the
+/// scheduler can dispatch the matching automations' actions.
+#[napi]
+pub fn bridge_matching_kchat_message_automations(
+    channel_id: String,
+    message: String,
+) -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::matching_kchat_message_automations(&store, &channel_id, &message)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 

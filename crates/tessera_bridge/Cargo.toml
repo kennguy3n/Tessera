@@ -25,6 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+regex = { workspace = true }
 napi = { version = "2", features = ["napi6", "serde-json"] }
 napi-derive = "2"
 

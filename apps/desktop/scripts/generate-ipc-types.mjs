@@ -98,6 +98,83 @@ function collectInferAliasNames(source) {
   return names;
 }
 
+// TS utility/built-in type names that are always in scope and must
+// never be treated as a project type needing a standalone emit.
+const BUILTIN_TYPE_NAMES = new Set([
+  "Array",
+  "ReadonlyArray",
+  "Record",
+  "Partial",
+  "Required",
+  "Readonly",
+  "Pick",
+  "Omit",
+  "Exclude",
+  "Extract",
+  "NonNullable",
+  "ReturnType",
+  "Parameters",
+  "Map",
+  "ReadonlyMap",
+  "Set",
+  "ReadonlySet",
+  "Date",
+  "Promise",
+  "RegExp",
+  "Uint8Array",
+  "Buffer",
+]);
+
+/**
+ * Extract candidate PascalCase type identifiers referenced in a printed
+ * type string.
+ * @param {string} text
+ * @returns {Set<string>}
+ */
+function referencedTypeNames(text) {
+  /** @type {Set<string>} */
+  const refs = new Set();
+  const matches = text.match(/\b[A-Z][A-Za-z0-9_]*\b/g) ?? [];
+  for (const m of matches) {
+    if (!BUILTIN_TYPE_NAMES.has(m)) refs.add(m);
+  }
+  return refs;
+}
+
+/**
+ * Map every exported `type`/`interface` declared in project (non-
+ * `node_modules`, non-`.d.ts`) source files to its symbol, so referenced
+ * domain types can be resolved and re-emitted.
+ * @param {import("typescript").Program} program
+ * @param {import("typescript").TypeChecker} checker
+ * @returns {Map<string, import("typescript").Symbol>}
+ */
+function collectProjectTypeDecls(program, checker) {
+  /** @type {Map<string, import("typescript").Symbol>} */
+  const map = new Map();
+  for (const sf of program.getSourceFiles()) {
+    if (sf.isDeclarationFile) continue;
+    if (sf.fileName.includes("node_modules")) continue;
+    for (const stmt of sf.statements) {
+      if (
+        !ts.isTypeAliasDeclaration(stmt) &&
+        !ts.isInterfaceDeclaration(stmt)
+      ) {
+        continue;
+      }
+      const isExported = (stmt.modifiers ?? []).some(
+        (m) => m.kind === ts.SyntaxKind.ExportKeyword,
+      );
+      if (!isExported) continue;
+      const name = stmt.name.text;
+      if (map.has(name)) continue;
+      const sym = checker.getSymbolAtLocation(stmt.name);
+      if (sym) map.set(name, sym);
+    }
+  }
+  return map;
+}
+
 function generate() {
   const program = createProgram();
   const checker = program.getTypeChecker();
@@ -134,6 +211,34 @@ function generate() {
     const type = checker.getDeclaredTypeOfSymbol(sym);
     const printed = checker.typeToString(type, decl, flags);
     blocks.push(`export type ${name} = ${printed};`);
+  }
+
+  // Some schemas are annotated with a nominal domain type (e.g.
+  // `z.ZodType<AutomationAction>` for the recursive `sequence` action),
+  // so `z.infer` resolves to that type *name* rather than an inlined
+  // structure. The renderer must not import from electron/shared, so we
+  // re-emit every such referenced project type as a standalone alias,
+  // following references transitively until the output is self-contained.
+  const projectTypes = collectProjectTypeDecls(program, checker);
+  const emitted = new Set(names);
+  const queue = [];
+  for (const block of blocks) {
+    for (const ref of referencedTypeNames(block)) {
+      if (!emitted.has(ref) && projectTypes.has(ref)) queue.push(ref);
+    }
+  }
+  while (queue.length > 0) {
+    const refName = queue.shift();
+    if (emitted.has(refName)) continue;
+    emitted.add(refName);
+    const sym = projectTypes.get(refName);
+    const decl = sym.declarations?.[0];
+    const type = checker.getDeclaredTypeOfSymbol(sym);
+    const printed = checker.typeToString(type, decl, flags);
+    blocks.push(`export type ${refName} = ${printed};`);
+    for (const ref of referencedTypeNames(printed)) {
+      if (!emitted.has(ref) && projectTypes.has(ref)) queue.push(ref);
+    }
   }
 
   const header = `/**

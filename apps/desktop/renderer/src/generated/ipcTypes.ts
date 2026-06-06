@@ -42,6 +42,7 @@ export type CreateTaskInput = {
   dueDate?: string | null | undefined;
   sourceId?: string | null | undefined;
   extractedItemId?: string | null | undefined;
+  dependsOn?: string[] | undefined;
 };
 
 export type UpdateTaskInput = {
@@ -52,20 +53,16 @@ export type UpdateTaskInput = {
   position?: number | undefined;
   assignee?: string | null | undefined;
   dueDate?: string | null | undefined;
+  dependsOn?: string[] | undefined;
 };
 
 export type CreateAutomationInput = {
   name: string;
   trigger:
     | { kind: "schedule"; interval_seconds: number }
-    | { kind: "on_generate"; template_id: string };
-  action:
-    | { kind: "reindex_source"; source_id: string }
-    | {
-        kind: "generate_from_template";
-        template_id: string;
-        source_ids: string[];
-      };
+    | { kind: "on_generate"; template_id: string }
+    | { kind: "on_kchat_message_match"; channel_id: string; regex: string };
+  action: AutomationAction;
   enabled?: boolean | undefined;
 };
 
@@ -79,7 +76,7 @@ export type SettingsUpdateInput = {
   recentArtifactIds?: string[] | undefined;
   modelIdleTimeoutSecs?: number | undefined;
   telemetryEnabled?: boolean | undefined;
-  appLockMode?: "off" | "pin" | "biometric" | undefined;
+  appLockMode?: "off" | "pin" | "biometric" | "fido2" | undefined;
   enforceUpdateSignature?: boolean | undefined;
   enforceKeychainAcl?: boolean | undefined;
 };
@@ -140,6 +137,12 @@ export type MarpExportInput = {
   allowHtml?: boolean | undefined;
 };
 
+export type StartPresentationInput = {
+  slides: { title: string; lines: string[]; notes: string }[];
+  startIndex: number;
+  deckTitle?: string | undefined;
+};
+
 export type GdriveSelectedItemsInput = {
   id: string;
   name: string;
@@ -172,3 +175,12 @@ export type GenerateImageInput = {
   negativePrompt?: string | undefined;
   sectionIndex?: number | undefined;
 };
+
+export type AutomationAction =
+  | { kind: "reindex_source"; source_id: string }
+  | {
+      kind: "generate_from_template";
+      template_id: string;
+      source_ids: string[];
+    }
+  | { kind: "sequence"; actions: AutomationAction[] };

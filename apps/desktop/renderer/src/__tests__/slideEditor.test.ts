@@ -22,6 +22,8 @@ import {
   computeDeckWordCounts,
   findInSlides,
   nextBlockForTypeChange,
+  slideBodyLines,
+  buildPresentationSlides,
   DEFAULT_DIAGRAM_DSL,
 } from "../editors/slideEditorHelpers";
 import type { Slide, SlideBlock, SlideContent } from "../editors/slideEditorTypes";
@@ -1622,5 +1624,47 @@ describe("findInSlides", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0].offset).toBe(4);
     expect(matches[0].length).toBe(5);
+  });
+});
+
+describe("slideBodyLines / buildPresentationSlides", () => {
+  const slide = (over: Partial<Slide>): Slide => ({
+    id: "s1",
+    title: "Title",
+    blocks: [],
+    notes: "",
+    ...over,
+  });
+
+  it("flattens text and bullets to one line per non-blank source line", () => {
+    const s = slide({
+      blocks: [
+        { id: "b1", type: "text", content: "one\n\ntwo" },
+        { id: "b2", type: "bullets", content: "a\nb\n" },
+      ],
+    });
+    expect(slideBodyLines(s)).toEqual(["one", "two", "a", "b"]);
+  });
+
+  it("labels diagram and image blocks (with alt) as placeholders", () => {
+    const s = slide({
+      blocks: [
+        { id: "b1", type: "diagram", content: "flowchart LR\nA-->B" },
+        { id: "b2", type: "image", content: "data:image/png;base64,xxx", alt: "Chart" },
+        { id: "b3", type: "image", content: "data:image/png;base64,yyy" },
+      ],
+    });
+    expect(slideBodyLines(s)).toEqual(["[Diagram]", "[Image: Chart]", "[Image]"]);
+  });
+
+  it("builds the IPC payload preserving title, lines, and notes", () => {
+    const deck = [
+      slide({ title: "Intro", notes: "hi", blocks: [{ id: "b", type: "text", content: "x" }] }),
+      slide({ id: "s2", title: "End", notes: "" }),
+    ];
+    expect(buildPresentationSlides(deck)).toEqual([
+      { title: "Intro", lines: ["x"], notes: "hi" },
+      { title: "End", lines: [], notes: "" },
+    ]);
   });
 });

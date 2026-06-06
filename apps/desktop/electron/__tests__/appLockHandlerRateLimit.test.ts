@@ -94,9 +94,18 @@ beforeEach(() => {
   removeHandlerMock.mockClear();
   _clearConfigCacheForTests();
   defaultRateLimiter.reset();
+  // Freeze the limiter's clock so the two "back-to-back" calls in
+  // each case share one window. The first call on the PIN channels
+  // runs a scrypt KDF, which under full-suite CPU contention can take
+  // longer than the 250ms window — with a real clock the bucket would
+  // refill between the two calls and the second would slip past the
+  // limiter, making the assertion flaky. A frozen clock models the
+  // "same tick" intent exactly. (Restored in afterEach.)
+  defaultRateLimiter._setNowForTests(() => 1_000_000);
 });
 
 afterEach(() => {
+  defaultRateLimiter._setNowForTests(null);
   _setAppLockPathForTests(null);
   try {
     if (hasPinSet()) clearPin();
