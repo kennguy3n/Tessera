@@ -899,7 +899,7 @@ export function registerFido2(
     alg: input.alg,
     publicKeySpki: spki.toString("base64"),
     rpIdHash: rpIdHashB64(),
-    createdAt: Date.now(),
+    createdAt: now,
   };
   writePersisted(persisted);
   getLogger().info(

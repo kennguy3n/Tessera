@@ -508,6 +508,16 @@ export class KchatOfflineQueue {
   /**
    * Persist the queue with an atomic write (tmp + rename) so a
    * crash mid-write cannot truncate the queue file.
+   *
+   * The temp file uses a per-write unique suffix (`pid` + a random
+   * token) rather than a fixed `.tmp`. `enqueue` and `replay` both
+   * call `persist` and are not serialised against each other, so a
+   * shared temp path could let two concurrent writes interleave their
+   * `writeFile` + `rename` and move the wrong content. A unique temp
+   * per call makes each write self-contained and the final `rename`
+   * atomic regardless of overlap. The random token uses `randomUUID`
+   * directly (not the injectable `randomId`) so it never perturbs the
+   * operation-id sequence tests depend on.
    */
   private async persist(): Promise<void> {
     const payload: PersistedQueueFile = {
@@ -516,7 +526,7 @@ export class KchatOfflineQueue {
     };
     const serialized = JSON.stringify(payload, null, 2);
     await this.fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.tmp`;
+    const tmp = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     await this.fs.writeFile(tmp, serialized, "utf8");
     await this.fs.rename(tmp, this.filePath);
   }
