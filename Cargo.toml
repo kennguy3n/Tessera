@@ -86,6 +86,15 @@ ndarray = { version = "0.16", default-features = false, features = ["std"] }
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
 flate2 = "1.0"
 
+# Strip debug symbols from release artifacts. The headline win is the
+# Rust N-API addon (`crates/tessera_bridge`) shipped in the packaged
+# desktop build: an unstripped cdylib carries tens of MB of DWARF that
+# the end user never needs. `strip = true` is shorthand for
+# `strip = "symbols"`, which removes both debuginfo and the symbol
+# table.
+[profile.release]
+strip = true
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

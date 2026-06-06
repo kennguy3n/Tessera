@@ -1755,82 +1755,197 @@ export interface DeleteDeps {
   beforeMutation?: () => Promise<void>;
 }
 
-const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
-  url,
-  onProgress,
-  destPath,
-) => {
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    // Cancel the response body so undici releases the underlying TCP
-    // socket immediately instead of waiting for the `Response` to be
-    // garbage-collected. Without this, a CDN returning repeated
-    // 4xx/5xx errors during a retry loop would accumulate unclosed
-    // sockets until the next GC cycle. We `.catch(() => {})` because
-    // cancel() can throw if the body has already been consumed or the
-    // connection is already closed, and we don't want a secondary
-    // failure to mask the original HTTP-status error.
-    await resp.body?.cancel().catch(() => undefined);
-    throw new Error(`Download failed: HTTP ${resp.status}`);
-  }
-  const totalHeader = resp.headers.get("content-length");
-  const total = totalHeader ? parseInt(totalHeader, 10) : 0;
-  if (!resp.body) throw new Error("Empty response body");
+/**
+ * Maximum number of HTTP attempts the default fetcher makes for a
+ * single file before surfacing the error. The first attempt is the
+ * initial request; every retry resumes from the bytes already on disk
+ * via an HTTP `Range` request rather than restarting from zero. Four
+ * attempts (one initial + three resumes) covers the common transient
+ * blip (CDN hiccup, Wi-Fi roam, laptop sleep) without spinning forever
+ * on a genuinely dead endpoint.
+ */
+const DEFAULT_FETCH_MAX_ATTEMPTS = 4;
 
-  // Open the destination file BEFORE acquiring the reader. Previously
-  // we called `resp.body.getReader()` first and then `fsp.open(...)`,
-  // which created a leak window: if `fsp.open` threw (permission
-  // denied, disk full, EACCES, ENOSPC, ...), the reader had already
-  // taken an exclusive lock on the response body and was never
-  // released, leaving the HTTP socket open until GC. Doing IO in this
-  // order means a failed file-open simply aborts before any reader
-  // exists, and the response body is consumed (and the connection
-  // released back to the pool) on the next event-loop turn via the
-  // usual GC path.
-  const tmpHandle = await fsp.open(destPath, "w");
-  let downloaded = 0;
-  // Nested try/finally so the file handle is closed even if the very
-  // next operation (`resp.body.getReader()`) throws. Per the WHATWG
-  // Streams spec `getReader()` only throws synchronously when the
-  // stream is already locked — unreachable for a just-received fetch
-  // response in practice — but the outer try/finally costs us nothing
-  // and eliminates the theoretical leak window entirely. Combined with
-  // the inner reader.cancel() in `finally`, the function now has no
-  // resource paths that can leak on either expected or surprise
-  // failures.
-  try {
-    const reader = resp.body.getReader();
+/**
+ * Parse the absolute resource length out of a `Content-Range` response
+ * header (`bytes <start>-<end>/<total>`). Returns `null` when the
+ * header is absent or uses the `*` unknown-total form, in which case
+ * the caller falls back to `start + Content-Length`.
+ */
+function parseContentRangeTotal(header: string | null): number | null {
+  if (!header) return null;
+  const match = /\/(\d+)\s*$/.exec(header.trim());
+  if (!match) return null;
+  const total = parseInt(match[1], 10);
+  return Number.isFinite(total) ? total : null;
+}
+
+/**
+ * Build the production HTTP fetcher. Split into a factory (rather than
+ * a bare const) so unit tests can inject a fake `fetch` and exercise
+ * the resume / retry logic against a real temp file without hitting
+ * the network.
+ *
+ * Resume semantics: large model weights (multiple GB) routinely
+ * outlive a flaky connection. Instead of throwing away a half-finished
+ * `.partial` on the first dropped socket, the fetcher:
+ *
+ *   1. Probes `destPath` for bytes left by a previous attempt and, if
+ *      any exist, requests `Range: bytes=<n>-` so the server streams
+ *      only the remainder.
+ *   2. Appends to the existing file when the server honours the range
+ *      (HTTP 206). If the server ignores the range and replays the
+ *      whole body (HTTP 200), it truncates and restarts so we never
+ *      concatenate a second full copy onto the prefix.
+ *   3. On a 416 (range past EOF — e.g. the remote artifact was
+ *      replaced with a smaller one) it discards the prefix and starts
+ *      clean.
+ *   4. Retries a mid-stream interruption up to `maxAttempts`,
+ *      resuming from whatever landed on disk each time.
+ *
+ * The caller (`downloadModelLocked`) still deletes the `.partial` on a
+ * *terminal* failure, so this resume behaviour is what makes a single
+ * `downloadModel` call survive transient drops — and any `.partial`
+ * that does survive a crash is opportunistically resumed on the next
+ * download of the same file.
+ */
+export function createDefaultFetcher(
+  fetchImpl?: typeof fetch,
+  maxAttempts: number = DEFAULT_FETCH_MAX_ATTEMPTS,
+): NonNullable<DownloadDeps["fetcher"]> {
+  return async (url, onProgress, destPath) => {
+    // Resolve `fetch` lazily at call time (not at factory-creation
+    // time) so the production fetcher honours a `globalThis.fetch`
+    // swapped in after module load — e.g. test mocks, or a runtime
+    // proxy install.
+    const doFetch = fetchImpl ?? globalThis.fetch;
+    // Resume point: bytes a previous (interrupted) attempt already
+    // wrote. Zero for a fresh download.
+    let downloaded = 0;
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value && value.byteLength > 0) {
-          await tmpHandle.write(value);
-          downloaded += value.byteLength;
-          // `onProgress` is wrapped at the `downloadModel` boundary
-          // (see `wrapProgressNoThrow`) so even a destroyed-BrowserWindow
-          // throw or a buggy custom callback cannot abort the byte
-          // pump. We just call it normally here.
-          onProgress(downloaded, total);
-        }
-      }
-    } finally {
-      // Always release the body reader so the underlying HTTP
-      // connection can be returned to the pool, even on read errors
-      // mid-stream. `reader.cancel()` both releases the lock AND
-      // aborts the response body, which is what we want — we don't
-      // need any further bytes.
-      try {
-        await reader.cancel();
-      } catch {
-        // ignore — reader may already be in a terminal state
-      }
+      const st = await fsp.stat(destPath);
+      if (st.isFile()) downloaded = st.size;
+    } catch {
+      // No partial on disk yet — start from byte 0.
     }
-  } finally {
-    await tmpHandle.close();
-  }
-  return { totalBytes: downloaded };
-};
+
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const resuming = downloaded > 0;
+      const init: RequestInit = resuming
+        ? { headers: { Range: `bytes=${downloaded}-` } }
+        : {};
+
+      let resp: Response;
+      try {
+        resp = await doFetch(url, init);
+      } catch (err) {
+        // Connection failed before any response (DNS, TCP reset,
+        // refused). Retry — `downloaded` is unchanged so the next
+        // attempt resumes from the same offset.
+        lastErr = err;
+        continue;
+      }
+
+      // 416: our partial is at/past the resource length (the remote
+      // file shrank or we somehow already have it all). Drop the
+      // prefix and restart from scratch on the next attempt.
+      if (resp.status === 416) {
+        await resp.body?.cancel().catch(() => undefined);
+        downloaded = 0;
+        await fsp.truncate(destPath, 0).catch(() => undefined);
+        lastErr = new Error(`Download failed: HTTP ${resp.status}`);
+        continue;
+      }
+
+      if (!resp.ok) {
+        // Cancel the response body so undici releases the underlying
+        // TCP socket immediately instead of waiting for GC. `.catch`
+        // because cancel() throws if the body was already consumed,
+        // and we don't want that to mask the HTTP-status error.
+        await resp.body?.cancel().catch(() => undefined);
+        throw new Error(`Download failed: HTTP ${resp.status}`);
+      }
+
+      const isPartial = resp.status === 206;
+      if (resuming && !isPartial) {
+        // Server ignored the Range header and is sending the whole
+        // body again (200). Discard the prefix so we don't append a
+        // second full copy onto it.
+        downloaded = 0;
+      }
+
+      const clenHeader = resp.headers.get("content-length");
+      const clen = clenHeader ? parseInt(clenHeader, 10) : 0;
+      const clenValid = Number.isFinite(clen) && clen > 0;
+      // Full resource size for progress math. For a 206 the
+      // Content-Length is only the *remaining* bytes, so prefer the
+      // absolute total from Content-Range and fall back to
+      // prefix + remaining.
+      const total =
+        isPartial && downloaded > 0
+          ? (parseContentRangeTotal(resp.headers.get("content-range")) ??
+            (clenValid ? downloaded + clen : 0))
+          : clenValid
+            ? clen
+            : 0;
+
+      if (!resp.body) throw new Error("Empty response body");
+
+      // Append when resuming a server-honoured range; otherwise
+      // truncate-and-write. Open AFTER the status checks so a failed
+      // open doesn't strand a locked response-body reader.
+      const appendMode = isPartial && downloaded > 0;
+      const handle = await fsp.open(destPath, appendMode ? "a" : "w");
+      let pumpError: unknown = null;
+      try {
+        const reader = resp.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) {
+              await handle.write(value);
+              downloaded += value.byteLength;
+              // `onProgress` is wrapped at the `downloadModel`
+              // boundary (see `wrapProgressNoThrow`) so a buggy
+              // callback or destroyed BrowserWindow cannot abort the
+              // byte pump.
+              onProgress(downloaded, total);
+            }
+          }
+        } finally {
+          // Release the body reader so the HTTP connection returns to
+          // the pool, even on a mid-stream read error.
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore — reader may already be in a terminal state
+          }
+        }
+      } catch (err) {
+        // Mid-stream failure. Keep the bytes written so far and retry
+        // with a Range request continuing from `downloaded`.
+        pumpError = err;
+      } finally {
+        await handle.close().catch(() => undefined);
+      }
+
+      if (pumpError) {
+        lastErr = pumpError;
+        continue;
+      }
+      return { totalBytes: downloaded };
+    }
+
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error("Download failed after exhausting retries");
+  };
+}
+
+const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> =
+  createDefaultFetcher();
 
 const defaultHasher: NonNullable<DownloadDeps["hasher"]> = async (filePath) => {
   const hash = crypto.createHash("sha256");

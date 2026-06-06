@@ -88,6 +88,21 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Fold the active toolchain's `rustc --version` into the cache key
+      # so a toolchain bump (e.g. 1.88 -> 1.89, or a nightly date change)
+      # invalidates the cache. Without this, the `target/` dir cached
+      # under the old compiler would be restored on top of a new rustc,
+      # which at best wastes a full rebuild and at worst surfaces
+      # confusing "found invalid metadata" / incremental-cache errors.
+      #
+      # We write the version to a file and hash it with `hashFiles`
+      # (built into the runner, identical on Linux/macOS/Windows) rather
+      # than piping through `sha256sum` — the latter is absent on the
+      # macOS runner image's default BSD userland.
+      - name: Record rustc version
+        shell: bash
+        run: rustc --version --verbose > rustc-version.txt
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -97,8 +112,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Check formatting
         if: matrix.os == 'ubuntu-22.04'
