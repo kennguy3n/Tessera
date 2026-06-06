@@ -1,3 +1,6 @@
+//! Citation tracking and storage plus source-freshness checks.
+#![warn(missing_docs)]
+
 pub mod citation;
 pub mod freshness;
 pub mod store;

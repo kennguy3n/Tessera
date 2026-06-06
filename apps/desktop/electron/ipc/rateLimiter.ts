@@ -325,6 +325,25 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 10,
   },
+  // `kchat:searchUsers` backs the `@mention` typeahead in the
+  // DocumentEditor. The renderer debounces keystrokes, but each
+  // accepted keystroke fires a server-side user search; 8/s with
+  // burst 12 keeps fast typing smooth while bounding a runaway
+  // component that re-fires the query on every render.
+  "kchat:searchUsers": {
+    tokensPerInterval: 8,
+    intervalMs: 1_000,
+    burst: 12,
+  },
+  // `kchat:getUserStatuses` backs the Sidebar presence indicator,
+  // which polls on a timer and on reconnect. 2/s with burst 5 lets
+  // the indicator refresh promptly after a reconnect without
+  // letting a misbehaving poll loop hammer the status endpoint.
+  "kchat:getUserStatuses": {
+    tokensPerInterval: 2,
+    intervalMs: 1_000,
+    burst: 5,
+  },
 } satisfies Record<string, RateLimitConfig>;
 
 /** Shared default limiter instance used by the IPC layer. */

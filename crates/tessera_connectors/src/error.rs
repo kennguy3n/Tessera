@@ -1,3 +1,5 @@
+//! The connector error type shared by every remote connector.
+
 use thiserror::Error;
 
 /// All connector-related errors.
@@ -24,39 +26,59 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ConnectorError {
     #[error("Authentication failed: {0}")]
+    /// Authentication failed.
     AuthenticationFailed(String),
 
     #[error("OAuth token has expired")]
+    /// OAuth token has expired.
     TokenExpired,
 
     #[error("OAuth token has been revoked")]
+    /// OAuth token has been revoked.
     TokenRevoked,
 
     #[error("Network error: {0}")]
+    /// Network error.
     NetworkError(String),
 
     #[error("Rate limited, retry after {retry_after_secs}s")]
-    RateLimited { retry_after_secs: u64 },
+    /// The provider rate-limited the request.
+    RateLimited {
+        /// Seconds to wait before retrying.
+        retry_after_secs: u64,
+    },
 
     #[error("File not found: {0}")]
+    /// File not found.
     FileNotFound(String),
 
     #[error("Permission denied: {0}")]
+    /// Permission denied.
     PermissionDenied(String),
 
     #[error("{provider} error: {message}")]
-    ProviderError { provider: String, message: String },
+    /// A provider returned an error response.
+    ProviderError {
+        /// Name of the connector provider that failed.
+        provider: String,
+        /// Provider-supplied error message.
+        message: String,
+    },
 
     #[error("Invalid config: {0}")]
+    /// Invalid config.
     InvalidConfig(String),
 
     #[error("Storage error: {0}")]
+    /// Storage error.
     StorageError(String),
 
     #[error("Sync conflict: {0}")]
+    /// Sync conflict.
     SyncConflict(String),
 
     #[error("IO error: {0}")]
+    /// IO error.
     Io(#[from] std::io::Error),
 }
 
@@ -69,6 +91,7 @@ impl From<reqwest::Error> for ConnectorError {
     }
 }
 
+/// Connector Result type alias.
 pub type ConnectorResult<T> = std::result::Result<T, ConnectorError>;
 
 /// classification of a `ConnectorError` for the

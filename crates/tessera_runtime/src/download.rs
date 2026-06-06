@@ -23,27 +23,39 @@ use crate::config::{
 };
 
 #[derive(thiserror::Error, Debug)]
+/// Manifest Error.
 pub enum ManifestError {
     #[error("IO error reading manifest: {0}")]
+    /// IO error reading manifest.
     Io(#[from] std::io::Error),
     #[error("JSON parse error: {0}")]
+    /// JSON parse error.
     Json(#[from] serde_json::Error),
     #[error("Unknown platform in manifest: {0}")]
+    /// Unknown platform in manifest.
     UnknownPlatform(String),
     #[error("Unknown format in manifest: {0}")]
+    /// Unknown format in manifest.
     UnknownFormat(String),
     #[error("Unknown tier in manifest: {0}")]
+    /// Unknown tier in manifest.
     UnknownTier(String),
     #[error("Unknown compute backend in manifest: {0}")]
+    /// Unknown compute backend in manifest.
     UnknownCompute(String),
     #[error("Unknown capability in manifest: {0}")]
+    /// Unknown capability in manifest.
     UnknownCapability(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Manifest Model.
 pub struct ManifestModel {
+    /// Id.
     pub id: String,
+    /// Name.
     pub name: String,
+    /// Parameters.
     pub parameters: String,
     /// What slot this entry occupies in the multi-capability registry.
     /// Optional in the wire format so older manifest copies (predating
@@ -51,21 +63,33 @@ pub struct ManifestModel {
     /// is `"text"`, matching the historical single-capability behavior.
     #[serde(default = "default_manifest_capability_string")]
     pub capability: String,
+    /// Format.
     pub format: String,
+    /// Quantization.
     pub quantization: String,
+    /// Platform.
     pub platform: String,
+    /// Compute.
     pub compute: Vec<String>,
+    /// Tier.
     pub tier: String,
     #[serde(rename = "downloadSizeMb")]
+    /// Download size mb.
     pub download_size_mb: u64,
     #[serde(rename = "diskSizeMb")]
+    /// Disk size mb.
     pub disk_size_mb: u64,
     #[serde(rename = "requiredRamGb")]
+    /// Required ram gb.
     pub required_ram_gb: f64,
     #[serde(rename = "contextLength")]
+    /// Context length.
     pub context_length: u32,
+    /// Filename.
     pub filename: String,
+    /// Url.
     pub url: String,
+    /// Sha256.
     pub sha256: Option<String>,
     /// Filename of the multimodal projector for vision-GGUF entries.
     /// Always populated together with `mmproj_url`; the TS-side
@@ -89,27 +113,41 @@ fn default_manifest_capability_string() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Manifest Llama Server Variant.
 pub struct ManifestLlamaServerVariant {
+    /// Platform.
     pub platform: String,
+    /// Compute.
     pub compute: String,
+    /// Url.
     pub url: String,
+    /// Sha256.
     pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Manifest Llama Server.
 pub struct ManifestLlamaServer {
+    /// Version.
     pub version: String,
     #[serde(default)]
+    /// Note.
     pub note: Option<String>,
+    /// Variants.
     pub variants: Vec<ManifestLlamaServerVariant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Model Manifest.
 pub struct ModelManifest {
+    /// Format version.
     pub format_version: u32,
     #[serde(default)]
+    /// Note.
     pub note: Option<String>,
+    /// Models.
     pub models: Vec<ManifestModel>,
+    /// Llama server.
     pub llama_server: Option<ManifestLlamaServer>,
 }
 
@@ -171,6 +209,7 @@ fn parse_platform(s: &str, target: Platform) -> Result<Platform, ManifestError> 
 }
 
 impl ManifestModel {
+    /// Into model info.
     pub fn into_model_info(self, target: Platform) -> Result<ModelInfo, ManifestError> {
         let format = parse_format(&self.format)?;
         let tier = parse_tier(&self.tier)?;
@@ -287,6 +326,7 @@ pub fn pick_llama_server_variant(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledModel {
+    /// Model id.
     pub model_id: String,
     /// Capability slot this record belongs to. Mirrors the TS-side
     /// `InstalledModelRecord.capability` field which the Electron main
@@ -297,8 +337,11 @@ pub struct InstalledModel {
     /// the legacy-migration target slot.
     #[serde(default = "default_installed_capability")]
     pub capability: ModelCapability,
+    /// Format.
     pub format: ModelFormat,
+    /// Filename.
     pub filename: String,
+    /// Path.
     pub path: String,
     /// Bytes pulled over the wire when this model was installed.
     pub download_size_mb: u64,
@@ -343,6 +386,7 @@ pub struct InstalledModel {
     /// Settings UI per-slot disk display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mmproj_size_mb: Option<u64>,
+    /// Downloaded at.
     pub downloaded_at: String,
 }
 
@@ -369,29 +413,47 @@ impl InstalledModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Swap Decision.
 pub struct SwapDecision {
+    /// Evict model id.
     pub evict_model_id: String,
+    /// Evict filename.
     pub evict_filename: String,
+    /// Evict size mb.
     pub evict_size_mb: u64,
+    /// Install model id.
     pub install_model_id: String,
+    /// Install filename.
     pub install_filename: String,
+    /// Install size mb.
     pub install_size_mb: u64,
+    /// Net disk delta mb.
     pub net_disk_delta_mb: i64,
+    /// Message.
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+/// Download Plan.
 pub enum DownloadPlan {
+    /// Already Installed.
     AlreadyInstalled {
+        /// Model id.
         model_id: String,
     },
+    /// Direct Download.
     DirectDownload {
+        /// Model id.
         model_id: String,
+        /// Filename.
         filename: String,
+        /// Download size mb.
         download_size_mb: u64,
+        /// Message.
         message: String,
     },
+    /// The `Swap` variant.
     Swap(SwapDecision),
 }
 

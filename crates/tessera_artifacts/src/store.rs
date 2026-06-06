@@ -1,6 +1,10 @@
+//! SQLite persistence for artifacts and their version history.
+
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
-use tessera_core::{open_shared, open_shared_in_memory, ArtifactId, SharedConnection};
+use tessera_core::{
+    open_shared, open_shared_in_memory, with_secure_delete, ArtifactId, SharedConnection,
+};
 
 use crate::artifact::Artifact;
 
@@ -9,15 +13,18 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
         .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc))
 }
 
+/// Artifact Store.
 pub struct ArtifactStore {
     conn: SharedConnection,
 }
 
 impl ArtifactStore {
+    /// Open.
     pub fn open(path: &str) -> Result<Self> {
         Self::with_shared_conn(open_shared(path)?)
     }
 
+    /// Open in memory.
     pub fn open_in_memory() -> Result<Self> {
         Self::with_shared_conn(open_shared_in_memory()?)
     }
@@ -60,6 +67,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// Insert.
     pub fn insert(&self, artifact: &Artifact) -> Result<()> {
         let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
@@ -84,6 +92,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// Update.
     pub fn update(&self, artifact: &Artifact) -> Result<()> {
         let citations_json = serde_json::to_string(&artifact.citations).map_err(Error::Json)?;
         self.conn
@@ -104,6 +113,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// Get.
     pub fn get(&self, id: &ArtifactId) -> Result<Artifact> {
         self.conn
             .lock()
@@ -169,6 +179,7 @@ impl ArtifactStore {
             .map_err(|e| Error::ArtifactNotFound(e.to_string()))
     }
 
+    /// List.
     pub fn list(&self) -> Result<Vec<Artifact>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -243,18 +254,23 @@ impl ArtifactStore {
         Ok(artifacts)
     }
 
+    /// Delete.
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
-        self.conn
-            .lock()
-            .expect("connection mutex poisoned")
-            .execute(
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Zero-fill the freed pages so the artifact body (and its
+        // CASCADE-deleted version snapshots) cannot be recovered from
+        // the SQLCipher freelist after deletion.
+        with_secure_delete(&conn, |conn| {
+            conn.execute(
                 "DELETE FROM artifacts WHERE id = ?1",
                 params![id.to_string()],
             )
             .map_err(Error::Sqlite)?;
-        Ok(())
+            Ok(())
+        })
     }
 
+    /// Save version.
     pub fn save_version(
         &self,
         artifact_id: &ArtifactId,
@@ -273,6 +289,7 @@ impl ArtifactStore {
         Ok(())
     }
 
+    /// List versions.
     pub fn list_versions(&self, artifact_id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -297,6 +314,7 @@ impl ArtifactStore {
         Ok(versions)
     }
 
+    /// Get version.
     pub fn get_version(
         &self,
         artifact_id: &ArtifactId,
@@ -322,9 +340,13 @@ impl ArtifactStore {
 }
 
 #[derive(Debug, Clone)]
+/// Artifact Version.
 pub struct ArtifactVersion {
+    /// Version number.
     pub version_number: u32,
+    /// Content snapshot.
     pub content_snapshot: String,
+    /// Created at.
     pub created_at: String,
 }
 
@@ -385,6 +407,38 @@ mod tests {
 
         let result = store.get(&artifact.id);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_restores_secure_delete_off() {
+        // `ArtifactStore::delete` runs its DELETE under
+        // `secure_delete = ON` to zero-fill the freed pages. Because
+        // the pragma is connection-scoped on a shared connection, it
+        // MUST be restored to OFF afterwards so steady-state inserts
+        // don't pay the page-zero-fill cost for the process lifetime.
+        let store = ArtifactStore::open_in_memory().unwrap();
+
+        let read_secure_delete = || -> i64 {
+            store
+                .conn
+                .lock()
+                .expect("conn poisoned")
+                .query_row("PRAGMA secure_delete", [], |r| r.get::<_, i64>(0))
+                .expect("PRAGMA secure_delete should always return a row")
+        };
+
+        assert_eq!(read_secure_delete(), 0, "control: defaults to OFF");
+
+        let artifact = Artifact::new("Sensitive".to_string(), ArtifactType::Document, None);
+        store.insert(&artifact).unwrap();
+        store.delete(&artifact.id).unwrap();
+
+        assert!(store.get(&artifact.id).is_err(), "row should be gone");
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "delete must restore secure_delete=OFF on the shared connection",
+        );
     }
 
     #[test]

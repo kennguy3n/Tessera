@@ -27,6 +27,7 @@ import {
   runNow,
   stopScheduler,
   dispatchOnGenerate,
+  dispatchKchatMessage,
   getSchedulerStatus,
   __testing__,
 } from "../scheduler";
@@ -56,6 +57,7 @@ function fakeAutomation(
 interface BridgeMock {
   bridgeDueScheduledAutomations: ReturnType<typeof vi.fn>;
   bridgeMatchingOnGenerateAutomations: ReturnType<typeof vi.fn>;
+  bridgeMatchingKchatMessageAutomations: ReturnType<typeof vi.fn>;
   bridgeReindexSource: ReturnType<typeof vi.fn>;
   bridgeGenerateFromTemplate: ReturnType<typeof vi.fn>;
   bridgeRecordAutomationRun: ReturnType<typeof vi.fn>;
@@ -65,6 +67,7 @@ function newBridge(): BridgeMock {
   return {
     bridgeDueScheduledAutomations: vi.fn().mockReturnValue([]),
     bridgeMatchingOnGenerateAutomations: vi.fn().mockReturnValue([]),
+    bridgeMatchingKchatMessageAutomations: vi.fn().mockReturnValue([]),
     bridgeReindexSource: vi.fn().mockReturnValue({}),
     bridgeGenerateFromTemplate: vi.fn().mockReturnValue({}),
     bridgeRecordAutomationRun: vi.fn(),
@@ -517,6 +520,141 @@ describe("scheduler.tick — backfill_kchat_channel action", () => {
     );
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
       "a-backfill",
+      "ok",
+    );
+  });
+});
+
+// ----------------------------------------------------------------
+// on_kchat_message_match dispatch
+// ----------------------------------------------------------------
+
+describe("scheduler.dispatchKchatMessage", () => {
+  it("runs every automation the bridge reports as matching", async () => {
+    const bridge = newBridge();
+    bridge.bridgeMatchingKchatMessageAutomations.mockReturnValue([
+      fakeAutomation(
+        "km1",
+        '{"kind":"reindex_source","source_id":"src-km"}',
+        { triggerJson: '{"kind":"on_kchat_message_match","channel_id":"c1","regex":"deploy"}' },
+      ),
+    ]);
+
+    await dispatchKchatMessage("c1", "please deploy now", bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeMatchingKchatMessageAutomations).toHaveBeenCalledWith(
+      "c1",
+      "please deploy now",
+    );
+    expect(bridge.bridgeReindexSource).toHaveBeenCalledWith("src-km");
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("km1", "ok");
+  });
+
+  it("is a no-op when the channel id is empty (never calls the bridge)", async () => {
+    const bridge = newBridge();
+    await dispatchKchatMessage("", "anything", bridge as unknown as NativeBridge);
+    expect(bridge.bridgeMatchingKchatMessageAutomations).not.toHaveBeenCalled();
+    expect(bridge.bridgeRecordAutomationRun).not.toHaveBeenCalled();
+  });
+
+  it("swallows a bridge resolution failure without throwing", async () => {
+    const bridge = newBridge();
+    bridge.bridgeMatchingKchatMessageAutomations.mockImplementation(() => {
+      throw new Error("regex engine exploded");
+    });
+    await expect(
+      dispatchKchatMessage("c1", "msg", bridge as unknown as NativeBridge),
+    ).resolves.toBeUndefined();
+    expect(bridge.bridgeRecordAutomationRun).not.toHaveBeenCalled();
+  });
+});
+
+// ----------------------------------------------------------------
+// Multi-step (sequence) actions
+// ----------------------------------------------------------------
+
+describe("scheduler — multi-step sequence actions", () => {
+  it("runs every leaf step in order and records ok when all succeed", async () => {
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-ok",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "s1" },
+            { kind: "reindex_source", source_id: "s2" },
+            { kind: "generate_from_template", template_id: "t1", source_ids: ["s3"] },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource.mock.calls).toEqual([["s1"], ["s2"]]);
+    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith("t1", ["s3"]);
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("seq-ok", "ok");
+  });
+
+  it("continues past a failing step and aggregates failures in the status", async () => {
+    const bridge = newBridge();
+    bridge.bridgeReindexSource.mockImplementation((id: string) => {
+      if (id === "boom") throw new Error("kaboom");
+    });
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-partial",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "ok-1" },
+            { kind: "reindex_source", source_id: "boom" },
+            { kind: "reindex_source", source_id: "ok-2" },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    // The failing middle step did NOT abort the chain — both ok steps ran.
+    expect(bridge.bridgeReindexSource.mock.calls).toEqual([
+      ["ok-1"],
+      ["boom"],
+      ["ok-2"],
+    ]);
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("seq-partial");
+    expect(recorded[1]).toBe("failed: 1/3 steps failed: step 2: kaboom");
+  });
+
+  it("flattens nested sequences before executing", async () => {
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-nested",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "a" },
+            {
+              kind: "sequence",
+              actions: [
+                { kind: "reindex_source", source_id: "b" },
+                { kind: "reindex_source", source_id: "c" },
+              ],
+            },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource.mock.calls).toEqual([["a"], ["b"], ["c"]]);
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
+      "seq-nested",
       "ok",
     );
   });

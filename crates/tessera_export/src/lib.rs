@@ -1,3 +1,7 @@
+//! Exporters that render artifacts to Markdown, HTML, CSV, PDF, DOCX,
+//! Typst, XLSX, Mermaid, and bundled evidence packs.
+#![warn(missing_docs)]
+
 pub mod csv;
 #[cfg(feature = "docx")]
 pub mod docx;

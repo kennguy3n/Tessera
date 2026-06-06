@@ -181,8 +181,11 @@ impl SyncBackoffPolicy {
 ///     broken provider.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncFailureState {
+    /// Last error.
     pub last_error: Option<PersistedSyncError>,
+    /// Retry count.
     pub retry_count: u32,
+    /// Failed permanently.
     pub failed_permanently: bool,
 }
 
@@ -199,14 +202,19 @@ pub struct SyncFailureState {
 /// only confuse a user looking at a 4-hour-old failure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PersistedSyncError {
+    /// Kind.
     pub kind: PersistedFailureKind,
+    /// Message.
     pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+/// Persisted Failure Kind.
 pub enum PersistedFailureKind {
+    /// The `Transient` variant.
     Transient,
+    /// The `Permanent` variant.
     Permanent,
 }
 

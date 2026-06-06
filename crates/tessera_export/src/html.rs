@@ -1,3 +1,5 @@
+//! HTML export of an artifact and its citations.
+
 use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
@@ -20,6 +22,7 @@ fn is_visual_artifact_type(t: ArtifactType) -> bool {
     matches!(t, ArtifactType::Infographic | ArtifactType::LandingPage)
 }
 
+/// Export html.
 pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 

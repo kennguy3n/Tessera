@@ -6,11 +6,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { Plus, Trash2, Calendar, User, ClipboardList } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Calendar,
+  User,
+  ClipboardList,
+  GanttChartSquare,
+  LayoutGrid,
+} from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
+import TaskGantt from "../components/TaskGantt";
 import { useCspNonce } from "../utils/cspNonce";
 import { useTaskList, useTaskMutations } from "../hooks/useTasks";
 import {
@@ -48,6 +57,8 @@ const COLUMNS: ColumnDef[] = [
 // Pulled from the canonical const tuple in `shared/types.ts` so the
 // dropdown options and the IPC zod schema can never drift.
 const PRIORITIES: readonly TaskPriority[] = TASK_PRIORITIES;
+
+type TaskView = "board" | "gantt";
 
 interface DraftTask {
   title: string;
@@ -108,6 +119,9 @@ export default function TasksPage() {
   const { create, update, remove, reorder } = useTaskMutations();
 
   const [createOpen, setCreateOpen] = useState(false);
+  // Board (Kanban) is the default view; Gantt is an opt-in timeline that
+  // visualises `dueDate` positioning and `dependsOn` edges.
+  const [view, setView] = useState<TaskView>("board");
   const [draft, setDraft] = useState<DraftTask>(EMPTY_DRAFT);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -360,10 +374,40 @@ export default function TasksPage() {
         title="Tasks"
         description="Track plan work. Drag cards across columns to move them between statuses."
         actions={
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus size={16} strokeWidth={2} aria-hidden="true" />
-            <span style={{ marginLeft: 6 }}>New Task</span>
-          </Button>
+          <div className="tasks-header-actions">
+            <div
+              className="tasks-view-toggle"
+              role="group"
+              aria-label="Task view"
+            >
+              <button
+                type="button"
+                className={`tasks-view-btn ${view === "board" ? "is-active" : ""}`}
+                aria-pressed={view === "board"}
+                onClick={() => setView("board")}
+              >
+                <LayoutGrid size={14} strokeWidth={1.75} aria-hidden="true" />
+                <span>Board</span>
+              </button>
+              <button
+                type="button"
+                className={`tasks-view-btn ${view === "gantt" ? "is-active" : ""}`}
+                aria-pressed={view === "gantt"}
+                onClick={() => setView("gantt")}
+              >
+                <GanttChartSquare
+                  size={14}
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
+                <span>Gantt</span>
+              </button>
+            </div>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus size={16} strokeWidth={2} aria-hidden="true" />
+              <span style={{ marginLeft: 6 }}>New Task</span>
+            </Button>
+          </div>
         }
       />
 
@@ -396,7 +440,9 @@ export default function TasksPage() {
         />
       )}
 
-      {tasks.length > 0 && (
+      {tasks.length > 0 && view === "gantt" && <TaskGantt tasks={tasks} />}
+
+      {tasks.length > 0 && view === "board" && (
         <div className="kanban">
           {COLUMNS.map((col) => (
             <div
@@ -694,6 +740,35 @@ export default function TasksPage() {
         .tasks-loading {
           padding: var(--spacing-xl);
           color: var(--color-text-secondary);
+        }
+        .tasks-header-actions {
+          display: flex;
+          align-items: center;
+          gap: var(--spacing-sm);
+        }
+        .tasks-view-toggle {
+          display: inline-flex;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md, 6px);
+          overflow: hidden;
+        }
+        .tasks-view-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 4px 10px;
+          background: var(--color-bg-elevated, #fff);
+          border: none;
+          color: var(--color-text-secondary);
+          font-size: var(--font-size-xs);
+          cursor: pointer;
+        }
+        .tasks-view-btn + .tasks-view-btn {
+          border-left: 1px solid var(--color-border);
+        }
+        .tasks-view-btn.is-active {
+          background: var(--color-primary);
+          color: var(--color-text-on-primary);
         }
         .kanban {
           display: grid;

@@ -3,6 +3,8 @@ import type {
   AddCitationRequest,
   ExternalProviderConfigInput,
   ExternalProviderListModelsDraftOverrides,
+  Fido2AssertionInput,
+  Fido2RegistrationInput,
   HybridSearchConfigUpdate,
   InstalledModelsByCapability,
   KchatConnectionStateView,
@@ -10,6 +12,7 @@ import type {
   ModelCapability,
   ModelDownloadProgress,
   OpenImageDialogOptions,
+  RendererCrashReport,
   ReplaceCitationRequest,
   SaveDialogOptions,
   SettingsData,
@@ -55,6 +58,10 @@ export type {
   ExternalProviderTestResult,
   ExternalProviderType,
   ExtractedItem,
+  Fido2AssertionInput,
+  Fido2AssertionOptions,
+  Fido2RegistrationInput,
+  Fido2RegistrationOptions,
   GenerateChunk,
   GenerateRequest,
   HybridSearchConfigInfo,
@@ -103,6 +110,7 @@ export type {
   UpdateTaskRequest,
   KchatConnectionStateView,
   KchatWebSocketEventPayload,
+  RendererCrashReport,
 } from "../shared/types";
 
 /**
@@ -346,6 +354,22 @@ const api: TesseraApi = {
       ipcRenderer.invoke("appLock:attemptUnlock", pin),
     attemptBiometric: (reason?: string) =>
       ipcRenderer.invoke("appLock:attemptBiometric", reason),
+    getFido2RegistrationOptions: () =>
+      ipcRenderer.invoke("appLock:getFido2RegistrationOptions"),
+    registerFido2: (input: Fido2RegistrationInput) =>
+      ipcRenderer.invoke("appLock:registerFido2", input),
+    getFido2AssertionOptions: () =>
+      ipcRenderer.invoke("appLock:getFido2AssertionOptions"),
+    verifyFido2: (input: Fido2AssertionInput) =>
+      ipcRenderer.invoke("appLock:verifyFido2", input),
+    removeFido2: (pin: string) =>
+      ipcRenderer.invoke("appLock:removeFido2", pin),
+  },
+  // Renderer crash reporting from the React error boundaries. See
+  // `electron/ipc/diagnostics.ts` for the channel contract.
+  diagnostics: {
+    reportCrash: (report: RendererCrashReport) =>
+      ipcRenderer.invoke("diagnostics:reportCrash", report),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),
@@ -529,6 +553,7 @@ const api: TesseraApi = {
       format: "markdown" | "html" | "pdf" | "docx" | "json",
       includeCitations: boolean,
       includeEvidencePack: boolean,
+      delivery?: "attachment" | "deeplink",
     ) =>
       ipcRenderer.invoke(
         "kchat:shareArtifact",
@@ -537,7 +562,52 @@ const api: TesseraApi = {
         format,
         includeCitations,
         includeEvidencePack,
+        delivery ?? null,
       ),
+    /**
+     * Session 8 Task 2: search KChat users for the DocumentEditor
+     * `@mention` typeahead. Returns a renderer-safe projection
+     * (id + username + display name).
+     */
+    searchUsers: (term: string, limit?: number) =>
+      ipcRenderer.invoke("kchat:searchUsers", term, limit ?? null),
+    /**
+     * Session 8 Task 5: coarse presence (online/away/dnd/offline)
+     * for a bounded list of user ids, backing the Sidebar presence
+     * indicator.
+     */
+    getUserStatuses: (userIds: string[]) =>
+      ipcRenderer.invoke("kchat:getUserStatuses", userIds),
+    /**
+     * Session 8 Task 1: read-only snapshot of the offline write
+     * queue (pending `shareArtifact` / `ingestChannel` ops) so the
+     * Sidebar can show a "N pending" badge.
+     */
+    offlineQueueStatus: () =>
+      ipcRenderer.invoke("kchat:offlineQueueStatus"),
+    /**
+     * Session 8 Task 3: set which channels raise native OS
+     * notifications (and auto-create tasks) for new posts.
+     */
+    setWatchedChannels: (channelIds: string[]) =>
+      ipcRenderer.invoke("kchat:setWatchedChannels", channelIds),
+    /**
+     * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
+     * channel as a formatted message. Carries the `— via Tessera`
+     * footer so the inbound detector ignores the round-trip.
+     */
+    postTaskToChannel: (
+      channelId: string,
+      task: {
+        id: string;
+        title: string;
+        description?: string | null;
+        status?: string | null;
+        priority?: string | null;
+        dueDate?: string | null;
+        assignee?: string | null;
+      },
+    ) => ipcRenderer.invoke("kchat:postTaskToChannel", channelId, task),
     addChannelSource: (channelId: string, channelName: string) =>
       ipcRenderer.invoke("sources:addKchatChannel", channelId, channelName),
     /**

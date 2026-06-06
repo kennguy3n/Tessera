@@ -15,6 +15,33 @@
 - **Review citations and provenance** — every generated section links back to the source material it drew from.
 - **Export completed work** — Markdown, HTML, PDF, DOCX, CSV, XLSX, PPTX.
 
+## Latest release highlights
+
+The most recent release integrates eight parallel work streams that push
+every product dimension toward best-in-class against Notion / Coda /
+Google Workspace while staying a local-first desktop app. See
+[`docs/COMPETITIVE_SCORECARD.md`](docs/COMPETITIVE_SCORECARD.md) for the
+dimension-by-dimension scoring and [`CHANGELOG.md`](CHANGELOG.md) for the
+full list.
+
+- **Editors** — inline document comments, Sheet conditional formatting, a
+  fillable Base form view, and a Slides presenter mode with speaker notes.
+- **Tasks & automations** — task dependencies with cycle detection, an
+  SVG Gantt timeline, a KChat-message-match trigger, and multi-step
+  automation actions.
+- **Performance** — incremental IVF index updates, 100K/500K-chunk
+  benchmarks, virtual-scrolling grids, read-pool pre-warm, and a 3s
+  cold-start CI gate.
+- **Security** — FIDO2/WebAuthn app-lock, `PRAGMA secure_delete` on all
+  deletion paths, tightened CSP, keychain enforce-mode write-blocking,
+  and `cargo vet` + `npm audit` supply-chain CI gates.
+- **Architecture & DX** — a versioned SQL migration framework, typed
+  database errors, 10 ADRs, `missing_docs` + generated-IPC-type CI gates,
+  and React error boundaries with crash reports.
+- **KChat depth** — offline queue with replay, `@mention` extension,
+  native notification bridge, DOCX/PDF/deeplink share formats, presence
+  indicator, and bidirectional task sync.
+
 ## What Tessera is not
 
 - **Not a chat app** — Tessera produces structured work artifacts, not conversation threads.

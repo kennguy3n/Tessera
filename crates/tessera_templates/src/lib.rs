@@ -1,3 +1,6 @@
+//! Loading, parsing, and validation of artifact templates.
+#![warn(missing_docs)]
+
 pub mod parser;
 pub mod registry;
 pub mod template;
