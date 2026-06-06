@@ -4,6 +4,7 @@ import {
   screen,
   waitFor,
   fireEvent,
+  act,
 } from "@testing-library/react";
 import KchatSidebarSection from "../components/KchatSidebarSection";
 
@@ -458,6 +459,97 @@ describe("KchatSidebarSection — unread poll does not overlap when slow (eleven
       expect(listChannelFiles).toHaveBeenCalledTimes(channels.length + 1),
     );
     expect(listChannelFiles.mock.calls[channels.length][0]).toBe("chan-0");
+  });
+
+  it("clears the sync indicator when the channel list empties mid-poll (no stuck 'syncing…')", async () => {
+    // Repro: a reconciliation poll is in-flight (the indicator shows
+    // "syncing…"), then a reconnect re-fetches an *empty* channel set
+    // — e.g. the user left every watched channel while away. The
+    // in-flight cycle is cancelled by the effect teardown, so its
+    // `finally` deliberately skips `setSyncing(false)` (to avoid
+    // clobbering a freshly re-armed cycle's `true`). With the poll
+    // loop now disarmed (zero channels), nothing else would reset the
+    // flag, so the indicator would stick on "syncing…" forever while
+    // still connected. The disarm branch must clear it.
+    let onStatusListener: ((s: unknown) => void) | null = null;
+    const onStatusChange = vi
+      .fn()
+      .mockImplementation((cb: (s: unknown) => void) => {
+        onStatusListener = cb;
+        return () => {
+          onStatusListener = null;
+        };
+      });
+    const connectedStatus = {
+      state: "connected",
+      user: {
+        id: "u1",
+        username: "alice",
+        email: "a@x",
+        firstName: "A",
+        lastName: "A",
+      },
+    };
+    // First connect resolves two channels; the post-reconnect
+    // re-fetch resolves an empty set.
+    const listChannels = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: "chan-1",
+          team_id: "team-1",
+          name: "general",
+          display_name: "General",
+          type: "O",
+        },
+        {
+          id: "chan-2",
+          team_id: "team-1",
+          name: "side",
+          display_name: "Side",
+          type: "P",
+        },
+      ])
+      .mockResolvedValue([]);
+    // Hold the file poll open so the first cycle stays in-flight and
+    // the indicator latches on "syncing".
+    const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
+    const api = makeApi({ onStatusChange, listChannels, listChannelFiles });
+    render(<KchatSidebarSection api={api} />);
+
+    // First poll fires and the indicator latches on "syncing".
+    await waitFor(() => expect(listChannelFiles).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("kchat-sync-status")).toHaveAttribute(
+        "data-sync-state",
+        "syncing",
+      ),
+    );
+
+    // Reconnect: a transient disconnect tears down the poll loop and
+    // channel fetch, then "connected" re-fetches the now-empty set.
+    await act(async () => {
+      onStatusListener?.({ state: "disconnected" });
+    });
+    await act(async () => {
+      onStatusListener?.(connectedStatus);
+    });
+
+    // Still connected, but with zero channels — the header (and the
+    // sync indicator) is rendered.
+    await waitFor(() =>
+      expect(screen.getByTestId("kchat-sidebar-channels")).toHaveTextContent(
+        "0 channels",
+      ),
+    );
+    // The indicator must be reset to idle, not stuck on "syncing".
+    await waitFor(() =>
+      expect(screen.getByTestId("kchat-sync-status")).toHaveAttribute(
+        "data-sync-state",
+        "idle",
+      ),
+    );
+    expect(screen.getByTestId("kchat-sync-status")).toHaveTextContent("synced");
   });
 });
 
