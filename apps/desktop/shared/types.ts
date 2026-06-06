@@ -2802,7 +2802,55 @@ export interface KchatWebSocketEventPayload {
   data: Record<string, unknown>;
 }
 
-/** Renderer-facing KChat API namespace. */
+/**
+ * Renderer-safe KChat user projection for the DocumentEditor
+ * `@mention` typeahead (Session 8 Task 2). Only the id, the
+ * `@`-handle, and a human display label cross the IPC boundary —
+ * never email or roles.
+ */
+export interface KchatUserSearchResultView {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+/** Coarse KChat presence value surfaced to the renderer (Task 5). */
+export type KchatPresenceStatusView = "online" | "away" | "dnd" | "offline";
+
+/** Renderer-safe presence row backing the Sidebar indicator (Task 5). */
+export interface KchatUserStatusView {
+  userId: string;
+  status: KchatPresenceStatusView;
+}
+
+/** One pending offline-queue operation, as seen by the renderer (Task 1). */
+export interface KchatOfflineQueueOpView {
+  id: string;
+  type: "shareArtifact" | "ingestChannel";
+  attempts: number;
+  enqueuedAt: number;
+}
+
+/** Snapshot of the offline write queue surfaced to the renderer (Task 1). */
+export interface KchatOfflineQueueStatusView {
+  size: number;
+  operations: KchatOfflineQueueOpView[];
+}
+
+/**
+ * Minimal Tessera task shape the renderer posts to KChat via
+ * `kchat.postTaskToChannel` (Session 8 Task 6).
+ */
+export interface KchatPostTaskInput {
+  id: string;
+  title: string;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  dueDate?: string | null;
+  assignee?: string | null;
+}
+
 export interface KchatApi {
   isAvailable: () => Promise<boolean>;
   status: () => Promise<KchatConnectionStateView>;
@@ -2822,11 +2870,70 @@ export interface KchatApi {
     format: "markdown" | "html" | "pdf" | "docx" | "json",
     includeCitations: boolean,
     includeEvidencePack: boolean,
-  ) => Promise<{ fileId: string; fileName: string }>;
+    /**
+     * Session 8 Task 4: delivery mode. `"attachment"` (default)
+     * exports the artifact and uploads it as a file;
+     * `"deeplink"` posts a `tessera://` deeplink message instead
+     * of exporting bytes.
+     */
+    delivery?: "attachment" | "deeplink",
+  ) => Promise<{
+    fileId: string;
+    fileName: string;
+    /** Set for `deeplink` delivery — the id of the posted message. */
+    postId?: string;
+    /** True when the server was offline and the op was queued (Task 1). */
+    queued?: boolean;
+    /** The offline-queue entry id when `queued` is true. */
+    queueId?: string;
+  }>;
   addChannelSource: (
     channelId: string,
     channelName: string,
-  ) => Promise<{ sourceId: string; cacheDir: string }>;
+  ) => Promise<{
+    sourceId: string;
+    cacheDir: string;
+    /** True when the server was offline and the op was queued (Task 1). */
+    queued?: boolean;
+    /** The offline-queue entry id when `queued` is true. */
+    queueId?: string;
+  }>;
+  /**
+   * Session 8 Task 2: search KChat users for the DocumentEditor
+   * `@mention` typeahead. `limit` defaults to 10 (clamped to
+   * `[1, 50]`). An empty / whitespace term resolves to `[]`
+   * without a server round-trip.
+   */
+  searchUsers: (
+    term: string,
+    limit?: number,
+  ) => Promise<KchatUserSearchResultView[]>;
+  /**
+   * Session 8 Task 5: coarse presence for a bounded list of user
+   * ids (at most 200), backing the Sidebar presence indicator.
+   */
+  getUserStatuses: (userIds: string[]) => Promise<KchatUserStatusView[]>;
+  /**
+   * Session 8 Task 1: read-only snapshot of the offline write
+   * queue (pending `shareArtifact` / `ingestChannel` ops). Pure
+   * local read — no server round-trip.
+   */
+  offlineQueueStatus: () => Promise<KchatOfflineQueueStatusView>;
+  /**
+   * Session 8 Task 3: set which channels raise native OS
+   * notifications (and auto-create tasks) for new posts. Returns
+   * the deduped count actually applied.
+   */
+  setWatchedChannels: (channelIds: string[]) => Promise<{ count: number }>;
+  /**
+   * Session 8 Task 6 (Tessera → KChat): post a Tessera task to a
+   * channel as a formatted message. Carries the `— via Tessera`
+   * footer so the inbound detector ignores the round-trip.
+   */
+  postTaskToChannel: (
+    channelId: string,
+    task: KchatPostTaskInput,
+  ) => Promise<{ postId: string; queued?: boolean; queueId?: string }>;
   /**
    * trigger the historical-backfill
    * walk for an already-linked KChat channel. The walk paginates

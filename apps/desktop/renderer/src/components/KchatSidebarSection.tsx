@@ -138,6 +138,11 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   const [channels, setChannels] = useState<KchatChannelView[]>([]);
   const [unread, setUnread] = useState(0);
   const [available, setAvailable] = useState<boolean | null>(null);
+  // Active-sync indicator (Session 8 Task 5): true while a
+  // reconciliation poll (`pollUnread`) is walking channel files.
+  // Surfaced next to the presence dot so the user can tell Tessera
+  // is actively pulling from KChat versus idle-connected.
+  const [syncing, setSyncing] = useState(false);
   // passive snapshot of Tessera's localhost API server +
   // last extension heartbeat. Used to render the bridge-health
   // dot and to decide whether to show per-channel "Open in
@@ -341,6 +346,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       // just make each individual request slower while still
       // consuming the same number of tokens.
       const polled = live.slice(0, MAX_POLL_CHANNELS);
+      setSyncing(true);
       try {
         let total = 0;
         for (const ch of polled) {
@@ -354,6 +360,8 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
         setUnread(total);
       } catch {
         /* swallow — keep last-known count */
+      } finally {
+        if (!isCancelled?.()) setSyncing(false);
       }
     },
     [kchat, state.state],
@@ -613,6 +621,42 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           <strong style={{ color: "var(--color-text-headline)" }}>
             KChat
           </strong>
+          <span
+            data-testid="kchat-presence-dot"
+            data-presence-state="online"
+            title="Connected to KChat — you are online"
+            aria-label="Connected to KChat — you are online"
+            role="img"
+            style={{
+              display: "inline-block",
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: "var(--color-success, #2da44e)",
+            }}
+          />
+          <span
+            data-testid="kchat-sync-status"
+            data-sync-state={syncing ? "syncing" : "idle"}
+            title={
+              syncing
+                ? "Syncing KChat channels…"
+                : "KChat is up to date"
+            }
+            aria-label={
+              syncing
+                ? "Syncing KChat channels"
+                : "KChat is up to date"
+            }
+            style={{
+              fontSize: "var(--font-size-xs)",
+              color: syncing
+                ? "var(--color-primary, #0969da)"
+                : "var(--color-text-tertiary, #999)",
+            }}
+          >
+            {syncing ? "syncing…" : "synced"}
+          </span>
         </div>
         {unread > 0 && (
           <button

@@ -324,3 +324,17 @@ export interface KchatWebSocketEventView {
   /** Opaque event-specific payload. Type narrowed per-event by consumers. */
   data: Record<string, unknown>;
 }
+
+/** Coarse presence states KChat reports for a user. */
+export type KchatPresenceStatus = "online" | "away" | "dnd" | "offline";
+
+/**
+ * Presence row as returned by `POST /api/v4/users/status/ids`.
+ * Backs the Sidebar presence indicator (Session 8 Task 5). The
+ * `status` is normalised to one of {@link KchatPresenceStatus};
+ * any unrecognised server value falls back to `"offline"`.
+ */
+export interface KchatUserStatus {
+  user_id: string;
+  status: KchatPresenceStatus;
+}

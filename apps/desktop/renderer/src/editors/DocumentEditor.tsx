@@ -35,6 +35,10 @@ import {
   type SlashTriggerState,
 } from "./extensions/SlashCommandExtension";
 import {
+  KchatMentionExtension,
+  type MentionTriggerState,
+} from "./extensions/KchatMentionExtension";
+import {
   parseDocumentContent,
   countDocText,
   fileToDataUrl,
@@ -42,6 +46,8 @@ import {
 } from "./documentEditorHelpers";
 import { FindReplacePanel } from "./components/FindReplacePanel";
 import { SlashMenu } from "./components/SlashMenu";
+import { MentionMenu } from "./components/MentionMenu";
+import type { KchatUserSearchResultView } from "../types/ipc";
 
 interface DocumentEditorProps {
   content: string;
@@ -63,6 +69,13 @@ const SLASH_TRIGGER_INITIAL: SlashTriggerState = {
   clientRect: null,
   visible: false,
   suppressed: false,
+};
+
+const MENTION_TRIGGER_INITIAL: MentionTriggerState = {
+  query: "",
+  range: null,
+  clientRect: null,
+  visible: false,
 };
 
 export default function DocumentEditor({
@@ -109,6 +122,12 @@ export default function DocumentEditor({
     SLASH_TRIGGER_INITIAL,
   );
 
+  // KChat @mention trigger state, populated by the extension's
+  // `onStateChange` (Session 8 Task 2).
+  const [mentionTrigger, setMentionTrigger] = useState<MentionTriggerState>(
+    MENTION_TRIGGER_INITIAL,
+  );
+
   // File-picker ref for the toolbar's image upload button. We keep
   // the underlying `<input type=file>` in the DOM but visually hidden
   // so screen readers can still surface it.
@@ -151,6 +170,9 @@ export default function DocumentEditor({
       FindReplaceExtension,
       SlashCommandExtension.configure({
         onStateChange: (state) => setSlashTrigger(state),
+      }),
+      KchatMentionExtension.configure({
+        onStateChange: (state) => setMentionTrigger(state),
       }),
     ],
     content: parseDocumentContent(content),
@@ -304,6 +326,33 @@ export default function DocumentEditor({
     setSlashTrigger(SLASH_TRIGGER_INITIAL);
   }, [editor]);
 
+  // Insert the chosen KChat user as a mention node, replacing the
+  // active `@query` trigger range (Session 8 Task 2).
+  const selectMention = useCallback(
+    (user: KchatUserSearchResultView) => {
+      if (!editor) return;
+      const range = mentionTrigger.range ?? undefined;
+      editor
+        .chain()
+        .focus()
+        .insertKchatMention({
+          id: user.id,
+          label: user.username,
+          range,
+        })
+        .run();
+      setMentionTrigger(MENTION_TRIGGER_INITIAL);
+    },
+    [editor, mentionTrigger.range],
+  );
+
+  const dismissMention = useCallback(() => {
+    if (editor) {
+      editor.chain().dismissKchatMention().run();
+    }
+    setMentionTrigger(MENTION_TRIGGER_INITIAL);
+  }, [editor]);
+
   const onPickImage = useCallback(
     async (e: ChangeEvent<HTMLInputElement>) => {
       if (!editor) return;
@@ -362,6 +411,13 @@ export default function DocumentEditor({
             trigger={slashTrigger}
             onSelect={dispatchSlash}
             onDismiss={dismissSlash}
+          />
+        )}
+        {mentionTrigger.visible && (
+          <MentionMenu
+            trigger={mentionTrigger}
+            onSelect={selectMention}
+            onDismiss={dismissMention}
           />
         )}
       </div>

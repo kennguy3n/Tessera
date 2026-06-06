@@ -94,7 +94,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, Notification } from "electron";
 import type { NativeBridge } from "../appState";
 import type { KchatClient } from "./kchatClient";
 import {
@@ -105,6 +105,11 @@ import {
   writeManifest,
 } from "./kchatChannelSyncer";
 import { kchatChannelCacheDir } from "./kchatPaths";
+import {
+  buildPostNotification,
+  type PostNotification,
+} from "./kchatNotify";
+import { detectTaskFromMessage } from "./kchatTaskSync";
 import type {
   KchatConnectionState,
   KchatWebSocketEvent,
@@ -454,6 +459,21 @@ export function parsePostPayload(
 }
 
 /**
+ * Production notification sink (Session 8 Task 3). Shows a native
+ * OS notification when the platform supports it; otherwise a no-op
+ * (headless CI, an OS with notifications disabled). Never throws —
+ * a notification failure must not wedge the WS reader loop.
+ */
+function defaultNotify(n: PostNotification): void {
+  try {
+    if (!Notification.isSupported()) return;
+    new Notification({ title: n.title, body: n.body }).show();
+  } catch (err) {
+    console.error("[KchatEventForwarder] notification failed:", err);
+  }
+}
+
+/**
  * KChat WebSocket forwarder. Construct one per app process,
  * start it after `getKchatAuthService()` has been initialised,
  * dispose on shutdown / between tests.
@@ -588,12 +608,52 @@ export class KchatEventForwarder {
    */
   private readonly resolveCacheDir: (channelId: string) => string;
 
+  /**
+   * Session 8 Task 3/6: the set of channel ids the user is
+   * actively watching. New posts in these channels raise a native
+   * OS notification (Task 3) and, when `autoCreateTasks` is on, an
+   * actionable message auto-creates a Tessera task (Task 6). Empty
+   * by default, so a forwarder constructed without explicit wiring
+   * (every existing test) has no notification / task side effects —
+   * the gate below short-circuits before either runs. Populated in
+   * production by the `kchat:setWatchedChannels` IPC handler.
+   */
+  private watchedChannels: Set<string> = new Set();
+
+  /**
+   * Session 8 Task 3: deliver one native OS notification. Injected
+   * so unit tests can capture notifications without standing up an
+   * Electron `Notification`. Production default shows a real OS
+   * notification when the platform supports it.
+   */
+  private readonly notify: (n: PostNotification) => void;
+
+  /**
+   * Session 8 Task 3: resolve a channel id to its display name for
+   * the notification title. Defaults to `() => null` (the title
+   * then omits the channel name); production may wire the IPC name
+   * cache through.
+   */
+  private readonly resolveChannelName: (channelId: string) => string | null;
+
+  /**
+   * Session 8 Task 6: when `true`, an inbound task-like message in
+   * a watched channel auto-creates a Tessera task via
+   * `bridgeCreateTask`. Defaults to `true` in production; the
+   * watched-channel gate keeps it inert until the user opts a
+   * channel in.
+   */
+  private readonly autoCreateTasks: boolean;
+
   constructor(
     options: {
       listWindows?: () => BrowserWindow[];
       getBridge?: () => NativeBridge | null;
       scheduleChannelResync?: (channelId: string) => Promise<void>;
       getCacheDir?: (channelId: string) => string;
+      notify?: (n: PostNotification) => void;
+      resolveChannelName?: (channelId: string) => string | null;
+      autoCreateTasks?: boolean;
     } = {},
   ) {
     this.listWindows =
@@ -609,6 +669,25 @@ export class KchatEventForwarder {
     this.scheduleChannelResync =
       options.scheduleChannelResync ?? (() => Promise.resolve());
     this.resolveCacheDir = options.getCacheDir ?? kchatChannelCacheDir;
+    this.notify = options.notify ?? defaultNotify;
+    this.resolveChannelName = options.resolveChannelName ?? (() => null);
+    this.autoCreateTasks = options.autoCreateTasks ?? true;
+  }
+
+  /**
+   * Session 8 Task 3: replace the set of watched channel ids. New
+   * posts in these channels raise native OS notifications and (when
+   * `autoCreateTasks` is on) auto-create tasks from actionable
+   * messages. Ids are validated/sanitised by the IPC layer before
+   * reaching here.
+   */
+  setWatchedChannels(channelIds: Iterable<string>): void {
+    this.watchedChannels = new Set(channelIds);
+  }
+
+  /** Snapshot of the currently watched channel ids (Task 3). */
+  getWatchedChannels(): string[] {
+    return [...this.watchedChannels];
   }
 
   /**
@@ -1698,6 +1777,78 @@ export class KchatEventForwarder {
     view: KchatWebSocketEventView,
   ): Promise<void> {
     await this.handlePostIngestEvent(view, /* isEdit */ false);
+    // Session 8 Task 3 + Task 6: notification + inbound task
+    // auto-create. Runs after retrieval ingest and is gated on the
+    // watched-channel set, so it is inert until the user opts a
+    // channel in. Best-effort — failures are swallowed so they
+    // can't wedge the WS reader loop.
+    this.handlePostWatchSideEffects(view);
+  }
+
+  /**
+   * Session 8 Task 3 + Task 6 side-effects for a new `posted`
+   * event: raise a native OS notification and, when enabled,
+   * auto-create a Tessera task from an actionable message. Only
+   * fires for channels in the watched set.
+   */
+  private handlePostWatchSideEffects(view: KchatWebSocketEventView): void {
+    const channelId = view.channelId;
+    if (channelId === null) return;
+    if (!this.watchedChannels.has(channelId)) return;
+
+    const parsed = parsePostPayload(view.data);
+    if (parsed === null) return;
+
+    // Task 3: native OS notification.
+    try {
+      const notification = buildPostNotification({
+        channelId,
+        channelName: this.resolveChannelName(channelId),
+        senderUserId: parsed.userId,
+        senderUsername: null,
+        message: parsed.message,
+        isEdit: false,
+        selfUserId: this.client?.getUser()?.id ?? null,
+        watched: true,
+      });
+      if (notification !== null) this.notify(notification);
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] notification side-effect failed:",
+        err,
+      );
+    }
+
+    // Task 6: inbound task auto-create. `detectTaskFromMessage`
+    // returns null for ordinary chatter and for Tessera-authored
+    // posts (the `— via Tessera` footer), so the Tessera→KChat→
+    // Tessera round-trip terminates.
+    if (this.autoCreateTasks) {
+      try {
+        const detected = detectTaskFromMessage(parsed.message);
+        if (detected !== null) {
+          const bridge = this.getBridgeFn();
+          if (bridge) {
+            const payload: Record<string, unknown> = {
+              title: detected.title,
+              description: detected.description,
+              status: detected.status,
+              priority: detected.priority,
+              assignee: null,
+              due_date: detected.dueDate,
+              source_id: null,
+              extracted_item_id: null,
+            };
+            bridge.bridgeCreateTask(JSON.stringify(payload));
+          }
+        }
+      } catch (err) {
+        console.error(
+          "[KchatEventForwarder] task auto-create side-effect failed:",
+          err,
+        );
+      }
+    }
   }
 
   /**

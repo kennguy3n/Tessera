@@ -249,9 +249,29 @@ const serviceMock = {
   disconnect: vi.fn(),
 };
 
+// Session 8: `registerKchatHandlers` wires offline-queue executors
+// at registration time and the `kchat:offlineQueueStatus` handler
+// reads the queue. The IPC suite does not exercise offline-queue
+// behaviour (that lives in `kchatOfflineQueue.test.ts`), so we stub
+// the singleton with an in-memory double that satisfies the surface
+// the IPC layer touches. `getKchatEventForwarder` returns null here
+// because the forwarder is constructed alongside the auth service,
+// which this suite mocks away — the `kchat:setWatchedChannels`
+// handler tolerates a null forwarder by design.
+const offlineQueueMock = {
+  load: vi.fn(async () => {}),
+  size: vi.fn(() => 0),
+  list: vi.fn(() => [] as unknown[]),
+  setExecutors: vi.fn(),
+  enqueueShareArtifact: vi.fn(async () => "queued-share-id"),
+  enqueueIngestChannel: vi.fn(async () => "queued-ingest-id"),
+};
+
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getKchatAuthService: () => serviceMock,
+  getKchatOfflineQueue: () => offlineQueueMock,
+  getKchatEventForwarder: () => null,
   // Block B Task 4 second-pass Devin Review: `registerKchatHandlers` populates this slot
   // with the auto-resync closure that powers the forwarder's
   // `outcome=regranted` re-sync hook. The IPC test suite
@@ -381,6 +401,12 @@ describe("kchat IPC registration", () => {
     "kchat:backfillProgress",
     "kchat:searchPosts",
     "kchat:fetchThreadContext",
+    // Session 8 (KChat Collaboration Depth) additions:
+    "kchat:searchUsers", // @mention autocomplete (Task 2)
+    "kchat:getUserStatuses", // presence indicator (Task 5)
+    "kchat:offlineQueueStatus", // offline-queue depth surface (Task 1)
+    "kchat:setWatchedChannels", // notification bridge watch-list (Task 3)
+    "kchat:postTaskToChannel", // bidirectional task sync (Task 6)
   ];
 
   it("registers every kchat:* / sources:* channel from the master list", () => {
