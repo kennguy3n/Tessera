@@ -39,7 +39,7 @@ export interface IntentCategory {
  * intentionally short (3-5) so step 2 stays scannable. The full
  * gallery remains one click away via the "Show all templates" link.
  */
-export const INTENT_CATEGORIES: IntentCategory[] = [
+const INTENT_CATEGORIES: IntentCategory[] = [
   {
     id: "document",
     title: "Write a document",

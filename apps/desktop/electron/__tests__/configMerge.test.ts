@@ -292,4 +292,59 @@ describe("loadConfig defensive normalisation", () => {
     expect(provider.modelName).toBe("kept-by-user");
     expect(provider.streamingMode).toBe("sse-v2");
   });
+
+  // Progressive-disclosure migration: an existing user who completed
+  // onboarding under the pre-tiering build (config has
+  // `onboardingCompleted: true` but no `simplifiedNav`/`createPageMode`)
+  // must keep the full sidebar + template gallery they already know,
+  // rather than being silently flipped to the reduced new-user UI.
+  it("preserves the legacy UI for an existing user upgrading from a pre-disclosure build", () => {
+    writeConfig({ onboardingCompleted: true });
+    const cfg = loadConfig();
+    expect(cfg.simplifiedNav).toBe(false);
+    expect(cfg.createPageMode).toBe("gallery");
+    // The download trigger is gated on onboarding state, not this flag,
+    // so it is left at the default rather than migrated.
+    expect(cfg.autoDownloadModel).toBe(true);
+  });
+
+  // Fresh installs (no config file) get the simplified new-user
+  // defaults — the migration must NOT touch them.
+  it("gives a fresh install the simplified new-user defaults", () => {
+    const cfg = loadConfig();
+    expect(cfg.simplifiedNav).toBe(true);
+    expect(cfg.createPageMode).toBe("wizard");
+  });
+
+  // A config mid-onboarding (onboardingCompleted false) is a new user,
+  // so it also gets the simplified defaults.
+  it("treats an in-progress onboarding config as a new user", () => {
+    writeConfig({ onboardingCompleted: false });
+    const cfg = loadConfig();
+    expect(cfg.simplifiedNav).toBe(true);
+    expect(cfg.createPageMode).toBe("wizard");
+  });
+
+  // Idempotent: once the keys exist on disk (e.g. the user already ran
+  // this build, or explicitly chose simplified nav), their values are
+  // respected and the migration is a no-op.
+  it("respects explicit progressive-disclosure values for an onboarded user", () => {
+    writeConfig({
+      onboardingCompleted: true,
+      simplifiedNav: true,
+      createPageMode: "wizard",
+    });
+    const cfg = loadConfig();
+    expect(cfg.simplifiedNav).toBe(true);
+    expect(cfg.createPageMode).toBe("wizard");
+  });
+
+  it("does not migrate when only one of the two keys is missing", () => {
+    // A partially-written config that already records a deliberate
+    // `simplifiedNav` choice is not a pre-disclosure upgrade; honor it.
+    writeConfig({ onboardingCompleted: true, simplifiedNav: true });
+    const cfg = loadConfig();
+    expect(cfg.simplifiedNav).toBe(true);
+    expect(cfg.createPageMode).toBe("wizard");
+  });
 });

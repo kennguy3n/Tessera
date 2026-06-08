@@ -43,6 +43,18 @@ export default function ModelDownloadBanner() {
   // Guards so the auto-start effect fires exactly once per mount even
   // as `settings` re-renders the component on every store update.
   const startedRef = useRef(false);
+  // Tracks mount state so the async `start()` promise (which is not
+  // cancelable through the IPC bridge) never calls a state setter
+  // after the user navigates away and the banner unmounts. Re-set on
+  // every mount so React 18 StrictMode's mount→unmount→remount cycle
+  // leaves it `true`.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Kick off (or re-run on Retry) the recommended-model download.
   // Owns the download promise so it can resolve to ready/failed even
@@ -53,17 +65,20 @@ export default function ModelDownloadBanner() {
     if (!api?.runtime) return;
     try {
       const recommended = await api.runtime.recommendModel("text");
+      if (!mountedRef.current) return;
       if (!recommended) {
         // Nothing to install on this device/tier — stay quiet.
         setStatus("idle");
         return;
       }
       setStatus("downloading");
-      setPercent((p) => (p > 0 ? p : 0));
+      setPercent(0);
       await api.runtime.downloadModel(recommended.id);
+      if (!mountedRef.current) return;
       setStatus("ready");
       setPercent(100);
     } catch {
+      if (!mountedRef.current) return;
       setStatus("failed");
     }
   }, []);
@@ -96,6 +111,7 @@ export default function ModelDownloadBanner() {
     if (!online) return;
     startedRef.current = true;
     void api.runtime.getCurrentModel("text").then((record) => {
+      if (!mountedRef.current) return;
       if (record !== null) return;
       void start();
     });

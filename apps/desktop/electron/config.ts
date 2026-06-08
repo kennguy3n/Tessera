@@ -727,6 +727,31 @@ function readConfigFromDisk(configPath: string): AppConfig {
       // writes, partial-write corruption) typed as the narrow union
       // despite being out-of-range at runtime.
       const healed = AppConfigSchema.parse(parsed);
+      // Progressive-disclosure migration. `simplifiedNav` and
+      // `createPageMode` heal to the new-user defaults (`true` /
+      // `"wizard"`) when absent — correct for a fresh install, but it
+      // would silently flip an *existing* user from the full sidebar +
+      // template gallery they already know to the reduced UI on first
+      // launch after upgrading. Detect that case (a config that
+      // completed onboarding under the pre-tiering build, i.e. has
+      // `onboardingCompleted === true` yet lacks these keys) and
+      // preserve the legacy experience. The user can still opt into
+      // simplified nav from Settings; fresh installs are untouched
+      // because they have no config file (or `onboardingCompleted`
+      // false). `autoDownloadModel` needs no migration: its auto-start
+      // trigger is already gated on `onboardingCompleted === false`,
+      // so an existing user never gets a surprise background download.
+      const rawRecord =
+        parsed !== null && typeof parsed === "object"
+          ? (parsed as Record<string, unknown>)
+          : {};
+      const isPreDisclosureUpgrade =
+        rawRecord.onboardingCompleted === true &&
+        rawRecord.simplifiedNav === undefined &&
+        rawRecord.createPageMode === undefined;
+      const progressiveDisclosure = isPreDisclosureUpgrade
+        ? { simplifiedNav: false, createPageMode: "gallery" as const }
+        : {};
       const externalProvider: ExternalProviderConfig = {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...healed.externalProvider,
@@ -747,6 +772,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
       return {
         ...DEFAULT_CONFIG,
         ...healed,
+        ...progressiveDisclosure,
         externalProvider,
         externalProviderTokenUsage,
         hybridSearchConfig,

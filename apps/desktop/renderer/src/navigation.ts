@@ -64,17 +64,23 @@ export const SECONDARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
  * Full, ordered navigation list — the single source of truth for
  * keyboard shortcuts (`Ctrl/Cmd+1..N` in `useKeyboardShortcuts.ts`),
  * the command registry (`buildSidebarCommands`), and the shortcut
- * hint chips. It is the concatenation of the primary and secondary
- * tiers; the visible sidebar splits the same items across the two
- * tiers but the shortcut numbering follows this combined order so a
- * shortcut never changes meaning when the user collapses or expands
- * the "More tools" section.
+ * hint chips.
  *
- * Kept as an explicit literal (rather than
- * `[...PRIMARY_SIDEBAR_ITEMS, ...SECONDARY_SIDEBAR_ITEMS]`) so the
- * canonical shortcut order is reviewable in one place and so adding
- * an item forces a deliberate decision about both its tier and its
- * shortcut index.
+ * This order is the original, pre-tiering sidebar order (Home,
+ * Sources, Create, Templates, Tasks, Automations, Vision, Settings)
+ * and is intentionally NOT `[...PRIMARY, ...SECONDARY]`: a naive
+ * concatenation would move Settings from index 8 to index 4 and
+ * silently reassign every `Ctrl/Cmd+N` shortcut. Preserving the
+ * legacy order keeps each shortcut pinned to the same destination
+ * regardless of which tier an item now lives in, so collapsing or
+ * expanding "More tools" never changes what a shortcut does.
+ *
+ * Kept as an explicit literal (rather than derived from the two
+ * tier arrays) so the canonical shortcut order is reviewable in one
+ * place and so adding an item forces a deliberate decision about
+ * both its tier and its shortcut index. `navigation.test.ts` pins
+ * this order and asserts every tier item appears here, so the three
+ * lists can't silently drift.
  */
 export const SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/", label: "Home", Icon: Home },
