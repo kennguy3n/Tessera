@@ -234,7 +234,10 @@ export function buildShowcaseApi(personaId: string): unknown {
     new Proxy(
       {},
       {
-        get(_t, method: string) {
+        get(_t, method: string | symbol) {
+          // The Proxy protocol passes string | symbol; DevTools inspects
+          // Symbol.toStringTag etc., so guard before calling string methods.
+          if (typeof method === "symbol") return undefined;
           const impl = real[namespace]?.[method];
           if (impl) return impl;
           if (method.startsWith("on")) return () => () => {};
@@ -246,7 +249,8 @@ export function buildShowcaseApi(personaId: string): unknown {
   return new Proxy(
     {},
     {
-      get(_t, namespace: string) {
+      get(_t, namespace: string | symbol) {
+        if (typeof namespace === "symbol") return undefined;
         return passthrough(namespace);
       },
     },
