@@ -45,6 +45,18 @@ const BUILTIN_TEMPLATES: TemplateCardData[] = [
   { id: "decision-log-v1", name: "Decision Log", description: "Decision tracking with context, options, and outcomes", type: "base" },
 ];
 
+/**
+ * Industry-agnostic "Featured" set surfaced by default (Part 2c).
+ * These are the general-purpose templates that apply across every
+ * industry — the same curated ids backing the built-in fallback
+ * gallery. New users see only these ~14; a toggle reveals the full
+ * (170+) library for power users. Ids absent from the live registry
+ * simply don't render, so the set is safe to keep static.
+ */
+const FEATURED_TEMPLATE_IDS: ReadonlySet<string> = new Set(
+  BUILTIN_TEMPLATES.map((t) => t.id),
+);
+
 const TYPE_LABELS: Record<string, string> = {
   document: "Documents",
   slides: "Slides",
@@ -97,6 +109,10 @@ export default function TemplatesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [columns, setColumns] = useState(1);
+  // Featured-only is the default first-contact view (Part 2c): show a
+  // small, industry-agnostic curated set and hide the long tail behind
+  // a "Show all" toggle.
+  const [featuredOnly, setFeaturedOnly] = useState(true);
   const gridRef = useRef<HTMLDivElement | null>(null);
 
   const displayTemplates: TemplateCardData[] = useMemo(() => {
@@ -111,16 +127,30 @@ export default function TemplatesPage() {
     return BUILTIN_TEMPLATES;
   }, [templates]);
 
+  // The Featured set is the curated subset; toggling off reveals the
+  // full library. Search always operates on whichever base is active.
+  const featuredTemplates = useMemo(
+    () => displayTemplates.filter((t) => FEATURED_TEMPLATE_IDS.has(t.id)),
+    [displayTemplates],
+  );
+  // When the curated set matches nothing in the live registry (an
+  // unexpected id drift), fall back to the full list so the page is
+  // never blank in Featured mode.
+  const baseTemplates =
+    featuredOnly && featuredTemplates.length > 0
+      ? featuredTemplates
+      : displayTemplates;
+
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return displayTemplates;
+    if (!searchQuery.trim()) return baseTemplates;
     const q = searchQuery.toLowerCase();
-    return displayTemplates.filter(
+    return baseTemplates.filter(
       (t) =>
         t.name.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q) ||
         t.type.toLowerCase().includes(q),
     );
-  }, [displayTemplates, searchQuery]);
+  }, [baseTemplates, searchQuery]);
 
   /**
    * Flatten the visible templates in their rendered order (group by
@@ -299,12 +329,45 @@ export default function TemplatesPage() {
       />
 
       {hasTemplates && (
-        <div style={{ marginBottom: "var(--spacing-lg)" }}>
-          <SearchInput
-            placeholder="Search templates..."
-            value={searchQuery}
-            onSearch={setSearchQuery}
-          />
+        <div
+          style={{
+            marginBottom: "var(--spacing-lg)",
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-md)",
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ flex: "1 1 240px", minWidth: "200px" }}>
+            <SearchInput
+              placeholder="Search templates..."
+              value={searchQuery}
+              onSearch={setSearchQuery}
+            />
+          </div>
+          {featuredTemplates.length > 0 &&
+            displayTemplates.length > featuredTemplates.length && (
+              <button
+                type="button"
+                className="templates-featured-toggle"
+                aria-pressed={!featuredOnly}
+                data-testid="templates-featured-toggle"
+                onClick={() => setFeaturedOnly((v) => !v)}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--color-border, #d9d9d9)",
+                  borderRadius: "var(--radius-md, 6px)",
+                  padding: "var(--spacing-sm) var(--spacing-md)",
+                  cursor: "pointer",
+                  color: "var(--color-text-secondary)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {featuredOnly
+                  ? `Show all ${displayTemplates.length} templates`
+                  : "Show featured only"}
+              </button>
+            )}
         </div>
       )}
 

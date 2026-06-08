@@ -20,6 +20,7 @@
 import { z } from "zod";
 import {
   APP_LOCK_MODES,
+  CREATE_PAGE_MODES,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
   MAX_MODEL_IDLE_TIMEOUT_SECS,
@@ -306,6 +307,18 @@ export const SettingsUpdateSchema = z.object({
   // XOR-with-hardcoded-key). macOS / Windows installs are unaffected
   // by the value.
   enforceKeychainAcl: z.boolean().optional(),
+  // simplified-navigation toggle. Pure boolean; the renderer
+  // Settings toggle is the only writer. No `.catch()` — a renderer
+  // type-narrowing failure is a renderer bug worth surfacing.
+  simplifiedNav: z.boolean().optional(),
+  // auto-download-recommended-model toggle. Pure boolean; flips the
+  // first-launch background-download behaviour read by the auto-
+  // download trigger in the main process.
+  autoDownloadModel: z.boolean().optional(),
+  // default Create-page mode. Pure enum; the renderer's in-page
+  // "Show all templates" / "Guided picker" links and the Settings
+  // toggle are the only writers.
+  createPageMode: z.enum(CREATE_PAGE_MODES).optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 

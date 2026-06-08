@@ -1,10 +1,23 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import HomePage from "../pages/HomePage";
 import SettingsPage from "../pages/SettingsPage";
 import CreatePage from "../pages/CreatePage";
 import SourcesPage from "../pages/SourcesPage";
+import { __resetSettingsStoreForTests } from "../hooks/useSettings";
+
+/**
+ * Switch the Create page from its default guided wizard into the full
+ * tabbed gallery by clicking the always-present "Show all templates"
+ * action. Gallery-specific assertions below run after this so they
+ * exercise the same gallery the wizard now hides behind a click.
+ */
+function showFullGallery() {
+  fireEvent.click(
+    screen.getByRole("button", { name: /show all templates/i }),
+  );
+}
 
 describe("HomePage", () => {
   it("shows welcome state when no sources or artifacts", async () => {
@@ -251,6 +264,40 @@ describe("SettingsPage", () => {
       expect(screen.getByText("v0.1.0")).toBeInTheDocument();
     });
   });
+
+  it("persists the simplified-nav and auto-download toggles on Save", async () => {
+    const updateSpy = window.tessera.settings.update as ReturnType<
+      typeof vi.fn
+    >;
+    updateSpy.mockClear();
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    const simplified = await screen.findByTestId("settings-simplified-nav");
+    const autoDownload = screen.getByTestId("settings-auto-download-model");
+    // Defaults reflect the loaded settings (both on).
+    expect(simplified).toBeChecked();
+    expect(autoDownload).toBeChecked();
+
+    fireEvent.click(simplified);
+    fireEvent.click(autoDownload);
+    // The page-level Save lives in the PageHeader (rendered first);
+    // per-card panels also render their own Save buttons.
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          simplifiedNav: false,
+          autoDownloadModel: false,
+        }),
+      );
+    });
+  });
 });
 
 function CurrentPath() {
@@ -259,12 +306,63 @@ function CurrentPath() {
 }
 
 describe("CreatePage", () => {
-  it("shows the template gallery at /create", () => {
+  beforeEach(() => {
+    // Each case starts from a fresh-install state: the guided wizard
+    // is the default (`createPageMode: "wizard"`). Reset the shared
+    // settings store so a prior test's mode toggle doesn't leak in.
+    __resetSettingsStoreForTests();
+    // Default the text-model probe to "installed" so the runner shows
+    // its AI-enhanced path (button labelled "Generate"). The
+    // extraction-only test overrides this with a null model.
+    window.tessera.runtime.getCurrentModel = vi.fn().mockResolvedValue({
+      modelId: "text-model-v1",
+      capability: "text",
+      installedAt: new Date().toISOString(),
+      sizeBytes: 1,
+    });
+  });
+
+  it("defaults to the guided intent wizard at /create", () => {
     render(
       <MemoryRouter initialEntries={["/create"]}>
         <CreatePage />
       </MemoryRouter>,
     );
+    expect(screen.getByText("What do you need?")).toBeInTheDocument();
+    expect(screen.getByText("Write a document")).toBeInTheDocument();
+    expect(screen.getByText("Make a presentation")).toBeInTheDocument();
+    // The full gallery is hidden until the user opts in.
+    expect(screen.queryByRole("tab", { name: "Analyze" })).not.toBeInTheDocument();
+  });
+
+  it("walks intent → curated templates → runner", async () => {
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <Routes>
+          <Route path="/create" element={<CreatePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    // Step 1 → pick an intent.
+    fireEvent.click(screen.getByText("Write a document"));
+    // Step 2 → curated templates for documents.
+    expect(screen.getByText("What's it for?")).toBeInTheDocument();
+    expect(screen.getByText("PRD")).toBeInTheDocument();
+    // Pick a template → runner opens for that id.
+    fireEvent.click(screen.getByText("PRD"));
+    await waitFor(() => {
+      expect(screen.getByText(/Create: PRD/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows the full gallery after clicking 'Show all templates'", () => {
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <CreatePage />
+      </MemoryRouter>,
+    );
+    showFullGallery();
     expect(screen.getByText("PRD")).toBeInTheDocument();
     expect(screen.getByText("Product Requirements Document")).toBeInTheDocument();
     expect(screen.queryByText(/Phase 3/i)).not.toBeInTheDocument();
@@ -384,6 +482,7 @@ describe("CreatePage", () => {
         <CreatePage />
       </MemoryRouter>,
     );
+    showFullGallery();
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual([
       "Create",
@@ -403,6 +502,7 @@ describe("CreatePage", () => {
         <CreatePage />
       </MemoryRouter>,
     );
+    showFullGallery();
     fireEvent.click(screen.getByRole("tab", { name: "Analyze" }));
     // Each workflow shows its friendly name…
     expect(screen.getByText("Summarize sources")).toBeInTheDocument();
@@ -420,6 +520,7 @@ describe("CreatePage", () => {
         <CreatePage />
       </MemoryRouter>,
     );
+    showFullGallery();
     fireEvent.click(screen.getByRole("tab", { name: "Analyze" }));
     fireEvent.click(screen.getByText("Analyze spreadsheet"));
 
@@ -460,6 +561,7 @@ describe("CreatePage", () => {
         <CreatePage />
       </MemoryRouter>,
     );
+    showFullGallery();
     fireEvent.click(screen.getByRole("tab", { name: "Analyze" }));
     fireEvent.click(screen.getByText("Summarize sources"));
 
@@ -472,6 +574,30 @@ describe("CreatePage", () => {
       ).toBeInTheDocument();
     });
     expect(screen.queryByText("Analytical report")).not.toBeInTheDocument();
+  });
+
+  it("falls back to an extraction-only runner when no text model is installed", async () => {
+    // No model in the text slot → the runner must set source-based
+    // expectations: a "Source-based" badge, the "Create from sources"
+    // button label, and an inline explanation.
+    window.tessera.runtime.getCurrentModel = vi.fn().mockResolvedValue(null);
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+
+    render(
+      <MemoryRouter initialEntries={["/create?template=prd-v1"]}>
+        <CreatePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-model-badge")).toHaveTextContent(
+        "Source-based",
+      );
+    });
+    expect(
+      screen.getByRole("button", { name: /create from sources/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("create-extraction-note")).toBeInTheDocument();
   });
 });
 

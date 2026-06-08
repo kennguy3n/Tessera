@@ -3,7 +3,10 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
+import IntentPicker from "../components/IntentPicker";
 import { useSourceList } from "../hooks/useSources";
+import { useSettings, useUpdateSetting } from "../hooks/useSettings";
+import type { CreatePageMode } from "../../../shared/types";
 import type { TemplateInfo } from "../types/ipc";
 
 interface CategoryItem {
@@ -731,9 +734,46 @@ export default function CreatePage() {
   const [selectedIndustry, setSelectedIndustry] = useState<string>("all");
   const [selectedLocale, setSelectedLocale] = useState<string>("all");
 
+  const { settings } = useSettings();
+  const { update } = useUpdateSetting();
+  // Local override wins immediately when the user flips between the
+  // guided wizard and the full gallery via the in-page links, while
+  // `update()` persists the choice so it survives relaunches and
+  // syncs other surfaces. Until the user clicks, the persisted
+  // `createPageMode` (default `"wizard"`) drives the view.
+  const [modeOverride, setModeOverride] = useState<CreatePageMode | null>(null);
+  const mode = modeOverride ?? settings.createPageMode;
+  const setMode = useCallback(
+    (next: CreatePageMode) => {
+      setModeOverride(next);
+      void update({ createPageMode: next });
+    },
+    [update],
+  );
+
   if (templateId) {
     return (
       <TemplateRunner templateId={templateId} workflow={workflow} />
+    );
+  }
+
+  if (mode === "wizard") {
+    return (
+      <div>
+        <PageHeader
+          title="Create"
+          description="Tell us what you need and we'll suggest a starting point."
+          actions={
+            <Button variant="secondary" onClick={() => setMode("gallery")}>
+              Show all templates
+            </Button>
+          }
+        />
+        <IntentPicker
+          onSelectTemplate={(id) => navigate(`/create?template=${id}`)}
+          onShowAll={() => setMode("gallery")}
+        />
+      </div>
     );
   }
 
@@ -748,6 +788,11 @@ export default function CreatePage() {
       <PageHeader
         title="Create"
         description={TAB_DESCRIPTIONS[activeTab]}
+        actions={
+          <Button variant="secondary" onClick={() => setMode("wizard")}>
+            Guided picker
+          </Button>
+        }
       />
 
       <div
@@ -963,6 +1008,13 @@ function TemplateRunner({
   const [templateLoaded, setTemplateLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [gen, setGen] = useState<GenerateState>({ status: "idle", message: null });
+  // Tri-state model availability for the text slot: `null` while the
+  // `runtime.getCurrentModel` probe is in flight, then `true` once a
+  // model is installed (LLM drafting available) or `false` when the
+  // slot is empty (extraction-only — artifacts are assembled from
+  // raw source material). Drives the "AI-enhanced" vs "Source-based"
+  // badge, the Generate button label, and the inline explanation.
+  const [modelAvailable, setModelAvailable] = useState<boolean | null>(null);
 
   // NOTE: artifacts.generateFromTemplate runs synchronously through the Rust
   // bridge (bridgeGenerateFromTemplate -> inference_router) and does NOT emit
@@ -998,6 +1050,33 @@ function TemplateRunner({
       cancelled = true;
     };
   }, [templateId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      // No bridge (e.g. unit test without a runtime mock): treat as
+      // extraction-only so the UI sets honest "Source-based"
+      // expectations rather than implying AI drafting.
+      setModelAvailable(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    api.runtime
+      .getCurrentModel("text")
+      .then((record) => {
+        if (cancelled) return;
+        setModelAvailable(record !== null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setModelAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggle = useCallback((id: string) => {
     setSelected((prev) => {
@@ -1064,9 +1143,41 @@ function TemplateRunner({
         title={`Create: ${displayName}`}
         description={displayDescription}
         actions={
-          <Button variant="secondary" onClick={() => navigate("/create")}>
-            Back to Templates
-          </Button>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--spacing-sm)",
+            }}
+          >
+            {modelAvailable !== null && (
+              <span
+                data-testid="create-model-badge"
+                title={
+                  modelAvailable
+                    ? "A local AI model is installed — generation drafts and summarizes your sources."
+                    : "No AI model installed yet — artifacts are assembled directly from your source material."
+                }
+                style={{
+                  fontSize: "var(--font-size-xs)",
+                  fontWeight: 600,
+                  padding: "0.125rem 0.5rem",
+                  borderRadius: "999px",
+                  color: modelAvailable
+                    ? "var(--color-primary, #7C3AED)"
+                    : "var(--color-text-secondary)",
+                  background: modelAvailable
+                    ? "var(--color-primary-soft, #ede9fe)"
+                    : "var(--color-surface-soft, #f3f4f6)",
+                }}
+              >
+                {modelAvailable ? "AI-enhanced" : "Source-based"}
+              </span>
+            )}
+            <Button variant="secondary" onClick={() => navigate("/create")}>
+              Back to Templates
+            </Button>
+          </div>
         }
       />
 
@@ -1152,6 +1263,20 @@ function TemplateRunner({
           </ul>
         )}
 
+        {modelAvailable === false && (
+          <p
+            data-testid="create-extraction-note"
+            style={{
+              marginTop: "var(--spacing-md)",
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            AI model is downloading. You can create from your source material
+            now, or wait for AI-powered generation.
+          </p>
+        )}
+
         <div
           style={{
             display: "flex",
@@ -1164,11 +1289,19 @@ function TemplateRunner({
             onClick={handleGenerate}
             disabled={gen.status === "loading" || selected.size === 0}
           >
-            {gen.status === "loading" ? "Generating…" : "Generate"}
+            {gen.status === "loading"
+              ? modelAvailable === false
+                ? "Creating…"
+                : "Generating…"
+              : modelAvailable === false
+                ? "Create from sources"
+                : "Generate"}
           </Button>
           {gen.status === "loading" && (
             <span data-testid="create-generating" style={{ fontSize: "var(--font-size-sm)" }}>
-              Generating from the local model…
+              {modelAvailable === false
+                ? "Assembling from your sources…"
+                : "Generating from the local model…"}
             </span>
           )}
           {gen.status === "error" && (

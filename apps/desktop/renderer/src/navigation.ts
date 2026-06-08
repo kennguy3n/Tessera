@@ -30,6 +30,58 @@ export interface SidebarNavItem {
   Icon: LucideIcon;
 }
 
+/**
+ * Primary navigation tier — always visible in the sidebar, even in
+ * "simplified navigation" mode. These four destinations cover the
+ * core flow for a non-technical user: see what you have (Home),
+ * connect material (Sources), make something (Create), and configure
+ * the app (Settings). Templates is intentionally NOT here — the
+ * Create page is the single entry point for making things, with the
+ * full template browser tucked into the secondary tier.
+ */
+export const PRIMARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
+  { to: "/", label: "Home", Icon: Home },
+  { to: "/sources", label: "Sources", Icon: FolderOpen },
+  { to: "/create", label: "Create", Icon: Plus },
+  { to: "/settings", label: "Settings", Icon: Settings },
+];
+
+/**
+ * Secondary navigation tier — power-user tools surfaced under the
+ * collapsible "More tools" section in the sidebar. Hidden by default
+ * for fresh installs (`simplifiedNav: true`) so new users aren't
+ * overwhelmed, but always reachable via the toggle and via the
+ * `Ctrl/Cmd+N` keyboard shortcuts (which read `SIDEBAR_ITEMS`).
+ */
+export const SECONDARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
+  { to: "/templates", label: "Templates", Icon: ClipboardList },
+  { to: "/tasks", label: "Tasks", Icon: CheckSquare },
+  { to: "/automations", label: "Automations", Icon: Zap },
+  { to: "/vision", label: "Vision", Icon: Eye },
+];
+
+/**
+ * Full, ordered navigation list — the single source of truth for
+ * keyboard shortcuts (`Ctrl/Cmd+1..N` in `useKeyboardShortcuts.ts`),
+ * the command registry (`buildSidebarCommands`), and the shortcut
+ * hint chips.
+ *
+ * This order is the original, pre-tiering sidebar order (Home,
+ * Sources, Create, Templates, Tasks, Automations, Vision, Settings)
+ * and is intentionally NOT `[...PRIMARY, ...SECONDARY]`: a naive
+ * concatenation would move Settings from index 8 to index 4 and
+ * silently reassign every `Ctrl/Cmd+N` shortcut. Preserving the
+ * legacy order keeps each shortcut pinned to the same destination
+ * regardless of which tier an item now lives in, so collapsing or
+ * expanding "More tools" never changes what a shortcut does.
+ *
+ * Kept as an explicit literal (rather than derived from the two
+ * tier arrays) so the canonical shortcut order is reviewable in one
+ * place and so adding an item forces a deliberate decision about
+ * both its tier and its shortcut index. `navigation.test.ts` pins
+ * this order and asserts every tier item appears here, so the three
+ * lists can't silently drift.
+ */
 export const SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/", label: "Home", Icon: Home },
   { to: "/sources", label: "Sources", Icon: FolderOpen },

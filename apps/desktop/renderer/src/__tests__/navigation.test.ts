@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  PRIMARY_SIDEBAR_ITEMS,
+  SECONDARY_SIDEBAR_ITEMS,
   SIDEBAR_ITEMS,
   SIDEBAR_NAV_BY_KEY,
   SIDEBAR_SHORTCUT_HINTS,
@@ -35,6 +37,24 @@ describe("sidebar navigation", () => {
       "/vision",
       "/settings",
     ]);
+  });
+
+  it("keeps the primary/secondary tiers in sync with SIDEBAR_ITEMS", () => {
+    // The tiered sidebar splits SIDEBAR_ITEMS across two arrays for
+    // display, but shortcuts/routing still read the full list. Pin the
+    // relationship so a future edit can't add a tier item that has no
+    // shortcut (only in PRIMARY/SECONDARY) or a routed item that never
+    // appears in a tier (only in SIDEBAR_ITEMS).
+    const full = SIDEBAR_ITEMS.map((i) => i.to).sort();
+    const tiered = [...PRIMARY_SIDEBAR_ITEMS, ...SECONDARY_SIDEBAR_ITEMS]
+      .map((i) => i.to)
+      .sort();
+    expect(tiered).toEqual(full);
+    // Tiers must be disjoint — an item belongs to exactly one tier.
+    const primary = new Set(PRIMARY_SIDEBAR_ITEMS.map((i) => i.to));
+    SECONDARY_SIDEBAR_ITEMS.forEach((i) => {
+      expect(primary.has(i.to)).toBe(false);
+    });
   });
 
   it("maps the Vision entry to keyboard shortcut 7 (Settings shifts to 8)", () => {

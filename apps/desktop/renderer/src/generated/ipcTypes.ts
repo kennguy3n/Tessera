@@ -79,6 +79,9 @@ export type SettingsUpdateInput = {
   appLockMode?: "off" | "pin" | "biometric" | "fido2" | undefined;
   enforceUpdateSignature?: boolean | undefined;
   enforceKeychainAcl?: boolean | undefined;
+  simplifiedNav?: boolean | undefined;
+  autoDownloadModel?: boolean | undefined;
+  createPageMode?: "wizard" | "gallery" | undefined;
 };
 
 export type ExternalProviderConfigInput = {

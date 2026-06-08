@@ -317,6 +317,13 @@ const mockApi = {
       // specific IDs they want to assert against.
       pinnedArtifactIds: [],
       recentArtifactIds: [],
+      // UX-disclosure defaults mirror DEFAULT_CONFIG: simplified
+      // sidebar on (secondary tools collapsed), model auto-download
+      // on, guided Create wizard as the default mode. Tests that
+      // exercise the power-user layouts override these explicitly.
+      simplifiedNav: true,
+      autoDownloadModel: true,
+      createPageMode: "wizard",
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
@@ -326,6 +333,9 @@ const mockApi = {
       onboardingCompleted: true,
       pinnedArtifactIds: [],
       recentArtifactIds: [],
+      simplifiedNav: true,
+      autoDownloadModel: true,
+      createPageMode: "wizard",
     }),
     // Hybrid search config lives on `settings` (not `sources`)
     // because the channel name is `settings:*` and the handler is

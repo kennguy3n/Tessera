@@ -1,12 +1,44 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { Star } from "lucide-react";
-import { SIDEBAR_ITEMS, SIDEBAR_SHORTCUT_HINTS } from "../navigation";
+import { Star, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  PRIMARY_SIDEBAR_ITEMS,
+  SECONDARY_SIDEBAR_ITEMS,
+  SIDEBAR_SHORTCUT_HINTS,
+  type SidebarNavItem,
+} from "../navigation";
 import KchatSidebarSection from "./KchatSidebarSection";
 import { useCspNonce } from "../utils/cspNonce";
 import { useArtifactList } from "../hooks/useArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
+import { useSettings } from "../hooks/useSettings";
 import type { ArtifactInfo } from "../types/ipc";
+
+/**
+ * localStorage key holding the user's explicit expand/collapse choice
+ * for the "More tools" secondary section. Stored as the string
+ * `"true"` / `"false"`. When absent, the section's default open state
+ * is derived from the `simplifiedNav` setting (collapsed when
+ * simplified). An explicit choice always wins over the setting so a
+ * power user who expands the section keeps it expanded across launches
+ * even with simplified navigation on.
+ */
+const MORE_TOOLS_STORAGE_KEY = "tessera:sidebar-more-tools-expanded";
+
+function readStoredMoreToolsExpanded(): boolean | null {
+  try {
+    const v =
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem(MORE_TOOLS_STORAGE_KEY)
+        : null;
+    if (v === "true") return true;
+    if (v === "false") return false;
+  } catch {
+    // localStorage can throw in locked-down environments; fall back
+    // to the setting-derived default.
+  }
+  return null;
+}
 
 interface SidebarProps {
   /**
@@ -19,6 +51,7 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed = false }: SidebarProps) {
   const cspNonce = useCspNonce();
+  const { settings } = useSettings();
   const { pinnedIds } = usePinnedArtifacts();
   // Gate the artifact-list IPC on `pinnedIds.length > 0` so a
   // fresh-install / zero-pins user never pays the cost of fetching
@@ -58,6 +91,74 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
     [pinnedIds, artifactById],
   );
 
+  // Explicit user choice for the "More tools" section, or `null` when
+  // the user has not toggled it yet. Read once from localStorage on
+  // mount; subsequent toggles update both this state and the stored
+  // value so the choice survives relaunches.
+  const [moreToolsChoice, setMoreToolsChoice] = useState<boolean | null>(
+    () => readStoredMoreToolsExpanded(),
+  );
+  // Effective open state: an explicit user choice always wins;
+  // otherwise the section defaults to collapsed under simplified
+  // navigation and expanded otherwise.
+  const moreToolsExpanded = moreToolsChoice ?? !settings.simplifiedNav;
+
+  const toggleMoreTools = useCallback(() => {
+    // Toggle relative to the current effective state, then persist. The
+    // side effect lives in the event handler (not the state updater,
+    // which must stay pure) so React can freely re-invoke the updater.
+    const next = !moreToolsExpanded;
+    setMoreToolsChoice(next);
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(MORE_TOOLS_STORAGE_KEY, String(next));
+      }
+    } catch {
+      // Persisting the choice is best-effort; the in-memory state
+      // still drives this session even if storage is unavailable.
+    }
+  }, [moreToolsExpanded]);
+
+  // Shared renderer for a single nav row so the primary list and the
+  // secondary ("More tools") list stay visually identical. `showHint`
+  // gates the keyboard-shortcut chip: it is suppressed for collapsed
+  // secondary rows so a hidden destination never advertises a chip,
+  // while the `aria-keyshortcuts` attribute is always present so
+  // assistive tech still announces the shortcut.
+  const renderNavItem = useCallback(
+    (item: SidebarNavItem, showHint: boolean) => {
+      const hint = SIDEBAR_SHORTCUT_HINTS[item.to];
+      return (
+        <li key={item.to}>
+          <NavLink
+            to={item.to}
+            end={item.to === "/"}
+            className={({ isActive }) =>
+              `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
+            }
+            aria-keyshortcuts={hint ? `${modLabel}+${hint}` : undefined}
+            title={collapsed ? item.label : undefined}
+          >
+            <span className="sidebar-icon" aria-hidden="true">
+              <item.Icon size={20} strokeWidth={1.75} />
+            </span>
+            {!collapsed && (
+              <>
+                <span className="sidebar-label">{item.label}</span>
+                {showHint && hint && (
+                  <span className="sidebar-kbd" aria-hidden="true">
+                    {modLabel}+{hint}
+                  </span>
+                )}
+              </>
+            )}
+          </NavLink>
+        </li>
+      );
+    },
+    [collapsed, modLabel],
+  );
+
   return (
     <nav
       className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}
@@ -70,37 +171,35 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
         {!collapsed && <span className="sidebar-title">Tessera</span>}
       </div>
       <ul className="sidebar-nav">
-        {SIDEBAR_ITEMS.map((item) => {
-          const hint = SIDEBAR_SHORTCUT_HINTS[item.to];
-          return (
-            <li key={item.to}>
-              <NavLink
-                to={item.to}
-                end={item.to === "/"}
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
-                }
-                aria-keyshortcuts={hint ? `${modLabel}+${hint}` : undefined}
-                title={collapsed ? item.label : undefined}
-              >
-                <span className="sidebar-icon" aria-hidden="true">
-                  <item.Icon size={20} strokeWidth={1.75} />
-                </span>
-                {!collapsed && (
-                  <>
-                    <span className="sidebar-label">{item.label}</span>
-                    {hint && (
-                      <span className="sidebar-kbd" aria-hidden="true">
-                        {modLabel}+{hint}
-                      </span>
-                    )}
-                  </>
-                )}
-              </NavLink>
-            </li>
-          );
-        })}
+        {PRIMARY_SIDEBAR_ITEMS.map((item) => renderNavItem(item, true))}
       </ul>
+
+      <div className="sidebar-more-tools">
+        <button
+          type="button"
+          className="sidebar-link sidebar-more-toggle"
+          onClick={toggleMoreTools}
+          aria-expanded={moreToolsExpanded}
+          aria-controls="sidebar-more-tools-list"
+          title={collapsed ? "More tools" : undefined}
+        >
+          <span className="sidebar-icon" aria-hidden="true">
+            {moreToolsExpanded ? (
+              <ChevronDown size={20} strokeWidth={1.75} />
+            ) : (
+              <ChevronRight size={20} strokeWidth={1.75} />
+            )}
+          </span>
+          {!collapsed && <span className="sidebar-label">More tools</span>}
+        </button>
+        {moreToolsExpanded && (
+          <ul className="sidebar-nav" id="sidebar-more-tools-list">
+            {SECONDARY_SIDEBAR_ITEMS.map((item) =>
+              renderNavItem(item, true),
+            )}
+          </ul>
+        )}
+      </div>
       {!collapsed && pinnedArtifacts.length > 0 && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">Pinned</div>
@@ -216,6 +315,25 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
           padding: 1px 4px;
           border-radius: 4px;
           background: var(--color-bg-secondary, transparent);
+        }
+        .sidebar-more-tools {
+          margin-top: var(--spacing-xs);
+          padding: var(--spacing-xs) var(--spacing-sm) 0;
+          border-top: 1px solid var(--color-border);
+        }
+        .sidebar-more-tools .sidebar-nav {
+          margin-top: 2px;
+          padding: 0;
+        }
+        .sidebar-more-toggle {
+          width: 100%;
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          font: inherit;
+          font-size: var(--font-size-sm);
+          font-weight: var(--font-weight-medium);
+          color: var(--color-text-secondary);
         }
         .sidebar-section {
           margin-top: var(--spacing-md);

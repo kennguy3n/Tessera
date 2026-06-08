@@ -29,6 +29,7 @@ import { useNavigate } from "react-router-dom";
 import { FolderPlus, LayoutTemplate, Rocket } from "lucide-react";
 import Button from "./Button";
 import Modal from "./Modal";
+import IntentPicker from "./IntentPicker";
 import { useCspNonce } from "../utils/cspNonce";
 
 type Step = 0 | 1 | 2;
@@ -69,7 +70,7 @@ const STEP_COPY: Record<Step, StepCopy> = {
   1: {
     title: "Pick a template",
     message:
-      "Templates jump-start documents, slides, sheets, and bases with the right shape. Browse the gallery to see what's available.",
+      "Tell us what you need and we'll suggest a starting point — or browse the full gallery.",
     icon: <LayoutTemplate size={48} strokeWidth={1.5} aria-hidden="true" />,
     primaryLabel: "Browse templates",
     primaryHref: "/templates",
@@ -83,39 +84,17 @@ const STEP_COPY: Record<Step, StepCopy> = {
   },
 };
 
-/**
- * Top 3 built-in templates surfaced in step 2. The list intentionally
- * mirrors the most-clicked templates on the existing `TemplatesPage`
- * (PRD, QBR, Budget) — the wizard does not call `templates:list`
- * because we want the same three to appear deterministically even
- * before the templates IPC has finished warming up.
- */
-const FEATURED_TEMPLATES: ReadonlyArray<{
-  id: string;
-  name: string;
-  description: string;
-}> = [
-  {
-    id: "prd-v1",
-    name: "PRD",
-    description: "Product Requirements Document",
-  },
-  {
-    id: "qbr-v1",
-    name: "QBR",
-    description: "Quarterly Business Review deck",
-  },
-  {
-    id: "budget-v1",
-    name: "Budget",
-    description: "Budget spreadsheet with variance analysis",
-  },
-];
-
 export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(0);
+  // Model-setup awareness (Part 3d). `modelReady` is the text-slot
+  // probe result; `downloadPercent` tracks an in-flight background
+  // download surfaced via `runtime.onDownloadProgress`. Together they
+  // drive the inline "being set up…" note on the template step and
+  // the final step's "ready" wording.
+  const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const [downloadPercent, setDownloadPercent] = useState<number | null>(null);
   // Re-entrancy guard MUST be a ref, not a useState value
   // Review PR #70. The risk is a fast Escape press while
   // a Finish click's `await api.settings.update(...)` is still
@@ -228,7 +207,55 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
     };
   }, []);
 
+  // Probe the text-model slot once and subscribe to download progress
+  // so the wizard can reflect a background model setup kicked off on
+  // first launch (Part 3a/3d). The subscription also flips
+  // `modelReady` to true the moment a download reaches 100%, so a
+  // user who lingers on the wizard sees the "ready" wording update
+  // live without a manual refresh.
+  useEffect(() => {
+    let cancelled = false;
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api?.runtime) {
+      setModelReady(false);
+      return;
+    }
+    api.runtime
+      .getCurrentModel("text")
+      .then((record) => {
+        if (!cancelled) setModelReady(record !== null);
+      })
+      .catch(() => {
+        if (!cancelled) setModelReady(false);
+      });
+    const unsubscribe = api.runtime.onDownloadProgress((p) => {
+      if (cancelled || p.capability !== "text") return;
+      setDownloadPercent(p.percent);
+      if (p.percent >= 100) setModelReady(true);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
   const copy = STEP_COPY[step];
+  // A background text-model download is "in progress" when we've seen
+  // a sub-100% progress event and the slot isn't ready yet.
+  const modelDownloading =
+    modelReady !== true &&
+    downloadPercent !== null &&
+    downloadPercent < 100;
+  // Final-step wording adapts to model state: ready → AI available;
+  // still downloading → AI will finish in the background; otherwise
+  // the generic ready copy.
+  const readyMessage =
+    modelReady === true
+      ? "Your workspace is ready — AI-powered generation is available."
+      : modelDownloading
+        ? "Your workspace is ready — AI setup will complete shortly in the background."
+        : STEP_COPY[2].message;
+  const message = step === 2 ? readyMessage : copy.message;
 
   return (
     <Modal
@@ -241,25 +268,21 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
           {copy.icon}
         </div>
         <h2 className="onboarding-title">{copy.title}</h2>
-        <p className="onboarding-message">{copy.message}</p>
+        <p className="onboarding-message">{message}</p>
 
         {step === 1 && (
-          <ul className="onboarding-template-list">
-            {FEATURED_TEMPLATES.map((t) => (
-              <li key={t.id}>
-                <button
-                  type="button"
-                  className="onboarding-template-item"
-                  onClick={() => goToTemplate(t.id)}
-                >
-                  <span className="onboarding-template-name">{t.name}</span>
-                  <span className="onboarding-template-description">
-                    {t.description}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="onboarding-intent">
+            <IntentPicker onSelectTemplate={goToTemplate} />
+            {modelDownloading && (
+              <p
+                className="onboarding-model-note"
+                data-testid="onboarding-model-progress"
+              >
+                Your AI assistant is being set up in the background (
+                {Math.round(downloadPercent ?? 0)}%)… You can start working now.
+              </p>
+            )}
+          </div>
         )}
 
         <div className="onboarding-actions">
@@ -308,41 +331,17 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
           max-width: 480px;
           margin: 0;
         }
-        .onboarding-template-list {
-          list-style: none;
-          padding: 0;
+        .onboarding-intent {
+          width: 100%;
+          max-width: 560px;
           margin: var(--spacing-md) 0 0;
-          width: 100%;
-          max-width: 480px;
-          display: flex;
-          flex-direction: column;
-          gap: var(--spacing-sm);
-        }
-        .onboarding-template-item {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          width: 100%;
-          padding: var(--spacing-sm) var(--spacing-md);
-          border: 1px solid var(--color-border, #d9d9d9);
-          border-radius: var(--radius-md, 6px);
-          background: var(--color-surface, #fff);
-          color: inherit;
-          cursor: pointer;
           text-align: left;
         }
-        .onboarding-template-item:hover,
-        .onboarding-template-item:focus-visible {
-          border-color: var(--color-primary, #7c3aed);
-          outline: none;
-        }
-        .onboarding-template-name {
-          font-weight: 600;
-          color: var(--color-text-headline);
-        }
-        .onboarding-template-description {
+        .onboarding-model-note {
+          margin: var(--spacing-md) 0 0;
           font-size: var(--font-size-sm);
           color: var(--color-text-secondary);
+          text-align: center;
         }
         .onboarding-actions {
           display: flex;

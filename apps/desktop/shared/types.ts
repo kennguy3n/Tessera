@@ -1111,7 +1111,52 @@ export interface SettingsData {
    *   - `none-unavailable` (no safeStorage; password-vault fallback active)
    */
   enforceKeychainAcl: boolean;
+  /**
+   * When `true` (default) the sidebar shows only the primary
+   * navigation items (Home, Sources, Create, Settings) and tucks the
+   * secondary tools (Templates, Tasks, Automations, Vision) behind a
+   * collapsed "More tools" section. Flipping it `false` from
+   * Settings → General expands the secondary section by default for
+   * power users who want every destination visible at once.
+   *
+   * This only controls the *default* collapsed state: the user's
+   * explicit expand/collapse click on the "More tools" toggle is
+   * remembered separately in `localStorage` and takes precedence
+   * over this flag. Keyboard shortcuts (`Ctrl/Cmd+1..N`) navigate to
+   * every destination regardless of this flag, because they read the
+   * full `SIDEBAR_ITEMS` array, not the visible subset.
+   */
+  simplifiedNav: boolean;
+  /**
+   * When `true` (default) a fresh install with no text model
+   * installed automatically downloads the recommended model in the
+   * background on first launch, surfaced via the non-blocking
+   * `ModelDownloadBanner`. Set `false` (Settings → Models) to stay in
+   * extraction-only mode permanently — artifacts are then assembled
+   * from source material without LLM drafting until the user
+   * downloads a model manually.
+   */
+  autoDownloadModel: boolean;
+  /**
+   * Controls the default Create page experience. `"wizard"` (default)
+   * shows the intent-based "What do you need?" flow that surfaces a
+   * small curated set of templates for new users; `"gallery"` shows
+   * the full tabbed gallery of every template immediately. The user
+   * can switch modes at any time via the in-page links ("Show all
+   * templates" / "Guided picker"), which persist their choice here.
+   */
+  createPageMode: CreatePageMode;
 }
+
+/**
+ * Default Create-page presentation mode. `"wizard"` is the
+ * progressive-disclosure intent flow for new / non-technical users;
+ * `"gallery"` is the full tabbed template gallery for power users.
+ * Constrained to a fixed tuple so the renderer toggle, the IPC
+ * schema, and the persisted config all reference the same values.
+ */
+export const CREATE_PAGE_MODES = ["wizard", "gallery"] as const;
+export type CreatePageMode = (typeof CREATE_PAGE_MODES)[number];
 
 /**
  * valid app-lock modes. Constrained to a
