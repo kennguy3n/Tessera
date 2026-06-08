@@ -4,6 +4,7 @@ import { app } from "electron";
 import { z } from "zod";
 import {
   APP_LOCK_MODES,
+  CREATE_PAGE_MODES,
   DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
@@ -12,6 +13,7 @@ import {
   MAX_RECENT_ARTIFACTS,
   THEMES,
   type AppLockMode,
+  type CreatePageMode,
   type ExportFormat,
   type ExternalProviderType,
   type ExternalProviderTokenUsage,
@@ -160,6 +162,28 @@ export interface AppConfig {
    * `electron/sidecar.ts` before this field was added.
    */
   modelIdleTimeoutSecs: number;
+  /**
+   * Simplified-navigation toggle. See
+   * `SettingsData.simplifiedNav` in `shared/types.ts` for the full
+   * semantics. Defaults to `true` so a fresh install shows the
+   * reduced primary sidebar with secondary tools collapsed.
+   */
+  simplifiedNav: boolean;
+  /**
+   * Auto-download-recommended-model toggle. See
+   * `SettingsData.autoDownloadModel` in `shared/types.ts`. Defaults
+   * to `true` so a fresh install fetches the recommended text model
+   * in the background instead of leaving the user in extraction-only
+   * mode until they discover the Models settings.
+   */
+  autoDownloadModel: boolean;
+  /**
+   * Default Create-page presentation mode. See
+   * `SettingsData.createPageMode` in `shared/types.ts`. Defaults to
+   * `"wizard"` so new users get the guided intent flow rather than
+   * the full 170+ template gallery on first contact.
+   */
+  createPageMode: CreatePageMode;
 }
 
 /** Default persisted hybrid config — mirrors Rust default. */
@@ -263,6 +287,9 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   enforceKeychainAcl: true,
   hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
+  simplifiedNav: true,
+  autoDownloadModel: true,
+  createPageMode: "wizard",
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -455,6 +482,21 @@ const AppConfigSchema = z
       .min(0)
       .max(MAX_MODEL_IDLE_TIMEOUT_SECS)
       .catch(DEFAULT_MODEL_IDLE_TIMEOUT_SECS),
+    // simplified-navigation toggle. Heals a
+    // corrupted value to `true` (the fresh-install default) so a
+    // mangled config still gives non-technical users the reduced
+    // sidebar. Flipping to `false` is a deliberate power-user choice
+    // made in Settings → General.
+    simplifiedNav: z.boolean().catch(true),
+    // auto-download-recommended-model toggle.
+    // Heals a corrupted value to `true` so a mangled config still
+    // gives a fresh install the zero-friction model setup. Users who
+    // want extraction-only mode flip this off in Settings → Models.
+    autoDownloadModel: z.boolean().catch(true),
+    // default Create-page mode. Heals a
+    // corrupted value to `"wizard"` (the guided new-user flow) rather
+    // than dropping the user into the full 170+ template gallery.
+    createPageMode: z.enum(CREATE_PAGE_MODES).catch("wizard"),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the

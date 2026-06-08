@@ -28,6 +28,7 @@ import { MemoryRouter } from "react-router-dom";
 import Modal from "../components/Modal";
 import SlideEditor from "../editors/SlideEditor";
 import Sidebar from "../components/Sidebar";
+import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 
 // ---------------------------------------------------------------------------
 // Modal accessibility
@@ -186,11 +187,20 @@ vi.mock("../hooks/useSettings", () => ({
       // on the DOM contract rather than the persistence layer.
       pinnedArtifactIds: [],
       recentArtifactIds: [],
+      // `simplifiedNav: true` keeps the Sidebar's "More tools"
+      // section collapsed by default so the aria-current test can
+      // expand it explicitly to reach a secondary link.
+      simplifiedNav: true,
+      autoDownloadModel: true,
+      createPageMode: "wizard",
     },
     loading: false,
     refresh: vi.fn(),
   }),
   useUpdateSetting: () => ({ update: vi.fn().mockResolvedValue(undefined) }),
+  // Sidebar tests reset the (mocked) store between cases; a no-op
+  // keeps the call site identical to the real export.
+  __resetSettingsStoreForTests: vi.fn(),
 }));
 
 // ModelRuntimeCard, ExternalProviderCard, HybridSearchCard each pull
@@ -243,6 +253,11 @@ describe("SettingsPage label associations", () => {
 // ---------------------------------------------------------------------------
 
 describe("Sidebar accessibility", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    __resetSettingsStoreForTests();
+  });
+
   it("renders aria-current=page on the NavLink that matches the URL", () => {
     render(
       <MemoryRouter initialEntries={["/sources"]}>
@@ -252,7 +267,11 @@ describe("Sidebar accessibility", () => {
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     const sourcesLink = within(nav).getByRole("link", { name: /Sources/ });
     expect(sourcesLink.getAttribute("aria-current")).toBe("page");
-    // Other links should NOT be marked aria-current.
+    // Expand the "More tools" section so a secondary link is present
+    // to assert the negative case against.
+    fireEvent.click(
+      within(nav).getByRole("button", { name: /more tools/i }),
+    );
     const tasksLink = within(nav).getByRole("link", { name: /Tasks/ });
     expect(tasksLink.getAttribute("aria-current")).toBeNull();
   });

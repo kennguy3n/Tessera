@@ -289,6 +289,13 @@ export function registerSettingsHandlers(): void {
       appLockMode: config.appLockMode,
       enforceUpdateSignature: config.enforceUpdateSignature,
       enforceKeychainAcl: config.enforceKeychainAcl,
+      // UX-disclosure preferences. All three heal
+      // to their fresh-install defaults (`simplifiedNav: true`,
+      // `autoDownloadModel: true`, `createPageMode: "wizard"`) via the
+      // on-disk schema so the renderer always sees a usable value.
+      simplifiedNav: config.simplifiedNav,
+      autoDownloadModel: config.autoDownloadModel,
+      createPageMode: config.createPageMode,
     } as SettingsData;
   });
 
@@ -464,6 +471,20 @@ export function registerSettingsHandlers(): void {
         "enforceKeychainAcl",
         String(parsed.enforceKeychainAcl),
       );
+    // UX-disclosure preferences. Pure persisted
+    // toggles — no live side effects to apply here (the renderer
+    // re-reads them via `settings:get`, and the auto-download trigger
+    // reads `autoDownloadModel` directly from `loadConfig()` on next
+    // launch). Audited for parity with the other fields.
+    if (parsed.simplifiedNav !== undefined)
+      auditSettingsField("simplifiedNav", String(parsed.simplifiedNav));
+    if (parsed.autoDownloadModel !== undefined)
+      auditSettingsField(
+        "autoDownloadModel",
+        String(parsed.autoDownloadModel),
+      );
+    if (parsed.createPageMode !== undefined)
+      auditSettingsField("createPageMode", parsed.createPageMode);
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -477,6 +498,9 @@ export function registerSettingsHandlers(): void {
       appLockMode: persisted.appLockMode,
       enforceUpdateSignature: persisted.enforceUpdateSignature,
       enforceKeychainAcl: persisted.enforceKeychainAcl,
+      simplifiedNav: persisted.simplifiedNav,
+      autoDownloadModel: persisted.autoDownloadModel,
+      createPageMode: persisted.createPageMode,
     } as SettingsData;
   });
 

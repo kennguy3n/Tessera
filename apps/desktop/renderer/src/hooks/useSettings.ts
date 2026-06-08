@@ -50,6 +50,15 @@ const DEFAULT_SETTINGS: SettingsData = {
   // surfaces a checkbox that toggles this so Linux users without a
   // secret-store daemon can flip it off after weighing the trade-off.
   enforceKeychainAcl: true,
+  // UX-disclosure placeholders mirror the main-process
+  // `DEFAULT_CONFIG`: simplified sidebar on, model auto-download on,
+  // and the guided Create wizard as the default mode. The real
+  // values load via `refresh()` on mount and overwrite these within
+  // a tick; surfacing the same defaults here avoids a flash of the
+  // power-user layout for a fresh install before the IPC resolves.
+  simplifiedNav: true,
+  autoDownloadModel: true,
+  createPageMode: "wizard",
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

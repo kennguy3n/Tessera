@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
+import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import PageHeader from "../components/PageHeader";
@@ -12,7 +13,15 @@ import Modal from "../components/Modal";
 import ModelRuntimeCard from "../components/ModelRuntimeCard";
 
 describe("Sidebar", () => {
-  it("renders all navigation links", () => {
+  beforeEach(() => {
+    // Reset the shared settings store and any persisted "More tools"
+    // choice so each case starts from a fresh-install state
+    // (`simplifiedNav: true`, secondary section collapsed).
+    localStorage.clear();
+    __resetSettingsStoreForTests();
+  });
+
+  it("always renders the primary navigation links", () => {
     render(
       <MemoryRouter>
         <Sidebar />
@@ -21,8 +30,38 @@ describe("Sidebar", () => {
     expect(screen.getByText("Home")).toBeInTheDocument();
     expect(screen.getByText("Sources")).toBeInTheDocument();
     expect(screen.getByText("Create")).toBeInTheDocument();
-    expect(screen.getByText("Templates")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+
+  it("collapses secondary tools behind a 'More tools' toggle by default", () => {
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>,
+    );
+    const toggle = screen.getByRole("button", { name: /more tools/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // Secondary destinations are hidden until the section is expanded.
+    expect(screen.queryByText("Templates")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tasks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Automations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vision")).not.toBeInTheDocument();
+  });
+
+  it("reveals secondary tools when 'More tools' is expanded", () => {
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more tools/i }));
+    expect(
+      screen.getByRole("button", { name: /more tools/i }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Templates")).toBeInTheDocument();
+    expect(screen.getByText("Tasks")).toBeInTheDocument();
+    expect(screen.getByText("Automations")).toBeInTheDocument();
+    expect(screen.getByText("Vision")).toBeInTheDocument();
   });
 
   it("renders the Tessera brand", () => {

@@ -5,6 +5,7 @@ import { ToastProvider } from "../components/Toast";
 import { useToast } from "../components/toastContext";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Sidebar from "../components/Sidebar";
+import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
 
@@ -287,24 +288,33 @@ describe("useKeyboardShortcuts", () => {
 });
 
 describe("Sidebar shortcut hints", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    __resetSettingsStoreForTests();
+  });
+
   it("annotates nav links with the matching Ctrl/Cmd shortcut", () => {
     render(
       <MemoryRouter>
         <Sidebar />
       </MemoryRouter>,
     );
-    // Each item should expose aria-keyshortcuts; we don't pin the
-    // exact label because it depends on navigator.platform under
-    // jsdom (Linux runners report "Linux x86_64").
+    // Primary items keep their shortcut even though the visible
+    // ordering differs from the shortcut index: shortcuts read the
+    // full SIDEBAR_ITEMS array, so Home stays at 1 and Settings at 8.
+    // We don't pin the exact modifier label because it depends on
+    // navigator.platform under jsdom (Linux runners report "Linux
+    // x86_64").
     const home = screen.getByRole("link", { name: /Home/ });
     expect(home.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+1/);
-    // Settings was at shortcut 7 before Block E inserted /vision at
-    // position 7. The test pins the new layout: Vision at 7,
-    // Settings at 8.
-    const vision = screen.getByRole("link", { name: /Vision/ });
-    expect(vision.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+7/);
     const settings = screen.getByRole("link", { name: /Settings/ });
     expect(settings.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+8/);
+    // Vision lives in the collapsed "More tools" section; it is only
+    // present once expanded, and still carries its original shortcut
+    // (8th in display order before, now 7th in SIDEBAR_ITEMS).
+    fireEvent.click(screen.getByRole("button", { name: /more tools/i }));
+    const vision = screen.getByRole("link", { name: /Vision/ });
+    expect(vision.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+7/);
   });
 });
 

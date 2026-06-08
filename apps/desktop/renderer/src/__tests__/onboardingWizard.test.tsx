@@ -18,8 +18,15 @@
  * accompanying step transition.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { ModelDownloadProgress } from "../../../shared/types";
 import OnboardingWizard from "../components/OnboardingWizard";
 
 const navigateSpy = vi.fn();
@@ -71,17 +78,57 @@ describe("OnboardingWizard", () => {
     });
   });
 
-  it("featured-template click routes to /create with id AND lands on step 3", async () => {
+  it("intent → curated template click routes to /create with id AND lands on step 3", async () => {
     renderWizard();
     // Advance to step 2.
     fireEvent.click(screen.getByRole("button", { name: "Add a folder" }));
     await waitFor(() => screen.getByText("Pick a template"));
-    // Click first featured template (PRD).
-    fireEvent.click(screen.getByText("PRD").closest("button")!);
+    // Step 2 now shows the shared intent picker. Pick "Write a
+    // document" to reveal its curated templates…
+    fireEvent.click(screen.getByText("Write a document"));
+    // …then pick PRD. The Card renders as role="button"; click the
+    // label text and the event bubbles to the card's onClick.
+    fireEvent.click(screen.getByText("PRD"));
     expect(navigateSpy).toHaveBeenLastCalledWith("/create?template=prd-v1");
     await waitFor(() => {
       expect(screen.getByText("Your workspace is ready")).toBeTruthy();
     });
+  });
+
+  it("surfaces background model download progress on the template step", async () => {
+    // Capture the progress callback so the test can drive it.
+    let emit: ((p: ModelDownloadProgress) => void) | null = null;
+    window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
+      emit = cb;
+      return () => undefined;
+    });
+    window.tessera.runtime.getCurrentModel = vi.fn().mockResolvedValue(null);
+
+    renderWizard();
+    fireEvent.click(screen.getByRole("button", { name: "Add a folder" }));
+    await waitFor(() => screen.getByText("Pick a template"));
+
+    // No progress yet → no note.
+    expect(
+      screen.queryByTestId("onboarding-model-progress"),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() => expect(emit).not.toBeNull());
+    act(() => {
+      emit!({
+        modelId: "text-model-v1",
+        capability: "text",
+        format: "gguf",
+        filename: "model.gguf",
+        downloadedMb: 65,
+        totalMb: 100,
+        percent: 65,
+      });
+    });
+
+    expect(
+      screen.getByTestId("onboarding-model-progress"),
+    ).toHaveTextContent("65%");
   });
 
   it("Finish on step 3 persists onboardingCompleted before onDismiss", async () => {

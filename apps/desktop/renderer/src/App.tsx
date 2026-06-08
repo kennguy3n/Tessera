@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
+import ModelDownloadBanner from "./components/ModelDownloadBanner";
 import HomePage from "./pages/HomePage";
 import SourcesPage from "./pages/SourcesPage";
 import SourceDetailPage from "./pages/SourceDetailPage";
@@ -106,6 +107,7 @@ export default function App() {
     >
       <Sidebar collapsed={sidebarCollapsed} />
       <main className="app-main">
+        <ModelDownloadBanner />
         <Routes>
           <Route path="/" element={page("HomePage", <HomePage />)} />
           <Route path="/sources" element={page("SourcesPage", <SourcesPage />)} />

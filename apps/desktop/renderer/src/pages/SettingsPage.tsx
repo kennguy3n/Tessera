@@ -85,6 +85,10 @@ export default function SettingsPage() {
   const [modelIdleTimeoutSecs, setModelIdleTimeoutSecs] = useState<number>(
     settings.modelIdleTimeoutSecs,
   );
+  const [simplifiedNav, setSimplifiedNav] = useState(settings.simplifiedNav);
+  const [autoDownloadModel, setAutoDownloadModel] = useState(
+    settings.autoDownloadModel,
+  );
 
   useEffect(() => {
     setTheme(settings.theme);
@@ -92,6 +96,8 @@ export default function SettingsPage() {
     setIgnorePatterns(settings.ignorePatterns.join(", "));
     setWatchPatterns(settings.watchPatterns.join(", "));
     setModelIdleTimeoutSecs(settings.modelIdleTimeoutSecs);
+    setSimplifiedNav(settings.simplifiedNav);
+    setAutoDownloadModel(settings.autoDownloadModel);
   }, [settings]);
 
   const handleSave = async () => {
@@ -116,6 +122,8 @@ export default function SettingsPage() {
         .map((p) => p.trim())
         .filter(Boolean),
       modelIdleTimeoutSecs: clampedIdleTimeout,
+      simplifiedNav,
+      autoDownloadModel,
     });
     refresh();
   };
@@ -164,6 +172,90 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
+          </div>
+        </Card>
+
+        <Card>
+          <h3 style={{ marginBottom: "var(--spacing-md)" }}>
+            Navigation &amp; setup
+          </h3>
+          <div style={{ marginBottom: "var(--spacing-md)" }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "var(--spacing-sm)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={simplifiedNav}
+                data-testid="settings-simplified-nav"
+                onChange={(e) => setSimplifiedNav(e.target.checked)}
+              />
+              <span>
+                <span
+                  style={{
+                    display: "block",
+                    fontWeight:
+                      "var(--font-weight-medium)" as unknown as number,
+                    color: "var(--color-text-headline)",
+                  }}
+                >
+                  Simplified navigation
+                </span>
+                <span
+                  style={{
+                    fontSize: "var(--font-size-sm)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  Collapse secondary tools (Templates, Tasks, Automations,
+                  Vision) under a &ldquo;More tools&rdquo; section by default.
+                  Turn off to always show every item in the sidebar.
+                </span>
+              </span>
+            </label>
+          </div>
+          <div>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "var(--spacing-sm)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={autoDownloadModel}
+                data-testid="settings-auto-download-model"
+                onChange={(e) => setAutoDownloadModel(e.target.checked)}
+              />
+              <span>
+                <span
+                  style={{
+                    display: "block",
+                    fontWeight:
+                      "var(--font-weight-medium)" as unknown as number,
+                    color: "var(--color-text-headline)",
+                  }}
+                >
+                  Auto-download recommended AI model
+                </span>
+                <span
+                  style={{
+                    fontSize: "var(--font-size-sm)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  On a fresh install, download the recommended local model in
+                  the background. Turn off to stay in extraction-only mode and
+                  download models manually.
+                </span>
+              </span>
+            </label>
           </div>
         </Card>
 
