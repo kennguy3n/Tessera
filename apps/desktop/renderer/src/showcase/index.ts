@@ -71,6 +71,9 @@ function buildSources(ds: ShowcaseDataset) {
 }
 
 function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number) {
+  // Deliberate fallback: when an artifact reports `count` of 0 (e.g. a sheet or
+  // base where citations aren't surfaced per-cell), show citations for every
+  // source file so the provenance panel is never empty in the demo capture.
   const files = ds.sourceFiles.slice(0, Math.max(count, 0) || ds.sourceFiles.length);
   return files.map((f, i) => ({
     citationId: `sc-${ds.id}-cite-${i}`,
@@ -98,7 +101,7 @@ const installedModel = {
   downloadedAt: NOW,
 };
 
-const settingsData = (ds: ShowcaseDataset, artifacts: ReturnType<typeof buildArtifacts>) => ({
+const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
   theme: "light",
   defaultExportFormat: "markdown",
   ignorePatterns: [".git", "node_modules"],
@@ -123,7 +126,7 @@ export function buildShowcaseApi(personaId: string): unknown {
 
   const artifacts = buildArtifacts(ds);
   const sources = buildSources(ds);
-  let settings = settingsData(ds, artifacts);
+  let settings = settingsData(artifacts);
 
   const byId = new Map(artifacts.map((a) => [a.id, a]));
 
