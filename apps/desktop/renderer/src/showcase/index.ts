@@ -201,6 +201,20 @@ export function buildShowcaseApi(personaId: string): unknown {
       status: async () => ({ available: true, modelName: "Llama 3.2 3B Instruct", status: "ready" }),
       onToken: () => () => {},
     },
+    // Cloud connectors (Google Drive, etc.) report a clean disconnected state
+    // so the Sources page renders its empty/connect affordances rather than
+    // crashing on an undefined status.
+    connectors: {
+      status: async () => ({ provider: "google_drive", connected: false, status: "disconnected" }),
+      list: async () => [],
+      listDriveFiles: async () => [],
+      getAllRedirectUris: async () => [],
+      authenticate: async () => ({ connected: false, status: "disconnected" }),
+      disconnect: async () => ({ connected: false, status: "disconnected" }),
+      selectItems: async () => ({ ok: true }),
+      sync: async () => ({ ok: true }),
+      syncDrive: async () => ({ ok: true }),
+    },
     // KChat is an enterprise messaging connector unrelated to the demo; report
     // it unavailable so the sidebar section renders nothing instead of polling.
     kchat: {
