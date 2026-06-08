@@ -110,11 +110,18 @@ export default function ModelDownloadBanner() {
       typeof navigator === "undefined" || navigator.onLine !== false;
     if (!online) return;
     startedRef.current = true;
-    void api.runtime.getCurrentModel("text").then((record) => {
-      if (!mountedRef.current) return;
-      if (record !== null) return;
-      void start();
-    });
+    void api.runtime
+      .getCurrentModel("text")
+      .then((record) => {
+        if (!mountedRef.current) return;
+        if (record !== null) return;
+        void start();
+      })
+      .catch(() => {
+        // Bridge not ready or a transient IPC failure — stay idle so the
+        // user can still work in extraction-only mode. The download can
+        // be retried later from the Settings model panel.
+      });
   }, [loading, settings.autoDownloadModel, settings.onboardingCompleted, start]);
 
   // Auto-dismiss the success state after a short delay so the banner

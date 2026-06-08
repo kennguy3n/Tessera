@@ -104,19 +104,20 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
   const moreToolsExpanded = moreToolsChoice ?? !settings.simplifiedNav;
 
   const toggleMoreTools = useCallback(() => {
-    setMoreToolsChoice((prev) => {
-      const next = !(prev ?? !settings.simplifiedNav);
-      try {
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem(MORE_TOOLS_STORAGE_KEY, String(next));
-        }
-      } catch {
-        // Persisting the choice is best-effort; the in-memory state
-        // still drives this session even if storage is unavailable.
+    // Toggle relative to the current effective state, then persist. The
+    // side effect lives in the event handler (not the state updater,
+    // which must stay pure) so React can freely re-invoke the updater.
+    const next = !moreToolsExpanded;
+    setMoreToolsChoice(next);
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(MORE_TOOLS_STORAGE_KEY, String(next));
       }
-      return next;
-    });
-  }, [settings.simplifiedNav]);
+    } catch {
+      // Persisting the choice is best-effort; the in-memory state
+      // still drives this session even if storage is unavailable.
+    }
+  }, [moreToolsExpanded]);
 
   // Shared renderer for a single nav row so the primary list and the
   // secondary ("More tools") list stay visually identical. `showHint`
