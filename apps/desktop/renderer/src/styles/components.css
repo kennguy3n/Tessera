@@ -1333,3 +1333,687 @@
 .sheet-cf-remove {
   margin-left: auto;
 }
+
+/* ============================================================
+ * Editor controls — compact buttons
+ *
+ * Slide/Sheet/Base editors historically referenced `.btn-sm` and
+ * `.btn-xs` (plus `.danger` / `.primary` / `.active` modifiers) that
+ * were never declared, so their toolbars fell back to bare native
+ * <button> chrome and looked unpolished next to the DocumentEditor's
+ * token-driven `.editor-toolbar` / `.toolbar-btn`. These declarations
+ * bring the three editors up to the same visual bar using the shared
+ * design tokens (so they flip correctly in dark mode).
+ * ============================================================ */
+.btn-sm:not(.btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  height: 30px;
+  padding: 0 var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast),
+    border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-sm:not(.btn):hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  border-color: var(--color-text-tertiary);
+}
+
+.btn-sm:not(.btn):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.btn-sm:not(.btn):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-sm:not(.btn).primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-on-primary);
+}
+
+.btn-sm:not(.btn).primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.btn-sm:not(.btn).active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-sm:not(.btn).danger {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-light);
+  color: var(--color-danger-fg);
+}
+
+.btn-sm:not(.btn).danger:hover:not(:disabled) {
+  background: var(--color-danger-light);
+}
+
+.btn-xs:not(.btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--spacing-xs);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast),
+    border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-xs:not(.btn):hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+  color: var(--color-text-body);
+}
+
+.btn-xs:not(.btn):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.btn-xs:not(.btn):disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-xs:not(.btn).danger:hover:not(:disabled) {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-light);
+  color: var(--color-danger-fg);
+}
+
+/* ============================================================
+ * Shared editor shells — toolbar + scroll area + data grid
+ * ============================================================ */
+.sheet-editor,
+.base-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-bg-page);
+}
+
+.sheet-toolbar,
+.base-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sheet-grid-wrapper,
+.base-grid-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--color-bg-page);
+}
+
+.sheet-grid,
+.base-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-body);
+}
+
+.sheet-grid th,
+.base-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border-light);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  text-align: left;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.sheet-grid td,
+.base-grid td {
+  border-bottom: 1px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-light);
+  padding: 0;
+  background: var(--color-bg-page);
+  vertical-align: middle;
+}
+
+.sheet-grid tbody tr:hover td,
+.base-grid tbody tr:hover td {
+  background: var(--color-bg-sidebar);
+}
+
+/* ============================================================
+ * Sheet editor specifics
+ * ============================================================ */
+.sheet-formula-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: var(--color-bg-page);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sheet-formula-bar-address {
+  min-width: 56px;
+  padding: 2px var(--spacing-sm);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.sheet-formula-bar-fx {
+  font-style: italic;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+}
+
+.sheet-formula-bar-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+.sheet-formula-bar-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.sheet-row-number,
+.base-row-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: 44px;
+  min-width: 44px;
+  background: var(--color-bg-surface);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-grid td.sheet-row-number {
+  position: relative;
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.sheet-row-remove {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.sheet-grid tbody tr:hover .sheet-row-remove {
+  opacity: 1;
+}
+
+.sheet-row-remove:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+}
+
+.sheet-col-header {
+  position: relative;
+}
+
+.sheet-col-header > span:first-child {
+  color: var(--color-text-headline);
+  font-weight: var(--font-weight-semibold);
+}
+
+.sheet-col-remove,
+.base-col-remove {
+  margin-left: var(--spacing-xs);
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.sheet-col-header:hover .sheet-col-remove,
+.base-col-header:hover .base-col-remove {
+  opacity: 1;
+}
+
+.sheet-col-remove:hover,
+.base-col-remove:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+}
+
+.sheet-cell-display {
+  display: block;
+  min-height: 30px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet-cell-input {
+  width: 100%;
+  height: 30px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 2px solid var(--color-primary);
+  border-radius: 0;
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+/* ============================================================
+ * Base editor specifics
+ * ============================================================ */
+.base-select-cell {
+  width: 36px;
+  min-width: 36px;
+  text-align: center;
+}
+
+.base-col-header-content {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.base-col-sort {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-headline);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-align: left;
+  cursor: pointer;
+}
+
+.base-col-sort:hover {
+  color: var(--color-primary);
+}
+
+.base-col-type {
+  font-weight: var(--font-weight-normal);
+  font-size: 0.6875rem;
+  color: var(--color-text-tertiary);
+  text-transform: lowercase;
+}
+
+.base-filter-input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 3px var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+}
+
+.base-filter-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.base-actions-header,
+.base-actions-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.base-cell,
+.base-cell-input {
+  width: 100%;
+  min-height: 32px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+.base-cell-input:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: var(--color-bg-page);
+}
+
+.base-grid tbody tr.base-row-selected td {
+  background: var(--color-primary-soft);
+}
+
+/* ============================================================
+ * Slide editor — sidebar (thumbnails) + main (canvas)
+ * ============================================================ */
+.slide-editor {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-bg-page);
+}
+
+.slide-editor-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 248px;
+  min-width: 248px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  overflow: hidden;
+}
+
+.slide-thumbnails {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.slide-thumb-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-xs);
+}
+
+.slide-thumb-row.is-dragging {
+  opacity: 0.5;
+}
+
+.slide-thumb {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-height: 56px;
+  padding: var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.slide-thumb:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.slide-thumb.active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.slide-thumb-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.slide-thumb-title {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-headline);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slide-thumb-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.slide-sidebar-actions {
+  position: relative;
+  padding: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.slide-sidebar-actions .btn-sm {
+  width: 100%;
+}
+
+.slide-layout-menu {
+  position: absolute;
+  left: var(--spacing-sm);
+  right: var(--spacing-sm);
+  bottom: calc(100% - var(--spacing-xs));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-xs);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-modal);
+}
+
+.slide-layout-menu-item {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.slide-layout-menu-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.slide-editor-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.slide-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.slide-word-count {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.slide-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: var(--spacing-xl);
+}
+
+.slide-title-input {
+  width: 100%;
+  padding: var(--spacing-sm) 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-headline);
+  font-family: var(--font-family);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+}
+
+.slide-title-input:focus {
+  outline: none;
+  border-bottom-color: var(--color-primary);
+}
+
+.slide-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.slide-block-content {
+  width: 100%;
+  min-height: 150px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.slide-block-content:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.slide-block-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
+}
+
+.slide-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.slide-notes-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.slide-notes-input {
+  width: 100%;
+  min-height: 60px;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+}
+
+.slide-notes-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
