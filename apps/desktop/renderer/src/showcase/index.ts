@@ -40,7 +40,7 @@ function artifactId(personaId: string, slug: string): string {
 }
 
 function buildArtifacts(ds: ShowcaseDataset) {
-  return ds.artifacts.map((a, i) => ({
+  return ds.artifacts.map((a) => ({
     id: artifactId(ds.id, a.slug),
     title: a.title,
     artifactType: a.type,
@@ -49,7 +49,8 @@ function buildArtifacts(ds: ShowcaseDataset) {
     citationCount: a.citationCount,
     createdAt: NOW,
     updatedAt: NOW,
-    version: 1 + i,
+    // Each artifact is an independent entity at its first revision.
+    version: 1,
   }));
 }
 
