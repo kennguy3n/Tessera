@@ -2,7 +2,7 @@
 
 - **Persona:** Maya Okonkwo, Clinical Privacy Officer, Mercy Ridge Health
 - **Template:** `templates/documents/hipaa-incident-report.yaml` (HIPAA Incident Report)
-- **Model:** llama3.2:3b (local, via Ollama)
+- **Model:** Ternary-Bonsai 4B (GGUF Q1_0_g128) — `ternary-bonsai-4b-gguf`, via the PrismML llama.cpp `llama-server` (Tessera's on-device runtime)
 - **Input source files:** 01-helpdesk-ticket-INC-4471.md, 02-endpoint-mdm-report.md, 03-ehr-export-log.md, 04-policy-and-context.md
 
 Tessera runs each template section prompt below against the source files, grounded locally. The generated output is in the matching `outputs/` file.

@@ -2,7 +2,7 @@
 
 - **Persona:** Priya Nair, Commercial Credit Officer, Cascade Regional Bank
 - **Template:** `templates/documents/loan-proposal.yaml` (Loan / Credit Proposal)
-- **Model:** llama3.2:3b (local, via Ollama)
+- **Model:** Ternary-Bonsai 4B (GGUF Q1_0_g128) — `ternary-bonsai-4b-gguf`, via the PrismML llama.cpp `llama-server` (Tessera's on-device runtime)
 - **Input source files:** 01-borrower-financials.md, 02-market-and-risk-notes.md
 
 Tessera runs each template section prompt below against the source files, grounded locally. The generated output is in the matching `outputs/` file.

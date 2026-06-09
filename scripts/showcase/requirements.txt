@@ -1,5 +1,7 @@
 # Dependencies for the dev-only showcase artifact generator (generate.py).
 # Install with:  pip install -r scripts/showcase/requirements.txt
-# (generate.py also needs a local Ollama server reachable at $OLLAMA_HOST.)
+# (generate.py also needs Tessera's PrismML llama.cpp `llama-server` running and
+#  reachable at $TESSERA_LLM_BASE_URL, default http://127.0.0.1:8080, serving a
+#  Tessera design text model such as ternary-bonsai-4b-gguf.)
 PyYAML>=6.0
 Markdown>=3.4

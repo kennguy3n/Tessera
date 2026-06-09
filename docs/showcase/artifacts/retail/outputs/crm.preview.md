@@ -1,10 +1,10 @@
 # Sales Pipeline — Key Accounts
 
-| Account (text) | Region (select) | Owner (text) | ARR (text) | Amount (text) | Stage (select) | Health (select) |
-|---|---|---|---|---|---|---|
-| Summit Sports (West) | West | A. Okafor | $1.2M | $220K | Best Case | Green |
-| Alpine Co-op (Central) | Central | R. Mills | $780K |  |  | Yellow |
-| TrailMart (East) | East | D. Singh | $2.1M | $540K | Commit | Green |
-| Nordic Outfitters (Intl) | Intl | L. Tran | $640K | $300K | Pipeline | Green |
-| Urban Trek (West) | West | A. Okafor | $410K | $410K | Commit | Red |
-| RidgeLine Gear |  |  |  | $180K | Best Case |  |
+| Account (text) | Region (select) | Owner (text) | ARR($) (text) | Open Opportunity (text) | Amount($) (text) | Stage (select) | Health (select) |
+|---|---|---|---|---|---|---|---|
+| Summit Sports | West | A. Okafor | 1.2M | Footwear expansion | 220K | Best Case | Green |
+| Alpine Co-op | Central | R. Mills | 780K | Retention/renewal | 410K | Commit (save) | Yellow |
+| TrailMart | East | D. Singh | 2.1M | Private-label packs | 540K | Commit | Green |
+| Nordic Outfitters | Intl | L. Tran | 640K | Scandinavia lane | 300K | Pipeline | Green |
+| Urban Trek | West | A. Okafor | 410K | Retention/renewal | 410K | Commit (save) | Red |
+| RidgeLine Gear | Intl | A. Okafor | None | New logo — RidgeLine | 180K | Best Case | Green |

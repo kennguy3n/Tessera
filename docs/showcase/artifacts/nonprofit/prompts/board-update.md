@@ -2,7 +2,7 @@
 
 - **Persona:** Sofia Alvarez, Development Director, Riverside Youth Coalition
 - **Template:** `templates/slides/board-update.yaml` (Board of Directors Update)
-- **Model:** llama3.2:3b (local, via Ollama)
+- **Model:** Ternary-Bonsai 4B (GGUF Q1_0_g128) — `ternary-bonsai-4b-gguf`, via the PrismML llama.cpp `llama-server` (Tessera's on-device runtime)
 - **Input source files:** 01-program-notes-and-outcomes.md, 02-funder-rfp-and-board-context.md
 
 Tessera runs each template section prompt below against the source files, grounded locally. The generated output is in the matching `outputs/` file.

@@ -7,6 +7,15 @@
 // Activate by appending `?showcase=<persona>` to the dev URL, e.g.
 //   http://localhost:5173/?showcase=healthcare#/create
 // Guarded by `import.meta.env.DEV` in the entry point — never ships to prod.
+//
+// DESIGN-MODEL INVARIANT: the artifacts injected here are generated ONLY by a
+// Tessera design text model (the Ternary-Bonsai family in sidecars/models.json)
+// running on Tessera's own PrismML llama.cpp runtime — see
+// scripts/showcase/generate.py, which hard-fails on any off-design model id.
+// The `installedModel` / runtime identity below MUST therefore name a real
+// Tessera model. Do NOT substitute an external/stand-in model (e.g. a generic
+// Llama/Qwen Instruct build) here or in the generator without adding it to the
+// product model registry first.
 
 import type { ShowcaseDataset } from "./types";
 import { healthcareDataset } from "./generated/healthcare";
@@ -90,17 +99,21 @@ function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number
   }));
 }
 
+// Mirrors the `ternary-bonsai-4b-gguf` entry in sidecars/models.json (Tessera's
+// design text model). This is the model that actually generated the artifacts
+// above, via the PrismML llama.cpp runtime.
 const installedModel = {
-  modelId: "llama-3.2-3b-instruct",
+  modelId: "ternary-bonsai-4b-gguf",
   capability: "text" as const,
   format: "gguf" as const,
-  filename: "llama-3.2-3b-instruct-q4_k_m.gguf",
-  path: "/models/llama-3.2-3b-instruct-q4_k_m.gguf",
-  downloadSizeMb: 1920,
-  diskSizeMb: 1920,
+  filename: "ternary-bonsai-4b-q1_0_g128.gguf",
+  path: "/models/ternary-bonsai-4b-q1_0_g128.gguf",
+  downloadSizeMb: 1000,
+  diskSizeMb: 1000,
   sha256: null,
   downloadedAt: NOW,
 };
+const MODEL_NAME = "Ternary-Bonsai 4B";
 
 const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
   theme: "light",
@@ -193,16 +206,37 @@ export function buildShowcaseApi(personaId: string): unknown {
       },
     },
     runtime: {
-      detectPlatform: async () => ({ os: "macos", arch: "arm64", tier: "high" }),
+      // Report the REAL PlatformInfo shape (RuntimeStatus / ModelRuntimeCard
+      // read computeBackends, totalRamGb, preferredFormat, *Label fields). A
+      // non-Apple-Silicon host keeps the GGUF (Q1_0_g128) build platform-correct
+      // (Apple Silicon would prefer MLX), and the medium tier is the one that
+      // recommends the 4B design model the showcase advertises.
+      detectPlatform: async () => ({
+        platform: "linux-x64",
+        platformLabel: "Linux x64",
+        totalRamGb: 6,
+        tier: "medium",
+        tierLabel: "Medium (4-6 GB RAM)",
+        computeBackends: ["cpu"],
+        preferredFormat: "gguf",
+      }),
       getCurrentModel: async () => installedModel,
-      getInstalledModels: async () => ({ text: installedModel }),
-      recommendModel: async () => ({ id: installedModel.modelId, name: "Llama 3.2 3B Instruct" }),
-      listModels: async () => [{ id: installedModel.modelId, name: "Llama 3.2 3B Instruct" }],
+      // Real bridge returns Record<ModelCapability, InstalledModelRecord|null>
+      // with all three slots present; the showcase is text-only, so vision /
+      // imagegen are explicitly null (uninstalled) rather than absent — matches
+      // the real shape if any consumer enumerates capabilities via Object.keys.
+      getInstalledModels: async () => ({
+        text: installedModel,
+        vision: null,
+        imagegen: null,
+      }),
+      recommendModel: async () => ({ id: installedModel.modelId, name: MODEL_NAME }),
+      listModels: async () => [{ id: installedModel.modelId, name: MODEL_NAME }],
       isCapabilityAvailable: async () => true,
       onDownloadProgress: () => () => {},
     },
     model: {
-      status: async () => ({ available: true, modelName: "Llama 3.2 3B Instruct", status: "ready" }),
+      status: async () => ({ available: true, modelName: MODEL_NAME, status: "ready" }),
       onToken: () => () => {},
     },
     // Cloud connectors (Google Drive, etc.) report a clean disconnected state

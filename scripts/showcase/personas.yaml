@@ -2,10 +2,14 @@
 #
 # Each persona maps a real job role + market segment to real Tessera templates.
 # The generator (generate.py) reads this, loads each template's REAL section
-# prompts, feeds the persona's input source files to a local LLM (Ollama),
-# and produces genuine generated artifacts + a transparent prompt log.
-
-model: llama3.2:3b
+# prompts, feeds the persona's input source files to Tessera's on-device runtime
+# (the PrismML llama.cpp `llama-server`), and produces genuine generated
+# artifacts + a transparent prompt log.
+#
+# `model` MUST be a Tessera DESIGN text model id from sidecars/models.json
+# (capability=text). generate.py hard-fails on anything else, so an off-design
+# stand-in model can never silently produce showcase artifacts.
+model: ternary-bonsai-4b-gguf
 
 personas:
   - id: healthcare

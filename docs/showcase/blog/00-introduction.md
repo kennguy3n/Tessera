@@ -42,11 +42,12 @@ acceptable outcome.
 ## What makes this different from a normal demo
 
 **1. The artifacts are genuinely generated, not written.**
-Every output in this series came out of a local `llama3.2:3b` model, prompted with the
-*verbatim* section prompts from Tessera's real template library, grounded only in each
-persona's source files. We did not edit the model's prose. Where it hedges, repeats, or
-leans on a citation, you see exactly that — because that is what source-backed generation
-actually looks like.
+Every output in this series came out of Tessera's own on-device model — **Ternary-Bonsai 4B**
+(the GGUF `Q1_0_g128` build from Tessera's model registry, running on Tessera's PrismML
+llama.cpp runtime) — prompted with the *verbatim* section prompts from Tessera's real
+template library, grounded only in each persona's source files. We did not edit the model's
+prose. Where it hedges, repeats, or leans on a citation, you see exactly that — because that
+is what source-backed, on-device generation actually looks like.
 
 **2. You can inspect every step.**
 For each persona, the [`artifacts/`](../artifacts) folder contains:

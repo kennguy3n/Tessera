@@ -16,295 +16,244 @@ export const financeDataset: ShowcaseDataset = {
       citationCount: 2,
       content: `<h1>Loan / Credit Proposal</h1>
 <h2>Transaction Summary</h2>
-<h4>Borrower Name: Riverbend Logistics LLC</h4>
-<h4>Facility Type: Equipment Term Loan</h4>
-<h4>Requested Amount: $3,200,000</h4>
-<h4>Proposed Term: 60 months</h4>
-<h4>Proposed Amortization: Monthly amortization</h4>
-<h4>All-in Pricing:</h4>
-<ul>
-<li><strong>Rate:</strong> Prime + 1.75% (floor 8.0%)</li>
-<li><strong>Fees:</strong> [02-market-and-risk-notes.md]</li>
-</ul>
-<h4>Use of Proceeds:</h4>
-<p>The proceeds will be used to purchase 18 new tractors and 24 trailers to replace aging fleet and add two regional lanes.</p>
-<h4>Recommended Action</h4>
-<p>Priya Nair, Commercial Lending Officer, is requested to approve this transaction. The credit officer's approval level for this facility type is required.</p>
+<p>The requested facility is a term loan of $3,200,000 for the purchase of 18 new tractors and 24 trailers, with a 60-month term and monthly amortization. The proposed rate is prime plus 1.75%, resulting in an all-in pricing of approximately 8.0% (floor). The use of proceeds is directly tied to fleet modernization and expansion of regional lanes to serve underserved mid-size shippers. The loan is secured by a first lien on the financed equipment (valued at $3,640K) and a blanket UCC-1 on business assets, providing a robust collateral structure.  </p>
+<p>The DSCR for the proposed facility, based on FY2025 EBITDA of $4,310K and pro-forma total debt service of $1,830K, is approximately 2.35x, exceeding the bank’s 1.25x DSCR covenant floor. Additionally, the pro-forma total debt-to-EBITDA ratio is approximately 1.47x, which remains within the bank’s recommended 2.5x limit. While fuel price volatility remains a margin risk, the borrower has implemented a fuel surcharge pass-through tied to the DOE index, which has historically supported cash flow stability and ensures DSCR remains above 1.7x under stress conditions.  </p>
+<p>The credit officer, Priya Nair, recommends approval of the transaction. This decision is supported by the borrower’s clean financial history, including a prior $1.2M term loan fully repaid in 2024 with no delinquencies, and a current total debt of $3,150K. The proposed covenants—minimum DSCR of 1.25x tested quarterly and maximum total debt/EBITDA of 2.5x—are aligned with the bank’s risk appetite and are consistent with the financial performance and asset coverage outlined in the source files. Approval is subject to the assignment of $2M in key-person life insurance to the bank as a condition, which is recommended to mitigate individual risk exposure.  </p>
+<p>Approval Level Required: Approved</p>
 <h2>Borrower Profile</h2>
-<p>Riverbend Logistics LLC is a regional less-than-truckload (LTL) carrier incorporated in the state of Washington. The company's ownership structure consists of Elena Marsh (70%) and Tomas Reyes (30%), both personally guaranteeing the facility. As of 2026, the borrower has been operating for 12 years, with its headquarters located in Spokane, WA.</p>
-<p>The company employs 184 individuals and operates primarily in the Pacific Northwest region. Riverbend Logistics LLC's industry is well-established, with a strong demand for LTL freight services in the area. The borrower has maintained a clean banking relationship with Cascade Regional Bank, having repaid a prior $1.2M term loan in 2024 without any delinquencies.</p>
-<p>In recent years, the company has experienced steady growth, with revenue increasing by ~4% YoY in FY2025. Key milestones include the origination of the business in 2014 and the expansion of its operations through the addition of two new regional lanes in 2025.</p>
+<p>Riverbend Logistics LLC is a regional less-than-truckload (LTL) carrier operating under the legal structure of a limited liability company (LLC). The entity is headquartered in Spokane, Washington, and operates within the Pacific Northwest, serving primarily mid-sized shippers across key corridors including Spokane–Boise and Spokane–Portland. Founded in 2014, the company has maintained a stable business trajectory over the past six years, with a consistent headcount of 184 employees. The ownership structure consists of 70% held by Elena Marsh, CEO, and 30% by Tomas Reyes, COO, both of whom personally guarantee the loan.</p>
+<p>The company has a clean lending history, having secured a prior $1.2 million term loan in 2024, which was fully repaid with no delinquencies or non-performance fees over the subsequent 24 months. This established financial stability supports the current request for a $3.2 million equipment term loan. Riverbend Logistics LLC operates in a competitive but growing LTL market, where demand in the Pacific Northwest increased by approximately 4% year-over-year in 2025. The business has focused on expanding regional capacity through the addition of two new lanes, targeting underserved market segments with a strategic emphasis on operational efficiency and driver retention.</p>
+<p>Ownership remains stable, with no recent changes to the principal shareholders. Elena Marsh continues as CEO, and Tomas Reyes as COO, both of whom have been instrumental in the company’s growth and fleet modernization. The company's strong financial performance, as reflected in consistent revenue growth and improving margins, underscores its operational resilience. Key milestones include the transition to a more modernized fleet in 2023 and the successful launch of the two new regional lanes in early 2025, which have contributed to improved service delivery and market positioning.</p>
 <h2>Business Description and Strategy</h2>
-<h4>Overview</h4>
-<p>Riverbend Logistics LLC is a regional less-than-truckload (LTL) carrier specializing in expedited freight services to mid-size shippers across the Pacific Northwest. With a strong focus on customer satisfaction, Riverbend has established itself as a reliable partner for its clients.</p>
-<h4>Product and Service Offerings</h4>
-<p>The company's core product offerings include expedited LTL freight services, utilizing a fleet of 18 new tractors and 24 trailers acquired through the proposed facility. Additionally, Riverbend provides fuel surcharge pass-through to manage margin risk, ensuring a stable revenue stream despite fluctuations in diesel prices.</p>
-<h4>Customer Base</h4>
-<p>Riverbend's customer base is concentrated among top 10 clients, accounting for approximately 38% of its revenue. The largest single customer represents less than 9% of total revenue. Long-term relationships and contract terms are prevalent, with an average tenure of over 2 years.</p>
+<p>The business is Riverbend Logistics LLC, a regional less-than-truckload (LTL) carrier operating primarily in the Pacific Northwest. The company provides on-demand freight transportation services to mid-size shippers, focusing on efficiency and reliability in last-mile delivery. Its strategic expansion includes the addition of two new regional lanes—Spokane–Boise and Spokane–Portland—targeting underserved markets with growing demand, particularly in the logistics and supply chain sectors. Revenue growth has been consistent, increasing from $24.1M in FY2023 to $31.6M in FY2025, reflecting a strong market position and effective service delivery.</p>
+<p>Customer concentration remains moderate, with the top 10 customers accounting for 38% of revenue and the largest single customer representing 9% of total revenue—no customer exceeds 10%. The company maintains a stable customer base through long-term contracts and consistent service performance, with tenure averaging over 3 years. Contract terms are typically 12-month fixed commitments with renewal options based on performance, and the borrower has demonstrated a track record of on-time payments and low default rates. Supplier relationships are diversified, with a primary focus on equipment and fuel suppliers, and the company passes ~70% of fuel cost through a fuel surcharge tied to the DOE index, which helps stabilize margins.</p>
+<p>Riverbend Logistics is positioned as a competitive, locally focused alternative to larger national carriers, leveraging its proximity to major distribution hubs and its ability to serve niche, time-sensitive shipments. The management team includes experienced executives, with CEO Elena Marsh and COO Tomas Reyes both personally guaranteeing the loan and contributing to operational oversight. Over the next 24–36 months, the strategic plan includes expanding fleet capacity to support increased demand, improving driver retention through targeted training and incentives, and enhancing service reliability to strengthen customer relationships and market share. The acquisition of 18 new tractors and 24 trailers is aligned with this growth, ensuring operational scalability and improved route efficiency.</p>
 <h2>Financial Performance</h2>
 <table>
 <thead>
 <tr>
 <th>Metric</th>
+<th>Basis</th>
 <th>FY2023</th>
 <th>FY2024</th>
 <th>FY2025</th>
+<th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Revenue</td>
-<td>$24,100</td>
-<td>$27,850</td>
-<td>$31,600</td>
+<td>Audited</td>
+<td>24,100</td>
+<td>27,850</td>
+<td>31,600</td>
+<td>Non-recurring adjustments: no significant one-time events reported</td>
 </tr>
 <tr>
 <td>EBITDA</td>
-<td>$3,050</td>
-<td>$3,720</td>
-<td>$4,310</td>
+<td>Audited</td>
+<td>3,050</td>
+<td>3,720</td>
+<td>4,310</td>
+<td>Consistent with prior financials; no major non-recurring adjustments</td>
 </tr>
 <tr>
-<td>Net income</td>
-<td>$980</td>
-<td>$1,340</td>
-<td>$1,690</td>
+<td>Net Income</td>
+<td>Audited</td>
+<td>980</td>
+<td>1,340</td>
+<td>1,690</td>
+<td>Non-recurring adjustments: none noted</td>
 </tr>
 <tr>
-<td>Free cash flow</td>
-<td>($250)</td>
-<td>$(410)</td>
-<td>$440</td>
+<td>Free Cash Flow</td>
+<td>Calculated (EBITDA - Total Debt Service)</td>
+<td>1,970</td>
+<td>2,940</td>
+<td>3,480</td>
+<td>Based on pro-forma debt service; no non-recurring adjustments</td>
 </tr>
 <tr>
-<td>Total debt</td>
-<td>$4,200</td>
-<td>$3,600</td>
-<td>$3,150</td>
+<td>Total Debt</td>
+<td>Audited</td>
+<td>4,200</td>
+<td>3,600</td>
+<td>3,150</td>
+<td>Includes prior $1.2M term loan (paid off in 2024), no new debt before funding</td>
 </tr>
 <tr>
-<td>Equity</td>
-<td>$5,100</td>
-<td>$6,200</td>
-<td>$7,600</td>
+<td>Total Equity</td>
+<td>Audited</td>
+<td>5,100</td>
+<td>6,200</td>
+<td>7,600</td>
+<td>Reflects equity growth post-2024 loan repayment</td>
 </tr>
 <tr>
 <td>Debt/EBITDA</td>
-<td>0.69x</td>
-<td>0.62x</td>
-<td>0.55x</td>
+<td>Pro-forma, reviewed</td>
+<td>1.47x</td>
+<td>1.47x</td>
+<td>1.47x</td>
+<td>Stable; no significant changes</td>
 </tr>
 <tr>
-<td>Fixed-charge coverage</td>
-<td>1.35x</td>
-<td>1.45x</td>
-<td>1.60x</td>
+<td>Fixed-Charge Coverage</td>
+<td>Pro-forma, reviewed</td>
+<td>1.23x</td>
+<td>1.23x</td>
+<td>1.23x</td>
+<td>Based on pro-forma operating expenses and fixed charges; no major adjustments</td>
 </tr>
 <tr>
-<td>Interest coverage</td>
-<td>2.15x</td>
-<td>2.30x</td>
-<td>2.50x</td>
+<td>Interest Coverage</td>
+<td>Pro-forma, reviewed</td>
+<td>1.85x</td>
+<td>1.85x</td>
+<td>1.85x</td>
+<td>Assumed stable; based on pro-forma interest expense and EBITDA</td>
 </tr>
 <tr>
-<td>Debt/equity</td>
-<td>0.41x</td>
-<td>0.37x</td>
-<td>0.33x</td>
+<td>Debt/Equity</td>
+<td>Pro-forma, reviewed</td>
+<td>0.74x</td>
+<td>0.58x</td>
+<td>0.49x</td>
+<td>Declining trend; stable within acceptable range</td>
 </tr>
 </tbody>
 </table>
+<p><strong>Basis Note:</strong> All financial metrics are derived from audited financial statements [01-borrower-financials.md] and reviewed pro-forma projections. No non-recurring adjustments were identified in the source data.</p>
 <h2>Cash Flow and Repayment Source</h2>
-<h4>Base Scenario</h4>
-<p>Under the base scenario, we expect Riverbend Logistics LLC to generate sufficient cash flow from its operating activities to service the proposed equipment term loan. Our analysis indicates that the company's EBITDA will increase by 10% in the first year of the loan, reaching $4,362K, and then stabilize at $4,310K for the remaining 59 months of the loan term. Based on this, we estimate the monthly debt service to be approximately $780K, which is within our bank's comfort level.</p>
-<h4>Downside Scenario</h4>
-<p>In the event of a 20% revenue decline and a 200 bps increase in interest rates, Riverbend's cash flow profile becomes more challenging. However, our analysis suggests that the company's DSCR will remain above the required threshold of 1.25x, albeit at a slightly lower level. Under these conditions, we expect the monthly debt service to increase to approximately $920K. To mitigate this risk, we propose a secondary repayment source through asset sale, where Riverbend can sell its excess assets to refinance or repay the loan.</p>
-<h4>Secondary Repayment Source</h4>
-<p>As an additional measure to ensure timely repayment of the loan, we recommend that Riverbend Logistics LLC assign a life insurance policy worth $2M to the bank as collateral. This will provide a tertiary repayment source in case of default and ensure that the company has sufficient coverage to meet its obligations under the loan agreement.</p>
+<p>Under base conditions, the primary repayment source for the $3,200,000 equipment term loan is operating cash flow, driven by revenue growth and improved gross margins. Based on the financial summary, Riverbend Logistics reported $31,600K in revenue in FY2025, with a gross margin of 23.1% and EBITDA of $4,310K. With an annual debt service of approximately $780K, the DSCR is projected at 2.35x, indicating strong operational coverage. This cash flow is consistent with the company’s stable revenue trajectory and efficient cost management, as reflected in the 15% year-over-year increase in EBITDA from FY2024 to FY2025.</p>
+<p>In a downside scenario involving a 20% revenue decline (projected to $25,280K) and a 200 bps higher interest rate (resulting in a 1.75% cost of capital or 8.25% loan rate), the pro-forma EBITDA is adjusted to $3,470K, maintaining a DSCR of approximately 1.6x—still above the bank’s 1.25x covenant floor. Despite the revenue contraction, the company’s operating cash flow remains robust due to the fuel surcharge mechanism, which absorbs ~70% of diesel cost volatility. This ensures that even during downturns, the core business generates sufficient cash to service the loan.</p>
+<p>The secondary repayment source is the blanket UCC-1 on accounts receivable ($3.1M), which provides secondary coverage during periods of reduced cash flow. Additionally, the company’s ownership structure includes a personal guarantee from CEO Elena Marsh, and the proposal includes a $2M key-person life insurance policy assigned to the bank as a condition to ensure repayment security. No asset sale or refinancing is proposed in the base case, but the collateral and guarantor obligations remain sufficient to meet the loan’s obligations under all tested scenarios.</p>
 <h2>Collateral and Security Package</h2>
 <table>
 <thead>
 <tr>
-<th><strong>Collateral Description</strong></th>
+<th><strong>Item</strong></th>
 <th><strong>Details</strong></th>
+<th><strong>Source</strong></th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Real Estate (Headquarters)</td>
-<td>70% Elena Marsh (CEO), 30% Tomas Reyes (COO) personally guaranteeing; Appraised value: $1,200,000 [01-borrower-financials.md]; LTV ≈ 100%</td>
+<td><strong>Real Estate</strong></td>
+<td>No real estate holdings are part of the collateral package.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 <tr>
-<td>Equipment (Financed)</td>
-<td>Vendor quotes total $3,640K; Loan-to-Value at funding ≈ 88% [02-market-and-risk-notes.md]; First lien on the financed equipment (titled); New Class-8 tractors hold value well; Estimated 3-year residual ≈ 55-60% of cost</td>
+<td><strong>Equipment</strong></td>
+<td>18 new tractors and 24 trailers; total value: $3,640K (vendor quotes); loan-to-value at funding: ~88%.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 <tr>
-<td>Inventory and Accounts Receivable</td>
-<td>Advance rates: 80% for inventory, 90% for accounts receivable [02-market-and-risk-notes.md]; Eligibility criteria: inventory must be in good condition, accounts receivable must be less than 30 days old; No specific requirements for substandard or obsolete items</td>
+<td><strong>Inventory &amp; Accounts Receivable</strong></td>
+<td>Inventory and accounts receivable are not specifically referenced in the financials or collateral analysis. No advance rates or eligibility criteria provided.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 <tr>
-<td>Cash</td>
-<td>$1,250 (as of FY2025) [01-borrower-financials.md]; Held in a separate account at the bank; Eligibility criteria: cash must be available for immediate use by the business</td>
+<td><strong>Cash</strong></td>
+<td>$2,240K in cash (pro-forma, FY2025); available as a security asset.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 <tr>
-<td>Securities</td>
-<td>None reported [02-market-and-risk-notes.md]</td>
+<td><strong>Securities</strong></td>
+<td>No securities are referenced in the collateral or security package.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 <tr>
-<td>Intellectual Property (IP)</td>
-<td>No specific details provided [02-market-and-risk-notes.md]; IP is not considered a significant source of value for the business</td>
+<td><strong>Intellectual Property (IP)</strong></td>
+<td>No IP assets are identified as collateral.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 <tr>
-<td>Blanket Lien</td>
-<td>UCC-1 blanket lien on business assets, providing secondary coverage [02-market-and-risk-notes.md]; Prior liens: none reported; Subordination or intercreditor agreements: to be determined</td>
+<td><strong>Blanket Lien</strong></td>
+<td>A blanket UCC-1 lien is proposed on business assets, including accounts receivable ($3.1M) and rolling stock, providing secondary coverage.</td>
+<td>02-market-and-risk-notes.md</td>
+</tr>
+<tr>
+<td><strong>Prior Liens</strong></td>
+<td>A prior $1.2M term loan was fully paid off in 2024 with no delinquencies. No prior liens on equipment or assets are noted.</td>
+<td>01-borrower-financials.md</td>
+</tr>
+<tr>
+<td><strong>Lien Position</strong></td>
+<td>First lien is placed on the financed equipment (titled); secondary coverage via blanket UCC-1 on business assets.</td>
+<td>02-market-and-risk-notes.md</td>
+</tr>
+<tr>
+<td><strong>Subordination or Intercreditor Agreements</strong></td>
+<td>No subordination or intercreditor agreements are mentioned in the provided files.</td>
+<td>01-borrower-financials.md</td>
+</tr>
+<tr>
+<td><strong>Intercreditor Agreement</strong></td>
+<td>Not applicable; no other debt instruments or intercreditor obligations are referenced.</td>
+<td>01-borrower-financials.md</td>
 </tr>
 </tbody>
 </table>
-<p>Note: The information provided in this section is based solely on the source files provided and may not be comprehensive or up-to-date.</p>
 <h2>Guarantors and Other Credit Support</h2>
-<h4>Personal Guarantors</h4>
-<ul>
-<li>Elena Marsh (CEO) - Financial strength: <strong>Strong</strong>; form of guaranty: Unlimited personal liability; validity: Until death or incapacitation; payment: Absolute.</li>
-<li>Tomas Reyes (COO) - Financial strength: <strong>Strong</strong>; form of guaranty: Unlimited personal liability; validity: Until death or incapacitation; payment: Absolute.</li>
-</ul>
-<h4>Corporate Guarantors</h4>
-<ul>
-<li>Riverbend Logistics LLC - Form of guaranty: Limited, as per state law; validity: Until the principal debt is satisfied; payment: Limited to the company's assets.</li>
-</ul>
-<h3>Other Credit Support</h3>
-<ul>
-<li>The bank will be provided with a letter of credit from a major financial institution in an amount equal to 10% of the facility's outstanding balance.</li>
-</ul>
+<p>The primary guarantors of Riverbend Logistics LLC are its founders, Elena Marsh (CEO) and Tomas Reyes (COO), who each hold a 70% and 30% ownership interest respectively. Both individuals personally guarantee the facility loan, providing direct personal liability for repayment. Their financial strength is supported by their respective roles in the company’s operations and ownership structure; as the CEO and COO, they are directly involved in revenue generation and financial oversight. The form of the guarantee is limited to the specific loan amount and is valid for the full term of the facility agreement. No additional financial strength is currently documented beyond their ownership equity and personal assets, which are not quantified in the provided files.</p>
+<p>No corporate guarantees or third-party financial instruments are attached to the facility loan. The borrower has not provided any letters of credit, deposit accounts, or parent company comfort letters as part of the credit support package. The proposed loan is secured solely by a first lien on the financed equipment and a blanket UCC-1 on business assets, which serve as primary and secondary collateral. While the company maintains a clean banking relationship with Cascade Regional Bank—having repaid a prior $1.2M term loan in 2024 with no delinquencies—the absence of formal credit support mechanisms from third parties is noted in the source documentation.</p>
+<p>A key person life insurance policy of $2M has been assigned to the bank as a condition of the loan, providing a layer of credit support in the event of the failure of the primary guarantors. This policy is intended to mitigate the risk associated with the personal guarantees and is consistent with the bank’s risk mitigation practices. The policy is valid for the full term of the loan and is subject to the bank’s underwriting review. No other credit support mechanisms, such as parent company guarantees or operating leases, are referenced in the provided financial or risk files.</p>
 <h2>Covenants and Reporting Requirements</h2>
 <table>
 <thead>
 <tr>
-<th>Covenant/Requirement</th>
-<th>Proposed Value</th>
-<th>Cushion to Projected Performance</th>
+<th>Covenant / Requirement</th>
+<th>Detail</th>
+<th>Source</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Debt-to-EBITDA Cap</td>
-<td>2.5x</td>
-<td>0.25x (10% buffer)</td>
+<td><strong>Debt-to-EBITDA ratio cap</strong></td>
+<td>Maximum total debt service to EBITDA shall not exceed 2.5x. This cap is designed to provide a buffer against cyclical downturns and maintain financial stability.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 <tr>
-<td>Fixed-Charge Coverage Floor</td>
-<td>1.20x</td>
-<td>0.05x (4% buffer)</td>
+<td><strong>Fixed-charge coverage floor</strong></td>
+<td>Fixed-charge coverage shall be maintained at a minimum of 1.25x EBITDA. This ensures sufficient liquidity to meet operational obligations even during periods of reduced revenue.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 <tr>
-<td>Minimum Liquidity</td>
-<td>$1,200,000</td>
-<td>-</td>
+<td><strong>Minimum liquidity requirement</strong></td>
+<td>Cash reserves shall remain at a minimum of 1.5x of annual operating expenses. This requirement supports liquidity for debt service and unexpected operational demands.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 <tr>
-<td>Capex Limit</td>
-<td>$500,000</td>
-<td>-</td>
-</tr>
-</tbody>
-</table>
-<table>
-<thead>
-<tr>
-<th>Affirmative Covenant</th>
-<th>Requirement</th>
-<th>Frequency</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Financial Reporting Cadence</td>
-<td>Quarterly financial statements and EBITDA calculation</td>
-<td>Q3, 6 months after end of fiscal year</td>
+<td><strong>Cap on capital expenditures (Capex)</strong></td>
+<td>Total annual Capex shall not exceed $1.2M. This aligns with the company’s projected investment in new equipment and infrastructure.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 <tr>
-<td>Insurance Certificate</td>
-<td>Life insurance assignment for key person (Elena Marsh)</td>
-<td>Annually, with 30-day notice prior to policy expiration</td>
+<td><strong>Affirmative covenants</strong></td>
+<td>- Financial reporting shall be quarterly, with full audited statements provided to the bank by the end of each quarter. <br> - Key-person life insurance (CEO Elena Marsh) shall be assigned to Cascade Regional Bank as a condition of the loan. <br> - The borrower shall maintain current compliance certificates, including those for environmental, labor, and financial regulations.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 <tr>
-<td>Compliance Certificates</td>
-<td>Proof of compliance with regulatory requirements and industry standards</td>
-<td>Annually, with 30-day notice prior to certification expiration</td>
-</tr>
-</tbody>
-</table>
-<table>
-<thead>
-<tr>
-<th>Negative Covenant</th>
-<th>Prohibited Action</th>
-<th>Trigger Event</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Additional Debt</td>
-<td>Increase in total debt by more than $200,000</td>
-<td>Quarterly financial statement submission</td>
+<td><strong>Negative covenants</strong></td>
+<td>- No additional debt shall be taken on without prior written consent from the Commercial Lending Department. <br> - No liens shall be placed on any financed equipment or business assets. <br> - No dividends shall be declared without bank approval. <br> - No material mergers or acquisitions shall occur without prior notification and bank consent.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 <tr>
-<td>Liens</td>
-<td>Creation of new liens on collateral or business assets</td>
-<td>Annually, with 30-day notice prior to lien creation</td>
-</tr>
-<tr>
-<td>Dividends</td>
-<td>Payment of dividends to shareholders</td>
-<td>Quarterly financial statement submission</td>
-</tr>
-</tbody>
-</table>
-<table>
-<thead>
-<tr>
-<th>Reporting Requirements</th>
-<th>Requirement</th>
-<th>Format</th>
-<th>Certifying Officer</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Financial Statements</td>
-<td>Quarterly and annual financial statements in accordance with GAAP</td>
-<td>PDF format, signed and dated by authorized officer</td>
-<td></td>
-</tr>
-<tr>
-<td>EBITDA Calculation</td>
-<td>Calculation and submission of EBITDA in accordance with agreed-upon methodology</td>
-<td>Excel spreadsheet, signed and dated by authorized officer</td>
-<td></td>
+<td><strong>Reporting requirements</strong></td>
+<td>- Financial statements (income, balance sheet, cash flow) shall be submitted in PDF format, audited and signed by the CFO, to the Commercial Lending Department every quarter. <br> - Quarterly DSCR and debt-to-EBITDA ratios shall be reported to the bank to ensure covenant compliance. <br> - The certifying officer for financial disclosures shall be the Chief Financial Officer (CFO) of Riverbend Logistics LLC.</td>
+<td>[02-market-and-risk-notes.md]</td>
 </tr>
 </tbody>
 </table>
 <h2>Risk Assessment and Risk Rating</h2>
-<p>The proposed facility is rated as <strong>Low-Risk</strong> on our internal scale, reflecting a strong credit profile and solid risk management practices.</p>
-<p>The primary driver of this rating is Riverbend's demonstrated ability to manage its financials effectively, with a clean banking history and no recent delinquencies. The company's tight labor market management and fuel surcharge pass-through also contribute to this assessment. Additionally, the proposed covenants, including a minimum DSCR of 1.25x tested quarterly, provide an adequate level of risk protection for the bank.</p>
-<p>While industry cyclicality is always a consideration, Riverbend's strong revenue growth and EBITDA margins suggest that it can navigate potential downturns. The company's customer concentration and key person risks are also mitigated by the presence of multiple large customers and a robust management structure.</p>
-<p>[02-market-and-risk-notes.md]</p>
+<p>The proposed risk rating for Riverbend Logistics LLC is <strong>Low Risk</strong>, consistent with the bank’s internal credit scale and the prior period’s stable financial performance. This assessment is based on a DSCR of approximately 2.35x in FY2025, which exceeds the bank’s 1.25x DSCR covenant floor, and a pro-forma total debt/EBITDA ratio of approximately 1.47x, well within the 2.5x threshold. The borrower maintains a clean credit history, with no delinquencies on prior accounts and a fully repaid $1.2M term loan in 2024. The primary risk factors—fuel/margin volatility, customer concentration, management succession, and regulatory exposure—are all adequately mitigated by the proposed financial structure and risk management mechanisms.</p>
+<p>Principal risks include industry volatility due to diesel price fluctuations and cyclical demand patterns, customer concentration (top 10 customers accounting for 38% of revenue), and reliance on key management (CEO Elena Marsh). Diesel price volatility is addressed through a fuel surcharge pass-through tied to the DOE index, which has historically provided a buffer during price spikes. Customer concentration remains manageable, as the largest single customer represents only 9% of revenue and no customer exceeds 10%. Management succession is mitigated by the assignment of a $2M key-person life insurance policy to the bank, providing a financial safeguard in the event of leadership transition. Regulatory risks are minimal, as the facility operates within standard LTL regulations and no pending regulatory actions or compliance issues are noted in the source files.</p>
+<p>Compared to the prior period (FY2024), where DSCR was 2.2x and total debt/EBITDA was 1.5x, the current proposal reflects improved financial stability and a stronger operational position. While the 2025 EBITDA growth is driven by demand expansion and new lane operations, the financial model remains robust under stress conditions, with a 15% revenue decline still yielding a DSCR of approximately 1.6x—above the bank’s 1.25x threshold. The combination of strong margin protection, low turnover, and proactive risk allocation ensures that the facility remains within acceptable risk parameters for commercial lending.</p>
 <h2>Approval Recommendation</h2>
-<h4>Conditions of Approval</h4>
-<p>The proposed $3,200,000 equipment term loan for Riverbend Logistics LLC is approved, subject to the following conditions:</p>
-<ul>
-<li>The Borrower must maintain a minimum DSCR of 1.25x tested quarterly and provide regular financial updates.</li>
-<li>The Borrower must not incur any new NSFs or late payments during the loan term.</li>
-</ul>
-<h4>Relationship View</h4>
-<p>Total Commitment: $3,200,000 (Equipment Term Loan)</p>
-<p>Anticipated Revenue from Cross-Sell: Estimated 10% increase in revenue from existing customers leveraging the new equipment and services offered by Riverbend Logistics LLC.</p>
-<p>Relationship Profitability Analysis:<br />
-The relationship has a proven track record of clean credit history, with prior loan repayment and no NSFs in the past 24 months. The proposed covenants are reasonable and aligned with industry standards. With this approval, we anticipate a strong repayment profile for the facility and continued growth for Riverbend Logistics LLC.</p>
-<h4>Approval Authority</h4>
-<p>This approval is authorized by Priya Nair, Commercial Lending Officer at Cascade Regional Bank.</p>
-<h4>Signatures Required</h4>
-<p>Priya Nair, Commercial Lending Officer<br />
-Cascade Regional Bank</p>`,
+<p>Approval Recommendation: The proposed $3,200,000 equipment term loan for Riverbend Logistics LLC is approved on the condition that the bank receives a signed assignment of $2M key-person life insurance from CEO Elena Marsh within 30 days of close. The facility aligns with the bank’s strategic focus on regional LTL carriers, with a projected 4% increase in cross-sell revenue from expanded regional lanes targeting underserved mid-size shippers. Given the strong FY2025 financial performance and a DSCR of approximately 2.35x at funding, the loan meets the bank’s minimum DSCR of 1.25x and remains within the 2.5x total debt/EBITDA covenant. The loan is secured by a first lien on financed equipment (valued at $3,640K) and a blanket UCC-1 on accounts receivable and rolling stock, providing robust collateral coverage.</p>
+<p>Post-close milestones include quarterly DSCR testing and a review of total debt service against EBITDA to ensure ongoing compliance. A step-down in the total debt/EBITDA ratio to 1.47x is proposed at the end of Year 2, contingent on sustained operational performance and a 15% revenue decline stress test result of DSCR ≈ 1.6x. The relationship remains clean with a six-year banking history and no delinquencies in the prior 24 months, and the proposed funding does not exceed the borrower’s current capacity. The loan is structured to maintain a healthy leverage profile and mitigate primary risk through fuel surcharge pass-through, which is expected to preserve DSCR above 1.7x under current market conditions.</p>
+<p>Total commitment from the borrower is $3,200,000, with anticipated cross-sell revenue of $1.2M from the new regional lanes. The relationship profitability analysis indicates that the loan will not reduce net income below $1.69M in FY2025, and the projected EBITDA growth of $4,310K supports a favorable DSCR and operating margin. Approval is subject to the bank’s credit officer and risk manager review; final sign-off requires endorsement from both the Commercial Lending Director and the Risk Management Lead.</p>`,
     },
     {
       slug: "financial-projection",
@@ -313,7 +262,7 @@ Cascade Regional Bank</p>`,
       templateId: "sales-forecast-v1",
       templateName: "Sales Forecast",
       citationCount: 0,
-      content: `{"columns": ["Line Item ($000s unless %)", "FY2026E", "FY2027E", "FY2028E"], "rows": [["Revenue", "$32.2M", "$34.3M", "$36.5M"], ["Gross Margin %", "22.1%", "23.0%", "24.0%"], ["EBITDA", "$4,370K", "$4,750K", "$5,130K"], ["New Facility Debt Service", "$780K", "$840K", "$900K"], ["Total Debt Service", "$1,050K", "$1,100K", "$1,150K"], ["DSCR (x)", "2.40x", "2.50x", "2.60x"], ["Net Income", "$1,730K", "$1,850K", "$1,970K"], ["Cash", "$1,710K", "$1,840K", "$1,980K"]]}`,
+      content: `{"columns": ["Revenue", "Gross margin %", "EBITDA", "New Facility Debt Service", "Total Debt Service", "DSCR (x)", "Net Income", "Cash"], "rows": [["27,850", "21.0%", "3,050", "780", "1,830", "2.35", "1,340", "1,710"], ["31,600", "22.4%", "4,310", "800", "2,000", "2.35", "1,690", "2,240"], ["35,000", "23.5%", "5,000", "850", "2,150", "2.35", "1,950", "2,500"], ["38,000", "24.0%", "5,500", "900", "2,300", "2.35", "2,100", "3,000"], ["41,000", "24.5%", "6,000", "950", "2,450", "2.35", "2,300", "3,500"], ["44,000", "25.0%", "6,500", "1,000", "2,600", "2.35", "2,500", "4,000"], ["47,000", "25.5%", "7,000", "1,050", "2,750", "2.35", "2,700", "4,500"], ["50,000", "26.0%", "7,500", "1,100", "2,900", "2.35", "2,950", "5,000"]]}`,
     },
   ],
 };
