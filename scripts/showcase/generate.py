@@ -171,6 +171,13 @@ def normalize_citations(text: str) -> str:
     # 6. collapse any residual parens left around an already-bracketed file:
     #    ([file]) -> [file]
     text = re.sub(r"\(\s*(\[" + FILE + r"\])\s*\)", r"\1", text)
+    # 7. bare standalone filename the model left uncited: "... in 01-foo.md" ->
+    #    "... in [01-foo.md]". The model sometimes omits the brackets the prompt
+    #    asks for; bracket a lone filename so it still renders and counts as a
+    #    citation. The lookbehind avoids one already inside [..], (..), or a path
+    #    (markdown-link target), and the lookahead avoids one already closed by
+    #    "]"/")".
+    text = re.sub(r"(?<![\[\(/\w.-])" + FILE + r"(?![\]\)])", r"[\1]", text)
     return text
 
 
@@ -249,6 +256,132 @@ def trim_dangling_sentence(body: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _parse_num(cell: str):
+    """If `cell` is a single number (optionally bold, $-prefixed, with thousands
+    separators), return (value, prefix, bold, commas); else None."""
+    s = cell.strip()
+    bold = False
+    m = re.fullmatch(r"\*\*(.*)\*\*", s)
+    if m:
+        bold, s = True, m.group(1).strip()
+    prefix = ""
+    if s.startswith("$"):
+        prefix, s = "$", s[1:].strip()
+    commas = "," in s
+    t = s.replace(",", "")
+    if re.fullmatch(r"-?\d+(\.\d+)?", t):
+        return float(t), prefix, bold, commas
+    return None
+
+
+def _fmt_num(val: float, prefix: str, bold: bool, commas: bool) -> str:
+    if val == int(val):
+        num = f"{int(val):,}" if commas else str(int(val))
+    else:
+        num = f"{val:,.2f}" if commas else f"{val:.2f}"
+    out = f"{prefix}{num}"
+    return f"**{out}**" if bold else out
+
+
+def _split_row(row: str) -> list[str]:
+    s = row.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _is_total_label(s: str) -> bool:
+    s2 = re.sub(r"[*_`]", "", s).strip().lower()
+    return s2.startswith(("total", "subtotal", "grand total"))
+
+
+def _reconcile_block(block: list[str]) -> list[str]:
+    header = _split_row(block[0])
+    ncol = len(header)
+    rows = [_split_row(r) for r in block[2:]]
+    rows = [r[:ncol] + [""] * (ncol - len(r)) for r in rows]
+    total_cols = {c for c in range(ncol) if _is_total_label(header[c])}
+    total_rows = {r for r in range(len(rows)) if rows[r] and _is_total_label(rows[r][0])}
+    if not total_cols and not total_rows:
+        return block
+    value_cols = [c for c in range(1, ncol) if c not in total_cols]
+    value_rows = [r for r in range(len(rows)) if r not in total_rows]
+    parsed = [[_parse_num(rows[r][c]) for c in range(ncol)] for r in range(len(rows))]
+
+    def fmt_for(r: int, c: int, val: float):
+        # Match the style of the cells actually being summed: a total column's
+        # cell follows its row's line items; a total row's cell follows its
+        # column's line items. Add thousands separators for any value >= 1000.
+        if c in total_cols:
+            sibs = [_parse_num(rows[r][cc]) for cc in value_cols]
+        else:
+            sibs = [_parse_num(rows[rr][c]) for rr in value_rows]
+        sibs = [s for s in sibs if s]
+        pfx = "$" if any(p for _, p, _, _ in sibs) else ""
+        com = any(cm for _, _, _, cm in sibs) or abs(val) >= 1000
+        return pfx, com
+
+    def set_cell(r: int, c: int, val: float):
+        pfx, com = fmt_for(r, c, val)
+        orig = parsed[r][c]  # keep the model's bold if it set it
+        rows[r][c] = _fmt_num(val, pfx, bool(orig and orig[2]), com)
+
+    # 1. total column(s) for each value row = sum of that row's value columns.
+    for r in value_rows:
+        for tc in total_cols:
+            terms = [parsed[r][c][0] for c in value_cols if parsed[r][c]]
+            if terms:
+                set_cell(r, tc, sum(terms))
+    # 2. total row(s): each value column = sum down the value rows. Skip text
+    # columns (e.g. a "Justification" column has no numbers to sum).
+    for tr in total_rows:
+        for c in value_cols:
+            terms = [parsed[r][c][0] for r in value_rows if parsed[r][c]]
+            if terms:
+                set_cell(tr, c, sum(terms))
+    # 3. grand-total cell(s) = sum of the (now-correct) total row's value columns.
+    for tr in total_rows:
+        for tc in total_cols:
+            terms = [_parse_num(rows[tr][c])[0] for c in value_cols if _parse_num(rows[tr][c])]
+            if terms:
+                set_cell(tr, tc, sum(terms))
+
+    # Render compact GFM (no width padding — a wide text column would otherwise
+    # bloat every cell). Markdown renders this identically.
+    out = ["| " + " | ".join(header) + " |",
+           "| " + " | ".join("---" for _ in range(ncol)) + " |"]
+    for r in range(len(rows)):
+        out.append("| " + " | ".join(rows[r]) + " |")
+    return out
+
+
+def reconcile_table_totals(text: str) -> str:
+    """Make any 'Total'/'Subtotal' row or column in a Markdown table the exact
+    arithmetic sum of its line items. A small on-device model reliably produces
+    sensible per-line figures but cannot sum a column in its head; totals are
+    *derived* values, so recomputing them — without altering any line item or the
+    surrounding prose — keeps a budget/financial table internally consistent."""
+    lines = text.split("\n")
+    out: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        is_header = lines[i].lstrip().startswith("|")
+        is_sep = (i + 1 < n and "-" in lines[i + 1]
+                  and re.fullmatch(r"\s*\|?[\s:\-|]+\|?\s*", lines[i + 1] or ""))
+        if is_header and is_sep:
+            j = i + 2
+            while j < n and lines[j].lstrip().startswith("|"):
+                j += 1
+            out.extend(_reconcile_block(lines[i:j]))
+            i = j
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
 def extract_json(text: str) -> str:
     text = text.strip()
     # pull the first {...} or [...] block
@@ -298,9 +431,109 @@ SYSTEM_DOC = (
     "dates or numbers that are not supported by the sources. When you state a "
     "fact drawn from a source, cite it inline in square brackets with the source "
     "filename, e.g. [01-helpdesk-ticket-INC-4471.md]. Write in precise, neutral "
-    "professional prose. Output only the section body in Markdown — do NOT repeat "
-    "the section title, and do not add commentary before or after."
+    "professional prose. State final figures and conclusions directly — do not "
+    "show calculation scratch-work, walk through trial arithmetic, second-guess "
+    "yourself, or speculate that the sources contain errors. Output only the "
+    "section body in Markdown — do NOT repeat the section title, and do not add "
+    "commentary before or after."
 )
+
+
+def gen_itemized_budget(persona: dict, sec: dict, corpus: str) -> str:
+    """Generate a budget/financial table as constrained JSON, then render it
+    deterministically. A small model reliably reports the source's per-line
+    figures but, asked for a free-form table, tends to fabricate year-by-year
+    columns the sources don't contain and ramble through invalid arithmetic.
+    Pinning the shape to one amount + one justification per line item — and
+    summing the Total ourselves — keeps the amounts and prose model-authored
+    while making the structure and total deterministic and source-faithful."""
+    title = sec["title"]
+    sec_prompt = " ".join(sec["prompt"].split())
+    system = (
+        "You are Tessera, a local-first AI assistant. Produce an itemized budget "
+        f"for a {persona['role']} at {persona['org']}, grounded STRICTLY in the "
+        "SOURCE FILES. Output STRICT JSON only — no prose, no code fences. Schema: "
+        "{\"unit\": string, \"period\": string, \"rows\": [{\"category\": string, "
+        "\"amount\": number, \"justification\": string}]}. Use the exact budget "
+        "categories and amounts stated in the source budget outline. Do NOT invent "
+        "per-year splits, future-year projections, or figures the sources do not "
+        "contain. Each amount is a single number in the unit the source uses (set "
+        "\"unit\" to that, e.g. \"$000s\"). Each justification is ONE concise "
+        "sentence grounding the amount in the sources, citing the source file in "
+        "square brackets, e.g. [01-program-notes-and-outcomes.md]."
+    )
+    user = (
+        f"SOURCE FILES:\n{corpus}\n\n"
+        f"SECTION TO WRITE: \"{title}\"\n"
+        f"INSTRUCTION: {sec_prompt}\n\n"
+        "Return ONLY the JSON object described in the schema."
+    )
+
+    def amount_of(r: dict):
+        try:
+            return float(str(r.get("amount")).replace(",", "").replace("$", ""))
+        except (TypeError, ValueError):
+            return None
+
+    def validate(p: dict) -> tuple[bool, str]:
+        rows = p.get("rows")
+        if not isinstance(rows, list) or len(rows) < 3:
+            return False, "need >=3 rows"
+        for r in rows:
+            if not isinstance(r, dict) or not str(r.get("category", "")).strip():
+                return False, "every row needs a category"
+            if amount_of(r) is None:
+                return False, "every row needs a numeric amount"
+        return True, ""
+
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "budget",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "unit": {"type": "string"},
+                    "period": {"type": "string"},
+                    "rows": {
+                        "type": "array", "minItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "category": {"type": "string"},
+                                "amount": {"type": "number"},
+                                "justification": {"type": "string"},
+                            },
+                            "required": ["category", "amount", "justification"],
+                        },
+                    },
+                },
+                "required": ["unit", "rows"],
+            },
+        },
+    }
+    log("    - generating itemized budget JSON")
+    parsed = gen_structured(persona["_model"], system, user, validate,
+                            num_predict=1280, response_format=schema)
+
+    def famt(v: float) -> str:
+        return f"{int(v):,}" if float(v).is_integer() else f"{v:,.2f}"
+
+    unit = str(parsed.get("unit") or "$").strip()
+    rows, total = [], 0.0
+    for r in parsed["rows"]:
+        amt = amount_of(r) if isinstance(r, dict) else None
+        if amt is None or not str(r.get("category", "")).strip():
+            continue
+        just = " ".join(str(r.get("justification", "")).split())  # one table-cell line
+        rows.append((str(r["category"]).strip(), amt, just))
+        total += amt
+    lines = [f"| Category | Amount ({unit}) | Justification |", "| --- | --- | --- |"]
+    lines += [f"| {cat} | {famt(amt)} | {just} |" for cat, amt, just in rows]
+    lines.append(f"| **Total** | **{famt(total)}** | |")
+    body = "\n".join(lines)
+    period = str(parsed.get("period") or "").strip()
+    return f"Itemized budget ({period}):\n\n{body}" if period else body
 
 
 def gen_document(persona: dict, template: dict, corpus: str, source_names: list[str],
@@ -316,7 +549,23 @@ def gen_document(persona: dict, template: dict, corpus: str, source_names: list[
         fmt_hint = {
             "numbered_list": "Format the body as a numbered list.",
             "bullets": "Format the body as a bulleted list.",
-            "table": "Format the body as a GitHub-flavored Markdown table.",
+            "table": (
+                "Format the body as a GitHub-flavored Markdown table. Every "
+                "numeric column header must state its unit explicitly (e.g. a "
+                "money column reads \"FY2025 ($)\" or \"Annual ($)\" — never an "
+                "ambiguous or wrong unit like \"(Months)\" on a dollar column). "
+                "Only include columns/periods the SOURCE FILES actually support — "
+                "if the sources give a single budget or total (not a year-by-year "
+                "breakdown), use one amount column rather than inventing per-year "
+                "figures. Keep units consistent down each column and keep every "
+                "figure realistic and grounded in the SOURCE FILES (do not "
+                "multiply line items into implausible totals). If the table "
+                "includes a row or column that sums the others, label it exactly "
+                "\"Total\" (not "
+                "\"Amount\"/\"Sum\"/\"Cost\"), and make sure every total, subtotal, "
+                "or derived figure is arithmetically consistent with the line "
+                "items it summarizes."
+            ),
         }.get(fmt, "Write 1-3 tight paragraphs.")
         user = (
             f"SOURCE FILES:\n{corpus}\n\n"
@@ -325,15 +574,29 @@ def gen_document(persona: dict, template: dict, corpus: str, source_names: list[
             f"{fmt_hint}"
         )
         log(f"    - [{i}/{len(sections)}] {title}")
-        raw, finish = llm_complete(persona["_model"], user, system,
-                                   num_predict=768, temperature=0.4)
-        body = clean(raw)
-        body = strip_echoed_title(body, title)
+        if fmt == "table" and "budget" in title.lower():
+            # Budget/financial tables go through constrained-JSON generation so
+            # the model can't fabricate year-by-year columns or non-summing
+            # totals; the structure + Total are rendered deterministically.
+            body, finish = gen_itemized_budget(persona, sec, corpus), "stop"
+        else:
+            # A table section packs many line items plus a written justification
+            # for each, so it needs more room than a prose section to finish
+            # without truncating mid-table.
+            sec_budget = 1280 if fmt == "table" else 768
+            raw, finish = llm_complete(persona["_model"], user, system,
+                                       num_predict=sec_budget, temperature=0.4)
+            body = clean(raw)
+            body = strip_echoed_title(body, title)
         body = normalize_citations(body)
         # If the model hit the token budget mid-sentence, drop the dangling
         # fragment so the section reads as finished, not cut off.
         if finish == "length":
             body = trim_dangling_sentence(body)
+        # Totals in a generated table are derived values the small model can't
+        # sum reliably; recompute any Total/Subtotal row or column from its line
+        # items so a budget/financial table is internally consistent.
+        body = reconcile_table_totals(body)
         for n in source_names:
             if f"[{n}]" in body:
                 citations.add(n)
