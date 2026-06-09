@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -13,8 +14,10 @@ import {
 // `text`-capability entries in Tessera's real model registry. The mock bridge
 // must never report an off-design stand-in model (e.g. a generic Llama/Qwen
 // build); this mirrors the hard guard in scripts/showcase/generate.py.
-// Vitest runs with cwd = apps/desktop, so the repo-root registry is two levels up.
-const MODELS_JSON = resolve(process.cwd(), "../../sidecars/models.json");
+// Resolve the repo-root registry relative to THIS test file (not process.cwd())
+// so the path holds no matter where the runner is invoked from.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const MODELS_JSON = resolve(HERE, "../../../../../sidecars/models.json");
 const DESIGN_TEXT_MODEL_IDS = new Set<string>(
   (JSON.parse(readFileSync(MODELS_JSON, "utf8")).models as Array<{
     id: string;

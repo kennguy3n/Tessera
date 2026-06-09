@@ -153,8 +153,11 @@ def normalize_citations(text: str) -> str:
     # 3. emphasized source note:  *Source: file* / _Source: file_ -> [file]
     text = re.sub(r"[*_]+\s*Source:\s*\[?" + FILE + r"\]?\s*[*_]+", r"[\1]", text,
                   flags=re.IGNORECASE)
-    # 4. plain "Source: [file]" / "Source: file" -> [file]
-    text = re.sub(r"Source:\s*\[?" + FILE + r"\]?", r"[\1]", text,
+    # 4. plain "Source: [file]" / "Source: file" -> [file]. The negative
+    #    lookbehind keeps a mid-sentence "... data Source: x.md" from being
+    #    rewritten into an orphaned "... data [x.md]"; only a standalone
+    #    "Source:" citation note (not preceded by a word char) is collapsed.
+    text = re.sub(r"(?<![A-Za-z])Source:\s*\[?" + FILE + r"\]?", r"[\1]", text,
                   flags=re.IGNORECASE)
     # 5. bare parenthesized filename:  (file) -> [file]
     text = re.sub(r"\(\s*" + FILE + r"\s*\)", r"[\1]", text)
@@ -387,6 +390,11 @@ def gen_sheet(persona: dict, template: dict, corpus: str, source_names: list[str
             },
         },
     }
+    # NOTE: when the runtime supports constrained decoding this schema is the
+    # binding constraint (minItems 8 rows here). validate() below intentionally
+    # uses a looser floor (>= 4 rows) so it still passes as a fallback on a
+    # runtime that ignores response_format; the stricter schema wins whenever
+    # it is honored.
     log("    - generating sheet JSON")
     parsed = gen_structured(persona["_model"], system, user, validate,
                             num_predict=1800, response_format=sheet_schema)
@@ -462,6 +470,10 @@ def gen_base(persona: dict, template: dict, corpus: str, source_names: list[str]
             },
         },
     }
+    # As with the sheet schema: under constrained decoding these minItems
+    # (>= 5 fields, >= 6 records) are binding. validate() keeps a looser floor
+    # so generation still passes on a runtime that ignores response_format; the
+    # stricter schema wins whenever it is honored.
     log("    - generating base JSON")
     parsed = gen_structured(persona["_model"], system, user, validate,
                             num_predict=2400, response_format=base_schema)
@@ -516,10 +528,16 @@ def gen_slides(persona: dict, template: dict, corpus: str, source_names: list[st
         user = (f"SOURCE FILES:\n{corpus}\n\nSLIDE: \"{title}\"\nINSTRUCTION: {sec_prompt}\n\n"
                 "Write the slide body as 3-5 bullet points.")
         log(f"    - slide [{i}/{len(sections)}] {title}")
-        body = clean(llm_generate(persona["_model"], user, system,
-                                  num_predict=300, temperature=0.45))
+        raw, finish = llm_complete(persona["_model"], user, system,
+                                   num_predict=300, temperature=0.45)
+        body = clean(raw)
         body = strip_echoed_title(body, title)
         body = normalize_citations(body)
+        # Same treatment as document sections: if the slide hit the token
+        # budget mid-sentence, drop the dangling fragment so the bullet list
+        # reads as finished rather than cut off.
+        if finish == "length":
+            body = trim_dangling_sentence(body)
         slides.append({
             "id": f"slide-{i}",
             "title": title,
