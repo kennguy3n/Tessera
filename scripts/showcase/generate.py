@@ -467,6 +467,9 @@ def main() -> None:
                 content, citation_count = gen(persona, template, corpus, source_names, prompt_log)
 
             prm_dir = REPO / "docs/showcase/artifacts" / pid / "prompts"
+            # Self-contained: a brand-new persona has no committed dirs yet.
+            out_dir.mkdir(parents=True, exist_ok=True)
+            prm_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"{art['slug']}.{ext}").write_text(content)
             (out_dir / f"{art['slug']}.preview.md").write_text(
                 preview_markdown(art["type"], art["title"], content))
