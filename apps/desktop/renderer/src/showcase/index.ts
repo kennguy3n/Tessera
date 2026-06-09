@@ -54,8 +54,8 @@ function buildArtifacts(ds: ShowcaseDataset) {
 }
 
 function buildSources(ds: ShowcaseDataset) {
-  // Group the persona's input files under a single indexed local folder, plus
-  // a couple of representative connected sources so the Sources view looks real.
+  // Group the persona's input files under a single indexed local folder so the
+  // Sources view shows a realistic, ready-to-query source for the demo.
   const folderPath = `~/Documents/${ds.persona.org.replace(/[^A-Za-z0-9]+/g, "-")}`;
   return [
     {
@@ -238,6 +238,9 @@ export function buildShowcaseApi(personaId: string): unknown {
           // The Proxy protocol passes string | symbol; DevTools inspects
           // Symbol.toStringTag etc., so guard before calling string methods.
           if (typeof method === "symbol") return undefined;
+          // Keep namespaces non-thenable: returning a function for `then`
+          // would make `await api.<namespace>` silently resolve to undefined.
+          if (method === "then") return undefined;
           const impl = real[namespace]?.[method];
           if (impl) return impl;
           if (method.startsWith("on")) return () => () => {};
