@@ -1,0 +1,137 @@
+# Showcase persona manifest.
+#
+# Each persona maps a real job role + market segment to real Tessera templates.
+# The generator (generate.py) reads this, loads each template's REAL section
+# prompts, feeds the persona's input source files to a local LLM (Ollama),
+# and produces genuine generated artifacts + a transparent prompt log.
+
+model: llama3.2:3b
+
+personas:
+  - id: healthcare
+    name: Maya Okonkwo
+    role: Clinical Privacy Officer
+    org: Mercy Ridge Health
+    market: Healthcare (regional health system)
+    blurb: >
+      Maya runs HIPAA privacy compliance for a 410-bed health system. When a
+      device goes missing she has 5 business days to produce a defensible
+      four-factor breach risk assessment — and the source material is the most
+      sensitive data in the building (PHI), which is exactly why it can never
+      leave her laptop.
+    artifacts:
+      - template: templates/documents/hipaa-incident-report.yaml
+        type: document
+        slug: hipaa-incident-report
+        title: "HIPAA Incident Report — Lost Device INC-4471"
+      - template: templates/bases/incident-tracker.yaml
+        type: base
+        slug: incident-tracker
+        title: "Privacy Incident Tracker"
+        hint: >
+          Use these fields: Incident ID (text), Date Discovered (date), Type
+          (select: Lost Device / Misdirected Email / Unauthorized Access /
+          Business Associate), Severity (select: Low / Medium / High /
+          Critical), Individuals Affected (number), Encrypted (select: Yes /
+          No), Status (select: Open / Risk Assessment / Reportable /
+          Closed-Incident), Owner (text). Create one record for the current
+          INC-4471 lost-laptop event and 6-8 realistic prior privacy incidents
+          for a health system, with varied types and statuses.
+
+  - id: legal
+    name: David Reyes
+    role: Corporate Paralegal
+    org: Hartwell & Cho LLP
+    market: Legal (mid-size corporate firm)
+    blurb: >
+      David abstracts inbound commercial contracts for the firm's corporate
+      group. Partners want a consistent one-page summary of parties, key terms,
+      obligations and risks — plus a tracker of renewal and notice deadlines so
+      nothing lapses.
+    artifacts:
+      - template: templates/documents/contract-summary.yaml
+        type: document
+        slug: contract-summary
+        title: "Contract Summary — Master SaaS Agreement (Northwind × Acme)"
+      - template: templates/sheets/tracker.yaml
+        type: sheet
+        slug: obligation-tracker
+        title: "Contract Obligation & Renewal Tracker"
+        hint: >
+          Columns: Obligation, Responsible Party, Trigger / Clause, Due Date,
+          Priority, Status. Each row is a concrete obligation or deadline drawn
+          from the agreement and reviewer notes (e.g. non-renewal notice
+          deadline 2027-12-31, breach notification 72h, SLA credit triggers,
+          liability-cap negotiation, fee true-up). Use ISO dates.
+
+  - id: finance
+    name: Priya Nair
+    role: Commercial Credit Officer
+    org: Cascade Regional Bank
+    market: Finance (regional commercial bank)
+    blurb: >
+      Priya underwrites commercial loans. For every deal she assembles a credit
+      memo that ties the borrower's financials, collateral and risks to a clear
+      recommendation — and a multi-year projection the credit committee can
+      interrogate.
+    artifacts:
+      - template: templates/documents/loan-proposal.yaml
+        type: document
+        slug: loan-proposal
+        title: "Credit Memo — Riverbend Logistics Equipment Facility"
+      - template: templates/sheets/sales-forecast.yaml
+        type: sheet
+        slug: financial-projection
+        title: "Riverbend Logistics — 3-Year Projection"
+        hint: >
+          Columns: Line Item ($000s unless %), FY2026E, FY2027E, FY2028E. Rows:
+          Revenue, Gross Margin %, EBITDA, New Facility Debt Service, Total Debt
+          Service, DSCR (x), Net Income, Cash. Project forward from the
+          historicals (FY2023-FY2025: revenue 24,100 / 27,850 / 31,600; EBITDA
+          3,050 / 3,720 / 4,310) using realistic mid-single-digit growth and the
+          new $3.2M facility. Keep numbers internally consistent.
+
+  - id: nonprofit
+    name: Sofia Alvarez
+    role: Development Director
+    org: Riverside Youth Coalition
+    market: Nonprofit (community services)
+    blurb: >
+      Sofia raises the money that keeps after-school programs running. She turns
+      messy program notes and outcomes data into funder-ready grant proposals,
+      then reports impact back to her board.
+    artifacts:
+      - template: templates/documents/grant-proposal.yaml
+        type: document
+        slug: grant-proposal
+        title: "Grant Proposal — After-School STEM Expansion"
+      - template: templates/slides/board-update.yaml
+        type: slides
+        slug: board-update
+        title: "Board Update — Program Impact & Development"
+
+  - id: retail
+    name: Marcus Chen
+    role: Sales Operations Lead
+    org: Northwind Outdoor Co.
+    market: Retail / Consumer Goods
+    blurb: >
+      Marcus runs the quarterly business review for a consumer-goods sales org.
+      He consolidates pipeline, performance and account health into a QBR deck
+      and a clean CRM view the team can actually act on.
+    artifacts:
+      - template: templates/slides/qbr.yaml
+        type: slides
+        slug: qbr
+        title: "Q1 FY26 Quarterly Business Review"
+      - template: templates/bases/crm.yaml
+        type: base
+        slug: crm
+        title: "Sales Pipeline — Key Accounts"
+        hint: >
+          Use these fields: Account (text), Region (select: West / Central /
+          East / Intl), Owner (text), ARR ($) (text), Open Opportunity (text),
+          Amount ($) (text), Stage (select: Pipeline / Best Case / Commit),
+          Health (select: Green / Yellow / Red). One record per strategic
+          account / open opportunity from the source notes (Summit Sports,
+          Alpine Co-op, TrailMart, Nordic Outfitters, Urban Trek, RidgeLine).
