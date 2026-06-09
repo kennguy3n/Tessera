@@ -221,7 +221,15 @@ export function buildShowcaseApi(personaId: string): unknown {
         preferredFormat: "gguf",
       }),
       getCurrentModel: async () => installedModel,
-      getInstalledModels: async () => ({ text: installedModel }),
+      // Real bridge returns Record<ModelCapability, InstalledModelRecord|null>
+      // with all three slots present; the showcase is text-only, so vision /
+      // imagegen are explicitly null (uninstalled) rather than absent — matches
+      // the real shape if any consumer enumerates capabilities via Object.keys.
+      getInstalledModels: async () => ({
+        text: installedModel,
+        vision: null,
+        imagegen: null,
+      }),
       recommendModel: async () => ({ id: installedModel.modelId, name: MODEL_NAME }),
       listModels: async () => [{ id: installedModel.modelId, name: MODEL_NAME }],
       isCapabilityAvailable: async () => true,
