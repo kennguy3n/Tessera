@@ -164,8 +164,10 @@ def normalize_citations(text: str) -> str:
     #    "Source:" citation note (not preceded by a word char) is collapsed.
     text = re.sub(r"(?<![A-Za-z])Source:\s*\[?" + FILE + r"\]?", r"[\1]", text,
                   flags=re.IGNORECASE)
-    # 5. bare parenthesized filename:  (file) -> [file]
-    text = re.sub(r"\(\s*" + FILE + r"\s*\)", r"[\1]", text)
+    # 5. bare parenthesized filename:  (file) -> [file]. The negative lookbehind
+    #    keeps the target of a real markdown link [text](file.md) intact, which
+    #    would otherwise be rewritten into a broken reference-style [text][file.md].
+    text = re.sub(r"(?<!\])\(\s*" + FILE + r"\s*\)", r"[\1]", text)
     # 6. collapse any residual parens left around an already-bracketed file:
     #    ([file]) -> [file]
     text = re.sub(r"\(\s*(\[" + FILE + r"\])\s*\)", r"\1", text)
