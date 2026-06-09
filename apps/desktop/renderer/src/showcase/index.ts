@@ -206,9 +206,20 @@ export function buildShowcaseApi(personaId: string): unknown {
       },
     },
     runtime: {
-      // any-non-apple-silicon host so the GGUF (Q1_0_g128) build is the
-      // platform-correct design model (Apple Silicon would use the MLX build).
-      detectPlatform: async () => ({ os: "linux", arch: "x64", tier: "medium" }),
+      // Report the REAL PlatformInfo shape (RuntimeStatus / ModelRuntimeCard
+      // read computeBackends, totalRamGb, preferredFormat, *Label fields). A
+      // non-Apple-Silicon host keeps the GGUF (Q1_0_g128) build platform-correct
+      // (Apple Silicon would prefer MLX), and the medium tier is the one that
+      // recommends the 4B design model the showcase advertises.
+      detectPlatform: async () => ({
+        platform: "linux-x64",
+        platformLabel: "Linux x64",
+        totalRamGb: 6,
+        tier: "medium",
+        tierLabel: "Medium (4-6 GB RAM)",
+        computeBackends: ["cpu"],
+        preferredFormat: "gguf",
+      }),
       getCurrentModel: async () => installedModel,
       getInstalledModels: async () => ({ text: installedModel }),
       recommendModel: async () => ({ id: installedModel.modelId, name: MODEL_NAME }),

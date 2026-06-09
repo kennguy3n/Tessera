@@ -105,6 +105,11 @@ def llm_complete(model: str, prompt: str, system: str, *, num_predict: int = 600
             finish = choice.get("finish_reason") or "stop"
             if text:
                 return text, finish
+            # HTTP succeeded but the model produced no content. Log + back off
+            # so an "empty completion" failure is distinguishable from an
+            # "unreachable server" one in the generation log (same retry budget).
+            log(f"    ! llm-server returned empty text (attempt {attempt+1}); retrying")
+            time.sleep(2)
         except Exception as e:  # noqa: BLE001
             log(f"    ! llm-server error (attempt {attempt+1}): {e}")
             time.sleep(2)
@@ -185,10 +190,12 @@ def strip_echoed_title(body: str, title: str) -> str:
             if htext and (htext in norm or norm in htext):
                 lines.pop(0)
                 continue
-        # Plain-text echo: strip markdown emphasis/heading marks and compare for
-        # an EXACT match (so we never eat a real sentence that merely starts
-        # with the title's words).
-        plain = re.sub(r"[*_`#:>\-\s]", "", first.lower())
+        # Plain-text echo: normalize the line identically to `norm` (drop every
+        # non-[a-z0-9] char) and compare for an EXACT match. Using the same
+        # normalization means a symbol-bearing title (e.g. "Risk Assessment
+        # (45 CFR 164.402)") is still caught, while a real sentence that merely
+        # starts with the title's words is left intact.
+        plain = re.sub(r"[^a-z0-9]", "", first.lower())
         if plain and plain == norm:
             lines.pop(0)
             continue
@@ -624,8 +631,13 @@ def main() -> None:
     model = manifest["model"]
     # Guard: the configured model MUST be a Tessera design text model.
     spec = assert_design_model(model)
+    # Registry entries always carry these today; fall back defensively so a
+    # future text model that omits an optional field can't crash the generator.
+    spec_name = spec.get("name", model)
+    spec_fmt = (spec.get("format") or "gguf").upper()
+    spec_quant = spec.get("quantization") or "unknown"
     model_label = (
-        f"{spec['name']} ({spec['format'].upper()} {spec['quantization']}) "
+        f"{spec_name} ({spec_fmt} {spec_quant}) "
         f"— `{model}`, via the PrismML llama.cpp `llama-server` (Tessera's "
         f"on-device runtime)"
     )
