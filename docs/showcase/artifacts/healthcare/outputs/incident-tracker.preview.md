@@ -2,11 +2,11 @@
 
 | Incident ID (text) | Date Discovered (date) | Type (select) | Severity (select) | Individuals Affected (number) | Encrypted (select) | Status (select) | Owner (text) |
 |---|---|---|---|---|---|---|---|
-| INC-4471 | 2026-02-18 | Unauthorized Access | High | 220 | No | Open | Marcus Lee |
-| CHG-2208 | 2025-09 | Lost Device | Medium | 0 | Yes | Closed-Incident | Raj Patel |
-| INC-4341 | 2026-01-15 | Misdirected Email | Low | 10 | No | Reportable | Maya Okonkwo |
-| INC-4328 | 2025-11-20 | Unauthorized Access | Critical | 500 | Yes | Closed-Incident | Raj Patel |
-| INC-4219 | 2026-02-01 | Lost Device | Low | 0 | No | Open | Eleanor Voss |
-| INC-4198 | 2025-10-25 | Business Associate | Medium | 100 | Yes | Closed-Incident | Maya Okonkwo |
-| INC-4167 | 2026-01-10 | Unauthorized Access | High | 200 | No | Open | Raj Patel |
-| INC-4143 | 2025-12-15 | Misdirected Email | Low | 20 | Yes | Closed-Incident | Eleanor Voss |
+| INC-4471 | 2026-02-18 | Lost Device | High | 220 | No | Risk Assessment | Marcus Lee |
+| CHG-2208 | 2026-02-18 | Unauthorized Access | Medium | 198 | No | Open | Dana Whitfield |
+| EHR-2024-09-12 | 2024-09-12 | Misdirected Email | Low | 60 | Yes | Closed-Incident | Maya Okonkwo |
+| USB-2024-03-05 | 2024-03-05 | Lost Device | Medium | 60 | No | Reportable | Raj Patel |
+| CHG-2023-11-22 | 2023-11-22 | Unauthorized Access | High | 210 | Yes | Risk Assessment | Dana Whitfield |
+| EHR-2023-07-10 | 2023-07-10 | Lost Device | Low | 150 | No | Closed-Incident | Marcus Lee |
+| MDM-2022-12-01 | 2022-12-01 | Misdirected Email | Medium | 85 | Yes | Open | HIM Analyst |
+| CHG-2022-05-15 | 2022-05-15 | Lost Device | High | 450 | No | Reportable | Dana Whitfield |

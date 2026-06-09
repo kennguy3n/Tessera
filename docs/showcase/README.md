@@ -26,8 +26,13 @@ types, and full input → prompt → output transparency.
 
 ## How the artifacts were generated
 
-- **Model:** `llama3.2:3b`, running locally via Ollama on a CPU-only machine. No external
-  API, no cloud inference, no hand-editing of the model's prose.
+- **Model:** **Ternary-Bonsai 4B** — Tessera's own design text model, the GGUF `Q1_0_g128`
+  build registered in [`sidecars/models.json`](../../sidecars/models.json) (`ternary-bonsai-4b-gguf`),
+  running on Tessera's PrismML llama.cpp runtime on a CPU-only machine. No external API, no
+  cloud inference, no hand-editing of the model's prose. The generator
+  ([`scripts/showcase/generate.py`](../../scripts/showcase/generate.py)) hard-fails on any
+  model id that is not a design text model in the registry, so an off-design stand-in model
+  can never silently produce these artifacts.
 - **Prompts:** the *verbatim* section prompts from Tessera's real template library
   (`templates/documents/*.yaml`, `templates/slides/*.yaml`, etc.). The prompt logs in each
   persona's `prompts/` folder quote them directly.
@@ -39,10 +44,11 @@ types, and full input → prompt → output transparency.
   renderer). The document/sheet/base/slide chrome, outline panels, field types, and
   citations are all the real app.
 
-> Tessera ships a bundled 1.7B model for true zero-setup use. This showcase used
-> `llama3.2:3b` because the bundled model's ternary quantization needs Tessera's
-> packaged inference fork, which isn't reproducible in a generic CI sandbox. The pipeline,
-> prompts, and grounding are otherwise identical to the shipping product.
+> The Ternary-Bonsai family is Tessera's bundled, on-device model line (1.7B / 4B / 8B),
+> selected automatically by device tier. Its 1.58-bit ternary quantization (`Q1_0_g128`)
+> requires Tessera's packaged PrismML llama.cpp fork — stock llama.cpp/Ollama cannot load
+> it. This showcase reproduces the shipping path exactly: the same model, the same `Q1_0_g128`
+> quant, and the same runtime a real Tessera install uses.
 
 ---
 

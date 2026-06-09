@@ -28,8 +28,9 @@ Tessera inverts the usual AI demo. Instead of a prompt box and a black box, it m
 
 ## Proof: five personas, five markets
 
-This showcase demonstrates the full flow with genuinely AI-generated artifacts (local
-`llama3.2:3b`, real template prompts, no hand-editing) across five professionals:
+This showcase demonstrates the full flow with genuinely AI-generated artifacts (Tessera's
+own on-device **Ternary-Bonsai 4B** model, real template prompts, no hand-editing) across
+five professionals:
 
 | Persona | Market | Deliverables |
 |---------|--------|--------------|

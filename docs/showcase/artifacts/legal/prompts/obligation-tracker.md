@@ -2,7 +2,7 @@
 
 - **Persona:** David Reyes, Corporate Paralegal, Hartwell & Cho LLP
 - **Template:** `templates/sheets/tracker.yaml` (Tracker)
-- **Model:** llama3.2:3b (local, via Ollama)
+- **Model:** Ternary-Bonsai 4B (GGUF Q1_0_g128) — `ternary-bonsai-4b-gguf`, via the PrismML llama.cpp `llama-server` (Tessera's on-device runtime)
 - **Input source files:** 01-master-saas-agreement.md, 02-reviewer-notes-and-redlines.md
 
 Tessera runs each template section prompt below against the source files, grounded locally. The generated output is in the matching `outputs/` file.

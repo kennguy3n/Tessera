@@ -2,147 +2,108 @@
 
 ## Contract Identification
 
-#### Master SaaS Agreement
+This agreement is the Master Software-as-a-Service Agreement, entered into between Northwind Outdoor Co., a Delaware corporation, and Acme Cloud, Inc., a California corporation. The effective date of the agreement is March 1, 2026, and the initial term is twenty-four (24) months, automatically renewing for successive twelve (12)-month periods unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term. The agreement is governed by the laws of the State of New York, without regard to conflicts of law principles, and any disputes arising under this agreement shall be resolved in state and federal courts located in New York County.
 
-The Master SaaS Agreement ("Agreement") is a contract between **Northwind Outdoor Co., a Delaware corporation** ("Customer") and **Acme Cloud, Inc., a California corporation** ("Provider").
-
-The Agreement became effective on **March 1, 2026**, with an initial term of twenty-four (24) months. The Agreement will auto-renew for successive 12-month periods unless either party gives written notice of non-renewal at least sixty (60) days before the end of the then-current term.
-
-The governing law for this Agreement is the **laws of the State of New York**, without regard to conflicts principles, and venue shall be in state and federal courts in New York County.
+The term of the agreement expires on February 29, 2028, following the initial twenty-four-month period. Renewal terms are subject to annual fee increases of no more than five (5%) per renewal cycle, as outlined in Section 2.3. The governing law applies uniformly to both parties, and venue is limited to the courts in New York County. This structure ensures that the agreement remains enforceable and predictable under current contractual and jurisdictional frameworks.
 
 ## Business Purpose and Scope
 
-The Master SaaS Agreement establishes a comprehensive partnership between Northwind Outdoor Co., a Delaware corporation ("Customer"), and Acme Cloud, Inc., a California corporation ("Provider") for the provision of Software-as-a-Service (SaaS) solutions.
+The Master SaaS Agreement is a 24-month software-as-a-service contract between Northwind Outdoor Co. and Acme Cloud, Inc., designed to provide the Customer with access to a cloud-based platform for managing outdoor event operations, including booking, inventory tracking, and real-time reporting. The scope of services includes the deployment, maintenance, and support of a secure, scalable SaaS solution tailored to the Customer’s operational needs, with no exclusivity clauses that would restrict the Customer’s ability to use alternative platforms in the future.
 
-**Key Deliverables:** The Provider will deliver a production service with monthly uptime of 99.9%, processing Customer Data solely to provide the service. The scope includes maintenance of SOC 2 Type II certification and encryption of data in transit and at rest. 
+Key deliverables include the production environment hosting the software application, regular updates and security patches, and 24/7 technical support during the term. The service level agreement (SLA) requires a minimum of 99.9% monthly uptime, with service credits awarded for any monthly uptime below specified thresholds. Acceptance criteria are defined by the Provider’s performance in meeting uptime requirements and the timely delivery of updates and support as outlined in the agreement.
 
-**Milestones and Acceptance Criteria:** The agreement outlines specific milestones, including the initial term, auto-renewal terms, and termination procedures. The Provider will return or delete Customer Data within 30 days upon termination and provide an export in a machine-readable format. Key deliverables are subject to acceptance by Northwind Outdoor Co., with service credits awarded for availability failures below the specified uptime threshold.
+Milestones are not explicitly defined in the current draft, but the initial term ends on February 29, 2028, and the first fee true-up or renewal notice is expected on December 1, 2027. The contract includes no non-compete or restrictive covenant clauses, and the Customer is not bound by exclusivity or confidentiality obligations beyond those required by the terms of service.
 
 ## Financial Terms
 
-| **Fee Category** | **Description** | **Amount** | **Payment Terms** | **Late Payment Interest** |
-| --- | --- | --- | --- | --- |
-| Annual Subscription Fee | Fixed fee for access to SaaS service | $480,000 | Net 30 days from invoice date | 1.5%/month |
-| Late Payment Interest Rate | Interest applied to unpaid fees | - | - | 1.5%/month |
-| Renewal Fee Escalator | Percentage increase in annual subscription fee per renewal term | 5% | - | - |
-| Data-Related Claim Liability Cap | Maximum liability for data-related claims (uncapped) | - | - | - |
-| Service Credit Amounts | Amount of service credits applied to monthly fees for SLA failures | 10% of monthly fee <99.9%, 25% <99.0%, 50% <95.0% | - | - |
-
-Note: The table only includes the most relevant financial terms and does not include all possible clauses or sections from the Master SaaS Agreement.
+| **Item**                     | **Detail**                                                                 |
+|-----------------------------|----------------------------------------------------------------------------|
+| **Annual Subscription Fee** | $480,000 (in advance, net 30)                                               |
+| **Pricing Structure**      | Fixed annual subscription fee; no time-and-materials or royalty clauses    |
+| **Payment Terms**           | Net 30 from invoice date                                                   |
+| **Late Payment Interest**  | 1.5% per month on overdue amounts                                          |
+| **Currency**                | USD                                                                          |
+| **Taxes**                   | All fees subject to applicable federal and state taxes (not specified in agreement) |
+| **Expense Reimbursement**   | Not specified in agreement                                                |
+| **Audit Rights**            | Not specified in agreement                                                |
+| **Most-Favored-Nation**    | Not specified in agreement                                                |
+| **Price Adjustment Clauses** | Not specified in agreement                                                |
 
 ## Key Obligations and Performance Standards
 
-* **Customer (Northwind Outdoor Co.)**
-  • Deliverables:
-    - Payment of annual subscription fee ($480,000)
-    - Compliance with data protection requirements
-  • SLA/uptime commitments:
-    - Provider maintains 99.9% monthly uptime for the production service
-    - Service credits: 10% of monthly fee for <99.9%, 25% for <99.0%, 50% for <95.0%
-  • Reporting cadence:
-    - Provider provides regular reports on system performance and availability
-  • Regulatory compliance:
-    - Compliance with applicable laws and regulations, including data protection requirements
-  • Conditions precedent or subsequent:
-    - Written notice of non-renewal at least 60 days before the end of the then-current term
-* **Vendor (Acme Cloud, Inc.)**
-  • Deliverables:
-    - Provision of SaaS service
-    - Compliance with data protection requirements
-  • SLA/uptime commitments:
-    - Maintain 99.9% monthly uptime for the production service
-    - Service credits: 10% of monthly fee for <99.9%, 25% for <99.0%, 50% for <95.0%
-  • Reporting cadence:
-    - Provide regular reports on system performance and availability
-  • Regulatory compliance:
-    - Compliance with applicable laws and regulations, including data protection requirements
-  • Conditions precedent or subsequent:
-    - Written notice of non-renewal at least 60 days before the end of the then-current term
+- **Northwind Outdoor Co. ("Customer")**  
+  - Delivers Customer Data to Acme Cloud, Inc. in a machine-readable format upon termination or data deletion.  
+  - Maintains data in a secure environment and ensures compliance with applicable data protection laws.  
+  - Receives service credits based on monthly uptime: 10% of monthly fee for <99.9%, 25% for <99.0%, and 50% for <95.0%.  
+  - Provides written notice of non-renewal at least sixty (60) days before the end of the term.  
+  - Is entitled to termination for material breach if such breach remains uncured after thirty (30) days of written notice.  
+  - Indemnifies Acme Cloud, Inc. against claims arising from Customer Data.  
+  - Requires Provider to maintain SOC 2 Type II certification and implement data encryption in transit and at rest.  
+  - Must notify Provider of a confirmed data breach within seventy-two (72) hours of discovery.  
+
+- **Acme Cloud, Inc. ("Provider")**  
+  - Maintains a minimum of ninety-nine point nine percent (99.9%) monthly uptime for the production service.  
+  - Provides the service in a machine-readable format upon termination.  
+  - Notifies Customer of a confirmed data breach within seventy-two (72) hours of discovery.  
+  - Processes Customer Data solely to provide the service and ensures encryption of data in transit and at rest.  
+  - Maintains SOC 2 Type II certification.  
+  - Indemnifies Customer against third-party claims that the service infringes IP rights.  
+  - Is responsible for notifying Customer of a breach if the breach is attributable to its own failure or negligence.  
+  - Must ensure the service remains available and operational during the initial term and subsequent renewal periods.  
+  - Returns or deletes Customer Data within thirty (30) days of termination.  
+  - Provides annual subscription fee of $480,000, payable net 30 from invoice date, with interest accruing at 1.5% per month on late payments.  
+  - May increase fees by no more than five percent (5%) per renewal term.  
+  - Is subject to a liability cap of one (1) times the fees paid in the 12 months preceding the claim, unless the claim relates to excluded claims such as breach of confidentiality, indemnification obligations, or payment defaults.  
+  - Is not liable for indirect or consequential damages.  
+  - Is not liable for service failure due to Customer Data-related issues.  
+  - Must maintain the 99.9% monthly uptime commitment throughout the term and renew automatically unless either party provides written notice of non-renewal at least sixty (60) days before the end of the term.  
+  - Must provide service credits when uptime falls below 99.9%, 99.0%, or 95.0% as defined in Section 3.3.  
+  - Must meet the 99.9% uptime standard in each month to qualify for full service fees.  
+  - Is not liable for service interruptions caused by Customer Data or operational issues originating from Customer.  
+  - Is not liable for claims arising from Customer's payment obligations or breach of confidentiality.
 
 ## Representations, Warranties, and Disclaimers
 
-The parties represent and warrant as follows:
-
-* The Provider represents that it has the authority to enter into this Agreement and to perform its obligations hereunder [01-master-saas-agreement.md].
-* The Customer represents that it has no conflict of interest with respect to the provision of the service by the Provider, and that it will comply with all applicable laws and regulations in connection with the use of the service [01-master-saas-agreement.md].
-* The Provider warrants that it does not infringe on any intellectual property rights owned or controlled by third parties, and that it will take all necessary steps to prevent infringement [01-master-saas-agreement.md].
-* The Customer represents that it has the right to grant the Provider the license to use its data as set forth in this Agreement, and that it will comply with all applicable laws and regulations in connection with the provision of the service by the Provider [01-master-saas-agreement.md].
-
-### Survival Periods
-
-The representations and warranties contained in Section 9.1 shall survive for a period of two (2) years from the Effective Date.
-
-### Disclaimers
-
-THE PROVIDER DISCLAIMS ALL IMPLIED WARRANTIES, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. THE PROVIDER ALSO DISCLAIMS ALL IMPLIED WARRANTIES ARISING FROM COURSE OF DEALING OR USAGE OF TRADE. [01-master-saas-agreement.md]
+[01-master-saas-agreement.md]
 
 ## Indemnification and Limitation of Liability
 
-#### Mutual Indemnity
+Indemnification in this Agreement is structured as a mutual obligation under §6.1 and §6.2. Provider indemnifies Customer against third-party claims that the SaaS service infringes on Provider’s intellectual property rights, while Customer indemnifies Provider against claims arising from Customer’s Data, including unauthorized access, misuse, or breaches of data security. Neither party has a unilateral indemnification obligation; instead, the indemnification triggers are clearly defined and tied to specific events, such as IP infringement or data misuse, and both parties are required to take reasonable steps to prevent or mitigate such claims. The indemnification obligations are enforceable only upon written notice of a claim and are subject to the same defense controls as other contractual obligations, including the right to challenge claims on the basis of lack of causation or failure to meet disclosure requirements.
 
-The parties agree to indemnify each other against losses arising from the breach of obligations under this Agreement. Provider shall indemnify Customer against third-party claims that the service infringes on intellectual property rights, while Customer shall indemnify Provider against claims arising from Customer Data.
+The limitation of liability is capped at the fees paid in the 12 months preceding the claim, as set forth in §5.1, which applies to all claims except those explicitly excluded. The Excluded Claims—breach of confidentiality, indemnification obligations, and Customer's payment obligations—remain uncapped and constitute a material exposure for the Customer. This uncapped liability for payment obligations is acceptable under the current risk posture, as Northwind is the paying party. However, the cap on liability for data-related claims is at 1× the trailing-12-month fees, which the supervising attorney has flagged as insufficient and inconsistent with industry standards; a proposed increase to 2× annual fees for data-related claims is under consideration to better align with risk exposure and market benchmarks.
 
-#### Limitation of Liability
-
-Each party's aggregate liability for damages or losses arising from this Agreement is capped at the fees paid in the 12 months preceding the claim. This cap excludes claims related to breach of confidentiality, indemnification obligations, and Customer's payment obligations, which are uncapped (Excluded Claims). Neither party is liable for indirect or consequential damages.
-
-#### Uncapped Exposure
-
-Customer's payment obligations under this Agreement are uncapped at $480,000 per year, as stated in Section 2.1 [01-master-saas-agreement.md]. This means that if Customer fails to make timely payments, Provider may seek additional compensation beyond the capped amount.
+Consequential and indirect damages are expressly waived under §5.3, which prohibits any liability for such damages regardless of the nature of the claim. The service-level uptime requirements in §3.1 and the associated service credits in §3.3 are not subject to liability caps and represent the sole remedy for availability failures. While the current structure provides a clear defense mechanism for the Provider, the absence of a termination-for-repeated-SLA-failure right (e.g., 3 months below 99.0% in any rolling 12 months) remains an open issue and may lead to prolonged service disruptions if uptime fails to meet thresholds.
 
 ## IP and Data Rights
 
-#### Background Intellectual Property
+Background IP, including any pre-existing software, algorithms, or technical frameworks developed prior to the Effective Date, shall remain the exclusive property of the Provider. Foreground IP, including all work product created during the term of the Agreement, shall be jointly owned by the Provider and the Customer, with the Customer retaining all rights to use, modify, and distribute such work product as necessary for the operation of the service. The Provider shall grant the Customer a non-exclusive, non-sublicensable, non-transferable license to use the foreground IP solely for the purposes of providing and operating the SaaS service, with such license being limited to the scope and duration defined in Section 3.1 of the Agreement. The Provider shall not assign or sublicense such license without prior written consent of the Customer.
 
-The parties acknowledge that the provision of the Service by Provider does not create any ownership or intellectual property rights in and to the Service or any related technology, including but not limited to software, algorithms, and data structures [01-master-saas-agreement.md]. The Customer acknowledges that all background IP developed during the term of this Agreement remains owned by the Provider.
+The Provider shall maintain ownership of all pre-existing IP and shall not claim ownership of any work product created during the term unless such work product is explicitly licensed by the Customer. The scope of the license granted to the Customer is strictly limited to the service functionality and operational use of the foreground IP, and shall not extend to integration with third-party tools or systems outside the service platform. The license shall be non-exclusive and non-sublicensable, meaning the Customer may not use the license to develop or distribute derivative works without the Provider’s prior written approval. The Provider shall waive any moral rights, including the right to attribution or integrity, in respect of the foreground IP, provided such waiver is expressly stated in the Agreement and is not contrary to applicable law.
 
-#### Foreground Intellectual Property and Work Product
-
-The parties agree that all foreground IP created during the term of this Agreement, including but not limited to software code, documentation, and other work product [01-master-saas-agreement.md], shall be owned solely by the Provider. The Customer acknowledges that it has no right, title, or interest in any such foreground IP.
-
-#### Licenses Granted
-
-The Provider grants to the Customer a non-exclusive license to use the Service during the term of this Agreement [01-master-saas-agreement.md]. The scope of such license is limited to the Customer's internal business purposes and shall not include any resale or redistribution rights. The license is granted for a period of time equal to the term of this Agreement, unless terminated earlier.
-
-#### Moral Rights Waivers
-
-The parties acknowledge that they waive all moral rights in and to the Service and related technology [01-master-saas-agreement.md]. This waiver includes but is not limited to the right to claim authorship or to object to any alteration or distortion of the work.
-
-#### Data Ownership and Processing Rights
-
-For purposes of this Agreement, Provider shall be considered a controller of Customer Data [01-master-saas-agreement.md]. The parties agree that the Provider's processing of Customer Data shall be in accordance with applicable data protection laws, including but not limited to the General Data Protection Regulation (GDPR) and the California Consumer Privacy Act (CCPA).
+With respect to data processing, the Provider shall act as a data processor under the Customer’s control, and the Customer shall serve as the data controller. The Provider shall process Customer Data only for the purposes of delivering the service and shall not use, store, or retain such data beyond the necessary scope of operation. All data processing activities shall comply with the California Consumer Privacy Act (CCPA) and any applicable Data Protection Act (DPA) requirements. The Provider shall ensure that data is encrypted in transit and at rest and shall maintain appropriate safeguards to protect Customer Data. Any cross-border transfer of Customer Data shall be governed by a standard contractual clause (SCC) approved by the Customer and compliant with the DPA, and shall be subject to the requirements of the receiving jurisdiction.
 
 ## Term, Termination, and Transition
 
-The initial term of this Master SaaS Agreement commences on March 1, 2026, and expires on February 28, 2028. The Agreement auto-renews for successive 12-month periods unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term.
+The Master Software-as-a-Service Agreement shall have an initial term of twenty-four (24) months, commencing on the Effective Date of March 1, 2026. The Agreement auto-renews for successive twelve (12)-month periods unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term. This notice period is designed to ensure that parties have sufficient time to evaluate service performance and contractual obligations before the renewal cycle begins.
 
-Either party may terminate this Agreement for material breach uncured after thirty (30) days' written notice. Upon termination, Provider shall return or delete Customer Data within thirty (30) days and provide an export in a machine-readable format. The post-termination transition obligations also include the provision of reasonable assistance to ensure a smooth transition of knowledge and ongoing licenses, with provisions surviving termination for a period of two years from the effective date of termination.
+Either party may terminate this Agreement for material breach, provided that written notice is given at least thirty (30) days prior to the termination date. Termination for convenience is not permitted under the current terms. Upon termination, the Provider shall return or delete all Customer Data within thirty (30) days and provide an export of the data in a machine-readable format. The Provider shall also transfer all knowledge of the Customer’s systems, data structures, and operational processes to the Customer, including documentation and access instructions, to ensure a smooth transition and continuity of business operations.
 
-The termination rights are governed by Section 7.1 of this Agreement, which provides that either party may terminate for material breach uncured after thirty (30) days' written notice. The termination notice deadline is set at December 31, 2027, to ensure a sixty-day window for non-renewal prior to the term's expiration on February 28, 2028.
+Following termination, the Customer shall retain all ongoing licenses to the software product for the duration of the initial term, unless otherwise terminated in accordance with this Agreement. The Provider shall not be liable for indirect or consequential damages, and the aggregate liability of each party is capped at the fees paid in the twelve (12) months immediately preceding the claim, as defined in Section 5.1. This structure ensures that the Customer bears the primary risk of service disruptions, while the Provider remains subject to the standard limitation of liability and indemnification obligations outlined in Section 5.1 and Section 6.1, respectively.
 
 ## Risk Heatmap
 
-| Clause | Risk Level | Notes |
-| --- | --- | --- |
-| 5.1 Liability cap (§5.1) | High | Raise cap to 2× annual fees for data-related claims, compromise at 1.5× |
-| 4.3 Breach notification (§4.3) | Medium | Tie notice deadline to "discovery" not "confirmation", Acme bears cost of customer notifications if breach is their fault |
-| 1.2 Auto-renewal (§1.2) | Low | Calendar non-renewal notice deadline to avoid auto-renewal by accident |
-| 3.3 Service credits (§3.3) | Medium | Consider adding termination-for-repeated-SLA-failure right, e.g., 3 months below 99.0% in any rolling 12 months |
-| 2.3 Fee escalator (§2.3) | Low | Negotiate fee escalator to 3-4%, low priority |
-| 7.1 Termination for material breach (§7.1) | Medium | Consider adding specific conditions or carve-outs for termination, e.g., 30-day notice period |
-| 8.1 Governing law (§8.1) | Low | No significant risks associated with this clause |
-
-Note: The risk levels are subjective and based on the provided notes from David Reyes. They may not reflect the actual level of risk or importance for each clause in the context of the entire agreement.
+| Clause | Risk Rank | Description | Redline / Fallback Position |
+|--------|-----------|-------------|-----------------------------|
+| 5.1 Liability Cap (§5.1) | High | The current cap is limited to the fees paid in the 12 months preceding the claim, which may not adequately cover data-related risks or recurring obligations. This cap is too narrow for a data-sensitive SaaS relationship. | Increase the liability cap to **2× annual fees** for data-related claims (e.g., breach of confidentiality, IP infringement). Propose a tiered structure where caps apply only to data-related claims and are not subject to the trailing 12-month fee rule. |
+| 4.3 Data Breach Notification (§4.3) | Medium | The current 72-hour notification window is acceptable but lacks specificity regarding "discovery" versus "confirmation" of a breach. There is no provision for cost-sharing when the breach is attributable to the Provider. | Redline: Require breach notification to be triggered upon **discovery** (e.g., by the Customer's security team or internal audit), not confirmation. Add a clause requiring the Provider to bear the cost of customer notifications if the breach is their fault (e.g., due to failure in encryption or access controls). |
+| 1.2 Auto-renewal (§1.2) | High | The 60-day non-renewal notice window is tight for a 24-month term, increasing the risk of accidental renewal without customer intent. This creates a lack of control for Northwind over service continuity. | Redline: Modify the auto-renewal term to require **written notice of non-renewal at least 90 days before the end of the term**. This ensures Northwind has sufficient time to review and opt out intentionally. |
+| 3.3 Service Credits as Sole Remedy (§3.3) | High | The provision that service credits are the **sole remedy** for availability failures undermines the Customer's ability to terminate the Agreement for repeated SLA violations. This creates a high risk of prolonged service disruptions. | Redline: Introduce a **termination-for-repeated-SLA-failure** right, allowing the Customer to terminate the Agreement if the Provider fails to maintain 99.9% monthly uptime for **three consecutive months** below 99.0% in any rolling 12-month period. |
+| 2.3 Fee Escalator (§2.3) | Medium | The 5% annual increase is higher than market benchmarks (3–4%), which may lead to financial strain for Northwind. While not a material risk, it is a significant point of concern for pricing stability. | Propose a **4% annual increase** for fee escalations, with a floor of 3% to ensure market alignment and reduce financial volatility. This change is acceptable given the current structure and market context. |
 
 ## Recommendations
 
-The Master SaaS Agreement is largely compliant with standard industry practices, but several provisions warrant attention to mitigate risks and ensure a mutually beneficial relationship between Northwind Outdoor Co. and Acme Cloud, Inc.
+- The liability cap in Section 5.1 is the highest-risk clause, as it limits exposure to claims based solely on fees paid in the prior year, which may not adequately cover data-related losses or third-party liabilities. Given that Northwind is the paying party and the risk of data-related breaches is material, a cap of 2× annual fees would better align with risk posture and provide stronger protection under the Excluded Claims framework.  
+- The breach notification clause in Section 4.3 poses a significant risk due to its lack of "discovery" linkage and the absence of cost-sharing for Acme’s notification expenses when breaches are their responsibility. These elements increase uncertainty in incident response and may expose Acme to unforeseen liability.  
+- The current auto-renewal mechanism in Section 1.2, with a 60-day non-renewal window, is a critical risk point because it may result in unintentional renewals if Northwind fails to act in time. A revised notice deadline of 2027-12-31 (aligned with the 24-month term) would ensure clear control and prevent accidental continuation of the agreement.  
 
-The liability cap in §5.1 is a concern, as it may not adequately protect Northwind from data-related claims. While the current draft caps at 1× trailing-12-month fees, Partner Jordan Pak recommends raising this cap to **2× annual fees** for data-related claims, aligning with Acme's historical agreement. This adjustment would provide Northwind with more robust protection against potential data breaches.
-
-Additionally, the breach notification provision in §4.3 is acceptable but could be improved by tying the notice period to "discovery" rather than "confirmation," and requiring Acme to bear the cost of customer notifications if the breach is their fault. This modification would enhance transparency and accountability for both parties.
-
-#### Redline Suggestions
-
-* §5.1: Insert "2× annual fees" in brackets [2x-annual-fees.md] to reflect recommended changes.
-* §4.3: Add "(b) Acme shall bear the cost of customer notifications if the breach is their fault."
+Recommendation: Sign as drafted, but apply redlines to Section 5.1 (increase liability cap to 2× annual fees), Section 4.3 (add "discovery" trigger and require Acme to bear notification costs), and Section 1.2 (adjust non-renewal deadline to 2027-12-31). These changes address the most material risks identified by the supervising attorney and ensure clarity in service performance and liability. Escalate to senior counsel for final review before execution.

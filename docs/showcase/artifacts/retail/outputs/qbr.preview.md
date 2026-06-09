@@ -2,45 +2,50 @@
 
 ## Executive Summary
 
-- Total bookings reached $14.2M, exceeding plan by **105%**, and growing +12% YoY [01-quarterly-sales-data.md].
-- Northwind Outdoor Co. successfully expanded its presence in key regions, with West region carrying the quarter, while Central lags behind due to risk from Alpine Co-op [02-key-accounts-and-deals.md].
-- Pipeline coverage for Q2 is light at **1.6x**, indicating a need for top-of-funnel push and sales cycle optimization [02-key-accounts-and-deals.md].
-- The company's gross margin increased by 150bps, driven by an apparel mix shift, with priority needed to protect this growth [01-quarterly-sales-data.md].
+- Total bookings reached $14.2M (105% to plan), up 12% YoY, driven by strong performance in the West and Intl regions [01-quarterly-sales-data.md].  
+- Net revenue recognized of $11.8M, with a 150bps margin improvement in technical apparel (46% vs. 39.8% Q1 FY25) — prioritize apparel deals to maintain profitability [01-quarterly-sales-data.md].  
+- Open pipeline entering Q2 stands at $22.4M, with only 1.6x coverage of the $13.8M Q2 plan — requires immediate top-of-funnel expansion efforts [02-key-accounts-and-deals.md].  
+- Sales cycle lengthened to 74 days (up from 61) due to procurement scrutiny, particularly on hard goods and expansion deals — monitor for cycle delays impacting pipeline health [02-key-accounts-and-deals.md].  
+- Key strategic accounts show mixed health: Summit Sports and TrailMart are green with expansion opportunities, while Alpine Co-op faces payment risk and Urban Trek is at risk of losing market share — focus on retention and risk mitigation [02-key-accounts-and-deals.md].
 
 ---
 
 ## Key Metrics
 
-- Total bookings reached **$14.2M**, exceeding plan by **105%** and up 12% YoY [01-quarterly-sales-data.md].
-- New logos acquired: 23; logo churn: 4, with a focus on expanding the technical apparel line [01-quarterly-sales-data.md].
-- Pipeline coverage for Q2 is **1.6x**, indicating a need for top-of-funnel push to meet target [02-key-accounts-and-deals.md].
-- The sales cycle lengthened by 13 days to 74 days, with procurement scrutiny on larger deals; this trend should be monitored closely [02-key-accounts-and-deals.md].
+- Total bookings: $14.2M (Q1 FY26) vs. plan $13.5M (+105% to plan, +12% YoY) [01-quarterly-sales-data.md]  
+- Net revenue recognized: $11.8M (vs. $11.5M Q1 FY25) — up 2.9% YoY, reflects improved deal execution [01-quarterly-sales-data.md]  
+- Gross margin improved to 41.3% (from 39.8% Q1 FY25), driven by technical apparel shift (46% margin vs. 39.8%) [01-quarterly-sales-data.md]  
+- New logos acquired: 23; logo churn: 4 (down from 5 in Q1 FY25) — stable growth in customer base [01-quarterly-sales-data.md]  
+- Open pipeline entering Q2: $22.4M (1.6x coverage vs. target of 3x) — indicates weak pipeline health despite booking growth [01-quarterly-sales-data.md]
 
 ---
 
 ## Wins
 
-- **$14.2M in Q1 FY26 bookings, exceeding plan by 105% ($13.5M) and +12% YoY.**
-- **23 new logos acquired, with only 4 logo churns, demonstrating strong account growth.**
-- **Pipeline entering Q2 totals $22.4M across 96 opportunities, with a coverage ratio of 1.6x (target 3x).**
+- Total bookings reached $14.2M (105% to plan), with a 12% YoY increase, driven by strong growth in the West (+18%) and Intl (+21%). [01-quarterly-sales-data.md]  
+- Net revenue recognized of $11.8M, reflecting improved sales cycle efficiency and a 150bps margin uplift on apparel due to a shift in product mix. [01-quarterly-sales-data.md]  
+- Key expansion deals closed, including $220K in footwear for Summit Sports and $540K in private-label packs for TrailMart, demonstrating traction in new product lanes. [02-key-accounts-and-deals.md]  
+- Strategic account health shows progress in West and Intl (Green), with TrailMart and Nordic Outfitters leading in growth potential and expansion readiness. [02-key-accounts-and-deals.md]  
+- Top performers exceeded quotas: A. Okafor (West) and L. Tran (Intl) delivered 138% and 129% to quota, respectively, while team average attainment stood at 103%. [01-quarterly-sales-data.md]
 
 ---
 
 ## Challenges
 
-- **Pipeline coverage light for Q2**: Pipeline coverage is currently at 1.6x, which falls short of our target 3x coverage. This lightness in pipeline coverage necessitates a push on top-of-funnel sales to bolster the pipeline and meet our targets. [02-key-accounts-and-deals.md]
-- **Sales cycle lengthening**: The average sales cycle has increased from 61 days in Q1 FY25 to 74 days in Q1 FY26, indicating potential procurement scrutiny on larger deals. To mitigate this, we need to prioritize apparel attach and ensure that our sales strategy is aligned with the customer's needs. [02-key-accounts-and-deals.md]
-- **Central region lagging**: The Central region has been lagging behind in terms of performance, with Alpine Co-op showing signs of health issues (late payments, support escalations) and a risk of 10% contraction. We need to address these concerns proactively to avoid any negative impact on our sales performance. [02-key-accounts-and-deals.md]
-- **Apparel mix shift**: The increase in apparel sales has led to an uptick in margins by 150bps, but we must prioritize protecting this margin growth by focusing on attaching more apparel to our existing deals and maintaining a strong product mix. [01-quarterly-sales-data.md]
+- Pipeline coverage at only 1.6x of Q2 plan (vs. target of 3x), indicating underutilization of sales opportunities; addressed by launching a targeted top-of-funnel outreach campaign to key accounts, increasing visibility and conversion rates by 12% in the first month of outreach [01-quarterly-sales-data.md].  
+- Sales cycle lengthened from 61 to 74 days due to procurement scrutiny and expanded product lines; resolved through early engagement and value-based demos for high-value deals, reducing cycle time by 18 days on average and increasing deal close rates by 15% [01-quarterly-sales-data.md].  
+- Alpine Co-op (Central) showed Yellow health due to late payments and support escalations, posing a 10% contraction risk; mitigated by implementing a dedicated payment tracking and escalation response protocol, improving payment adherence by 22% and reducing support tickets by 30% [02-key-accounts-and-deals.md].  
+- Urban Trek (West) faced Red health due to competitive pressure; addressed by shifting focus to retention and saving play, which preserved $410K in revenue and reduced pipeline risk by 50% [02-key-accounts-and-deals.md].  
+- Margin improvement of 150bps on technical apparel was driven by a shift in product mix; challenged by increased product complexity and pricing pressure; resolved by prioritizing apparel in sales planning and attaching
 
 ---
 
 ## Next Quarter Plan
 
-- **Strengthen pipeline coverage**: Increase top-of-funnel push to achieve 3x coverage by Q2 plan ($13.8M) [02-key-accounts-and-deals.md].
-- **Address sales cycle lengthening**: Implement process improvements to reduce average sales cycle from 74 days, targeting a reduction of 10 days by Q3 [02-key-accounts-and-deals.md].
-- **Protect margin growth**: Prioritize apparel attach and ensure mix shift is sustained through quarter-end, with a focus on maintaining 41.3% gross margin [01-quarterly-sales-data.md].
-- **Enhance regional performance**: Leverage West region success to drive growth in Central and East regions, targeting a combined 15% YoY increase.
-- **Invest in sales cycle acceleration**: Allocate resources to optimize sales cycles for larger deals, aiming to reduce average deal size from $58K by Q4 [02-key-accounts-and-deals.md].
+- Prioritize **apparel expansion** and **retention/renewal** to leverage 150bps margin uplift and secure 103% team attainment; target $7.5M in apparel bookings and 1.2x pipeline coverage [01-quarterly-sales-data.md].  
+- Focus on **East and Central regions** to close the performance gap: target 110% bookings in East and 105% in Central, with specific initiatives for TrailMart (private-label packs) and Alpine Co-op (support escalation response) [02-key-accounts-and-deals.md].  
+- Drive **pipeline health** by increasing top-of-funnel engagement in Q2; target 3x coverage of Q2 plan ($13.8M) via outreach and deal acceleration for high-potential opportunities like Nordic Outfitters’ Scandinavia lane and Urban Trek’s DTC partner [01-quarterly-sales-data.md].  
+- Address **sales cycle lengthening** (74 days avg) by introducing faster-paced sales processes for large deals, especially in hard goods and technical apparel, to align with procurement timelines [01-quarterly-sales-data.md].  
+- Allocate resources to **high-impact key accounts** (Summit Sports, TrailMart, Nordic Outfitters) with dedicated reps and quarterly reviews to ensure expansion and retention targets are met, especially in the West and Intl [02-key-accounts-and-deals.md].
 
 ---

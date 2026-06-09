@@ -43,6 +43,10 @@ Thumbs.db
 coverage/
 *.lcov
 
+# Python (showcase generator bytecode)
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Desktop.ini

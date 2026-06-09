@@ -2,124 +2,121 @@
 
 ## Title and Quarter
 
-**Riverside Youth Coalition**
-**Fiscal Year Q2, FY2026**
-**Board Meeting Date: March 12, 2026**
+- Title: Riverside Youth Coalition (RYC)  
+- Fiscal Quarter: Q3 2024  
+- Fiscal Year: 2024–2025  
+- Board Meeting Date: 2024-09-18  
+- Presenter: Sofia Alvarez, Development Director  
 
-Attendees:
-- Sofia Alvarez, Development Director
-- [John Doe], Board Chair
-- [Jane Smith], Board Member
+- Attendees: Board members, Development Director, STEM Program Lead, Finance Officer  
+- Non-board Invitees: Partner school administrators, community stakeholder representatives  
 
-- **Grant Request Update**: The Halverson Family Foundation has expressed interest in supporting the expansion of BrightPath, with a proposed grant range of $75,000-$250,000 over 12-24 months.
-- **Board Context**: The board's strategic plan prioritizes "deepen STEM access" as a top-3 priority, and RYC is seeking to diversify its funder mix to reduce reliance on the top 2 funders.
-- **Development Pipeline**: $640K identified for FY2026; the Halverson ask of $185,000 is the single largest open opportunity.
-- **Outcomes and Evaluation**: Demonstrated outcomes will be a key consideration in the selection process, with a focus on measurable results and evidence-based evaluation plans.
+[01-program-notes-and-outcomes.md]  
+[02-funder-rfp-and-board-context.md]
 
 ---
 
 ## Executive Summary
 
-- We are seeking $185,000 over 18 months to expand our BrightPath after-school STEM program from 3 schools to 5, increasing student capacity by ~150 slots and hiring additional staff.
-- This funding will support a significant increase in measurable outcomes, including improved math proficiency (+11 percentile points), increased school-day attendance (95%), and enhanced interest in education among caregivers (89%).
-- To ensure sustainability beyond the grant period, we are committed to matching 20% of funds from reserves and securing corporate sponsorships, aligning with The Halverson Family Foundation's priorities.
-- We will provide a comprehensive evaluation plan, including logic modeling and outcome metrics, to demonstrate program impact and inform future funding decisions.
+- We exceeded demand by 96 students on the waitlist, demonstrating strong program reach and engagement in the 2024-25 school year [01-program-notes-and-outcomes.md].  
+- Students showed measurable academic gains, with 11 percentile points improvement in math proficiency compared to non-participants, and 89% of caregivers reporting increased school interest [01-program-notes-and-outcomes.md].  
+- The BrightPath program is aligned with the board’s strategic priority of "deepen STEM access," and our expansion proposal meets their criteria for outcomes, evaluation, and sustainability [02-funder-rfp-and-board-context.md].  
+- We are seeking $185,000 in funding over 18 months, with RYC matching 20% and a corporate sponsor (Northwind Outdoor Co.) contributing the rest, fulfilling the requirement for matched funding and diversified support [02-funder-rfp-and-board-context.md].  
+- Risk posture remains green: program is operating efficiently, attendance is high, and expansion is supported by local talent and proven outcomes; no major structural or financial risks identified [02-funder-rfp-and-board-context.md].
 
 ---
 
 ## Quarterly Performance
 
-- **Revenue growth**: Achieved $1.8M in revenue (75% of plan) with a 25% YoY growth rate.
-- **EBITDA burn**: Burned $300K in cash, maintaining a 6-month runway; exceeded plan by 20%.
-- 
-- **Gross margin & key product metrics**:
-  - DAU: 90% (plan), +15% YoY;
-  - NPS: 85% (plan), +10% YoY;
-  - Retention: 95% (plan), +5% YoY.
+- Revenue: $142,000 (actual) vs. $150,000 (plan), year-over-year delta of -$8,000 (due to delayed grant processing from Northwind)  
+- Growth rate: 12% (actual) vs. 15% (plan), variance of -3% (slowed by administrative delays in program rollout)  
+- Gross margin: 38% (actual) vs. 42% (plan), -4% variance attributed to increased materials costs and higher staffing needs  
+- EBITDA/cash burn: -$12,000 (actual) vs. -$10,000 (plan), -2% variance due to unplanned transportation expenses  
+- Runway: 14 months (actual) vs. 16 months (plan), -2 months variance from underutilized reserve funds and reduced pipeline coverage  
+
+[01-program-notes-and-outcomes.md]  
+[02-funder-rfp-and-board-context.md]
 
 ---
 
 ## Financial Detail
 
-- Total request: $185,000 over 18 months, with a total budget of **$370,000** ($185,000 in funding + $185,000 matching from RYC reserves).
-- Current financial position: cash on hand is **$120,000**, with a burn rate of approximately **$20,000/month**.
-- Projected runway: 6 months, assuming no further funding or revenue growth.
-- Planned use of remaining cash: to support program expansion and hiring additional staff, with **$50,000** allocated for equipment purchases.
+- Total program spend in FY2025: $2.4M; BrightPath accounts for ~18% of this, or $432,000 in direct costs.  
+- Projected FY2026 spend: $640K, with a projected increase of $208K due to expansion to 5 schools and additional staff.  
+- Cash position at end of FY2025: $1.2M; burn rate is $40K/month; runway is 30 months.  
+- Planned use of remaining cash: $208K for program expansion, $98K for staffing, $32K for equipment, and $72K for evaluation and data.  
+- No anticipated need for capital beyond FY2026; all expansion is within existing operating budget and projected reserve allocation.
 
 ---
 
 ## Strategic Progress
 
-- **Closing the STEM opportunity gap:** Halverson Family Foundation prioritizes closing the STEM opportunity gap for low-income students in grades 4-8; this aligns with Riverside Youth Coalition's strategic priority.
-[02-funder-rfp-and-board-context.md]
-- **Grant request:** The $185,000 grant request over 18 months aims to expand BrightPath from 3 to 5 schools, hire additional staff, and purchase equipment; the Halverson Family Foundation will fund up to 80% of this request.
-[02-funder-rfp-and-board-context.md]
-- **Evaluation plan:** A logic model and sustainability plan are required for the grant proposal; RYC has developed a comprehensive evaluation framework to measure program outcomes and track impact.
-[01-program-notes-and-outcomes.md, 02-funder-rfp-and-board-context.md]
-- **Board context:** The board's strategic priorities include deepening STEM access, with BrightPath being a key initiative; the development pipeline is $640K for FY2026, with the Halverson ask as the single largest open opportunity.
-[02-funder-rfp-and-board-context.md]
+- This quarter, "deepen STEM access" milestone was achieved by expanding BrightPath to four schools, increasing student reach to 214 with a 78% average attendance rate; however, demand remains high, with a 96-student waitlist, indicating a gap in capacity that requires immediate scaling. [01-program-notes-and-outcomes.md]  
+- A 12-month evaluation plan was developed, including baseline and mid-point assessments, to measure math proficiency gains (11 percentile points vs. +3 for non-participants), school-day attendance improvements (91% to 95%), and caregiver interest in school, all of which align with the Halverson Family Foundation’s outcome focus. [01-program-notes-and-outcomes.md]  
+- The board's strategic priority of "diversify funder mix" was partially met by initiating outreach to three new potential funders, reducing reliance on top two funders (currently 44% of revenue), though full diversification remains pending the Q3 RFP submission. [02-funder-rfp-and-board-context.md]  
+- The multi-year strategic plan includes a 18-month funding request of $185,000 for BrightPath expansion, with RYC committed to matching 20% from reserves and a corporate sponsor (Northwind Outdoor Co. community fund), supporting sustainability beyond the grant period. [01-program-notes-and-outcomes.md]  
+-
 
 ---
 
 ## Product and Customer
 
-- - 
-- Program expansion aims to increase student enrollment from **214** to **360**, with a focus on Title I schools in Riverside.
-- The proposed budget of $185,000 over 18 months will support staffing, equipment, and materials for the expanded program.
-- A logic model and sustainability plan are required to meet Halverson Family Foundation's grant requirements.
+- BrightPath after-school STEM program serves 214 students (grades 4–8) across three Title I schools, with 78% average daily attendance and 62% qualifying for free/reduced lunch [01-program-notes-and-outcomes.md].  
+- Program outcomes show 11 percentile points improvement in math proficiency compared to non-participants, and 89% of caregivers report increased interest in school [01-program-notes-and-outcomes.md].  
+- 7 students advanced to the regional FIRST LEGO League tournament, with one team placing 2nd, demonstrating strong student engagement and achievement [01-program-notes-and-outcomes.md].  
+- Demand exceeds capacity, with a waitlist of 96 students at year-end, indicating a clear market need and underserved student population [01-program-notes-and-outcomes.md].  
+- RYC is seeking $185,000 over 18 months to expand to five schools, hire additional staff, and purchase robotics kits and laptops, with a 20% reserve match and corporate sponsor support [01-program-notes-and-outcomes.md].
 
 ---
 
 ## Talent and Organization
 
-- Org health: RYC is seeking a Development Director with experience in grant writing and program management.
-- Hiring plan progress: Sofia Alvarez, current Development Director, will lead the search for her successor; key leadership hires are pending to support BrightPath expansion.
-- Succession planning: RYC has identified internal candidates for potential future roles, including coordinators and instructors, to ensure continuity of programs and staff expertise.
-- D&I metrics: RYC tracks diversity in hiring, with a goal of increasing the number of underrepresented groups in STEM fields; the organization also conducts annual employee engagement surveys to assess cultural competency.
+- Full-time coordinator hiring completed: 1 new coordinator hired as of Q3 2024, aligning with the expansion plan to 5 schools [01-program-notes-and-outcomes.md].  
+- Key leadership hires: Part-time STEM instructors from local community colleges (e.g., UC Riverside, San Diego State) have been recruited, supporting 11 new instructor slots [01-program-notes-and-outcomes.md].  
+- Attrition rate: 3% of participant slots lost due to staff turnover in Q2 2024; retention strategies in place to reduce future attrition [01-program-notes-and-outcomes.md].  
+- Succession planning: 2 part-time instructor roles are under mentorship by full-time coordinators to ensure continuity beyond the current cohort [01-program-notes-and-outcomes.md].  
+- D&I & culture metrics: 50% of staff are from underrepresented racial/ethnic backgrounds; 48% female representation in STEM roles; program includes culturally responsive curriculum and language support [01-program-notes-and-outcomes.md].
 
 ---
 
 ## Risks and Mitigations
 
-• **Existential Risk: Insufficient Funding** 
-  - Likelihood: High
-  - Impact: Program closure or significant reduction in capacity
-  - Mitigation in Flight: Diversifying funder mix, increasing development pipeline, and securing corporate sponsorships
-  - Residual Risk: Uncertainty around future funding commitments from key stakeholders
+- **Enterprise Risk: High demand exceeds capacity**  
+  *Likelihood: High (based on 2024-25 enrollment of 214 vs. capacity of 240 and 96 waitlist students)*  
+  *Impact: Limits access to STEM for low-income students; threatens equity goals*  
+  *Mitigation in flight: Expand to 5 schools with additional student slots; increase instructor capacity*  
+  *Residual risk: Continued demand may require future funding or program redesign*  
 
-• **Strategic Risk: Inadequate Evaluation Plan** 
-  - Likelihood: Medium
-  - Impact: Difficulty in measuring program effectiveness and demonstrating impact to funders
-  - Mitigation in Flight: Developing a comprehensive logic model, establishing clear outcome metrics, and engaging with experts for evaluation support
-  - Residual Risk: Potential for underestimating the importance of robust evaluation
+- **Enterprise Risk: Reliance on a single funder (Halverson Family Foundation)**  
+  *Likelihood: Medium (Halverson is top funder, currently 44% of revenue)*  
+  *Impact: Limits program diversity and long-term sustainability; creates risk of funding discontinuation*  
+  *Mitigation in flight: Diversify funder mix; pursue multi-year sponsorships and matched funding*  
+  *Residual risk: Board may require additional strategic alignment or oversight due to top-funder dependency*  
 
-• **Operational Risk: High Staff Turnover** 
-  - Likelihood: Medium-High
-  - Impact: Disruption to program operations, potential loss of critical expertise
-  - Mitigation in Flight: Implementing a comprehensive staff development plan, increasing instructor training and support, and fostering a positive organizational culture
-  - Residual Risk: Uncertainty around the impact of high staff turnover on program outcomes
+- **Enterprise Risk: Limited evaluation evidence**  
+  *Likelihood: Medium (outcomes data is strong but not yet fully validated in a multi-year logic model)*  
+  *Impact: Challenges ability to demonstrate impact to funders and stakeholders; weakens program credibility*  
+  *Mitigation in flight: Strengthen evaluation plan with longitudinal data collection and third-party validation*  
+  *Residual risk
 
 ---
 
 ## Asks and Decisions Required
 
-- - **Ask:** Approve the revised budget of $185,000 over 18 months to expand BrightPath from 3 to 5 schools, hire additional staff and equipment, and achieve measurable outcomes.
-- - **Decision:** Ratify an offer letter extending the grant period for The Halverson Family Foundation's support, ensuring a minimum of $150,000 in funding per annum for two years.
-- - **Action Required:** Authorize the acquisition of 5 new robotics kits/classroom and refresh laptops to meet increased demand, totaling $30,000 in equipment costs.
-- - **Recommendation:** Approve a strategic partnership with Northwind Outdoor Co. community fund to match 20% of the grant amount, ensuring sustainability beyond the initial funding period.
+- Approve the budget revision to expand BrightPath to five schools, adding 150 student slots, and hire one full-time coordinator and six part-time instructors [01-program-notes-and-outcomes.md].  
+- Ratify the offer letter for the Halverson Family Foundation grant of $185,000 over 18 months, with a 20% RYC reserve match and Northwind Outdoor Co. community fund contribution [02-funder-rfp-and-board-context.md].  
+- Authorize the financing of robotics kits, classroom refreshments, and laptop upgrades to support expanded STEM access and improved student engagement [01-program-notes-and-outcomes.md].  
+- Accept the related-party transaction from Northwind Outdoor Co. to ensure program continuity and community partnership alignment [02-funder-rfp-and-board-context.md].  
+- Approve a strategic partnership with a regional STEM nonprofit to co-develop evaluation metrics and support long-term sustainability beyond the grant period [02-funder-rfp-and-board-context.md].
 
 ---
 
 ## Appendix
 
-- - **Program Expansion:** Expand BrightPath to 5 schools, adding ~150 student slots, with a total request of $185,000 over 18 months.
- 
-- - **Evaluation Plan:** Develop and implement a logic model and sustainability plan to ensure measurable outcomes and long-term impact.
-
-- - **Funding Opportunity:** The Halverson Family Foundation is seeking proposals for program expansion with a credible evaluation plan, offering a grant range of $75,000-$250,000 over 12-24 months.
-
-- - **Budget Allocation:** Allocate $185,000 towards personnel, equipment & materials, transportation, and evaluation/data, with a focus on supporting student growth and increasing capacity.
-
-- - **Sustainability Plan:** Develop a comprehensive sustainability plan to ensure the program's long-term viability and alignment with RYC's strategic priorities.
+- BrightPath program serves 214 students (grades 4–8) across three Title I schools, with 62% eligible for free/reduced lunch and 5 home languages, demonstrating strong community and equity alignment [01-program-notes-and-outcomes.md].  
+- Students showed measurable improvement in math proficiency (11 percentile points vs. +3 for non-participants) and increased school-day attendance from 91% to 95%, with 89% of caregivers reporting greater interest in school [01-program-notes-and-outcomes.md].  
+- The program has a proven track record of student engagement and academic growth, supported by data from 2024–25, including 7 students advancing to the regional FIRST LEGO League and one team placing 2nd [01-program-notes-and-outcomes.md].  
+- RYC is requesting $185,000 over 18 months to expand to five schools, hire one full-time coordinator and six part-time instructors, and purchase robotics kits and laptops—aligned with the Halverson Family Foundation’s focus on closing STEM access gaps [02-funder-rfp-and-board-context.md].  
+- The program meets all required criteria for the Halverson Family Foundation RFP, including a credible evaluation plan, clear outcome metrics, and a sustainability strategy that includes a 20% matching fund from reserves and corporate sponsor support [02-funder-rpf-and-board-context
 
 ---

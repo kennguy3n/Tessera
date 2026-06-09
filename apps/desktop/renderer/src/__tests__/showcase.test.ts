@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -5,6 +8,21 @@ import {
   installShowcaseBridge,
   showcasePersonaFromQuery,
 } from "../showcase";
+
+// The set of model ids the showcase is ALLOWED to advertise = the
+// `text`-capability entries in Tessera's real model registry. The mock bridge
+// must never report an off-design stand-in model (e.g. a generic Llama/Qwen
+// build); this mirrors the hard guard in scripts/showcase/generate.py.
+// Vitest runs with cwd = apps/desktop, so the repo-root registry is two levels up.
+const MODELS_JSON = resolve(process.cwd(), "../../sidecars/models.json");
+const DESIGN_TEXT_MODEL_IDS = new Set<string>(
+  (JSON.parse(readFileSync(MODELS_JSON, "utf8")).models as Array<{
+    id: string;
+    capability: string;
+  }>)
+    .filter((m) => m.capability === "text")
+    .map((m) => m.id),
+);
 
 /**
  * The showcase harness is a DEV-only mock `window.tessera` bridge used to
@@ -21,7 +39,11 @@ type Api = {
   artifacts: { list: () => Promise<Array<{ id: string; version: number; artifactType: string }>> };
   sources: { listSources: () => Promise<Array<{ id: string }>> };
   citations: { list: (artifactId: string) => Promise<Array<{ citationId: string }>> };
-  runtime: { onDownloadProgress: () => () => void };
+  runtime: {
+    onDownloadProgress: () => () => void;
+    getCurrentModel: () => Promise<{ modelId: string }>;
+    getInstalledModels: () => Promise<{ text?: { modelId: string } }>;
+  };
   // Namespace/method that is not implemented in `real`.
   nope: { missing: () => Promise<unknown> };
 };
@@ -57,6 +79,18 @@ describe("buildShowcaseApi", () => {
   it("throws on an unknown persona", () => {
     expect(() => buildShowcaseApi("nope")).toThrow(/Unknown showcase persona/);
   });
+
+  it.each(PERSONAS)(
+    "advertises only a Tessera design text model for %s (no off-design models)",
+    async (persona) => {
+      const api = buildShowcaseApi(persona) as Api;
+      const current = await api.runtime.getCurrentModel();
+      const installed = await api.runtime.getInstalledModels();
+      expect(DESIGN_TEXT_MODEL_IDS.has(current.modelId)).toBe(true);
+      expect(installed.text).toBeDefined();
+      expect(DESIGN_TEXT_MODEL_IDS.has(installed.text!.modelId)).toBe(true);
+    },
+  );
 
   it.each(PERSONAS)("exposes a working mock surface for %s", async (persona) => {
     const api = buildShowcaseApi(persona) as Api;
