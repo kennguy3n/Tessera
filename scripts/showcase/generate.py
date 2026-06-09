@@ -382,6 +382,49 @@ def reconcile_table_totals(text: str) -> str:
     return "\n".join(out)
 
 
+def dedup_and_strip_tables(text: str) -> str:
+    """Free-form table generation occasionally makes a small model repeat an
+    entire table (sometimes with a few cells reworded) or trail off into a few
+    orphan pipe-rows with no header. Keep the first well-formed table for any
+    given header row and drop (a) later tables that repeat that header and
+    (b) stray pipe-row fragments that aren't under a header+separator. This is
+    structure-only cleanup — no cell content is altered — and a no-op on a body
+    that already holds a single clean table or pure prose."""
+    blocks = re.split(r"\n\s*\n", text)
+    seen_headers: set = set()
+    kept: list[str] = []
+    for blk in blocks:
+        nonempty = [l for l in blk.split("\n") if l.strip()]
+        if not nonempty:
+            continue
+        # A table row either starts with "|" or carries >=2 pipes (multi-cell);
+        # a prose sentence with a single stray "|" must NOT qualify, or we'd drop
+        # real text.
+        def is_row(l: str) -> bool:
+            return "|" in l and (l.lstrip().startswith("|") or l.count("|") >= 2)
+        rowish = [l for l in nonempty if is_row(l)]
+        has_sep = any("-" in l and re.fullmatch(r"\s*\|?[\s:\-|]+\|?\s*", l)
+                      for l in nonempty)
+        # Only a block that is ENTIRELY table rows is treated as a table (or a
+        # table fragment); a block with any prose line is left alone.
+        if rowish and len(rowish) == len(nonempty):
+            if not has_sep:
+                # Orphan pipe-rows with no header/separator. Drop only what is
+                # unambiguously a broken table fragment — a row that starts with
+                # "|" or has an empty pipe-delimited cell (prose never does) — so
+                # a multi-pipe prose line (e.g. "Options are A | B | C.") stays.
+                if any(l.lstrip().startswith("|") for l in rowish) or any(
+                        "" in _split_row(l) for l in rowish):
+                    continue
+            else:
+                sig = tuple(c.lower() for c in _split_row(nonempty[0]))
+                if sig in seen_headers:
+                    continue  # a second table with the same header -> duplicate
+                seen_headers.add(sig)
+        kept.append(blk)
+    return "\n\n".join(kept)
+
+
 def extract_json(text: str) -> str:
     text = text.strip()
     # pull the first {...} or [...] block
@@ -409,6 +452,9 @@ def gen_structured(model: str, system: str, user: str, validate, *,
     JSON schema so output is syntactically valid by construction."""
     last_err = ""
     for i in range(attempts):
+        # First pass at 0.3; retries drop to 0.2. For schema-constrained JSON we
+        # want retries MORE deterministic (the first try's sampling produced an
+        # invalid shape), the opposite of the usual "heat up on retry" pattern.
         raw = llm_generate(model, user, system, num_predict=num_predict,
                            temperature=0.2 if i else 0.3,
                            response_format=response_format)
@@ -459,8 +505,11 @@ def gen_itemized_budget(persona: dict, sec: dict, corpus: str) -> str:
         "per-year splits, future-year projections, or figures the sources do not "
         "contain. Each amount is a single number in the unit the source uses (set "
         "\"unit\" to that, e.g. \"$000s\"). Each justification is ONE concise "
-        "sentence grounding the amount in the sources, citing the source file in "
-        "square brackets, e.g. [01-program-notes-and-outcomes.md]."
+        "sentence stating WHAT the amount funds and WHY, grounded in the sources "
+        "and citing the source file in square brackets, e.g. "
+        "[01-program-notes-and-outcomes.md]. Do NOT show calculations, per-unit "
+        "pricing, unit conversions, or arithmetic in the justification — state the "
+        "rationale only."
     )
     user = (
         f"SOURCE FILES:\n{corpus}\n\n"
@@ -574,7 +623,8 @@ def gen_document(persona: dict, template: dict, corpus: str, source_names: list[
             f"{fmt_hint}"
         )
         log(f"    - [{i}/{len(sections)}] {title}")
-        if fmt == "table" and "budget" in title.lower():
+        is_budget = fmt == "table" and "budget" in title.lower()
+        if is_budget:
             # Budget/financial tables go through constrained-JSON generation so
             # the model can't fabricate year-by-year columns or non-summing
             # totals; the structure + Total are rendered deterministically.
@@ -593,10 +643,18 @@ def gen_document(persona: dict, template: dict, corpus: str, source_names: list[
         # fragment so the section reads as finished, not cut off.
         if finish == "length":
             body = trim_dangling_sentence(body)
-        # Totals in a generated table are derived values the small model can't
-        # sum reliably; recompute any Total/Subtotal row or column from its line
-        # items so a budget/financial table is internally consistent.
-        body = reconcile_table_totals(body)
+        if is_budget:
+            # gen_itemized_budget already rendered a single table with a
+            # deterministic, correct Total — no dedup or reconcile needed.
+            pass
+        else:
+            # Free-form table output can repeat a table or trail into orphan
+            # pipe-rows; collapse it back to one clean table first.
+            body = dedup_and_strip_tables(body)
+            # Totals in a generated table are derived values the small model
+            # can't sum reliably; recompute any Total/Subtotal row or column
+            # from its line items so a financial table is internally consistent.
+            body = reconcile_table_totals(body)
         for n in source_names:
             if f"[{n}]" in body:
                 citations.add(n)
