@@ -62,10 +62,25 @@ describe("resourceMode config (LW-2)", () => {
   });
 
   it("heals a corrupted on-disk value back to lightweight", () => {
-    const cfgPath = path.join(userDataDir, "config.json");
-    fs.writeFileSync(cfgPath, JSON.stringify({ resourceMode: "turbo" }));
+    // Must match getConfigPath() in config.ts, which resolves to
+    // "tessera-config.json" under userData — writing "config.json"
+    // would land at a path loadConfig() never reads, so the test would
+    // pass on the fresh-install default instead of exercising the
+    // zod .catch("lightweight") healing path it documents.
+    const cfgPath = path.join(userDataDir, "tessera-config.json");
+    // Pair the corrupt resourceMode with a VALID non-default sibling
+    // (theme defaults to "light"). Asserting theme === "dark" round-trips
+    // proves loadConfig() actually read THIS file and healed only the
+    // bad field — rather than silently falling back to the all-defaults
+    // config because the file was written to a path it never reads.
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({ resourceMode: "turbo", theme: "dark" }),
+    );
     _clearConfigCacheForTests();
-    expect(loadConfig().resourceMode).toBe("lightweight");
+    const healed = loadConfig();
+    expect(healed.resourceMode).toBe("lightweight");
+    expect(healed.theme).toBe("dark");
   });
 });
 

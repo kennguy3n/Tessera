@@ -131,11 +131,6 @@ export async function ensureVisionSidecarRunning(): Promise<void> {
   }
   if (sidecar.isRunning) return;
 
-  // LW-2: in lightweight mode, starting vision stops any running
-  // text / diffusion sidecar so only one model is resident at a
-  // time. No-op in performance mode (concurrent text + vision).
-  await enforceSidecarExclusivity("vision");
-
   const record = await getInstalledModel(userDataDir(), "vision");
   if (!record) {
     throw new Error(
@@ -166,6 +161,16 @@ export async function ensureVisionSidecarRunning(): Promise<void> {
       "Vision model projector file is missing on disk. Re-download the vision model from Settings.",
     );
   }
+
+  // LW-2: in lightweight mode, starting vision stops any running
+  // text / diffusion sidecar so only one model is resident at a time
+  // (no-op in performance mode — concurrent text + vision). This runs
+  // only AFTER every validation above has passed: enforcing exclusivity
+  // earlier would kill the user's running text sidecar even when the
+  // vision start is about to fail (no model installed, missing or
+  // deleted mmproj), leaving them with no sidecar at all. Mirrors the
+  // validate-then-enforce ordering in ipc/imagegen.ts.
+  await enforceSidecarExclusivity("vision");
 
   const platform = detectPlatformInfo();
   sidecar.setModelPath(record.path);
