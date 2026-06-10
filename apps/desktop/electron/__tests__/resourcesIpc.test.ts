@@ -112,7 +112,7 @@ describe("resources:getUsage IPC handler", () => {
       vision: { running: false, endpoint: null },
       imagegen: { state: "unloaded" },
     });
-    expect(usage.connections).toEqual({ writers: 1, readers: 4 });
+    expect(usage.connections).toEqual({ writers: 1, readers: 2 });
     expect(usage.indexing).toEqual({
       deferredForMemory: false,
       pressure: null,
@@ -146,9 +146,10 @@ describe("resources:getUsage IPC handler", () => {
   });
 
   it("caps the read-pool count at MAX_READ_POOL_SIZE", async () => {
-    // node:os.availableParallelism is mocked to 8; the pool is capped 4.
+    // node:os.availableParallelism is mocked to 8; the pool is capped 2
+    // (MAX_READ_POOL_SIZE, mirroring the Rust source of truth).
     const usage = await getUsage();
-    expect(usage.connections.readers).toBe(4);
+    expect(usage.connections.readers).toBe(2);
   });
 
   it("passes through a full watchdog pressure sample when present", async () => {
@@ -312,7 +313,7 @@ describe("resources:getUsage IPC handler", () => {
           imagegen: { state: "unloaded" },
         },
         // readPoolSize stays live — it has its own internal guard.
-        connections: { writers: 1, readers: 4 },
+        connections: { writers: 1, readers: 2 },
         indexing: { deferredForMemory: false, pressure: null },
         battery: {
           hasBattery: false,

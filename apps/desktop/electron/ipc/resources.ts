@@ -40,8 +40,12 @@ import type {
  * so the dashboard re-derives it from the same formula. This constant
  * is the single cross-FFI coupling point; a future bridge getter that
  * returns the live pool size would remove the need to mirror it here.
+ *
+ * Keep this value in lock-step with the Rust constant (currently 2,
+ * lowered from 4 in LW-5 for the single-user desktop profile). A
+ * mismatch makes the dashboard misreport the reader-connection count.
  */
-const MAX_READ_POOL_SIZE = 4;
+const MAX_READ_POOL_SIZE = 2;
 
 /**
  * The read pool is built with at least one reader (the
