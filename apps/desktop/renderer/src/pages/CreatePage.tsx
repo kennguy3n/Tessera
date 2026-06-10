@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
@@ -1094,7 +1094,11 @@ function TemplateRunner({
   // set, the substrate surfaces other indexed sources that co-occur (by
   // entity) with the selection — replacing the manual "search and hunt"
   // step with a one-click "include these too" affordance.
-  const selectedIds = Array.from(selected);
+  // `selected` is a Set whose reference only changes when the working
+  // set actually changes, so memoising on it avoids allocating a fresh
+  // array on unrelated re-renders. The hook already derives a stable
+  // string key internally, so this is purely an allocation nicety.
+  const selectedIds = useMemo(() => Array.from(selected), [selected]);
   const { suggestions } = useRelatedSourceSuggestions(selectedIds);
   // Only suggest sources that still exist in the live list and aren't
   // already selected (the substrate already excludes selected ids, but

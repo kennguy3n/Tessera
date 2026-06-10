@@ -888,7 +888,7 @@ export interface NativeBridge {
 
   // --- Knowledge substrate (additive native layer) ---------------------
   //
-  // The eight functions below are exported from `tessera_bridge`'s
+  // The nine functions below are exported from `tessera_bridge`'s
   // `substrate.rs` module (snake_case `bridge_*` on the Rust side,
   // camelCased here by napi-derive). They delegate to the
   // `SubstrateManager` held in `AppState`, which writes only to the

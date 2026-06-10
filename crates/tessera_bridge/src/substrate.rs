@@ -1,6 +1,6 @@
 //! N-API surface for the additive knowledge substrate.
 //!
-//! These eight entry points are the FOUNDATIONAL contract the UI and
+//! These nine entry points are the FOUNDATIONAL contract the UI and
 //! search sessions wire to. They mirror Tessera's existing
 //! `napi-derive` style (snake_case `bridge_*` functions returning
 //! `napi::Result<T>` with `#[napi(object)]` DTOs), and they delegate to
