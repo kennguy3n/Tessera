@@ -373,6 +373,11 @@ const api: TesseraApi = {
     reportCrash: (report: RendererCrashReport) =>
       ipcRenderer.invoke("diagnostics:reportCrash", report),
   },
+  // LW-12 read-only resource-usage snapshot for the Settings →
+  // Performance dashboard. See `electron/ipc/resources.ts`.
+  resources: {
+    getUsage: () => ipcRenderer.invoke("resources:getUsage"),
+  },
   // LW-8: bridge-readiness signal. `getBridgeState` is the only IPC the
   // renderer is allowed to call before the bridge is up — it answers
   // "are you ready yet?" so the renderer can keep showing the

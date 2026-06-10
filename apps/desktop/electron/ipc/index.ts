@@ -19,6 +19,7 @@ import { registerDialogHandlers } from "./dialog";
 import { registerImagegenHandlers } from "./imagegen";
 import { registerKchatHandlers } from "./kchat";
 import { registerModelHandlers } from "./model";
+import { registerResourcesHandlers } from "./resources";
 import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
 import { registerSlidesHandlers } from "./slides";
@@ -60,4 +61,8 @@ export function registerAllIpcHandlers(): void {
   // (registration is idempotent); kept at the end alongside the other
   // cross-cutting diagnostic surfaces.
   registerDiagnosticsHandlers();
+  // LW-12 read-only resource-usage snapshot for Settings → Performance.
+  // Ordering is cosmetic (registration is idempotent); grouped with the
+  // other cross-cutting, state-free inspection surfaces.
+  registerResourcesHandlers();
 }

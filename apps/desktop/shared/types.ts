@@ -2732,6 +2732,8 @@ export interface TesseraApi {
   diagnostics: DiagnosticsApi;
   /** Main-process window-visibility signals (suspend/resume). */
   appLifecycle: AppLifecycleApi;
+  /** LW-12 read-only resource-usage snapshot for Settings → Performance. */
+  resources: ResourcesApi;
   /** App-lifecycle surface (LW-8 bridge readiness). */
   lifecycle: LifecycleApi;
 }
@@ -2770,6 +2772,118 @@ export interface DiagnosticsApi {
    * never blocks on disk IO.
    */
   reportCrash: (report: RendererCrashReport) => Promise<void>;
+}
+
+/**
+ * LW-12: a single read-only snapshot of everything the resource-usage
+ * dashboard (Settings → Performance) shows. Aggregated in the main
+ * process from the live subsystems the LW work introduced — the model
+ * sidecars (LW-1), the resource mode (LW-2), the battery monitor
+ * (LW-3), and the indexing RSS watchdog (LW-7) — so the renderer never
+ * reaches into main-process state directly.
+ *
+ * Every field is a plain JSON-cloneable value: the snapshot crosses the
+ * IPC boundary by structured clone, so it carries no live handles.
+ */
+export interface ResourceUsage {
+  /** Active resource profile (drives the gates above). */
+  resourceMode: ResourceMode;
+  memory: ResourceUsageMemory;
+  slm: ResourceUsageSlm;
+  connections: ResourceUsageConnections;
+  indexing: ResourceUsageIndexing;
+  battery: ResourceUsageBattery;
+}
+
+/**
+ * Main-process memory footprint from `process.memoryUsage()`. RSS is
+ * the headline number the dashboard shows: it covers the Electron main
+ * process **including** the in-process Rust substrate (the N-API addon
+ * runs in this process, not a child), which is the bulk of the idle
+ * footprint once the renderer is excluded. The model sidecars are
+ * separate child processes and are reported under {@link slm} instead.
+ */
+export interface ResourceUsageMemory {
+  rssBytes: number;
+  heapUsedBytes: number;
+  heapTotalBytes: number;
+  externalBytes: number;
+}
+
+/** Per-capability local-model (sidecar) load state. */
+export interface ResourceUsageSlm {
+  /** Local text-generation sidecar (llama-server). */
+  text: ResourceUsageSidecar;
+  /** Local vision sidecar. */
+  vision: ResourceUsageSidecar;
+  /**
+   * Image-generation (diffusion) sidecar lifecycle. Distinct shape
+   * because it has an explicit load state machine
+   * (`unloaded → loading → loaded`/`failed`) rather than the simple
+   * running/stopped of the llama-server sidecars.
+   */
+  imagegen: { state: "unloaded" | "loading" | "loaded" | "failed" };
+}
+
+export interface ResourceUsageSidecar {
+  running: boolean;
+  /** Loopback endpoint when running, else `null`. */
+  endpoint: string | null;
+}
+
+/**
+ * Open SQLCipher connections. The store uses a single serialized
+ * writer (the `SharedConnection` mutex) plus a bounded read pool sized
+ * by `tessera_core::db::default_read_pool_size()`
+ * (`min(available_parallelism, MAX_READ_POOL_SIZE)`). The bridge does
+ * not currently export the live pool size, so the main process mirrors
+ * that formula; see `electron/ipc/resources.ts` for the single
+ * cross-FFI coupling point.
+ */
+export interface ResourceUsageConnections {
+  /** Always 1 — the serialized writer connection. */
+  writers: number;
+  /** Read-pool size (bounded readers). */
+  readers: number;
+}
+
+/** RSS-watchdog view of bulk-indexing admission (LW-7). */
+export interface ResourceUsageIndexing {
+  /** Bulk-indexing admission currently deferred by memory pressure. */
+  deferredForMemory: boolean;
+  /**
+   * Latest watchdog sample, or `null` before the first poll / when the
+   * watchdog is not running (e.g. some test envs).
+   */
+  pressure: {
+    paused: boolean;
+    rssBytes: number;
+    highWaterMarkBytes: number;
+    lowWaterMarkBytes: number;
+  } | null;
+}
+
+/** Power-state view used to explain battery-driven gating (LW-3). */
+export interface ResourceUsageBattery {
+  hasBattery: boolean;
+  isOnBattery: boolean;
+  isCharging: boolean;
+  /** Charge level 0–100, or `null` when unknown. */
+  percent: number | null;
+  /**
+   * Whether low-battery synthesis gating is currently active (a present
+   * battery, discharging, at/below the low-battery threshold).
+   */
+  gating: boolean;
+}
+
+/**
+ * LW-12 resource-usage inspection surface. Read-only; the dashboard
+ * polls {@link ResourcesApi.getUsage} on a short interval while the
+ * Performance settings card is mounted.
+ */
+export interface ResourcesApi {
+  getUsage: () => Promise<ResourceUsage>;
 }
 
 /**
