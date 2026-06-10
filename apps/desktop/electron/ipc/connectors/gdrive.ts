@@ -18,6 +18,10 @@
  */
 
 import * as fsp from "fs/promises";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
+import type { ReadableStream as NodeWebReadableStream } from "stream/web";
+import { pipeline } from "stream/promises";
 import * as path from "path";
 
 import { resolveAccessToken, SourcePathIndex, syncDirFor } from "./syncDir";
@@ -37,6 +41,53 @@ export interface GdriveSyncResult {
 }
 
 const MAX_SYNC_FILE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * LW-6: stream a successful `fetch` response body to `destPath` instead
+ * of buffering the whole file in memory. Returns the number of bytes
+ * written.
+ *
+ * Drive files are capped at `MAX_SYNC_FILE_BYTES` (100 MB); the old
+ * `arrayBuffer()` path held a transient ~100 MB `ArrayBuffer` plus a
+ * second ~100 MB `Buffer` copy per file — a ~200 MB heap spike that
+ * blows the lightweight RSS budget. Streaming keeps only one chunk
+ * resident.
+ *
+ * Writes to a sibling `.partial` file and renames on success so a
+ * mid-stream failure never leaves a truncated file for the bridge to
+ * index, and a zero-byte body (Drive occasionally 200s an empty export)
+ * is skipped without creating an empty source. `rename` is atomic
+ * within a filesystem; the temp file always lives in the sync dir
+ * alongside its destination.
+ */
+async function streamResponseToFile(
+  resp: Response,
+  destPath: string,
+): Promise<number> {
+  if (!resp.body) return 0;
+  const tmpPath = `${destPath}.partial`;
+  try {
+    // `resp.body` is the DOM `ReadableStream` (lib.dom); `Readable.fromWeb`
+    // is typed against Node's `stream/web` `ReadableStream`. The two are
+    // structurally compatible at runtime (Node 20 / Electron 31 unify the
+    // stream implementations) but differ in their .d.ts identity, so we
+    // bridge the nominal gap with a typed cast rather than `any`.
+    await pipeline(
+      Readable.fromWeb(resp.body as unknown as NodeWebReadableStream<Uint8Array>),
+      createWriteStream(tmpPath),
+    );
+    const { size } = await fsp.stat(tmpPath);
+    if (size === 0) {
+      await fsp.unlink(tmpPath).catch(() => undefined);
+      return 0;
+    }
+    await fsp.rename(tmpPath, destPath);
+    return size;
+  } catch (err) {
+    await fsp.unlink(tmpPath).catch(() => undefined);
+    throw err;
+  }
+}
 
 const EXPORT_MIME_MAP: Record<string, string> = {
   "application/vnd.google-apps.document": "text/plain",
@@ -178,33 +229,11 @@ export async function syncGoogleDrive(ctx: {
       const fileSize = Number(meta.size ?? "0");
       if (fileSize > MAX_SYNC_FILE_BYTES) continue;
 
-      let contentBytes: ArrayBuffer;
       const exportMime = EXPORT_MIME_MAP[meta.mimeType];
-      if (exportMime) {
-        const exportResp = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!exportResp.ok) {
-          // Drain body before skipping so the underlying socket is
-          // returned to the pool immediately.
-          await exportResp.text().catch(() => undefined);
-          continue;
-        }
-        contentBytes = await exportResp.arrayBuffer();
-      } else {
-        const dlResp = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!dlResp.ok) {
-          await dlResp.text().catch(() => undefined);
-          continue;
-        }
-        contentBytes = await dlResp.arrayBuffer();
-      }
-
-      if (contentBytes.byteLength === 0) continue;
+      // `ext` and `localPath` depend only on the (already-known) export
+      // MIME / file name, so resolve them up front and stream the body
+      // straight into the destination (via a `.partial` temp) rather
+      // than buffering the whole file. See `streamResponseToFile`.
       const ext = exportMime
         ? exportMime === "text/csv"
           ? ".csv"
@@ -213,7 +242,30 @@ export async function syncGoogleDrive(ctx: {
           ? meta.name.substring(meta.name.lastIndexOf("."))
           : "";
       const localPath = path.join(syncDir, `${fileId}${ext}`);
-      await fsp.writeFile(localPath, Buffer.from(contentBytes));
+
+      let resp: Response;
+      if (exportMime) {
+        resp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+      } else {
+        resp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+      }
+      if (!resp.ok) {
+        // Drain body before skipping so the underlying socket is
+        // returned to the pool immediately.
+        await resp.text().catch(() => undefined);
+        continue;
+      }
+      // A zero-byte body returns 0 and writes nothing — skip without
+      // registering an empty source (matches the old `byteLength === 0`
+      // guard).
+      const written = await streamResponseToFile(resp, localPath);
+      if (written === 0) continue;
 
       try {
         const existing = sourceIndex.get(localPath);
@@ -237,6 +289,17 @@ export async function syncGoogleDrive(ctx: {
         const entries = await fsp.readdir(syncDir);
         for (const failedId of failedFileIds) {
           for (const entry of entries) {
+            // Never match a streaming temp file. A `.partial` orphaned
+            // by an unclean termination (SIGKILL / power loss skips the
+            // `streamResponseToFile` catch) shares its destination's
+            // `fileId.` prefix, so `fileIdFromLocalPath` would extract
+            // the same id and this loop would unlink it and inflate
+            // `removed`. Partials are never registered sources, so
+            // skipping them here keeps the deletion accounting honest;
+            // a genuine orphan is reclaimed by the next successful
+            // download to that path (which renames over it) or by the
+            // OS temp reaper.
+            if (entry.endsWith(".partial")) continue;
             const entryId = fileIdFromLocalPath(entry);
             if (entryId === failedId) {
               const localPath = path.join(syncDir, entry);

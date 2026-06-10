@@ -24,6 +24,10 @@
  */
 
 import * as fsp from "fs/promises";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
+import type { ReadableStream as NodeWebReadableStream } from "stream/web";
+import { pipeline } from "stream/promises";
 import * as path from "path";
 
 import {
@@ -178,9 +182,48 @@ async function downloadItem(
   const resp = await fetch(downloadUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!resp.ok) return false;
-  const buf = Buffer.from(await resp.arrayBuffer());
-  await fsp.writeFile(localPath, buf);
+  if (!resp.ok) {
+    // Drain the body so undici returns the socket to the keep-alive
+    // pool immediately instead of pinning it until GC.
+    await resp.text().catch(() => undefined);
+    return false;
+  }
+  // LW-6: stream the body straight to disk instead of buffering the
+  // whole file via `arrayBuffer()`. OneDrive files are capped at
+  // `MAX_BYTES_PER_FILE` (100 MB); buffering one meant a transient
+  // ~100 MB `ArrayBuffer` plus a second ~100 MB `Buffer` copy on the
+  // V8/native heap — a ~200 MB spike per large file that blows the
+  // lightweight RSS budget. Streaming keeps only one chunk in flight.
+  //
+  // Write to a sibling `.partial` file and rename on success so a
+  // mid-stream failure (the body cut the doc comment in the caller
+  // calls out) can never leave a truncated file that the bridge would
+  // then index as a corrupt source. `rename` is atomic within a
+  // filesystem, and the sync dir + temp file always share one.
+  if (!resp.body) {
+    // 200 with no body: nothing to write. Treat as a skip rather than
+    // creating a zero-byte source.
+    return false;
+  }
+  const tmpPath = `${localPath}.partial`;
+  try {
+    // `resp.body` is the DOM `ReadableStream`; `Readable.fromWeb` is typed
+    // against Node's `stream/web` `ReadableStream`. They are structurally
+    // compatible at runtime (Node 20 / Electron 31 unify the stream
+    // implementations) but differ in .d.ts identity, so bridge the nominal
+    // gap with a typed cast rather than `any`.
+    await pipeline(
+      Readable.fromWeb(resp.body as unknown as NodeWebReadableStream<Uint8Array>),
+      createWriteStream(tmpPath),
+    );
+    await fsp.rename(tmpPath, localPath);
+  } catch (err) {
+    // Best-effort cleanup of the partial file before propagating so the
+    // caller's per-item catch (network -> offline, else skip) sees the
+    // same error surface as before and no truncated file survives.
+    await fsp.unlink(tmpPath).catch(() => undefined);
+    throw err;
+  }
   return true;
 }
 

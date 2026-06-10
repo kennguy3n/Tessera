@@ -44,6 +44,24 @@ async function makeTempDir(): Promise<string> {
   return dir;
 }
 
+/**
+ * Build a `fetch`-style response body as a web `ReadableStream` so the
+ * download path (which now streams `resp.body` to disk via
+ * `Readable.fromWeb` instead of buffering `arrayBuffer()`) can be
+ * exercised by the mocks. Each call returns a fresh single-chunk
+ * stream — streams are one-shot, so reusing one across two downloads
+ * would yield an empty body on the second read.
+ */
+function streamBody(data: ArrayBuffer | Uint8Array): ReadableStream<Uint8Array> {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
 describe("OneDrive sync", () => {
   const originalFetch = globalThis.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -88,7 +106,7 @@ describe("OneDrive sync", () => {
       // download of item 1
       .mockResolvedValueOnce({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode("hello").buffer,
+        body: streamBody(new TextEncoder().encode("hello")),
       });
 
     const result = await syncOneDrive({
@@ -124,7 +142,7 @@ describe("OneDrive sync", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode("v1").buffer,
+        body: streamBody(new TextEncoder().encode("v1")),
       });
     await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
     const firstAdded = bridge.added[0];
@@ -149,7 +167,7 @@ describe("OneDrive sync", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode("v2!").buffer,
+        body: streamBody(new TextEncoder().encode("v2!")),
       });
     const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
     expect(result.modified).toBe(1);
@@ -175,7 +193,7 @@ describe("OneDrive sync", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode("v1").buffer,
+        body: streamBody(new TextEncoder().encode("v1")),
       });
     await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
     const addedSource = bridge.added[0];
@@ -245,7 +263,7 @@ describe("OneDrive sync", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode("v1").buffer,
+        body: streamBody(new TextEncoder().encode("v1")),
       });
     await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
     const added = bridge.added[0];
@@ -286,7 +304,7 @@ describe("OneDrive sync", () => {
       // download of the page-1 item
       .mockResolvedValueOnce({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode("aaaaa").buffer,
+        body: streamBody(new TextEncoder().encode("aaaaa")),
       })
       // page 2: blows up with a 500
       .mockResolvedValueOnce({
@@ -370,10 +388,10 @@ describe("OneDrive sync", () => {
         }),
       })
       // 4 downloads expected — one per indexable item, none for HEIC
-      .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })
-      .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })
-      .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })
-      .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+      .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) })
+      .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) })
+      .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) })
+      .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) });
 
     const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
     expect(result.added).toBe(4);
@@ -425,7 +443,7 @@ describe("OneDrive sync", () => {
     // Only ONE download is expected — for the real file. If the
     // gate is missing the test will fail because no second mock is
     // queued for the shortcut's would-be download.
-    .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+    .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) });
 
     const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
     expect(result.added).toBe(1);

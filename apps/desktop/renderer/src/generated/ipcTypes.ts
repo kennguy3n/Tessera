@@ -82,6 +82,7 @@ export type SettingsUpdateInput = {
   simplifiedNav?: boolean | undefined;
   autoDownloadModel?: boolean | undefined;
   createPageMode?: "wizard" | "gallery" | undefined;
+  resourceMode?: "lightweight" | "performance" | undefined;
 };
 
 export type ExternalProviderConfigInput = {
