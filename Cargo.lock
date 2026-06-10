@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "concept_graph"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -606,6 +606,44 @@ dependencies = [
  "thiserror 2.0.18",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "connector_framework"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
+dependencies = [
+ "chrono",
+ "crypto",
+ "evidence_store",
+ "observation_engine",
+ "permission_service",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "connectors"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
+dependencies = [
+ "chrono",
+ "connector_framework",
+ "crypto",
+ "evidence_store",
+ "hmac 0.13.0",
+ "observation_engine",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -758,7 +796,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "crypto"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1149,7 +1187,7 @@ dependencies = [
 [[package]]
 name = "evidence_store"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -2201,7 +2239,7 @@ checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 [[package]]
 name = "inference_router"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -2617,7 +2655,7 @@ dependencies = [
 [[package]]
 name = "memory_manager"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -3006,7 +3044,7 @@ dependencies = [
 [[package]]
 name = "observation_engine"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -3196,6 +3234,23 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "permission_service"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
+dependencies = [
+ "chrono",
+ "crypto",
+ "rand 0.10.1",
+ "rand_core 0.6.4",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+ "zeroize",
+]
 
 [[package]]
 name = "phf"
@@ -3758,6 +3813,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -4451,7 +4507,7 @@ dependencies = [
 [[package]]
 name = "synthesis_pipeline"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -4521,7 +4577,11 @@ dependencies = [
 name = "tessera_bridge"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "connector_framework",
+ "connectors",
+ "evidence_store",
  "napi",
  "napi-build",
  "napi-derive",

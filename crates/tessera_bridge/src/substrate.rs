@@ -215,9 +215,12 @@ pub fn bridge_suggest_related_sources(
     max_suggestions: Option<u32>,
 ) -> napi::Result<Vec<SubstrateRelatedSuggestion>> {
     let max = max_suggestions.map_or(10, |n| n as usize);
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     let suggestions = manager
         .suggest_related_sources(&selected_source_ids, max)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;

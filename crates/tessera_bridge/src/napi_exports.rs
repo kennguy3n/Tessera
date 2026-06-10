@@ -1,6 +1,7 @@
 //! Top-level N-API entry points wiring the Rust core managers to the
 //! desktop app, including async tasks shared across bridge modules.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use napi::bindgen_prelude::{AsyncTask, Buffer};
@@ -19,7 +20,7 @@ use tessera_core::{
 };
 use tessera_sources::manager::SourceManager;
 use tessera_sources::progress::EmbeddingProgressTracker;
-use tessera_substrate::SubstrateManager;
+use tessera_substrate::{EnrichedKnowledge, SubstrateManager};
 
 use crate::artifacts;
 use crate::automations;
@@ -442,7 +443,22 @@ pub(crate) fn remove_source_from_substrate(source_id: &str) {
 /// Returns metadata describing the new backup file.
 pub fn bridge_create_backup(backup_dir: String) -> napi::Result<backup::BackupInfo> {
     let s = state()?;
-    backup::create(&s.shared_conn, s.db_key.as_deref(), &backup_dir).map_err(backup::to_napi)
+    // Hold the substrate lock across the copy so the attached snapshots
+    // are consistent with the main DB hot-copy. The substrate uses its
+    // own connections (never `shared_conn`), so this acquires no lock the
+    // Online Backup API needs — no deadlock, and the critical section is
+    // just one hot-copy long.
+    let guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    backup::create(
+        &s.shared_conn,
+        s.db_key.as_deref(),
+        &backup_dir,
+        guard.as_ref(),
+    )
+    .map_err(backup::to_napi)
 }
 
 #[napi]
@@ -487,8 +503,18 @@ pub fn bridge_export_bundle(
     extras: Vec<backup::BundleFileEntry>,
 ) -> napi::Result<backup::BundleInfo> {
     let s = state()?;
-    backup::export_bundle(&s.shared_conn, s.db_key.as_deref(), extras, &out_path)
-        .map_err(backup::to_napi)
+    let guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    backup::export_bundle(
+        &s.shared_conn,
+        s.db_key.as_deref(),
+        extras,
+        &out_path,
+        guard.as_ref(),
+    )
+    .map_err(backup::to_napi)
 }
 
 #[napi]
@@ -897,19 +923,27 @@ pub fn bridge_search_sources_enriched(
     let limit = limit as usize;
 
     // Phase 1: substrate plane. Acquire, read, release before touching
-    // the source-manager lock.
+    // the source-manager lock. A degraded (`None`) substrate is not an
+    // error here: enriched search must still return the chunk hits, so
+    // it falls back to an empty retention map + empty knowledge plane,
+    // making the ranking identical to `bridge_search_sources`.
     let (retention_by_source, knowledge) = {
-        let mut substrate = s
+        let mut guard = s
             .substrate
             .lock()
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        let retention = substrate
-            .retention_by_source()
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        let knowledge = substrate
-            .search_knowledge(&query, limit)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        (retention, knowledge)
+        match guard.as_mut() {
+            Some(substrate) => {
+                let retention = substrate
+                    .retention_by_source()
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                let knowledge = substrate
+                    .search_knowledge(&query, limit)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                (retention, knowledge)
+            }
+            None => (HashMap::new(), EnrichedKnowledge::default()),
+        }
     };
 
     // Phase 2: chunk plane, retention-weighted.
@@ -1834,6 +1868,56 @@ pub fn bridge_restore_version(
 
 // --- Artifact Generation ---
 
+/// Render one template section's Markdown body for the extraction-only
+/// (no-LLM) draft path.
+///
+/// This is the fallback used when no local text model is installed, so
+/// `bridge_generate_from_template` assembles artifacts directly from
+/// retrieved source material instead of prompting an LLM. The output is
+/// intentionally an *editable scaffold*, not a finished draft:
+///
+///   - Every section always gets a level-2 (`##`) header so the
+///     produced artifact has a navigable structure the user can fill
+///     in, regardless of source coverage.
+///   - When relevant source excerpts were retrieved they are emitted
+///     verbatim, separated by a horizontal rule, as the starting
+///     evidence the user edits down.
+///   - When NO source material matched the section we emit a
+///     structured `Add your content here` placeholder plus a
+///     prompt-derived hint, rather than the old dead-end
+///     `*No source material found*` stub. The user lands on a clear,
+///     actionable outline they can complete by hand or by adding more
+///     sources and regenerating.
+///
+/// Pure and side-effect free so it can be unit-tested without the
+/// N-API runtime or a live `SourceManager`.
+fn render_extraction_section(title: &str, prompt: &str, excerpts: &[String]) -> String {
+    let heading = title.trim();
+    let meaningful: Vec<&str> = excerpts
+        .iter()
+        .map(|e| e.trim())
+        .filter(|e| !e.is_empty())
+        .collect();
+
+    if meaningful.is_empty() {
+        use std::fmt::Write as _;
+        let mut body = format!("## {heading}\n\n_Add your content here._\n");
+        let hint = prompt.trim();
+        if !hint.is_empty() {
+            // Surface the section's authoring prompt as a blockquoted
+            // guidance line so the user knows what this section is for
+            // even with no model and no matching sources. `write!` into
+            // the owned `String` is infallible, so the `Result` is
+            // intentionally discarded.
+            let _ = write!(body, "\n> What to cover: {hint}\n");
+        }
+        body
+    } else {
+        let context = meaningful.join("\n\n---\n\n");
+        format!("## {heading}\n\n{context}\n")
+    }
+}
+
 #[napi]
 /// N-API entry point: generates a new artifact from a template
 /// and its source bindings.
@@ -1880,20 +1964,12 @@ pub fn bridge_generate_from_template(
                 .take(5)
                 .collect()
         };
-        let context: String = filtered
-            .iter()
-            .map(|h| h.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
-        let content = if context.is_empty() {
-            format!(
-                "## {}\n\n*No source material found for this section.*\n",
-                section.title
-            )
-        } else {
-            format!("## {}\n\n{}\n", section.title, context)
-        };
-        section_contents.push(content);
+        let excerpts: Vec<String> = filtered.into_iter().map(|h| h.content).collect();
+        section_contents.push(render_extraction_section(
+            &section.title,
+            &section.prompt,
+            &excerpts,
+        ));
     }
 
     // Append the additive knowledge-substrate context as a trailing
@@ -3978,4 +4054,59 @@ pub fn bridge_generate_image(
         seed: request.seed,
         negative_prompt: request.negative_prompt,
     }))
+}
+
+#[cfg(test)]
+mod extraction_section_tests {
+    use super::render_extraction_section;
+
+    #[test]
+    fn emits_header_and_excerpts_when_sources_present() {
+        let excerpts = vec![
+            "First chunk of evidence.".to_string(),
+            "Second chunk of evidence.".to_string(),
+        ];
+        let out = render_extraction_section("Background", "Summarize", &excerpts);
+        assert_eq!(
+            out,
+            "## Background\n\nFirst chunk of evidence.\n\n---\n\nSecond chunk of evidence.\n",
+        );
+        // No dead-end stub or placeholder leaks into the sourced path.
+        assert!(!out.contains("Add your content here"));
+        assert!(!out.contains("No source material found"));
+    }
+
+    #[test]
+    fn emits_structured_placeholder_when_no_sources() {
+        let out = render_extraction_section("Risks", "List the key risks and mitigations.", &[]);
+        // Structured, editable scaffold — header + placeholder + a
+        // prompt-derived hint — instead of the old dead-end stub.
+        assert_eq!(
+            out,
+            "## Risks\n\n_Add your content here._\n\n> What to cover: List the key risks and mitigations.\n",
+        );
+        assert!(!out.contains("No source material found"));
+    }
+
+    #[test]
+    fn placeholder_omits_hint_when_prompt_blank() {
+        let out = render_extraction_section("Notes", "   ", &[]);
+        assert_eq!(out, "## Notes\n\n_Add your content here._\n");
+        assert!(!out.contains("What to cover"));
+    }
+
+    #[test]
+    fn whitespace_only_excerpts_fall_back_to_placeholder() {
+        // Retrieval can return blank/whitespace chunks; they must not
+        // produce an empty "sourced" section with no real content.
+        let excerpts = vec!["   ".to_string(), "\n\n".to_string()];
+        let out = render_extraction_section("Summary", "Summarize", &excerpts);
+        assert!(out.starts_with("## Summary\n\n_Add your content here._"));
+    }
+
+    #[test]
+    fn header_is_always_present_and_trimmed() {
+        let out = render_extraction_section("  Spaced Title  ", "", &[]);
+        assert!(out.starts_with("## Spaced Title\n\n"));
+    }
 }

@@ -222,6 +222,24 @@ export interface AppConfig {
    */
   closeToTray: boolean;
   /**
+   * Connector backend selector. When `true` (the default) the
+   * `connectors:sync` IPC path is served by the knowledge-substrate
+   * `connector_framework` via the Rust bridge (`connectors_v2`),
+   * which is the long-term replacement for Tessera's hand-rolled
+   * per-provider sync logic. When `false`, sync falls back to the
+   * legacy in-process `tessera_connectors` implementations for the
+   * original six providers.
+   *
+   * Defaults to `true` so new installs get the unified substrate
+   * connectors (and the four substrate-only providers — HubSpot,
+   * Slack, Email, GitHub — which have no legacy fallback). The flag
+   * exists as an operational kill-switch: if a substrate connector
+   * regresses in the field, flipping this to `false` immediately
+   * restores the proven legacy path for the six original providers
+   * without a re-deploy.
+   */
+  useV2Connectors: boolean;
+  /**
    * When `true` (default) the main-process backup scheduler runs a
    * periodic hot backup of the encrypted database. See
    * `SettingsData.autoBackup` in `shared/types.ts`. Defaults to `true`
@@ -361,6 +379,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   createPageMode: "wizard",
   resourceMode: "lightweight",
   closeToTray: false,
+  useV2Connectors: true,
   autoBackup: true,
   backupDir: "",
   backupIntervalHours: DEFAULT_BACKUP_INTERVAL_HOURS,
@@ -581,6 +600,11 @@ const AppConfigSchema = z
     // config never silently traps the user in background-mode with no
     // visible window — opting into tray-mode is a deliberate choice.
     closeToTray: z.boolean().catch(false),
+    // Connector backend selector. Heals a corrupted on-disk value to
+    // `true` (the substrate `connector_framework` path) so a mangled
+    // config keeps the four substrate-only providers reachable; an
+    // operator deliberately opts back into the legacy path.
+    useV2Connectors: z.boolean().catch(true),
     // Backup scheduler config. Each heals to its fresh-install
     // default so a mangled entry can never disable disk-failure
     // protection or push the scheduler to a pathological interval.

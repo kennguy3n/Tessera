@@ -45,8 +45,19 @@ use uuid::Uuid;
 use crate::error::{Result, SubstrateError};
 use crate::types::{
     DecaySweepSummary, EnrichedKnowledge, KnowledgeConcept, MemoryRecord, RelatedSourceSuggestion,
-    SynthesisSummary,
+    SubstrateFileEntry, SynthesisSummary,
 };
+
+/// Manifest role tag for the evidence-store sibling in a backup bundle.
+pub const SUBSTRATE_EVIDENCE_ROLE: &str = "substrate-evidence";
+/// Manifest role tag for the concept-graph sibling in a backup bundle.
+pub const SUBSTRATE_CONCEPTS_ROLE: &str = "substrate-concepts";
+/// Stable in-bundle archive name (and live sibling file-name suffix) of
+/// the evidence-store SQLCipher database.
+pub const SUBSTRATE_EVIDENCE_ARCNAME: &str = "substrate-evidence.db";
+/// Stable in-bundle archive name (and live sibling file-name suffix) of
+/// the concept-graph SQLCipher database.
+pub const SUBSTRATE_CONCEPTS_ARCNAME: &str = "substrate-concepts.db";
 
 /// HKDF context that separates the substrate master key from Tessera's
 /// raw SQLCipher key. Bumping the `vN` suffix rotates every substrate
@@ -123,6 +134,60 @@ impl SubstrateManager {
             pipeline: default_pipeline(),
             default_scope,
         })
+    }
+
+    /// Produce consistent, encrypted snapshots of both substrate sibling
+    /// databases into `dest_dir`, one [`SubstrateFileEntry`] per sibling.
+    ///
+    /// Each snapshot is written through the upstream `snapshot_to`
+    /// (`VACUUM INTO`) primitive against the store's own live
+    /// connection, so it is transactionally consistent — no torn pages,
+    /// no half-applied write — even while the substrate stays open, and
+    /// it re-opens under the *same* HKDF-derived master key (a backup
+    /// copy, not a rekey). The destinations are standalone files with no
+    /// `-wal` / `-journal` sidecars, so the caller can fold them into a
+    /// backup bundle or copy them next to a hot-copy backup verbatim.
+    ///
+    /// `dest_dir` is created if absent; any stale file at a target name
+    /// is removed first because `VACUUM INTO` refuses a present
+    /// destination. The returned `path`s live inside `dest_dir`; the
+    /// caller owns cleaning the directory up once the files are packed.
+    ///
+    /// Works for the in-memory test stores too (`VACUUM INTO` copies the
+    /// in-memory database to a real on-disk file).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstrateError::Io`] if `dest_dir` cannot be created or
+    /// a stale snapshot cannot be cleared, and propagates the underlying
+    /// store error if a vacuum fails.
+    pub fn snapshot_into(&self, dest_dir: &Path) -> Result<Vec<SubstrateFileEntry>> {
+        std::fs::create_dir_all(dest_dir).map_err(|e| {
+            SubstrateError::Io(format!("create snapshot dir {}: {e}", dest_dir.display()))
+        })?;
+
+        let evidence_dest = dest_dir.join(SUBSTRATE_EVIDENCE_ARCNAME);
+        let concepts_dest = dest_dir.join(SUBSTRATE_CONCEPTS_ARCNAME);
+        // VACUUM INTO refuses a present destination; clear any stale
+        // snapshot left by a previously-aborted run at the same path.
+        remove_stale_snapshot(&evidence_dest)?;
+        remove_stale_snapshot(&concepts_dest)?;
+
+        self.evidence.snapshot_to(&evidence_dest)?;
+        self.concepts.snapshot_to(&concepts_dest)?;
+
+        Ok(vec![
+            SubstrateFileEntry {
+                role: SUBSTRATE_EVIDENCE_ROLE.to_string(),
+                arcname: SUBSTRATE_EVIDENCE_ARCNAME.to_string(),
+                path: evidence_dest,
+            },
+            SubstrateFileEntry {
+                role: SUBSTRATE_CONCEPTS_ROLE.to_string(),
+                arcname: SUBSTRATE_CONCEPTS_ARCNAME.to_string(),
+                path: concepts_dest,
+            },
+        ])
     }
 
     /// The deterministic default scope id (UUID string) all substrate
@@ -889,9 +954,50 @@ fn substrate_paths(db_path: &str) -> (PathBuf, PathBuf) {
         return (PathBuf::from(":memory:"), PathBuf::from(":memory:"));
     }
     let base = Path::new(db_path);
-    let evidence = sibling(base, "substrate-evidence.db");
-    let concepts = sibling(base, "substrate-concepts.db");
+    let evidence = sibling(base, SUBSTRATE_EVIDENCE_ARCNAME);
+    let concepts = sibling(base, SUBSTRATE_CONCEPTS_ARCNAME);
     (evidence, concepts)
+}
+
+/// The live substrate sibling databases for a Tessera main `db_path`,
+/// paired with the stable bundle `role` / `arcname` they back up under.
+///
+/// Used by the backup/restore layer (where no [`SubstrateManager`] need
+/// be open) to learn *where on disk* each bundle entry must be restored:
+/// the returned `path` is the live sibling next to the main DB, and the
+/// `arcname` matches the entry [`SubstrateManager::snapshot_into`]
+/// produced on export. Returns an empty vector for the in-memory test
+/// path (`":memory:"`), which has no on-disk siblings.
+pub fn substrate_sibling_entries(db_path: &str) -> Vec<SubstrateFileEntry> {
+    if db_path == ":memory:" {
+        return Vec::new();
+    }
+    let (evidence, concepts) = substrate_paths(db_path);
+    vec![
+        SubstrateFileEntry {
+            role: SUBSTRATE_EVIDENCE_ROLE.to_string(),
+            arcname: SUBSTRATE_EVIDENCE_ARCNAME.to_string(),
+            path: evidence,
+        },
+        SubstrateFileEntry {
+            role: SUBSTRATE_CONCEPTS_ROLE.to_string(),
+            arcname: SUBSTRATE_CONCEPTS_ARCNAME.to_string(),
+            path: concepts,
+        },
+    ]
+}
+
+/// Remove a stale snapshot file at `path` if present, so a fresh
+/// `VACUUM INTO` (which refuses a present destination) can write there.
+fn remove_stale_snapshot(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(SubstrateError::Io(format!(
+            "clear stale snapshot {}: {e}",
+            path.display()
+        ))),
+    }
 }
 
 /// Build a sibling path `<file_name>.<suffix>` next to `base`.

@@ -8,7 +8,10 @@
 
 use std::fs;
 
-use tessera_substrate::SubstrateManager;
+use tessera_substrate::{
+    substrate_sibling_entries, SubstrateManager, SUBSTRATE_CONCEPTS_ARCNAME,
+    SUBSTRATE_EVIDENCE_ARCNAME,
+};
 
 /// A 64-char hex SQLCipher key, matching what Tessera passes to
 /// `init_bridge`.
@@ -336,5 +339,113 @@ fn data_persists_across_reopen() {
         memories.len() as u32,
         count,
         "memories must survive a reopen"
+    );
+}
+
+#[test]
+fn snapshot_into_produces_reopenable_consistent_copies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let main_db = dir.path().join("tessera.db");
+    let source_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+    let mut manager =
+        SubstrateManager::open(main_db.to_str().unwrap(), Some(TEST_KEY_HEX)).expect("open");
+    let count = manager
+        .extract_observations(source_id, &sample_chunks())
+        .expect("extract");
+    assert!(count > 0, "fixture should extract at least one observation");
+
+    // Snapshot the live (still-open) substrate into a staging dir.
+    let snap_dir = dir.path().join("snap");
+    let entries = manager.snapshot_into(&snap_dir).expect("snapshot");
+    assert_eq!(entries.len(), 2, "one entry per sibling DB");
+
+    let evidence_snap = snap_dir.join(SUBSTRATE_EVIDENCE_ARCNAME);
+    let concepts_snap = snap_dir.join(SUBSTRATE_CONCEPTS_ARCNAME);
+    assert!(evidence_snap.exists(), "evidence snapshot written");
+    assert!(concepts_snap.exists(), "concepts snapshot written");
+    // Snapshots are standalone (no -wal / -journal sidecars).
+    assert!(!snap_dir
+        .join(format!("{SUBSTRATE_EVIDENCE_ARCNAME}-wal"))
+        .exists());
+    assert!(!snap_dir
+        .join(format!("{SUBSTRATE_EVIDENCE_ARCNAME}-journal"))
+        .exists());
+    // Entry paths point at the produced files with the stable arcnames.
+    for entry in &entries {
+        assert!(
+            entry.path.exists(),
+            "entry path {} exists",
+            entry.path.display()
+        );
+        assert_eq!(
+            entry.path.file_name().unwrap().to_str().unwrap(),
+            entry.arcname
+        );
+    }
+
+    drop(manager);
+
+    // Restore the snapshots into a *fresh* main DB's sibling locations
+    // (the same swap a real restore performs), then reopen under the
+    // same key — the snapshot must re-key transparently and carry every
+    // memory across.
+    let restored_main = dir.path().join("restored.db");
+    let targets = substrate_sibling_entries(restored_main.to_str().unwrap());
+    assert_eq!(targets.len(), 2);
+    for target in &targets {
+        let src = if target.arcname == SUBSTRATE_EVIDENCE_ARCNAME {
+            &evidence_snap
+        } else {
+            &concepts_snap
+        };
+        if let Some(parent) = target.path.parent() {
+            fs::create_dir_all(parent).expect("mkdir restore parent");
+        }
+        fs::copy(src, &target.path).expect("swap snapshot into place");
+    }
+
+    let restored = SubstrateManager::open(restored_main.to_str().unwrap(), Some(TEST_KEY_HEX))
+        .expect("reopen restored");
+    let memories = restored.list_memories(None).expect("list restored");
+    assert_eq!(
+        memories.len() as u32,
+        count,
+        "restored snapshot must carry every memory"
+    );
+}
+
+#[test]
+fn snapshot_into_overwrites_stale_snapshot_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let manager = SubstrateManager::open(":memory:", Some(TEST_KEY_HEX)).expect("open");
+
+    let snap_dir = dir.path().join("snap");
+    fs::create_dir_all(&snap_dir).expect("mkdir");
+    // Pre-seed stale files at the snapshot target names; snapshot_into
+    // must clear them rather than fail on VACUUM INTO's present-dest guard.
+    fs::write(snap_dir.join(SUBSTRATE_EVIDENCE_ARCNAME), b"stale").expect("seed");
+    fs::write(snap_dir.join(SUBSTRATE_CONCEPTS_ARCNAME), b"stale").expect("seed");
+
+    let entries = manager
+        .snapshot_into(&snap_dir)
+        .expect("snapshot over stale");
+    assert_eq!(entries.len(), 2);
+    // The produced snapshots are real SQLCipher DBs, not the 5-byte stub.
+    for entry in &entries {
+        let len = fs::metadata(&entry.path).expect("stat").len();
+        assert!(
+            len > 5,
+            "snapshot {} should be a real DB, got {len} bytes",
+            entry.arcname
+        );
+    }
+}
+
+#[test]
+fn sibling_entries_empty_for_in_memory() {
+    assert!(
+        substrate_sibling_entries(":memory:").is_empty(),
+        "in-memory path has no on-disk siblings to back up"
     );
 }

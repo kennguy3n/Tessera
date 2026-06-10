@@ -15,8 +15,11 @@ mod manager;
 mod types;
 
 pub use error::{Result, SubstrateError};
-pub use manager::SubstrateManager;
+pub use manager::{
+    substrate_sibling_entries, SubstrateManager, SUBSTRATE_CONCEPTS_ARCNAME,
+    SUBSTRATE_CONCEPTS_ROLE, SUBSTRATE_EVIDENCE_ARCNAME, SUBSTRATE_EVIDENCE_ROLE,
+};
 pub use types::{
     DecaySweepSummary, EnrichedKnowledge, KnowledgeConcept, MemoryRecord, RelatedSourceSuggestion,
-    SynthesisSummary,
+    SubstrateFileEntry, SynthesisSummary,
 };

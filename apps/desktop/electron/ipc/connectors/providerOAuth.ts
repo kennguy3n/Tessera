@@ -242,6 +242,74 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     supportsRefresh: true,
     usePkce: false,
   },
+  // ── Substrate-only providers (v2 `connector_framework`) ──────────
+  // These four have no legacy `tessera_connectors` sync impl; their
+  // OAuth flow is the same provider-agnostic authorization-code grant
+  // as the six above, and their content traversal is served by the
+  // knowledge substrate via the Rust bridge. Each gets a unique
+  // loopback port (continuing the 9876+ sequence) so concurrent auth
+  // attempts stay isolated.
+  hubspot: {
+    provider: "hubspot",
+    authUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    // CRM read scopes + `oauth` (required by HubSpot for the token
+    // exchange itself). HubSpot issues refresh tokens for all apps.
+    scope:
+      "oauth crm.objects.contacts.read crm.objects.companies.read crm.objects.deals.read",
+    redirectPort: 9882,
+    extraAuthorizeParams: {},
+    // HubSpot's token endpoint requires client_id + client_secret in
+    // the form body (not Basic auth) and does not support PKCE.
+    supportsRefresh: true,
+    usePkce: false,
+  },
+  slack: {
+    provider: "slack",
+    authUrl: "https://slack.com/oauth/v2/authorize",
+    tokenUrl: "https://slack.com/api/oauth.v2.access",
+    // Read-only history/read scopes for channels, groups and users.
+    scope:
+      "channels:history channels:read groups:history users:read team:read",
+    redirectPort: 9883,
+    extraAuthorizeParams: {},
+    // Slack v2 tokens are non-expiring unless workspace token rotation
+    // is enabled (off by default), so we treat them as refresh-less —
+    // mirrors Notion's non-expiring-token handling.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  email: {
+    provider: "email",
+    // The substrate Email connector reads mail over the Gmail API; the
+    // OAuth surface is therefore Google's, distinct from Drive only in
+    // the requested scope (read-only Gmail) and loopback port.
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    revokeUrl: "https://oauth2.googleapis.com/revoke",
+    scope: "https://www.googleapis.com/auth/gmail.readonly",
+    redirectPort: 9884,
+    redirectHost: "127.0.0.1",
+    extraAuthorizeParams: {
+      access_type: "offline",
+      prompt: "consent",
+    },
+    supportsRefresh: true,
+    usePkce: true,
+  },
+  github: {
+    provider: "github",
+    authUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    scope: "repo read:org read:user",
+    redirectPort: 9885,
+    extraAuthorizeParams: {},
+    // GitHub OAuth Apps issue non-expiring tokens with no refresh
+    // token (only GitHub Apps with expiring tokens do); treat as
+    // refresh-less. No PKCE on the OAuth App flow.
+    supportsRefresh: false,
+    usePkce: false,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {

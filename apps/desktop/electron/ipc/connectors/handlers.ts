@@ -70,6 +70,115 @@ import { disconnectJira, syncJira } from "./jira";
 import { disconnectConfluence, syncConfluence } from "./confluence";
 import { disconnectFigma, syncFigma } from "./figma";
 import { syncGoogleDrive, disconnectGoogleDrive } from "./gdrive";
+import {
+  runV2Sync,
+  readV2State,
+  writeV2State,
+  v2BridgeAvailable,
+  disconnectV2Provider,
+  type V2NativeBridge,
+} from "./connectorsV2";
+
+/**
+ * The six providers that retain a hand-rolled in-process
+ * (`tessera_connectors`-style) TS sync impl. The four substrate-only
+ * providers (HubSpot, Slack, Email, GitHub) are deliberately absent:
+ * they have no legacy fallback and are reachable only through the v2
+ * `connector_framework` bridge.
+ */
+type LegacyProviderId =
+  | "google_drive"
+  | "onedrive"
+  | "notion"
+  | "jira"
+  | "confluence"
+  | "figma";
+
+// `satisfies` pins every id to a valid `LegacyProviderId` at compile
+// time (a typo or stray provider here is a build error). The Set is
+// typed `ReadonlySet<ProviderId>` — not `Set<LegacyProviderId>` — so
+// callers can probe membership with a full `ProviderId`, since
+// `Set<T>.has` requires its argument to be `T`.
+const LEGACY_PROVIDER_IDS = [
+  "google_drive",
+  "onedrive",
+  "notion",
+  "jira",
+  "confluence",
+  "figma",
+] as const satisfies readonly LegacyProviderId[];
+
+const LEGACY_PROVIDERS: ReadonlySet<ProviderId> = new Set(LEGACY_PROVIDER_IDS);
+
+/**
+ * Whether the native addon reports `provider` as a feature-enabled v2
+ * connector. Defensive: a `bridgeConnectorsV2Supported` that throws
+ * (older/partial addon) is treated as "not supported" so the caller
+ * falls back rather than crashing the sync.
+ */
+function isV2Supported(bridge: V2NativeBridge, provider: ProviderId): boolean {
+  try {
+    return bridge.bridgeConnectorsV2Supported?.(provider) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Drive one provider sync through the v2 `connector_framework` bridge:
+ * load the keychain token, replay the persisted cursor, ingest fetched
+ * documents into the local index, and persist the new cursor. Throws
+ * `NotConnectedError` when the provider isn't authenticated (matching
+ * the legacy path's precondition).
+ */
+async function runProviderV2Sync(
+  ctx: IpcContext,
+  provider: ProviderId,
+  userDataDir: string,
+): Promise<ConnectorSyncResult> {
+  // Refresh-before-sync: unlike the legacy connectors, which call
+  // `getValidAccessToken` at the top of every iteration of their hot
+  // loop, the v2 path hands the Rust `connector_framework` a single
+  // `OAuth2Token` snapshot for the whole `initial_sync`/`incremental_sync`
+  // run — the framework does not refresh mid-call. To match the legacy
+  // path's resilience we proactively refresh here: `getValidAccessToken`
+  // is a no-op when >60s of lifetime remains and otherwise performs the
+  // refresh-token exchange AND persists the rotated tokens back to the
+  // vault. Reading `getTokens` *after* this guarantees the wire token we
+  // build below starts the run with a full (~1h) lifetime, so a bounded
+  // single run (capped by the Rust `max_fetch` budget) will not expire
+  // part-way through. A pathological single run that itself outlives the
+  // token would still need framework-level 401 refresh; that is bounded
+  // by `max_fetch` and tracked as a substrate enhancement.
+  await getValidAccessToken(ctx, provider);
+  const tokens = ctx.tokenVault.getTokens(provider);
+  if (!tokens) {
+    throw new NotConnectedError(
+      `${provider} is not connected — authenticate first`,
+    );
+  }
+  const nativeBridge = ctx.requireBridge();
+  const { result, nextCursor, warnings } = await runV2Sync({
+    provider,
+    bridge: nativeBridge,
+    hooks: bridgeHooks(ctx),
+    tokens,
+    userDataDir,
+    stateJson: await readV2State(userDataDir, provider),
+    // Single-tenant desktop host: let the Rust side derive a stable
+    // deterministic per-provider scope (see `parse_scope`).
+    scopeId: null,
+  });
+  await writeV2State(userDataDir, provider, nextCursor);
+  if (warnings.length > 0) {
+    ctx.log.warn("v2 connector sync produced non-fatal warnings", {
+      provider,
+      count: warnings.length,
+      sample: warnings.slice(0, 5),
+    });
+  }
+  return result;
+}
 
 export interface ConnectorStatusInfo {
   provider: string;
@@ -175,6 +284,10 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   jira: "jira",
   confluence: "confluence",
   figma: "figma",
+  hubspot: "hubspot",
+  slack: "slack",
+  email: "email",
+  github: "github",
 };
 
 /**
@@ -632,6 +745,80 @@ async function runSync(
   // expired, so the per-iteration cost is a vault read + a
   // millisecond comparison in the common case.
   const getAccessToken = (): Promise<string> => getValidAccessToken(ctx, provider);
+
+  // v2 path: when `useV2Connectors` is on (default) AND the native
+  // addon exposes the v2 functions AND this provider is compiled into
+  // the substrate build, serve the sync from the knowledge
+  // `connector_framework`. This is the long-term replacement for the
+  // hand-rolled per-provider TS sync below. A config-read failure must
+  // never wedge sync, so it defaults to the v2 path (matching the
+  // documented `.catch(true)` config fallback).
+  let useV2: boolean;
+  try {
+    useV2 = loadConfig().useV2Connectors;
+  } catch {
+    useV2 = true;
+  }
+
+  // Selective sync is a legacy-only capability. The renderer's
+  // `connectors:gdrive:sync` channel passes an explicit
+  // `selectedFileIds` allowlist so the user can pull only the files
+  // they picked. The knowledge `connector_framework` sync is
+  // changefeed-based (`initial_sync`/`incremental_sync` emit whatever
+  // the provider reports as changed) and Google Drive's only filter
+  // hook is `auth_config_json.q` — a Drive search query that cannot
+  // express an arbitrary file-id allowlist (`files.list` has no
+  // `id in [...]` operator). There is therefore no faithful way to
+  // honour an explicit selection through v2. Rather than silently
+  // running a full sync and ignoring the user's choice, route the
+  // selection-bearing call to the legacy connector (which fetches each
+  // selected id directly). Only Google Drive ever supplies a
+  // selection, and it is a legacy provider, so the legacy path is
+  // always available. The dual sync directory this can create
+  // (`gdrive-sync/` vs `google_drive-sync/`) is already reconciled by
+  // `runDisconnect`, which purges both backends.
+  const hasSelection = (options?.selectedFileIds?.length ?? 0) > 0;
+
+  // A selection allowlist is only meaningful for a provider that has a
+  // legacy connector able to fetch specific ids (today only Google
+  // Drive's renderer sends one). A substrate-only provider
+  // (hubspot/slack/email/github) has no per-file fetch path, so a
+  // selection cannot be honoured. Reject it explicitly with an accurate
+  // message instead of falling through to the generic
+  // `requires useV2Connectors=true` branch below, whose wording would be
+  // misleading in this case (useV2 may well be true — the real problem
+  // is the unsupported selection). Unreachable today, but a clear guard
+  // for any future substrate provider that grows a selection UI.
+  if (hasSelection && !LEGACY_PROVIDERS.has(provider)) {
+    throw new Error(
+      `${provider} does not support selective sync; selectedFileIds is ` +
+        "only honoured by providers with a legacy connector (currently " +
+        "Google Drive).",
+    );
+  }
+
+  if (useV2 && !hasSelection) {
+    const nativeBridge = ctx.requireBridge();
+    if (v2BridgeAvailable(nativeBridge) && isV2Supported(nativeBridge, provider)) {
+      return runProviderV2Sync(ctx, provider, userDataDir);
+    }
+    // The four substrate-only providers have no legacy fallback. If
+    // the v2 bridge isn't available for them, that's a hard config
+    // error rather than a silent degrade to a non-existent TS impl.
+    if (!LEGACY_PROVIDERS.has(provider)) {
+      throw new Error(
+        `${provider} is only available via the v2 connector bridge, ` +
+          "which is not present in this build.",
+      );
+    }
+    // Otherwise fall through to the legacy TS sync for the original
+    // six providers (e.g. an addon built without `connectors-v2`).
+  } else if (!LEGACY_PROVIDERS.has(provider)) {
+    throw new Error(
+      `${provider} requires useV2Connectors=true; it has no legacy connector.`,
+    );
+  }
+
   switch (provider) {
     case "google_drive":
       return syncGoogleDrive({
@@ -651,6 +838,16 @@ async function runSync(
       return syncConfluence({ accessToken, getAccessToken, userDataDir, bridge });
     case "figma":
       return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
+    case "hubspot":
+    case "slack":
+    case "email":
+    case "github":
+      // Substrate-only providers: reachable here only when the v2
+      // path was unavailable; surfaced as a clear config error above,
+      // but the explicit cases keep the exhaustiveness check honest.
+      throw new Error(
+        `${provider} is only available via the v2 connector bridge.`,
+      );
     default: {
       // Exhaustiveness assertion. `ProviderId` is derived from the
       // `KNOWN_PROVIDERS` tuple in `validate.ts`, so a future 7th
@@ -907,12 +1104,21 @@ async function runConnectorSyncInner(
   }
 }
 
-async function runDisconnect(
-  ctx: IpcContext,
-  provider: ProviderId,
+/**
+ * Per-provider cleanup for the six providers that have a hand-rolled
+ * (`tessera_connectors`-style) TS sync impl. Each removes the sources
+ * the legacy sync registered and purges that provider's legacy sync
+ * directory. Note Google Drive's legacy code keys its directory and
+ * manifest on the short name `"gdrive"` (→ `gdrive-sync/`), which is
+ * distinct from the canonical `"google_drive"` id the v2 path uses
+ * (→ `google_drive-sync/`); the two backends therefore never share a
+ * directory for Google Drive.
+ */
+function runLegacyDisconnect(
+  provider: LegacyProviderId,
   userDataDir: string,
+  bridge: BridgeHooks,
 ): Promise<{ filesRemoved: number }> {
-  const bridge = bridgeHooks(ctx);
   switch (provider) {
     case "google_drive":
       return disconnectGoogleDrive(userDataDir, bridge);
@@ -926,6 +1132,63 @@ async function runDisconnect(
       return disconnectConfluence(userDataDir, bridge);
     case "figma":
       return disconnectFigma(userDataDir, bridge);
+    default: {
+      const _exhaustive: never = provider;
+      throw new Error(
+        `runLegacyDisconnect: non-legacy provider ${String(_exhaustive)}`,
+      );
+    }
+  }
+}
+
+/**
+ * Disconnect cleanup dispatch. Exported for the regression test that
+ * verifies a Google Drive disconnect purges BOTH backends' sync
+ * directories (the legacy `gdrive-sync/` and the v2
+ * `google_drive-sync/`); not part of the IPC contract.
+ */
+export async function runDisconnect(
+  ctx: IpcContext,
+  provider: ProviderId,
+  userDataDir: string,
+): Promise<{ filesRemoved: number }> {
+  const bridge = bridgeHooks(ctx);
+  switch (provider) {
+    case "google_drive":
+    case "onedrive":
+    case "notion":
+    case "jira":
+    case "confluence":
+    case "figma": {
+      // The active sync backend is selected at runtime (see `runSync`):
+      // either the v2 `connector_framework` bridge or the legacy TS
+      // impl. Disconnect must not assume which one produced the files,
+      // because the choice can differ between a sync and a later
+      // disconnect — e.g. `useV2Connectors` was toggled, the addon was
+      // rebuilt without `connectors-v2`, or (for Google Drive) the two
+      // backends simply use different directories (`gdrive-sync/` vs
+      // `google_drive-sync/`). Cleaning ONLY the legacy path therefore
+      // orphaned every v2-synced Google Drive file on disk.
+      //
+      // So we run BOTH cleanups. Each is best-effort and a no-op when
+      // its directory/manifest is absent. For the five providers whose
+      // legacy and v2 paths share a directory + manifest format, the
+      // first pass purges it and the second finds nothing left; for
+      // Google Drive the two distinct directories are each cleaned.
+      const legacy = await runLegacyDisconnect(provider, userDataDir, bridge);
+      const v2 = await disconnectV2Provider(provider, userDataDir, bridge);
+      return { filesRemoved: legacy.filesRemoved + v2.filesRemoved };
+    }
+    case "hubspot":
+    case "slack":
+    case "email":
+    case "github":
+      // Substrate-only providers: no legacy disconnect impl exists, so
+      // reuse the generic v2 cleanup (unhook sources + purge sync dir
+      // + delete manifest/cursor). Token revocation + vault deletion
+      // happen in the shared disconnect handler before this is called,
+      // identical to the legacy providers.
+      return disconnectV2Provider(provider, userDataDir, bridge);
     default: {
       // Exhaustiveness assertion. Same architectural rationale as the
       // sibling `default` branch in `runSync` above: `ProviderId` is
@@ -970,10 +1233,11 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       const clientSecret = assertString(clientSecretRaw, "clientSecret", {
         maxLen: 512,
         // Every provider supported today (Google Drive, OneDrive,
-        // Notion, Jira, Confluence, Figma) is registered as a
-        // confidential OAuth client and therefore requires a non-empty
-        // `client_secret`. If a future connector is added with a public
-        // / PKCE-only OAuth client, special-case it here.
+        // Notion, Jira, Confluence, Figma, HubSpot, Slack, Email,
+        // GitHub) is registered as a confidential OAuth client and
+        // therefore requires a non-empty `client_secret`. If a future
+        // connector is added with a public / PKCE-only OAuth client,
+        // special-case it here.
         allowEmpty: false,
       });
       try {

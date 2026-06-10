@@ -424,6 +424,32 @@ pub fn stage_restore(backup_path: &Path, db_path: &Path, key: Option<&str>) -> R
     path_to_string(&staged)
 }
 
+/// Stage an already-trusted, self-contained database file `src` for
+/// restore into `db_path` at next launch, returning the staged
+/// `*.pending-restore` path.
+///
+/// Unlike [`stage_restore`], this performs **no** key validation or
+/// integrity check: `src` is assumed to be a same-batch, internally
+/// consistent snapshot (e.g. a `VACUUM INTO` copy) whose authenticity
+/// is established by the accompanying main-database backup. It is used
+/// for sibling databases whose encryption key the core layer does not
+/// hold (the knowledge substrate derives its own key), so the bytes are
+/// copied verbatim to `<db_path>.pending-restore` via a temp-file +
+/// atomic rename. The swap into place happens at next boot via
+/// [`apply_pending_restore`]; a sibling that fails to re-open then
+/// degrades independently rather than corrupting the workspace.
+pub fn stage_pending_restore(src: &Path, db_path: &Path) -> Result<String> {
+    if !src.is_file() {
+        return Err(Error::Backup(format!(
+            "sibling snapshot to stage not found: {}",
+            src.display()
+        )));
+    }
+    let staged = pending_restore_path(db_path);
+    atomic_copy(src, &staged)?;
+    path_to_string(&staged)
+}
+
 /// If a `<db_path>.pending-restore` file exists, atomically swap it
 /// into place as the live database and drop any stale `-wal` / `-shm`
 /// sidecars. Returns `true` when a restore was applied.
@@ -1240,6 +1266,40 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("tessera.db");
         assert!(!apply_pending_restore(&db_path).unwrap());
+    }
+
+    #[test]
+    fn stage_pending_restore_copies_verbatim_and_applies() {
+        // The trusted-sibling staging primitive copies bytes verbatim
+        // (no key validation), into `<db>.pending-restore`, and the
+        // boot swap then moves it into place. This is the path the
+        // substrate siblings use, whose key the core layer never holds.
+        let dir = tempfile::tempdir().unwrap();
+        let sibling = dir.path().join("substrate-evidence.db");
+        let snapshot = dir.path().join("snapshot.db");
+        fs::write(&snapshot, b"opaque-encrypted-bytes").unwrap();
+
+        let staged = stage_pending_restore(&snapshot, &sibling).expect("stage");
+        assert_eq!(staged, pending_restore_path(&sibling).to_str().unwrap());
+        assert!(pending_restore_path(&sibling).is_file());
+        // The live sibling is untouched until the boot swap.
+        assert!(!sibling.exists());
+
+        assert!(apply_pending_restore(&sibling).expect("apply"));
+        assert!(!pending_restore_path(&sibling).exists());
+        assert_eq!(fs::read(&sibling).unwrap(), b"opaque-encrypted-bytes");
+    }
+
+    #[test]
+    fn stage_pending_restore_errors_on_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.db");
+        let target = dir.path().join("evidence.db");
+        let err = stage_pending_restore(&missing, &target).unwrap_err();
+        assert!(
+            format!("{err}").contains("not found"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

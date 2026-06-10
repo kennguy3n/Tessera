@@ -3,7 +3,30 @@
 //! internal enums so the `tessera_bridge` N-API layer can map them to
 //! stable TypeScript shapes.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
+
+/// One substrate sibling database file, used by the backup layer.
+///
+/// Returned by [`crate::SubstrateManager::snapshot_into`] (where `path`
+/// points at a freshly-produced, consistent snapshot inside the
+/// caller's staging dir) and by [`crate::substrate_sibling_entries`]
+/// (where `path` is the *live* sibling next to Tessera's main DB, used
+/// as the on-disk restore target). Its `role` / `arcname` are stable so
+/// an export entry and the matching import target line up by name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubstrateFileEntry {
+    /// Stable role tag recorded in a backup manifest
+    /// (`substrate-evidence` / `substrate-concepts`).
+    pub role: String,
+    /// Stable archive name used inside a bundle and to match an export
+    /// entry to its import target (no directory component).
+    pub arcname: String,
+    /// Filesystem path: the produced snapshot (export) or the live
+    /// sibling to restore into (import).
+    pub path: PathBuf,
+}
 
 /// A memory object as surfaced to the desktop UI.
 ///
@@ -74,7 +97,7 @@ pub struct KnowledgeConcept {
 /// Tessera's existing hybrid search. `entities` and `facts` are
 /// disjoint projections of `memories` by observation type, pre-split
 /// so the renderer's "Knowledge" tab does not have to re-bucket them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EnrichedKnowledge {
     /// Memory items whose observation type is `entity`, ranked by
     /// query relevance then retention.

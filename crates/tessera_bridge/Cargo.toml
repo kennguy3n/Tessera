@@ -10,7 +10,75 @@ description = "N-API bridge between Electron and the Tessera Rust core."
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[features]
+# `connectors-v2` is on by default so the knowledge-substrate connector
+# layer (`connectors_v2.rs`) compiles into the addon and the
+# `useV2Connectors` config flag (default `true`) has a real backend to
+# dispatch to. Turning it off drops the knowledge git deps entirely and
+# falls the host back onto the legacy `tessera_connectors` path.
+#
+# Per-provider `connector-*` features gate which `ConnectorKind`s the
+# factory will instantiate and which the host lists to the UI. The
+# upstream `connectors` crate compiles every vendor impl regardless
+# (it has no per-connector cargo features), so these gates control the
+# *exposed* surface — not codegen — which is the maintainable knob for
+# "which connectors ship" until upstream grows per-connector features.
+default = ["connectors-v2", "connectors-v2-stable"]
+connectors-v2 = [
+    "dep:connector_framework",
+    "dep:connectors",
+    "dep:evidence_store",
+    "dep:base64",
+    "connector_framework/http-client",
+    "connectors/http-client",
+]
+# Exposes `connector_framework::MockHttpTransport` so the crate's own
+# integration tests (and `--all-features` clippy) can drive connectors
+# with canned HTTP responses. Never enabled in the shipped addon.
+connectors-v2-test-support = [
+    "connectors-v2",
+    "connector_framework/test-support",
+    "connectors/test-support",
+]
+# The 10 stable providers this migration ships first.
+connectors-v2-stable = [
+    "connector-google-drive",
+    "connector-onedrive",
+    "connector-notion",
+    "connector-jira",
+    "connector-confluence",
+    "connector-figma",
+    "connector-hubspot",
+    "connector-slack",
+    "connector-email",
+    "connector-github",
+]
+connector-google-drive = ["connectors-v2"]
+connector-onedrive = ["connectors-v2"]
+connector-notion = ["connectors-v2"]
+connector-jira = ["connectors-v2"]
+connector-confluence = ["connectors-v2"]
+connector-figma = ["connectors-v2"]
+connector-hubspot = ["connectors-v2"]
+connector-slack = ["connectors-v2"]
+connector-email = ["connectors-v2"]
+connector-github = ["connectors-v2"]
+
 [dependencies]
+# Knowledge substrate connector layer, pinned by rev for reproducible
+# cross-repo builds. Optional + gated behind `connectors-v2` so a
+# `--no-default-features` build never pulls the knowledge graph in.
+connector_framework = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537", default-features = false, optional = true }
+connectors = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537", default-features = false, optional = true }
+# `ScopeId` lives in `evidence_store` and is required to build a
+# `ConnectorConfig`. Pulled directly (rather than re-exported) so the
+# connector layer can bind synced content to the per-tenant scope that
+# the substrate's evidence/observation pipeline keys on.
+evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537", default-features = false, optional = true }
+# Standard base64 for encoding fetched connector bodies onto the JSON
+# FFI boundary. Optional + only pulled in by `connectors-v2`, so a
+# `--no-default-features` build stays lean.
+base64 = { workspace = true, optional = true }
 tessera_core = { path = "../tessera_core" }
 tessera_sources = { path = "../tessera_sources" }
 tessera_templates = { path = "../tessera_templates" }
