@@ -11,6 +11,7 @@ import type {
   KchatConnectionStateView,
   KchatWebSocketEventPayload,
   ModelCapability,
+  ModelDownloadError,
   ModelDownloadProgress,
   OpenImageDialogOptions,
   RendererCrashReport,
@@ -74,6 +75,7 @@ export type {
   MarpExportRequest,
   ModelApi,
   ModelCapability,
+  ModelDownloadError,
   ModelDownloadProgress,
   ModelFormat,
   ModelPlatform,
@@ -430,10 +432,14 @@ const api: TesseraApi = {
     // renderer does not need to pass it explicitly.
     downloadModel: (modelId: string) =>
       ipcRenderer.invoke("runtime:downloadModel", modelId),
+    downloadRecommended: (capability?: ModelCapability) =>
+      ipcRenderer.invoke("runtime:downloadRecommended", capability),
     deleteModel: (capability?: ModelCapability) =>
       ipcRenderer.invoke("runtime:deleteModel", capability),
     onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) =>
       subscribeIpc<ModelDownloadProgress>("runtime:downloadProgress", callback),
+    onDownloadError: (callback: (e: ModelDownloadError) => void) =>
+      subscribeIpc<ModelDownloadError>("runtime:downloadError", callback),
   },
   vision: {
     isAvailable: (): Promise<boolean> =>
@@ -530,6 +536,27 @@ const api: TesseraApi = {
       ipcRenderer.invoke("dialog:showSaveDialog", options),
     pickImage: (options?: OpenImageDialogOptions) =>
       ipcRenderer.invoke("dialog:pickImage", options ?? {}),
+    openDirectory: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openDirectory", options ?? {}),
+    openBundle: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openBundle", options ?? {}),
+  },
+  backup: {
+    create: () => ipcRenderer.invoke("backup:create"),
+    list: () => ipcRenderer.invoke("backup:list"),
+    status: () => ipcRenderer.invoke("backup:status"),
+    restore: (backupPath: string) =>
+      ipcRenderer.invoke("backup:restore", { backupPath }),
+    configure: (patch: {
+      autoBackup?: boolean;
+      backupDir?: string;
+      backupIntervalHours?: number;
+      backupRetentionCount?: number;
+    }) => ipcRenderer.invoke("backup:configure", patch),
+    exportBundle: (outPath: string) =>
+      ipcRenderer.invoke("backup:exportBundle", { outPath }),
+    importBundle: (bundlePath: string) =>
+      ipcRenderer.invoke("backup:importBundle", { bundlePath }),
   },
   slides: {
     startPresentation: (request: StartPresentationRequest) =>

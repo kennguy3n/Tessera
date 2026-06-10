@@ -69,6 +69,11 @@ import type {
   SourceInfo,
   TaskInfo,
   TemplateInfo,
+  BackupInfo,
+  BundleInfo,
+  BundleImportReport,
+  BundleFileEntry,
+  BundleRestoreTarget,
 } from "../shared/types";
 
 // Re-export the canonical shared types so existing call sites that
@@ -116,6 +121,11 @@ export type {
   EmbeddingModelInfo,
   EmbeddingModelStatusInfo,
   EmbeddingDownloadProgressInfo,
+  BackupInfo,
+  BundleInfo,
+  BundleImportReport,
+  BundleFileEntry,
+  BundleRestoreTarget,
 } from "../shared/types";
 
 /**
@@ -914,6 +924,58 @@ export interface NativeBridge {
       negativePrompt: string | null;
     },
   ): Promise<{ pngBytes: Buffer; seed: bigint }>;
+  // --- Backup & recovery ---
+  //
+  // Hot copies run against the same shared connection every other
+  // store writes through, so the SQLite Online Backup API observes a
+  // transactionally-consistent snapshot. The SQLCipher key and live
+  // database path are captured Rust-side at `initBridge`, so the
+  // renderer never handles key material or re-derives the on-disk path.
+  /**
+   * Hot-copy the live database into `backupDir` (created if absent)
+   * using the SQLite Online Backup API, re-encrypted under the live
+   * SQLCipher key. Written to a `*.partial` temp file and atomically
+   * renamed, so a crash never leaves a usable-looking truncated file.
+   */
+  bridgeCreateBackup(backupDir: string): BackupInfo;
+  /** List backups in `backupDir`, newest first. A missing directory
+   *  yields an empty list rather than throwing. */
+  bridgeListBackups(backupDir: string): BackupInfo[];
+  /** Delete backups beyond the `keep` most recent (always keeps at
+   *  least one). Returns the filenames removed. */
+  bridgePruneBackups(backupDir: string, keep: number): string[];
+  /**
+   * Validate that `backupPath` decrypts under the live key, then stage
+   * it as a `*.pending-restore` sibling of the live DB. The swap
+   * happens at next launch via {@link bridgeApplyPendingRestore}.
+   * Returns the staged file path. Requires an app restart to take
+   * effect — the live connection is never swapped underneath open
+   * statements.
+   */
+  bridgeStageRestore(backupPath: string): string;
+  /**
+   * Apply a previously-staged restore for the DB at `dbPath` by
+   * swapping the pending file into place. Returns `true` when a swap
+   * occurred. Called at startup BEFORE {@link initBridge} opens the
+   * database, so it does not depend on bridge state.
+   */
+  bridgeApplyPendingRestore(dbPath: string): boolean;
+  /**
+   * Export a full workspace bundle (hot DB copy + caller-supplied
+   * sidecar files) into a single `.tessera-backup` tar.gz archive at
+   * `outPath` with a SHA-256 manifest.
+   */
+  bridgeExportBundle(outPath: string, extras: BundleFileEntry[]): BundleInfo;
+  /**
+   * Import a workspace bundle from `bundlePath`: verify every entry's
+   * SHA-256 against the manifest, stage the contained database for the
+   * next launch, and atomically restore the matched sidecar `targets`.
+   * Requires an app restart for the database swap to take effect.
+   */
+  bridgeImportBundle(
+    bundlePath: string,
+    targets: BundleRestoreTarget[],
+  ): BundleImportReport;
 }
 
 let bridge: NativeBridge | null = null;
@@ -1253,6 +1315,27 @@ export async function initAppState(): Promise<boolean> {
       bridge = null;
       return false;
     }
+  }
+
+  // Apply a previously-staged restore BEFORE the bridge opens the
+  // database. A restore (single backup or bundle import) is never
+  // applied to the live connection — it is staged as a
+  // `*.pending-restore` sibling and swapped in here, at the one moment
+  // the DB file is guaranteed closed. This makes restore crash-safe:
+  // the swap is an atomic rename, so a crash mid-restore either leaves
+  // the old DB intact (rename not yet done) or the new DB in place
+  // (rename done) — never a half-written file. A swap failure must not
+  // block boot; the staged file is left for the next attempt.
+  try {
+    const swapped = bridge.bridgeApplyPendingRestore(dbPath);
+    if (swapped) {
+      console.log("[Tessera] Applied staged database restore at startup.");
+    }
+  } catch (restoreErr) {
+    console.error(
+      "[Tessera] Failed to apply staged database restore; continuing with the existing database.",
+      restoreErr,
+    );
   }
 
   try {

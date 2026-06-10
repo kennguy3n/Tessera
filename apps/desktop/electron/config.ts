@@ -5,12 +5,18 @@ import { z } from "zod";
 import {
   APP_LOCK_MODES,
   CREATE_PAGE_MODES,
+  DEFAULT_BACKUP_INTERVAL_HOURS,
+  DEFAULT_BACKUP_RETENTION_COUNT,
   DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
+  MAX_BACKUP_INTERVAL_HOURS,
+  MAX_BACKUP_RETENTION_COUNT,
   MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
+  MIN_BACKUP_INTERVAL_HOURS,
+  MIN_BACKUP_RETENTION_COUNT,
   RESOURCE_MODES,
   THEMES,
   type AppLockMode,
@@ -231,6 +237,35 @@ export interface AppConfig {
    * without a re-deploy.
    */
   useV2Connectors: boolean;
+  /**
+   * When `true` (default) the main-process backup scheduler runs a
+   * periodic hot backup of the encrypted database. See
+   * `SettingsData.autoBackup` in `shared/types.ts`. Defaults to `true`
+   * so disk-failure protection is on out of the box — the whole point
+   * of a zero-config backup system is that the user does not have to
+   * discover and enable it before their first disk failure.
+   */
+  autoBackup: boolean;
+  /**
+   * Directory automatic + manual backups are written to. The empty
+   * string (the default) means "use `<userData>/backups`", resolved by
+   * the main process at runtime — the renderer cannot compute
+   * `userData` itself. A non-empty value is an absolute directory the
+   * user picked via the native folder picker. See
+   * `SettingsData.backupDir`.
+   */
+  backupDir: string;
+  /**
+   * Hours between automatic backups, bounded to `[1, 168]`. See
+   * `SettingsData.backupIntervalHours`. Defaults to 24.
+   */
+  backupIntervalHours: number;
+  /**
+   * Number of most-recent backups to keep; older ones are pruned after
+   * each successful backup. Bounded to `[1, 30]`. See
+   * `SettingsData.backupRetentionCount`. Defaults to 7.
+   */
+  backupRetentionCount: number;
 }
 
 /** Default persisted hybrid config — mirrors Rust default. */
@@ -340,6 +375,10 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   resourceMode: "lightweight",
   closeToTray: false,
   useV2Connectors: true,
+  autoBackup: true,
+  backupDir: "",
+  backupIntervalHours: DEFAULT_BACKUP_INTERVAL_HOURS,
+  backupRetentionCount: DEFAULT_BACKUP_RETENTION_COUNT,
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -561,6 +600,29 @@ const AppConfigSchema = z
     // config keeps the four substrate-only providers reachable; an
     // operator deliberately opts back into the legacy path.
     useV2Connectors: z.boolean().catch(true),
+    // Backup scheduler config. Each heals to its fresh-install
+    // default so a mangled entry can never disable disk-failure
+    // protection or push the scheduler to a pathological interval.
+    // `autoBackup` heals to `true` (protection on by default);
+    // `backupDir` heals to `""` (the `<userData>/backups` sentinel);
+    // `backupIntervalHours` clamps to `[1, 168]` then heals to 24;
+    // `backupRetentionCount` clamps to `[1, 30]` then heals to 7. The
+    // bounds match the IPC `BackupConfigureSchema` so a value that
+    // round-trips disk → IPC can never be rejected at the boundary.
+    autoBackup: z.boolean().catch(true),
+    backupDir: z.string().max(4096).catch(""),
+    backupIntervalHours: z
+      .number()
+      .int()
+      .min(MIN_BACKUP_INTERVAL_HOURS)
+      .max(MAX_BACKUP_INTERVAL_HOURS)
+      .catch(DEFAULT_BACKUP_INTERVAL_HOURS),
+    backupRetentionCount: z
+      .number()
+      .int()
+      .min(MIN_BACKUP_RETENTION_COUNT)
+      .max(MAX_BACKUP_RETENTION_COUNT)
+      .catch(DEFAULT_BACKUP_RETENTION_COUNT),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the
@@ -619,7 +681,13 @@ const AppConfigSchema = z
     hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   }));
 
-function getConfigPath(): string {
+/**
+ * Absolute path to the on-disk config JSON. Exported so the backup
+ * bundle exporter can fold the persisted settings + model config into
+ * a `.tessera-backup` archive alongside the database, and so the
+ * importer can restore it back to the exact same location.
+ */
+export function getConfigPath(): string {
   try {
     return path.join(app.getPath("userData"), "tessera-config.json");
   } catch {

@@ -4605,9 +4605,12 @@ name = "tessera_core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "flate2",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
+ "tar",
  "tempfile",
  "thiserror 1.0.69",
  "uuid",

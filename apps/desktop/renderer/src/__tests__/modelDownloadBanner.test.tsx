@@ -1,118 +1,87 @@
 /**
- * ModelDownloadBanner tests.
+ * ModelDownloadBanner tests (Session 5, Step 2 + Step 6).
+ *
+ * The banner is now a pure OBSERVER — the first-launch auto-download is
+ * triggered in the main process (`autoModelDownload.ts`), so the banner
+ * never initiates a download on mount. These tests therefore drive the
+ * banner entirely through the `runtime:downloadProgress` /
+ * `runtime:downloadError` IPC events it subscribes to.
  *
  * Coverage:
- *   1. Renders nothing on an already-onboarded install (no auto-start).
- *   2. Fresh install with auto-download enabled and no text model
- *      installed → triggers `runtime.downloadModel(recommended)` and
- *      shows the downloading state.
- *   3. Progress events update the visible percentage.
- *   4. A resolved download surfaces the "AI model ready" state.
- *   5. A rejected download surfaces the failure state + Retry, and
- *      Retry re-invokes the download.
- *   6. Skip dismisses the banner.
- *   7. Auto-download is suppressed when the preference is off.
- *
- * `useSettings` is mocked so each test controls the fresh-install
- * preconditions deterministically without driving the settings IPC.
+ *   1. Renders nothing until a download event arrives (no auto-start).
+ *   2. A progress event shows the downloading state + percentage.
+ *   3. The size estimate is shown before the first byte (percent 0).
+ *   4. A `percent >= 100` event surfaces the "AI ready" state.
+ *   5. A `runtime:downloadError` event surfaces the failure state, and
+ *      Retry calls `runtime.downloadRecommended("text")`.
+ *   6. Skip dismisses the banner AND persists `autoDownloadModel:false`.
+ *   7. The success state auto-dismisses after the timeout.
+ *   8. `formatModelSize` formatting (unit).
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  act,
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
-import type { SettingsData, ModelDownloadProgress } from "../../../shared/types";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import type { ModelDownloadProgress, ModelDownloadError } from "../../../shared/types";
 import ModelDownloadBanner from "../components/ModelDownloadBanner";
+import { formatModelSize } from "../utils/formatModelSize";
 
-let bannerSettings: Partial<SettingsData> = {};
+const updateMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: bannerSettings as SettingsData,
-    loading: false,
-    error: null,
-    refresh: vi.fn(),
-  }),
-  __resetSettingsStoreForTests: vi.fn(),
+  useUpdateSetting: () => ({ update: updateMock, loading: false, error: null }),
 }));
 
 const recommended = {
   id: "text-model-v1",
   name: "Text Model",
   capability: "text",
+  downloadSizeMb: 450,
 };
 
-function emitProgress(
-  cb: (p: ModelDownloadProgress) => void,
-  percent: number,
-) {
-  cb({
+function progress(percent: number): ModelDownloadProgress {
+  return {
     modelId: "text-model-v1",
     capability: "text",
     format: "gguf",
     filename: "model.gguf",
-    downloadedMb: percent,
-    totalMb: 100,
+    downloadedMb: (percent / 100) * 450,
+    totalMb: 450,
     percent,
-  } as ModelDownloadProgress);
+  } as ModelDownloadProgress;
 }
 
 describe("ModelDownloadBanner", () => {
   beforeEach(() => {
-    bannerSettings = { onboardingCompleted: true, autoDownloadModel: true };
+    updateMock.mockClear();
     window.tessera.runtime.recommendModel = vi
       .fn()
       .mockResolvedValue(recommended);
-    window.tessera.runtime.getCurrentModel = vi.fn().mockResolvedValue(null);
-    window.tessera.runtime.downloadModel = vi
+    window.tessera.runtime.downloadRecommended = vi
       .fn()
       .mockReturnValue(new Promise(() => {}));
     window.tessera.runtime.onDownloadProgress = vi
       .fn()
       .mockReturnValue(() => undefined);
+    window.tessera.runtime.onDownloadError = vi
+      .fn()
+      .mockReturnValue(() => undefined);
   });
 
-  it("renders nothing for an already-onboarded install", async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders nothing until a download event arrives", async () => {
     render(<ModelDownloadBanner />);
-    // Give the (suppressed) effects a tick to run.
     await act(async () => {
       await Promise.resolve();
     });
     expect(
       screen.queryByTestId("model-download-banner"),
     ).not.toBeInTheDocument();
-    expect(window.tessera.runtime.downloadModel).not.toHaveBeenCalled();
+    // It must NOT initiate a download itself.
+    expect(window.tessera.runtime.downloadRecommended).not.toHaveBeenCalled();
   });
 
-  it("auto-starts the recommended download on a fresh install", async () => {
-    bannerSettings = { onboardingCompleted: false, autoDownloadModel: true };
-    render(<ModelDownloadBanner />);
-    await waitFor(() => {
-      expect(window.tessera.runtime.downloadModel).toHaveBeenCalledWith(
-        "text-model-v1",
-      );
-    });
-    expect(
-      screen.getByTestId("model-download-banner"),
-    ).toHaveTextContent(/Setting up AI capabilities/);
-  });
-
-  it("does not auto-start when the preference is disabled", async () => {
-    bannerSettings = { onboardingCompleted: false, autoDownloadModel: false };
-    render(<ModelDownloadBanner />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(window.tessera.runtime.downloadModel).not.toHaveBeenCalled();
-    expect(
-      screen.queryByTestId("model-download-banner"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("reflects download progress percentage", async () => {
-    bannerSettings = { onboardingCompleted: false, autoDownloadModel: true };
+  it("shows the downloading state + percentage from a progress event", async () => {
     let emit: ((p: ModelDownloadProgress) => void) | null = null;
     window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
       emit = cb;
@@ -121,56 +90,138 @@ describe("ModelDownloadBanner", () => {
 
     render(<ModelDownloadBanner />);
     await waitFor(() => expect(emit).not.toBeNull());
-    act(() => emitProgress(emit!, 42));
+    act(() => emit!(progress(42)));
 
-    expect(
-      screen.getByTestId("model-download-banner"),
-    ).toHaveTextContent("42%");
+    expect(screen.getByTestId("model-download-banner")).toHaveTextContent(
+      "42%",
+    );
   });
 
-  it("shows the ready state when the download resolves", async () => {
-    bannerSettings = { onboardingCompleted: false, autoDownloadModel: true };
-    window.tessera.runtime.downloadModel = vi.fn().mockResolvedValue({
-      id: "text-model-v1",
+  it("shows the size estimate before the first byte (percent 0)", async () => {
+    let emit: ((p: ModelDownloadProgress) => void) | null = null;
+    window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
+      emit = cb;
+      return () => undefined;
     });
 
     render(<ModelDownloadBanner />);
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("model-download-banner"),
-      ).toHaveTextContent("AI model ready");
+    // Wait for the size probe to resolve so the estimate is populated.
+    await waitFor(() =>
+      expect(window.tessera.runtime.recommendModel).toHaveBeenCalled(),
+    );
+    await act(async () => {
+      await Promise.resolve();
     });
+    act(() => emit!(progress(0)));
+
+    expect(screen.getByTestId("model-download-banner")).toHaveTextContent(
+      /Downloading AI model \(~450 MB\)/,
+    );
   });
 
-  it("shows the failure state with a working Retry", async () => {
-    bannerSettings = { onboardingCompleted: false, autoDownloadModel: true };
-    window.tessera.runtime.downloadModel = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("network"))
-      .mockReturnValue(new Promise(() => {}));
+  it("surfaces the ready state on a completion (>=100) event", async () => {
+    let emit: ((p: ModelDownloadProgress) => void) | null = null;
+    window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
+      emit = cb;
+      return () => undefined;
+    });
 
     render(<ModelDownloadBanner />);
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("model-download-banner"),
-      ).toHaveTextContent(/failed/i);
+    await waitFor(() => expect(emit).not.toBeNull());
+    act(() => emit!(progress(100)));
+
+    expect(screen.getByTestId("model-download-banner")).toHaveTextContent(
+      "AI ready",
+    );
+  });
+
+  it("surfaces failure from a downloadError event and Retry re-installs", async () => {
+    let emitErr: ((e: ModelDownloadError) => void) | null = null;
+    window.tessera.runtime.onDownloadError = vi.fn((cb) => {
+      emitErr = cb;
+      return () => undefined;
     });
+
+    render(<ModelDownloadBanner />);
+    await waitFor(() => expect(emitErr).not.toBeNull());
+    act(() =>
+      emitErr!({
+        capability: "text",
+        modelId: "text-model-v1",
+        message: "network",
+      }),
+    );
+
+    expect(screen.getByTestId("model-download-banner")).toHaveTextContent(
+      /failed/i,
+    );
 
     fireEvent.click(screen.getByTestId("model-download-banner-retry"));
     await waitFor(() => {
-      expect(window.tessera.runtime.downloadModel).toHaveBeenCalledTimes(2);
+      expect(window.tessera.runtime.downloadRecommended).toHaveBeenCalledWith(
+        "text",
+      );
     });
   });
 
-  it("dismisses when Skip is clicked", async () => {
-    bannerSettings = { onboardingCompleted: false, autoDownloadModel: true };
+  it("Skip dismisses and persists autoDownloadModel:false", async () => {
+    let emit: ((p: ModelDownloadProgress) => void) | null = null;
+    window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
+      emit = cb;
+      return () => undefined;
+    });
+
     render(<ModelDownloadBanner />);
-    await waitFor(() =>
-      expect(screen.getByTestId("model-download-banner")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(emit).not.toBeNull());
+    act(() => emit!(progress(20)));
+    expect(
+      screen.getByTestId("model-download-banner"),
+    ).toBeInTheDocument();
+
     fireEvent.click(screen.getByTestId("model-download-banner-skip"));
+
     expect(
       screen.queryByTestId("model-download-banner"),
     ).not.toBeInTheDocument();
+    expect(updateMock).toHaveBeenCalledWith({ autoDownloadModel: false });
+  });
+
+  it("auto-dismisses the ready state after the timeout", async () => {
+    vi.useFakeTimers();
+    let emit: ((p: ModelDownloadProgress) => void) | null = null;
+    window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
+      emit = cb;
+      return () => undefined;
+    });
+
+    render(<ModelDownloadBanner />);
+    // `render` already flushed effects (so `emit` is wired); flush the
+    // size-probe microtask too. We avoid `waitFor` here because it polls
+    // on faked timers and would never resolve.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => emit!(progress(100)));
+    expect(screen.getByTestId("model-download-banner")).toHaveTextContent(
+      "AI ready",
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(
+      screen.queryByTestId("model-download-banner"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("formatModelSize", () => {
+  it("formats MB and GB and degrades on bad input", () => {
+    expect(formatModelSize(450)).toBe(" (~450 MB)");
+    expect(formatModelSize(2048)).toBe(" (~2.0 GB)");
+    expect(formatModelSize(null)).toBe("");
+    expect(formatModelSize(0)).toBe("");
+    expect(formatModelSize(Number.NaN)).toBe("");
+    expect(formatModelSize(-10)).toBe("");
   });
 });

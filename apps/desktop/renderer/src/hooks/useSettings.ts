@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_MODEL_IDLE_TIMEOUT_SECS } from "../../../shared/types";
+import {
+  DEFAULT_BACKUP_INTERVAL_HOURS,
+  DEFAULT_BACKUP_RETENTION_COUNT,
+  DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
+} from "../../../shared/types";
 import {
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
@@ -68,6 +72,16 @@ const DEFAULT_SETTINGS: SettingsData = {
   // placeholder matches a fresh install's quit-on-close behaviour
   // before the real value loads via `refresh()`.
   closeToTray: false,
+  // Backup-scheduler placeholders mirror the main-process
+  // `DEFAULT_CONFIG`: protection on, the `<userData>/backups` default
+  // dir (empty-string sentinel), a 24h cadence and 7-backup retention.
+  // The real values load via `refresh()` on mount; the Settings →
+  // Backup panel reads the authoritative resolved state from
+  // `backup:status` rather than these placeholders.
+  autoBackup: true,
+  backupDir: "",
+  backupIntervalHours: DEFAULT_BACKUP_INTERVAL_HOURS,
+  backupRetentionCount: DEFAULT_BACKUP_RETENTION_COUNT,
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

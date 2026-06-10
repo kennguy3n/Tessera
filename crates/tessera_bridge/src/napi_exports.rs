@@ -22,6 +22,7 @@ use tessera_sources::progress::EmbeddingProgressTracker;
 
 use crate::artifacts;
 use crate::automations;
+use crate::backup;
 use crate::citations;
 use crate::exporter;
 use crate::sources;
@@ -97,6 +98,17 @@ struct AppState {
     /// also keeps the connection alive even if every individual
     /// store is dropped or replaced during shutdown.
     shared_conn: tessera_core::SharedConnection,
+    /// Absolute path to the live SQLCipher database file. Captured at
+    /// `init_bridge` so backup/restore operations can stage a restore
+    /// next to the live file without the renderer having to re-derive
+    /// the path (which must match exactly for the swap to be correct).
+    db_path: String,
+    /// Raw 64-hex SQLCipher key (or `None` for an unencrypted DB),
+    /// captured at `init_bridge`. The backup path re-applies it to the
+    /// destination connection so hot copies are written back encrypted
+    /// under the user's key, and validates a backup decrypts before a
+    /// restore is staged. Never logged or surfaced to the renderer.
+    db_key: Option<String>,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -244,6 +256,8 @@ pub fn init_bridge(
             // race the embedding-progress tracker handles.
             download_progress: Arc::new(sources::DownloadProgressTracker::new()),
             shared_conn: conn,
+            db_path,
+            db_key: key_ref.map(str::to_owned),
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
@@ -275,6 +289,83 @@ fn state() -> napi::Result<&'static AppState> {
     APP_STATE
         .get()
         .ok_or_else(|| napi::Error::from_reason("Bridge not initialized. Call init_bridge first."))
+}
+
+// --- Backup & recovery ---
+//
+// These wrappers forward the SQLCipher key and live database path
+// captured at `init_bridge` so the renderer never has to handle the
+// key material or re-derive the on-disk path. Hot copies run against
+// the same `shared_conn` every other store writes through, so the
+// SQLite Online Backup API observes a transactionally-consistent
+// snapshot without blocking the single writer for more than the copy
+// itself.
+
+#[napi]
+/// Create a hot backup of the live database into `backup_dir`.
+/// Returns metadata describing the new backup file.
+pub fn bridge_create_backup(backup_dir: String) -> napi::Result<backup::BackupInfo> {
+    let s = state()?;
+    backup::create(&s.shared_conn, s.db_key.as_deref(), &backup_dir).map_err(backup::to_napi)
+}
+
+#[napi]
+/// List existing backups in `backup_dir`, newest first. A missing
+/// directory yields an empty list rather than an error.
+pub fn bridge_list_backups(backup_dir: String) -> napi::Result<Vec<backup::BackupInfo>> {
+    backup::list(&backup_dir).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Delete backups in `backup_dir` beyond the `keep` most recent
+/// (always keeps at least one). Returns the filenames removed.
+pub fn bridge_prune_backups(backup_dir: String, keep: u32) -> napi::Result<Vec<String>> {
+    backup::prune(&backup_dir, keep).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Validate that `backup_path` decrypts under the live key, then stage
+/// it as a `*.pending-restore` sibling of the live database. The swap
+/// itself happens at next launch via `bridge_apply_pending_restore`.
+/// Returns the staged file path.
+pub fn bridge_stage_restore(backup_path: String) -> napi::Result<String> {
+    let s = state()?;
+    backup::stage_restore(&backup_path, &s.db_path, s.db_key.as_deref()).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Apply a previously-staged restore for the database at `db_path` by
+/// swapping the pending file into place. Returns `true` when a swap
+/// occurred. Called at startup BEFORE `init_bridge` opens the
+/// database, so it deliberately does not depend on bridge state.
+pub fn bridge_apply_pending_restore(db_path: String) -> napi::Result<bool> {
+    backup::apply_pending_restore(&db_path).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Export a full workspace bundle (hot DB copy + caller-supplied
+/// sidecar files) into a single `.tessera-backup` archive at
+/// `out_path`. Returns the archive path, size, and entry count.
+pub fn bridge_export_bundle(
+    out_path: String,
+    extras: Vec<backup::BundleFileEntry>,
+) -> napi::Result<backup::BundleInfo> {
+    let s = state()?;
+    backup::export_bundle(&s.shared_conn, s.db_key.as_deref(), extras, &out_path)
+        .map_err(backup::to_napi)
+}
+
+#[napi]
+/// Import a workspace bundle from `bundle_path`: verify every entry's
+/// SHA-256 against the manifest, stage the contained database for the
+/// next launch, and atomically restore the matched sidecar `targets`.
+pub fn bridge_import_bundle(
+    bundle_path: String,
+    targets: Vec<backup::BundleRestoreTarget>,
+) -> napi::Result<backup::BundleImportReport> {
+    let s = state()?;
+    backup::import_bundle(&bundle_path, &s.db_path, targets, s.db_key.as_deref())
+        .map_err(backup::to_napi)
 }
 
 // --- Sources ---
@@ -1498,6 +1589,56 @@ pub fn bridge_restore_version(
 
 // --- Artifact Generation ---
 
+/// Render one template section's Markdown body for the extraction-only
+/// (no-LLM) draft path.
+///
+/// This is the fallback used when no local text model is installed, so
+/// `bridge_generate_from_template` assembles artifacts directly from
+/// retrieved source material instead of prompting an LLM. The output is
+/// intentionally an *editable scaffold*, not a finished draft:
+///
+///   - Every section always gets a level-2 (`##`) header so the
+///     produced artifact has a navigable structure the user can fill
+///     in, regardless of source coverage.
+///   - When relevant source excerpts were retrieved they are emitted
+///     verbatim, separated by a horizontal rule, as the starting
+///     evidence the user edits down.
+///   - When NO source material matched the section we emit a
+///     structured `Add your content here` placeholder plus a
+///     prompt-derived hint, rather than the old dead-end
+///     `*No source material found*` stub. The user lands on a clear,
+///     actionable outline they can complete by hand or by adding more
+///     sources and regenerating.
+///
+/// Pure and side-effect free so it can be unit-tested without the
+/// N-API runtime or a live `SourceManager`.
+fn render_extraction_section(title: &str, prompt: &str, excerpts: &[String]) -> String {
+    let heading = title.trim();
+    let meaningful: Vec<&str> = excerpts
+        .iter()
+        .map(|e| e.trim())
+        .filter(|e| !e.is_empty())
+        .collect();
+
+    if meaningful.is_empty() {
+        use std::fmt::Write as _;
+        let mut body = format!("## {heading}\n\n_Add your content here._\n");
+        let hint = prompt.trim();
+        if !hint.is_empty() {
+            // Surface the section's authoring prompt as a blockquoted
+            // guidance line so the user knows what this section is for
+            // even with no model and no matching sources. `write!` into
+            // the owned `String` is infallible, so the `Result` is
+            // intentionally discarded.
+            let _ = write!(body, "\n> What to cover: {hint}\n");
+        }
+        body
+    } else {
+        let context = meaningful.join("\n\n---\n\n");
+        format!("## {heading}\n\n{context}\n")
+    }
+}
+
 #[napi]
 /// N-API entry point: generates a new artifact from a template
 /// and its source bindings.
@@ -1533,20 +1674,12 @@ pub fn bridge_generate_from_template(
                 .take(5)
                 .collect()
         };
-        let context: String = filtered
-            .iter()
-            .map(|h| h.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
-        let content = if context.is_empty() {
-            format!(
-                "## {}\n\n*No source material found for this section.*\n",
-                section.title
-            )
-        } else {
-            format!("## {}\n\n{}\n", section.title, context)
-        };
-        section_contents.push(content);
+        let excerpts: Vec<String> = filtered.into_iter().map(|h| h.content).collect();
+        section_contents.push(render_extraction_section(
+            &section.title,
+            &section.prompt,
+            &excerpts,
+        ));
     }
 
     let template_name = template.name.clone();
@@ -3614,4 +3747,59 @@ pub fn bridge_generate_image(
         seed: request.seed,
         negative_prompt: request.negative_prompt,
     }))
+}
+
+#[cfg(test)]
+mod extraction_section_tests {
+    use super::render_extraction_section;
+
+    #[test]
+    fn emits_header_and_excerpts_when_sources_present() {
+        let excerpts = vec![
+            "First chunk of evidence.".to_string(),
+            "Second chunk of evidence.".to_string(),
+        ];
+        let out = render_extraction_section("Background", "Summarize", &excerpts);
+        assert_eq!(
+            out,
+            "## Background\n\nFirst chunk of evidence.\n\n---\n\nSecond chunk of evidence.\n",
+        );
+        // No dead-end stub or placeholder leaks into the sourced path.
+        assert!(!out.contains("Add your content here"));
+        assert!(!out.contains("No source material found"));
+    }
+
+    #[test]
+    fn emits_structured_placeholder_when_no_sources() {
+        let out = render_extraction_section("Risks", "List the key risks and mitigations.", &[]);
+        // Structured, editable scaffold — header + placeholder + a
+        // prompt-derived hint — instead of the old dead-end stub.
+        assert_eq!(
+            out,
+            "## Risks\n\n_Add your content here._\n\n> What to cover: List the key risks and mitigations.\n",
+        );
+        assert!(!out.contains("No source material found"));
+    }
+
+    #[test]
+    fn placeholder_omits_hint_when_prompt_blank() {
+        let out = render_extraction_section("Notes", "   ", &[]);
+        assert_eq!(out, "## Notes\n\n_Add your content here._\n");
+        assert!(!out.contains("What to cover"));
+    }
+
+    #[test]
+    fn whitespace_only_excerpts_fall_back_to_placeholder() {
+        // Retrieval can return blank/whitespace chunks; they must not
+        // produce an empty "sourced" section with no real content.
+        let excerpts = vec!["   ".to_string(), "\n\n".to_string()];
+        let out = render_extraction_section("Summary", "Summarize", &excerpts);
+        assert!(out.starts_with("## Summary\n\n_Add your content here._"));
+    }
+
+    #[test]
+    fn header_is_always_present_and_trimmed() {
+        let out = render_extraction_section("  Spaced Title  ", "", &[]);
+        assert!(out.starts_with("## Spaced Title\n\n"));
+    }
 }
