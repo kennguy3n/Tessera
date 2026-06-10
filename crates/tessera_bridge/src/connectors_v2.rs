@@ -60,6 +60,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use connector_framework::{
     ClientSecretResolver, Connector, ConnectorConfig, ConnectorEvent, ConnectorInstanceId,
@@ -809,33 +810,10 @@ pub fn run_sync(
     Ok(outcome)
 }
 
-/// Minimal, dependency-free base64 (standard alphabet, padded) for
-/// encoding fetched bodies onto the JSON boundary. Avoids adding a
-/// base64 crate dependency for this single use.
+/// Standard, padded base64 (RFC 4648) for encoding fetched bodies onto
+/// the JSON boundary, delegating to the workspace `base64` crate.
 fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    for chunk in input.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[((n >> 6) & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[(n & 0x3f) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
+    base64::engine::general_purpose::STANDARD.encode(input)
 }
 
 // ───────────────────────────── public API ──────────────────────────────────

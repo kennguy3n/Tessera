@@ -86,14 +86,29 @@ import {
  * they have no legacy fallback and are reachable only through the v2
  * `connector_framework` bridge.
  */
-const LEGACY_PROVIDERS = new Set<ProviderId>([
+type LegacyProviderId =
+  | "google_drive"
+  | "onedrive"
+  | "notion"
+  | "jira"
+  | "confluence"
+  | "figma";
+
+// `satisfies` pins every id to a valid `LegacyProviderId` at compile
+// time (a typo or stray provider here is a build error). The Set is
+// typed `ReadonlySet<ProviderId>` — not `Set<LegacyProviderId>` — so
+// callers can probe membership with a full `ProviderId`, since
+// `Set<T>.has` requires its argument to be `T`.
+const LEGACY_PROVIDER_IDS = [
   "google_drive",
   "onedrive",
   "notion",
   "jira",
   "confluence",
   "figma",
-]);
+] as const satisfies readonly LegacyProviderId[];
+
+const LEGACY_PROVIDERS: ReadonlySet<ProviderId> = new Set(LEGACY_PROVIDER_IDS);
 
 /**
  * Whether the native addon reports `provider` as a feature-enabled v2
@@ -1036,12 +1051,21 @@ async function runConnectorSyncInner(
   }
 }
 
-async function runDisconnect(
-  ctx: IpcContext,
-  provider: ProviderId,
+/**
+ * Per-provider cleanup for the six providers that have a hand-rolled
+ * (`tessera_connectors`-style) TS sync impl. Each removes the sources
+ * the legacy sync registered and purges that provider's legacy sync
+ * directory. Note Google Drive's legacy code keys its directory and
+ * manifest on the short name `"gdrive"` (→ `gdrive-sync/`), which is
+ * distinct from the canonical `"google_drive"` id the v2 path uses
+ * (→ `google_drive-sync/`); the two backends therefore never share a
+ * directory for Google Drive.
+ */
+function runLegacyDisconnect(
+  provider: LegacyProviderId,
   userDataDir: string,
+  bridge: BridgeHooks,
 ): Promise<{ filesRemoved: number }> {
-  const bridge = bridgeHooks(ctx);
   switch (provider) {
     case "google_drive":
       return disconnectGoogleDrive(userDataDir, bridge);
@@ -1055,6 +1079,53 @@ async function runDisconnect(
       return disconnectConfluence(userDataDir, bridge);
     case "figma":
       return disconnectFigma(userDataDir, bridge);
+    default: {
+      const _exhaustive: never = provider;
+      throw new Error(
+        `runLegacyDisconnect: non-legacy provider ${String(_exhaustive)}`,
+      );
+    }
+  }
+}
+
+/**
+ * Disconnect cleanup dispatch. Exported for the regression test that
+ * verifies a Google Drive disconnect purges BOTH backends' sync
+ * directories (the legacy `gdrive-sync/` and the v2
+ * `google_drive-sync/`); not part of the IPC contract.
+ */
+export async function runDisconnect(
+  ctx: IpcContext,
+  provider: ProviderId,
+  userDataDir: string,
+): Promise<{ filesRemoved: number }> {
+  const bridge = bridgeHooks(ctx);
+  switch (provider) {
+    case "google_drive":
+    case "onedrive":
+    case "notion":
+    case "jira":
+    case "confluence":
+    case "figma": {
+      // The active sync backend is selected at runtime (see `runSync`):
+      // either the v2 `connector_framework` bridge or the legacy TS
+      // impl. Disconnect must not assume which one produced the files,
+      // because the choice can differ between a sync and a later
+      // disconnect — e.g. `useV2Connectors` was toggled, the addon was
+      // rebuilt without `connectors-v2`, or (for Google Drive) the two
+      // backends simply use different directories (`gdrive-sync/` vs
+      // `google_drive-sync/`). Cleaning ONLY the legacy path therefore
+      // orphaned every v2-synced Google Drive file on disk.
+      //
+      // So we run BOTH cleanups. Each is best-effort and a no-op when
+      // its directory/manifest is absent. For the five providers whose
+      // legacy and v2 paths share a directory + manifest format, the
+      // first pass purges it and the second finds nothing left; for
+      // Google Drive the two distinct directories are each cleaned.
+      const legacy = await runLegacyDisconnect(provider, userDataDir, bridge);
+      const v2 = await disconnectV2Provider(provider, userDataDir, bridge);
+      return { filesRemoved: legacy.filesRemoved + v2.filesRemoved };
+    }
     case "hubspot":
     case "slack":
     case "email":
@@ -1109,10 +1180,11 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       const clientSecret = assertString(clientSecretRaw, "clientSecret", {
         maxLen: 512,
         // Every provider supported today (Google Drive, OneDrive,
-        // Notion, Jira, Confluence, Figma) is registered as a
-        // confidential OAuth client and therefore requires a non-empty
-        // `client_secret`. If a future connector is added with a public
-        // / PKCE-only OAuth client, special-case it here.
+        // Notion, Jira, Confluence, Figma, HubSpot, Slack, Email,
+        // GitHub) is registered as a confidential OAuth client and
+        // therefore requires a non-empty `client_secret`. If a future
+        // connector is added with a public / PKCE-only OAuth client,
+        // special-case it here.
         allowEmpty: false,
       });
       try {

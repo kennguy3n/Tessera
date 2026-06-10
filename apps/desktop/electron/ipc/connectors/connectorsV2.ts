@@ -291,10 +291,27 @@ export async function readV2State(
 /**
  * Persist the connector sync-state for the next incremental run.
  *
- * The Rust `sync` entry point pins the state's `connector` field to
- * the deterministically-resolved instance id on every call, so the
- * placeholder all-zero UUID written here is corrected on read; only
- * `cursor` / `mode` / `last_synced_at` carry forward meaningfully.
+ * Initial-vs-incremental contract with the Rust side: the Rust
+ * `run_sync` decides whether to call `initial_sync` or
+ * `incremental_sync` purely from the state it reads (see
+ * `crates/tessera_bridge/src/connectors_v2.rs` — `is_initial` is
+ * `mode == Full && cursor.is_none() && last_synced_at.is_none()`).
+ *
+ *   - On the very first sync, {@link readV2State} returns `null`, the
+ *     Rust side constructs a fresh `SyncState::new` (`mode: Full`,
+ *     no cursor, no timestamp) and runs the INITIAL sync.
+ *   - Every run thereafter reads the state written here. Because this
+ *     writer always emits `mode: "incremental"` and a `last_synced_at`,
+ *     `is_initial` is false and the Rust side runs an INCREMENTAL sync.
+ *
+ * So a persisted state file is itself the "initial sync already
+ * happened" marker; deleting it (e.g. on disconnect via
+ * {@link purgeSyncDir}) correctly forces the next sync back to initial.
+ *
+ * The `connector` field is a placeholder all-zero UUID: the Rust `sync`
+ * entry point pins it to the deterministically-resolved instance id on
+ * every call, so only `cursor` / `mode` / `last_synced_at` carry
+ * forward meaningfully.
  */
 export async function writeV2State(
   userDataDir: string,
