@@ -268,18 +268,29 @@ impl SubstrateManager {
         })
     }
 
-    /// Return a JSON-serialized [`concept_graph::GraphView`] for a scope,
-    /// bounded by `max_nodes` (the crate default applies when `None`).
+    /// Return a JSON-serialized [`concept_graph::GraphView`] of the
+    /// single-user concept graph, bounded by `max_nodes` (the crate
+    /// default applies when `None`).
+    ///
+    /// Like the memory plane, the concept graph is single-scope:
+    /// `build_concept_graph` only ever writes nodes under the default
+    /// scope, so this view always reads the default scope. The `_scope`
+    /// parameter is retained for N-API signature stability and forward
+    /// compatibility but is intentionally not used — resolving a
+    /// non-default scope here would always return an empty graph (nothing
+    /// is ever written to another scope), which would mislead callers
+    /// into expecting scoped data that does not exist. This keeps the
+    /// concept graph consistent with `list_memories` / `trigger_synthesis`.
     ///
     /// # Errors
     ///
     /// Returns [`SubstrateError`] on store or serialization failure.
     pub fn concept_graph_json(
         &mut self,
-        scope: Option<&str>,
+        _scope: Option<&str>,
         max_nodes: Option<usize>,
     ) -> Result<String> {
-        let scope = self.resolve_scope(scope);
+        let scope = self.default_scope;
         self.concepts.load_scope(scope)?;
         let filter = ViewFilter {
             scope_ids: vec![scope],
@@ -377,14 +388,6 @@ impl SubstrateManager {
     }
 
     // ───────────────────────────── internals ─────────────────────────
-
-    fn resolve_scope(&self, scope: Option<&str>) -> ScopeId {
-        match scope {
-            None => self.default_scope,
-            Some(s) if s.trim().is_empty() => self.default_scope,
-            Some(s) => scope_id_from_label(s),
-        }
-    }
 
     fn load_memories(&self, scope: ScopeId) -> Result<Vec<MemoryObject>> {
         match self.evidence.load_memory_blob(scope, MEMORIES_KIND)? {
