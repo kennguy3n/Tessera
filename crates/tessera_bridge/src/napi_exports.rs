@@ -26,6 +26,7 @@ use crate::automations;
 use crate::citations;
 use crate::exporter;
 use crate::sources;
+use crate::substrate;
 use crate::tasks;
 use crate::templates;
 
@@ -703,6 +704,86 @@ pub fn bridge_search_sources(
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     sources::search_sources(&mgr, &query, limit as usize)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Observation-enriched search.
+///
+/// Composes Tessera's existing chunk-level hybrid search with the
+/// knowledge substrate's observation/memory/concept planes:
+///
+///  1. Reads the per-source retention scores and the matching
+///     entities / facts / concepts / memories from the substrate
+///     (under the substrate lock, which is then released).
+///  2. Runs the chunk search with that retention map fused in as the
+///     fourth RRF signal (under the source-manager lock).
+///
+/// The two locks are acquired *sequentially* and never held at the
+/// same time, preserving the documented lock order (substrate is
+/// never held while taking another lock). The returned `hits` are the
+/// retention-weighted chunk results; `entities`/`facts`/`concepts`/
+/// `memories` are the additive knowledge plane for the renderer's
+/// "Knowledge" tab.
+///
+/// Backward-compatible: `bridge_search_sources` is unchanged. If the
+/// substrate has no memories yet the retention map is empty and the
+/// chunk ranking is identical to `bridge_search_sources`.
+#[napi]
+pub fn bridge_search_sources_enriched(
+    query: String,
+    limit: u32,
+) -> napi::Result<sources::EnrichedSearchResult> {
+    let s = state()?;
+    let limit = limit as usize;
+
+    // Phase 1: substrate plane. Acquire, read, release before touching
+    // the source-manager lock.
+    let (retention_by_source, knowledge) = {
+        let mut substrate = s
+            .substrate
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let retention = substrate
+            .retention_by_source()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let knowledge = substrate
+            .search_knowledge(&query, limit)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        (retention, knowledge)
+    };
+
+    // Phase 2: chunk plane, retention-weighted.
+    let hits = {
+        let mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        sources::search_sources_with_retention(&mgr, &query, limit, retention_by_source)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    };
+
+    Ok(sources::EnrichedSearchResult {
+        hits,
+        entities: knowledge
+            .entities
+            .into_iter()
+            .map(substrate::SubstrateMemory::from)
+            .collect(),
+        facts: knowledge
+            .facts
+            .into_iter()
+            .map(substrate::SubstrateMemory::from)
+            .collect(),
+        concepts: knowledge
+            .concepts
+            .into_iter()
+            .map(substrate::SubstrateConcept::from)
+            .collect(),
+        memories: knowledge
+            .memories
+            .into_iter()
+            .map(substrate::SubstrateMemory::from)
+            .collect(),
+    })
 }
 
 /// query the KChat-post FTS5 index for

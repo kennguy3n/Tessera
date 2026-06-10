@@ -188,6 +188,8 @@ const api: TesseraApi = {
     removeSource: (id: string) => ipcRenderer.invoke("sources:remove", id),
     searchSources: (query: string, limit: number) =>
       ipcRenderer.invoke("sources:search", query, limit),
+    searchEnriched: (query: string, limit: number) =>
+      ipcRenderer.invoke("sources:searchEnriched", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
     // bulk re-index. Calls the main-process
@@ -528,6 +530,12 @@ const api: TesseraApi = {
         "substrate:getConceptGraph",
         scope ?? null,
         maxNodes ?? null,
+      ),
+    suggestRelatedSources: (selectedSourceIds, maxSuggestions) =>
+      ipcRenderer.invoke(
+        "substrate:suggestRelatedSources",
+        selectedSourceIds,
+        maxSuggestions ?? null,
       ),
     runDecaySweep: () => ipcRenderer.invoke("substrate:runDecaySweep"),
     triggerSynthesis: (scope) =>

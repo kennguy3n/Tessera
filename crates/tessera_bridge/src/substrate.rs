@@ -10,7 +10,9 @@
 
 use napi_derive::napi;
 
-use tessera_substrate::{DecaySweepSummary, MemoryRecord, SynthesisSummary};
+use tessera_substrate::{
+    DecaySweepSummary, KnowledgeConcept, MemoryRecord, RelatedSourceSuggestion, SynthesisSummary,
+};
 
 use crate::napi_exports::{extract_observations_for_source, substrate_lock};
 
@@ -60,6 +62,57 @@ impl From<MemoryRecord> for SubstrateMemory {
             created_at: record.created_at,
             last_accessed_at: record.last_accessed_at,
             source_id: record.source_id,
+        }
+    }
+}
+
+/// A concept-graph node surfaced to the renderer as part of an
+/// enriched search (the "Knowledge" tab).
+#[napi(object)]
+pub struct SubstrateConcept {
+    /// Concept node id (UUID).
+    pub id: String,
+    /// Human-readable concept label (the extracted entity surface).
+    pub label: String,
+    /// Short definition / provenance tag for the node.
+    pub definition: String,
+    /// Concept lifecycle state: `candidate`, `canonical`,
+    /// `superseded`, `contradicted`, or `deleted`.
+    pub state: String,
+    /// Tessera source ids (UUID strings) this concept co-occurs in.
+    pub related_source_ids: Vec<String>,
+}
+
+impl From<KnowledgeConcept> for SubstrateConcept {
+    fn from(concept: KnowledgeConcept) -> Self {
+        Self {
+            id: concept.id,
+            label: concept.label,
+            definition: concept.definition,
+            state: concept.state,
+            related_source_ids: concept.related_source_ids,
+        }
+    }
+}
+
+/// A concept-graph-derived suggestion of related sources for the
+/// artifact-creation flow ("You have N sources about [entity].").
+#[napi(object)]
+pub struct SubstrateRelatedSuggestion {
+    /// Concept label the suggestion is anchored on.
+    pub entity: String,
+    /// Related Tessera source ids (UUID strings) not already selected.
+    pub source_ids: Vec<String>,
+    /// Ranking signal: the number of related sources.
+    pub score: u32,
+}
+
+impl From<RelatedSourceSuggestion> for SubstrateRelatedSuggestion {
+    fn from(suggestion: RelatedSourceSuggestion) -> Self {
+        Self {
+            entity: suggestion.entity,
+            source_ids: suggestion.source_ids,
+            score: suggestion.score,
         }
     }
 }
@@ -142,6 +195,33 @@ pub fn bridge_get_memories(scope: Option<String>) -> napi::Result<Vec<SubstrateM
         .list_memories(scope.as_deref())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(records.into_iter().map(SubstrateMemory::from).collect())
+}
+
+/// Suggest sources related to an already-selected working set, via the
+/// concept graph. Powers the artifact-creation "You have N sources
+/// about [entity]. Include them?" affordance.
+///
+/// `selected_source_ids` is the user's current selection (source UUID
+/// strings); suggestions never include an already-selected source and
+/// are capped at `max_suggestions` (a `null`/omitted limit applies a
+/// default of 10). Returns suggestions ranked by how many related
+/// sources each concept pulls in.
+#[napi]
+pub fn bridge_suggest_related_sources(
+    selected_source_ids: Vec<String>,
+    max_suggestions: Option<u32>,
+) -> napi::Result<Vec<SubstrateRelatedSuggestion>> {
+    let max = max_suggestions.map_or(10, |n| n as usize);
+    let mut manager = substrate_lock()?
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let suggestions = manager
+        .suggest_related_sources(&selected_source_ids, max)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(suggestions
+        .into_iter()
+        .map(SubstrateRelatedSuggestion::from)
+        .collect())
 }
 
 /// Pin a memory by id — the strongest retention signal — promoting a

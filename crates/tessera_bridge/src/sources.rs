@@ -62,6 +62,31 @@ pub struct SearchHitInfo {
     pub relevance: f64,
 }
 
+/// JS-facing result of an observation-enriched search
+/// (`bridge_search_sources_enriched`).
+///
+/// `hits` are the standard chunk-level results (identical shape to
+/// `bridge_search_sources`), but ranked by the retention-weighted
+/// hybrid search so chunks from sources with active memories rank
+/// higher. The remaining fields are the additive knowledge plane the
+/// renderer shows in the "Knowledge" tab: `entities` and `facts` are
+/// observation-typed memory items, `concepts` are matching
+/// concept-graph nodes, and `memories` is the full ranked memory match
+/// set (superset of entities/facts).
+#[napi(object)]
+pub struct EnrichedSearchResult {
+    /// Standard chunk hits, retention-weighted.
+    pub hits: Vec<SearchHitInfo>,
+    /// Matching `entity` memory items.
+    pub entities: Vec<crate::substrate::SubstrateMemory>,
+    /// Matching `fact`/`claim`/`decision` memory items.
+    pub facts: Vec<crate::substrate::SubstrateMemory>,
+    /// Matching concept-graph nodes with their related sources.
+    pub concepts: Vec<crate::substrate::SubstrateConcept>,
+    /// All matching memory items (any observation type).
+    pub memories: Vec<crate::substrate::SubstrateMemory>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 /// JS-facing view of one indexed file belonging to a source.
@@ -721,6 +746,31 @@ pub fn search_sources(
     Ok(results.iter().map(SearchHitInfo::from).collect())
 }
 
+/// Like [`search_sources`] but fuses the knowledge-substrate retention
+/// signal into the hybrid ranking via
+/// [`SourceManager::search_with_retention`]. An empty
+/// `retention_by_source` map yields ranking identical to
+/// [`search_sources`].
+///
+/// The default `RandomState` hasher is intentionally concrete (rather
+/// than a generic `S: BuildHasher`): the map is handed straight to
+/// [`SourceManager::search_with_retention`], whose `SearchEngine`
+/// stores it in a `HashMap<String, f64>` field pinned to the default
+/// hasher, so a generic parameter here would buy nothing and force a
+/// rebuild at the boundary.
+#[allow(clippy::implicit_hasher)]
+pub fn search_sources_with_retention(
+    manager: &SourceManager,
+    query: &str,
+    limit: usize,
+    retention_by_source: std::collections::HashMap<String, f64>,
+) -> BridgeResult<Vec<SearchHitInfo>> {
+    let results = manager
+        .search_with_retention(query, limit, retention_by_source)
+        .map_err(BridgeError::Core)?;
+    Ok(results.iter().map(SearchHitInfo::from).collect())
+}
+
 /// bridge counterpart of
 /// [`SourceManager::search_kchat_posts`]. Returns AEAD-verified
 /// KChat post-body chunks ranked by BM25 + reciprocal rank.
@@ -937,6 +987,9 @@ pub struct HybridSearchConfigInfo {
     pub recency_halflife_secs: Option<f64>,
     /// Candidates pulled from each ranking before fusion.
     pub candidate_pool_size: u32,
+    /// Weight of the knowledge-substrate retention ranking in fusion
+    /// (the fourth RRF signal).
+    pub retention_weight: f64,
 }
 
 impl From<&HybridSearchConfig> for HybridSearchConfigInfo {
@@ -949,6 +1002,7 @@ impl From<&HybridSearchConfig> for HybridSearchConfigInfo {
             recency_decay_enabled: decay_enabled,
             recency_halflife_secs: decay_enabled.then_some(c.recency_halflife_secs),
             candidate_pool_size: u32::try_from(c.candidate_pool_size).unwrap_or(u32::MAX),
+            retention_weight: c.retention_weight,
         }
     }
 }
@@ -979,6 +1033,8 @@ pub struct HybridSearchConfigUpdate {
     pub recency_halflife_secs: Option<f64>,
     /// New candidate-pool size, or `None` to leave unchanged.
     pub candidate_pool_size: Option<u32>,
+    /// New retention-signal weight, or `None` to leave unchanged.
+    pub retention_weight: Option<f64>,
 }
 
 fn embedding_status_str(status: EmbeddingStatus) -> String {
@@ -1125,6 +1181,7 @@ pub fn update_hybrid_search_config(
         rrf_k: update.rrf_k,
         recency_halflife_secs: effective_halflife,
         candidate_pool_size: update.candidate_pool_size.map(|n| n as usize),
+        retention_weight: update.retention_weight,
     };
     let new_cfg = manager.update_hybrid_config(&patch).map_err(|e| match e {
         // Validation errors live in `Error::InvalidConfig`; surface

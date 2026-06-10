@@ -4,7 +4,10 @@ import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
 import IntentPicker from "../components/IntentPicker";
-import { useSourceList } from "../hooks/useSources";
+import {
+  useSourceList,
+  useRelatedSourceSuggestions,
+} from "../hooks/useSources";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import type { CreatePageMode } from "../../../shared/types";
 import type { TemplateInfo } from "../types/ipc";
@@ -1087,6 +1090,33 @@ function TemplateRunner({
     });
   }, []);
 
+  // Concept-graph smart suggestions: as the user builds their working
+  // set, the substrate surfaces other indexed sources that co-occur (by
+  // entity) with the selection — replacing the manual "search and hunt"
+  // step with a one-click "include these too" affordance.
+  const selectedIds = Array.from(selected);
+  const { suggestions } = useRelatedSourceSuggestions(selectedIds);
+  // Only suggest sources that still exist in the live list and aren't
+  // already selected (the substrate already excludes selected ids, but
+  // the source list can lag a removal — defend against a stale id).
+  const knownSourceIds = new Set(sources.map((s) => s.id));
+  const visibleSuggestions = suggestions
+    .map((suggestion) => ({
+      ...suggestion,
+      sourceIds: suggestion.sourceIds.filter(
+        (id) => knownSourceIds.has(id) && !selected.has(id),
+      ),
+    }))
+    .filter((suggestion) => suggestion.sourceIds.length > 0);
+
+  const includeSuggestion = useCallback((sourceIds: string[]) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of sourceIds) next.add(id);
+      return next;
+    });
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) {
@@ -1261,6 +1291,60 @@ function TemplateRunner({
               );
             })}
           </ul>
+        )}
+
+        {visibleSuggestions.length > 0 && (
+          <div
+            data-testid="create-related-suggestions"
+            style={{
+              marginTop: "var(--spacing-md)",
+              padding: "var(--spacing-sm) var(--spacing-md)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--color-surface-soft)",
+            }}
+          >
+            <h4
+              style={{
+                margin: 0,
+                marginBottom: "var(--spacing-xs)",
+                fontSize: "var(--font-size-sm)",
+              }}
+            >
+              Related sources
+            </h4>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {visibleSuggestions.map((suggestion) => {
+                const count = suggestion.sourceIds.length;
+                return (
+                  <li
+                    key={suggestion.entity}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "var(--spacing-sm)",
+                      padding: "var(--spacing-xs) 0",
+                    }}
+                  >
+                    <span style={{ fontSize: "var(--font-size-sm)" }}>
+                      You have {count} more source{count === 1 ? "" : "s"}{" "}
+                      about <strong>{suggestion.entity}</strong>.
+                    </span>
+                    <Button
+                      variant="secondary"
+                      onClick={() => includeSuggestion(suggestion.sourceIds)}
+                      aria-label={`Include ${count} source${
+                        count === 1 ? "" : "s"
+                      } about ${suggestion.entity}`}
+                    >
+                      Include {count === 1 ? "it" : "them"}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
 
         {modelAvailable === false && (

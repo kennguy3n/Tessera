@@ -150,6 +150,20 @@ pub struct HybridSearchConfig {
     /// this too low causes the fusion to miss items that would
     /// rank well after combination.
     pub candidate_pool_size: usize,
+    /// Weight applied to the knowledge-substrate retention ranking in
+    /// RRF — the fourth signal alongside BM25, vector, and recency.
+    /// Default 1.0.
+    ///
+    /// The retention signal ranks candidate chunks by the live
+    /// retention score of the memories the substrate extracted from
+    /// their source (active > fading > archived). It only fires when
+    /// the caller supplies a per-source retention map (the
+    /// `*_with_retention` entry points); the plain `hybrid_search`
+    /// path passes an empty map, so this weight has no effect there
+    /// and the historical BM25 + vector + recency behaviour is
+    /// preserved exactly. Set to 0.0 to disable the signal even when
+    /// retention data is available.
+    pub retention_weight: f64,
 }
 
 impl Default for HybridSearchConfig {
@@ -160,6 +174,7 @@ impl Default for HybridSearchConfig {
             rrf_k: RRF_K,
             recency_halflife_secs: DEFAULT_RECENCY_HALFLIFE_SECS,
             candidate_pool_size: 0, // 0 means "4× limit", set in apply()
+            retention_weight: 1.0,
         }
     }
 }
@@ -188,6 +203,8 @@ pub struct HybridSearchConfigInput {
     pub recency_halflife_secs: Option<f64>,
     /// New candidate-pool size, or `None` to leave unchanged.
     pub candidate_pool_size: Option<usize>,
+    /// New retention-signal weight, or `None` to leave unchanged.
+    pub retention_weight: Option<f64>,
 }
 
 impl HybridSearchConfig {
@@ -265,6 +282,13 @@ impl HybridSearchConfig {
                 )));
             }
         }
+        if let Some(v) = patch.retention_weight {
+            if !v.is_finite() || v < 0.0 {
+                return Err(Error::InvalidConfig(format!(
+                    "hybrid retention_weight must be a finite, non-negative number; got {v}"
+                )));
+            }
+        }
 
         // All patched fields validated — commit.
         if let Some(v) = patch.bm25_weight {
@@ -281,6 +305,9 @@ impl HybridSearchConfig {
         }
         if let Some(v) = patch.candidate_pool_size {
             self.candidate_pool_size = v;
+        }
+        if let Some(v) = patch.retention_weight {
+            self.retention_weight = v;
         }
         Ok(())
     }
@@ -348,6 +375,28 @@ pub fn fuse_rankings<S>(
 where
     S: std::hash::BuildHasher,
 {
+    fuse_rankings_with_retention(bm25, vector, &[], ages_secs, config)
+}
+
+/// Like [`fuse_rankings`] but with the knowledge-substrate retention
+/// ranking as a fourth RRF signal.
+///
+/// `retention` is the candidate set ranked by descending live
+/// retention score (highest-retention chunk at rank 0), produced by
+/// [`rank_chunks_by_retention`]. Its RRF contribution uses
+/// `config.retention_weight`. Passing an empty slice (the default
+/// [`fuse_rankings`] path) makes this identical to the historical
+/// BM25 + vector fusion, so the retention signal is strictly additive.
+pub fn fuse_rankings_with_retention<S>(
+    bm25: &[RankedCandidate],
+    vector: &[RankedCandidate],
+    retention: &[RankedCandidate],
+    ages_secs: &HashMap<i64, f64, S>,
+    config: &HybridSearchConfig,
+) -> Vec<FusedScore>
+where
+    S: std::hash::BuildHasher,
+{
     let mut acc: HashMap<i64, f64> = HashMap::new();
 
     for c in bm25 {
@@ -357,6 +406,16 @@ where
     for c in vector {
         let contrib = rrf_contribution(c.rank, config.rrf_k, config.vector_weight);
         *acc.entry(c.chunk_id).or_insert(0.0) += contrib;
+    }
+    for c in retention {
+        let contrib = rrf_contribution(c.rank, config.rrf_k, config.retention_weight);
+        // Retention only *reinforces* chunks already surfaced by BM25
+        // or vector — it never introduces a chunk that no lexical or
+        // semantic signal matched. Otherwise a high-retention source
+        // would inject unrelated chunks into every query's results.
+        if let Some(score) = acc.get_mut(&c.chunk_id) {
+            *score += contrib;
+        }
     }
 
     let mut out: Vec<FusedScore> = acc
@@ -427,6 +486,45 @@ pub fn rank_chunks_by_cosine(
         .collect()
 }
 
+/// Rank `candidate_ids` by the retention score of the source they
+/// belong to, returning the chunks that have a score as
+/// `RankedCandidate`s (highest retention at rank 0).
+///
+/// `chunk_sources` maps a chunk id to its source id;
+/// `retention_by_source` maps a source id to its live retention score.
+/// Chunks whose source has no retention entry are omitted (they pick
+/// up no retention contribution in fusion). The result is sorted by
+/// retention descending with `chunk_id` ascending as a deterministic
+/// tiebreaker, mirroring [`rank_chunks_by_cosine`].
+pub fn rank_chunks_by_retention<S1, S2>(
+    candidate_ids: &[i64],
+    chunk_sources: &HashMap<i64, String, S1>,
+    retention_by_source: &HashMap<String, f64, S2>,
+) -> Vec<RankedCandidate>
+where
+    S1: std::hash::BuildHasher,
+    S2: std::hash::BuildHasher,
+{
+    let mut scored: Vec<(i64, f64)> = candidate_ids
+        .iter()
+        .filter_map(|&chunk_id| {
+            let source = chunk_sources.get(&chunk_id)?;
+            let score = retention_by_source.get(source)?;
+            Some((chunk_id, *score))
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    scored
+        .into_iter()
+        .enumerate()
+        .map(|(rank, (chunk_id, _))| RankedCandidate { chunk_id, rank })
+        .collect()
+}
+
 /// High-level hybrid search entry point. Runs BM25 via FTS5,
 /// vector cosine via the provided embedding provider, fuses with
 /// RRF, applies recency decay, and returns the top `limit` chunks.
@@ -443,6 +541,42 @@ pub fn hybrid_search(
     limit: usize,
     config: &HybridSearchConfig,
 ) -> Result<Vec<i64>> {
+    hybrid_search_with_retention(
+        store,
+        provider,
+        query,
+        fts_query,
+        limit,
+        config,
+        &HashMap::new(),
+    )
+}
+
+/// [`hybrid_search`] augmented with the knowledge-substrate retention
+/// signal as a fourth RRF input.
+///
+/// `retention_by_source` maps a Tessera source id to its live
+/// retention score (see `tessera_substrate::SubstrateManager::retention_by_source`).
+/// Candidate chunks surfaced by BM25 / vector are looked up against
+/// this map (via their source id) and a retention ranking is fused in
+/// with `config.retention_weight`, so chunks from sources with active
+/// memories rank above fading above archived.
+///
+/// Passing an empty map reduces this to exactly [`hybrid_search`]: the
+/// retention ranking is empty and contributes nothing. Retention never
+/// introduces a chunk that no lexical/semantic signal matched.
+pub fn hybrid_search_with_retention<S>(
+    store: &SourceStore,
+    provider: Option<&dyn EmbeddingProvider>,
+    query: &str,
+    fts_query: &str,
+    limit: usize,
+    config: &HybridSearchConfig,
+    retention_by_source: &HashMap<String, f64, S>,
+) -> Result<Vec<i64>>
+where
+    S: std::hash::BuildHasher,
+{
     // Whitespace-only query short-circuit. Both signals would otherwise
     // produce "results":
     //
@@ -549,7 +683,20 @@ pub fn hybrid_search(
     candidate_ids.dedup();
 
     let ages = store.ages_secs_for_chunks(&candidate_ids)?;
-    let fused = fuse_rankings(&bm25, &vector, &ages, config);
+
+    // Fourth signal: substrate retention. Only resolve chunk→source
+    // and build the ranking when the caller actually supplied
+    // retention data and the weight is active — otherwise this is the
+    // historical BM25 + vector + recency path with zero extra I/O.
+    let retention: Vec<RankedCandidate> =
+        if retention_by_source.is_empty() || config.retention_weight <= 0.0 {
+            Vec::new()
+        } else {
+            let chunk_sources = store.source_ids_for_chunks(&candidate_ids)?;
+            rank_chunks_by_retention(&candidate_ids, &chunk_sources, retention_by_source)
+        };
+
+    let fused = fuse_rankings_with_retention(&bm25, &vector, &retention, &ages, config);
 
     Ok(fused.into_iter().take(limit).map(|f| f.chunk_id).collect())
 }
@@ -1043,5 +1190,172 @@ mod tests {
         assert!(input.rrf_k.is_none());
         assert!(input.recency_halflife_secs.is_none());
         assert!(input.candidate_pool_size.is_none());
+    }
+
+    #[test]
+    fn rank_chunks_by_retention_orders_by_score_desc() {
+        // chunk 10 → source "a" (0.9), chunk 20 → source "b" (0.3),
+        // chunk 30 → source "c" (0.6). Expect rank order a, c, b.
+        let chunk_sources: HashMap<i64, String> = HashMap::from([
+            (10, "a".to_string()),
+            (20, "b".to_string()),
+            (30, "c".to_string()),
+        ]);
+        let retention: HashMap<String, f64> = HashMap::from([
+            ("a".to_string(), 0.9),
+            ("b".to_string(), 0.3),
+            ("c".to_string(), 0.6),
+        ]);
+        let ranked = rank_chunks_by_retention(&[10, 20, 30], &chunk_sources, &retention);
+        let ids: Vec<i64> = ranked.iter().map(|c| c.chunk_id).collect();
+        assert_eq!(ids, vec![10, 30, 20]);
+        // Ranks are assigned 0..n in score order.
+        assert_eq!(ranked[0].rank, 0);
+        assert_eq!(ranked[1].rank, 1);
+        assert_eq!(ranked[2].rank, 2);
+    }
+
+    #[test]
+    fn rank_chunks_by_retention_omits_chunks_without_a_score() {
+        // chunk 20's source "b" has no retention entry → omitted. A
+        // chunk with no source mapping at all is also omitted.
+        let chunk_sources: HashMap<i64, String> =
+            HashMap::from([(10, "a".to_string()), (20, "b".to_string())]);
+        let retention: HashMap<String, f64> = HashMap::from([("a".to_string(), 0.5)]);
+        let ranked = rank_chunks_by_retention(&[10, 20, 999], &chunk_sources, &retention);
+        let ids: Vec<i64> = ranked.iter().map(|c| c.chunk_id).collect();
+        assert_eq!(ids, vec![10]);
+    }
+
+    #[test]
+    fn rank_chunks_by_retention_breaks_ties_by_chunk_id() {
+        // Two chunks share source "a" (same score) → deterministic
+        // ascending chunk_id order regardless of input order.
+        let chunk_sources: HashMap<i64, String> =
+            HashMap::from([(30, "a".to_string()), (10, "a".to_string())]);
+        let retention: HashMap<String, f64> = HashMap::from([("a".to_string(), 0.7)]);
+        let ranked = rank_chunks_by_retention(&[30, 10], &chunk_sources, &retention);
+        let ids: Vec<i64> = ranked.iter().map(|c| c.chunk_id).collect();
+        assert_eq!(ids, vec![10, 30]);
+    }
+
+    #[test]
+    fn fuse_rankings_with_retention_promotes_high_retention_chunk() {
+        // Two chunks tie on BM25+vector; retention breaks the tie in
+        // favour of the chunk whose source has live memories.
+        let bm25 = vec![
+            RankedCandidate {
+                chunk_id: 1,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 2,
+                rank: 1,
+            },
+        ];
+        let vector = vec![
+            RankedCandidate {
+                chunk_id: 2,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 1,
+                rank: 1,
+            },
+        ];
+        // Without retention chunk 1 and 2 are symmetric (ranks {0,1} vs
+        // {1,0}) → tie broken by chunk_id ascending → chunk 1 first.
+        let ages = HashMap::new();
+        let cfg = HybridSearchConfig {
+            recency_halflife_secs: f64::INFINITY,
+            ..Default::default()
+        };
+        let baseline = fuse_rankings_with_retention(&bm25, &vector, &[], &ages, &cfg);
+        assert_eq!(baseline[0].chunk_id, 1);
+
+        // Now feed retention ranking that favours chunk 2.
+        let retention = vec![RankedCandidate {
+            chunk_id: 2,
+            rank: 0,
+        }];
+        let fused = fuse_rankings_with_retention(&bm25, &vector, &retention, &ages, &cfg);
+        assert_eq!(
+            fused[0].chunk_id, 2,
+            "retention signal should lift chunk 2 above the tie"
+        );
+    }
+
+    #[test]
+    fn fuse_rankings_with_retention_never_introduces_unmatched_chunks() {
+        // A high-retention chunk (99) that no BM25/vector signal
+        // surfaced must NOT appear in the fused output — retention only
+        // reinforces, it never injects.
+        let bm25 = vec![RankedCandidate {
+            chunk_id: 1,
+            rank: 0,
+        }];
+        let vector = vec![RankedCandidate {
+            chunk_id: 1,
+            rank: 0,
+        }];
+        let retention = vec![
+            RankedCandidate {
+                chunk_id: 99,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 1,
+                rank: 1,
+            },
+        ];
+        let ages = HashMap::new();
+        let cfg = HybridSearchConfig {
+            recency_halflife_secs: f64::INFINITY,
+            ..Default::default()
+        };
+        let fused = fuse_rankings_with_retention(&bm25, &vector, &retention, &ages, &cfg);
+        let ids: Vec<i64> = fused.iter().map(|f| f.chunk_id).collect();
+        assert_eq!(ids, vec![1], "chunk 99 must not be injected by retention");
+    }
+
+    #[test]
+    fn fuse_rankings_with_retention_empty_matches_plain_fusion() {
+        // The retention path with an empty retention slice must produce
+        // byte-for-byte the same ordering/scores as `fuse_rankings`,
+        // proving the signal is strictly additive (backward compatible).
+        let bm25 = vec![
+            RankedCandidate {
+                chunk_id: 1,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 2,
+                rank: 1,
+            },
+            RankedCandidate {
+                chunk_id: 3,
+                rank: 2,
+            },
+        ];
+        let vector = vec![
+            RankedCandidate {
+                chunk_id: 3,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 1,
+                rank: 1,
+            },
+        ];
+        let ages: HashMap<i64, f64> = HashMap::from([(1, 100.0), (2, 5000.0)]);
+        let cfg = HybridSearchConfig::default();
+        let plain = fuse_rankings(&bm25, &vector, &ages, &cfg);
+        let with_empty = fuse_rankings_with_retention(&bm25, &vector, &[], &ages, &cfg);
+        let plain_ids: Vec<i64> = plain.iter().map(|f| f.chunk_id).collect();
+        let empty_ids: Vec<i64> = with_empty.iter().map(|f| f.chunk_id).collect();
+        assert_eq!(plain_ids, empty_ids);
+        for (a, b) in plain.iter().zip(with_empty.iter()) {
+            assert!((a.final_score - b.final_score).abs() < 1e-12);
+        }
     }
 }
