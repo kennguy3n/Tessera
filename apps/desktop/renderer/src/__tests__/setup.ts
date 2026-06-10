@@ -711,25 +711,6 @@ const mockApi = {
   // fully-idle box (no models resident, on AC, indexing idle) so the
   // Settings → Performance card renders its populated state in tests;
   // cases that need a specific reading override per-case.
-  substrate: {
-    extractObservations: vi.fn().mockResolvedValue(0),
-    getMemories: vi.fn().mockResolvedValue([]),
-    getConceptGraph: vi.fn().mockResolvedValue("{}"),
-    runDecaySweep: vi.fn().mockResolvedValue({
-      scanned: 0,
-      archived: 0,
-      deleted: 0,
-    }),
-    triggerSynthesis: vi.fn().mockResolvedValue({
-      scope: null,
-      generated: 0,
-      updated: 0,
-    }),
-    pinMemory: vi.fn().mockResolvedValue(undefined),
-    unpinMemory: vi.fn().mockResolvedValue(undefined),
-    forgetMemory: vi.fn().mockResolvedValue(undefined),
-    suggestRelatedSources: vi.fn().mockResolvedValue([]),
-  },
   resources: {
     getUsage: vi.fn().mockResolvedValue({
       resourceMode: "lightweight",
@@ -762,14 +743,23 @@ const mockApi = {
   substrate: {
     extractObservations: vi.fn().mockResolvedValue(0),
     getMemories: vi.fn().mockResolvedValue([]),
-    pinMemory: vi.fn(),
-    unpinMemory: vi.fn(),
+    pinMemory: vi.fn().mockResolvedValue(undefined),
+    unpinMemory: vi.fn().mockResolvedValue(undefined),
     forgetMemory: vi.fn().mockResolvedValue(undefined),
     getConceptGraph: vi.fn().mockResolvedValue('{"nodes":[],"edges":[]}'),
+    suggestRelatedSources: vi.fn().mockResolvedValue([]),
     runDecaySweep: vi
       .fn()
       .mockResolvedValue({ scored: 0, candidatesArchived: 0, supersededArchived: 0 }),
-    triggerSynthesis: vi.fn(),
+    triggerSynthesis: vi.fn().mockResolvedValue({
+      windowId: "",
+      scopeId: "",
+      version: 0,
+      recap: "",
+      decisions: [],
+      openQuestions: [],
+      activeTasks: [],
+    }),
   },
 };
 
