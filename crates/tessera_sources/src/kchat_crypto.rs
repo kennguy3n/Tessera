@@ -159,9 +159,10 @@ pub struct SealedChunk {
 /// linked channels).
 pub struct KchatCrypto {
     master: MasterKey,
-    // Mutex<...> because the cache is read-modify-write; the lock is
-    // only held for the cache map operation, never across the AEAD
-    // seal/open call.
+    // Mutex<...> because the cache is read-modify-write. The DEK is cloned
+    // out from under the lock (a cheap 32-byte `Zeroizing` copy) so the AEAD
+    // seal/open never runs while the mutex is held; concurrent ops on
+    // distinct sources therefore don't serialise on each other's crypto work.
     dek_cache: Mutex<std::collections::HashMap<String, DekBytes>>,
 }
 
@@ -206,12 +207,22 @@ impl KchatCrypto {
         Ok(())
     }
 
+    /// Clone the cached DEK for `source_id` out from under the cache lock so
+    /// the AEAD seal/open runs without the mutex held. The returned copy is
+    /// `Zeroizing`, so it is scrubbed when the calling operation finishes.
+    fn cached_dek(&self, source_id: &SourceId) -> Option<DekBytes> {
+        self.dek_cache
+            .lock()
+            .expect("dek_cache mutex poisoned")
+            .get(&source_id.to_string())
+            .cloned()
+    }
+
     /// Encrypt chunk content under the per-source DEK with
     /// XChaCha20-Poly1305 (v2). The associated-data binds source_id and
     /// the scheme version.
     pub fn seal_chunk(&self, source_id: &SourceId, plaintext: &[u8]) -> Result<SealedChunk> {
-        let guard = self.dek_cache.lock().expect("dek_cache mutex poisoned");
-        let dek = guard.get(&source_id.to_string()).ok_or_else(|| {
+        let dek = self.cached_dek(source_id).ok_or_else(|| {
             Error::DatabaseState(format!(
                 "seal_chunk: DEK for source {source_id} not loaded; call generate_and_wrap_dek or unwrap_dek first"
             ))
@@ -220,7 +231,7 @@ impl KchatCrypto {
         let mut nonce = [0u8; XCHACHA_NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
         let aad = chunk_aad(CryptoScheme::XChaCha20Poly1305V2, source_id);
-        let ciphertext = knowledge_crypto::encrypt_aead(dek, &nonce, plaintext, aad.as_bytes())
+        let ciphertext = knowledge_crypto::encrypt_aead(&dek, &nonce, plaintext, aad.as_bytes())
             .map_err(|e| Error::DatabaseState(format!("chunk seal failed: {e}")))?;
 
         Ok(SealedChunk {
@@ -235,8 +246,7 @@ impl KchatCrypto {
     /// verify (tampered ciphertext, wrong DEK, wrong source_id AAD).
     pub fn open_chunk(&self, source_id: &SourceId, sealed: &SealedChunk) -> Result<Vec<u8>> {
         let scheme = CryptoScheme::from_nonce_len(sealed.nonce.len())?;
-        let guard = self.dek_cache.lock().expect("dek_cache mutex poisoned");
-        let dek = guard.get(&source_id.to_string()).ok_or_else(|| {
+        let dek = self.cached_dek(source_id).ok_or_else(|| {
             Error::DatabaseState(format!(
                 "open_chunk: DEK for source {source_id} not loaded; call unwrap_dek first"
             ))
@@ -264,7 +274,7 @@ impl KchatCrypto {
             CryptoScheme::XChaCha20Poly1305V2 => {
                 let mut nonce = [0u8; XCHACHA_NONCE_LEN];
                 nonce.copy_from_slice(&sealed.nonce);
-                knowledge_crypto::decrypt_aead(dek, &nonce, &sealed.ciphertext, aad.as_bytes())
+                knowledge_crypto::decrypt_aead(&dek, &nonce, &sealed.ciphertext, aad.as_bytes())
                     .map_err(|e| Error::DatabaseState(format!("chunk open (v2) failed: {e}")))
             }
         }

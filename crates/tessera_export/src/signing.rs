@@ -254,7 +254,14 @@ pub fn verify_content(content: &[u8], sig: &ExportSignature) -> Result<bool> {
         .decode(sig.verifying_key_b64.as_bytes())
         .map_err(|e| Error::Export(format!("verifying key is not valid base64: {e}")))?;
 
-    // Cheap integrity gate before the (heavier) lattice verify.
+    // Cheap integrity gate before the (heavier) lattice verify. The
+    // `content_hash_b64` field is NOT part of the signed message (only
+    // `DOMAIN_TAG || 0x00 || content` is), so this hash is purely an
+    // optimization to skip the lattice verify on obviously-mismatched
+    // content — it carries no authentication weight. The ML-DSA-65
+    // signature below is the sole authority on authenticity; tampering with
+    // only this field can at most turn an authentic result into `Ok(false)`,
+    // never the reverse, and the sidecar is inside the trust boundary anyway.
     let expected_hash = B64
         .decode(sig.content_hash_b64.as_bytes())
         .map_err(|e| Error::Export(format!("content hash is not valid base64: {e}")))?;

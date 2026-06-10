@@ -36,7 +36,7 @@
 //! ML-KEM-768 backend, and XChaCha20-Poly1305 AEAD all come from the audited
 //! `knowledge` crypto crate.
 
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::{Error, Result};
 
@@ -106,7 +106,13 @@ fn split_secret(bytes: &[u8]) -> Result<knowledge_crypto::HybridSecretKey> {
     x25519.copy_from_slice(&bytes[..32]);
     let mut mlkem768 = [0u8; knowledge_crypto::KEM_SECRET_KEY_LEN];
     mlkem768.copy_from_slice(&bytes[32..]);
-    Ok(knowledge_crypto::HybridSecretKey { x25519, mlkem768 })
+    // `[u8; N]` is `Copy`, so building the struct copies the secret bytes;
+    // scrub the intermediate stack copies once the (zeroize-on-drop)
+    // `HybridSecretKey` owns its own copy so they are not left on the stack.
+    let sk = knowledge_crypto::HybridSecretKey { x25519, mlkem768 };
+    x25519.zeroize();
+    mlkem768.zeroize();
+    Ok(sk)
 }
 
 /// Generate a fresh hybrid recipient keypair.
