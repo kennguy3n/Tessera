@@ -405,4 +405,37 @@ describe("CSP session handler hoist: main.ts", () => {
       "the idempotency guard must run BEFORE `new BrowserWindow(...)` so the early-return actually prevents the duplicate window",
     ).toBeLessThan(newWindowIdx);
   });
+
+  it("routes every logger call in initBridgeAndServices through the safeLog* guards", () => {
+    // LW-8 "NEVER throws" invariant: `initBridgeAndServices` is invoked
+    // with `void` (unawaited) and reports readiness to the renderer
+    // itself, so it must always reach a `setBridgeState(...)` terminal.
+    // A bare `getLogger().info(...)` / `getLogger().error(...)` is the
+    // hazard: `getLogger()` lazily runs `createLogger()` (which can
+    // `fs.mkdirSync` and throw EACCES/ENOSPC on first use), so an
+    // unguarded log on the SUCCESS path — sharing the try with
+    // `await initAppState()` — would fall into the catch and misreport a
+    // healthy bridge as failed, while one on a failure path would skip
+    // the `setBridgeState("error")` and wedge the renderer on the
+    // skeleton. Both diagnostics must therefore go through `safeLogInfo`
+    // / `safeLogError` (each wraps the logger in its own try/catch). Pin
+    // it: the function body must contain no bare `getLogger().` access.
+    const startIdx = source.indexOf("async function initBridgeAndServices");
+    expect(
+      startIdx,
+      "could not find initBridgeAndServices in main.ts",
+    ).toBeGreaterThan(-1);
+    // The success path's final statement is the unique end anchor; every
+    // logging site sits before it.
+    const endIdx = source.indexOf('setBridgeState("ready")', startIdx);
+    expect(
+      endIdx,
+      "could not find the setBridgeState(\"ready\") terminal of initBridgeAndServices",
+    ).toBeGreaterThan(startIdx);
+    const body = source.slice(startIdx, endIdx);
+    expect(
+      body,
+      "initBridgeAndServices must not call getLogger() directly — use safeLogInfo()/safeLogError() so a throwing logger can never skip the setBridgeState(...) that follows",
+    ).not.toMatch(/getLogger\(\)\s*\./);
+  });
 });

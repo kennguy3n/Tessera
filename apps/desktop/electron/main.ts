@@ -721,6 +721,29 @@ function safeLogError(event: string, fields: Record<string, unknown>): void {
 }
 
 /**
+ * Info-level sibling of {@link safeLogError}. Used for the success-path
+ * diagnostics inside `initBridgeAndServices` (e.g. the `startup.bridgeInit`
+ * timing event) that sit in the SAME `try` as `await initAppState()`. A
+ * throwing logger there — `getLogger()` lazily runs `createLogger()` which
+ * can `fs.mkdirSync` and fail with EACCES/ENOSPC on first use — would fall
+ * straight into the `catch` and call `setBridgeState("error")`, falsely
+ * reporting a bridge failure even though `initAppState()` succeeded, and
+ * skipping the `setBridgeState("ready")` that should follow. Swallowing the
+ * logger fault keeps a successful init reported as ready.
+ */
+function safeLogInfo(event: string, fields: Record<string, unknown>): void {
+  try {
+    getLogger().info(event, fields);
+  } catch (logErr) {
+    try {
+      console.error(`[Tessera] logger threw while logging ${event}:`, logErr);
+    } catch {
+      // Nothing left to do — never let logging wedge the boot path.
+    }
+  }
+}
+
+/**
  * LW-8 (cold-start budget): initialise the native bridge and every
  * bridge-dependent service OFF the cold-start critical path.
  *
@@ -765,7 +788,11 @@ async function initBridgeAndServices(): Promise<void> {
     // some test envs), so we skip the event rather than log a
     // meaningless value.
     if (bridgeInitMs !== null) {
-      getLogger().info("startup.bridgeInit", {
+      // Best-effort (see `safeLogInfo`): this success-path log sits inside
+      // the same try as `await initAppState()`, so a throwing logger here
+      // must not fall into the catch below and misreport a healthy bridge
+      // as failed.
+      safeLogInfo("startup.bridgeInit", {
         durationMs: Math.round(bridgeInitMs * 100) / 100,
       });
     }
