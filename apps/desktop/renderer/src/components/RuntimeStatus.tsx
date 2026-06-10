@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
+import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 import type {
   InstalledModelRecord,
   ModelStatus,
@@ -109,13 +110,13 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
           // status poll surface any runtime error.
         });
     }
-    pollStatus();
-    const interval = setInterval(pollStatus, 5000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
-  }, [pollStatus]);
+  }, []);
+
+  // LW-4: pause the 5s status poll while the window is hidden.
+  useSuspendablePolling(pollStatus, 5000, { immediate: true });
 
   const { status, current, platform } = snap;
   const statusColor = getStatusColor(status.status);

@@ -2637,6 +2637,20 @@ export interface UpdatesApi {
 }
 
 /**
+ * Window-lifecycle signals from the main process (LW-4). Lets the
+ * renderer pause work that is wasted while the window is hidden
+ * (minimized / minimized-to-tray / `app.hide()` on macOS) — chiefly the
+ * recurring status-poll intervals — and resume it on show. Both
+ * subscriptions return an unsubscribe to call in React cleanup.
+ */
+export interface AppLifecycleApi {
+  /** Fires when the window becomes hidden. Returns an unsubscribe. */
+  onSuspend: (cb: () => void) => () => void;
+  /** Fires when the window becomes visible again. Returns an unsubscribe. */
+  onResume: (cb: () => void) => () => void;
+}
+
+/**
  * Renderer-facing API namespace exposed on `window.tessera`. The
  * preload script's `contextBridge.exposeInMainWorld("tessera", api)`
  * call must satisfy this shape.
@@ -2666,6 +2680,8 @@ export interface TesseraApi {
   appLock: AppLockApi;
   /** Crash / error-boundary reporting surface. */
   diagnostics: DiagnosticsApi;
+  /** Main-process window-visibility signals (suspend/resume). */
+  appLifecycle: AppLifecycleApi;
 }
 
 /**

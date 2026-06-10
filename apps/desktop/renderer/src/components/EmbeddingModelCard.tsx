@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Card from "./Card";
 import Button from "./Button";
+import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 import type {
   EmbeddingDownloadProgressInfo,
   EmbeddingModelInfo,
@@ -258,17 +259,24 @@ export default function EmbeddingModelCard() {
     }
   }, []);
 
+  // LW-4: both the status (1s) and download-progress (0.5s) polls pause
+  // while the window is hidden and resume — re-syncing immediately — on
+  // show. A backgrounded card has nothing to render, and the 500ms
+  // download poll in particular is wasteful to keep firing off-screen.
+  useSuspendablePolling(() => void refreshStatus(), STATUS_POLL_MS, {
+    immediate: true,
+  });
+  useSuspendablePolling(() => void refreshDownload(), DOWNLOAD_POLL_MS, {
+    immediate: true,
+  });
+
+  // The transient-error auto-clear timeout is independent of the polls;
+  // clear it on unmount so a pending flash can't fire into a dead tree.
   useEffect(() => {
-    void refreshStatus();
-    void refreshDownload();
-    const sId = setInterval(() => void refreshStatus(), STATUS_POLL_MS);
-    const dId = setInterval(() => void refreshDownload(), DOWNLOAD_POLL_MS);
     return () => {
-      clearInterval(sId);
-      clearInterval(dId);
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
     };
-  }, [refreshStatus, refreshDownload]);
+  }, []);
 
   const flashError = useCallback((msg: string) => {
     setMutationError(msg);

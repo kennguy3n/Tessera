@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import type { ConnectorStatusInfo } from "../types/ipc";
+import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 
 interface ConnectorStatusProps {
   provider: string;
@@ -67,11 +68,9 @@ export default function ConnectorStatus({
     }
   }, [provider]);
 
-  useEffect(() => {
-    pollStatus();
-    const interval = setInterval(pollStatus, 10_000);
-    return () => clearInterval(interval);
-  }, [pollStatus]);
+  // LW-4: pause the 10s status poll while the window is hidden; resume
+  // (and re-sync immediately) on show.
+  useSuspendablePolling(pollStatus, 10_000, { immediate: true });
 
   const handleSync = async () => {
     setSyncing(true);

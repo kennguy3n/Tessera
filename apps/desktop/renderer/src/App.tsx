@@ -1,22 +1,36 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  lazy,
+  Suspense,
+  type ReactNode,
+} from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import ModelDownloadBanner from "./components/ModelDownloadBanner";
-import HomePage from "./pages/HomePage";
-import SourcesPage from "./pages/SourcesPage";
-import SourceDetailPage from "./pages/SourceDetailPage";
-import TemplatesPage from "./pages/TemplatesPage";
-import CreatePage from "./pages/CreatePage";
-import SettingsPage from "./pages/SettingsPage";
-import ArtifactEditorPage from "./pages/ArtifactEditorPage";
-import TasksPage from "./pages/TasksPage";
-import AutomationsPage from "./pages/AutomationsPage";
-import VisionPage from "./pages/VisionPage";
 import CommandPalette from "./components/CommandPalette";
 import KeyboardShortcutsHelp from "./components/KeyboardShortcutsHelp";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTheme } from "./hooks/useTheme";
+
+// LW-4: route-level code splitting. Each page (and the heavy editor
+// module graph it pulls in — TipTap/ProseMirror, the sheet formula
+// engine, Marp slide rendering) is loaded as its own lazy chunk on
+// first navigation instead of being parsed into the initial bundle.
+// This shrinks the renderer's startup parse/compile cost and keeps the
+// V8 heap from holding code for pages a given session never visits.
+const HomePage = lazy(() => import("./pages/HomePage"));
+const SourcesPage = lazy(() => import("./pages/SourcesPage"));
+const SourceDetailPage = lazy(() => import("./pages/SourceDetailPage"));
+const TemplatesPage = lazy(() => import("./pages/TemplatesPage"));
+const CreatePage = lazy(() => import("./pages/CreatePage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const ArtifactEditorPage = lazy(() => import("./pages/ArtifactEditorPage"));
+const TasksPage = lazy(() => import("./pages/TasksPage"));
+const AutomationsPage = lazy(() => import("./pages/AutomationsPage"));
+const VisionPage = lazy(() => import("./pages/VisionPage"));
 
 type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
 
@@ -52,6 +66,28 @@ function PageBoundary({
 
 function page(name: string, node: ReactNode): ReactNode {
   return <PageBoundary name={name}>{node}</PageBoundary>;
+}
+
+/**
+ * Suspense fallback shown while a lazily-loaded route chunk is being
+ * fetched/parsed (LW-4 route-level code splitting). Chunks are local
+ * files served by Electron, so this is typically a single frame on
+ * first visit to a page; `aria-busy` keeps it announced for assistive
+ * tech, matching the in-page "Loading..." pattern used by HomePage et
+ * al. while their data hydrates.
+ */
+function RouteFallback(): ReactNode {
+  return (
+    <div
+      aria-busy="true"
+      style={{
+        padding: "var(--spacing-lg)",
+        color: "var(--color-text-secondary)",
+      }}
+    >
+      Loading...
+    </div>
+  );
 }
 
 export default function App() {
@@ -108,34 +144,45 @@ export default function App() {
       <Sidebar collapsed={sidebarCollapsed} />
       <main className="app-main">
         <ModelDownloadBanner />
-        <Routes>
-          <Route path="/" element={page("HomePage", <HomePage />)} />
-          <Route path="/sources" element={page("SourcesPage", <SourcesPage />)} />
-          <Route
-            path="/sources/:id"
-            element={page("SourceDetailPage", <SourceDetailPage />)}
-          />
-          <Route
-            path="/templates"
-            element={page("TemplatesPage", <TemplatesPage />)}
-          />
-          <Route path="/create" element={page("CreatePage", <CreatePage />)} />
-          <Route path="/tasks" element={page("TasksPage", <TasksPage />)} />
-          <Route
-            path="/automations"
-            element={page("AutomationsPage", <AutomationsPage />)}
-          />
-          <Route path="/vision" element={page("VisionPage", <VisionPage />)} />
-          <Route
-            path="/artifacts/:id/edit"
-            element={page("ArtifactEditorPage", <ArtifactEditorPage />)}
-          />
-          <Route
-            path="/settings"
-            element={page("SettingsPage", <SettingsPage />)}
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={page("HomePage", <HomePage />)} />
+            <Route
+              path="/sources"
+              element={page("SourcesPage", <SourcesPage />)}
+            />
+            <Route
+              path="/sources/:id"
+              element={page("SourceDetailPage", <SourceDetailPage />)}
+            />
+            <Route
+              path="/templates"
+              element={page("TemplatesPage", <TemplatesPage />)}
+            />
+            <Route
+              path="/create"
+              element={page("CreatePage", <CreatePage />)}
+            />
+            <Route path="/tasks" element={page("TasksPage", <TasksPage />)} />
+            <Route
+              path="/automations"
+              element={page("AutomationsPage", <AutomationsPage />)}
+            />
+            <Route
+              path="/vision"
+              element={page("VisionPage", <VisionPage />)}
+            />
+            <Route
+              path="/artifacts/:id/edit"
+              element={page("ArtifactEditorPage", <ArtifactEditorPage />)}
+            />
+            <Route
+              path="/settings"
+              element={page("SettingsPage", <SettingsPage />)}
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </main>
       {paletteHasMounted && (
         <CommandPalette

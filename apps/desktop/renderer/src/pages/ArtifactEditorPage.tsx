@@ -3,6 +3,8 @@ import {
   useEffect,
   useCallback,
   useRef,
+  lazy,
+  Suspense,
   type ReactNode,
 } from "react";
 import { useParams, useNavigate } from "react-router-dom";
@@ -19,14 +21,6 @@ import ShareToKchatModal, {
 import { useTrackArtifactView } from "../hooks/useRecentlyViewedArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { notifyArtifactsChanged } from "../hooks/useArtifacts";
-import {
-  DocumentEditor,
-  SlideEditor,
-  SheetEditor,
-  BaseEditor,
-  InfographicEditor,
-  LandingPageEditor,
-} from "../editors";
 import {
   embedIcons,
   iconsToTextPlaceholder,
@@ -47,6 +41,19 @@ import {
 } from "../editors/landingPageEditorHelpers";
 import { availableExportFormats } from "./artifactExportFormats";
 import type { ArtifactInfo } from "../types/ipc";
+
+// LW-4: split each editor into its own lazy chunk. Only the editor for
+// the artifact type actually being opened is fetched/parsed, so editing
+// a document never loads the sheet formula engine or the Marp slide
+// renderer (and vice-versa). The `../editors` barrel is intentionally
+// bypassed here — importing from it would pull every editor's module
+// graph into one chunk and defeat the split.
+const DocumentEditor = lazy(() => import("../editors/DocumentEditor"));
+const SlideEditor = lazy(() => import("../editors/SlideEditor"));
+const SheetEditor = lazy(() => import("../editors/SheetEditor"));
+const BaseEditor = lazy(() => import("../editors/BaseEditor"));
+const InfographicEditor = lazy(() => import("../editors/InfographicEditor"));
+const LandingPageEditor = lazy(() => import("../editors/LandingPageEditor"));
 
 // Formats whose body can carry inline `<svg>` markup directly
 // (HTML renders it; DOCX-rs forwards it inside drawing runs). PDF is
@@ -814,7 +821,21 @@ function EditorSwitch({
   // so a static key would not reset on an id-only change.
   return (
     <ErrorBoundary name={name} resetKeys={[artifact.id, name]}>
-      {editor}
+      <Suspense
+        fallback={
+          <div
+            aria-busy="true"
+            style={{
+              padding: "var(--spacing-lg)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            Loading editor...
+          </div>
+        }
+      >
+        {editor}
+      </Suspense>
     </ErrorBoundary>
   );
 }

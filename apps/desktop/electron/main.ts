@@ -47,6 +47,24 @@ import {
   registerProtocolClient,
 } from "./kchat/kchatDeeplinkBridge";
 
+// LW-4: cap the V8 old-space (the GC-managed JS heap) at 512 MB so a
+// long session that accumulates document models, fiber trees, and
+// cached IPC payloads cannot let the renderer heap balloon unbounded —
+// the cap makes V8 collect more aggressively as it approaches the
+// ceiling instead of growing RSS. `js-flags` is the only mechanism
+// Electron exposes for renderer V8 tuning (there is no per-`BrowserWindow`
+// `webPreferences` knob for `--max-old-space-size`), and it must be set
+// before `app` is ready, hence this module-top-level call.
+//
+// It applies process-wide (main + renderers), which is intentional and
+// safe: the heavy substrate state lives in the N-API addon's *native*
+// Rust allocations, which are off-heap and unaffected by this V8 limit,
+// and the main process itself holds very little long-lived JS. 512 MB
+// is comfortably above the renderer's working set (well under the
+// ≤200 MB idle RSS target, which counts native + heap) while still
+// catching runaway growth.
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512");
+
 // `tessera-asset://` must be registered as a privileged scheme
 // BEFORE `app.whenReady` fires — Electron's
 // `protocol.registerSchemesAsPrivileged` is a one-shot, ready-state
@@ -432,6 +450,37 @@ function createWindow(): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  // LW-4: tell the renderer to pause/resume its recurring polls when the
+  // window's visibility changes. `hide` covers minimize-to-tray (LW-9)
+  // and macOS `app.hide()`; `minimize` covers the taskbar/dock minimize.
+  // `show`/`restore` are the inverse. We route every event through
+  // `setRendererSuspended`, which de-dupes via a transition flag so the
+  // renderer never receives a redundant suspend-while-suspended or a
+  // resume it didn't need (e.g. the `show` that fires on first paint).
+  mainWindow.on("hide", () => setRendererSuspended(true));
+  mainWindow.on("minimize", () => setRendererSuspended(true));
+  mainWindow.on("show", () => setRendererSuspended(false));
+  mainWindow.on("restore", () => setRendererSuspended(false));
+}
+
+/**
+ * Whether the renderer is currently in the suspended (window-hidden)
+ * state. Module-scoped so {@link setRendererSuspended} can emit the
+ * `app:suspend` / `app:resume` IPC only on an actual transition — the
+ * underlying BrowserWindow events (`hide`/`minimize`/`show`/`restore`)
+ * can fire redundantly (e.g. `show` on first paint, or `minimize`
+ * followed by `hide`), and the renderer should see one clean edge.
+ */
+let rendererSuspended = false;
+
+function setRendererSuspended(suspended: boolean): void {
+  if (suspended === rendererSuspended) return;
+  rendererSuspended = suspended;
+  // `mainWindow` may already be torn down (`closed`) when a late event
+  // arrives; `isDestroyed()` guards the webContents access.
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(suspended ? "app:suspend" : "app:resume");
 }
 
 /**

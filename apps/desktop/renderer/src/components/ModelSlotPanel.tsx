@@ -48,7 +48,8 @@
  * (which exercises the text path) and adds new coverage for the
  * vision/imagegen paths in `modelSlotPanel.test.tsx`.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 import Card from "./Card";
 import Button from "./Button";
 import type {
@@ -162,6 +163,22 @@ export default function ModelSlotPanel({
     refresh();
   }, [refresh]);
 
+  // Tracks mount state so an async poll tick still awaiting
+  // `getCurrentModel` when the component unmounts (or when the poll is
+  // paused on window-hide and the tree later tears down) can't call
+  // `setState` on a dead component. Mirrors `runtimeMountedRef` in
+  // `ModelRuntimeCard` — React 18 already no-ops a post-unmount
+  // `setState`, but keeping the guard explicit and symmetric across the
+  // two slot pollers documents the intent and avoids relying on that
+  // silent behaviour.
+  const slotMountedRef = useRef(true);
+  useEffect(() => {
+    slotMountedRef.current = true;
+    return () => {
+      slotMountedRef.current = false;
+    };
+  }, []);
+
   // Subscribe to download-progress events, but FILTER by capability so
   // a concurrent text-slot download doesn't paint into this panel's
   // progress bar. `ModelDownloadProgress.capability` was added in
@@ -193,29 +210,30 @@ export default function ModelSlotPanel({
   // it in the UI for up to 5s. The functional setState reads
   // `s.busyModelId` at commit time, so the gate is race-free
   // against the user-action handlers.
-  useEffect(() => {
-    if (!tessera) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const current = await tessera.runtime.getCurrentModel(capability);
-        if (cancelled) return;
-        setState((s) => {
-          if (s.busyModelId !== null) return s;
-          return { ...s, current };
-        });
-      } catch {
-        // Swallow — a transient IPC blip shouldn't blank out the
-        // record the user just downloaded. The next successful
-        // tick will re-sync.
-      }
-    };
-    const id = setInterval(tick, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [tessera, capability]);
+  // LW-4: pause this 5s slot-reconciliation poll while the window is
+  // hidden. The `busyModelId` gate inside the functional setState keeps
+  // it race-free against the user-action handlers (see above).
+  useSuspendablePolling(
+    () => {
+      if (!tessera) return;
+      void (async () => {
+        try {
+          const current = await tessera.runtime.getCurrentModel(capability);
+          if (!slotMountedRef.current) return;
+          setState((s) => {
+            if (s.busyModelId !== null) return s;
+            return { ...s, current };
+          });
+        } catch {
+          // Swallow — a transient IPC blip shouldn't blank out the
+          // record the user just downloaded. The next successful
+          // tick will re-sync.
+        }
+      })();
+    },
+    5000,
+    { enabled: !!tessera },
+  );
 
   const performDownload = useCallback(
     async (modelId: string) => {

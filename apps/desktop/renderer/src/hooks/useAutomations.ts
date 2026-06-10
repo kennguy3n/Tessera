@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSuspendablePolling } from "./useSuspendablePolling";
 import type {
   AutomationInfo,
   CreateAutomationRequest,
@@ -102,11 +103,13 @@ export function useSchedulerStatus() {
     return s;
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const handle = setInterval(() => void refresh(), STATUS_POLL_MS);
-    return () => clearInterval(handle);
-  }, [refresh]);
+  // LW-4: pause the 5s scheduler-status poll while the window is hidden
+  // and resume — re-fetching immediately — on show, so a backgrounded
+  // AutomationsPage stops waking the main process for status it isn't
+  // rendering.
+  useSuspendablePolling(() => void refresh(), STATUS_POLL_MS, {
+    immediate: true,
+  });
 
   return { status, error, refresh, runNow };
 }
