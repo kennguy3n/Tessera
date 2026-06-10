@@ -270,10 +270,18 @@ describe("handleWillQuit", () => {
   // radius: removing the Electron listeners cannot affect any
   // other shutdown step.
   it(
-    "runs the full shutdown order: scheduler → sidecars → kchatLocalApi → " +
-      "detachDeeplink → quit",
+    "runs the full shutdown order: stopBatteryMonitor → scheduler → sidecars → " +
+      "kchatLocalApi → detachDeeplink → disposeBridge → quit",
     async () => {
       const order: string[] = [];
+      // Wire EVERY dep — including the two optional ones
+      // (`stopBatteryMonitor`, `disposeBridge`) — so this test documents
+      // the complete production sequence rather than a subset. The
+      // dedicated tests below still pin the battery-monitor-first and
+      // disposeBridge-last guarantees in isolation.
+      const stopBatteryMonitor = vi.fn().mockImplementation(() => {
+        order.push("stopBatteryMonitor");
+      });
       const stopScheduler = vi.fn().mockImplementation(async () => {
         order.push("stopScheduler");
       });
@@ -286,24 +294,31 @@ describe("handleWillQuit", () => {
       const detachKchatDeeplinkBridge = vi.fn().mockImplementation(() => {
         order.push("detachKchatDeeplinkBridge");
       });
+      const disposeBridge = vi.fn().mockImplementation(() => {
+        order.push("disposeBridge");
+      });
       const quit = vi.fn().mockImplementation(() => {
         order.push("quit");
       });
 
       const { event } = makeEvent();
       await handleWillQuit(event, {
+        stopBatteryMonitor,
         stopScheduler,
         stopAllSidecars,
         stopKchatLocalApi,
         detachKchatDeeplinkBridge,
+        disposeBridge,
         quit,
       });
 
       expect(order).toEqual([
+        "stopBatteryMonitor",
         "stopScheduler",
         "stopAllSidecars",
         "stopKchatLocalApi",
         "detachKchatDeeplinkBridge",
+        "disposeBridge",
         "quit",
       ]);
     },
