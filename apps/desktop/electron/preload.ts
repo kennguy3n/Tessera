@@ -530,6 +530,27 @@ const api: TesseraApi = {
       ipcRenderer.invoke("dialog:showSaveDialog", options),
     pickImage: (options?: OpenImageDialogOptions) =>
       ipcRenderer.invoke("dialog:pickImage", options ?? {}),
+    openDirectory: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openDirectory", options ?? {}),
+    openBundle: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openBundle", options ?? {}),
+  },
+  backup: {
+    create: () => ipcRenderer.invoke("backup:create"),
+    list: () => ipcRenderer.invoke("backup:list"),
+    status: () => ipcRenderer.invoke("backup:status"),
+    restore: (backupPath: string) =>
+      ipcRenderer.invoke("backup:restore", { backupPath }),
+    configure: (patch: {
+      autoBackup?: boolean;
+      backupDir?: string;
+      backupIntervalHours?: number;
+      backupRetentionCount?: number;
+    }) => ipcRenderer.invoke("backup:configure", patch),
+    exportBundle: (outPath: string) =>
+      ipcRenderer.invoke("backup:exportBundle", { outPath }),
+    importBundle: (bundlePath: string) =>
+      ipcRenderer.invoke("backup:importBundle", { bundlePath }),
   },
   slides: {
     startPresentation: (request: StartPresentationRequest) =>

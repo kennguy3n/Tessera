@@ -22,6 +22,7 @@ use tessera_sources::progress::EmbeddingProgressTracker;
 
 use crate::artifacts;
 use crate::automations;
+use crate::backup;
 use crate::citations;
 use crate::exporter;
 use crate::sources;
@@ -97,6 +98,17 @@ struct AppState {
     /// also keeps the connection alive even if every individual
     /// store is dropped or replaced during shutdown.
     shared_conn: tessera_core::SharedConnection,
+    /// Absolute path to the live SQLCipher database file. Captured at
+    /// `init_bridge` so backup/restore operations can stage a restore
+    /// next to the live file without the renderer having to re-derive
+    /// the path (which must match exactly for the swap to be correct).
+    db_path: String,
+    /// Raw 64-hex SQLCipher key (or `None` for an unencrypted DB),
+    /// captured at `init_bridge`. The backup path re-applies it to the
+    /// destination connection so hot copies are written back encrypted
+    /// under the user's key, and validates a backup decrypts before a
+    /// restore is staged. Never logged or surfaced to the renderer.
+    db_key: Option<String>,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -244,6 +256,8 @@ pub fn init_bridge(
             // race the embedding-progress tracker handles.
             download_progress: Arc::new(sources::DownloadProgressTracker::new()),
             shared_conn: conn,
+            db_path,
+            db_key: key_ref.map(str::to_owned),
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
@@ -275,6 +289,83 @@ fn state() -> napi::Result<&'static AppState> {
     APP_STATE
         .get()
         .ok_or_else(|| napi::Error::from_reason("Bridge not initialized. Call init_bridge first."))
+}
+
+// --- Backup & recovery ---
+//
+// These wrappers forward the SQLCipher key and live database path
+// captured at `init_bridge` so the renderer never has to handle the
+// key material or re-derive the on-disk path. Hot copies run against
+// the same `shared_conn` every other store writes through, so the
+// SQLite Online Backup API observes a transactionally-consistent
+// snapshot without blocking the single writer for more than the copy
+// itself.
+
+#[napi]
+/// Create a hot backup of the live database into `backup_dir`.
+/// Returns metadata describing the new backup file.
+pub fn bridge_create_backup(backup_dir: String) -> napi::Result<backup::BackupInfo> {
+    let s = state()?;
+    backup::create(&s.shared_conn, s.db_key.as_deref(), &backup_dir).map_err(backup::to_napi)
+}
+
+#[napi]
+/// List existing backups in `backup_dir`, newest first. A missing
+/// directory yields an empty list rather than an error.
+pub fn bridge_list_backups(backup_dir: String) -> napi::Result<Vec<backup::BackupInfo>> {
+    backup::list(&backup_dir).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Delete backups in `backup_dir` beyond the `keep` most recent
+/// (always keeps at least one). Returns the filenames removed.
+pub fn bridge_prune_backups(backup_dir: String, keep: u32) -> napi::Result<Vec<String>> {
+    backup::prune(&backup_dir, keep).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Validate that `backup_path` decrypts under the live key, then stage
+/// it as a `*.pending-restore` sibling of the live database. The swap
+/// itself happens at next launch via `bridge_apply_pending_restore`.
+/// Returns the staged file path.
+pub fn bridge_stage_restore(backup_path: String) -> napi::Result<String> {
+    let s = state()?;
+    backup::stage_restore(&backup_path, &s.db_path, s.db_key.as_deref()).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Apply a previously-staged restore for the database at `db_path` by
+/// swapping the pending file into place. Returns `true` when a swap
+/// occurred. Called at startup BEFORE `init_bridge` opens the
+/// database, so it deliberately does not depend on bridge state.
+pub fn bridge_apply_pending_restore(db_path: String) -> napi::Result<bool> {
+    backup::apply_pending_restore(&db_path).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Export a full workspace bundle (hot DB copy + caller-supplied
+/// sidecar files) into a single `.tessera-backup` archive at
+/// `out_path`. Returns the archive path, size, and entry count.
+pub fn bridge_export_bundle(
+    out_path: String,
+    extras: Vec<backup::BundleFileEntry>,
+) -> napi::Result<backup::BundleInfo> {
+    let s = state()?;
+    backup::export_bundle(&s.shared_conn, s.db_key.as_deref(), extras, &out_path)
+        .map_err(backup::to_napi)
+}
+
+#[napi]
+/// Import a workspace bundle from `bundle_path`: verify every entry's
+/// SHA-256 against the manifest, stage the contained database for the
+/// next launch, and atomically restore the matched sidecar `targets`.
+pub fn bridge_import_bundle(
+    bundle_path: String,
+    targets: Vec<backup::BundleRestoreTarget>,
+) -> napi::Result<backup::BundleImportReport> {
+    let s = state()?;
+    backup::import_bundle(&bundle_path, &s.db_path, targets, s.db_key.as_deref())
+        .map_err(backup::to_napi)
 }
 
 // --- Sources ---
