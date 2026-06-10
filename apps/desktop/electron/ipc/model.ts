@@ -225,6 +225,11 @@ export function registerModelHandlers(): void {
   idempotentHandle("model:generate", async (event, request: unknown) => {
     const parsed = GenerateRequestSchema.parse(request);
 
+    // Resolve the dispatch target up front (this is a pure, synchronous
+    // read of the external-provider config + keychain state) so the
+    // battery gate below can branch on it.
+    const adapter = resolveGenerationAdapter();
+
     // LW-3: pause synthesis when the device is on a low battery (≤20%
     // and discharging). Resolve a typed sentinel INSTEAD of starting a
     // stream so the renderer can show "Generation paused — battery
@@ -234,7 +239,16 @@ export function registerModelHandlers(): void {
     // `isBatteryLow()` fails open — desktops, AC power, and unknown
     // battery state all return false — so this never blocks generation
     // on a plugged-in or non-laptop host.
-    if (isBatteryLow()) {
+    //
+    // The gate applies ONLY to the local llama-server sidecar, which is
+    // the actual battery cost: a local generation pegs CPU/GPU for the
+    // duration. External-provider generation runs entirely on the
+    // remote API — local power use is just network + token rendering,
+    // negligible next to the screen already being on — so gating it
+    // would needlessly block a user who deliberately configured a cloud
+    // provider precisely to offload compute (arguably the *right* thing
+    // to do on a dying battery). See PR #105 review thread.
+    if (adapter.kind !== "external" && isBatteryLow()) {
       return { status: "battery_low" as const };
     }
 
@@ -271,8 +285,6 @@ export function registerModelHandlers(): void {
       "model:token",
     );
     let sentDone = false;
-
-    const adapter = resolveGenerationAdapter();
 
     if (adapter.kind === "external") {
       // Token-usage accounting for the optional external provider.

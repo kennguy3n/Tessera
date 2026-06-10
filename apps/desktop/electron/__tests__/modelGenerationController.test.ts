@@ -63,11 +63,42 @@ vi.mock("../appState", () => ({
   enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
+// `resolveGenerationAdapter()` reads `loadConfig()` + `secretsVault`;
+// the LW-3 battery gate now branches on its result (local vs external).
+// Default these to "no external provider configured" so every existing
+// test resolves to the local adapter exactly as before; the
+// external-path test overrides `loadConfig` / `getSecret` per-case.
+vi.mock("../config", () => ({
+  loadConfig: vi.fn(() => ({})),
+  updateConfig: vi.fn(),
+}));
+vi.mock("../secretsVault", () => ({
+  getSecret: vi.fn(() => null),
+}));
+vi.mock("../externalProviderStream", () => ({
+  // Resolves a one-chunk stream: signals the body opened, emits a
+  // single content delta, then resolves. Enough for the handler to walk
+  // its full external-provider path without a real network fetch.
+  streamExternalProvider: vi.fn(
+    async (
+      _params: unknown,
+      onChunk: (c: { content: string }) => void,
+      onBodyOpened?: () => void,
+    ) => {
+      onBodyOpened?.();
+      onChunk({ content: "ok" });
+    },
+  ),
+}));
+
 import {
   registerModelHandlers,
   _resetActiveGenerationControllerForTests,
 } from "../ipc/model";
 import { enforceSidecarExclusivity } from "../appState";
+import { loadConfig } from "../config";
+import * as secretsVault from "../secretsVault";
+import { streamExternalProvider } from "../externalProviderStream";
 import {
   __setBatteryStatusForTests,
   stopBatteryMonitor,
@@ -154,6 +185,13 @@ describe("model:generate — LW-3 battery gating", () => {
     handleMock.mockClear();
     _resetActiveGenerationControllerForTests();
     stopBatteryMonitor();
+    // Reset the adapter-resolution mocks to "no external provider" so
+    // each case starts from the local-sidecar default.
+    vi.mocked(loadConfig).mockReturnValue(
+      {} as unknown as ReturnType<typeof loadConfig>,
+    );
+    vi.mocked(secretsVault.getSecret).mockReturnValue(null);
+    vi.mocked(streamExternalProvider).mockClear();
   });
 
   afterEach(() => {
@@ -182,6 +220,42 @@ describe("model:generate — LW-3 battery gating", () => {
     // Fail-open (AC / charging / no battery) is exercised implicitly by
     // every other generation test in this file, all of which run under
     // the default AC snapshot and proceed past this gate.
+  });
+
+  it("does NOT gate external-provider generation on low battery (only the local sidecar)", async () => {
+    // Regression for the PR #105 review flag: the battery gate must
+    // conserve power only where the power is actually spent — the local
+    // CPU/GPU sidecar. When the user has configured a cloud provider,
+    // generation runs remotely, so even on a dying battery it should
+    // proceed (offloading compute is the *right* move there).
+    __setBatteryStatusForTests({
+      hasBattery: true,
+      isOnBattery: true,
+      isCharging: false,
+      percent: 5,
+    });
+    vi.mocked(loadConfig).mockReturnValue({
+      externalProvider: {
+        enabled: true,
+        apiUrl: "https://api.example.com/v1",
+        modelName: "gpt-x",
+        apiKeyRef: "ext-key",
+      },
+    } as unknown as ReturnType<typeof loadConfig>);
+    vi.mocked(secretsVault.getSecret).mockReturnValue("sk-test-key");
+
+    registerModelHandlers();
+    const generate = registeredHandlers.get("model:generate");
+    expect(generate).toBeDefined();
+
+    const result = await generate!({}, { prompt: "summarise this" });
+
+    // Not gated: the handler walked its external path instead of
+    // returning the sentinel, and the local sidecar was never touched.
+    expect(result).not.toEqual({ status: "battery_low" });
+    expect(vi.mocked(streamExternalProvider)).toHaveBeenCalledTimes(1);
+    expect(sidecarMock.start).not.toHaveBeenCalled();
+    expect(sidecarMock.markGenerationActive).not.toHaveBeenCalled();
   });
 });
 

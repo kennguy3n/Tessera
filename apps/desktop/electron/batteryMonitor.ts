@@ -66,7 +66,13 @@ export const AC_ALWAYS: BatteryStatus = {
   percent: null,
 };
 
-let current: BatteryStatus = AC_ALWAYS;
+// Spread-copy, not a bare `= AC_ALWAYS` reference: `getBatteryStatus()`
+// hands `current` straight to callers, and `AC_ALWAYS` is a plain
+// (unfrozen) object, so a caller that mutated the returned snapshot
+// before the first probe completed would otherwise corrupt the shared
+// constant — poisoning every later `{ ...AC_ALWAYS }` reset/fallback.
+// Matches the spread-copy used at every other assignment site.
+let current: BatteryStatus = { ...AC_ALWAYS };
 let pollHandle: ReturnType<typeof setInterval> | null = null;
 let inFlight: Promise<void> | null = null;
 
