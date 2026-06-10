@@ -456,6 +456,7 @@ export const HybridSearchConfigUpdateSchema = z
       .max(10 * 365 * 24 * 60 * 60)
       .optional(),
     candidatePoolSize: z.number().int().min(0).max(10_000).optional(),
+    retentionWeight: z.number().finite().min(0).max(10).optional(),
   })
   // Use `.strict()` rather than the default `.strip()` so a renderer
   // bug or compromised IPC caller that sends a field the schema

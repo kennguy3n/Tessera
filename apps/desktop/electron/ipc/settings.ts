@@ -855,12 +855,19 @@ export function registerSettingsHandlers(): void {
       // `candidatePoolSize` is the size of the BM25+vector candidate
       // pool the engine retrieves before RRF fusion. It is a mutable
       // search-tuning parameter that ships in `HybridSearchConfigInfo`
-      // alongside the other five tracked fields, so omitting it here
+      // alongside the other six tracked fields, so omitting it here
       // would break the contract documented above ("Each field is
       // logged as its own row").
       auditSettingsField(
         "hybridSearch.candidatePoolSize",
         String(effective.candidatePoolSize),
+      );
+      // `retentionWeight` is the fourth RRF signal (knowledge-substrate
+      // retention). Like the other weights it is part of the effective
+      // config the engine ranks with, so it is audited as its own row.
+      auditSettingsField(
+        "hybridSearch.retentionWeight",
+        String(effective.retentionWeight),
       );
       return effective;
     },
@@ -1060,6 +1067,7 @@ function persistedToInfo(
     recencyDecayEnabled: p.recencyDecayEnabled,
     recencyHalflifeSecs: p.recencyDecayEnabled ? p.recencyHalflifeSecs : null,
     candidatePoolSize: p.candidatePoolSize,
+    retentionWeight: p.retentionWeight,
   };
 }
 
@@ -1087,6 +1095,7 @@ function infoToPersisted(
     recencyDecayEnabled: info.recencyDecayEnabled,
     recencyHalflifeSecs: halflife,
     candidatePoolSize: info.candidatePoolSize,
+    retentionWeight: info.retentionWeight,
   };
 }
 
@@ -1149,7 +1158,8 @@ export function replayPersistedHybridSearchConfigToBridge(): void {
     persisted.recencyHalflifeSecs ===
       DEFAULT_HYBRID_SEARCH_CONFIG.recencyHalflifeSecs &&
     persisted.candidatePoolSize ===
-      DEFAULT_HYBRID_SEARCH_CONFIG.candidatePoolSize;
+      DEFAULT_HYBRID_SEARCH_CONFIG.candidatePoolSize &&
+    persisted.retentionWeight === DEFAULT_HYBRID_SEARCH_CONFIG.retentionWeight;
   if (isDefault) {
     return;
   }
@@ -1160,6 +1170,7 @@ export function replayPersistedHybridSearchConfigToBridge(): void {
     recencyDecayEnabled: persisted.recencyDecayEnabled,
     recencyHalflifeSecs: persisted.recencyHalflifeSecs,
     candidatePoolSize: persisted.candidatePoolSize,
+    retentionWeight: persisted.retentionWeight,
   };
   try {
     bridge.bridgeUpdateHybridSearchConfig(update);

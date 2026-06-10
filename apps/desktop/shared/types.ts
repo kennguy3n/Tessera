@@ -174,6 +174,11 @@ export interface HybridSearchConfigInfo {
   /** Half-life in seconds when decay is enabled; null when disabled. */
   recencyHalflifeSecs: number | null;
   candidatePoolSize: number;
+  /**
+   * Weight of the knowledge-substrate retention ranking in fusion
+   * (the fourth RRF signal). Defaults to 1.0.
+   */
+  retentionWeight: number;
 }
 
 /**
@@ -197,6 +202,8 @@ export interface HybridSearchConfigUpdate {
   recencyDecayEnabled?: boolean;
   recencyHalflifeSecs?: number;
   candidatePoolSize?: number;
+  /** New retention-signal weight, or undefined to leave unchanged. */
+  retentionWeight?: number;
 }
 
 export interface IndexedFileInfo {
