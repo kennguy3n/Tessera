@@ -69,7 +69,42 @@ All user data is stored locally on the user's machine by default. No data leaves
 
 ### Encrypted local storage
 
-All indexed content is stored in SQLCipher-encrypted databases. Encryption keys are derived per-scope and never leave the device. The knowledge substrate uses XChaCha20-Poly1305 AEAD for content encryption and BLAKE3 for content hashing. KChat post bodies are additionally protected by column-level AES-256-GCM with a per-source DEK; disconnecting a KChat source destroys the DEK and renders previously stored chunks unrecoverable. Every artifact and source **deletion** path runs under `PRAGMA secure_delete`, so freed pages are zero-filled and deleted titles, notes, and content cannot be recovered from the SQLite freelist.
+All indexed content is stored in SQLCipher-encrypted databases. Encryption keys are derived per-scope and never leave the device. The knowledge substrate uses XChaCha20-Poly1305 AEAD for content encryption and BLAKE3 for content hashing. KChat post bodies are additionally protected by column-level AEAD with a per-source DEK (Data Encryption Key) that is itself wrapped under an app master key; disconnecting a KChat source destroys the DEK and renders previously stored chunks unrecoverable (cryptoshredding). Every artifact and source **deletion** path runs under `PRAGMA secure_delete`, so freed pages are zero-filled and deleted titles, notes, and content cannot be recovered from the SQLite freelist.
+
+See [Post-quantum cryptography](#post-quantum-cryptography) below for the AEAD scheme upgrade (XChaCha20-Poly1305), its backward-compatible migration, the optional hybrid post-quantum KEM, and ML-DSA-65 export provenance signatures.
+
+### Post-quantum cryptography
+
+Tessera integrates the knowledge `crypto` substrate (FIPS 203 ML-KEM-768, FIPS 204 ML-DSA-65, XChaCha20-Poly1305 AEAD, hybrid X25519 + ML-KEM-768 KEM) to harden encryption-at-rest against "harvest-now, decrypt-later" adversaries. The integration is **backward-compatible**: existing databases continue to open and read unchanged, and the stronger primitives apply to newly written data with a tested lazy migration for the rest.
+
+#### Per-source DEK wrapping (XChaCha20-Poly1305)
+
+The per-source DEK is wrapped under the app master key with an authenticated, scheme-versioned envelope. The scheme is self-describing via the wrap **nonce length**, which doubles as a zero-overhead discriminator — no extra version column is needed:
+
+| Scheme | AEAD | Wrap nonce | Status |
+|---|---|---|---|
+| `v1` (legacy) | AES-256-GCM + HKDF-SHA256 | 12 bytes | read-only, decrypt-only |
+| `v2` (current) | XChaCha20-Poly1305 + HKDF-SHA256 | 24 bytes | default for all new writes |
+
+- **New DEKs** are always wrapped with `v2`.
+- **Reads** dispatch on the stored nonce length, so legacy `v1` DEKs and `v1` chunk ciphertext keep decrypting with no user action.
+- Chunk content AEAD is likewise scheme-versioned; the associated data binds both the `source_id` and the scheme version so ciphertext cannot be transplanted between sources or reinterpreted under a different scheme.
+
+#### Lazy, content-preserving migration
+
+`tessera_migrate` provides `detect_scheme()` and `upgrade_dek_wrapping()` (migration `0006_kchat_crypto_scheme`). The upgrade:
+
+- **Re-wraps** each legacy `v1` DEK envelope to `v2` under the same master key, inside a single transaction (atomic; rolls back on any failure, e.g. wrong master key).
+- Does **not** re-encrypt stored content. The DEK *value* is unchanged — only its wrapper is upgraded — so existing chunks remain readable while large databases avoid an O(total-evidence) rewrite. Re-wrapping is O(number of sources), typically completing in milliseconds.
+- Records progress in the `kchat_crypto_scheme` bookkeeping row and is idempotent (re-running is a no-op once all rows are `v2`).
+
+#### Optional hybrid post-quantum KEM (`pqc` feature, experimental)
+
+`tessera_core` exposes a hybrid **X25519 + ML-KEM-768** KEM (concatenate-then-KDF combiner over HKDF-SHA256) that can wrap the SQLCipher database key, so a captured database file is protected against future quantum decryption of the wrapped key. This is gated behind the `pqc` cargo feature and is **OFF by default** (experimental). When the feature is disabled there is no behavioural or on-disk change. The hybrid construction means security holds as long as *either* X25519 *or* ML-KEM-768 remains unbroken.
+
+#### Export provenance signatures (ML-DSA-65)
+
+Export artifacts (PDF, DOCX, XLSX, evidence packs, and text formats) can be signed with **ML-DSA-65** (FIPS 204) lattice signatures via `tessera_export::signing`. Each signed export writes a detached `<file>.sig` JSON sidecar containing the algorithm identifier, a BLAKE3 content hash, the base64 ML-DSA-65 signature, the base64 verifying key, and an RFC 3339 timestamp. The signed message is domain-separated (`tessera/export-provenance/v1`) to prevent cross-protocol signature reuse. A recipient who pins the publisher's verifying key can prove both the **origin** and the **integrity** of an exported artifact; any post-export tampering fails verification.
 
 ### Safe renderer boundary
 
@@ -159,6 +194,7 @@ Tessera uses well-maintained dependencies with known security properties:
 |---|---|---|
 | SQLCipher (via rusqlite) | Encrypted local storage | AES-256 page-level encryption |
 | BLAKE3 | Content hashing | Cryptographic hash function |
+| knowledge `crypto` | DEK wrapping, KEM, signatures | XChaCha20-Poly1305 AEAD, ML-KEM-768 (FIPS 203), ML-DSA-65 (FIPS 204) |
 | Electron | Desktop shell | Chromium sandbox + process isolation |
 | napi-rs | Rust ↔ Node.js bridge | No serialization vulnerabilities |
 
