@@ -27,10 +27,12 @@ import {
   recommendModel,
   resetManifestCache,
   type DownloadProgress,
+  type InstalledModelRecord,
   type ModelCapability,
   type ResolvedModel,
 } from "../modelManagement";
 import { assertId } from "./validate";
+import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { safeRendererSender } from "./model";
 
 function userDataDir(): string {
@@ -144,6 +146,82 @@ function sidecarStopperFor(capability: ModelCapability): () => Promise<void> {
   return async () => undefined;
 }
 
+/**
+ * Resolve the recommended model for `capability` on the current
+ * platform/tier, or `null` when the manifest has no candidate for this
+ * machine. Exported so the first-launch auto-download
+ * (`autoModelDownload.ts`) can read the real download host + size
+ * before deciding whether to start, without duplicating the manifest
+ * plumbing that lives here.
+ */
+export function resolveRecommendedModel(
+  capability: ModelCapability,
+): ResolvedModel | null {
+  const info = detectPlatformInfo();
+  const manifest = loadResolvedManifest();
+  return recommendModel(manifest, info.platform, info.tier, capability);
+}
+
+/**
+ * Resolve the recommended model for `capability` on the current
+ * platform/tier and ensure it is installed, downloading it if needed.
+ *
+ * This is the shared core behind BOTH the `runtime:downloadRecommended`
+ * IPC channel (renderer-initiated: the banner's "Retry" and any future
+ * "Download AI now" CTA) AND the main-process first-launch auto-download
+ * (`autoModelDownload.ts`). Centralising it here keeps a single
+ * authoritative path that resolves the manifest, derives the slot, runs
+ * the sidecar-stop-inside-the-lock mutation, and reports progress — so
+ * the two entry points can never drift.
+ *
+ * Returns the installed record, or `null` when the manifest has no
+ * candidate for the slot on this platform (a headless/unsupported
+ * build) — callers treat `null` as "nothing to do", not an error.
+ *
+ * Progress (including a final synthetic `percent: 100` event on success,
+ * so observers that only watch `runtime:downloadProgress` reliably see
+ * completion even if the underlying fetcher's last tick lands below 100)
+ * is delivered via `emit`. The already-installed fast path emits the
+ * same completion event so a redundant call still flips observers to
+ * "ready" without re-downloading bytes.
+ */
+export async function downloadRecommendedModel(
+  capability: ModelCapability,
+  emit: (p: DownloadProgress) => void,
+): Promise<InstalledModelRecord | null> {
+  const recommended = resolveRecommendedModel(capability);
+  if (!recommended) return null;
+
+  const completion: DownloadProgress = {
+    modelId: recommended.id,
+    capability,
+    format: recommended.format,
+    filename: recommended.filename,
+    downloadedMb: recommended.downloadSizeMb,
+    totalMb: recommended.downloadSizeMb,
+    percent: 100,
+  };
+
+  // Fast path: already installed in its slot. Re-emit completion so a
+  // late observer (e.g. a banner that mounted after the download
+  // finished) still resolves to "ready" rather than hanging.
+  const installed = await isModelInstalled(
+    userDataDir(),
+    capability,
+    recommended.id,
+  );
+  if (installed) {
+    emit(completion);
+    return installed;
+  }
+
+  const record = await downloadModel(userDataDir(), recommended, emit, {
+    beforeMutation: sidecarStopperFor(capability),
+  });
+  emit(completion);
+  return record;
+}
+
 export function registerRuntimeHandlers(): void {
   idempotentHandle("runtime:detectPlatform", async () => detectPlatformInfo());
 
@@ -232,6 +310,23 @@ export function registerRuntimeHandlers(): void {
     async (event, modelId: unknown) => {
       const id = assertId(modelId, "modelId");
       const requested = findModelOrThrow(id);
+      // Defense-in-depth at the IPC boundary, mirroring
+      // `runtime:downloadRecommended` and making the rate limiter's
+      // documented "safety net" for this channel real: bound
+      // *renderer-initiated* starts to 1 / 5s so a buggy or compromised
+      // renderer can't hammer the channel with manifest reads +
+      // install-state stats that all funnel into the per-slot download
+      // lock. The budget is keyed PER capability slot so a legitimate
+      // burst across slots (e.g. grabbing the text model then the vision
+      // model from Settings) is never throttled — only repeated starts on
+      // the SAME slot are. Real UI flows never trip it: the slot panel
+      // disables itself (busyModelId + progress) the instant a download
+      // starts. The per-slot download lock still serialises the actual
+      // mutation; this just rejects abusive starts cheaply before that.
+      defaultRateLimiter.consume(
+        `runtime:downloadModel:${requested.capability}`,
+        RATE_LIMIT_PROFILES["runtime:downloadModel"],
+      );
       // Only stop the sidecar if we will actually mutate the model
       // file AND the affected slot is the one the sidecar is serving
       // (text today; vision/imagegen sidecars stop themselves in
@@ -272,6 +367,38 @@ export function registerRuntimeHandlers(): void {
       return downloadModel(userDataDir(), requested, progressEmitter(event), {
         beforeMutation: sidecarStopperFor(requested.capability),
       });
+    },
+  );
+
+  // Resolve + install the recommended model for a slot in one call.
+  // Unlike `runtime:downloadModel` (which takes an explicit modelId),
+  // this lets the renderer say "give me the right model for this
+  // machine" without first round-tripping `runtime:recommendModel`.
+  // Backs the ModelDownloadBanner's "Retry" affordance and shares its
+  // implementation with the first-launch auto-download in
+  // `autoModelDownload.ts` via `downloadRecommendedModel`.
+  idempotentHandle(
+    "runtime:downloadRecommended",
+    async (event, capability: unknown) => {
+      const cap = coerceCapability(capability);
+      // Defense-in-depth at the IPC boundary (the rate limiter's stated
+      // purpose): bound *renderer-initiated* starts to 1 / 5s so a buggy
+      // or compromised renderer can't hammer this channel with cheap-but-
+      // unbounded manifest reads + install-state stats that all funnel
+      // into the per-slot download lock. Keyed PER capability slot, like
+      // the sibling `runtime:downloadModel`: the channel accepts any
+      // capability, so a legitimate burst across slots (recommend text,
+      // then recommend vision) must not be throttled — only repeated
+      // starts on the SAME slot are. Legitimate UI flows never trip it
+      // anyway — the banner's "Retry" button hides itself the moment it's
+      // clicked (status flips to "downloading"), and the first-launch
+      // auto-download calls `downloadRecommendedModel` directly in the
+      // main process, bypassing this handler entirely.
+      defaultRateLimiter.consume(
+        `runtime:downloadRecommended:${cap}`,
+        RATE_LIMIT_PROFILES["runtime:downloadRecommended"],
+      );
+      return downloadRecommendedModel(cap, progressEmitter(event));
     },
   );
 
