@@ -48,7 +48,7 @@
  * (which exercises the text path) and adds new coverage for the
  * vision/imagegen paths in `modelSlotPanel.test.tsx`.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 import Card from "./Card";
 import Button from "./Button";
@@ -163,6 +163,22 @@ export default function ModelSlotPanel({
     refresh();
   }, [refresh]);
 
+  // Tracks mount state so an async poll tick still awaiting
+  // `getCurrentModel` when the component unmounts (or when the poll is
+  // paused on window-hide and the tree later tears down) can't call
+  // `setState` on a dead component. Mirrors `runtimeMountedRef` in
+  // `ModelRuntimeCard` — React 18 already no-ops a post-unmount
+  // `setState`, but keeping the guard explicit and symmetric across the
+  // two slot pollers documents the intent and avoids relying on that
+  // silent behaviour.
+  const slotMountedRef = useRef(true);
+  useEffect(() => {
+    slotMountedRef.current = true;
+    return () => {
+      slotMountedRef.current = false;
+    };
+  }, []);
+
   // Subscribe to download-progress events, but FILTER by capability so
   // a concurrent text-slot download doesn't paint into this panel's
   // progress bar. `ModelDownloadProgress.capability` was added in
@@ -203,6 +219,7 @@ export default function ModelSlotPanel({
       void (async () => {
         try {
           const current = await tessera.runtime.getCurrentModel(capability);
+          if (!slotMountedRef.current) return;
           setState((s) => {
             if (s.busyModelId !== null) return s;
             return { ...s, current };
