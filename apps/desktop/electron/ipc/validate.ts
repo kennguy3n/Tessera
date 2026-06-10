@@ -37,6 +37,13 @@ export const KNOWN_PROVIDERS = [
   "jira",
   "confluence",
   "figma",
+  // Substrate-only providers (served exclusively by the v2
+  // `connector_framework` bridge; no legacy `tessera_connectors`
+  // fallback exists for these four).
+  "hubspot",
+  "slack",
+  "email",
+  "github",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 

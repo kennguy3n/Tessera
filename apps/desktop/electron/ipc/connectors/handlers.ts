@@ -70,6 +70,85 @@ import { disconnectJira, syncJira } from "./jira";
 import { disconnectConfluence, syncConfluence } from "./confluence";
 import { disconnectFigma, syncFigma } from "./figma";
 import { syncGoogleDrive, disconnectGoogleDrive } from "./gdrive";
+import {
+  runV2Sync,
+  readV2State,
+  writeV2State,
+  v2BridgeAvailable,
+  disconnectV2Provider,
+  type V2NativeBridge,
+} from "./connectorsV2";
+
+/**
+ * The six providers that retain a hand-rolled in-process
+ * (`tessera_connectors`-style) TS sync impl. The four substrate-only
+ * providers (HubSpot, Slack, Email, GitHub) are deliberately absent:
+ * they have no legacy fallback and are reachable only through the v2
+ * `connector_framework` bridge.
+ */
+const LEGACY_PROVIDERS = new Set<ProviderId>([
+  "google_drive",
+  "onedrive",
+  "notion",
+  "jira",
+  "confluence",
+  "figma",
+]);
+
+/**
+ * Whether the native addon reports `provider` as a feature-enabled v2
+ * connector. Defensive: a `bridgeConnectorsV2Supported` that throws
+ * (older/partial addon) is treated as "not supported" so the caller
+ * falls back rather than crashing the sync.
+ */
+function isV2Supported(bridge: V2NativeBridge, provider: ProviderId): boolean {
+  try {
+    return bridge.bridgeConnectorsV2Supported?.(provider) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Drive one provider sync through the v2 `connector_framework` bridge:
+ * load the keychain token, replay the persisted cursor, ingest fetched
+ * documents into the local index, and persist the new cursor. Throws
+ * `NotConnectedError` when the provider isn't authenticated (matching
+ * the legacy path's precondition).
+ */
+async function runProviderV2Sync(
+  ctx: IpcContext,
+  provider: ProviderId,
+  userDataDir: string,
+): Promise<ConnectorSyncResult> {
+  const tokens = ctx.tokenVault.getTokens(provider);
+  if (!tokens) {
+    throw new NotConnectedError(
+      `${provider} is not connected — authenticate first`,
+    );
+  }
+  const nativeBridge = ctx.requireBridge();
+  const { result, nextCursor, warnings } = await runV2Sync({
+    provider,
+    bridge: nativeBridge,
+    hooks: bridgeHooks(ctx),
+    tokens,
+    userDataDir,
+    stateJson: await readV2State(userDataDir, provider),
+    // Single-tenant desktop host: let the Rust side derive a stable
+    // deterministic per-provider scope (see `parse_scope`).
+    scopeId: null,
+  });
+  await writeV2State(userDataDir, provider, nextCursor);
+  if (warnings.length > 0) {
+    ctx.log.warn("v2 connector sync produced non-fatal warnings", {
+      provider,
+      count: warnings.length,
+      sample: warnings.slice(0, 5),
+    });
+  }
+  return result;
+}
 
 export interface ConnectorStatusInfo {
   provider: string;
@@ -175,6 +254,10 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   jira: "jira",
   confluence: "confluence",
   figma: "figma",
+  hubspot: "hubspot",
+  slack: "slack",
+  email: "email",
+  github: "github",
 };
 
 /**
@@ -632,6 +715,42 @@ async function runSync(
   // expired, so the per-iteration cost is a vault read + a
   // millisecond comparison in the common case.
   const getAccessToken = (): Promise<string> => getValidAccessToken(ctx, provider);
+
+  // v2 path: when `useV2Connectors` is on (default) AND the native
+  // addon exposes the v2 functions AND this provider is compiled into
+  // the substrate build, serve the sync from the knowledge
+  // `connector_framework`. This is the long-term replacement for the
+  // hand-rolled per-provider TS sync below. A config-read failure must
+  // never wedge sync, so it defaults to the v2 path (matching the
+  // documented `.catch(true)` config fallback).
+  let useV2: boolean;
+  try {
+    useV2 = loadConfig().useV2Connectors;
+  } catch {
+    useV2 = true;
+  }
+  if (useV2) {
+    const nativeBridge = ctx.requireBridge();
+    if (v2BridgeAvailable(nativeBridge) && isV2Supported(nativeBridge, provider)) {
+      return runProviderV2Sync(ctx, provider, userDataDir);
+    }
+    // The four substrate-only providers have no legacy fallback. If
+    // the v2 bridge isn't available for them, that's a hard config
+    // error rather than a silent degrade to a non-existent TS impl.
+    if (!LEGACY_PROVIDERS.has(provider)) {
+      throw new Error(
+        `${provider} is only available via the v2 connector bridge, ` +
+          "which is not present in this build.",
+      );
+    }
+    // Otherwise fall through to the legacy TS sync for the original
+    // six providers (e.g. an addon built without `connectors-v2`).
+  } else if (!LEGACY_PROVIDERS.has(provider)) {
+    throw new Error(
+      `${provider} requires useV2Connectors=true; it has no legacy connector.`,
+    );
+  }
+
   switch (provider) {
     case "google_drive":
       return syncGoogleDrive({
@@ -651,6 +770,16 @@ async function runSync(
       return syncConfluence({ accessToken, getAccessToken, userDataDir, bridge });
     case "figma":
       return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
+    case "hubspot":
+    case "slack":
+    case "email":
+    case "github":
+      // Substrate-only providers: reachable here only when the v2
+      // path was unavailable; surfaced as a clear config error above,
+      // but the explicit cases keep the exhaustiveness check honest.
+      throw new Error(
+        `${provider} is only available via the v2 connector bridge.`,
+      );
     default: {
       // Exhaustiveness assertion. `ProviderId` is derived from the
       // `KNOWN_PROVIDERS` tuple in `validate.ts`, so a future 7th
@@ -926,6 +1055,16 @@ async function runDisconnect(
       return disconnectConfluence(userDataDir, bridge);
     case "figma":
       return disconnectFigma(userDataDir, bridge);
+    case "hubspot":
+    case "slack":
+    case "email":
+    case "github":
+      // Substrate-only providers: no legacy disconnect impl exists, so
+      // reuse the generic v2 cleanup (unhook sources + purge sync dir
+      // + delete manifest/cursor). Token revocation + vault deletion
+      // happen in the shared disconnect handler before this is called,
+      // identical to the legacy providers.
+      return disconnectV2Provider(provider, userDataDir, bridge);
     default: {
       // Exhaustiveness assertion. Same architectural rationale as the
       // sibling `default` branch in `runSync` above: `ProviderId` is
