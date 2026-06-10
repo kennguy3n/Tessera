@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   AddCitationRequest,
+  BridgeStateView,
   ExternalProviderConfigInput,
   ExternalProviderListModelsDraftOverrides,
   Fido2AssertionInput,
@@ -111,6 +112,7 @@ export type {
   KchatConnectionStateView,
   KchatWebSocketEventPayload,
   RendererCrashReport,
+  BridgeStateView,
 } from "../shared/types";
 
 /**
@@ -370,6 +372,16 @@ const api: TesseraApi = {
   diagnostics: {
     reportCrash: (report: RendererCrashReport) =>
       ipcRenderer.invoke("diagnostics:reportCrash", report),
+  },
+  // LW-8: bridge-readiness signal. `getBridgeState` is the only IPC the
+  // renderer is allowed to call before the bridge is up — it answers
+  // "are you ready yet?" so the renderer can keep showing the
+  // "Loading workspace…" skeleton until the store is open. See
+  // `electron/bridgeLifecycle.ts` for the main-side contract.
+  lifecycle: {
+    getBridgeState: () => ipcRenderer.invoke("app:bridgeState:get"),
+    onBridgeState: (cb: (state: BridgeStateView) => void) =>
+      subscribeIpc<BridgeStateView>("app:bridgeState", cb),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),

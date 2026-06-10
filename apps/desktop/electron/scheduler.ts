@@ -32,6 +32,7 @@
 import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo } from "./appState";
 import { isBatteryLow } from "./batteryMonitor";
 import { isIndexingDeferredForMemory } from "./memoryWatchdog";
+import { isAppSuspended } from "./appSuspension";
 
 /**
  * Thrown by {@link executeLeafAction} when a `GenerateFromTemplate`
@@ -197,6 +198,16 @@ export async function tick(
   bridge: NativeBridge | null = getBridge(),
 ): Promise<void> {
   if (!bridge) return;
+  // LW-9 (minimize-to-tray): when the app is suspended in the tray, the
+  // scheduler is paused (`suspendForTray` calls `stopScheduler`), but a
+  // tick already dispatched by `setInterval` in the tiny window before
+  // `clearInterval` ran could still land here. Self-gate so no
+  // background synthesis/reindex burns resources while suspended; the
+  // automation re-fires on the next tick after `resumeForTray` restarts
+  // the interval. `runNow()` is intentionally NOT gated — it is only
+  // reachable from an explicit user action, which requires a visible
+  // (non-suspended) window.
+  if (isAppSuspended()) return;
   if (activeTick) return;
   await runTick(bridge);
 }

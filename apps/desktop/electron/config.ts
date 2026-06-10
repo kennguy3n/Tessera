@@ -202,6 +202,17 @@ export interface AppConfig {
    * brand-new installs (no config file) get the `"lightweight"` default.
    */
   resourceMode: ResourceMode;
+  /**
+   * LW-9 (minimize-to-tray) preference. When `true`, closing the main
+   * window hides it to the system tray and suspends the app (sidecars
+   * stopped, scheduler paused) instead of quitting; the user reopens
+   * via the tray icon and quits via the tray's "Quit Tessera" item.
+   * When `false`, closing the window quits as before. See
+   * `SettingsData.closeToTray` in `shared/types.ts`. Defaults to
+   * `false` so a fresh install keeps the historical quit-on-close
+   * behaviour and the user opts in to background-mode explicitly.
+   */
+  closeToTray: boolean;
 }
 
 /** Default persisted hybrid config — mirrors Rust default. */
@@ -309,6 +320,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   autoDownloadModel: true,
   createPageMode: "wizard",
   resourceMode: "lightweight",
+  closeToTray: false,
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -520,6 +532,11 @@ const AppConfigSchema = z
     // `"lightweight"` (the minimal-footprint default) rather than
     // silently granting the heavier concurrent-sidecar behaviour.
     resourceMode: z.enum(RESOURCE_MODES).catch("lightweight"),
+    // LW-9 close-to-tray preference. Heals a corrupted on-disk value to
+    // `false` (the historical quit-on-close behaviour) so a mangled
+    // config never silently traps the user in background-mode with no
+    // visible window — opting into tray-mode is a deliberate choice.
+    closeToTray: z.boolean().catch(false),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the
