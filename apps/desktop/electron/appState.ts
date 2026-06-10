@@ -376,8 +376,11 @@ export interface NativeBridge {
     sourceIds: string[],
     /**
      * Optional, additive knowledge-substrate context lines appended to
-     * generation as a "Knowledge context" section. Omitted by callers
-     * that don't augment (e.g. the automation scheduler), preserving
+     * generation as a "Knowledge context" section. Both the interactive
+     * (`artifacts:generateFromTemplate`) and automated (scheduler)
+     * generation paths augment via `buildMemoryContext`; the argument
+     * stays optional so a caller that passes nothing (or an empty
+     * context, e.g. an empty/unavailable substrate) preserves
      * backward-compatible output.
      */
     memoryContext?: string[],
