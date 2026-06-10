@@ -414,9 +414,11 @@ async function executeLeafAction(
       // Augment scheduled generation with the same knowledge-substrate
       // context as the interactive path (`artifacts:generateFromTemplate`)
       // so automated artifacts also draw on extracted entities/facts/
-      // decisions + concept relationships, not just raw source hits.
-      // Best-effort and additive: an empty/unavailable substrate yields no
-      // context and generation is unchanged.
+      // decisions, not just raw source hits. `buildMemoryContext` keeps
+      // memory lines strictly source-scoped and only folds in workspace
+      // concept relations for unscoped generation. Best-effort and
+      // additive: an empty/unavailable substrate yields no context and
+      // generation is unchanged.
       const memoryContext = buildMemoryContext(bridge, sourceIds);
       bridge.bridgeGenerateFromTemplate(
         action.template_id,

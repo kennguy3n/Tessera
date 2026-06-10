@@ -101,6 +101,19 @@ describe("artifacts:generateFromTemplate (memory-augmented)", () => {
     expect(ids).toEqual([SOURCE_ID]);
     expect(Array.isArray(context)).toBe(true);
     expect(context.join("\n")).toContain("Atlas is the project codename");
+    // Scoped to a source, so workspace-level concept relations are omitted
+    // (no per-source attribution to filter on) and the graph isn't fetched.
+    // (Devin Review PR #120.)
+    expect(context.join("\n")).not.toContain("Atlas — is a → Project");
+    expect(bridgeMock.bridgeGetConceptGraph).not.toHaveBeenCalled();
+  });
+
+  it("includes concept relations for unscoped generation", async () => {
+    const result = await invoke("artifacts:generateFromTemplate", TEMPLATE_ID, []);
+    expect(result).toEqual(generatedArtifact);
+    const [, ids, context] = bridgeMock.bridgeGenerateFromTemplate.mock.calls[0];
+    expect(ids).toEqual([]);
+    // Unscoped ("everything Tessera knows"): relations are folded in.
     expect(context.join("\n")).toContain("Atlas — is a → Project");
   });
 

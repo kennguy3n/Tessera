@@ -196,15 +196,20 @@ describe("scheduler.tick", () => {
     const call = bridge.bridgeGenerateFromTemplate.mock.calls[0];
     expect(call[0]).toBe("tmpl");
     expect(call[1]).toEqual(["s1"]);
-    // The scoped memory + the concept relationship are distilled into the
-    // additive 3rd-arg context; the unrelated-source memory is dropped.
+    // The scoped memory is distilled into the additive 3rd-arg context;
+    // the unrelated-source memory is dropped.
     expect(call[2]).toEqual(
       expect.arrayContaining([
         "- [Fact] Atlas is the data platform (canonical, 90% retained)",
-        "- Atlas — is a → Platform",
       ]),
     );
     expect(call[2]).not.toContain("- [Fact] unrelated (canonical, 50% retained)");
+    // The automation is source-scoped, so workspace-level concept
+    // relations are omitted entirely (they have no per-source attribution
+    // to filter on) and the concept graph isn't fetched. (Devin Review PR #120.)
+    expect(call[2]).not.toContain("- Atlas — is a → Platform");
+    expect(call[2]).not.toContain("### Concept relationships");
+    expect(bridge.bridgeGetConceptGraph).not.toHaveBeenCalled();
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("gen", "ok");
   });
 

@@ -595,10 +595,12 @@ export function registerArtifactsHandlers(): void {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
       // Augment the source pack with relevant knowledge-substrate
-      // memories + concept relationships before generation so the
-      // artifact draws on extracted entities/facts/decisions, not just
-      // raw source hits. Best-effort and additive: an empty/unavailable
-      // substrate yields no context and generation is unchanged.
+      // memories before generation so the artifact draws on extracted
+      // entities/facts/decisions, not just raw source hits. Memory lines
+      // are strictly source-scoped; workspace concept relations are only
+      // folded in for unscoped generation (see buildMemoryContext).
+      // Best-effort and additive: an empty/unavailable substrate yields
+      // no context and generation is unchanged.
       const memoryContext = buildMemoryContext(bridge, ids);
       const artifact = bridge.bridgeGenerateFromTemplate(
         tpl,

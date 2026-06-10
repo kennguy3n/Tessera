@@ -116,15 +116,15 @@ interface RawGraphEdge {
  * Defensive: malformed JSON or unexpected shapes yield no lines rather
  * than throwing into the generation path.
  *
- * Unlike {@link selectMemoryLines}, relations are intentionally NOT
- * source-scoped. The concept-graph wire shape attributes nodes/edges to
- * a `scope_id` (the workspace scope), never to an individual source —
- * concepts are aggregate entities synthesized ACROSS sources, and an
- * edge like "Atlas — is_a → Project" has no single owning source to
- * filter on. Relationships are therefore workspace-level distilled
- * knowledge, surfaced regardless of the per-artifact source selection;
- * the source scoping that applies to raw memory lines does not map onto
- * them. (Devin Review PR #120.)
+ * Concept relations cannot be source-scoped at this layer: the
+ * concept-graph wire shape attributes nodes/edges to a `scope_id` (the
+ * workspace scope), never to an individual source — concepts are
+ * aggregate entities synthesized ACROSS sources, and an edge like
+ * "Atlas — is_a → Project" has no single owning source to filter on.
+ * Because of that, {@link buildMemoryContext} only folds relations in
+ * for UNSCOPED generation; a source-scoped artifact omits them entirely
+ * rather than leaking workspace-wide relationships the user didn't
+ * select. (Devin Review PR #120.)
  */
 export function selectRelationLines(conceptGraphJson: string): string[] {
   let parsed: unknown;
@@ -166,6 +166,14 @@ export function selectRelationLines(conceptGraphJson: string): string[] {
  * distills them, and returns a flat `string[]` (memory lines first,
  * then a blank separator + relationship lines). Returns `[]` on any
  * substrate error so generation degrades gracefully.
+ *
+ * Scoping rules:
+ *  - Memory lines are always strictly source-scoped when `sourceIds` is
+ *    non-empty (see {@link selectMemoryLines}).
+ *  - Concept-relationship lines are only included for UNSCOPED
+ *    generation (`sourceIds` empty). A source-scoped artifact omits
+ *    relations entirely, since the concept graph has no per-source
+ *    attribution to filter on. (Devin Review PR #120.)
  */
 export function buildMemoryContext(
   bridge: NativeBridge,
@@ -179,13 +187,18 @@ export function buildMemoryContext(
   }
 
   let relationLines: string[] = [];
-  try {
-    // Relations are workspace-level aggregate knowledge and are NOT
-    // source-scoped like the memory lines above — see selectRelationLines
-    // for why the wire shape makes per-source filtering inapplicable.
-    relationLines = selectRelationLines(bridge.bridgeGetConceptGraph(null, 64));
-  } catch {
-    relationLines = [];
+  // Concept relations are workspace-level aggregate knowledge with no
+  // per-source attribution (see selectRelationLines). For a SOURCE-SCOPED
+  // artifact we omit them entirely — folding in workspace-wide
+  // relationships would leak structure derived from sources the user did
+  // not select. They're only included for unscoped ("everything Tessera
+  // knows") generation. (Devin Review PR #120.)
+  if (sourceIds.length === 0) {
+    try {
+      relationLines = selectRelationLines(bridge.bridgeGetConceptGraph(null, 64));
+    } catch {
+      relationLines = [];
+    }
   }
 
   if (memoryLines.length === 0 && relationLines.length === 0) return [];

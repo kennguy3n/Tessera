@@ -159,6 +159,28 @@ describe("buildMemoryContext", () => {
     expect(ctx.some((l) => l.includes("Atlas — is a → Project"))).toBe(true);
   });
 
+  it("omits concept relations when the artifact is source-scoped", () => {
+    const bridge = bridgeWith(
+      [mem({ content: "Atlas", observationType: "entity", sourceId: "A" })],
+      JSON.stringify({
+        nodes: [
+          { id: "a", label: "Atlas" },
+          { id: "b", label: "Project" },
+        ],
+        edges: [{ from: "a", to: "b", relation_type: "is_a" }],
+      }),
+    );
+    // Source-scoped: only the in-scope memory line survives; the
+    // workspace-level concept relations are dropped entirely (they have
+    // no per-source attribution to filter on). (Devin Review PR #120.)
+    const ctx = buildMemoryContext(bridge, ["A"]);
+    expect(ctx).toContain("### Extracted knowledge");
+    expect(ctx).not.toContain("### Concept relationships");
+    expect(ctx.some((l) => l.includes("Atlas — is a → Project"))).toBe(false);
+    // The concept graph isn't even fetched for a scoped artifact.
+    expect(bridge.bridgeGetConceptGraph).not.toHaveBeenCalled();
+  });
+
   it("returns an empty context when the substrate is empty", () => {
     const bridge = bridgeWith([], '{"nodes":[],"edges":[]}');
     expect(buildMemoryContext(bridge, [])).toEqual([]);
