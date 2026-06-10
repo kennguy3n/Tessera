@@ -1207,76 +1207,22 @@ export async function initAppState(): Promise<boolean> {
   // accessors return `null` in fallback mode (bridge unavailable).
   sidecarsEnabled = true;
 
-  // defer the `./diffusionSidecar` module load. The
-  // diffusion sidecar is constructed (and the construction is what
-  // pulls in the heavy `./diffusionSidecar` module graph — binary
-  // resolution, tar extraction, log parsing) but the underlying
-  // `sd-server` process is NOT started here. It starts only on
-  // explicit user action (clicking "Generate image"). Loading the
-  // module asynchronously means cold-start does not pay for code
-  // that may never run on a given session.
-  //
-  // We catch and log the import failure rather than letting it
-  // propagate: a failed diffusion-sidecar load only impacts the
-  // image-generation feature, not the rest of the app, so it must
-  // not block boot completion.
-  diffusionSidecarState = "loading";
-  diffusionSidecarLoadError = null;
-  // Retain the promise so `stopAllSidecars()` can await it (with a
-  // bounded timeout) and observe the resolved sidecar before the
-  // shutdown path decides whether to skip the slot. Cleared in the
-  // terminal `.finally()` so a stale promise reference doesn't keep
-  // the module record alive after the load settles.
-  diffusionSidecarLoadPromise = import("./diffusionSidecar")
-    .then(({ DiffusionSidecar, resolveDiffusionBinary }) => {
-      diffusionSidecar = new DiffusionSidecar({
-        binaryPath: resolveDiffusionBinary(
-          app.getAppPath(),
-          __dirname,
-          (process as NodeJS.Process & { resourcesPath?: string })
-            .resourcesPath,
-        ),
-        port: 8386,
-        label: "diffusion",
-        // re-read the persisted idle window
-        // when the diffusion sidecar's lazy load settles (rather
-        // than capturing the boot-time `persistedIdleTimeoutMs`)
-        // so a `settings:update` that landed during the lazy load
-        // is reflected here. The next `applyModelIdleTimeoutToSidecars`
-        // call will see the same value and short-circuit the no-op
-        // diff via `setIdleUnloadMs`.
-        idleUnloadMs: normalizeModelIdleTimeoutSecsToMs(
-          loadConfig().modelIdleTimeoutSecs,
-        ),
-      });
-      diffusionSidecarState = "loaded";
-      console.log(
-        "[Tessera] Diffusion sidecar configured (port 8386, lazy-loaded)",
-      );
-    })
-    .catch((err: unknown) => {
-      // Mark the slot as permanently failed for this session. The
-      // IPC handler reads this state and surfaces an actionable
-      // "restart the app" message rather than the generic "not
-      // initialised" message that would otherwise leave the user
-      // wondering whether to keep retrying.
-      diffusionSidecarState = "failed";
-      diffusionSidecarLoadError =
-        err instanceof Error ? err : new Error(String(err));
-      console.warn(
-        "[Tessera] Diffusion sidecar lazy-load failed; image generation will be unavailable until next launch:",
-        diffusionSidecarLoadError.message,
-      );
-    })
-    .finally(() => {
-      // The promise has resolved either to a constructed sidecar or
-      // a permanent-failure state. Either way the load is no longer
-      // "in flight" and the shutdown path has nothing to wait on.
-      diffusionSidecarLoadPromise = null;
-    });
+  // LW-1: the diffusion sidecar (8386) is also demand-loaded now. The
+  // heavy `./diffusionSidecar` module graph (sd-server binary
+  // resolution, tar extraction, stable-diffusion.cpp log parsing) and
+  // the `DiffusionSidecar` object are NO LONGER built at boot — the
+  // earlier behaviour kicked off `import("./diffusionSidecar")` here
+  // on every launch even for the (vast majority of) sessions that
+  // never generate an image. Construction now happens lazily in
+  // `ensureDiffusionSidecar()` on the first "Generate image" action,
+  // matching the text/vision accessors. The underlying `sd-server`
+  // PROCESS still never auto-starts; `start()` runs only on explicit
+  // user action. The slot stays `null` / state `"unloaded"` until
+  // then, which `applyModelIdleTimeoutToSidecars` and
+  // `stopAllSidecars` already handle (both skip a null slot).
 
   console.log(
-    "[Tessera] Model sidecars armed (text=8384 vision=8385 demand-loaded; diffusion=8386 deferred)",
+    "[Tessera] Model sidecars armed (text=8384 vision=8385 diffusion=8386 demand-loaded)",
   );
 
   return true;
@@ -1519,6 +1465,95 @@ export function getVisionSidecar(): ModelSidecar | null {
  * compute, video editing).
  */
 export function getDiffusionSidecar(): DiffusionSidecar | null {
+  return diffusionSidecar;
+}
+
+/**
+ * Demand-load accessor for the diffusion sidecar (LW-1 parity with
+ * `ensureModelSidecar()` / `ensureVisionSidecar()`). The heavy
+ * `./diffusionSidecar` module graph (sd-server binary resolution, tar
+ * extraction, stable-diffusion.cpp log parsing) and the
+ * `DiffusionSidecar` object are built here on first use — typically the
+ * user's first "Generate image" action — rather than at boot. The
+ * underlying `sd-server` PROCESS is still NEVER auto-started; only the
+ * explicit imagegen path calls `start()` after this resolves.
+ *
+ * Lifecycle / re-entrancy (mirrors the boot-time contract this
+ * replaced, so `getDiffusionSidecarState()` and `ipc/imagegen.ts`
+ * behave identically):
+ *   - Fallback mode (bridge unavailable, `sidecarsEnabled === false`):
+ *     returns `null`, state stays `"unloaded"` — same as the
+ *     text/vision accessors.
+ *   - Already constructed: returns the memoised slot.
+ *   - Load failed earlier this session (`state === "failed"`): returns
+ *     `null` without retrying. A failed import is permanent for the
+ *     session; the IPC layer surfaces an actionable "restart the app"
+ *     message via `getDiffusionSidecarState()`.
+ *   - Load already in flight: awaits the SAME
+ *     `diffusionSidecarLoadPromise` instead of kicking off a second
+ *     `import()`, so two near-simultaneous generations coalesce onto
+ *     one load. (Single-threaded main process: no microtask runs
+ *     between the null-check and the await, so the promise reference is
+ *     stable.)
+ *
+ * `stopAllSidecars()` still awaits `diffusionSidecarLoadPromise` (with
+ * a bounded timeout) so a generation that triggered the load during
+ * shutdown is observed before the slot is torn down.
+ */
+export async function ensureDiffusionSidecar(): Promise<DiffusionSidecar | null> {
+  if (!sidecarsEnabled) return null;
+  if (diffusionSidecar !== null) return diffusionSidecar;
+  if (diffusionSidecarState === "failed") return null;
+  if (diffusionSidecarLoadPromise === null) {
+    diffusionSidecarState = "loading";
+    diffusionSidecarLoadError = null;
+    // Retain the promise so `stopAllSidecars()` can await it (bounded)
+    // and observe the resolved sidecar before deciding whether to stop
+    // it. Cleared in the terminal `.finally()` so a stale reference
+    // doesn't keep the module record alive after the load settles.
+    diffusionSidecarLoadPromise = import("./diffusionSidecar")
+      .then(({ DiffusionSidecar, resolveDiffusionBinary }) => {
+        diffusionSidecar = new DiffusionSidecar({
+          binaryPath: resolveDiffusionBinary(
+            app.getAppPath(),
+            __dirname,
+            (process as NodeJS.Process & { resourcesPath?: string })
+              .resourcesPath,
+          ),
+          port: 8386,
+          label: "diffusion",
+          // Read the persisted idle window when the lazy load settles
+          // (rather than capturing a boot-time value) so a
+          // `settings:update` that landed earlier is reflected here.
+          // The next `applyModelIdleTimeoutToSidecars` sees the same
+          // value and short-circuits the no-op diff.
+          idleUnloadMs: normalizeModelIdleTimeoutSecsToMs(
+            loadConfig().modelIdleTimeoutSecs,
+          ),
+        });
+        diffusionSidecarState = "loaded";
+        console.log(
+          "[Tessera] Diffusion sidecar constructed on demand (port 8386)",
+        );
+      })
+      .catch((err: unknown) => {
+        // Mark the slot permanently failed for this session. The IPC
+        // handler reads this state and surfaces an actionable "restart
+        // the app" message rather than the generic "not initialised"
+        // one that would leave the user wondering whether to retry.
+        diffusionSidecarState = "failed";
+        diffusionSidecarLoadError =
+          err instanceof Error ? err : new Error(String(err));
+        console.warn(
+          "[Tessera] Diffusion sidecar lazy-load failed; image generation will be unavailable until next launch:",
+          diffusionSidecarLoadError.message,
+        );
+      })
+      .finally(() => {
+        diffusionSidecarLoadPromise = null;
+      });
+  }
+  await diffusionSidecarLoadPromise;
   return diffusionSidecar;
 }
 

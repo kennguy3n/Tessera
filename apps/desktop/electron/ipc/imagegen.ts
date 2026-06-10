@@ -49,6 +49,7 @@ import {
 } from "../modelManagement";
 import {
   enforceSidecarExclusivity,
+  ensureDiffusionSidecar,
   getBridge,
   getDiffusionSidecar,
   getDiffusionSidecarState,
@@ -144,7 +145,13 @@ export async function probeImagegenAvailable(): Promise<boolean> {
  * Exported for tests.
  */
 export async function ensureDiffusionSidecarRunning(): Promise<void> {
-  const sidecar = getDiffusionSidecar();
+  // LW-1: construct the diffusion sidecar on demand here (first
+  // "Generate image"), rather than at boot. `ensureDiffusionSidecar()`
+  // awaits the one-time module load; it returns `null` only in
+  // fallback mode (bridge down → state "unloaded") or when an earlier
+  // load failed this session (state "failed"), both surfaced below via
+  // `getDiffusionSidecarState()`.
+  const sidecar = await ensureDiffusionSidecar();
   if (!sidecar) {
     // replace the generic
     // "not initialised" message with an error that reflects the

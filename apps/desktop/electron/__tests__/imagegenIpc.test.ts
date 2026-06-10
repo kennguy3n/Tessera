@@ -94,6 +94,12 @@ vi.mock("../appState", () => ({
   getBridge: () => bridgeStub,
   isBridgeAvailable: () => bridgeStub !== null,
   getDiffusionSidecar: () => diffusionSidecarStub,
+  // LW-1: `ensureDiffusionSidecarRunning` now demand-loads via the
+  // async accessor. It resolves to the same (possibly null) slot the
+  // synchronous peek returns, so the state-driven message branches
+  // (loading / failed / unloaded) below remain exercised by setting
+  // `diffusionSidecarStub = null` + `diffusionSidecarStateStub`.
+  ensureDiffusionSidecar: () => Promise.resolve(diffusionSidecarStub),
   getDiffusionSidecarState: () => diffusionSidecarStateStub,
   // LW-2: ensureDiffusionSidecarRunning calls enforceSidecarExclusivity
   // before start. No-op stub — single-sidecar exclusion has its own

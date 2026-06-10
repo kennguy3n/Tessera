@@ -193,6 +193,13 @@ export interface AppConfig {
    * mutual exclusion and the minimal idle footprint; power users who
    * want concurrent text + vision sidecars flip this to
    * `"performance"` in Settings → Performance.
+   *
+   * NOTE on upgrades: an *existing* install (config file present, but
+   * written by a pre-`resourceMode` build) is migrated to
+   * `"performance"` in `readConfigFromDisk`, not `"lightweight"`, so a
+   * user who relied on concurrent text + vision isn't silently switched
+   * to single-sidecar exclusion on first launch after upgrading. Only
+   * brand-new installs (no config file) get the `"lightweight"` default.
    */
   resourceMode: ResourceMode;
 }
@@ -768,6 +775,25 @@ function readConfigFromDisk(configPath: string): AppConfig {
       const progressiveDisclosure = isPreDisclosureUpgrade
         ? { simplifiedNav: false, createPageMode: "gallery" as const }
         : {};
+      // LW-2 migration. `resourceMode` heals to `"lightweight"` when
+      // absent (see schema), which is right for a fresh install but
+      // would silently impose single-sidecar mutual exclusion on an
+      // *existing* user who upgraded from a pre-`resourceMode` build
+      // and may have relied on concurrent text + vision sidecars.
+      // Detect that upgrade (a config that completed onboarding under
+      // an older build, i.e. `onboardingCompleted === true`, yet has
+      // no `resourceMode` key) and preserve the prior concurrent
+      // behaviour by pinning `"performance"`. Mirrors the
+      // progressive-disclosure migration above. Fresh installs are
+      // untouched: they either have no config file (handled below) or
+      // `onboardingCompleted === false`, so they keep `"lightweight"`.
+      // The user can still flip the mode from Settings → Performance.
+      const isResourceModeUpgrade =
+        rawRecord.onboardingCompleted === true &&
+        rawRecord.resourceMode === undefined;
+      const resourceModeMigration = isResourceModeUpgrade
+        ? { resourceMode: "performance" as const }
+        : {};
       const externalProvider: ExternalProviderConfig = {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...healed.externalProvider,
@@ -789,6 +815,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_CONFIG,
         ...healed,
         ...progressiveDisclosure,
+        ...resourceModeMigration,
         externalProvider,
         externalProviderTokenUsage,
         hybridSearchConfig,

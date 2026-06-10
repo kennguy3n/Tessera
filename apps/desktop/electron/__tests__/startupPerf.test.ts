@@ -120,7 +120,7 @@ describe("startup performance", () => {
       // The type-only import is allowed (it erases at compile time)
       // but a runtime import is forbidden — diffusion sidecar setup
       // must happen via dynamic `import("./diffusionSidecar")`
-      // inside `configureSidecars()`.
+      // inside the demand-load accessor `ensureDiffusionSidecar()`.
       expect(hasStaticImport(source, "./diffusionSidecar")).toBe(false);
       // Type-only import is still present so the field declaration
       // `diffusionSidecar: DiffusionSidecar | null` keeps its type.
@@ -131,6 +131,41 @@ describe("startup performance", () => {
       // exists so a contributor who deletes the dynamic load also
       // sees this test fail.
       expect(source).toMatch(/import\(\s*["']\.\/diffusionSidecar["']/);
+    });
+
+    it("appState.ts demand-loads diffusion in ensureDiffusionSidecar, not at boot in initAppState (LW-1)", () => {
+      const source = read("appState.ts");
+      // LW-1 parity: the diffusion module graph + `DiffusionSidecar`
+      // object must NOT be constructed during `initAppState()` (every
+      // boot, even sessions that never generate an image). The single
+      // dynamic `import("./diffusionSidecar")` must live in the
+      // demand-load accessor `ensureDiffusionSidecar()`, which the
+      // imagegen path calls on the first "Generate image" action.
+      // Match the actual load KICKOFF (the assignment to
+      // `diffusionSidecarLoadPromise`), not bare `import(...)` mentions
+      // — the latter also appears in surrounding JSDoc/comments and
+      // would make this test count documentation, not code.
+      const loadAssignment =
+        /diffusionSidecarLoadPromise\s*=\s*import\(\s*["']\.\/diffusionSidecar["']/g;
+      const loadMatches = source.match(loadAssignment);
+      expect(loadMatches).not.toBeNull();
+      // Exactly one real load site keeps the locality assertion below
+      // unambiguous — if a second one appears, revisit this test.
+      expect(loadMatches).toHaveLength(1);
+
+      const initStart = source.indexOf(
+        "export async function initAppState",
+      );
+      const ensureStart = source.indexOf(
+        "export async function ensureDiffusionSidecar",
+      );
+      const loadIdx = source.search(loadAssignment);
+      expect(initStart).toBeGreaterThanOrEqual(0);
+      expect(ensureStart).toBeGreaterThan(initStart);
+      // The (sole) load kickoff sits inside `ensureDiffusionSidecar`,
+      // which is declared well below `initAppState` — so it cannot be
+      // part of the boot path.
+      expect(loadIdx).toBeGreaterThan(ensureStart);
     });
   });
 
