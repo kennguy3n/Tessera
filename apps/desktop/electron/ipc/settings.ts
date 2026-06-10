@@ -300,6 +300,8 @@ export function registerSettingsHandlers(): void {
       // on-disk schema so the renderer's Performance toggle always
       // reflects a valid mode.
       resourceMode: config.resourceMode,
+      // LW-9: close-to-tray preference (heals to `false` on disk).
+      closeToTray: config.closeToTray,
     } as SettingsData;
   });
 
@@ -495,6 +497,8 @@ export function registerSettingsHandlers(): void {
     // `enforceSidecarExclusivity` in `appState.ts`.
     if (parsed.resourceMode !== undefined)
       auditSettingsField("resourceMode", parsed.resourceMode);
+    if (parsed.closeToTray !== undefined)
+      auditSettingsField("closeToTray", String(parsed.closeToTray));
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -512,6 +516,7 @@ export function registerSettingsHandlers(): void {
       autoDownloadModel: persisted.autoDownloadModel,
       createPageMode: persisted.createPageMode,
       resourceMode: persisted.resourceMode,
+      closeToTray: persisted.closeToTray,
     } as SettingsData;
   });
 

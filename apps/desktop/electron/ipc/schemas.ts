@@ -325,6 +325,10 @@ export const SettingsUpdateSchema = z.object({
   // `"lightweight"` does not itself stop a running sidecar — the
   // next sidecar start enforces mutual exclusion.
   resourceMode: z.enum(RESOURCE_MODES).optional(),
+  // LW-9 close-to-tray toggle. Pure boolean; the Settings → General
+  // toggle is the only writer. Read per-close by the main process to
+  // decide hide-to-tray vs quit.
+  closeToTray: z.boolean().optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 

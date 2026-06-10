@@ -64,6 +64,10 @@ const DEFAULT_SETTINGS: SettingsData = {
   // toggle binds to the correct mode during the brief window before
   // the IPC response lands. The real value loads via `refresh()`.
   resourceMode: "lightweight",
+  // close-to-tray defaults OFF (mirrors `DEFAULT_CONFIG`) so the
+  // placeholder matches a fresh install's quit-on-close behaviour
+  // before the real value loads via `refresh()`.
+  closeToTray: false,
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

@@ -126,6 +126,7 @@ const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
   simplifiedNav: true,
   autoDownloadModel: true,
   createPageMode: "wizard",
+  closeToTray: false,
 });
 
 /**
