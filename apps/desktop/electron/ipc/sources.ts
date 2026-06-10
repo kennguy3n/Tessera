@@ -18,6 +18,23 @@ import {
 import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { BATCH_MAX_ITEMS, runBatch } from "./batch";
+import { isIndexingDeferredForMemory } from "../memoryWatchdog";
+
+/**
+ * Error thrown by bulk indexing admission points when the RSS watchdog
+ * (LW-7) is paused under memory pressure. Carries a stable `code` so the
+ * renderer can show a "paused — high memory, retry shortly" affordance
+ * instead of treating it as a hard failure.
+ */
+export class MemoryPressureDeferralError extends Error {
+  readonly code = "indexing_deferred_memory_pressure" as const;
+  constructor() {
+    super(
+      "Indexing deferred: memory usage is high. It will be available again once memory recovers.",
+    );
+    this.name = "MemoryPressureDeferralError";
+  }
+}
 
 export function registerSourcesHandlers(): void {
   idempotentHandle(
@@ -128,6 +145,17 @@ export function registerSourcesHandlers(): void {
       // malformed id is almost certainly a renderer bug, not a
       // recoverable per-item failure.
       const validated = ids.map((id) => assertId(id, "sourceId"));
+      // RSS watchdog admission gate (LW-7). A bulk "reindex all" is the
+      // single largest discretionary memory event the app can trigger;
+      // when the watchdog is already paused under pressure, refuse to
+      // admit it as a pre-flight check (before any bridge work) rather
+      // than piling more native allocation onto an already-stressed
+      // process. Single-source `sources:reindex` stays ungated — it's a
+      // one-shot user action with a bounded footprint. The watchdog
+      // fails open, so a missing watchdog never blocks indexing.
+      if (isIndexingDeferredForMemory()) {
+        throw new MemoryPressureDeferralError();
+      }
       const bridge = getBridge();
       if (!bridge) {
         throw new Error("Native bridge not available");
