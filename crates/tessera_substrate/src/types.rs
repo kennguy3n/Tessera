@@ -42,6 +42,72 @@ pub struct MemoryRecord {
     pub source_id: Option<String>,
 }
 
+/// A concept-graph node surfaced to the desktop UI as part of an
+/// enriched search result (`SubstrateManager::search_knowledge`).
+///
+/// Concepts are the entity nodes the observation pipeline extracted
+/// across the corpus; `related_source_ids` are the Tessera sources the
+/// concept co-occurs in (resolved from the `entity --PartOf--> source`
+/// edges in the concept graph). The renderer renders these in the
+/// "Knowledge" tab so a search surfaces *what the corpus knows about a
+/// topic*, not just the chunks that lexically match.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KnowledgeConcept {
+    /// Concept node id (UUID).
+    pub id: String,
+    /// Human-readable concept label (the extracted entity surface).
+    pub label: String,
+    /// Short definition / provenance tag for the node.
+    pub definition: String,
+    /// Concept lifecycle state: `candidate`, `canonical`,
+    /// `superseded`, `contradicted`, or `deleted`.
+    pub state: String,
+    /// Tessera source ids (UUID strings) this concept co-occurs in.
+    pub related_source_ids: Vec<String>,
+}
+
+/// The knowledge-plane half of an enriched search: the entities,
+/// facts, concepts, and memory items the substrate matched for a query.
+///
+/// This is purely additive context that accompanies the standard
+/// chunk-level [`crate::MemoryRecord`]-free hit list produced by
+/// Tessera's existing hybrid search. `entities` and `facts` are
+/// disjoint projections of `memories` by observation type, pre-split
+/// so the renderer's "Knowledge" tab does not have to re-bucket them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnrichedKnowledge {
+    /// Memory items whose observation type is `entity`, ranked by
+    /// query relevance then retention.
+    pub entities: Vec<MemoryRecord>,
+    /// Memory items whose observation type is `fact`, `claim`, or
+    /// `decision`, ranked by query relevance then retention.
+    pub facts: Vec<MemoryRecord>,
+    /// Concept-graph nodes matching the query, with their related
+    /// sources.
+    pub concepts: Vec<KnowledgeConcept>,
+    /// All matching memory items (any observation type), ranked by
+    /// query relevance then retention. Superset of `entities`/`facts`.
+    pub memories: Vec<MemoryRecord>,
+}
+
+/// A concept-graph-derived suggestion of sources related to a working
+/// set the user has already selected
+/// (`SubstrateManager::suggest_related_sources`).
+///
+/// "You have N sources about [entity]. Include them?" — `entity` is the
+/// shared concept, `source_ids` are the related (not-yet-selected)
+/// Tessera sources, and `score` is the number of related sources (used
+/// for ranking suggestions).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedSourceSuggestion {
+    /// Concept label the suggestion is anchored on.
+    pub entity: String,
+    /// Related Tessera source ids (UUID strings) not already selected.
+    pub source_ids: Vec<String>,
+    /// Ranking signal: the number of related sources.
+    pub score: u32,
+}
+
 /// Outcome of a decay sweep over all persisted memories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecaySweepSummary {

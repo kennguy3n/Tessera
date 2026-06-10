@@ -2814,6 +2814,53 @@ impl SourceStore {
         })
     }
 
+    /// Map each chunk id in `ids` to the string id of the source it
+    /// belongs to.
+    ///
+    /// Used by the retention-weighted hybrid search path
+    /// (`hybrid_search_with_retention`) to translate the substrate's
+    /// per-source retention scores onto candidate chunks. Mirrors
+    /// [`Self::ages_secs_for_chunks`]: a small fan-out read (one row
+    /// per candidate id) routed through the read pool, called once per
+    /// retention-weighted search. Chunk ids with no matching row are
+    /// simply absent from the returned map.
+    pub fn source_ids_for_chunks(
+        &self,
+        ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, String>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        self.with_read(|conn| {
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT c.id, f.source_id
+                 FROM chunks c
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 WHERE c.id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql).map_err(Error::Sqlite)?;
+            let id_params: Vec<rusqlite::types::Value> = ids
+                .iter()
+                .map(|&i| rusqlite::types::Value::Integer(i))
+                .collect();
+            let mut out = std::collections::HashMap::new();
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
+                    let id: i64 = row.get(0)?;
+                    let source_id: String = row.get(1)?;
+                    Ok((id, source_id))
+                })
+                .map_err(Error::Sqlite)?;
+            for r in rows.flatten() {
+                out.insert(r.0, r.1);
+            }
+            Ok(out)
+        })
+    }
+
     /// Counts the indexed files belonging to `source_id`.
     pub fn file_count_for_source(&self, source_id: &SourceId) -> Result<u64> {
         let id_str = source_id.to_string();

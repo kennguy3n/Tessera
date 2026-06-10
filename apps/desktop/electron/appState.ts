@@ -64,11 +64,13 @@ import type {
   ReplaceCitationRequest,
   ReplaceCitationResult,
   ResourceMode,
+  EnrichedSearchResultInfo,
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
   SubstrateDecayReportInfo,
   SubstrateMemoryInfo,
+  SubstrateRelatedSuggestionInfo,
   SubstrateSynthesisInfo,
   TaskInfo,
   TemplateInfo,
@@ -114,12 +116,16 @@ export type {
   KchatThreadContextMessageInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
+  EnrichedSearchResult,
+  EnrichedSearchResultInfo,
   SearchHit,
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
+  SubstrateConceptInfo,
   SubstrateDecayReportInfo,
   SubstrateMemoryInfo,
+  SubstrateRelatedSuggestionInfo,
   SubstrateSynthesisInfo,
   TaskInfo,
   TemplateInfo,
@@ -275,6 +281,18 @@ export interface NativeBridge {
   bridgeListSources(): SourceInfo[];
   bridgeRemoveSource(sourceId: string): void;
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];
+  /**
+   * Observation-enriched search. Returns the same chunk `hits` as
+   * {@link bridgeSearchSources} (retention-weighted via the substrate's
+   * per-source retention scores) plus the additive knowledge plane
+   * (entities, facts, concepts, memories) for the renderer's
+   * "Knowledge" tab. Exported from `tessera_bridge`'s `napi_exports.rs`
+   * as `bridge_search_sources_enriched`.
+   */
+  bridgeSearchSourcesEnriched(
+    query: string,
+    limit: number,
+  ): EnrichedSearchResultInfo;
   bridgeGetSourceDetail(sourceId: string): SourceDetailInfo;
   bridgeReindexSource(sourceId: string): SourceInfo;
   bridgeGetIndexingProgress(sourceId: string): IndexingProgressInfo;
@@ -939,7 +957,7 @@ export interface NativeBridge {
 
   // --- Knowledge substrate (additive native layer) ---------------------
   //
-  // The eight functions below are exported from `tessera_bridge`'s
+  // The nine functions below are exported from `tessera_bridge`'s
   // `substrate.rs` module (snake_case `bridge_*` on the Rust side,
   // camelCased here by napi-derive). They delegate to the
   // `SubstrateManager` held in `AppState`, which writes only to the
@@ -977,6 +995,19 @@ export interface NativeBridge {
     scope?: string | null,
     maxNodes?: number | null,
   ): string;
+  /**
+   * Suggest sources related to an already-selected working set via the
+   * concept graph (the artifact-creation "You have N sources about
+   * [entity]" affordance). `selectedSourceIds` is the user's current
+   * selection; suggestions exclude already-selected sources and are
+   * capped at `maxSuggestions` (default 10 when `null`/omitted).
+   * Exported from `tessera_bridge`'s `substrate.rs` as
+   * `bridge_suggest_related_sources`.
+   */
+  bridgeSuggestRelatedSources(
+    selectedSourceIds: string[],
+    maxSuggestions?: number | null,
+  ): SubstrateRelatedSuggestionInfo[];
   /**
    * Recompute retention scores for every memory and apply decay
    * transitions. Returns a report of how many objects were scored and

@@ -73,6 +73,8 @@ export interface HybridSearchConfigPersisted {
   /** Half-life in seconds. Ignored when `recencyDecayEnabled` is false. */
   recencyHalflifeSecs: number;
   candidatePoolSize: number;
+  /** Weight of the retention (fourth RRF) signal in fusion. */
+  retentionWeight: number;
 }
 
 export interface AppConfig {
@@ -283,6 +285,9 @@ export const DEFAULT_HYBRID_SEARCH_CONFIG: Readonly<HybridSearchConfigPersisted>
     // hardcoded number so a future Rust-side default change
     // automatically applies without a config migration.
     candidatePoolSize: 0,
+    // Matches `retention_weight` default in
+    // `crates/tessera_sources/src/hybrid.rs`.
+    retentionWeight: 1.0,
   });
 
 // Both DEFAULT_* constants are deep-frozen at module load so a
@@ -642,6 +647,7 @@ const AppConfigSchema = z
           .max(10 * 365 * 24 * 60 * 60) // 10 years
           .catch(30 * 24 * 60 * 60),
         candidatePoolSize: z.number().int().min(0).max(10_000).catch(0),
+        retentionWeight: z.number().finite().min(0).max(10).catch(1.0),
       })
       .loose()
       .catch(() => ({ ...DEFAULT_HYBRID_SEARCH_CONFIG })),

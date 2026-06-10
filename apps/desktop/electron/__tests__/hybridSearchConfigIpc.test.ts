@@ -120,6 +120,9 @@ function makeBridge(initial: HybridSearchConfigInfo): {
         ...(patch.candidatePoolSize !== undefined && {
           candidatePoolSize: patch.candidatePoolSize,
         }),
+        ...(patch.retentionWeight !== undefined && {
+          retentionWeight: patch.retentionWeight,
+        }),
       };
       // When decay is disabled, the bridge surfaces halflife as null
       // (mimic the real wire shape).
@@ -347,6 +350,9 @@ describe("hybrid search config IPC", () => {
       // the update payload did not pass a new value; the bridge mock
       // surfaces whatever is currently stored. Default seed is `0`.
       ["hybridSearch.candidatePoolSize", "0"],
+      // `retentionWeight` (the fourth RRF signal) is likewise preserved
+      // from the prior config — the default seed is `1.0`.
+      ["hybridSearch.retentionWeight", "1"],
     ]);
   });
 
