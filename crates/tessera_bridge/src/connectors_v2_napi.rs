@@ -26,7 +26,8 @@
 //! operation, and returns the updated token to the host's
 //! keychain-backed vault. See the module docs on [`crate::connectors_v2`].
 
-use napi::bindgen_prelude::Error as NapiError;
+use napi::bindgen_prelude::{AsyncTask, Error as NapiError};
+use napi::{Env, Task};
 use napi_derive::napi;
 
 use crate::connectors_v2::{self, ConnectorV2Error, NoopEvidenceSink, SyncOptions, TokenWire};
@@ -152,11 +153,26 @@ pub fn bridge_connectors_v2_refresh(
 /// ingest (the [`crate::connectors_v2::EvidenceSink`] trait is the
 /// seam).
 ///
+/// # Concurrency
+///
+/// A full sync makes one blocking HTTP round-trip per page of
+/// changes plus one per fetched document body (up to `max_fetch`,
+/// 512 by default). Running that on the Node main thread would
+/// freeze the Electron UI for the whole sync — seconds to minutes
+/// for a large initial import. To keep the event loop responsive
+/// the work is offloaded to a libuv worker thread via an
+/// [`AsyncTask`]; JS receives a `Promise` and `await`s it. The task
+/// owns its inputs (the raw JSON strings) so nothing is borrowed
+/// across the thread boundary, and the substrate's
+/// `BlockingHttpTransport` is created and used entirely on the
+/// worker thread. This mirrors the existing off-main pattern used
+/// by `bridge_backfill_embeddings` / `bridge_download_embedding_model`.
+///
 /// # Errors
 ///
 /// Rejects on connector/config failure. Per-document fetch/ingest
 /// issues are returned as non-fatal warnings inside the outcome.
-#[napi]
+#[napi(ts_return_type = "Promise<string>")]
 pub fn bridge_connectors_v2_sync(
     provider: String,
     auth_config_json: String,
@@ -165,32 +181,71 @@ pub fn bridge_connectors_v2_sync(
     scope_id: Option<String>,
     fetch_content: Option<bool>,
     max_fetch: Option<u32>,
-) -> Result<String, NapiError> {
-    let auth_config = parse_json("auth_config", &auth_config_json)?;
-    let token: TokenWire = serde_json::from_str(&token_json)
-        .map_err(|e| NapiError::from_reason(format!("invalid token JSON: {e}")))?;
-    let state = match state_json {
-        Some(s) if !s.trim().is_empty() => Some(parse_json("state", &s)?),
-        _ => None,
-    };
+) -> AsyncTask<ConnectorsV2SyncTask> {
+    AsyncTask::new(ConnectorsV2SyncTask {
+        provider,
+        auth_config_json,
+        token_json,
+        state_json,
+        scope_id,
+        fetch_content,
+        max_fetch,
+    })
+}
 
-    let opts = SyncOptions {
-        fetch_content: fetch_content.unwrap_or(true),
-        max_fetch: max_fetch.map_or(SyncOptions::default().max_fetch, |m| m as usize),
-    };
+/// [`napi::Task`] that runs a full v2 connector sync on a libuv
+/// worker thread. All argument parsing, the blocking HTTP sync, and
+/// outcome serialisation happen in [`Task::compute`] off the Node
+/// main thread; only the resulting JSON string crosses back. The
+/// task owns `String`/`Option<String>` inputs (all `Send`), so no
+/// host state is borrowed across the thread boundary.
+pub struct ConnectorsV2SyncTask {
+    provider: String,
+    auth_config_json: String,
+    token_json: String,
+    state_json: Option<String>,
+    scope_id: Option<String>,
+    fetch_content: Option<bool>,
+    max_fetch: Option<u32>,
+}
 
-    let sink = NoopEvidenceSink;
-    let outcome = connectors_v2::sync(
-        &provider,
-        auth_config,
-        token,
-        state,
-        scope_id.as_deref(),
-        &sink,
-        opts,
-    )
-    .map_err(|e| to_napi(&e))?;
+impl Task for ConnectorsV2SyncTask {
+    type Output = String;
+    type JsValue = String;
 
-    serde_json::to_string(&outcome)
-        .map_err(|e| NapiError::from_reason(format!("outcome serialize: {e}")))
+    fn compute(&mut self) -> Result<Self::Output, NapiError> {
+        let auth_config = parse_json("auth_config", &self.auth_config_json)?;
+        let token: TokenWire = serde_json::from_str(&self.token_json)
+            .map_err(|e| NapiError::from_reason(format!("invalid token JSON: {e}")))?;
+        let state = match &self.state_json {
+            Some(s) if !s.trim().is_empty() => Some(parse_json("state", s)?),
+            _ => None,
+        };
+
+        let opts = SyncOptions {
+            fetch_content: self.fetch_content.unwrap_or(true),
+            max_fetch: self
+                .max_fetch
+                .map_or(SyncOptions::default().max_fetch, |m| m as usize),
+        };
+
+        let sink = NoopEvidenceSink;
+        let outcome = connectors_v2::sync(
+            &self.provider,
+            auth_config,
+            token,
+            state,
+            self.scope_id.as_deref(),
+            &sink,
+            opts,
+        )
+        .map_err(|e| to_napi(&e))?;
+
+        serde_json::to_string(&outcome)
+            .map_err(|e| NapiError::from_reason(format!("outcome serialize: {e}")))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue, NapiError> {
+        Ok(output)
+    }
 }

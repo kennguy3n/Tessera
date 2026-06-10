@@ -779,6 +779,24 @@ async function runSync(
   // `runDisconnect`, which purges both backends.
   const hasSelection = (options?.selectedFileIds?.length ?? 0) > 0;
 
+  // A selection allowlist is only meaningful for a provider that has a
+  // legacy connector able to fetch specific ids (today only Google
+  // Drive's renderer sends one). A substrate-only provider
+  // (hubspot/slack/email/github) has no per-file fetch path, so a
+  // selection cannot be honoured. Reject it explicitly with an accurate
+  // message instead of falling through to the generic
+  // `requires useV2Connectors=true` branch below, whose wording would be
+  // misleading in this case (useV2 may well be true — the real problem
+  // is the unsupported selection). Unreachable today, but a clear guard
+  // for any future substrate provider that grows a selection UI.
+  if (hasSelection && !LEGACY_PROVIDERS.has(provider)) {
+    throw new Error(
+      `${provider} does not support selective sync; selectedFileIds is ` +
+        "only honoured by providers with a legacy connector (currently " +
+        "Google Drive).",
+    );
+  }
+
   if (useV2 && !hasSelection) {
     const nativeBridge = ctx.requireBridge();
     if (v2BridgeAvailable(nativeBridge) && isV2Supported(nativeBridge, provider)) {

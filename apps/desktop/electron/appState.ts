@@ -489,7 +489,13 @@ export interface NativeBridge {
     tokenJson: string,
     scopeId?: string | null,
   ): string;
-  /** Run one sync pass. Returns a `SyncOutcome` JSON string. */
+  /**
+   * Run one sync pass. Returns a `Promise` resolving to a `SyncOutcome`
+   * JSON string. The blocking HTTP sync runs on a libuv worker thread
+   * (napi `AsyncTask`) so the Electron main process event loop stays
+   * responsive during a long initial import — see
+   * `crates/tessera_bridge/src/connectors_v2_napi.rs`.
+   */
   bridgeConnectorsV2Sync?(
     provider: string,
     authConfigJson: string,
@@ -498,7 +504,7 @@ export interface NativeBridge {
     scopeId?: string | null,
     fetchContent?: boolean | null,
     maxFetch?: number | null,
-  ): string;
+  ): Promise<string>;
   // --- KChat audit pass-throughs ---
   //
   // Each method is a no-throw best-effort append into the

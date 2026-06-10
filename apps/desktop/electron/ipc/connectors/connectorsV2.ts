@@ -407,7 +407,12 @@ export async function runV2Sync(args: {
 
   let outcomeJson: string;
   try {
-    outcomeJson = bridge.bridgeConnectorsV2Sync(
+    // The bridge returns a Promise (napi `AsyncTask`): the blocking
+    // HTTP sync runs on a libuv worker thread so the main process
+    // event loop stays responsive. `await` here also unifies error
+    // handling — both a synchronous throw during the call and a
+    // rejected promise land in this `catch`.
+    outcomeJson = await bridge.bridgeConnectorsV2Sync(
       provider,
       JSON.stringify(authConfig),
       JSON.stringify(wire),
