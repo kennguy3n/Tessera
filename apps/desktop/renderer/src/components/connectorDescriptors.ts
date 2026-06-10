@@ -79,4 +79,32 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     help: "Create a Figma OAuth app, request files:read, and add the redirect URI below.",
     secretRequired: true,
   },
+  {
+    provider: "hubspot",
+    label: "HubSpot",
+    consoleUrl: "https://developers.hubspot.com/get-started",
+    help: "Create a HubSpot app, add the CRM read scopes and the redirect URI below, then copy the app's Client ID and Client Secret.",
+    secretRequired: true,
+  },
+  {
+    provider: "slack",
+    label: "Slack",
+    consoleUrl: "https://api.slack.com/apps",
+    help: "Create a Slack app, add the channels/users read scopes under 'OAuth & Permissions', and register the redirect URI below.",
+    secretRequired: true,
+  },
+  {
+    provider: "email",
+    label: "Email (Gmail)",
+    consoleUrl: "https://console.cloud.google.com/apis/credentials",
+    help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console, enable the Gmail API, and add the redirect URI below.",
+    secretRequired: true,
+  },
+  {
+    provider: "github",
+    label: "GitHub",
+    consoleUrl: "https://github.com/settings/developers",
+    help: "Register a GitHub OAuth App with the redirect URI below and request repo + read:org scopes, then copy the Client ID and Client Secret.",
+    secretRequired: true,
+  },
 ];

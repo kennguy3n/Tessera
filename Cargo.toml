@@ -44,12 +44,14 @@ rusqlite = { version = "0.36", features = ["bundled-sqlcipher-vendored-openssl",
 # are reproducible; bump deliberately. All six entry crates resolve
 # their intra-repo `path` deps (crypto, inference_router, evidence_
 # store, memory_manager) from the same git checkout automatically.
-knowledge-crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
-evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
-observation_engine = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
-memory_manager = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
-concept_graph = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
-synthesis_pipeline = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
+# Pinned to the snapshot-API rev (knowledge#220) so the substrate can
+# produce consistent encrypted backups of its sibling DBs.
+knowledge-crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+observation_engine = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+memory_manager = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+concept_graph = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+synthesis_pipeline = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 tempfile = "3"
 walkdir = "2"

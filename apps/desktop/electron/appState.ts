@@ -134,6 +134,17 @@ export type {
   BundleRestoreTarget,
 } from "../shared/types";
 
+/**
+ * JS-facing v2 connector descriptor returned by
+ * `bridgeConnectorsV2List`. Mirrors `ConnectorV2InfoNapi` in
+ * `crates/tessera_bridge/src/connectors_v2_napi.rs`.
+ */
+export interface ConnectorV2InfoNapi {
+  provider: string;
+  displayName: string;
+  authKind: string;
+}
+
 export interface NativeBridge {
   /**
    * Initialise the Rust-side workspace.
@@ -452,6 +463,54 @@ export interface NativeBridge {
     removed: number,
   ): void;
   bridgeLogConnectorDisconnected(provider: string, filesRemoved: number): void;
+  // --- v2 connector framework (knowledge substrate) bridge ---
+  //
+  // These map onto `crates/tessera_bridge/src/connectors_v2_napi.rs`.
+  // They are the long-term replacement for Tessera's hand-rolled
+  // per-provider TS sync logic: the Rust side wraps the knowledge
+  // `connector_framework::Connector` trait (authenticate / initial_
+  // sync / incremental_sync / fetch_content). Token and sync payloads
+  // cross as JSON strings (the napi 2.x object surface can't express
+  // optional/nested/binary fields losslessly); the TS adapter in
+  // `ipc/connectors/connectorsV2.ts` is the single (de)serialiser.
+  //
+  // The methods are optional on the interface because a build that
+  // compiles `tessera_bridge` without the `connectors-v2` feature
+  // (or an older native addon) will not export them; the adapter
+  // probes for their presence and falls back to the legacy path.
+  /** List the v2 connector providers compiled into the native addon. */
+  bridgeConnectorsV2List?(): ConnectorV2InfoNapi[];
+  /** Whether `provider` is a feature-enabled v2 connector. */
+  bridgeConnectorsV2Supported?(provider: string): boolean;
+  /** Exchange an auth code for a token. Returns a `TokenWire` JSON string. */
+  bridgeConnectorsV2Authenticate?(
+    provider: string,
+    authConfigJson: string,
+    scopeId?: string | null,
+  ): string;
+  /** Refresh a token. Returns the refreshed `TokenWire` JSON string. */
+  bridgeConnectorsV2Refresh?(
+    provider: string,
+    authConfigJson: string,
+    tokenJson: string,
+    scopeId?: string | null,
+  ): string;
+  /**
+   * Run one sync pass. Returns a `Promise` resolving to a `SyncOutcome`
+   * JSON string. The blocking HTTP sync runs on a libuv worker thread
+   * (napi `AsyncTask`) so the Electron main process event loop stays
+   * responsive during a long initial import — see
+   * `crates/tessera_bridge/src/connectors_v2_napi.rs`.
+   */
+  bridgeConnectorsV2Sync?(
+    provider: string,
+    authConfigJson: string,
+    tokenJson: string,
+    stateJson?: string | null,
+    scopeId?: string | null,
+    fetchContent?: boolean | null,
+    maxFetch?: number | null,
+  ): Promise<string>;
   // --- KChat audit pass-throughs ---
   //
   // Each method is a no-throw best-effort append into the

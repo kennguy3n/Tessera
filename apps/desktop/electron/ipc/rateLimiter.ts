@@ -117,9 +117,13 @@ export class RateLimiter {
  *
  * - `connectors:authenticate` — 1 per 5s per provider.
  * - `connectors:sync` — 1 per 30s per provider.
- * - `runtime:downloadModel` — 1 concurrent (handled with a separate
- *   in-flight flag in the runtime handler; rate limiter still bounds
- *   *start* attempts to 1 every 5s as a safety net).
+ * - `runtime:downloadModel` — 1 start every 5s, keyed PER capability
+ *   slot (`runtime:downloadModel:<capability>`). The per-slot download
+ *   lock in `modelManagement` serialises the actual mutation; this
+ *   limiter is the defense-in-depth safety net that rejects abusive
+ *   *start* attempts on a slot cheaply, before the manifest read +
+ *   install-state stat. Keying by capability means a legitimate burst
+ *   across slots (text then vision from Settings) is never throttled.
  * - `sources:search` — 10 per second (debounce is in renderer, this
  *   is defense-in-depth).
  * - `sources:backfillEmbeddings` — 1 every 10s. Backfill walks the
@@ -169,6 +173,17 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 30_000,
   },
   "runtime:downloadModel": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
+  // Recommended-model install (banner "Retry" / first-launch auto-
+  // download). Same 1-start-per-5s budget as `downloadModel`, and like
+  // it the bucket is keyed PER capability slot
+  // (`runtime:downloadRecommended:<capability>`): it routes into the
+  // same per-slot download lock, so this throttle just keeps rapid
+  // retries from queueing redundant fetches without penalising a
+  // legitimate burst across distinct slots.
+  "runtime:downloadRecommended": {
     tokensPerInterval: 1,
     intervalMs: 5_000,
   },

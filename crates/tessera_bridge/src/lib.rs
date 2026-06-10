@@ -6,6 +6,10 @@ pub mod artifacts;
 pub mod automations;
 pub mod backup;
 pub mod citations;
+#[cfg(feature = "connectors-v2")]
+pub mod connectors_v2;
+#[cfg(feature = "connectors-v2")]
+pub mod connectors_v2_napi;
 pub mod exporter;
 pub mod napi_exports;
 pub mod settings;
