@@ -275,17 +275,21 @@ describe("handleWillQuit", () => {
   // radius: removing the Electron listeners cannot affect any
   // other shutdown step.
   it(
-    "runs the full shutdown order: stopBatteryMonitor → scheduler → sidecars → " +
-      "kchatLocalApi → detachDeeplink → disposeBridge → quit",
+    "runs the full shutdown order: stopBatteryMonitor → stopMemoryWatchdog → scheduler → " +
+      "sidecars → kchatLocalApi → detachDeeplink → disposeBridge → quit",
     async () => {
       const order: string[] = [];
-      // Wire EVERY dep — including the two optional ones
-      // (`stopBatteryMonitor`, `disposeBridge`) — so this test documents
-      // the complete production sequence rather than a subset. The
-      // dedicated tests below still pin the battery-monitor-first and
+      // Wire EVERY dep — including the three optional ones
+      // (`stopBatteryMonitor`, `stopMemoryWatchdog`, `disposeBridge`) — so
+      // this test documents the complete production sequence rather than a
+      // subset. The dedicated tests below still pin the
+      // battery-monitor-first, memory-watchdog-before-drains, and
       // disposeBridge-last guarantees in isolation.
       const stopBatteryMonitor = vi.fn().mockImplementation(() => {
         order.push("stopBatteryMonitor");
+      });
+      const stopMemoryWatchdog = vi.fn().mockImplementation(() => {
+        order.push("stopMemoryWatchdog");
       });
       const stopScheduler = vi.fn().mockImplementation(async () => {
         order.push("stopScheduler");
@@ -309,6 +313,7 @@ describe("handleWillQuit", () => {
       const { event } = makeEvent();
       await handleWillQuit(event, {
         stopBatteryMonitor,
+        stopMemoryWatchdog,
         stopScheduler,
         stopAllSidecars,
         stopKchatLocalApi,
@@ -319,6 +324,7 @@ describe("handleWillQuit", () => {
 
       expect(order).toEqual([
         "stopBatteryMonitor",
+        "stopMemoryWatchdog",
         "stopScheduler",
         "stopAllSidecars",
         "stopKchatLocalApi",

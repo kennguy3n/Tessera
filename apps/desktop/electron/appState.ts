@@ -1131,7 +1131,13 @@ export async function initAppState(): Promise<boolean> {
   // A live toggle takes effect on next launch; the RSS watchdog is the
   // within-session lever (see `memoryWatchdog.ts`).
   try {
-    process.env.TESSERA_RESOURCE_MODE = loadConfig().resourceMode;
+    // `?? "lightweight"` is belt-and-suspenders: the zod schema's
+    // `.catch("lightweight")` already guarantees a valid value today, but
+    // were that fallback ever dropped, `process.env.X = undefined` would
+    // coerce to the literal string "undefined" — a silently wrong env var.
+    // The fallback keeps the addon defaulting to the safe low-footprint
+    // profile regardless.
+    process.env.TESSERA_RESOURCE_MODE = loadConfig().resourceMode ?? "lightweight";
   } catch {
     process.env.TESSERA_RESOURCE_MODE = "lightweight";
   }
