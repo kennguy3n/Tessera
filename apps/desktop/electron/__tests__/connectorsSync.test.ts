@@ -2597,6 +2597,49 @@ describe("Google Drive sync — manifest cleanup", () => {
     },
   );
 
+  it(
+    "ignores orphaned .partial temp files in the 404 cleanup loop " +
+      "(regression: stale partial inflates removed count)",
+    async () => {
+      // Simulate an unclean termination: a `.partial` temp file for
+      // `file-9` survives on disk (the streaming catch never ran), and
+      // `file-9` is then deleted upstream (404). The cleanup loop must
+      // NOT count or unlink the orphaned partial — partials are never
+      // registered sources, so matching one would inflate `removed`.
+      const syncDir = path.join(dir, "gdrive-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      const orphanPartial = path.join(syncDir, "file-9.txt.partial");
+      await fsp.writeFile(orphanPartial, "truncated bytes");
+      const manifestPath = path.join(syncDir, "manifest.json");
+      // Manifest tracks file-9 (its completed download never happened,
+      // but the id is carried forward), so its metadata is fetched.
+      await fsp.writeFile(
+        manifestPath,
+        JSON.stringify([path.join(syncDir, "file-9.txt")]),
+        "utf8",
+      );
+
+      // file-9 metadata 404s → lands in failedFileIds.
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => "not found",
+      });
+
+      const r = await syncGoogleDrive({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      // The orphaned partial is NOT a source, so removed stays 0...
+      expect(r.removed).toBe(0);
+      // ...and the partial is left untouched (reclaimed later by a
+      // successful rename or the OS temp reaper, not this loop).
+      await expect(fsp.access(orphanPartial)).resolves.toBeUndefined();
+    },
+  );
+
   // ---------------------------------------------------------------
   // gdrive lacked the try/finally manifest
   // persistence pattern that all five other connectors have. A

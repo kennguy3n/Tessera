@@ -20,6 +20,7 @@
 import * as fsp from "fs/promises";
 import { createWriteStream } from "fs";
 import { Readable } from "stream";
+import type { ReadableStream as NodeWebReadableStream } from "stream/web";
 import { pipeline } from "stream/promises";
 import * as path from "path";
 
@@ -66,7 +67,15 @@ async function streamResponseToFile(
   if (!resp.body) return 0;
   const tmpPath = `${destPath}.partial`;
   try {
-    await pipeline(Readable.fromWeb(resp.body), createWriteStream(tmpPath));
+    // `resp.body` is the DOM `ReadableStream` (lib.dom); `Readable.fromWeb`
+    // is typed against Node's `stream/web` `ReadableStream`. The two are
+    // structurally compatible at runtime (Node 20 / Electron 31 unify the
+    // stream implementations) but differ in their .d.ts identity, so we
+    // bridge the nominal gap with a typed cast rather than `any`.
+    await pipeline(
+      Readable.fromWeb(resp.body as unknown as NodeWebReadableStream<Uint8Array>),
+      createWriteStream(tmpPath),
+    );
     const { size } = await fsp.stat(tmpPath);
     if (size === 0) {
       await fsp.unlink(tmpPath).catch(() => undefined);
@@ -280,6 +289,17 @@ export async function syncGoogleDrive(ctx: {
         const entries = await fsp.readdir(syncDir);
         for (const failedId of failedFileIds) {
           for (const entry of entries) {
+            // Never match a streaming temp file. A `.partial` orphaned
+            // by an unclean termination (SIGKILL / power loss skips the
+            // `streamResponseToFile` catch) shares its destination's
+            // `fileId.` prefix, so `fileIdFromLocalPath` would extract
+            // the same id and this loop would unlink it and inflate
+            // `removed`. Partials are never registered sources, so
+            // skipping them here keeps the deletion accounting honest;
+            // a genuine orphan is reclaimed by the next successful
+            // download to that path (which renames over it) or by the
+            // OS temp reaper.
+            if (entry.endsWith(".partial")) continue;
             const entryId = fileIdFromLocalPath(entry);
             if (entryId === failedId) {
               const localPath = path.join(syncDir, entry);

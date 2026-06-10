@@ -26,6 +26,7 @@
 import * as fsp from "fs/promises";
 import { createWriteStream } from "fs";
 import { Readable } from "stream";
+import type { ReadableStream as NodeWebReadableStream } from "stream/web";
 import { pipeline } from "stream/promises";
 import * as path from "path";
 
@@ -206,7 +207,15 @@ async function downloadItem(
   }
   const tmpPath = `${localPath}.partial`;
   try {
-    await pipeline(Readable.fromWeb(resp.body), createWriteStream(tmpPath));
+    // `resp.body` is the DOM `ReadableStream`; `Readable.fromWeb` is typed
+    // against Node's `stream/web` `ReadableStream`. They are structurally
+    // compatible at runtime (Node 20 / Electron 31 unify the stream
+    // implementations) but differ in .d.ts identity, so bridge the nominal
+    // gap with a typed cast rather than `any`.
+    await pipeline(
+      Readable.fromWeb(resp.body as unknown as NodeWebReadableStream<Uint8Array>),
+      createWriteStream(tmpPath),
+    );
     await fsp.rename(tmpPath, localPath);
   } catch (err) {
     // Best-effort cleanup of the partial file before propagating so the
