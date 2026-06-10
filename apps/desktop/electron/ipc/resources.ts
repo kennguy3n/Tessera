@@ -97,28 +97,36 @@ function defend<T>(label: string, read: () => T, fallback: T): T {
 // fail-open" so the dashboard under-promises rather than misreports
 // when a subsystem read fails: memory zeros, sidecars stopped, indexing
 // admitted (not falsely shown as blocked), and battery gating off.
-const MEMORY_FALLBACK: ResourceUsage["memory"] = {
+//
+// They are `Object.freeze`d (including the nested SLM slots, which
+// `defend()` returns by reference on a failed per-capability read) so the
+// fail-open contract is self-enforcing: a future code path that retained
+// and mutated a returned snapshot before it crossed IPC could otherwise
+// permanently corrupt the fallback for every subsequent poll. Freezing
+// turns that latent hazard into a structural impossibility rather than
+// relying on call-site discipline.
+const MEMORY_FALLBACK: ResourceUsage["memory"] = Object.freeze({
   rssBytes: 0,
   heapUsedBytes: 0,
   heapTotalBytes: 0,
   externalBytes: 0,
-};
-const SLM_FALLBACK: ResourceUsage["slm"] = {
-  text: { running: false, endpoint: null },
-  vision: { running: false, endpoint: null },
-  imagegen: { state: "unloaded" },
-};
-const INDEXING_FALLBACK: ResourceUsage["indexing"] = {
+});
+const SLM_FALLBACK: ResourceUsage["slm"] = Object.freeze({
+  text: Object.freeze({ running: false, endpoint: null }),
+  vision: Object.freeze({ running: false, endpoint: null }),
+  imagegen: Object.freeze({ state: "unloaded" }),
+});
+const INDEXING_FALLBACK: ResourceUsage["indexing"] = Object.freeze({
   deferredForMemory: false,
   pressure: null,
-};
-const BATTERY_FALLBACK: ResourceUsage["battery"] = {
+});
+const BATTERY_FALLBACK: ResourceUsage["battery"] = Object.freeze({
   hasBattery: false,
   isOnBattery: false,
   isCharging: false,
   percent: null,
   gating: false,
-};
+});
 
 export function registerResourcesHandlers(): void {
   idempotentHandle("resources:getUsage", async (): Promise<ResourceUsage> => {

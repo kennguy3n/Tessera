@@ -106,6 +106,27 @@ describe("ResourceUsageCard", () => {
     );
   });
 
+  it("crosses to GB at the 1023.5 MB rounding boundary (never '1024 MB')", async () => {
+    window.tessera.resources.getUsage = vi.fn().mockResolvedValue(
+      snapshot({
+        memory: {
+          // 1023.5 MB rounds to 1024 — must render as GB, not "1024 MB".
+          rssBytes: 1023.5 * 1024 * 1024,
+          heapUsedBytes: 0,
+          heapTotalBytes: 0,
+          externalBytes: 0,
+        },
+      }),
+    );
+    render(<ResourceUsageCard />);
+    await waitFor(() =>
+      expect(screen.getByTestId("resource-usage-body")).toBeInTheDocument(),
+    );
+    const rss = screen.getByTestId("resource-usage-rss");
+    expect(rss).toHaveTextContent("1.0 GB");
+    expect(rss).not.toHaveTextContent("1024 MB");
+  });
+
   it("explains active battery gating", async () => {
     window.tessera.resources.getUsage = vi.fn().mockResolvedValue(
       snapshot({

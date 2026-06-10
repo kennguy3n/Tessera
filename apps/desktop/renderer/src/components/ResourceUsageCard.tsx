@@ -28,7 +28,10 @@ function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
   const mb = bytes / (1024 * 1024);
   if (mb < 1) return "<1 MB";
-  if (mb < 1024) return `${Math.round(mb)} MB`;
+  // Compare the *rounded* MB against the boundary so a value like
+  // 1023.5 MB (which rounds to 1024) crosses to the GB branch and
+  // renders "1.0 GB" rather than the nonsensical "1024 MB".
+  if (Math.round(mb) < 1024) return `${Math.round(mb)} MB`;
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
