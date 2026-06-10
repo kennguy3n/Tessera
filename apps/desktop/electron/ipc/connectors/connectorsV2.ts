@@ -62,7 +62,40 @@ import {
   type SyncManifest,
   type SyncManifestEntry,
 } from "./syncDir";
+import { NetworkError } from "./networkErrors";
 import type { ConnectorSyncResult } from "./handlers";
+
+/**
+ * Re-brand a network/transport failure surfaced by the Rust bridge as
+ * the host's {@link NetworkError} so it is classified deterministically.
+ *
+ * The bridge flattens `connector_framework` errors to
+ * `"{category}: {message}"` with a stable, machine-readable category
+ * (see `ConnectorV2Error` in `crates/tessera_bridge/src/connectors_v2.rs`).
+ * The `transport` category is the framework's AUTHORITATIVE signal that
+ * the failure was a transport fault — a reqwest DNS-resolution error,
+ * connection refused/reset, TLS reset, or timeout. Unlike the legacy
+ * connectors (which wrap every `fetch` failure in `NetworkError`), the
+ * napi bridge throws a plain `Error` whose message is reqwest's own
+ * phrasing (e.g. `"transport: error sending request … dns error"`).
+ * That phrasing does not reliably match the host's English
+ * `NETWORK_MESSAGE_PATTERNS`, so a v2 network failure could otherwise
+ * surface as a hard error instead of the Offline badge — the exact
+ * inconsistency flagged in review. Mapping the `transport` category to
+ * the branded class makes `isNetworkError` return `true` regardless of
+ * the underlying transport library's wording.
+ *
+ * Always throws; declared `never` so callers can treat it as terminal.
+ */
+function rethrowV2BridgeError(provider: ProviderId, err: unknown): never {
+  if (err instanceof Error && /^transport:/i.test(err.message)) {
+    throw new NetworkError(
+      `Network error during ${provider} v2 sync: ${err.message}`,
+      { cause: err },
+    );
+  }
+  throw err;
+}
 
 /**
  * Token shape exchanged with the Rust bridge (`TokenWire`). Field
@@ -372,15 +405,24 @@ export async function runV2Sync(args: {
   const authConfig = buildAuthConfig(provider, tokens);
   const wire = storedToWire(tokens);
 
-  const outcomeJson = bridge.bridgeConnectorsV2Sync(
-    provider,
-    JSON.stringify(authConfig),
-    JSON.stringify(wire),
-    args.stateJson,
-    args.scopeId,
-    args.fetchContent ?? true,
-    args.maxFetch ?? null,
-  );
+  let outcomeJson: string;
+  try {
+    outcomeJson = bridge.bridgeConnectorsV2Sync(
+      provider,
+      JSON.stringify(authConfig),
+      JSON.stringify(wire),
+      args.stateJson,
+      args.scopeId,
+      args.fetchContent ?? true,
+      args.maxFetch ?? null,
+    );
+  } catch (err) {
+    // Map an authoritative `transport:` framework error to the branded
+    // NetworkError so the shared `runConnectorSync` wrapper degrades to
+    // the Offline badge instead of a hard error. Non-transport errors
+    // (auth, parse, sync) propagate unchanged.
+    rethrowV2BridgeError(provider, err);
+  }
   const outcome = JSON.parse(outcomeJson) as SyncOutcome;
 
   const dir = syncDirFor(userDataDir, provider);
@@ -414,12 +456,36 @@ export async function runV2Sync(args: {
       continue;
     }
 
-    const wasPresent = priorById.has(doc.document_id);
+    const prior = priorById.get(doc.document_id);
     const entry = await ingestDocument(provider, dir, doc, hooks, sourceIndex);
     if (entry) {
+      // MIME-change orphan cleanup: the local filename is derived from
+      // the document id + an extension chosen from its MIME type. If a
+      // document's MIME type changes between syncs (e.g. text/markdown
+      // → text/plain), the new body lands at a DIFFERENT path. Without
+      // this, the old file and its bridge source would linger until
+      // disconnect — `ingestDocument` keys the source index on the new
+      // path and so registers a second source, never reclaiming the
+      // first. Remove the stale source + file now; the manifest entry
+      // itself is already replaced below (the new entry is pushed and
+      // the remote id marked seen, so the old entry is not carried
+      // forward).
+      if (prior && prior.localPath !== entry.localPath) {
+        const staleSrc = sourceIndex.get(prior.localPath);
+        if (staleSrc) {
+          try {
+            hooks.removeSource(staleSrc.id);
+          } catch {
+            // best-effort: a source the user already removed manually
+            // must not abort the rest of the sync.
+          }
+          sourceIndex.remove(prior.localPath);
+        }
+        await fsp.rm(prior.localPath, { force: true });
+      }
       newEntries.push(entry);
       seenRemoteIds.add(doc.document_id);
-      if (wasPresent) modified += 1;
+      if (prior) modified += 1;
       else added += 1;
     }
   }

@@ -136,6 +136,21 @@ async function runProviderV2Sync(
   provider: ProviderId,
   userDataDir: string,
 ): Promise<ConnectorSyncResult> {
+  // Refresh-before-sync: unlike the legacy connectors, which call
+  // `getValidAccessToken` at the top of every iteration of their hot
+  // loop, the v2 path hands the Rust `connector_framework` a single
+  // `OAuth2Token` snapshot for the whole `initial_sync`/`incremental_sync`
+  // run — the framework does not refresh mid-call. To match the legacy
+  // path's resilience we proactively refresh here: `getValidAccessToken`
+  // is a no-op when >60s of lifetime remains and otherwise performs the
+  // refresh-token exchange AND persists the rotated tokens back to the
+  // vault. Reading `getTokens` *after* this guarantees the wire token we
+  // build below starts the run with a full (~1h) lifetime, so a bounded
+  // single run (capped by the Rust `max_fetch` budget) will not expire
+  // part-way through. A pathological single run that itself outlives the
+  // token would still need framework-level 401 refresh; that is bounded
+  // by `max_fetch` and tracked as a substrate enhancement.
+  await getValidAccessToken(ctx, provider);
   const tokens = ctx.tokenVault.getTokens(provider);
   if (!tokens) {
     throw new NotConnectedError(
@@ -744,7 +759,27 @@ async function runSync(
   } catch {
     useV2 = true;
   }
-  if (useV2) {
+
+  // Selective sync is a legacy-only capability. The renderer's
+  // `connectors:gdrive:sync` channel passes an explicit
+  // `selectedFileIds` allowlist so the user can pull only the files
+  // they picked. The knowledge `connector_framework` sync is
+  // changefeed-based (`initial_sync`/`incremental_sync` emit whatever
+  // the provider reports as changed) and Google Drive's only filter
+  // hook is `auth_config_json.q` — a Drive search query that cannot
+  // express an arbitrary file-id allowlist (`files.list` has no
+  // `id in [...]` operator). There is therefore no faithful way to
+  // honour an explicit selection through v2. Rather than silently
+  // running a full sync and ignoring the user's choice, route the
+  // selection-bearing call to the legacy connector (which fetches each
+  // selected id directly). Only Google Drive ever supplies a
+  // selection, and it is a legacy provider, so the legacy path is
+  // always available. The dual sync directory this can create
+  // (`gdrive-sync/` vs `google_drive-sync/`) is already reconciled by
+  // `runDisconnect`, which purges both backends.
+  const hasSelection = (options?.selectedFileIds?.length ?? 0) > 0;
+
+  if (useV2 && !hasSelection) {
     const nativeBridge = ctx.requireBridge();
     if (v2BridgeAvailable(nativeBridge) && isV2Supported(nativeBridge, provider)) {
       return runProviderV2Sync(ctx, provider, userDataDir);

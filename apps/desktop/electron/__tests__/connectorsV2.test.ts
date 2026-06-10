@@ -28,6 +28,7 @@ import {
   type V2NativeBridge,
   type V2BridgeHooks,
 } from "../ipc/connectors/connectorsV2";
+import { NetworkError, isNetworkError } from "../ipc/connectors/networkErrors";
 import type { StoredTokens } from "../tokenVault";
 
 interface FakeSource {
@@ -283,6 +284,88 @@ describe("runV2Sync ingest", () => {
     expect(await fsp.readFile(hooks.added[0].path, "utf8")).toBe("v2");
   });
 
+  it("cleans up the stale file + source when a doc's MIME type changes between syncs", async () => {
+    // Initial sync: doc-1 arrives as Markdown → doc-1.md.
+    const first: SyncOutcome = {
+      created: 1,
+      updated: 0,
+      deleted: 0,
+      permission_changed: 0,
+      next_cursor: "c1",
+      documents: [
+        {
+          document_id: "doc-1",
+          event_kind: "created",
+          mime_type: "text/markdown",
+          body_base64: b64("# md body"),
+        },
+      ],
+    };
+    const hooks = new FakeBridge();
+    await runV2Sync({
+      provider: "notion",
+      bridge: fakeNativeBridge(first),
+      hooks,
+      tokens: TOKENS,
+      userDataDir: dir,
+      stateJson: null,
+      scopeId: null,
+    });
+    const mdSource = hooks.added[0];
+    expect(mdSource.path.endsWith(".md")).toBe(true);
+    expect(await fsp.stat(mdSource.path)).toBeTruthy();
+
+    // Incremental sync: the SAME doc now reports text/plain, so the
+    // body lands at doc-1.txt. The old doc-1.md file + its source must
+    // be reclaimed rather than orphaned.
+    const second: SyncOutcome = {
+      created: 0,
+      updated: 1,
+      deleted: 0,
+      permission_changed: 0,
+      next_cursor: "c2",
+      documents: [
+        {
+          document_id: "doc-1",
+          event_kind: "updated",
+          mime_type: "text/plain",
+          body_base64: b64("plain body"),
+        },
+      ],
+    };
+    const res = await runV2Sync({
+      provider: "notion",
+      bridge: fakeNativeBridge(second),
+      hooks,
+      tokens: TOKENS,
+      userDataDir: dir,
+      stateJson: JSON.stringify({ cursor: "c1" }),
+      scopeId: null,
+    });
+
+    expect(res.result.modified).toBe(1);
+    // The new .txt source exists; the stale .md source was removed.
+    const txtSource = hooks.added.find((s) => s.path.endsWith(".txt"));
+    expect(txtSource).toBeDefined();
+    expect(hooks.removed).toContain(mdSource.id);
+    expect(hooks.listSources().map((s) => s.path)).toEqual([txtSource!.path]);
+    // The stale file is gone; the new one has the new body.
+    await expect(fsp.stat(mdSource.path)).rejects.toBeTruthy();
+    expect(await fsp.readFile(txtSource!.path, "utf8")).toBe("plain body");
+
+    // The manifest carries exactly one entry (the new path), so a
+    // subsequent disconnect cannot re-orphan the old path.
+    const manifestRaw = await fsp.readFile(
+      path.join(path.dirname(txtSource!.path), "manifest.json"),
+      "utf8",
+    );
+    const manifest = JSON.parse(manifestRaw) as {
+      entries: Array<{ localPath: string; remoteId: string }>;
+    };
+    expect(manifest.entries).toHaveLength(1);
+    expect(manifest.entries[0].localPath).toBe(txtSource!.path);
+  });
+
   it("cascades a deletion: removes the bridge source and the local file", async () => {
     const create: SyncOutcome = {
       created: 1,
@@ -444,5 +527,76 @@ describe("disconnectV2Provider", () => {
     await expect(
       fsp.stat(path.dirname(created.path)),
     ).rejects.toBeTruthy();
+  });
+});
+
+describe("runV2Sync bridge error branding", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await tmpDir();
+  });
+  afterEach(async () => {
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  /** Native bridge whose sync throws the given plain `Error`. */
+  function throwingBridge(err: Error): V2NativeBridge {
+    return {
+      bridgeConnectorsV2Supported: () => true,
+      bridgeConnectorsV2Sync: () => {
+        throw err;
+      },
+    } as unknown as V2NativeBridge;
+  }
+
+  it("re-brands a `transport:` framework error as NetworkError so the offline badge fires", async () => {
+    // reqwest DNS failures surface through the bridge as
+    // `transport: error sending request … dns error …` — phrasing the
+    // host's message-pattern heuristic does NOT match. The adapter must
+    // still classify it as a network error via the stable category.
+    const raw = new Error(
+      "transport: error sending request for url (https://api.x): dns error: failed to lookup address",
+    );
+    let caught: unknown;
+    try {
+      await runV2Sync({
+        provider: "github",
+        bridge: throwingBridge(raw),
+        hooks: new FakeBridge(),
+        tokens: TOKENS,
+        userDataDir: dir,
+        stateJson: null,
+        scopeId: null,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(NetworkError);
+    expect(isNetworkError(caught)).toBe(true);
+    // The original framework error is preserved as the cause.
+    expect((caught as NetworkError).cause).toBe(raw);
+  });
+
+  it("propagates a non-transport framework error unchanged (NOT a network error)", async () => {
+    // An `auth:` category error is a hard failure the renderer must
+    // surface as a re-auth prompt, never as the offline badge.
+    const raw = new Error("auth: token expired or revoked");
+    let caught: unknown;
+    try {
+      await runV2Sync({
+        provider: "github",
+        bridge: throwingBridge(raw),
+        hooks: new FakeBridge(),
+        tokens: TOKENS,
+        userDataDir: dir,
+        stateJson: null,
+        scopeId: null,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(raw);
+    expect(caught).not.toBeInstanceOf(NetworkError);
+    expect(isNetworkError(caught)).toBe(false);
   });
 });
