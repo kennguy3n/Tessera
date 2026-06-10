@@ -1595,9 +1595,20 @@ pub fn bridge_restore_version(
 #[napi]
 /// N-API entry point: generates a new artifact from a template
 /// and its source bindings.
+///
+/// `memory_context` is an optional, additive list of knowledge-substrate
+/// context lines (extracted entities/facts/decisions and top concept
+/// relationships) gathered by the caller before generation. When
+/// present and non-empty it is appended as a dedicated
+/// "## Knowledge context" section so the generated artifact draws on the
+/// substrate's extracted knowledge in addition to raw source hits. The
+/// parameter is optional and trailing, so existing 2-argument callers
+/// (e.g. the automation scheduler) keep working unchanged and produce
+/// byte-identical output to before.
 pub fn bridge_generate_from_template(
     template_id: String,
     source_ids: Vec<String>,
+    memory_context: Option<Vec<String>>,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
     let src_mgr = s
@@ -1641,6 +1652,23 @@ pub fn bridge_generate_from_template(
             format!("## {}\n\n{}\n", section.title, context)
         };
         section_contents.push(content);
+    }
+
+    // Append the additive knowledge-substrate context as a trailing
+    // section when the caller supplied one. Lines are pre-formatted and
+    // relevance-filtered by the IPC layer (which already holds the
+    // substrate behind its own lock), so generation stays a pure
+    // formatting step here and never touches the substrate lock —
+    // preserving the documented lock order.
+    if let Some(lines) = memory_context {
+        let trimmed: Vec<&str> = lines
+            .iter()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !trimmed.is_empty() {
+            section_contents.push(format!("## Knowledge context\n\n{}\n", trimmed.join("\n")));
+        }
     }
 
     let template_name = template.name.clone();

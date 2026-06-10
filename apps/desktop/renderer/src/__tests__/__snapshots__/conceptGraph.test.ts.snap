@@ -1,0 +1,30 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`computeRadialLayout > produces a stable snapshot for the lightweight SVG renderer 1`] = `
+[
+  {
+    "id": "hub",
+    "radius": 34,
+    "x": 300,
+    "y": 200,
+  },
+  {
+    "id": "n1",
+    "radius": 19,
+    "x": 418,
+    "y": 200,
+  },
+  {
+    "id": "n2",
+    "radius": 19,
+    "x": 241,
+    "y": 302.191,
+  },
+  {
+    "id": "n3",
+    "radius": 14,
+    "x": 241,
+    "y": 97.809,
+  },
+]
+`;

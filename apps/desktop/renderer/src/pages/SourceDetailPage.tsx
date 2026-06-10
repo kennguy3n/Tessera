@@ -8,6 +8,8 @@ import { useSourceDetail, useReindexSource } from "../hooks/useSources";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
 import { useEmbeddingProgress } from "../hooks/useEmbeddingProgress";
 import { useKchatBackfillProgress } from "../hooks/useKchatBackfillProgress";
+import ConceptGraphPanel from "../components/ConceptGraphPanel";
+import { useMemories } from "../hooks/useSubstrate";
 import {
   extractKchatChannelIdFromSource,
   formatSourceTypeLabel,
@@ -24,6 +26,11 @@ export default function SourceDetailPage() {
   const [extracted, setExtracted] = useState<ExtractedItem[] | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
+  // The concept-graph panel is collapsed by default and only mounts
+  // (and therefore only fires its substrate fetches) once the user
+  // expands it, so the common "open a source to check indexing" path
+  // pays no graph/memory IPC cost.
+  const [showConceptGraph, setShowConceptGraph] = useState(false);
   const [reembedding, setReembedding] = useState(false);
   const [reembedError, setReembedError] = useState<string | null>(null);
   // Monotonic counter that bumps on each Re-embed click so the
@@ -672,7 +679,52 @@ export default function SourceDetailPage() {
             </div>
           )}
         </Card>
+
+        <Card>
+          <button
+            type="button"
+            data-testid="source-concept-graph-toggle"
+            aria-expanded={showConceptGraph}
+            onClick={() => setShowConceptGraph((v) => !v)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              font: "inherit",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              width: "100%",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>Concept graph</span>
+            <span
+              aria-hidden="true"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              {showConceptGraph ? "▾" : "▸"}
+            </span>
+          </button>
+          {showConceptGraph && (
+            <div style={{ marginTop: "var(--spacing-md)" }}>
+              <SourceConceptGraph />
+            </div>
+          )}
+        </Card>
       </div>
     </div>
   );
+}
+
+/**
+ * Lazily-mounted concept-graph panel for the SourceDetailPage. Kept as
+ * a child component so its `useMemories` / `useConceptGraph` fetches
+ * only run once the user expands the panel (the parent gates rendering
+ * on `showConceptGraph`). The full memory plane is loaded so selecting
+ * a concept can surface its source evidence + citations.
+ */
+function SourceConceptGraph() {
+  const { memories } = useMemories(null);
+  return <ConceptGraphPanel memories={memories} height={420} />;
 }

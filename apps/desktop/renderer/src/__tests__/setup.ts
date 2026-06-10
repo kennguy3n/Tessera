@@ -729,6 +729,22 @@ const mockApi = {
       },
     }),
   },
+  // Knowledge substrate surface (Session 1). Defaults to an empty
+  // memory plane + empty concept graph so substrate-consuming pages
+  // (Home insights, Memory, Knowledge Graph) render their empty states
+  // without errors; individual tests override these per case.
+  substrate: {
+    extractObservations: vi.fn().mockResolvedValue(0),
+    getMemories: vi.fn().mockResolvedValue([]),
+    pinMemory: vi.fn(),
+    unpinMemory: vi.fn(),
+    forgetMemory: vi.fn().mockResolvedValue(undefined),
+    getConceptGraph: vi.fn().mockResolvedValue('{"nodes":[],"edges":[]}'),
+    runDecaySweep: vi
+      .fn()
+      .mockResolvedValue({ scored: 0, candidatesArchived: 0, supersededArchived: 0 }),
+    triggerSynthesis: vi.fn(),
+  },
 };
 
 Object.defineProperty(window, "tessera", {

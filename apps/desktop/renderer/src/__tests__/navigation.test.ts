@@ -27,6 +27,9 @@ describe("sidebar navigation", () => {
   });
 
   it("renders the canonical Tessera nav order", () => {
+    // Memory + Knowledge Graph are appended AFTER Settings so the
+    // pre-existing 1..8 shortcuts stay pinned to their destinations
+    // (Vision=7, Settings=8) and only extend the range by two.
     expect(SIDEBAR_ITEMS.map((i) => i.to)).toEqual([
       "/",
       "/sources",
@@ -36,7 +39,18 @@ describe("sidebar navigation", () => {
       "/automations",
       "/vision",
       "/settings",
+      "/memory",
+      "/knowledge",
     ]);
+  });
+
+  it("appends Memory and Knowledge Graph as shortcuts 9 and 10", () => {
+    // The substrate UI surfaces live in the secondary ("More tools")
+    // tier and extend the shortcut range without disturbing 1..8.
+    expect(SIDEBAR_NAV_BY_KEY["9"]).toBe("/memory");
+    expect(SIDEBAR_NAV_BY_KEY["10"]).toBe("/knowledge");
+    expect(SIDEBAR_SHORTCUT_HINTS["/memory"]).toBe("9");
+    expect(SIDEBAR_SHORTCUT_HINTS["/knowledge"]).toBe("10");
   });
 
   it("keeps the primary/secondary tiers in sync with SIDEBAR_ITEMS", () => {

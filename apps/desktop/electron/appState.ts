@@ -374,6 +374,13 @@ export interface NativeBridge {
   bridgeGenerateFromTemplate(
     templateId: string,
     sourceIds: string[],
+    /**
+     * Optional, additive knowledge-substrate context lines appended to
+     * generation as a "Knowledge context" section. Omitted by callers
+     * that don't augment (e.g. the automation scheduler), preserving
+     * backward-compatible output.
+     */
+    memoryContext?: string[],
   ): ArtifactInfo;
   bridgeExtractTasksDecisions(sourceId: string): string;
   bridgeCompareSources(

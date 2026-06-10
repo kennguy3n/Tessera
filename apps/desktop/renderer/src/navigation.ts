@@ -7,6 +7,8 @@ import {
   Zap,
   Eye,
   Settings,
+  Brain,
+  Network,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -58,6 +60,8 @@ export const SECONDARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/tasks", label: "Tasks", Icon: CheckSquare },
   { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/vision", label: "Vision", Icon: Eye },
+  { to: "/memory", label: "Memory", Icon: Brain },
+  { to: "/knowledge", label: "Knowledge Graph", Icon: Network },
 ];
 
 /**
@@ -91,6 +95,8 @@ export const SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/vision", label: "Vision", Icon: Eye },
   { to: "/settings", label: "Settings", Icon: Settings },
+  { to: "/memory", label: "Memory", Icon: Brain },
+  { to: "/knowledge", label: "Knowledge Graph", Icon: Network },
 ];
 
 /** Map of `"1"..."N"` → route path, derived from `SIDEBAR_ITEMS`

@@ -15,6 +15,10 @@ import { notifyArtifactsChanged, useRecentArtifacts } from "../hooks/useArtifact
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { useSourceList } from "../hooks/useSources";
 import { useSettings } from "../hooks/useSettings";
+import {
+  useKnowledgeInsights,
+  type KnowledgeInsights,
+} from "../hooks/useSubstrate";
 import type { ArtifactInfo, SourceInfo } from "../types/ipc";
 
 /**
@@ -71,6 +75,7 @@ export default function HomePage() {
   const { sources, loading: sourcesLoading } = useSourceList();
   const { settings, loading: settingsLoading, refresh: refreshSettings } =
     useSettings();
+  const { insights, loading: insightsLoading } = useKnowledgeInsights();
   // Local optimistic flag so a successful Skip / Finish closes the
   // wizard immediately even if `refreshSettings()` is still in flight.
   // The IPC write has already succeeded by the time `onDismiss` fires
@@ -252,6 +257,30 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section
+        aria-label="Knowledge insights"
+        style={{ marginBottom: "var(--spacing-xl)" }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            marginBottom: "var(--spacing-md)",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Knowledge insights</h2>
+          <Button variant="secondary" onClick={() => navigate("/memory")}>
+            Open Memory
+          </Button>
+        </div>
+        <KnowledgeInsightsCard
+          insights={insights}
+          loading={insightsLoading}
+          onOpenGraph={() => navigate("/knowledge")}
+        />
+      </section>
+
       {hasArtifacts && (
         <section aria-label="Recent artifacts">
           <h2 style={{ marginBottom: "var(--spacing-md)" }}>Recent Artifacts</h2>
@@ -268,6 +297,75 @@ export default function HomePage() {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * "Knowledge insights" summary surfaced on the HomePage below the
+ * source-status card. Reads the substrate memory plane + concept graph
+ * (via `useKnowledgeInsights`) and renders four headline metrics —
+ * total entities extracted, active memories, concepts in graph — plus
+ * the most-connected entities, giving the user an at-a-glance sense of
+ * "what Tessera knows" without leaving Home.
+ */
+function KnowledgeInsightsCard({
+  insights,
+  loading,
+  onOpenGraph,
+}: {
+  insights: KnowledgeInsights;
+  loading: boolean;
+  onOpenGraph: () => void;
+}) {
+  if (loading) {
+    return (
+      <Card>
+        <p className="card-description">Loading knowledge insights...</p>
+      </Card>
+    );
+  }
+
+  const metrics: Array<[string, number]> = [
+    ["Entities extracted", insights.totalEntities],
+    ["Active memories", insights.activeMemories],
+    ["Concepts in graph", insights.conceptsInGraph],
+  ];
+
+  return (
+    <div
+      data-testid="knowledge-insights"
+      style={{ display: "flex", gap: "var(--spacing-md)", flexWrap: "wrap" }}
+    >
+      {metrics.map(([label, value]) => (
+        <Card key={label}>
+          <div className="card-title" data-testid={`knowledge-metric-${label}`}>
+            {value}
+          </div>
+          <div className="card-description">{label}</div>
+        </Card>
+      ))}
+      <Card onClick={onOpenGraph}>
+        <div className="card-description" style={{ marginBottom: "0.25rem" }}>
+          Most-connected entities
+        </div>
+        {insights.mostConnected.length === 0 ? (
+          <div className="card-description">No entities extracted yet.</div>
+        ) : (
+          <ol
+            data-testid="knowledge-most-connected"
+            style={{
+              margin: 0,
+              paddingLeft: "1.1rem",
+              fontSize: "var(--font-size-sm)",
+            }}
+          >
+            {insights.mostConnected.map((mem) => (
+              <li key={mem.id}>{mem.content}</li>
+            ))}
+          </ol>
+        )}
+      </Card>
     </div>
   );
 }
