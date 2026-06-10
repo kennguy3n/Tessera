@@ -15,6 +15,11 @@ import {
   logStartupPerfTable,
   coldStartTotalMs,
 } from "./startupPerf";
+import {
+  BRIDGE_STATE_GET_CHANNEL,
+  getBridgeStateSnapshot,
+  setBridgeState,
+} from "./bridgeLifecycle";
 // `./autoUpdater` is loaded dynamically inside `whenReady()` (see
 // `initAutoUpdater()` call site). Task 1: it pulls in
 // `electron-updater` (which itself imports `js-yaml` + `xml2js` +
@@ -691,6 +696,78 @@ function installCSPDevtoolsLogger(): void {
  */
 let appInitComplete = false;
 
+/**
+ * LW-8 (cold-start budget): initialise the native bridge and every
+ * bridge-dependent service OFF the cold-start critical path.
+ *
+ * Called via `void initBridgeAndServices()` AFTER `createWindow()` so
+ * the renderer can paint its "Loading workspace…" skeleton while this
+ * runs. The heavy `initAppState()` (SQLCipher open + tombstone replay +
+ * FTS purge) is the work being moved off the boot wire here.
+ *
+ * Lifecycle reporting:
+ *   - on success, broadcasts `setBridgeState("ready")` so the renderer
+ *     hydrates the real app shell;
+ *   - on failure, broadcasts `setBridgeState("error", …)` so the
+ *     renderer can surface a "workspace failed to open" state instead
+ *     of hanging on the skeleton forever.
+ *
+ * This function NEVER throws: it is invoked with `void` from the boot
+ * sequence (so an unhandled rejection would otherwise be silent), and a
+ * bridge-init failure must degrade gracefully, not crash the process.
+ */
+async function initBridgeAndServices(): Promise<void> {
+  try {
+    // Initialise the native bridge + SQLCipher key. Runs AFTER the
+    // vault is unlocked (the `await maybeInitPasswordVault()` in
+    // `whenReady` precedes the `void initBridgeAndServices()` call) so
+    // that on keyringless platforms `getOrCreateDbKeyAsync` can wrap the
+    // SQLCipher key under the vault key instead of throwing
+    // `EncryptionUnavailableError`.
+    markStart("bridge-init");
+    await initAppState();
+    markEnd("bridge-init");
+  } catch (err) {
+    markEnd("bridge-init");
+    const message = err instanceof Error ? err.message : String(err);
+    getLogger().error("bridge.init.failed", { message });
+    // Surface the failure to the renderer (it leaves the skeleton and
+    // shows an error state) rather than wedging boot on a half-open
+    // bridge.
+    setBridgeState("error", { error: message });
+    return;
+  }
+  // Replay the persisted hybrid retrieval config into the live Rust
+  // `SourceManager`. Must run AFTER `initAppState` brings the bridge up
+  // (otherwise it races the bridge being ready and silently no-ops via
+  // `getBridge() === null`). A failure is logged but not fatal: the
+  // user can re-tune in Settings; the engine uses its compiled defaults.
+  try {
+    replayPersistedHybridSearchConfigToBridge();
+  } catch (err) {
+    console.warn(
+      "[Tessera] Failed to replay persisted hybrid search config:",
+      err,
+    );
+  }
+  // LW-3: begin polling battery state so the scheduler and
+  // `model:generate` can defer synthesis when the device is on a low
+  // battery. The probe runs on a 60s unref'd timer (never holds the
+  // event loop open) and fails open — desktops / AC / unknown state
+  // report "AC always" and never gate. Started before the scheduler so
+  // the first tick already has a battery reading to consult. Lives here
+  // (off the cold-start critical path) alongside the rest of the
+  // bridge-dependent services rather than in the boot wire.
+  startBatteryMonitor();
+  // Start the automations scheduler now that the bridge backs its
+  // dispatch. It ticks every 30s in the main process, dispatching due
+  // `Schedule` automations directly against the native bridge. See
+  // `scheduler.ts` for the run-control protocol.
+  startScheduler();
+  // Bridge + services are up: tell every renderer to hydrate.
+  setBridgeState("ready");
+}
+
 // Record the `app-ready` start anchor at module-load — i.e. as close
 // as we can get to the V8 main bundle entrypoint inside the Electron
 // process. The end mark is recorded inside the `whenReady` callback
@@ -854,6 +931,15 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
+  // LW-8: register the bridge-readiness query channel here, alongside
+  // the domain handlers and BEFORE any window is created, so the very
+  // first thing the renderer does on mount — ask "is the bridge ready
+  // yet?" so it knows whether to keep showing the skeleton — always
+  // finds a live handler. The matching `app:bridgeState` push events
+  // are emitted by `setBridgeState()` from `initBridgeAndServices()`.
+  // This is a tiny module-singleton read with no bridge dependency, so
+  // it answers correctly even while `initAppState()` is still running.
+  ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, () => getBridgeStateSnapshot());
   // start the localhost API server the .kcz
   // extension installed in KChat Desktop talks to. Runs AFTER
   // `registerIpcHandlers()` because the handlers populate the
@@ -889,51 +975,34 @@ app.whenReady().then(async () => {
       err: err instanceof Error ? err.message : String(err),
     });
   }
-  // Run the vault prompt BEFORE `initAppState()` so that when
-  // `getOrCreateDbKeyAsync()` checks `passwordVaultActive()`, the
-  // vault key (if any) is already cached. On non-keyringless
-  // platforms `maybeInitPasswordVault` is a synchronous no-op.
+  // Run the vault prompt BEFORE creating the window / bridge init so
+  // that when `getOrCreateDbKeyAsync()` checks `passwordVaultActive()`,
+  // the vault key (if any) is already cached. On non-keyringless
+  // platforms `maybeInitPasswordVault` is a synchronous no-op, so it
+  // adds nothing to the cold-start path that the gate measures; on
+  // keyringless platforms the modal prompt must resolve before we open
+  // the store anyway, so it correctly stays ahead of the window.
   await maybeInitPasswordVault();
-  // Initialise the native bridge + SQLCipher key. Runs AFTER the
-  // vault is unlocked so that on keyringless platforms
-  // `getOrCreateDbKeyAsync` can wrap the SQLCipher key under the
-  // vault key (instead of throwing `EncryptionUnavailableError`
-  // and falling back to unencrypted mode as an earlier boot
-  // sequence did). See the doc comment at the top of this
-  // callback for the full ordering rationale.
-  markStart("bridge-init");
-  await initAppState();
-  markEnd("bridge-init");
-  // Replay the persisted hybrid retrieval config into the live Rust
-  // `SourceManager`. Must run AFTER `initAppState` brings the
-  // bridge up (awaiting `initAppState` is what makes that ordering
-  // deterministic — placing this call before `initAppState` raced
-  // against the bridge being ready and silently no-op'd via
-  // `getBridge() === null`). A failure
-  // is logged but not fatal: the user can re-tune in Settings,
-  // the live engine simply uses its compiled defaults.
-  try {
-    replayPersistedHybridSearchConfigToBridge();
-  } catch (err) {
-    console.warn(
-      "[Tessera] Failed to replay persisted hybrid search config:",
-      err,
-    );
-  }
-  // LW-3: begin polling battery state so the scheduler and
-  // `model:generate` can defer synthesis when the device is on a low
-  // battery. The probe runs on a 60s unref'd timer (never holds the
-  // event loop open) and fails open — desktops / AC / unknown state
-  // report "AC always" and never gate. Started before the scheduler so
-  // the first tick already has a battery reading to consult.
-  startBatteryMonitor();
-  // Start the automations scheduler. Runs in the main process and
-  // ticks every 30s, dispatching due `Schedule` automations directly
-  // against the native bridge (i.e. without bouncing through the
-  // renderer). See `scheduler.ts` for the run-control protocol.
-  startScheduler();
+  // LW-8 (cold-start budget): WINDOW FIRST.
+  //
+  // The boot path used to be `… → await initAppState() → createWindow()`,
+  // so the first paint the cold-start gate measures could not happen
+  // until the SQLCipher open + tombstone replay + FTS purge inside
+  // `initAppState()` had finished — that I/O-bound work dominated
+  // boot-to-first-render. We now create the window immediately: the
+  // renderer paints a lightweight "Loading workspace…" skeleton (which
+  // has no bridge dependency), and the heavy bridge init runs OFF the
+  // critical path in `initBridgeAndServices()` below, signalling the
+  // renderer to hydrate via `setBridgeState("ready")`. See
+  // `bridgeLifecycle.ts` for the readiness contract.
   createWindow();
   appInitComplete = true;
+  // Kick off bridge init + every bridge-dependent service in the
+  // background. `void` (NOT `await`): boot-to-first-render must never
+  // wait on it. `initBridgeAndServices` reports `ready`/`error` to the
+  // renderer itself and swallows its own failures, so an unhandled
+  // rejection can never escape here.
+  void initBridgeAndServices();
   // Kick off the auto-update check. No-op in dev (app.isPackaged ==
   // false) and silently disabled when the user has unchecked
   // "Automatically check for updates" in Settings.
