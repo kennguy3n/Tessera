@@ -14,6 +14,7 @@ pub mod exporter;
 pub mod napi_exports;
 pub mod settings;
 pub mod sources;
+pub mod substrate;
 pub mod tasks;
 pub mod templates;
 

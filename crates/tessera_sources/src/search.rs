@@ -1,10 +1,12 @@
 //! The search engine: hybrid lexical + vector retrieval over indexed
 //! source chunks.
 
+use std::collections::HashMap;
+
 use tessera_core::error::Result;
 
 use crate::embedding::EmbeddingProvider;
-use crate::hybrid::{hybrid_search, HybridSearchConfig};
+use crate::hybrid::{hybrid_search_with_retention, HybridSearchConfig};
 use crate::store::SourceStore;
 
 /// Runs full-text (BM25) and optional hybrid vector/recency search
@@ -13,6 +15,11 @@ pub struct SearchEngine<'a> {
     store: &'a SourceStore,
     provider: Option<&'a dyn EmbeddingProvider>,
     config: HybridSearchConfig,
+    /// Per-source retention scores from the knowledge substrate, fed
+    /// into the hybrid RRF fusion as a fourth signal. Empty for the
+    /// `new`/`hybrid` constructors (BM25 + vector + recency only);
+    /// populated via [`SearchEngine::hybrid_with_retention`].
+    retention_by_source: HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +88,7 @@ impl<'a> SearchEngine<'a> {
                 recency_halflife_secs: f64::INFINITY,
                 ..Default::default()
             },
+            retention_by_source: HashMap::new(),
         }
     }
 
@@ -97,6 +105,26 @@ impl<'a> SearchEngine<'a> {
             store,
             provider,
             config,
+            retention_by_source: HashMap::new(),
+        }
+    }
+
+    /// Build a hybrid search engine that additionally fuses the
+    /// knowledge-substrate retention signal (a fourth RRF input)
+    /// using `retention_by_source` (Tessera source id → live
+    /// retention score). Equivalent to [`SearchEngine::hybrid`] when
+    /// the map is empty.
+    pub fn hybrid_with_retention(
+        store: &'a SourceStore,
+        provider: Option<&'a dyn EmbeddingProvider>,
+        config: HybridSearchConfig,
+        retention_by_source: HashMap<String, f64>,
+    ) -> Self {
+        Self {
+            store,
+            provider,
+            config,
+            retention_by_source,
         }
     }
 
@@ -120,13 +148,14 @@ impl<'a> SearchEngine<'a> {
     ) -> Result<Vec<SearchResult>> {
         let fts_query = build_fts_query(query, use_or);
 
-        let ranked_ids = hybrid_search(
+        let ranked_ids = hybrid_search_with_retention(
             self.store,
             self.provider,
             query,
             &fts_query,
             limit,
             &self.config,
+            &self.retention_by_source,
         )?;
         if ranked_ids.is_empty() {
             return Ok(Vec::new());

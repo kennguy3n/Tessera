@@ -1,14 +1,52 @@
 import { useState, useEffect, useCallback } from "react";
+import type { ReactNode } from "react";
 import Button from "./Button";
 import RelevanceBadge from "./RelevanceBadge";
 import type {
   CitationInfo,
   AddCitationRequest,
   CitationFreshness,
+  EnrichedSearchResult,
   KchatPostSearchHit,
   ReplaceCitationRequest,
   SearchHit,
+  SubstrateConceptInfo,
+  SubstrateMemoryInfo,
 } from "../types/ipc";
+
+/**
+ * Empty knowledge plane — the additive "Knowledge" tab shows nothing
+ * until an enriched search resolves (or when the substrate has no
+ * observations for the query). Shared so a failed/absent enriched
+ * search degrades to "no knowledge" rather than crashing the dialog.
+ */
+const EMPTY_KNOWLEDGE: EnrichedSearchResult = {
+  hits: [],
+  entities: [],
+  facts: [],
+  concepts: [],
+  memories: [],
+};
+
+/**
+ * Fetch the additive knowledge plane (entities, facts, concepts) for a
+ * query via `sources:searchEnriched`. Returns an empty plane when the
+ * API or the native bridge is unavailable, or when the enriched search
+ * rejects — the "Knowledge" tab is purely additive and must never break
+ * the existing "Sources" evidence flow.
+ */
+async function fetchKnowledgePlane(
+  query: string,
+  limit: number,
+): Promise<EnrichedSearchResult> {
+  const api = window.tessera;
+  if (!api?.sources?.searchEnriched) return EMPTY_KNOWLEDGE;
+  try {
+    return await api.sources.searchEnriched(query, limit);
+  } catch {
+    return EMPTY_KNOWLEDGE;
+  }
+}
 
 /**
  * renderer-side merged-evidence row.
@@ -487,6 +525,195 @@ function buildCitationFields(row: EvidenceRow): {
   };
 }
 
+/** The two result views in the search dialogs. */
+type ResultTab = "sources" | "knowledge";
+
+/**
+ * Total count of knowledge items across the entity / fact / concept
+ * planes — drives the "Knowledge (N)" tab label and the empty-state
+ * copy. Memories are intentionally excluded from the badge because
+ * they are a superset of entities + facts (showing them would
+ * double-count what the user already sees in those sections).
+ */
+function knowledgeCount(k: EnrichedSearchResult): number {
+  return k.entities.length + k.facts.length + k.concepts.length;
+}
+
+/**
+ * Render the additive "Knowledge" plane of an enriched search:
+ * entities and facts (observation-typed memory items) plus matching
+ * concept-graph nodes. Each row shows its decay state and, for
+ * concepts, how many sources it co-occurs in. Purely informational —
+ * unlike the "Sources" tab these rows are not selectable as citations
+ * (entities/concepts have no single chunk hash to attribute).
+ */
+function KnowledgeResultsView({ knowledge }: { knowledge: EnrichedSearchResult }) {
+  const total = knowledgeCount(knowledge);
+  if (total === 0) {
+    return (
+      <p className="citation-knowledge-empty">
+        No entities, facts, or concepts found for this query. Run the
+        observation pipeline on your sources to populate the knowledge
+        layer.
+      </p>
+    );
+  }
+  return (
+    <div className="citation-knowledge-results">
+      {knowledge.entities.length > 0 && (
+        <KnowledgeMemorySection
+          title="Entities"
+          items={knowledge.entities}
+          kind="entity"
+        />
+      )}
+      {knowledge.facts.length > 0 && (
+        <KnowledgeMemorySection
+          title="Facts"
+          items={knowledge.facts}
+          kind="fact"
+        />
+      )}
+      {knowledge.concepts.length > 0 && (
+        <section
+          className="citation-knowledge-section"
+          aria-label="Concepts"
+        >
+          <h5 className="citation-knowledge-heading">
+            Concepts ({knowledge.concepts.length})
+          </h5>
+          <ul className="citation-knowledge-list">
+            {knowledge.concepts.map((concept: SubstrateConceptInfo) => (
+              <li
+                key={concept.id}
+                className="citation-knowledge-item citation-knowledge-item-concept"
+                data-state={concept.state}
+              >
+                <span className="citation-knowledge-label">
+                  {concept.label}
+                </span>
+                <span className="citation-knowledge-meta">
+                  <span className="citation-knowledge-state">
+                    {concept.state}
+                  </span>
+                  {concept.relatedSourceIds.length > 0 && (
+                    <span className="citation-knowledge-sources">
+                      {concept.relatedSourceIds.length} source
+                      {concept.relatedSourceIds.length === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function KnowledgeMemorySection({
+  title,
+  items,
+  kind,
+}: {
+  title: string;
+  items: SubstrateMemoryInfo[];
+  kind: string;
+}) {
+  return (
+    <section className="citation-knowledge-section" aria-label={title}>
+      <h5 className="citation-knowledge-heading">
+        {title} ({items.length})
+      </h5>
+      <ul className="citation-knowledge-list">
+        {items.map((item) => (
+          <li
+            key={item.id}
+            className={`citation-knowledge-item citation-knowledge-item-${kind}`}
+            data-state={item.state}
+          >
+            <span className="citation-knowledge-label">{item.content}</span>
+            <span className="citation-knowledge-meta">
+              <span className="citation-knowledge-state">{item.state}</span>
+              <span
+                className="citation-knowledge-retention"
+                title="Retention score"
+              >
+                {(item.retentionScore * 100).toFixed(0)}%
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Tabbed switch between the "Sources" (selectable evidence rows) and
+ * "Knowledge" (entities / facts / concepts) views shared by the
+ * Add/Replace citation dialogs. The Sources tab is unchanged from the
+ * original flat list; Knowledge is additive.
+ */
+function SearchResultsTabs({
+  activeTab,
+  onTabChange,
+  sourcesCount,
+  knowledge,
+  children,
+}: {
+  activeTab: ResultTab;
+  onTabChange: (tab: ResultTab) => void;
+  sourcesCount: number;
+  knowledge: EnrichedSearchResult;
+  children: ReactNode;
+}) {
+  return (
+    <div className="citation-search-tabs-container">
+      <div
+        className="citation-search-tabs"
+        role="tablist"
+        aria-label="Search result views"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "sources"}
+          className={
+            activeTab === "sources"
+              ? "citation-search-tab citation-search-tab-active"
+              : "citation-search-tab"
+          }
+          onClick={() => onTabChange("sources")}
+        >
+          Sources ({sourcesCount})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "knowledge"}
+          className={
+            activeTab === "knowledge"
+              ? "citation-search-tab citation-search-tab-active"
+              : "citation-search-tab"
+          }
+          onClick={() => onTabChange("knowledge")}
+        >
+          Knowledge ({knowledgeCount(knowledge)})
+        </button>
+      </div>
+      <div role="tabpanel">
+        {activeTab === "sources" ? (
+          children
+        ) : (
+          <KnowledgeResultsView knowledge={knowledge} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AddCitationDialog({
   artifactId,
   onAdd,
@@ -498,14 +725,27 @@ function AddCitationDialog({
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<EvidenceRow[]>([]);
+  const [knowledge, setKnowledge] =
+    useState<EnrichedSearchResult>(EMPTY_KNOWLEDGE);
+  const [activeTab, setActiveTab] = useState<ResultTab>("sources");
   const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
     setSearching(true);
     try {
-      const rows = await runMergedEvidenceSearch(query, 10);
+      // Run the existing merged evidence search (file + KChat) and the
+      // additive knowledge-plane lookup in parallel. A failure in the
+      // knowledge plane degrades to an empty "Knowledge" tab without
+      // affecting the "Sources" results.
+      const [rows, plane] = await Promise.all([
+        runMergedEvidenceSearch(query, 10),
+        fetchKnowledgePlane(query, 10),
+      ]);
       setResults(rows);
+      setKnowledge(plane);
+      setSearched(true);
     } finally {
       setSearching(false);
     }
@@ -545,20 +785,33 @@ function AddCitationDialog({
           Search
         </Button>
       </div>
-      {results.length > 0 && (
-        <div className="citation-search-results" role="list">
-          {results.map((row, i) => (
-            <EvidenceRowButton
-              key={
-                row.kind === "file"
-                  ? `file-${row.hit.chunkHash}-${i}`
-                  : `kchat-${row.hit.postId}-${row.hit.chunkHash}-${i}`
-              }
-              row={row}
-              onSelect={selectHit}
-            />
-          ))}
-        </div>
+      {searched && (
+        <SearchResultsTabs
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          sourcesCount={results.length}
+          knowledge={knowledge}
+        >
+          {results.length > 0 ? (
+            <div className="citation-search-results" role="list">
+              {results.map((row, i) => (
+                <EvidenceRowButton
+                  key={
+                    row.kind === "file"
+                      ? `file-${row.hit.chunkHash}-${i}`
+                      : `kchat-${row.hit.postId}-${row.hit.chunkHash}-${i}`
+                  }
+                  row={row}
+                  onSelect={selectHit}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="citation-search-empty">
+              No matching chunks found for this query.
+            </p>
+          )}
+        </SearchResultsTabs>
       )}
       <Button variant="secondary" onClick={onCancel}>
         Cancel
@@ -580,6 +833,10 @@ function ReplaceCitationDialog({
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<EvidenceRow[]>([]);
+  const [knowledge, setKnowledge] =
+    useState<EnrichedSearchResult>(EMPTY_KNOWLEDGE);
+  const [activeTab, setActiveTab] = useState<ResultTab>("sources");
+  const [searched, setSearched] = useState(false);
   const [searching, setSearching] = useState(false);
   const [replacing, setReplacing] = useState<string | null>(null);
 
@@ -587,8 +844,13 @@ function ReplaceCitationDialog({
     if (!query.trim()) return;
     setSearching(true);
     try {
-      const rows = await runMergedEvidenceSearch(query, 10);
+      const [rows, plane] = await Promise.all([
+        runMergedEvidenceSearch(query, 10),
+        fetchKnowledgePlane(query, 10),
+      ]);
       setResults(rows);
+      setKnowledge(plane);
+      setSearched(true);
     } finally {
       setSearching(false);
     }
@@ -640,21 +902,34 @@ function ReplaceCitationDialog({
           Search
         </Button>
       </div>
-      {results.length > 0 && (
-        <div className="citation-search-results" role="list">
-          {results.map((row, i) => (
-            <EvidenceRowButton
-              key={
-                row.kind === "file"
-                  ? `file-${row.hit.chunkHash}-${i}`
-                  : `kchat-${row.hit.postId}-${row.hit.chunkHash}-${i}`
-              }
-              row={row}
-              onSelect={selectHit}
-              disabled={replacing != null}
-            />
-          ))}
-        </div>
+      {searched && (
+        <SearchResultsTabs
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          sourcesCount={results.length}
+          knowledge={knowledge}
+        >
+          {results.length > 0 ? (
+            <div className="citation-search-results" role="list">
+              {results.map((row, i) => (
+                <EvidenceRowButton
+                  key={
+                    row.kind === "file"
+                      ? `file-${row.hit.chunkHash}-${i}`
+                      : `kchat-${row.hit.postId}-${row.hit.chunkHash}-${i}`
+                  }
+                  row={row}
+                  onSelect={selectHit}
+                  disabled={replacing != null}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="citation-search-empty">
+              No matching chunks found for this query.
+            </p>
+          )}
+        </SearchResultsTabs>
       )}
       <Button variant="secondary" onClick={onCancel}>
         Cancel

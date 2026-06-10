@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import HomePage from "../pages/HomePage";
 import SettingsPage from "../pages/SettingsPage";
@@ -474,6 +480,87 @@ describe("CreatePage", () => {
     expect(generateBtn).toBeDisabled();
 
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+  });
+
+  it("surfaces concept-graph suggestions and includes them on click", async () => {
+    const sourceA = {
+      id: "11111111-1111-4111-8111-111111111111",
+      sourceType: "local_folder" as const,
+      path: "/docs/a",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 2,
+    };
+    const sourceB = {
+      id: "22222222-2222-4222-8222-222222222222",
+      sourceType: "local_folder" as const,
+      path: "/docs/b",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+    window.tessera.sources.listSources = vi
+      .fn()
+      .mockResolvedValue([sourceA, sourceB]);
+    // The substrate suggests source B (co-occurs with A under "Acme
+    // Corp"). Once B is selected the suggestion's only id is selected
+    // and the panel must disappear.
+    window.tessera.substrate.suggestRelatedSources = vi.fn().mockResolvedValue([
+      { entity: "Acme Corp", sourceIds: [sourceB.id], score: 0.9 },
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={["/create?template=prd-v1"]}>
+        <Routes>
+          <Route path="/create" element={<CreatePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("/docs/a")).toBeInTheDocument();
+    });
+
+    // No suggestions until the user selects a source (empty selection
+    // short-circuits without an IPC round-trip).
+    expect(
+      screen.queryByTestId("create-related-suggestions"),
+    ).not.toBeInTheDocument();
+
+    // Select source A → substrate is queried with [A].
+    fireEvent.click(screen.getByLabelText(/\/docs\/a/i));
+    await waitFor(() => {
+      expect(
+        window.tessera.substrate.suggestRelatedSources,
+      ).toHaveBeenCalledWith([sourceA.id], 5);
+    });
+
+    const panel = await screen.findByTestId("create-related-suggestions");
+    expect(
+      within(panel).getByText(/You have 1 more source about/i),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("Acme Corp")).toBeInTheDocument();
+
+    // Including the suggestion checks source B and removes the panel.
+    fireEvent.click(
+      within(panel).getByRole("button", {
+        name: /include 1 source about acme corp/i,
+      }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("create-related-suggestions"),
+      ).not.toBeInTheDocument();
+    });
+    const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes.every((c) => c.checked)).toBe(true);
+
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+    window.tessera.substrate.suggestRelatedSources = vi
+      .fn()
+      .mockResolvedValue([]);
   });
 
   it("renders all four category tabs with the documented descriptions", () => {

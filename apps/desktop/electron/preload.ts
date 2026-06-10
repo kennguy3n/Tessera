@@ -190,6 +190,8 @@ const api: TesseraApi = {
     removeSource: (id: string) => ipcRenderer.invoke("sources:remove", id),
     searchSources: (query: string, limit: number) =>
       ipcRenderer.invoke("sources:search", query, limit),
+    searchEnriched: (query: string, limit: number) =>
+      ipcRenderer.invoke("sources:searchEnriched", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
     // bulk re-index. Calls the main-process
@@ -525,6 +527,30 @@ const api: TesseraApi = {
     update: (id, req) => ipcRenderer.invoke("tasks:update", id, req),
     remove: (id) => ipcRenderer.invoke("tasks:delete", id),
     reorder: (status, ids) => ipcRenderer.invoke("tasks:reorder", status, ids),
+  },
+  substrate: {
+    extractObservations: (sourceId) =>
+      ipcRenderer.invoke("substrate:extractObservations", sourceId),
+    getMemories: (scope) =>
+      ipcRenderer.invoke("substrate:getMemories", scope ?? null),
+    pinMemory: (id) => ipcRenderer.invoke("substrate:pinMemory", id),
+    unpinMemory: (id) => ipcRenderer.invoke("substrate:unpinMemory", id),
+    forgetMemory: (id) => ipcRenderer.invoke("substrate:forgetMemory", id),
+    getConceptGraph: (scope, maxNodes) =>
+      ipcRenderer.invoke(
+        "substrate:getConceptGraph",
+        scope ?? null,
+        maxNodes ?? null,
+      ),
+    suggestRelatedSources: (selectedSourceIds, maxSuggestions) =>
+      ipcRenderer.invoke(
+        "substrate:suggestRelatedSources",
+        selectedSourceIds,
+        maxSuggestions ?? null,
+      ),
+    runDecaySweep: () => ipcRenderer.invoke("substrate:runDecaySweep"),
+    triggerSynthesis: (scope) =>
+      ipcRenderer.invoke("substrate:triggerSynthesis", scope ?? null),
   },
   automations: {
     create: (req) => ipcRenderer.invoke("automations:create", req),

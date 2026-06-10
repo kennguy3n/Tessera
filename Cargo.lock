@@ -592,9 +592,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "concept_graph"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
+dependencies = [
+ "chrono",
+ "crypto",
+ "evidence_store",
+ "rand 0.10.1",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "connector_framework"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -613,7 +630,7 @@ dependencies = [
 [[package]]
 name = "connectors"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "connector_framework",
@@ -779,7 +796,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "crypto"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1170,7 +1187,7 @@ dependencies = [
 [[package]]
 name = "evidence_store"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -2222,7 +2239,7 @@ checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 [[package]]
 name = "inference_router"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -2638,7 +2655,7 @@ dependencies = [
 [[package]]
 name = "memory_manager"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -3027,7 +3044,7 @@ dependencies = [
 [[package]]
 name = "observation_engine"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -3221,7 +3238,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "permission_service"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "crypto",
@@ -4488,6 +4505,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "synthesis_pipeline"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
+dependencies = [
+ "chrono",
+ "crypto",
+ "evidence_store",
+ "inference_router",
+ "memory_manager",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "tar"
 version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4562,6 +4596,7 @@ dependencies = [
  "tessera_export",
  "tessera_runtime",
  "tessera_sources",
+ "tessera_substrate",
  "tessera_templates",
  "thiserror 1.0.69",
  "tokio",
@@ -4703,6 +4738,24 @@ dependencies = [
  "uuid",
  "walkdir",
  "zeroize",
+]
+
+[[package]]
+name = "tessera_substrate"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "concept_graph",
+ "crypto",
+ "evidence_store",
+ "memory_manager",
+ "observation_engine",
+ "serde",
+ "serde_json",
+ "synthesis_pipeline",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]

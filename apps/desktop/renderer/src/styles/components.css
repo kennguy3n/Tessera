@@ -357,6 +357,120 @@
   border-radius: var(--radius-input);
 }
 
+/*
+ * Session 6 enriched-search "Knowledge" tab (CitationPanel).
+ *
+ * The Add/Replace citation dialogs split their results into a
+ * "Sources" tab (the existing selectable chunk list) and an additive
+ * "Knowledge" tab (entities / facts / concepts from the observation
+ * substrate). Every colour is a theme-token reference so the dark
+ * theme picks up the override scope automatically — same discipline
+ * as the KChat surfaces above.
+ */
+.citation-search-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--spacing-sm);
+}
+
+.citation-search-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.citation-search-tab:hover {
+  color: var(--color-text-body);
+}
+
+.citation-search-tab-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.citation-search-tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
+}
+
+.citation-knowledge-section {
+  margin-bottom: var(--spacing-md);
+}
+
+.citation-knowledge-heading {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.citation-knowledge-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.citation-knowledge-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface-soft);
+  font-size: var(--font-size-sm);
+}
+
+.citation-knowledge-item-concept {
+  border-left: 3px solid var(--color-primary);
+  padding-left: calc(var(--spacing-sm) - 3px);
+}
+
+.citation-knowledge-label {
+  color: var(--color-text-body);
+}
+
+.citation-knowledge-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
+.citation-knowledge-state {
+  font-size: var(--font-size-xs);
+  text-transform: capitalize;
+  color: var(--color-text-secondary);
+}
+
+.citation-knowledge-retention,
+.citation-knowledge-sources {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-primary);
+}
+
+.citation-knowledge-empty,
+.citation-search-empty {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-sm) 0;
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;

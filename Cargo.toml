@@ -12,6 +12,7 @@ members = [
     "crates/tessera_audit",
     "crates/tessera_runtime",
     "crates/tessera_connectors",
+    "crates/tessera_substrate",
 ]
 
 [workspace.package]
@@ -28,14 +29,29 @@ blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-# Pinned to `0.36` to match the knowledge substrate's `evidence_store`
-# (see `crates/tessera_bridge` connectors-v2 git deps). Both link the
-# bundled SQLCipher native lib via `libsqlite3-sys`; cargo permits only
-# one package to `links = "sqlite3"`, so the substrate integration
-# requires Tessera and knowledge to resolve to the same rusqlite major.
-# The `blob` feature mirrors knowledge's pin so the unified
-# libsqlite3-sys build is identical across both graphs.
+# Bumped to 0.36 to unify `libsqlite3-sys` (which declares `links =
+# "sqlite3"`) with the `kennguy3n/knowledge` substrate crates
+# (`evidence_store`, `concept_graph`) pulled in via git below. Two
+# SemVer-incompatible `libsqlite3-sys` versions both bundling SQLCipher
+# cannot coexist in one build graph (Cargo rejects duplicate `links`),
+# so the whole workspace tracks the substrate's pinned `0.36` line.
+# `blob` matches the substrate's feature set; `bundled-sqlcipher-
+# vendored-openssl` keeps the single statically-linked SQLCipher build.
 rusqlite = { version = "0.36", features = ["bundled-sqlcipher-vendored-openssl", "blob"] }
+
+# --- kennguy3n/knowledge substrate (git, pinned) ---------------------
+# Additive native layer. Pinned to a specific rev so substrate builds
+# are reproducible; bump deliberately. All six entry crates resolve
+# their intra-repo `path` deps (crypto, inference_router, evidence_
+# store, memory_manager) from the same git checkout automatically.
+# Pinned to the snapshot-API rev (knowledge#220) so the substrate can
+# produce consistent encrypted backups of its sibling DBs.
+knowledge-crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+observation_engine = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+memory_manager = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+concept_graph = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+synthesis_pipeline = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 tempfile = "3"
 walkdir = "2"

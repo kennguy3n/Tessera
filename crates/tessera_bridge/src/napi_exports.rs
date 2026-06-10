@@ -1,6 +1,7 @@
 //! Top-level N-API entry points wiring the Rust core managers to the
 //! desktop app, including async tasks shared across bridge modules.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use napi::bindgen_prelude::{AsyncTask, Buffer};
@@ -19,6 +20,7 @@ use tessera_core::{
 };
 use tessera_sources::manager::SourceManager;
 use tessera_sources::progress::EmbeddingProgressTracker;
+use tessera_substrate::{EnrichedKnowledge, SubstrateManager};
 
 use crate::artifacts;
 use crate::automations;
@@ -26,6 +28,7 @@ use crate::backup;
 use crate::citations;
 use crate::exporter;
 use crate::sources;
+use crate::substrate;
 use crate::tasks;
 use crate::templates;
 
@@ -98,6 +101,21 @@ struct AppState {
     /// also keeps the connection alive even if every individual
     /// store is dropped or replaced during shutdown.
     shared_conn: tessera_core::SharedConnection,
+    /// Knowledge-substrate adapter (evidence store + observation
+    /// engine + memory manager + concept graph + synthesis). Additive
+    /// native layer; backed by its own SQLCipher sibling files keyed
+    /// from the same master key as the main DB, so it never touches
+    /// the existing `sources` / `chunks` / `chunk_embeddings` tables.
+    /// Acquired LAST in the documented lock order (after
+    /// `automation_store`) on the rare path that stacks it with another
+    /// store lock.
+    ///
+    /// Wrapped in `Option` so a substrate-open failure degrades
+    /// gracefully: the core app (sources, artifacts, search,
+    /// citations, backup) keeps working and only the additive
+    /// substrate surface returns an "unavailable" error. See
+    /// `init_bridge`.
+    substrate: Mutex<Option<SubstrateManager>>,
     /// Absolute path to the live SQLCipher database file. Captured at
     /// `init_bridge` so backup/restore operations can stage a restore
     /// next to the live file without the renderer having to re-derive
@@ -236,6 +254,34 @@ pub fn init_bridge(
     let automation_store = AutomationStore::with_shared_conn(conn.clone())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
+    // Open the additive knowledge substrate. It manages its own
+    // SQLCipher sibling files (never the main DB), all derived from the
+    // same `db_key`, so a single user secret protects everything and
+    // there is nothing extra to provision.
+    //
+    // A substrate-open failure must NOT break the core app: the
+    // substrate's sibling files (`*.substrate-evidence.db`,
+    // `*.substrate-concepts.db`) can become independently corrupted,
+    // fail a schema migration, or hit a file-level lock while the main
+    // DB is perfectly healthy. In that case every core feature
+    // (sources, artifacts, search, citations, backup) must keep working
+    // and only the additive substrate surface is disabled — so we log
+    // and fall back to `None` (degraded mode) instead of propagating the
+    // error up through `initAppState()` to a fatal `setBridgeState
+    // ("error", …)` screen. The substrate N-API exports return a clean
+    // "unavailable" error in this mode, and a later restart re-attempts
+    // the open once the underlying file issue is resolved.
+    let substrate = match SubstrateManager::open(&db_path, key_ref) {
+        Ok(manager) => Some(manager),
+        Err(e) => {
+            eprintln!(
+                "[substrate] open failed; continuing with knowledge substrate disabled \
+                 (core features unaffected): {e}"
+            );
+            None
+        }
+    };
+
     let embedding_progress = source_manager.embedding_progress_handle();
 
     APP_STATE
@@ -256,6 +302,7 @@ pub fn init_bridge(
             // race the embedding-progress tracker handles.
             download_progress: Arc::new(sources::DownloadProgressTracker::new()),
             shared_conn: conn,
+            substrate: Mutex::new(substrate),
             db_path,
             db_key: key_ref.map(str::to_owned),
         })
@@ -291,6 +338,96 @@ fn state() -> napi::Result<&'static AppState> {
         .ok_or_else(|| napi::Error::from_reason("Bridge not initialized. Call init_bridge first."))
 }
 
+/// Error surfaced by the substrate N-API exports when the substrate
+/// failed to open at `init_bridge` (graceful-degradation mode). Core
+/// features are unaffected; the additive knowledge surface is simply
+/// disabled until the underlying sibling-file issue is resolved and the
+/// app is restarted.
+pub(crate) const SUBSTRATE_UNAVAILABLE: &str =
+    "knowledge substrate unavailable: it failed to open at startup (core features are \
+     unaffected; restart after resolving the substrate database files)";
+
+/// Crate-internal accessor to the substrate manager's mutex, used by
+/// the `substrate` module's N-API exports. Kept here because
+/// `AppState`'s fields are private to this module. The inner `Option`
+/// is `None` when the substrate failed to open (degraded mode); call
+/// sites unwrap it with [`SUBSTRATE_UNAVAILABLE`].
+pub(crate) fn substrate_lock() -> napi::Result<&'static Mutex<Option<SubstrateManager>>> {
+    Ok(&state()?.substrate)
+}
+
+/// Read the indexed chunk text for `source_id` and run the knowledge
+/// observation pipeline over it, persisting the extracted observations,
+/// lifecycle memory objects, and concept-graph nodes into the
+/// substrate. Returns the number of observations extracted.
+///
+/// The `source_manager` and `substrate` locks are acquired
+/// *sequentially* (pattern B) and never held at the same time, which
+/// preserves the documented lock order (`substrate` is acquired last).
+pub(crate) fn extract_observations_for_source(source_id: &str) -> napi::Result<u32> {
+    let s = state()?;
+    let uuid = uuid::Uuid::parse_str(source_id)
+        .map_err(|e| napi::Error::from_reason(format!("invalid source id: {e}")))?;
+    // Read chunk bodies under the source_manager lock, then release it
+    // before touching the substrate so the two locks never overlap.
+    let chunks = {
+        let mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        mgr.get_chunks_for_source(&tessera_core::SourceId(uuid))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    };
+    let mut guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let substrate = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
+    substrate
+        .extract_observations(source_id, &chunks)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Best-effort wrapper around [`extract_observations_for_source`] used
+/// on the auto-ingest path. Indexing is the source of truth, so an
+/// extraction failure is logged and swallowed rather than failing the
+/// user-visible add/reindex. When the substrate is in degraded mode
+/// (`None`), this is a silent no-op so source-adds keep working.
+pub(crate) fn run_observations_for_source(source_id: &str) {
+    match extract_observations_for_source(source_id) {
+        Ok(count) if count > 0 => {
+            eprintln!("[substrate] extracted {count} observations from source {source_id}");
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[substrate] observation extraction failed for {source_id}: {e}"),
+    }
+}
+
+/// Best-effort substrate cleanup when a Tessera source is removed.
+/// Purges the per-source observations blob and drops every memory
+/// object carrying that `source_id` from the aggregate memory plane, so
+/// a removed source's extracted *content* is no longer recoverable.
+/// (Derived concept-graph nodes are deduplicated/shared and content-free
+/// — see [`SubstrateManager::remove_source`] for why they're retained.)
+/// Run AFTER the core source removal commits and never fails the
+/// user-visible remove. A no-op when the substrate is in degraded mode
+/// (`None`).
+pub(crate) fn remove_source_from_substrate(source_id: &str) {
+    let Ok(s) = state() else { return };
+    let Ok(mut guard) = s.substrate.lock() else {
+        eprintln!("[substrate] cleanup skipped for {source_id}: substrate lock poisoned");
+        return;
+    };
+    let Some(substrate) = guard.as_mut() else {
+        return;
+    };
+    if let Err(e) = substrate.remove_source(source_id) {
+        eprintln!("[substrate] cleanup failed for removed source {source_id}: {e}");
+    }
+}
+
 // --- Backup & recovery ---
 //
 // These wrappers forward the SQLCipher key and live database path
@@ -306,7 +443,22 @@ fn state() -> napi::Result<&'static AppState> {
 /// Returns metadata describing the new backup file.
 pub fn bridge_create_backup(backup_dir: String) -> napi::Result<backup::BackupInfo> {
     let s = state()?;
-    backup::create(&s.shared_conn, s.db_key.as_deref(), &backup_dir).map_err(backup::to_napi)
+    // Hold the substrate lock across the copy so the attached snapshots
+    // are consistent with the main DB hot-copy. The substrate uses its
+    // own connections (never `shared_conn`), so this acquires no lock the
+    // Online Backup API needs — no deadlock, and the critical section is
+    // just one hot-copy long.
+    let guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    backup::create(
+        &s.shared_conn,
+        s.db_key.as_deref(),
+        &backup_dir,
+        guard.as_ref(),
+    )
+    .map_err(backup::to_napi)
 }
 
 #[napi]
@@ -351,8 +503,18 @@ pub fn bridge_export_bundle(
     extras: Vec<backup::BundleFileEntry>,
 ) -> napi::Result<backup::BundleInfo> {
     let s = state()?;
-    backup::export_bundle(&s.shared_conn, s.db_key.as_deref(), extras, &out_path)
-        .map_err(backup::to_napi)
+    let guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    backup::export_bundle(
+        &s.shared_conn,
+        s.db_key.as_deref(),
+        extras,
+        &out_path,
+        guard.as_ref(),
+    )
+    .map_err(backup::to_napi)
 }
 
 #[napi]
@@ -389,6 +551,9 @@ pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_added(&path);
     }
+    // Additive: extract knowledge observations from the freshly
+    // indexed chunks. Best-effort; never fails the add.
+    run_observations_for_source(&info.id);
     Ok(info)
 }
 
@@ -410,6 +575,9 @@ pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> 
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_added(&path);
     }
+    // Additive: extract knowledge observations from the freshly
+    // indexed chunks. Best-effort; never fails the add.
+    run_observations_for_source(&info.id);
     Ok(info)
 }
 
@@ -452,6 +620,18 @@ pub fn bridge_add_kchat_channel(
             let _ = logger.log_source_added(&cache_dir);
         }
     }
+    // Additive: KChat channels are indexed through the same
+    // text-extraction → chunking → embeddings pipeline as local folders
+    // (`SourceManager::add_kchat_channel` calls `index_folder`), so their
+    // freshly-indexed chunks are extracted on every sync for parity with
+    // the local-source paths. Re-extraction is idempotent per source, so
+    // the convergent re-sync calls just replace this source's slice.
+    // Best-effort; never fails the add. The per-file WS fast path
+    // (`bridge_index_kchat_file`) intentionally does NOT extract here —
+    // re-extracting the whole source on every bursty single-file push
+    // would defeat its O(1) design; the next reconciliation sync covers
+    // those files.
+    run_observations_for_source(&outcome.source.id);
     Ok(outcome)
 }
 
@@ -602,6 +782,14 @@ pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_removed(&source_id);
     }
+    // Additive: purge the removed source's knowledge-substrate
+    // artifacts (per-source observations blob + its memory objects) so
+    // a deleted source leaves no recoverable extracted content behind.
+    // Runs AFTER the core removal commits, acquires the `substrate`
+    // lock last (sequential, never overlapping `source_manager`), and
+    // is best-effort — a substrate cleanup failure (or degraded mode)
+    // must not fail the user-visible source removal.
+    remove_source_from_substrate(&source_id);
     Ok(())
 }
 
@@ -705,6 +893,94 @@ pub fn bridge_search_sources(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Observation-enriched search.
+///
+/// Composes Tessera's existing chunk-level hybrid search with the
+/// knowledge substrate's observation/memory/concept planes:
+///
+///  1. Reads the per-source retention scores and the matching
+///     entities / facts / concepts / memories from the substrate
+///     (under the substrate lock, which is then released).
+///  2. Runs the chunk search with that retention map fused in as the
+///     fourth RRF signal (under the source-manager lock).
+///
+/// The two locks are acquired *sequentially* and never held at the
+/// same time, preserving the documented lock order (substrate is
+/// never held while taking another lock). The returned `hits` are the
+/// retention-weighted chunk results; `entities`/`facts`/`concepts`/
+/// `memories` are the additive knowledge plane for the renderer's
+/// "Knowledge" tab.
+///
+/// Backward-compatible: `bridge_search_sources` is unchanged. If the
+/// substrate has no memories yet the retention map is empty and the
+/// chunk ranking is identical to `bridge_search_sources`.
+#[napi]
+pub fn bridge_search_sources_enriched(
+    query: String,
+    limit: u32,
+) -> napi::Result<sources::EnrichedSearchResult> {
+    let s = state()?;
+    let limit = limit as usize;
+
+    // Phase 1: substrate plane. Acquire, read, release before touching
+    // the source-manager lock. A degraded (`None`) substrate is not an
+    // error here: enriched search must still return the chunk hits, so
+    // it falls back to an empty retention map + empty knowledge plane,
+    // making the ranking identical to `bridge_search_sources`.
+    let (retention_by_source, knowledge) = {
+        let mut guard = s
+            .substrate
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        match guard.as_mut() {
+            Some(substrate) => {
+                let retention = substrate
+                    .retention_by_source()
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                let knowledge = substrate
+                    .search_knowledge(&query, limit)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                (retention, knowledge)
+            }
+            None => (HashMap::new(), EnrichedKnowledge::default()),
+        }
+    };
+
+    // Phase 2: chunk plane, retention-weighted.
+    let hits = {
+        let mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        sources::search_sources_with_retention(&mgr, &query, limit, retention_by_source)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    };
+
+    Ok(sources::EnrichedSearchResult {
+        hits,
+        entities: knowledge
+            .entities
+            .into_iter()
+            .map(substrate::SubstrateMemory::from)
+            .collect(),
+        facts: knowledge
+            .facts
+            .into_iter()
+            .map(substrate::SubstrateMemory::from)
+            .collect(),
+        concepts: knowledge
+            .concepts
+            .into_iter()
+            .map(substrate::SubstrateConcept::from)
+            .collect(),
+        memories: knowledge
+            .memories
+            .into_iter()
+            .map(substrate::SubstrateMemory::from)
+            .collect(),
+    })
+}
+
 /// query the KChat-post FTS5 index for
 /// chat-body chunks that match `query`. The Node-side
 /// `kchat:searchPosts` IPC handler maps the returned shape
@@ -786,6 +1062,9 @@ pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceI
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_reindexed(&source_id);
     }
+    // Additive: re-extract knowledge observations over the re-indexed
+    // chunks. Idempotent per source. Best-effort; never fails reindex.
+    run_observations_for_source(&info.id);
     Ok(info)
 }
 

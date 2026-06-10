@@ -174,6 +174,11 @@ export interface HybridSearchConfigInfo {
   /** Half-life in seconds when decay is enabled; null when disabled. */
   recencyHalflifeSecs: number | null;
   candidatePoolSize: number;
+  /**
+   * Weight of the knowledge-substrate retention ranking in fusion
+   * (the fourth RRF signal). Defaults to 1.0.
+   */
+  retentionWeight: number;
 }
 
 /**
@@ -197,6 +202,8 @@ export interface HybridSearchConfigUpdate {
   recencyDecayEnabled?: boolean;
   recencyHalflifeSecs?: number;
   candidatePoolSize?: number;
+  /** New retention-signal weight, or undefined to leave unchanged. */
+  retentionWeight?: number;
 }
 
 export interface IndexedFileInfo {
@@ -622,6 +629,78 @@ export interface SearchHitInfo {
   chunkHash: string;
   chunkIndex: number;
   relevance: number;
+}
+
+/**
+ * A concept-graph node surfaced in the "Knowledge" tab of search
+ * results. Mirrors `tessera_bridge::substrate::SubstrateConcept`
+ * (camelCased by napi-derive); used unchanged on both the bridge and
+ * renderer sides.
+ */
+export interface SubstrateConceptInfo {
+  /** Concept node id (UUID). */
+  id: string;
+  /** Human-readable concept label (the extracted entity surface). */
+  label: string;
+  /** Short definition / provenance tag for the node. */
+  definition: string;
+  /**
+   * Concept lifecycle state: `candidate`, `canonical`, `superseded`,
+   * `contradicted`, or `deleted`.
+   */
+  state: string;
+  /** Tessera source ids (UUID strings) this concept co-occurs in. */
+  relatedSourceIds: string[];
+}
+
+/**
+ * Bridge-side (raw N-API) result of an observation-enriched search,
+ * returned by `bridgeSearchSourcesEnriched`. Mirrors
+ * `tessera_bridge::sources::EnrichedSearchResult`. The `sources:search`
+ * enriched IPC handler transforms `hits` (`SearchHitInfo`) into the
+ * renderer's {@link EnrichedSearchResult} (`SearchHit`); the knowledge
+ * planes pass through unchanged.
+ */
+export interface EnrichedSearchResultInfo {
+  hits: SearchHitInfo[];
+  entities: SubstrateMemoryInfo[];
+  facts: SubstrateMemoryInfo[];
+  concepts: SubstrateConceptInfo[];
+  memories: SubstrateMemoryInfo[];
+}
+
+/**
+ * Renderer-facing observation-enriched search result.
+ *
+ * `hits` is the standard chunk-level result set (identical to
+ * {@link SourceApi.searchSources}), retention-weighted so chunks from
+ * sources with active memories rank higher. The remaining fields are
+ * the additive knowledge plane rendered in the "Knowledge" tab:
+ * `entities`/`facts` are observation-typed memories, `concepts` are
+ * matching concept-graph nodes, and `memories` is the full ranked
+ * memory match set.
+ */
+export interface EnrichedSearchResult {
+  hits: SearchHit[];
+  entities: SubstrateMemoryInfo[];
+  facts: SubstrateMemoryInfo[];
+  concepts: SubstrateConceptInfo[];
+  memories: SubstrateMemoryInfo[];
+}
+
+/**
+ * A concept-graph-derived suggestion of related sources for the
+ * artifact-creation flow ("You have N sources about [entity]."),
+ * returned by `bridgeSuggestRelatedSources`. Mirrors
+ * `tessera_bridge::substrate::SubstrateRelatedSuggestion`.
+ */
+export interface SubstrateRelatedSuggestionInfo {
+  /** Concept label the suggestion is anchored on. */
+  entity: string;
+  /** Related Tessera source ids (UUID strings) not already selected. */
+  sourceIds: string[];
+  /** Ranking signal: the number of related sources. */
+  score: number;
 }
 
 /**
@@ -2167,6 +2246,16 @@ export interface SourceApi {
   listSources: () => Promise<SourceInfo[]>;
   removeSource: (id: string) => Promise<void>;
   searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
+  /**
+   * Observation-enriched search. Returns the same retention-weighted
+   * chunk `hits` as {@link searchSources} plus the additive knowledge
+   * plane (entities, facts, concepts, memories) for the "Knowledge"
+   * tab. Backed by `sources:searchEnriched`.
+   */
+  searchEnriched: (
+    query: string,
+    limit: number,
+  ) => Promise<EnrichedSearchResult>;
   getDetail: (id: string) => Promise<SourceDetailInfo>;
   reindex: (id: string) => Promise<SourceInfo>;
   /**
@@ -2760,6 +2849,126 @@ export interface TaskApi {
   reorder: (status: string, ids: string[]) => Promise<void>;
 }
 
+/**
+ * A single memory object from the knowledge substrate, surfaced to the
+ * renderer by the `bridge_get_memories` / `bridge_pin_memory` /
+ * `bridge_unpin_memory` N-API functions (camelCased on the JS side).
+ * Mirrors `tessera_substrate::MemoryRecord` field-for-field.
+ */
+export interface SubstrateMemoryInfo {
+  /** Memory object id (UUID). */
+  id: string;
+  /** Scope id (UUID) the memory belongs to. */
+  scopeId: string;
+  /**
+   * Observation kind: `entity`, `fact`, `task`, `decision`, `claim`,
+   * or `question`.
+   */
+  observationType: string;
+  /** Canonical surface text of the observation. */
+  content: string;
+  /**
+   * Decay state: `candidate`, `reinforced`, `consolidated`,
+   * `canonical`, `superseded`, `archived`, or `deleted`.
+   */
+  state: string;
+  /** Last computed retention score in `0.0 ..= 1.0`. */
+  retentionScore: number;
+  /** Number of pins (strongest retention signal). */
+  pinCount: number;
+  /** Number of times retrieved as part of an answered query. */
+  retrievalCount: number;
+  /** Number of independent corroborating sources. */
+  corroborationCount: number;
+  /** Unix epoch seconds of creation. */
+  createdAt: number;
+  /** Unix epoch seconds of last access. */
+  lastAccessedAt: number;
+  /** Originating Tessera source id (UUID), when known. */
+  sourceId: string | null;
+}
+
+/**
+ * Outcome of a substrate decay sweep (`bridge_run_decay_sweep`).
+ * Mirrors `tessera_substrate::DecaySweepSummary`.
+ */
+export interface SubstrateDecayReportInfo {
+  /** Number of objects whose retention score was recomputed. */
+  scored: number;
+  /** Number of `Candidate -> Archived` transitions. */
+  candidatesArchived: number;
+  /** Number of `Superseded -> Archived` transitions. */
+  supersededArchived: number;
+}
+
+/**
+ * Result of a substrate synthesis run (`bridge_trigger_synthesis`).
+ * Mirrors `tessera_substrate::SynthesisSummary`.
+ */
+export interface SubstrateSynthesisInfo {
+  /** Synthesis window id (UUID). */
+  windowId: string;
+  /** Scope id (UUID) the synthesis covers. */
+  scopeId: string;
+  /** Version stamp of the persisted synthesis object. */
+  version: number;
+  /** Free-text recap headline. */
+  recap: string;
+  /** Decisions captured during the window. */
+  decisions: string[];
+  /** Open questions captured during the window. */
+  openQuestions: string[];
+  /** Active tasks captured during the window. */
+  activeTasks: string[];
+}
+
+/**
+ * Renderer surface for the additive knowledge substrate. Wired to the
+ * `substrate:*` IPC channels registered in `electron/ipc/substrate.ts`.
+ * Sessions 3 (UI) and 6 (search) build on this contract.
+ */
+export interface SubstrateApi {
+  /**
+   * Run the observation pipeline over a source's indexed chunks and
+   * persist the extracted observations/memories/concepts. Idempotent
+   * per `sourceId`. Resolves with the number of observations extracted.
+   */
+  extractObservations: (sourceId: string) => Promise<number>;
+  /** List memory objects for a scope (default scope when omitted). */
+  getMemories: (scope?: string | null) => Promise<SubstrateMemoryInfo[]>;
+  /** Pin a memory (strongest retention signal). */
+  pinMemory: (id: string) => Promise<SubstrateMemoryInfo>;
+  /** Decrement a memory's pin count (saturating at zero). */
+  unpinMemory: (id: string) => Promise<SubstrateMemoryInfo>;
+  /** Forget (delete) a single memory by id. */
+  forgetMemory: (id: string) => Promise<void>;
+  /**
+   * JSON-serialized concept-graph view (`concept_graph::GraphView`)
+   * for a scope, bounded by `maxNodes`.
+   */
+  getConceptGraph: (
+    scope?: string | null,
+    maxNodes?: number | null,
+  ) => Promise<string>;
+  /**
+   * Suggest sources related to an already-selected working set via the
+   * concept graph. Powers the artifact-creation "You have N sources
+   * about [entity]. Include them?" affordance. Suggestions never
+   * include an already-selected source; `maxSuggestions` defaults to 10
+   * when omitted.
+   */
+  suggestRelatedSources: (
+    selectedSourceIds: string[],
+    maxSuggestions?: number | null,
+  ) => Promise<SubstrateRelatedSuggestionInfo[]>;
+  /** Recompute retention and apply decay transitions. */
+  runDecaySweep: () => Promise<SubstrateDecayReportInfo>;
+  /** Produce and persist a deterministic synthesis for a scope. */
+  triggerSynthesis: (
+    scope?: string | null,
+  ) => Promise<SubstrateSynthesisInfo>;
+}
+
 export interface AutomationApi {
   create: (req: CreateAutomationRequest) => Promise<AutomationInfo>;
   list: () => Promise<AutomationInfo[]>;
@@ -2986,6 +3195,8 @@ export interface TesseraApi {
   imagegen: ImagegenApi;
   connectors: ConnectorApi;
   tasks: TaskApi;
+  /** Additive knowledge-substrate surface (memories, concepts, decay). */
+  substrate: SubstrateApi;
   automations: AutomationApi;
   dialog: DialogApi;
   /** Local backup & recovery surface (`backup:*`). */

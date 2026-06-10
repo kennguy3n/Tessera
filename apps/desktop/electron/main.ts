@@ -8,6 +8,10 @@ import { detectComputeBackends } from "./modelManagement";
 import { reapOrphanedSidecars } from "./sidecarPidRegistry";
 import { startScheduler, stopScheduler } from "./scheduler";
 import {
+  startSubstrateDecayScheduler,
+  stopSubstrateDecayScheduler,
+} from "./substrateDecayScheduler";
+import {
   startBackupScheduler,
   stopBackupScheduler,
 } from "./backupScheduler";
@@ -1013,6 +1017,18 @@ async function initBridgeAndServices(): Promise<void> {
       message: err instanceof Error ? err.message : String(err),
     });
   }
+  // Start the 6-hour substrate decay timer now that the bridge backs
+  // its sweep. Guarded with the same "never throws, must still reach
+  // setBridgeState('ready')" rationale as `startScheduler` above: a
+  // failure to arm the timer is non-fatal (memories simply aren't
+  // decayed until the next launch), and the renderer must still hydrate.
+  try {
+    startSubstrateDecayScheduler();
+  } catch (err) {
+    safeLogError("substrate.decayScheduler.start.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Start the automatic-backup scheduler now that the bridge is up. It
   // runs a hot backup of the encrypted database on the configured
   // cadence (default 24h) and prunes to the retention count, so a user
@@ -1566,6 +1582,17 @@ export async function handleWillQuit(
      * battery monitor, outside the async-drain try/catch blocks.
      */
     stopMemoryWatchdog?: () => void;
+    /**
+     * Stop the 6-hour substrate decay timer. Injected (like
+     * `stopBatteryMonitor` / `stopMemoryWatchdog`) so the will-quit
+     * tests can spy on it and assert its ordering. Optional so existing
+     * tests that don't wire it keep compiling; production passes the
+     * real `stopSubstrateDecayScheduler`. Synchronous and never-throwing
+     * (the sweep itself is synchronous, so there's no in-flight async
+     * work to drain), so it runs up front alongside the other timer
+     * stops, outside the async-drain try/catch blocks.
+     */
+    stopSubstrateDecayScheduler?: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -1592,6 +1619,12 @@ export async function handleWillQuit(
   // it here prevents a stacked interval when a test harness relaunches the
   // main process. Synchronous and never-throwing, so outside the drains.
   deps.stopMemoryWatchdog?.();
+  // Stop the 6-hour substrate decay timer alongside the other unref'd
+  // poll timers. Same rationale: it can't itself block exit, but
+  // clearing it here prevents a stacked interval when a test harness
+  // relaunches the main process. Synchronous and never-throwing, so it
+  // sits outside the async-drain try/catch blocks.
+  deps.stopSubstrateDecayScheduler?.();
   // Outer `try/finally` guarantees `deps.quit()` runs even if one of
   // the inner `console.error` calls were to throw (e.g. a custom
   // `console` override in a future test/wrapper). The two inner
@@ -1702,6 +1735,7 @@ app.on("will-quit", (event) => {
     stopAllSidecars,
     stopBatteryMonitor,
     stopMemoryWatchdog,
+    stopSubstrateDecayScheduler,
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
     stopBackupScheduler,

@@ -46,6 +46,24 @@ if (typeof Document !== "undefined") {
   }
 }
 
+// A representative `SubstrateMemoryInfo` for the default pin/unpin mocks,
+// which resolve with the mutated memory (not void). Tests that assert on a
+// specific memory override `pinMemory`/`unpinMemory` per-case.
+const MOCK_SUBSTRATE_MEMORY = {
+  id: "00000000-0000-4000-8000-000000000001",
+  scopeId: "00000000-0000-4000-8000-000000000000",
+  observationType: "fact",
+  content: "",
+  state: "candidate",
+  retentionScore: 0,
+  pinCount: 0,
+  retrievalCount: 0,
+  corroborationCount: 0,
+  createdAt: 0,
+  lastAccessedAt: 0,
+  sourceId: null,
+};
+
 const mockApi = {
   sources: {
     addLocalFolder: vi.fn().mockResolvedValue({
@@ -69,6 +87,13 @@ const mockApi = {
     listSources: vi.fn().mockResolvedValue([]),
     removeSource: vi.fn().mockResolvedValue(undefined),
     searchSources: vi.fn().mockResolvedValue([]),
+    searchEnriched: vi.fn().mockResolvedValue({
+      hits: [],
+      entities: [],
+      facts: [],
+      concepts: [],
+      memories: [],
+    }),
     getDetail: vi.fn().mockResolvedValue({
       source: {
         id: "src-1",
@@ -707,6 +732,33 @@ const mockApi = {
   // fully-idle box (no models resident, on AC, indexing idle) so the
   // Settings → Performance card renders its populated state in tests;
   // cases that need a specific reading override per-case.
+  substrate: {
+    extractObservations: vi.fn().mockResolvedValue(0),
+    getMemories: vi.fn().mockResolvedValue([]),
+    getConceptGraph: vi.fn().mockResolvedValue("{}"),
+    // Field names mirror `SubstrateDecayReportInfo` so component tests
+    // that read the report (decay dashboard) see real keys, not undefined.
+    runDecaySweep: vi.fn().mockResolvedValue({
+      scored: 0,
+      candidatesArchived: 0,
+      supersededArchived: 0,
+    }),
+    // Field names mirror `SubstrateSynthesisInfo`.
+    triggerSynthesis: vi.fn().mockResolvedValue({
+      windowId: "00000000-0000-4000-8000-000000000000",
+      scopeId: "00000000-0000-4000-8000-000000000000",
+      version: 1,
+      recap: "",
+      decisions: [],
+      openQuestions: [],
+      activeTasks: [],
+    }),
+    // pin/unpin resolve with the mutated `SubstrateMemoryInfo`, not void.
+    pinMemory: vi.fn().mockResolvedValue(MOCK_SUBSTRATE_MEMORY),
+    unpinMemory: vi.fn().mockResolvedValue(MOCK_SUBSTRATE_MEMORY),
+    forgetMemory: vi.fn().mockResolvedValue(undefined),
+    suggestRelatedSources: vi.fn().mockResolvedValue([]),
+  },
   resources: {
     getUsage: vi.fn().mockResolvedValue({
       resourceMode: "lightweight",
