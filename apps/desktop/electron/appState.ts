@@ -67,6 +67,9 @@ import type {
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
+  SubstrateDecayReportInfo,
+  SubstrateMemoryInfo,
+  SubstrateSynthesisInfo,
   TaskInfo,
   TemplateInfo,
 } from "../shared/types";
@@ -110,6 +113,9 @@ export type {
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
+  SubstrateDecayReportInfo,
+  SubstrateMemoryInfo,
+  SubstrateSynthesisInfo,
   TaskInfo,
   TemplateInfo,
   ThemeInfo,
@@ -861,6 +867,60 @@ export interface NativeBridge {
       negativePrompt: string | null;
     },
   ): Promise<{ pngBytes: Buffer; seed: bigint }>;
+
+  // --- Knowledge substrate (additive native layer) ---------------------
+  //
+  // The eight functions below are exported from `tessera_bridge`'s
+  // `substrate.rs` module (snake_case `bridge_*` on the Rust side,
+  // camelCased here by napi-derive). They delegate to the
+  // `SubstrateManager` held in `AppState`, which writes only to the
+  // substrate's own sibling DB files — never the existing
+  // `sources` / `chunks` / `chunk_embeddings` tables. See
+  // `crates/tessera_bridge/src/substrate.rs`.
+
+  /**
+   * Run the observation pipeline over a source's indexed chunks and
+   * persist the extracted observations, memory objects, and concept
+   * nodes. Idempotent per `sourceId` (re-running replaces that
+   * source's slice rather than duplicating it). Returns the number of
+   * observations extracted. This is the on-demand counterpart to the
+   * automatic extraction that runs after
+   * `bridgeAddLocalFolder` / `bridgeAddLocalFile` / `bridgeReindexSource`.
+   */
+  bridgeExtractObservations(sourceId: string): number;
+  /**
+   * List every memory object for a scope. `scope` is a scope label or
+   * UUID; `null`/omitted uses the single default scope.
+   */
+  bridgeGetMemories(scope?: string | null): SubstrateMemoryInfo[];
+  /** Pin a memory by id (strongest retention signal). */
+  bridgePinMemory(id: string): SubstrateMemoryInfo;
+  /** Decrement a memory's pin count (saturating at zero). */
+  bridgeUnpinMemory(id: string): SubstrateMemoryInfo;
+  /** Forget (delete) a single memory by id. */
+  bridgeForgetMemory(id: string): void;
+  /**
+   * Return a JSON-serialized `concept_graph::GraphView` for a scope,
+   * bounded by `maxNodes` (substrate default applies when
+   * `null`/omitted).
+   */
+  bridgeGetConceptGraph(
+    scope?: string | null,
+    maxNodes?: number | null,
+  ): string;
+  /**
+   * Recompute retention scores for every memory and apply decay
+   * transitions. Returns a report of how many objects were scored and
+   * archived. Called on a 6-hour timer by the main process
+   * (`substrateDecayScheduler.ts`).
+   */
+  bridgeRunDecaySweep(): SubstrateDecayReportInfo;
+  /**
+   * Produce a deterministic, offline synthesis (recap, decisions, open
+   * questions, active tasks) for a scope and persist it as a versioned
+   * synthesis object.
+   */
+  bridgeTriggerSynthesis(scope?: string | null): SubstrateSynthesisInfo;
 }
 
 let bridge: NativeBridge | null = null;

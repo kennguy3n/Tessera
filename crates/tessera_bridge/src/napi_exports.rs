@@ -19,6 +19,7 @@ use tessera_core::{
 };
 use tessera_sources::manager::SourceManager;
 use tessera_sources::progress::EmbeddingProgressTracker;
+use tessera_substrate::SubstrateManager;
 
 use crate::artifacts;
 use crate::automations;
@@ -97,6 +98,15 @@ struct AppState {
     /// also keeps the connection alive even if every individual
     /// store is dropped or replaced during shutdown.
     shared_conn: tessera_core::SharedConnection,
+    /// Knowledge-substrate adapter (evidence store + observation
+    /// engine + memory manager + concept graph + synthesis). Additive
+    /// native layer; backed by its own SQLCipher sibling files keyed
+    /// from the same master key as the main DB, so it never touches
+    /// the existing `sources` / `chunks` / `chunk_embeddings` tables.
+    /// Acquired LAST in the documented lock order (after
+    /// `automation_store`) on the rare path that stacks it with another
+    /// store lock.
+    substrate: Mutex<SubstrateManager>,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -224,6 +234,16 @@ pub fn init_bridge(
     let automation_store = AutomationStore::with_shared_conn(conn.clone())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
+    // Open the additive knowledge substrate. It manages its own
+    // SQLCipher sibling files (never the main DB), all derived from the
+    // same `db_key`, so a single user secret protects everything and
+    // there is nothing extra to provision. A substrate-open failure
+    // must not break the core app, but in practice it only fails on a
+    // malformed key or unwritable DB directory — both of which would
+    // already have failed the main-DB open above — so we surface it.
+    let substrate = SubstrateManager::open(&db_path, key_ref)
+        .map_err(|e| napi::Error::from_reason(format!("substrate open failed: {e}")))?;
+
     let embedding_progress = source_manager.embedding_progress_handle();
 
     APP_STATE
@@ -244,6 +264,7 @@ pub fn init_bridge(
             // race the embedding-progress tracker handles.
             download_progress: Arc::new(sources::DownloadProgressTracker::new()),
             shared_conn: conn,
+            substrate: Mutex::new(substrate),
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
@@ -277,6 +298,58 @@ fn state() -> napi::Result<&'static AppState> {
         .ok_or_else(|| napi::Error::from_reason("Bridge not initialized. Call init_bridge first."))
 }
 
+/// Crate-internal accessor to the substrate manager's mutex, used by
+/// the `substrate` module's N-API exports. Kept here because
+/// `AppState`'s fields are private to this module.
+pub(crate) fn substrate_lock() -> napi::Result<&'static Mutex<SubstrateManager>> {
+    Ok(&state()?.substrate)
+}
+
+/// Read the indexed chunk text for `source_id` and run the knowledge
+/// observation pipeline over it, persisting the extracted observations,
+/// lifecycle memory objects, and concept-graph nodes into the
+/// substrate. Returns the number of observations extracted.
+///
+/// The `source_manager` and `substrate` locks are acquired
+/// *sequentially* (pattern B) and never held at the same time, which
+/// preserves the documented lock order (`substrate` is acquired last).
+pub(crate) fn extract_observations_for_source(source_id: &str) -> napi::Result<u32> {
+    let s = state()?;
+    let uuid = uuid::Uuid::parse_str(source_id)
+        .map_err(|e| napi::Error::from_reason(format!("invalid source id: {e}")))?;
+    // Read chunk bodies under the source_manager lock, then release it
+    // before touching the substrate so the two locks never overlap.
+    let chunks = {
+        let mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        mgr.get_chunks_for_source(&tessera_core::SourceId(uuid))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    };
+    let mut substrate = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    substrate
+        .extract_observations(source_id, &chunks)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Best-effort wrapper around [`extract_observations_for_source`] used
+/// on the auto-ingest path. Indexing is the source of truth, so an
+/// extraction failure is logged and swallowed rather than failing the
+/// user-visible add/reindex.
+pub(crate) fn run_observations_for_source(source_id: &str) {
+    match extract_observations_for_source(source_id) {
+        Ok(count) if count > 0 => {
+            eprintln!("[substrate] extracted {count} observations from source {source_id}");
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[substrate] observation extraction failed for {source_id}: {e}"),
+    }
+}
+
 // --- Sources ---
 
 #[napi]
@@ -298,6 +371,9 @@ pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_added(&path);
     }
+    // Additive: extract knowledge observations from the freshly
+    // indexed chunks. Best-effort; never fails the add.
+    run_observations_for_source(&info.id);
     Ok(info)
 }
 
@@ -319,6 +395,9 @@ pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> 
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_added(&path);
     }
+    // Additive: extract knowledge observations from the freshly
+    // indexed chunks. Best-effort; never fails the add.
+    run_observations_for_source(&info.id);
     Ok(info)
 }
 
@@ -695,6 +774,9 @@ pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceI
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_reindexed(&source_id);
     }
+    // Additive: re-extract knowledge observations over the re-indexed
+    // chunks. Idempotent per source. Best-effort; never fails reindex.
+    run_observations_for_source(&info.id);
     Ok(info)
 }
 

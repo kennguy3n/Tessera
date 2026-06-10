@@ -24,6 +24,7 @@ import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
 import { registerSlidesHandlers } from "./slides";
 import { registerSourcesHandlers } from "./sources";
+import { registerSubstrateHandlers } from "./substrate";
 import { registerTasksHandlers } from "./tasks";
 import { registerTelemetryHandlers } from "./telemetry";
 import { registerTemplatesHandlers } from "./templates";
@@ -41,6 +42,11 @@ export function registerAllIpcHandlers(): void {
   registerImagegenHandlers();
   registerConnectorsLegacyHandlers();
   registerTasksHandlers();
+  // Additive knowledge-substrate channels (memories, concept graph,
+  // decay sweep, synthesis). Registered alongside the other native-
+  // bridge-backed domains; registration is idempotent so ordering is
+  // cosmetic.
+  registerSubstrateHandlers();
   registerAutomationsHandlers();
   registerDialogHandlers();
   registerSlidesHandlers();

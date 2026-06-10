@@ -515,6 +515,24 @@ const api: TesseraApi = {
     remove: (id) => ipcRenderer.invoke("tasks:delete", id),
     reorder: (status, ids) => ipcRenderer.invoke("tasks:reorder", status, ids),
   },
+  substrate: {
+    extractObservations: (sourceId) =>
+      ipcRenderer.invoke("substrate:extractObservations", sourceId),
+    getMemories: (scope) =>
+      ipcRenderer.invoke("substrate:getMemories", scope ?? null),
+    pinMemory: (id) => ipcRenderer.invoke("substrate:pinMemory", id),
+    unpinMemory: (id) => ipcRenderer.invoke("substrate:unpinMemory", id),
+    forgetMemory: (id) => ipcRenderer.invoke("substrate:forgetMemory", id),
+    getConceptGraph: (scope, maxNodes) =>
+      ipcRenderer.invoke(
+        "substrate:getConceptGraph",
+        scope ?? null,
+        maxNodes ?? null,
+      ),
+    runDecaySweep: () => ipcRenderer.invoke("substrate:runDecaySweep"),
+    triggerSynthesis: (scope) =>
+      ipcRenderer.invoke("substrate:triggerSynthesis", scope ?? null),
+  },
   automations: {
     create: (req) => ipcRenderer.invoke("automations:create", req),
     list: () => ipcRenderer.invoke("automations:list"),

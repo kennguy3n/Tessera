@@ -19,6 +19,7 @@ tessera_citations = { path = "../tessera_citations" }
 tessera_export = { path = "../tessera_export" }
 tessera_audit = { path = "../tessera_audit" }
 tessera_runtime = { path = "../tessera_runtime" }
+tessera_substrate = { path = "../tessera_substrate" }
 tokio = { workspace = true, features = ["rt"] }
 chrono = { workspace = true }
 serde = { workspace = true }

@@ -2556,6 +2556,115 @@ export interface TaskApi {
   reorder: (status: string, ids: string[]) => Promise<void>;
 }
 
+/**
+ * A single memory object from the knowledge substrate, surfaced to the
+ * renderer by the `bridge_get_memories` / `bridge_pin_memory` /
+ * `bridge_unpin_memory` N-API functions (camelCased on the JS side).
+ * Mirrors `tessera_substrate::MemoryRecord` field-for-field.
+ */
+export interface SubstrateMemoryInfo {
+  /** Memory object id (UUID). */
+  id: string;
+  /** Scope id (UUID) the memory belongs to. */
+  scopeId: string;
+  /**
+   * Observation kind: `entity`, `fact`, `task`, `decision`, `claim`,
+   * or `question`.
+   */
+  observationType: string;
+  /** Canonical surface text of the observation. */
+  content: string;
+  /**
+   * Decay state: `candidate`, `reinforced`, `consolidated`,
+   * `canonical`, `superseded`, `archived`, or `deleted`.
+   */
+  state: string;
+  /** Last computed retention score in `0.0 ..= 1.0`. */
+  retentionScore: number;
+  /** Number of pins (strongest retention signal). */
+  pinCount: number;
+  /** Number of times retrieved as part of an answered query. */
+  retrievalCount: number;
+  /** Number of independent corroborating sources. */
+  corroborationCount: number;
+  /** Unix epoch seconds of creation. */
+  createdAt: number;
+  /** Unix epoch seconds of last access. */
+  lastAccessedAt: number;
+  /** Originating Tessera source id (UUID), when known. */
+  sourceId: string | null;
+}
+
+/**
+ * Outcome of a substrate decay sweep (`bridge_run_decay_sweep`).
+ * Mirrors `tessera_substrate::DecaySweepSummary`.
+ */
+export interface SubstrateDecayReportInfo {
+  /** Number of objects whose retention score was recomputed. */
+  scored: number;
+  /** Number of `Candidate -> Archived` transitions. */
+  candidatesArchived: number;
+  /** Number of `Superseded -> Archived` transitions. */
+  supersededArchived: number;
+}
+
+/**
+ * Result of a substrate synthesis run (`bridge_trigger_synthesis`).
+ * Mirrors `tessera_substrate::SynthesisSummary`.
+ */
+export interface SubstrateSynthesisInfo {
+  /** Synthesis window id (UUID). */
+  windowId: string;
+  /** Scope id (UUID) the synthesis covers. */
+  scopeId: string;
+  /** Version stamp of the persisted synthesis object. */
+  version: number;
+  /** Free-text recap headline. */
+  recap: string;
+  /** Decisions captured during the window. */
+  decisions: string[];
+  /** Open questions captured during the window. */
+  openQuestions: string[];
+  /** Active tasks captured during the window. */
+  activeTasks: string[];
+}
+
+/**
+ * Renderer surface for the additive knowledge substrate. Wired to the
+ * `substrate:*` IPC channels registered in `electron/ipc/substrate.ts`.
+ * Sessions 3 (UI) and 6 (search) build on this contract.
+ */
+export interface SubstrateApi {
+  /**
+   * Run the observation pipeline over a source's indexed chunks and
+   * persist the extracted observations/memories/concepts. Idempotent
+   * per `sourceId`. Resolves with the number of observations extracted.
+   */
+  extractObservations: (sourceId: string) => Promise<number>;
+  /** List memory objects for a scope (default scope when omitted). */
+  getMemories: (scope?: string | null) => Promise<SubstrateMemoryInfo[]>;
+  /** Pin a memory (strongest retention signal). */
+  pinMemory: (id: string) => Promise<SubstrateMemoryInfo>;
+  /** Decrement a memory's pin count (saturating at zero). */
+  unpinMemory: (id: string) => Promise<SubstrateMemoryInfo>;
+  /** Forget (delete) a single memory by id. */
+  forgetMemory: (id: string) => Promise<void>;
+  /**
+   * JSON-serialized concept-graph view (`concept_graph::GraphView`)
+   * for a scope, bounded by `maxNodes`.
+   */
+  getConceptGraph: (
+    scope?: string | null,
+    maxNodes?: number | null,
+  ) => Promise<string>;
+  /** Recompute retention and apply decay transitions. */
+  runDecaySweep: () => Promise<SubstrateDecayReportInfo>;
+  /** Produce and persist a deterministic synthesis for a scope. */
+  triggerSynthesis: (
+    scope?: string | null,
+  ) => Promise<SubstrateSynthesisInfo>;
+}
+
 export interface AutomationApi {
   create: (req: CreateAutomationRequest) => Promise<AutomationInfo>;
   list: () => Promise<AutomationInfo[]>;
@@ -2718,6 +2827,8 @@ export interface TesseraApi {
   imagegen: ImagegenApi;
   connectors: ConnectorApi;
   tasks: TaskApi;
+  /** Additive knowledge-substrate surface (memories, concepts, decay). */
+  substrate: SubstrateApi;
   automations: AutomationApi;
   dialog: DialogApi;
   slides: SlidesApi;
