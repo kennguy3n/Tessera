@@ -100,6 +100,12 @@ const BACKUP_ALL_PAGES: i32 = -1;
 /// `LOCKED`. Transient under our single-writer model; a short sleep
 /// lets the writer finish its statement.
 const BACKUP_BUSY_RETRY: Duration = Duration::from_millis(25);
+/// Maximum number of *consecutive* transient (`BUSY` / `LOCKED`) step
+/// retries before [`backup_db_to_file`] gives up with an error rather
+/// than spinning the thread forever. At [`BACKUP_BUSY_RETRY`] (25 ms)
+/// this is a ~5 s ceiling. Forward progress (`More`) resets the count,
+/// so a legitimately large multi-step copy is never falsely aborted.
+const MAX_BACKUP_BUSY_RETRIES: u32 = 200;
 /// Read-buffer size for streaming files through the SHA-256 hasher and
 /// the tar writer. 64 KiB balances syscall count against memory.
 const COPY_BUF_LEN: usize = 64 * 1024;
@@ -282,6 +288,15 @@ fn backup_db_to_file(source: &SharedConnection, key: Option<&str>, dest_path: &P
     let backup = Backup::new(&src_guard, &mut dest)
         .map_err(|e| Error::Backup(format!("backup_init failed: {e}")))?;
 
+    // Defensive bound on *consecutive* transient (Busy/Locked) retries.
+    // Under the single-writer model a fresh-destination hot copy
+    // completes in one step, so this is effectively never hit; it exists
+    // purely so a pathological external condition (e.g. another process
+    // wedging a lock on the just-created destination file) surfaces as a
+    // clear error instead of spinning the thread forever. A genuine
+    // multi-step copy resets the counter on each `More`, so large
+    // databases are never falsely aborted.
+    let mut busy_retries: u32 = 0;
     loop {
         match backup
             .step(BACKUP_ALL_PAGES)
@@ -289,14 +304,26 @@ fn backup_db_to_file(source: &SharedConnection, key: Option<&str>, dest_path: &P
         {
             StepResult::Done => break,
             // `-1` copies everything in one step, but a concurrent
-            // writer can still force a retry; handle all non-Done
-            // results defensively rather than asserting Done.
-            StepResult::More => continue,
+            // writer can still force a retry; treat `More` as forward
+            // progress and reset the transient-retry budget.
+            StepResult::More => {
+                busy_retries = 0;
+                continue;
+            }
             // `StepResult` is `#[non_exhaustive]`; Busy/Locked are the
             // only other documented variants and any future transient
-            // result is treated the same way — back off and retry.
-            StepResult::Busy | StepResult::Locked => std::thread::sleep(BACKUP_BUSY_RETRY),
-            _ => std::thread::sleep(BACKUP_BUSY_RETRY),
+            // result is treated the same way — bounded back-off + retry.
+            _ => {
+                busy_retries += 1;
+                if busy_retries > MAX_BACKUP_BUSY_RETRIES {
+                    return Err(Error::Backup(format!(
+                        "backup stalled: source stayed busy/locked for {busy_retries} \
+                         consecutive retries (~{} ms); aborting to avoid blocking the thread",
+                        u64::from(busy_retries) * BACKUP_BUSY_RETRY.as_millis() as u64
+                    )));
+                }
+                std::thread::sleep(BACKUP_BUSY_RETRY);
+            }
         }
     }
 
@@ -713,6 +740,21 @@ fn extract_and_verify(
         fs::write(&dest, &buf).map_err(Error::Io)?;
         out.insert(arcname, dest);
     }
+
+    // Completeness: every entry the manifest promises must actually be
+    // present in the archive. We already reject *extra* entries above;
+    // this is the mirror check for *missing* ones. A manifest that lists
+    // an entry the archive doesn't contain is a truncated or tampered
+    // bundle, so we refuse the whole import before mutating the live
+    // workspace rather than silently applying a partial restore.
+    for arcname in expected.keys() {
+        if !out.contains_key(*arcname) {
+            return Err(Error::Backup(format!(
+                "bundle is missing manifest entry {arcname} (truncated or tampered archive)"
+            )));
+        }
+    }
+
     Ok(out)
 }
 
@@ -1126,6 +1168,71 @@ mod tests {
         let new_db = dir.path().join("restored.db");
         assert!(import_bundle(&out, &new_db, &[], Some(TEST_KEY)).is_err());
         assert!(!pending_restore_path(&new_db).exists());
+    }
+
+    #[test]
+    fn bundle_import_rejects_missing_manifest_entry() {
+        use std::io::Read as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("tessera.db");
+        let conn = seed_db(&db_path, Some(TEST_KEY), &[(1, "alpha")]);
+
+        let sidecar = dir.path().join("settings.json");
+        fs::write(&sidecar, br#"{"theme":"dark"}"#).unwrap();
+        let extras = vec![BundleSource {
+            role: "settings".into(),
+            arcname: "settings.json".into(),
+            path: sidecar.clone(),
+        }];
+        let out = dir.path().join("workspace.tessera-backup");
+        export_bundle(&conn, Some(TEST_KEY), &extras, &out).expect("export");
+        drop(conn);
+
+        // Re-pack the archive dropping the sidecar *payload* but keeping
+        // the manifest (which still lists it). This simulates a
+        // truncated / tampered bundle whose manifest over-promises: the
+        // db entry hashes fine, but a promised entry is simply absent.
+        let stripped = dir.path().join("stripped.tessera-backup");
+        {
+            let in_file = fs::File::open(&out).unwrap();
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(in_file));
+            let out_file = fs::File::create(&stripped).unwrap();
+            let gz = flate2::write::GzEncoder::new(out_file, flate2::Compression::default());
+            let mut builder = tar::Builder::new(gz);
+            for entry in archive.entries().unwrap() {
+                let mut entry = entry.unwrap();
+                let arcname = entry.path().unwrap().to_string_lossy().into_owned();
+                if arcname == format!("{BUNDLE_EXTRA_PREFIX}settings.json") {
+                    continue; // drop the promised sidecar
+                }
+                let mut data = Vec::new();
+                entry.read_to_end(&mut data).unwrap();
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o600);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, &arcname, data.as_slice())
+                    .unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+
+        let new_db = dir.path().join("restored.db");
+        let targets = vec![BundleTarget {
+            arcname: "settings.json".into(),
+            path: dir.path().join("restored-settings.json"),
+        }];
+        let err = import_bundle(&stripped, &new_db, &targets, Some(TEST_KEY))
+            .expect_err("a manifest entry absent from the archive must be rejected");
+        assert!(
+            format!("{err}").contains("missing manifest entry"),
+            "unexpected error: {err}"
+        );
+        // Nothing on the live workspace was touched.
+        assert!(!pending_restore_path(&new_db).exists());
+        assert!(!dir.path().join("restored-settings.json").exists());
     }
 
     #[test]

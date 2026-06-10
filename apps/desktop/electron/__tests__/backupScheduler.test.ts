@@ -218,6 +218,36 @@ describe("runBackupNow", () => {
     expect(getBackupSchedulerStatus().lastBackupError).toBe("disk full");
   });
 
+  it("stopBackupScheduler drains the full side-effect chain on failure", async () => {
+    // Regression: `activeBackup` must hold the *chained* promise (with
+    // the .catch that records lastBackupError and the .finally that
+    // clears the guard), not the raw IIFE promise. If it held the raw
+    // promise, the drain in stopBackupScheduler would resolve a microtask
+    // early — before lastBackupError was recorded and before the guard
+    // was cleared.
+    const bridge = makeBridge({
+      bridgeCreateBackup: vi.fn(() => {
+        throw new Error("disk full");
+      }),
+    });
+    const h = makeHarness(bridge);
+    loadConfigMock.mockReturnValue(fakeConfig({ autoBackup: false }));
+    startBackupScheduler(h.deps);
+
+    // Kick off a failing backup but do NOT await its returned promise,
+    // so the drain — not our await — is what settles the chain.
+    const pending = runBackupNow();
+    pending.catch(() => {
+      /* failure asserted via status below */
+    });
+
+    await stopBackupScheduler();
+
+    const status = getBackupSchedulerStatus();
+    expect(status.lastBackupError).toBe("disk full");
+    expect(status.inFlight).toBe(false);
+  });
+
   it("coalesces concurrent calls onto a single in-flight backup", async () => {
     const createMock = vi.fn(() => fakeBackupInfo());
     const bridge = makeBridge({

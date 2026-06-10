@@ -219,6 +219,13 @@ export default function BackupSettingsCard({
     const save = await dialog.showSaveDialog({
       title: "Export workspace bundle",
       defaultPath: "tessera-workspace.tessera-backup",
+      // Lock the picker to the bundle extension so the saved file keeps
+      // its `.tessera-backup` suffix and shows up in the import picker
+      // (which filters on the same extension) without the user having to
+      // switch to "All files".
+      filters: [
+        { name: "Tessera workspace bundle", extensions: ["tessera-backup"] },
+      ],
     });
     if (save.canceled || !save.filePath) return;
     setBusy(true);

@@ -135,8 +135,14 @@ export function runBackupNow(): Promise<BackupInfo> {
     }
     return info;
   })();
-  activeBackup = run;
-  return run
+  // Publish the *chained* promise (not the raw `run`) as the in-flight
+  // handle. Consumers of `activeBackup` — the single-flight guard above
+  // and `stopBackupScheduler`'s drain — must observe completion only
+  // after the `.then`/`.catch` side effects (`lastBackupAt`,
+  // `lastBackupError`) have run and the guard has been cleared.
+  // Publishing `run` instead would let them resolve a microtask early,
+  // before `lastBackupError` is recorded and `activeBackup` is nulled.
+  const chained = run
     .then((info) => {
       lastBackupAt = deps.now();
       lastBackupError = null;
@@ -150,6 +156,8 @@ export function runBackupNow(): Promise<BackupInfo> {
     .finally(() => {
       activeBackup = null;
     }) as Promise<BackupInfo>;
+  activeBackup = chained;
+  return chained;
 }
 
 /** Fire a backup but never reject — for the timer callbacks. */
