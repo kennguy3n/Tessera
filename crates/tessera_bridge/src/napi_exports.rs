@@ -440,6 +440,18 @@ pub fn bridge_add_kchat_channel(
             let _ = logger.log_source_added(&cache_dir);
         }
     }
+    // Additive: KChat channels are indexed through the same
+    // text-extraction → chunking → embeddings pipeline as local folders
+    // (`SourceManager::add_kchat_channel` calls `index_folder`), so their
+    // freshly-indexed chunks are extracted on every sync for parity with
+    // the local-source paths. Re-extraction is idempotent per source, so
+    // the convergent re-sync calls just replace this source's slice.
+    // Best-effort; never fails the add. The per-file WS fast path
+    // (`bridge_index_kchat_file`) intentionally does NOT extract here —
+    // re-extracting the whole source on every bursty single-file push
+    // would defeat its O(1) design; the next reconciliation sync covers
+    // those files.
+    run_observations_for_source(&outcome.source.id);
     Ok(outcome)
 }
 

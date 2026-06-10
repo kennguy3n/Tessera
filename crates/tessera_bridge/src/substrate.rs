@@ -125,7 +125,7 @@ impl From<SynthesisSummary> for SubstrateSynthesis {
 ///
 /// This is the on-demand counterpart to the automatic extraction that
 /// runs after `bridge_add_local_folder` / `bridge_add_local_file` /
-/// `bridge_reindex_source`.
+/// `bridge_add_kchat_channel` / `bridge_reindex_source`.
 #[napi]
 pub fn bridge_extract_observations(source_id: String) -> napi::Result<u32> {
     extract_observations_for_source(&source_id)
