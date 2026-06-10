@@ -27,6 +27,7 @@ import {
   recommendModel,
   resetManifestCache,
   type DownloadProgress,
+  type InstalledModelRecord,
   type ModelCapability,
   type ResolvedModel,
 } from "../modelManagement";
@@ -142,6 +143,82 @@ function progressEmitter(event: Electron.IpcMainInvokeEvent) {
 function sidecarStopperFor(capability: ModelCapability): () => Promise<void> {
   if (capability === "text") return stopSidecarIfRunning;
   return async () => undefined;
+}
+
+/**
+ * Resolve the recommended model for `capability` on the current
+ * platform/tier, or `null` when the manifest has no candidate for this
+ * machine. Exported so the first-launch auto-download
+ * (`autoModelDownload.ts`) can read the real download host + size
+ * before deciding whether to start, without duplicating the manifest
+ * plumbing that lives here.
+ */
+export function resolveRecommendedModel(
+  capability: ModelCapability,
+): ResolvedModel | null {
+  const info = detectPlatformInfo();
+  const manifest = loadResolvedManifest();
+  return recommendModel(manifest, info.platform, info.tier, capability);
+}
+
+/**
+ * Resolve the recommended model for `capability` on the current
+ * platform/tier and ensure it is installed, downloading it if needed.
+ *
+ * This is the shared core behind BOTH the `runtime:downloadRecommended`
+ * IPC channel (renderer-initiated: the banner's "Retry" and any future
+ * "Download AI now" CTA) AND the main-process first-launch auto-download
+ * (`autoModelDownload.ts`). Centralising it here keeps a single
+ * authoritative path that resolves the manifest, derives the slot, runs
+ * the sidecar-stop-inside-the-lock mutation, and reports progress — so
+ * the two entry points can never drift.
+ *
+ * Returns the installed record, or `null` when the manifest has no
+ * candidate for the slot on this platform (a headless/unsupported
+ * build) — callers treat `null` as "nothing to do", not an error.
+ *
+ * Progress (including a final synthetic `percent: 100` event on success,
+ * so observers that only watch `runtime:downloadProgress` reliably see
+ * completion even if the underlying fetcher's last tick lands below 100)
+ * is delivered via `emit`. The already-installed fast path emits the
+ * same completion event so a redundant call still flips observers to
+ * "ready" without re-downloading bytes.
+ */
+export async function downloadRecommendedModel(
+  capability: ModelCapability,
+  emit: (p: DownloadProgress) => void,
+): Promise<InstalledModelRecord | null> {
+  const recommended = resolveRecommendedModel(capability);
+  if (!recommended) return null;
+
+  const completion: DownloadProgress = {
+    modelId: recommended.id,
+    capability,
+    format: recommended.format,
+    filename: recommended.filename,
+    downloadedMb: recommended.downloadSizeMb,
+    totalMb: recommended.downloadSizeMb,
+    percent: 100,
+  };
+
+  // Fast path: already installed in its slot. Re-emit completion so a
+  // late observer (e.g. a banner that mounted after the download
+  // finished) still resolves to "ready" rather than hanging.
+  const installed = await isModelInstalled(
+    userDataDir(),
+    capability,
+    recommended.id,
+  );
+  if (installed) {
+    emit(completion);
+    return installed;
+  }
+
+  const record = await downloadModel(userDataDir(), recommended, emit, {
+    beforeMutation: sidecarStopperFor(capability),
+  });
+  emit(completion);
+  return record;
 }
 
 export function registerRuntimeHandlers(): void {
@@ -272,6 +349,21 @@ export function registerRuntimeHandlers(): void {
       return downloadModel(userDataDir(), requested, progressEmitter(event), {
         beforeMutation: sidecarStopperFor(requested.capability),
       });
+    },
+  );
+
+  // Resolve + install the recommended model for a slot in one call.
+  // Unlike `runtime:downloadModel` (which takes an explicit modelId),
+  // this lets the renderer say "give me the right model for this
+  // machine" without first round-tripping `runtime:recommendModel`.
+  // Backs the ModelDownloadBanner's "Retry" affordance and shares its
+  // implementation with the first-launch auto-download in
+  // `autoModelDownload.ts` via `downloadRecommendedModel`.
+  idempotentHandle(
+    "runtime:downloadRecommended",
+    async (event, capability: unknown) => {
+      const cap = coerceCapability(capability);
+      return downloadRecommendedModel(cap, progressEmitter(event));
     },
   );
 

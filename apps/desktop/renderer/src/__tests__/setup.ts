@@ -567,8 +567,10 @@ const mockApi = {
       message: "Download Ternary-Bonsai 1.7B (450 MB).",
     }),
     downloadModel: vi.fn(),
+    downloadRecommended: vi.fn().mockResolvedValue(null),
     deleteModel: vi.fn().mockResolvedValue(undefined),
     onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+    onDownloadError: vi.fn().mockReturnValue(() => undefined),
   },
   vision: {
     // Default mock: vision is unavailable so renderer tests that

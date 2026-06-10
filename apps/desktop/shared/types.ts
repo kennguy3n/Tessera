@@ -1639,6 +1639,24 @@ export interface ModelDownloadProgress {
   percent: number;
 }
 
+/**
+ * Terminal failure of a background model download, broadcast on the
+ * `runtime:downloadError` channel. The renderer-initiated
+ * `runtime:downloadModel` / `runtime:downloadRecommended` invocations
+ * surface their own rejection to the caller, so this event exists
+ * specifically for the main-process FIRST-LAUNCH auto-download
+ * (`autoModelDownload.ts`), which is fire-and-forget and has no caller
+ * to reject to. The `ModelDownloadBanner` observes it to flip to its
+ * "Setup failed — retry" state. `modelId` is absent when the failure
+ * occurred before a model was resolved (e.g. the manifest could not be
+ * read).
+ */
+export interface ModelDownloadError {
+  capability: ModelCapability;
+  modelId?: string;
+  message: string;
+}
+
 export interface GenerateRequest {
   templateId?: string;
   sourceIds?: string[];
@@ -2364,6 +2382,17 @@ export interface RuntimeApi {
    */
   downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
   /**
+   * Resolve the recommended model for `capability` on this machine and
+   * ensure it is installed, downloading it if needed. Unlike
+   * `downloadModel` the renderer does not need to know the model id in
+   * advance — used by the ModelDownloadBanner's "Retry" affordance.
+   * Resolves `null` when the manifest has no candidate for this
+   * platform/tier. Defaults to the text slot when omitted.
+   */
+  downloadRecommended: (
+    capability?: ModelCapability,
+  ) => Promise<InstalledModelRecord | null>;
+  /**
    * Delete the model currently installed in `capability`'s slot.
    * Defaults to the text slot when omitted so legacy single-slot
    * callers keep working unchanged.
@@ -2372,6 +2401,11 @@ export interface RuntimeApi {
   onDownloadProgress: (
     callback: (p: ModelDownloadProgress) => void,
   ) => () => void;
+  /**
+   * Subscribe to terminal failures of the main-process first-launch
+   * auto-download. See {@link ModelDownloadError}.
+   */
+  onDownloadError: (callback: (e: ModelDownloadError) => void) => () => void;
 }
 
 /**

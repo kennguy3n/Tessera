@@ -172,6 +172,14 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 5_000,
   },
+  // Recommended-model install (banner "Retry" / first-launch auto-
+  // download). Same single-flight-per-5s budget as `downloadModel`:
+  // it routes into the same per-slot download lock, so this throttle
+  // just keeps rapid retries from queueing redundant fetches.
+  "runtime:downloadRecommended": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
   "sources:search": {
     tokensPerInterval: 10,
     intervalMs: 1_000,

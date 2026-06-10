@@ -1,25 +1,29 @@
 /**
- * Non-blocking model-setup banner (Part 3a/3b).
+ * Non-blocking model-setup banner (Session 5, Step 2).
  *
  * Renders a slim strip at the top of `app-main` that reflects the
- * state of the recommended text-model download. It serves two roles:
+ * state of the recommended text-model download. It is a pure OBSERVER:
+ * the first-launch auto-download is now initiated authoritatively in
+ * the MAIN process (`autoModelDownload.ts`, after `init_bridge`
+ * succeeds), so the banner no longer triggers a download on mount —
+ * it only reflects one that is (or was) in flight, whether started by
+ * the auto-download or from the Settings model panel. Having a single
+ * initiator removes the previous double-start race and means the
+ * banner can't fire a redundant fetch on every remount.
  *
- *   1. Auto-setup trigger. On a fresh install (`onboardingCompleted
- *      === false`) with auto-download enabled and no text model on
- *      disk, it kicks off `runtime.downloadModel(recommended)` in the
- *      background — the renderer-side equivalent of "zero-friction
- *      setup". `runtime:downloadModel` already enforces single-model
- *      installs, SHA256 verification, `.partial` cleanup and progress
- *      broadcasts, so the banner only has to start it and observe.
+ * State machine, driven entirely by IPC events:
+ *   - `runtime:downloadProgress` (text slot) → downloading (with %),
+ *     flipping to ready once a `percent >= 100` event arrives (the
+ *     main process emits a synthetic 100% completion event so this is
+ *     reliable even if the fetcher's last real tick lands below 100).
+ *   - `runtime:downloadError` (text slot) → failed, with a Retry
+ *     button that calls `runtime.downloadRecommended("text")`.
  *
- *   2. Progress surface. It subscribes to `runtime.onDownloadProgress`
- *      (filtered to the text slot) so it ALSO reflects a download
- *      started elsewhere (e.g. the Settings model panel) — not just
- *      the one it triggered.
- *
- * States: downloading (with %) → ready (auto-dismisses after 3s) →
- * or failed (with a Retry button). A Skip control dismisses the
- * banner so the user can work in extraction-only mode immediately.
+ * UX per spec: shows an estimated size before bytes start
+ * ("Downloading AI model (~450 MB)…"), auto-dismisses the success
+ * state after 5s, and offers a "Skip — work without AI" link that
+ * dismisses AND persists `autoDownloadModel: false` so the next launch
+ * won't auto-retry.
  *
  * The banner is intentionally additive and never blocks: it renders
  * `null` whenever there is nothing to say (idle, dismissed, or a
@@ -27,25 +31,25 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
-import { useSettings } from "../hooks/useSettings";
+import { useUpdateSetting } from "../hooks/useSettings";
 import { useCspNonce } from "../utils/cspNonce";
+import { formatModelSize } from "../utils/formatModelSize";
 
 type BannerStatus = "idle" | "downloading" | "ready" | "failed";
 
-const READY_AUTODISMISS_MS = 3000;
+const READY_AUTODISMISS_MS = 5000;
 
 export default function ModelDownloadBanner() {
   const cspNonce = useCspNonce();
-  const { settings, loading } = useSettings();
+  const { update } = useUpdateSetting();
   const [status, setStatus] = useState<BannerStatus>("idle");
   const [percent, setPercent] = useState(0);
   const [dismissed, setDismissed] = useState(false);
-  // Guards so the auto-start effect fires exactly once per mount even
-  // as `settings` re-renders the component on every store update.
-  const startedRef = useRef(false);
-  // Tracks mount state so the async `start()` promise (which is not
-  // cancelable through the IPC bridge) never calls a state setter
-  // after the user navigates away and the banner unmounts. Re-set on
+  // Estimated download size, shown before the first progress byte and
+  // then reconciled to the real `totalMb` once it's known.
+  const [sizeMb, setSizeMb] = useState<number | null>(null);
+  // Tracks mount state so async IPC callbacks (not cancelable through
+  // the bridge) never call a state setter after unmount. Re-set on
   // every mount so React 18 StrictMode's mount→unmount→remount cycle
   // leaves it `true`.
   const mountedRef = useRef(true);
@@ -56,73 +60,58 @@ export default function ModelDownloadBanner() {
     };
   }, []);
 
-  // Kick off (or re-run on Retry) the recommended-model download.
-  // Owns the download promise so it can resolve to ready/failed even
-  // when no further progress events arrive (e.g. an instant cache
-  // hit or an immediate rejection).
-  const start = useCallback(async () => {
+  // Probe the recommended model's size up-front so we can show
+  // "~450 MB" in the banner before the first progress event lands.
+  // Best-effort and read-only — never initiates a download.
+  useEffect(() => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api?.runtime) return;
-    try {
-      const recommended = await api.runtime.recommendModel("text");
-      if (!mountedRef.current) return;
-      if (!recommended) {
-        // Nothing to install on this device/tier — stay quiet.
-        setStatus("idle");
-        return;
-      }
-      setStatus("downloading");
-      setPercent(0);
-      await api.runtime.downloadModel(recommended.id);
-      if (!mountedRef.current) return;
-      setStatus("ready");
-      setPercent(100);
-    } catch {
-      if (!mountedRef.current) return;
-      setStatus("failed");
-    }
+    let cancelled = false;
+    void api.runtime
+      .recommendModel("text")
+      .then((m) => {
+        if (cancelled || !mountedRef.current) return;
+        if (m) setSizeMb(m.downloadSizeMb);
+      })
+      .catch(() => {
+        // No manifest / bridge not ready — degrade to no estimate.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Reflect ANY in-flight text-slot download (this banner's own, or
-  // one started from the Settings panel) by subscribing to progress.
+  // Reflect ANY in-flight text-slot download (the main-process auto-
+  // download, or one started from the Settings panel) by observing
+  // progress. A `percent >= 100` event is the completion signal.
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api?.runtime) return;
     return api.runtime.onDownloadProgress((p) => {
       if (p.capability !== "text") return;
+      if (!mountedRef.current) return;
       setPercent(p.percent);
-      setStatus((s) => (s === "ready" ? s : "downloading"));
+      // Capture the authoritative total once the fetcher reports it.
+      if (Number.isFinite(p.totalMb) && p.totalMb > 0) setSizeMb(p.totalMb);
+      if (p.percent >= 100) {
+        setStatus("ready");
+      } else {
+        setStatus((s) => (s === "ready" ? s : "downloading"));
+      }
     });
   }, []);
 
-  // Fresh-install auto-download trigger. Waits for the real settings
-  // to load (so we don't act on the optimistic `onboardingCompleted:
-  // true` placeholder), then checks the three preconditions from the
-  // spec: auto-download enabled, onboarding not yet completed, and no
-  // text model installed — plus a best-effort online check.
+  // Reflect a terminal failure of the main-process auto-download
+  // (which is fire-and-forget and has no caller to reject to).
   useEffect(() => {
-    if (loading || startedRef.current) return;
-    if (!settings.autoDownloadModel) return;
-    if (settings.onboardingCompleted) return;
     const api = typeof window !== "undefined" ? window.tessera : undefined;
-    if (!api?.runtime) return;
-    const online =
-      typeof navigator === "undefined" || navigator.onLine !== false;
-    if (!online) return;
-    startedRef.current = true;
-    void api.runtime
-      .getCurrentModel("text")
-      .then((record) => {
-        if (!mountedRef.current) return;
-        if (record !== null) return;
-        void start();
-      })
-      .catch(() => {
-        // Bridge not ready or a transient IPC failure — stay idle so the
-        // user can still work in extraction-only mode. The download can
-        // be retried later from the Settings model panel.
-      });
-  }, [loading, settings.autoDownloadModel, settings.onboardingCompleted, start]);
+    if (!api?.runtime?.onDownloadError) return;
+    return api.runtime.onDownloadError((e) => {
+      if (e.capability !== "text") return;
+      if (!mountedRef.current) return;
+      setStatus("failed");
+    });
+  }, []);
 
   // Auto-dismiss the success state after a short delay so the banner
   // doesn't linger once the model is ready.
@@ -132,14 +121,45 @@ export default function ModelDownloadBanner() {
     return () => clearTimeout(t);
   }, [status]);
 
+  // Retry re-runs the recommended-model install via the dedicated IPC.
+  // It owns this promise so it resolves to ready/failed even when no
+  // further progress events arrive (instant cache hit or immediate
+  // rejection); the progress/error observers above converge on the
+  // same states for the auto-download path.
   const onRetry = useCallback(() => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api?.runtime) return;
     setDismissed(false);
-    void start();
-  }, [start]);
+    setStatus("downloading");
+    setPercent(0);
+    void api.runtime
+      .downloadRecommended("text")
+      .then((record) => {
+        if (!mountedRef.current) return;
+        // `null` = no candidate for this device/tier — stay quiet.
+        setStatus(record === null ? "idle" : "ready");
+      })
+      .catch(() => {
+        if (!mountedRef.current) return;
+        setStatus("failed");
+      });
+  }, []);
+
+  // Skip dismisses the banner AND persists the opt-out so the next
+  // launch's auto-download trigger stays off. The user can re-enable
+  // it from Settings → Model Runtime.
+  const onSkip = useCallback(() => {
+    setDismissed(true);
+    void update({ autoDownloadModel: false }).catch(() => {
+      // A failed persist still dismisses for this session; the toggle
+      // in Settings remains the durable control.
+    });
+  }, [update]);
 
   if (dismissed || status === "idle") return null;
 
   const rounded = Math.round(percent);
+  const sizeLabel = formatModelSize(sizeMb);
 
   return (
     <div
@@ -157,10 +177,12 @@ export default function ModelDownloadBanner() {
       </span>
       <span className="model-download-banner-text">
         {status === "downloading" &&
-          `Setting up AI capabilities… ${rounded}%`}
-        {status === "ready" && "AI model ready"}
+          (rounded > 0
+            ? `Setting up AI capabilities… ${rounded}%`
+            : `Downloading AI model${sizeLabel}…`)}
+        {status === "ready" && "AI ready"}
         {status === "failed" &&
-          "AI model download failed. You can keep working from your sources."}
+          "AI setup failed. You can keep working from your sources."}
       </span>
       <span className="model-download-banner-actions">
         {status === "failed" && (
@@ -173,14 +195,14 @@ export default function ModelDownloadBanner() {
             Retry
           </button>
         )}
-        {status === "downloading" && (
+        {(status === "downloading" || status === "failed") && (
           <button
             type="button"
-            className="model-download-banner-btn"
-            onClick={() => setDismissed(true)}
+            className="model-download-banner-link"
+            onClick={onSkip}
             data-testid="model-download-banner-skip"
           >
-            Skip
+            Skip — work without AI
           </button>
         )}
         <button
@@ -229,6 +251,19 @@ export default function ModelDownloadBanner() {
           cursor: pointer;
           color: inherit;
           font-size: var(--font-size-sm);
+        }
+        .model-download-banner-link {
+          background: none;
+          border: none;
+          padding: 2px 4px;
+          cursor: pointer;
+          color: inherit;
+          font-size: var(--font-size-sm);
+          text-decoration: underline;
+          opacity: 0.85;
+        }
+        .model-download-banner-link:hover {
+          opacity: 1;
         }
         .model-download-banner-close {
           background: none;
