@@ -309,6 +309,47 @@ describe("handleWillQuit", () => {
     },
   );
 
+  // LW-3: `stopBatteryMonitor` is now injected via `deps` (rather than
+  // called as a direct module import), so the ordering it documents —
+  // "stop the battery poll FIRST, synchronously, before any async
+  // drain" — is verifiable here. It is synchronous and never-throwing,
+  // so it must land before `stopScheduler` even when the scheduler
+  // resolves on a later microtask.
+  it("stops the battery monitor first, before the async drains", async () => {
+    const order: string[] = [];
+    const stopBatteryMonitor = vi.fn().mockImplementation(() => {
+      order.push("stopBatteryMonitor");
+    });
+    const stopScheduler = vi.fn().mockImplementation(async () => {
+      order.push("stopScheduler");
+    });
+    const stopAllSidecars = vi.fn().mockImplementation(async () => {
+      order.push("stopAllSidecars");
+    });
+    const quit = vi.fn().mockImplementation(() => {
+      order.push("quit");
+    });
+
+    const { event } = makeEvent();
+    await handleWillQuit(event, {
+      stopBatteryMonitor,
+      stopScheduler,
+      stopAllSidecars,
+      stopKchatLocalApi: vi.fn().mockResolvedValue(undefined),
+      detachKchatDeeplinkBridge: vi.fn(),
+      quit,
+    });
+
+    expect(stopBatteryMonitor).toHaveBeenCalledTimes(1);
+    expect(order[0]).toBe("stopBatteryMonitor");
+    expect(order).toEqual([
+      "stopBatteryMonitor",
+      "stopScheduler",
+      "stopAllSidecars",
+      "quit",
+    ]);
+  });
+
   it(
     "calls app.quit() even when stopKchatLocalApi rejects (errors swallowed)",
     async () => {

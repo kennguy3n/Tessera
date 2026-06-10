@@ -1096,6 +1096,16 @@ export async function handleWillQuit(
      * registration below).
      */
     disposeBridge?: () => void;
+    /**
+     * Stop the LW-3 battery poll timer. Injected (like the other
+     * shutdown steps) rather than called as a direct import so the
+     * will-quit tests can spy on it and assert its ordering relative
+     * to the scheduler / sidecar drains. Optional so existing tests
+     * that don't wire it keep compiling; production passes the real
+     * `stopBatteryMonitor`. It is synchronous and never-throwing, so
+     * it runs up front, outside the async-drain try/catch blocks.
+     */
+    stopBatteryMonitor?: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -1114,7 +1124,9 @@ export async function handleWillQuit(
   // interval when a test harness re-launches the main process, mirroring
   // why we clear the scheduler interval up front. Synchronous and
   // never-throwing, so it sits outside the async-drain try/catch blocks.
-  stopBatteryMonitor();
+  // Injected via `deps` for the same testability reason as every other
+  // step (the `?.` keeps callers that don't wire it working).
+  deps.stopBatteryMonitor?.();
   // Outer `try/finally` guarantees `deps.quit()` runs even if one of
   // the inner `console.error` calls were to throw (e.g. a custom
   // `console` override in a future test/wrapper). The two inner
@@ -1205,6 +1217,7 @@ app.on("will-quit", (event) => {
   handleWillQuit(event, {
     stopScheduler,
     stopAllSidecars,
+    stopBatteryMonitor,
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
     disposeBridge: () => {

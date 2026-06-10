@@ -59,24 +59,46 @@ export const LOW_BATTERY_THRESHOLD_PERCENT = 20;
  * pre-first-poll value and the fallback whenever a probe throws or
  * yields nothing parseable.
  */
-export const AC_ALWAYS: BatteryStatus = {
+// Frozen, mirroring the other module-level config constants
+// (`DEFAULT_EXTERNAL_PROVIDER`, `DEFAULT_HYBRID_SEARCH_CONFIG`): a
+// shared fail-open default must never be mutable, or a stray
+// `AC_ALWAYS.hasBattery = true` from any importer would silently flip
+// gating on for the whole process.
+export const AC_ALWAYS: BatteryStatus = Object.freeze({
   hasBattery: false,
   isOnBattery: false,
   isCharging: true,
   percent: null,
-};
+});
 
-// Spread-copy, not a bare `= AC_ALWAYS` reference: `getBatteryStatus()`
-// hands `current` straight to callers, and `AC_ALWAYS` is a plain
-// (unfrozen) object, so a caller that mutated the returned snapshot
-// before the first probe completed would otherwise corrupt the shared
-// constant — poisoning every later `{ ...AC_ALWAYS }` reset/fallback.
-// Matches the spread-copy used at every other assignment site.
-let current: BatteryStatus = { ...AC_ALWAYS };
+// `AC_ALWAYS` is frozen, so sharing it by reference as the pre-first-poll
+// value is safe; the first `setCurrent` replaces it with its own frozen
+// snapshot regardless.
+let current: BatteryStatus = AC_ALWAYS;
 let pollHandle: ReturnType<typeof setInterval> | null = null;
 let inFlight: Promise<void> | null = null;
 
-/** The most recent power-state snapshot (cached; never throws). */
+/**
+ * Replace the cached snapshot with a FROZEN, independently-owned copy.
+ * Single choke point for every write to `current` so that:
+ *   - `getBatteryStatus()` can hand `current` straight to callers and a
+ *     stray `getBatteryStatus().percent = 100` throws in strict mode
+ *     instead of silently corrupting the cache for all later predicate
+ *     reads (`isBatteryLow()` / `isOnBattery()` / `isCharging()`);
+ *   - the cache is detached from the probe/parser's transient object and
+ *     from the shared `AC_ALWAYS` constant.
+ * `BatteryStatus` is flat (all primitives), so a shallow freeze is fully
+ * immutable.
+ */
+function setCurrent(next: BatteryStatus): void {
+  current = Object.freeze({ ...next });
+}
+
+/**
+ * The most recent power-state snapshot. Cached, never throws, and
+ * immutable — the returned object is frozen (see {@link setCurrent}), so
+ * callers can read it freely but cannot corrupt the shared cache.
+ */
 export function getBatteryStatus(): BatteryStatus {
   return current;
 }
@@ -309,11 +331,11 @@ export async function refreshBatteryStatus(): Promise<BatteryStatus> {
         default:
           next = { ...AC_ALWAYS };
       }
-      current = next;
+      setCurrent(next);
     } catch (e) {
       // Fail open: a probe error must never gate the user. Reset to
       // AC_ALWAYS rather than retaining a possibly-stale "low" reading.
-      current = { ...AC_ALWAYS };
+      setCurrent(AC_ALWAYS);
       console.error("[battery] probe failed; assuming AC power:", e);
     }
   })().finally(() => {
@@ -348,11 +370,9 @@ export function stopBatteryMonitor(): void {
     clearInterval(pollHandle);
     pollHandle = null;
   }
-  // Spread-copy (not a bare `current = AC_ALWAYS` reference) so the
-  // shared `AC_ALWAYS` constant can never be corrupted if a caller ever
-  // mutates the object returned by `getBatteryStatus()`. Matches every
-  // other reset/fallback path in this module.
-  current = { ...AC_ALWAYS };
+  // Reset to the fail-open default through the single frozen-snapshot
+  // choke point (see {@link setCurrent}).
+  setCurrent(AC_ALWAYS);
 }
 
 /**
@@ -362,5 +382,5 @@ export function stopBatteryMonitor(): void {
  * stubbing `child_process`.
  */
 export function __setBatteryStatusForTests(status: BatteryStatus): void {
-  current = status;
+  setCurrent(status);
 }
