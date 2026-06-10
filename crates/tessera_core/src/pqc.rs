@@ -202,7 +202,9 @@ pub fn unwrap_db_key(
 
     let plain =
         knowledge_crypto::decrypt_aead(&aead_key, &nonce, &wrapped.sealed_key, DBKEY_WRAP_AAD)
-            .map_err(|e| Error::DatabaseState(format!("pqc: unsealing SQLCipher key failed: {e}")))?;
+            .map_err(|e| {
+                Error::DatabaseState(format!("pqc: unsealing SQLCipher key failed: {e}"))
+            })?;
 
     let key_hex = String::from_utf8(plain)
         .map_err(|e| Error::DatabaseState(format!("pqc: recovered key is not valid UTF-8: {e}")))?;

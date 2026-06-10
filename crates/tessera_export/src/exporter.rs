@@ -314,7 +314,10 @@ mod tests {
         let sidecar =
             export_to_file_signed(&artifact, &[], ExportFormat::Pdf, &path, true, &signer).unwrap();
         assert_eq!(sidecar, dir.path().join("signed.pdf.sig"));
-        assert!(verify_file(&path, &sidecar).unwrap(), "fresh export verifies");
+        assert!(
+            verify_file(&path, &sidecar).unwrap(),
+            "fresh export verifies"
+        );
 
         std::fs::write(&path, b"%PDF-1.7 tampered").unwrap();
         assert!(

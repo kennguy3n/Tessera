@@ -169,13 +169,17 @@ fn crypto_scheme_table_exists(conn: &Connection) -> Result<bool> {
 }
 
 fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    use rusqlite::OptionalExtension;
+    // `.optional()` maps the no-rows case (table absent) to `None`
+    // while still propagating genuine query failures as errors, so a
+    // real DB fault is never silently misread as "table missing".
     let found: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
             params![table],
             |row| row.get(0),
         )
-        .ok();
+        .optional()?;
     Ok(found.is_some())
 }
 
@@ -204,7 +208,11 @@ mod tests {
     /// un-migrated database. Mirrors `tessera_core::crypto`'s internal v1
     /// construction (HKDF-SHA256 empty-salt KEK + AES-256-GCM, AAD
     /// `tessera/kchat-source-dek/v1/wrap/<source>`).
-    fn wrap_v1(master: &[u8; DEK_LEN], source: &SourceId, dek: &[u8; DEK_LEN]) -> (Vec<u8>, Vec<u8>) {
+    fn wrap_v1(
+        master: &[u8; DEK_LEN],
+        source: &SourceId,
+        dek: &[u8; DEK_LEN],
+    ) -> (Vec<u8>, Vec<u8>) {
         use aes_gcm::aead::{Aead, KeyInit, Payload};
         use aes_gcm::{Aes256Gcm, Nonce};
         use hkdf::Hkdf;
@@ -339,7 +347,6 @@ mod tests {
     #[test]
     fn upgrade_with_wrong_master_key_fails_and_rolls_back() {
         let mut conn = migrated_db();
-        let m = master();
 
         let source = SourceId::new();
         let dek = [3u8; DEK_LEN];

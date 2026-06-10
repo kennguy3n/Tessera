@@ -452,7 +452,9 @@ mod tests {
         let v1 = wrap_dek_v1_for_test(&master, &source, &dek);
 
         // v1 -> v2 re-wrap yields the SAME DEK under a v2 wrapper.
-        let v2 = rewrap_to_v2(&master, &source, &v1).unwrap().expect("v1 upgrades");
+        let v2 = rewrap_to_v2(&master, &source, &v1)
+            .unwrap()
+            .expect("v1 upgrades");
         assert_eq!(v2.scheme(), CryptoScheme::XChaCha20Poly1305V2);
         let unwrapped = unwrap_dek(&master, &source, &v2).unwrap();
         assert_eq!(&*unwrapped, &dek, "DEK value must be preserved");
