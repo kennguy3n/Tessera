@@ -59,6 +59,7 @@ import {
   buildTrayMenuTemplate,
   createTray,
   destroyTray,
+  hasTray,
   suspendForTray,
   resumeForTray,
   _hasTrayForTests,
@@ -96,6 +97,16 @@ describe("buildTrayMenuTemplate", () => {
       undefined as never,
     );
     expect(onQuit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("hasTray", () => {
+  it("reports false before create, true after create, false after destroy", () => {
+    expect(hasTray()).toBe(false);
+    createTray({ onShow: vi.fn(), onQuit: vi.fn() });
+    expect(hasTray()).toBe(true);
+    destroyTray();
+    expect(hasTray()).toBe(false);
   });
 });
 
@@ -146,6 +157,9 @@ describe("suspendForTray", () => {
       setAppSuspended: vi.fn((next: boolean) =>
         calls.push(`setAppSuspended(${next})`),
       ),
+      // Default: the app stays suspended through the whole sequence (no
+      // racing resume). The resume-race spec overrides this.
+      isAppSuspended: vi.fn(() => true),
       notifyRenderer: vi.fn((ch: string) => calls.push(`notify(${ch})`)),
       stopScheduler: vi.fn(async () => {
         calls.push("stopScheduler");
@@ -195,6 +209,24 @@ describe("suspendForTray", () => {
     });
     await expect(suspendForTray(d)).resolves.toBeUndefined();
     expect(d.stopAllSidecars).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the sidecar teardown if a resume raced in during the scheduler drain", async () => {
+    // Simulate the user clicking the tray icon (resume) while the
+    // in-flight tick is still draining: the suspended flag flips to
+    // false by the time `stopScheduler` resolves. The destructive
+    // sidecar reclaim must NOT run — otherwise it could kill a sidecar
+    // the user just started by triggering a generation post-restore.
+    let suspended = true;
+    const d = deps({
+      isAppSuspended: vi.fn(() => suspended),
+      stopScheduler: vi.fn(async () => {
+        suspended = false; // resume landed during the drain
+      }),
+    });
+    await suspendForTray(d);
+    expect(d.stopScheduler).toHaveBeenCalledTimes(1);
+    expect(d.stopAllSidecars).not.toHaveBeenCalled();
   });
 });
 

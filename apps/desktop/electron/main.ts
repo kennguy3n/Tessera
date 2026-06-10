@@ -23,6 +23,7 @@ import {
 import {
   createTray,
   destroyTray,
+  hasTray,
   resumeForTray,
   suspendForTray,
 } from "./tray";
@@ -528,11 +529,27 @@ function createWindow(): void {
     // than caching at window-create) so toggling the setting takes
     // effect without a relaunch. The window state was already persisted
     // above, so hiding loses nothing.
-    if (!isQuitting && mainWindow && loadConfig().closeToTray) {
+    //
+    // `hasTray()` is part of the condition because hiding-to-tray is
+    // only safe if a tray icon actually exists to restore from.
+    // `createTray` is wrapped in a try/catch on the boot path and can
+    // legitimately fail (Linux session with no StatusNotifier host),
+    // yet the user can still toggle "Close to tray" on. Without this
+    // guard, the close would hide the window with no icon to click and
+    // no recovery short of killing the process / editing `config.json`
+    // — a lockout (LW-9 review, PR #111). When there is no tray we fall
+    // through and let the window close normally.
+    if (
+      !isQuitting &&
+      mainWindow &&
+      loadConfig().closeToTray &&
+      hasTray()
+    ) {
       event.preventDefault();
       mainWindow.hide();
       void suspendForTray({
         setAppSuspended,
+        isAppSuspended,
         stopScheduler,
         stopAllSidecars,
         notifyRenderer: notifyRendererSuspension,
@@ -1031,13 +1048,18 @@ app.whenReady().then(async () => {
   //
   // Safety while the password prompt is open: the prompt is itself a
   // `BrowserWindow`, so `BrowserWindow.getAllWindows().length === 0`
-  // is false and the listener no-ops. The duplicate-window race is
-  // also closed by `createWindow()` checking the existing-window set
-  // before constructing a new one (see `createWindow` docstring) —
-  // so even if Cocoa fires `activate` after the prompt closes but
-  // before this `whenReady` callback resumes, the handler safely
-  // creates the main window early; the `createWindow()` call below
-  // then finds it already open and returns.
+  // is false and the handler takes the `showMainWindow()` branch,
+  // which calls `createWindow()` when `mainWindow` is still null. That
+  // CANNOT happen in practice: the password prompt only exists on Linux
+  // sessions with no keyring (`safeStorage.isEncryptionAvailable()` is
+  // false), while `activate` only fires from a macOS dock click, where
+  // safeStorage is always available so the prompt never runs. The
+  // duplicate-window race is also closed by `createWindow()` checking
+  // the existing-window set before constructing a new one (see
+  // `createWindow` docstring) — so even if Cocoa fires `activate` after
+  // the prompt closes but before this `whenReady` callback resumes, the
+  // handler safely creates the main window early; the `createWindow()`
+  // call below then finds it already open and returns.
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -1334,6 +1356,18 @@ let schedulerShutdownStarted = false;
  */
 export function _resetWillQuitLatchForTests(): void {
   schedulerShutdownStarted = false;
+}
+
+/**
+ * Reset the LW-9 `isQuitting` latch (see line ~168). Mirrors the
+ * sibling `_resetAppInitForTests` / `_resetWillQuitLatchForTests`
+ * resets so a vitest process that drives a quit → re-init cycle in one
+ * run doesn't leave the latch stuck at `true` (which would make the
+ * close handler stop hiding-to-tray for every later case). Production
+ * code never calls this.
+ */
+export function _resetIsQuittingForTests(): void {
+  isQuitting = false;
 }
 
 /**

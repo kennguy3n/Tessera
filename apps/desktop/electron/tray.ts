@@ -81,14 +81,34 @@ export function destroyTray(): void {
   }
 }
 
-/** Test-only peek at whether a tray is currently installed. */
-export function _hasTrayForTests(): boolean {
+/**
+ * Whether a system tray icon is currently installed. `createTray` is
+ * wrapped in a try/catch on the boot path because tray creation fails
+ * on Linux sessions without a StatusNotifier host (some tiling WMs /
+ * Wayland compositors with no appindicator). The window `close`
+ * handler MUST consult this before hiding-to-tray: hiding with no tray
+ * icon to click would lock the user out with no way back (LW-9 review,
+ * PR #111).
+ */
+export function hasTray(): boolean {
   return tray !== null;
+}
+
+/** Test-only alias of {@link hasTray}; kept for existing call sites. */
+export function _hasTrayForTests(): boolean {
+  return hasTray();
 }
 
 export interface SuspendForTrayDeps {
   /** Flip the process-wide suspended flag (see `appSuspension.ts`). */
   setAppSuspended: (next: boolean) => void;
+  /**
+   * Read the live suspended flag. `suspendForTray` consults this after
+   * its `await` points so a resume (tray click) that raced in mid-
+   * suspend can short-circuit the remaining reclaim — see the guard
+   * before `stopAllSidecars` below.
+   */
+  isAppSuspended: () => boolean;
   /** Pause the automation scheduler (drains any in-flight tick). */
   stopScheduler: () => Promise<void>;
   /** Stop every resident sidecar (text / vision / diffusion). */
@@ -126,6 +146,17 @@ export async function suspendForTray(deps: SuspendForTrayDeps): Promise<void> {
   } catch (e) {
     console.warn("[tessera] tray suspend: scheduler pause failed:", e);
   }
+  // Resume-during-suspend guard. `resumeForTray` clears the suspended
+  // flag and restarts the scheduler synchronously, so if the user
+  // clicked the tray icon while we were draining the in-flight tick
+  // above, bail out before the heaviest (and only destructive) reclaim:
+  // tearing down sidecars now could kill one the user just started by
+  // triggering a generation right after restoring. The scheduler stop
+  // above is already race-safe — `stopScheduler` clears its interval
+  // synchronously before awaiting, so a resume's `startScheduler` that
+  // landed during the drain survives untouched. Sidecars are the one
+  // step whose effect outlives the await, hence the dedicated guard.
+  if (!deps.isAppSuspended()) return;
   try {
     await deps.stopAllSidecars();
   } catch (e) {
