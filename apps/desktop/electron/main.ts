@@ -816,10 +816,14 @@ async function initBridgeAndServices(): Promise<void> {
   try {
     replayPersistedHybridSearchConfigToBridge();
   } catch (err) {
-    console.warn(
-      "[Tessera] Failed to replay persisted hybrid search config:",
-      err,
-    );
+    // Best-effort log (see `safeLogError`): this catch sits between a
+    // successful `initAppState()` and the final `setBridgeState("ready")`,
+    // so — like the battery / scheduler catches below — a throwing logger
+    // here must not escape and skip `ready`, wedging the renderer on the
+    // skeleton. Hence `safeLogError`, not a bare `console.warn`.
+    safeLogError("hybridSearch.replay.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   // LW-3: begin polling battery state so the scheduler and
   // `model:generate` can defer synthesis when the device is on a low

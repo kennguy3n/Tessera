@@ -419,7 +419,11 @@ describe("CSP session handler hoist: main.ts", () => {
     // the `setBridgeState("error")` and wedge the renderer on the
     // skeleton. Both diagnostics must therefore go through `safeLogInfo`
     // / `safeLogError` (each wraps the logger in its own try/catch). Pin
-    // it: the function body must contain no bare `getLogger().` access.
+    // it: the function body must contain no bare `getLogger().` access —
+    // and no bare `console.*` either, since `console.warn`/`console.error`
+    // is a separate code path that would equally escape a throw and skip
+    // the terminal `setBridgeState(...)` (the same hazard the structured
+    // logger has). Both must route through the safeLog* helpers.
     const startIdx = source.indexOf("async function initBridgeAndServices");
     expect(
       startIdx,
@@ -437,5 +441,9 @@ describe("CSP session handler hoist: main.ts", () => {
       body,
       "initBridgeAndServices must not call getLogger() directly — use safeLogInfo()/safeLogError() so a throwing logger can never skip the setBridgeState(...) that follows",
     ).not.toMatch(/getLogger\(\)\s*\./);
+    expect(
+      body,
+      "initBridgeAndServices must not call console.* directly — use safeLogInfo()/safeLogError() so a throwing console can never skip the setBridgeState(...) that follows",
+    ).not.toMatch(/\bconsole\s*\./);
   });
 });
