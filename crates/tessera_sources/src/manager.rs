@@ -1884,6 +1884,36 @@ impl SourceManager {
         engine.search(query, limit)
     }
 
+    /// Runs a strict (AND) hybrid search with the knowledge-substrate
+    /// retention signal fused in as a fourth RRF input.
+    ///
+    /// `retention_by_source` maps a Tessera source id to its live
+    /// retention score (from
+    /// `tessera_substrate::SubstrateManager::retention_by_source`); the
+    /// bridge layer owns substrate access and threads the map in here.
+    /// An empty map makes this identical to [`Self::search`], so the
+    /// existing BM25 + vector + recency ranking is preserved when the
+    /// substrate has no memories yet.
+    pub fn search_with_retention(
+        &self,
+        query: &str,
+        limit: usize,
+        retention_by_source: std::collections::HashMap<String, f64>,
+    ) -> Result<Vec<SearchResult>> {
+        let cfg = self
+            .hybrid_config
+            .lock()
+            .expect("hybrid_config mutex poisoned")
+            .clone();
+        let engine = SearchEngine::hybrid_with_retention(
+            &self.store,
+            self.embedder.as_deref(),
+            cfg,
+            retention_by_source,
+        );
+        engine.search(query, limit)
+    }
+
     /// Runs a broader (OR) hybrid search, returning up to `limit`
     /// ranked [`SearchResult`]s.
     pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {

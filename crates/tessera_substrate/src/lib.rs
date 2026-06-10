@@ -16,4 +16,7 @@ mod types;
 
 pub use error::{Result, SubstrateError};
 pub use manager::SubstrateManager;
-pub use types::{DecaySweepSummary, MemoryRecord, SynthesisSummary};
+pub use types::{
+    DecaySweepSummary, EnrichedKnowledge, KnowledgeConcept, MemoryRecord, RelatedSourceSuggestion,
+    SynthesisSummary,
+};

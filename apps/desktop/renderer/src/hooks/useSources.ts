@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import type { SourceInfo, SourceDetailInfo, SearchHit } from "../types/ipc";
+import type {
+  SourceInfo,
+  SourceDetailInfo,
+  SearchHit,
+  SubstrateRelatedSuggestionInfo,
+} from "../types/ipc";
 
 export function useSourceList() {
   const [sources, setSources] = useState<SourceInfo[]>([]);
@@ -107,6 +112,71 @@ export function useSearchSources() {
   }, []);
 
   return { results, search, loading };
+}
+
+/**
+ * Concept-graph-driven "related sources" suggestions for the
+ * artifact-creation flow. Given the user's current source selection,
+ * it asks the knowledge substrate (`substrate:suggestRelatedSources`)
+ * which other indexed sources co-occur — by entity — with the
+ * selected ones, so the UI can prompt "You have N sources about
+ * [entity]. Include them?".
+ *
+ * The fetch is purely additive: any failure (no bridge, substrate
+ * error, empty graph) resolves to an empty suggestion list rather than
+ * surfacing an error, so the manual checkbox flow always keeps working.
+ * An empty selection short-circuits to `[]` without an IPC round-trip.
+ */
+export function useRelatedSourceSuggestions(
+  selectedSourceIds: string[],
+  maxSuggestions = 5,
+) {
+  const [suggestions, setSuggestions] = useState<
+    SubstrateRelatedSuggestionInfo[]
+  >([]);
+  const [loading, setLoading] = useState(false);
+
+  // Stable primitive key so the effect re-runs only when the actual set
+  // of selected ids changes, not on every parent re-render that hands us
+  // a fresh array instance. Order-independent so reselecting the same
+  // sources in a different order doesn't refetch.
+  const selectionKey = [...selectedSourceIds].sort().join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = selectionKey ? selectionKey.split("|") : [];
+    if (ids.length === 0) {
+      setSuggestions([]);
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api?.substrate?.suggestRelatedSources) {
+      setSuggestions([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setLoading(true);
+    api.substrate
+      .suggestRelatedSources(ids, maxSuggestions)
+      .then((result) => {
+        if (!cancelled) setSuggestions(result);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectionKey, maxSuggestions]);
+
+  return { suggestions, loading };
 }
 
 export function useSourceDetail(id: string | undefined) {

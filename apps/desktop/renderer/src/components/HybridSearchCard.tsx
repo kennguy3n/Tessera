@@ -33,6 +33,7 @@ const PRELOAD_DEFAULTS: HybridSearchConfigInfo = {
   recencyDecayEnabled: true,
   recencyHalflifeSecs: 30 * SECONDS_PER_DAY,
   candidatePoolSize: 0,
+  retentionWeight: 1.0,
 };
 
 export default function HybridSearchCard() {
