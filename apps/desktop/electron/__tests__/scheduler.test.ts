@@ -39,6 +39,13 @@ import {
   __setBatteryStatusForTests,
   stopBatteryMonitor,
 } from "../batteryMonitor";
+import {
+  startMemoryWatchdog,
+  stopMemoryWatchdog,
+} from "../memoryWatchdog";
+
+/** MiB helper for legible RSS sampler values in the memory-gate tests. */
+const MiB = 1024 * 1024;
 
 const mockedGetKchatBackfillImpl = vi.mocked(getKchatBackfillImpl);
 
@@ -89,6 +96,10 @@ beforeEach(() => {
   // level set by one test never leaks into the next. The default state
   // means `isBatteryLow()` is false, so existing tests are unaffected.
   stopBatteryMonitor();
+  // LW-7: drop any memory watchdog a prior test started so the gate
+  // fails open (`isIndexingDeferredForMemory()` → false) by default and
+  // a paused watchdog can't leak across tests.
+  stopMemoryWatchdog();
   _resetAppSuspensionForTests();
 });
 
@@ -210,6 +221,46 @@ describe("scheduler.tick", () => {
       isCharging: false,
       percent: 5,
     });
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation("idx", '{"kind":"reindex_source","source_id":"src-1"}'),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).toHaveBeenCalledWith("src-1");
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("idx", "ok");
+  });
+
+  it("gates reindex_source under memory pressure and records skipped: memory_pressure", async () => {
+    // LW-7: the `sources:batchReindex` IPC handler is gated by the memory
+    // watchdog, but the scheduler calls `bridgeReindexSource` directly —
+    // so a dense run of due reindex automations would otherwise bypass the
+    // watchdog and admit full-source reindexes exactly when RSS is high.
+    // With the watchdog paused (sampled RSS above the 500MB high-water
+    // mark), the scheduler must NOT call the bridge, and must record a
+    // non-failure `skipped: memory_pressure` so the run re-fires normally
+    // once RSS recovers.
+    startMemoryWatchdog({ sampleRssBytes: () => 600 * MiB });
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation("idx", '{"kind":"reindex_source","source_id":"src-1"}'),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).not.toHaveBeenCalled();
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
+      "idx",
+      "skipped: memory_pressure",
+    );
+    expect(getSchedulerStatus().lastTickError).toBeNull();
+  });
+
+  it("does NOT gate reindex_source when memory is below the high-water mark", async () => {
+    // Control for the gate above: a watchdog sampling well under the
+    // high-water mark is not paused, so the reindex runs normally.
+    startMemoryWatchdog({ sampleRssBytes: () => 100 * MiB });
     const bridge = newBridge();
     bridge.bridgeDueScheduledAutomations.mockReturnValue([
       fakeAutomation("idx", '{"kind":"reindex_source","source_id":"src-1"}'),
@@ -846,6 +897,102 @@ describe("scheduler — multi-step sequence actions", () => {
     expect(recorded[0]).toBe("seq-mixed");
     expect(recorded[1]).toBe(
       "failed: 1/3 steps failed (1 skipped: battery_low): step 1: source not found",
+    );
+  });
+
+  it("treats a memory-pressure skip of a reindex step as skipped, not failed", async () => {
+    // LW-7: in a sequence, a reindex step deferred under memory pressure
+    // must not count as a failure. Other (ungated) steps still run and the
+    // run records `skipped: memory_pressure` rather than `failed: …`.
+    startMemoryWatchdog({ sampleRssBytes: () => 600 * MiB });
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-mem",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "s1" },
+            { kind: "reindex_source", source_id: "s2" },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).not.toHaveBeenCalled();
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("seq-mem");
+    expect(recorded[1]).toBe("skipped: memory_pressure (2/2 steps)");
+  });
+
+  it("reports BOTH failures and memory skips when a sequence has both", async () => {
+    // LW-7: a sequence with a genuinely failing step AND a memory-deferred
+    // reindex step must disclose both, mirroring the battery+failure case.
+    // Steps: reindex(memory-skipped) → generate(fails).
+    startMemoryWatchdog({ sampleRssBytes: () => 600 * MiB });
+    const bridge = newBridge();
+    bridge.bridgeGenerateFromTemplate.mockImplementation(() => {
+      throw new Error("template boom");
+    });
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-mem-mixed",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "s1" },
+            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).not.toHaveBeenCalled();
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("seq-mem-mixed");
+    expect(recorded[1]).toBe(
+      "failed: 1/2 steps failed (1 skipped: memory_pressure): step 2: template boom",
+    );
+  });
+
+  it("discloses both battery and memory skips in one sequence status", async () => {
+    // LW-7: battery (generate) and memory (reindex) gates can both fire in
+    // the same sequence. The status must list both deferrals in a stable
+    // order (battery first, then memory) without reporting a failure.
+    // Steps: reindex(memory-skipped) → generate(battery-skipped).
+    __setBatteryStatusForTests({
+      hasBattery: true,
+      isOnBattery: true,
+      isCharging: false,
+      percent: 8,
+    });
+    startMemoryWatchdog({ sampleRssBytes: () => 600 * MiB });
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-both",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "s1" },
+            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).not.toHaveBeenCalled();
+    expect(bridge.bridgeGenerateFromTemplate).not.toHaveBeenCalled();
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("seq-both");
+    expect(recorded[1]).toBe(
+      "skipped: battery_low (1/2 steps), memory_pressure (1/2 steps)",
     );
   });
 });
