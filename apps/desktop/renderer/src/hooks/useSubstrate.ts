@@ -22,6 +22,17 @@ function getApi() {
   return typeof window !== "undefined" ? window.tessera : undefined;
 }
 
+/**
+ * A single stable empty graph, reused for both the initial state and the
+ * gated-off ("disabled") path of {@link useConceptGraph}. `parseConceptGraph`
+ * mints a structurally-identical-but-new object on every call, so reusing one
+ * reference keeps `graph` referentially stable across disabled-path effect
+ * runs — React bails out via `Object.is` instead of forcing a redundant
+ * re-render with a logically-unchanged value. Safe to share because the view
+ * is treated as immutable (callers only ever replace it via `setGraph`).
+ */
+const EMPTY_CONCEPT_GRAPH: ConceptGraphView = parseConceptGraph("{}");
+
 export interface UseMemoriesResult {
   memories: SubstrateMemoryInfo[];
   loading: boolean;
@@ -163,9 +174,7 @@ export function useConceptGraph(
   maxNodes?: number | null,
   enabled = true,
 ): UseConceptGraphResult {
-  const [graph, setGraph] = useState<ConceptGraphView>(() =>
-    parseConceptGraph("{}"),
-  );
+  const [graph, setGraph] = useState<ConceptGraphView>(EMPTY_CONCEPT_GRAPH);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
@@ -190,8 +199,9 @@ export function useConceptGraph(
 
   useEffect(() => {
     if (!enabled) {
-      // See `useMemories`: skip IPC and settle empty when gated off.
-      setGraph(parseConceptGraph("{}"));
+      // See `useMemories`: skip IPC and settle empty when gated off. Reuse the
+      // shared empty graph so the value stays referentially stable.
+      setGraph(EMPTY_CONCEPT_GRAPH);
       setError(null);
       setLoading(false);
       return;

@@ -154,6 +154,13 @@ function normalizeRelation(value: unknown): ConceptRelation {
 }
 
 function normalizeTruncation(value: unknown): GraphTruncation {
+  // An *absent* truncation field means the payload was not a truncated graph
+  // (or not a graph at all), so it collapses to the canonical empty view's
+  // "complete" — keeping every empty/non-graph input (unparseable, non-object,
+  // or a non-graph object like `[]`) consistent with EMPTY_VIEW. A *present*
+  // but unrecognized value is a forward-compat signal from a newer substrate
+  // and stays "unknown".
+  if (value === undefined || value === null) return "complete";
   const lowered = asString(value).toLowerCase();
   return (
     KNOWN_TRUNCATIONS.has(lowered) ? lowered : "unknown"

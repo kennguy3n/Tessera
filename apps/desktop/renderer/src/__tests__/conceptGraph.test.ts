@@ -23,8 +23,11 @@ describe("parseConceptGraph", () => {
     }
   });
 
-  it("returns the canonical empty view (truncation 'complete') for unparseable input", () => {
-    for (const bad of ["", "not json", "null"]) {
+  it("returns the canonical empty view (truncation 'complete') for every invalid input", () => {
+    // Includes non-graph objects like `[]` and `"{}"`: an absent truncation
+    // field must collapse to "complete", not "unknown", so the empty-view
+    // contract holds uniformly regardless of which invalid shape was passed.
+    for (const bad of ["", "not json", "[]", "null", "42", '"str"', "{}"]) {
       expect(parseConceptGraph(bad).truncation).toBe("complete");
     }
   });
