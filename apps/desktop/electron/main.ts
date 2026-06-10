@@ -13,6 +13,7 @@ import {
 } from "./backupScheduler";
 import { startBatteryMonitor, stopBatteryMonitor } from "./batteryMonitor";
 import { startMemoryWatchdog, stopMemoryWatchdog } from "./memoryWatchdog";
+import { maybeAutoDownloadRecommendedModel } from "./autoModelDownload";
 import { getLogger } from "./logger";
 import {
   markEnd,
@@ -1030,6 +1031,18 @@ async function initBridgeAndServices(): Promise<void> {
   // internally (see `bridgeLifecycle.ts`), so this final step cannot
   // throw — the contract holds end-to-end.
   setBridgeState("ready");
+  // Session 5, Step 1: now that the bridge is ready, kick off the
+  // first-launch auto-download of the recommended text model on a fresh
+  // install (gated on `autoDownloadModel`, `onboardingCompleted`, no
+  // model installed, and network reachability — see
+  // `autoModelDownload.ts`). Fire-and-forget: it must NOT block boot or
+  // the `ready` broadcast above, and it owns its own error handling
+  // (the function NEVER throws), so a bare `void` is correct here. The
+  // ModelDownloadBanner observes the resulting `runtime:downloadProgress`
+  // events. Skipped entirely if the user quit mid-init.
+  if (!isQuitting) {
+    void maybeAutoDownloadRecommendedModel();
+  }
 }
 
 // Record the `app-ready` start anchor at module-load — i.e. as close

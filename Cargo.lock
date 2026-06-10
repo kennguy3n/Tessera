@@ -67,6 +67,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -583,6 +589,44 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "connector_framework"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "crypto",
+ "evidence_store",
+ "observation_engine",
+ "permission_service",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "connectors"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "connector_framework",
+ "crypto",
+ "evidence_store",
+ "hmac 0.13.0",
+ "observation_engine",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1124,6 +1168,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "evidence_store"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "crypto",
+ "inference_router",
+ "rand 0.10.1",
+ "rand_core 0.6.4",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+ "whatlang",
+ "zeroize",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1562,6 +1626,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -1573,11 +1639,11 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashlink"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
+checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
- "hashbrown 0.14.5",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -2154,6 +2220,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 
 [[package]]
+name = "inference_router"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "crypto",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "inotify"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2416,9 +2498,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.30.1"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+checksum = "91632f3b4fb6bd1d72aa3d78f41ffecfcf2b1a6648d8c241dbe7dbfaf4875e15"
 dependencies = [
  "cc",
  "openssl-sys",
@@ -2551,6 +2633,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memory_manager"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "crypto",
+ "evidence_store",
+ "inference_router",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -2928,6 +3025,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "observation_engine"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "crypto",
+ "evidence_store",
+ "memory_manager",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "unicode-normalization",
+ "uuid",
+ "whatlang",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3102,6 +3217,23 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "permission_service"
+version = "1.2.0"
+source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+dependencies = [
+ "chrono",
+ "crypto",
+ "rand 0.10.1",
+ "rand_core 0.6.4",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+ "zeroize",
+]
 
 [[package]]
 name = "phf"
@@ -3673,6 +3805,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -3754,9 +3887,9 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rusqlite"
-version = "0.32.1"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
+checksum = "3de23c3319433716cf134eed225fe9986bc24f63bed9be9f20c329029e672dc7"
 dependencies = [
  "bitflags 2.13.0",
  "fallible-iterator",
@@ -4419,7 +4552,11 @@ dependencies = [
 name = "tessera_bridge"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "connector_framework",
+ "connectors",
+ "evidence_store",
  "napi",
  "napi-build",
  "napi-derive",
@@ -5667,6 +5804,15 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
+
+[[package]]
+name = "whatlang"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5e8f38b596e2a359b755342473520a99421e43658548c79489ee221b728c107"
+dependencies = [
+ "hashbrown 0.15.5",
+]
 
 [[package]]
 name = "winapi"
