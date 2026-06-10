@@ -35,6 +35,8 @@ export type {
   AutomationAction,
   AutomationApi,
   AutomationInfo,
+  BridgeStateView,
+  LifecycleApi,
   AutomationTrigger,
   BackfillEmbeddingsResult,
   CitationApi,

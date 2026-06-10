@@ -343,6 +343,37 @@ describe("CSP session handler hoist: main.ts", () => {
     ).toBeLessThan(awaitPromptIdx);
   });
 
+  it("registers the bridge-state IPC handler BEFORE await maybeInitPasswordVault in app.whenReady", () => {
+    // LW-8 invariant: the renderer's BridgeGate invokes
+    // `getBridgeState()` the moment <App/> mounts so it knows whether to
+    // keep showing the "Loading workspace…" skeleton. `createWindow()`
+    // (and therefore that mount) can fire on the early macOS `activate`
+    // path BEFORE the `await maybeInitPasswordVault()` continuation
+    // resumes. If `ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...)` hadn't
+    // run yet, that first invoke rejects with "No handler registered for
+    // 'app:bridgeState:get'" and the renderer can wedge on the skeleton.
+    //
+    // Pinning the registration ahead of the vault prompt — the same
+    // anchor used for `registerIpcHandlers()` above — guarantees the
+    // bridge-readiness channel is live before ANY window (early-activate
+    // or the unconditional late call) can be created. A future refactor
+    // that moves the handler registration after window creation would
+    // silently break the mount-time invoke; this assertion catches it.
+    const whenReadyIdx = source.indexOf("app.whenReady()");
+    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    const handlerIdx = source.indexOf("ipcMain.handle(BRIDGE_STATE_GET_CHANNEL", whenReadyIdx);
+    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
+    expect(
+      handlerIdx,
+      "could not find ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...) after app.whenReady()",
+    ).toBeGreaterThan(-1);
+    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    expect(
+      handlerIdx,
+      "ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...) must be registered BEFORE await maybeInitPasswordVault() so the renderer's mount-time getBridgeState() invoke always finds a live handler, even on the early-activate createWindow() path",
+    ).toBeLessThan(awaitPromptIdx);
+  });
+
   it("createWindow is idempotent on the mainWindow reference", () => {
     // The hoisted activate listener (see test above) plus the
     // unconditional `createWindow()` call at the end of `whenReady`
@@ -373,5 +404,46 @@ describe("CSP session handler hoist: main.ts", () => {
       guardIdx,
       "the idempotency guard must run BEFORE `new BrowserWindow(...)` so the early-return actually prevents the duplicate window",
     ).toBeLessThan(newWindowIdx);
+  });
+
+  it("routes every logger call in initBridgeAndServices through the safeLog* guards", () => {
+    // LW-8 "NEVER throws" invariant: `initBridgeAndServices` is invoked
+    // with `void` (unawaited) and reports readiness to the renderer
+    // itself, so it must always reach a `setBridgeState(...)` terminal.
+    // A bare `getLogger().info(...)` / `getLogger().error(...)` is the
+    // hazard: `getLogger()` lazily runs `createLogger()` (which can
+    // `fs.mkdirSync` and throw EACCES/ENOSPC on first use), so an
+    // unguarded log on the SUCCESS path — sharing the try with
+    // `await initAppState()` — would fall into the catch and misreport a
+    // healthy bridge as failed, while one on a failure path would skip
+    // the `setBridgeState("error")` and wedge the renderer on the
+    // skeleton. Both diagnostics must therefore go through `safeLogInfo`
+    // / `safeLogError` (each wraps the logger in its own try/catch). Pin
+    // it: the function body must contain no bare `getLogger().` access —
+    // and no bare `console.*` either, since `console.warn`/`console.error`
+    // is a separate code path that would equally escape a throw and skip
+    // the terminal `setBridgeState(...)` (the same hazard the structured
+    // logger has). Both must route through the safeLog* helpers.
+    const startIdx = source.indexOf("async function initBridgeAndServices");
+    expect(
+      startIdx,
+      "could not find initBridgeAndServices in main.ts",
+    ).toBeGreaterThan(-1);
+    // The success path's final statement is the unique end anchor; every
+    // logging site sits before it.
+    const endIdx = source.indexOf('setBridgeState("ready")', startIdx);
+    expect(
+      endIdx,
+      "could not find the setBridgeState(\"ready\") terminal of initBridgeAndServices",
+    ).toBeGreaterThan(startIdx);
+    const body = source.slice(startIdx, endIdx);
+    expect(
+      body,
+      "initBridgeAndServices must not call getLogger() directly — use safeLogInfo()/safeLogError() so a throwing logger can never skip the setBridgeState(...) that follows",
+    ).not.toMatch(/getLogger\(\)\s*\./);
+    expect(
+      body,
+      "initBridgeAndServices must not call console.* directly — use safeLogInfo()/safeLogError() so a throwing console can never skip the setBridgeState(...) that follows",
+    ).not.toMatch(/\bconsole\s*\./);
   });
 });

@@ -25,7 +25,13 @@
  *       CI logs disambiguate "too slow" from "didn't boot".
  *
  * Environment overrides:
- *   TESSERA_COLD_START_BUDGET_MS  budget in ms (default 3000).
+ *   TESSERA_COLD_START_BUDGET_MS  budget in ms (default 2000).
+ *                                 Tightened 3000 -> 2000 in LW-8 once
+ *                                 the heavy bridge init (open_store +
+ *                                 tombstone replay + FTS purge) moved
+ *                                 OFF the boot critical path: the gate
+ *                                 now measures boot-to-skeleton-paint,
+ *                                 not boot-to-store-open.
  *   TESSERA_COLD_START_TIMEOUT_MS hard boot timeout in ms (default
  *                                 60000) before declaring a harness
  *                                 failure.
@@ -40,7 +46,7 @@ const path = require("path");
 const REPO_ROOT = path.resolve(__dirname, "..");
 const DESKTOP_DIR = path.join(REPO_ROOT, "apps", "desktop");
 
-const BUDGET_MS = Number(process.env.TESSERA_COLD_START_BUDGET_MS || 3000);
+const BUDGET_MS = Number(process.env.TESSERA_COLD_START_BUDGET_MS || 2000);
 const TIMEOUT_MS = Number(process.env.TESSERA_COLD_START_TIMEOUT_MS || 60000);
 const MARKER = "TESSERA_COLD_START_MS=";
 

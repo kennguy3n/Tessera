@@ -193,6 +193,7 @@ vi.mock("../hooks/useSettings", () => ({
       simplifiedNav: true,
       autoDownloadModel: true,
       createPageMode: "wizard",
+      closeToTray: false,
     },
     loading: false,
     refresh: vi.fn(),

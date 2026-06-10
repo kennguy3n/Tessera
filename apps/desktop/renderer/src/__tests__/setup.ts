@@ -324,6 +324,7 @@ const mockApi = {
       simplifiedNav: true,
       autoDownloadModel: true,
       createPageMode: "wizard",
+      closeToTray: false,
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
@@ -336,6 +337,7 @@ const mockApi = {
       simplifiedNav: true,
       autoDownloadModel: true,
       createPageMode: "wizard",
+      closeToTray: false,
     }),
     // Hybrid search config lives on `settings` (not `sources`)
     // because the channel name is `settings:*` and the handler is

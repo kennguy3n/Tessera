@@ -83,6 +83,7 @@ export type SettingsUpdateInput = {
   autoDownloadModel?: boolean | undefined;
   createPageMode?: "wizard" | "gallery" | undefined;
   resourceMode?: "lightweight" | "performance" | undefined;
+  closeToTray?: boolean | undefined;
 };
 
 export type ExternalProviderConfigInput = {

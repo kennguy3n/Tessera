@@ -1157,6 +1157,15 @@ export interface SettingsData {
    * The diffusion sidecar never auto-starts in either mode.
    */
   resourceMode: ResourceMode;
+  /**
+   * LW-9 (minimize-to-tray). When `true`, closing the main window hides
+   * it to the system tray and suspends the app (sidecars stopped,
+   * scheduler paused) instead of quitting; the user reopens via the
+   * tray icon and quits via the tray's "Quit Tessera" item. When
+   * `false` (default) closing the window quits as before. Toggled in
+   * Settings → General; mirrors `AppConfig.closeToTray`.
+   */
+  closeToTray: boolean;
 }
 
 /**
@@ -2655,6 +2664,47 @@ export interface AppLifecycleApi {
  * preload script's `contextBridge.exposeInMainWorld("tessera", api)`
  * call must satisfy this shape.
  */
+/**
+ * LW-8 (cold-start budget): the boot-time readiness state of the native
+ * bridge, surfaced to the renderer so it can paint a "Loading
+ * workspace…" skeleton while `initAppState()` runs off the cold-start
+ * critical path and hydrate the real app shell only once the bridge is
+ * up.
+ *
+ *   - `"initializing"` — the main process is still opening the store
+ *     (SQLCipher open + tombstone replay + FTS purge). The renderer
+ *     shows the skeleton and issues no bridge-backed IPC yet.
+ *   - `"ready"`        — the bridge is up; the renderer mounts the app.
+ *   - `"error"`        — bridge init threw; `error` carries the reason.
+ */
+export interface BridgeStateView {
+  state: "initializing" | "ready" | "error";
+  /** Failure reason; non-null only when `state === "error"`. */
+  error: string | null;
+}
+
+/**
+ * App-lifecycle IPC surface. Today it only carries the bridge-readiness
+ * signal (LW-8); it is deliberately a distinct namespace from the
+ * domain APIs because it is the one surface that must be callable
+ * *before* the bridge — and therefore every domain API — is ready.
+ */
+export interface LifecycleApi {
+  /**
+   * Read the current bridge state. Called by the renderer on mount so a
+   * subscription that races the `"ready"` transition (subscribing just
+   * after it fired) still learns the bridge is up instead of waiting
+   * forever on an event already delivered to no listener.
+   */
+  getBridgeState: () => Promise<BridgeStateView>;
+  /**
+   * Subscribe to bridge-state transitions. Returns a disposer that
+   * removes the listener. The callback fires on every
+   * `initializing → ready` / `initializing → error` transition.
+   */
+  onBridgeState: (cb: (state: BridgeStateView) => void) => () => void;
+}
+
 export interface TesseraApi {
   sources: SourceApi;
   artifacts: ArtifactApi;
@@ -2684,6 +2734,8 @@ export interface TesseraApi {
   appLifecycle: AppLifecycleApi;
   /** LW-12 read-only resource-usage snapshot for Settings → Performance. */
   resources: ResourcesApi;
+  /** App-lifecycle surface (LW-8 bridge readiness). */
+  lifecycle: LifecycleApi;
 }
 
 /**
