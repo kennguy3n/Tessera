@@ -192,4 +192,128 @@ describe("resources:getUsage IPC handler", () => {
     const usage = await getUsage();
     expect(usage.resourceMode).toBe("performance");
   });
+
+  // A transparency surface must never destabilise the app it reports
+  // on. The module contract promises each sub-read is defended and
+  // degrades to a conservative default; these assert that at runtime —
+  // a throw in any one subsystem blanks only its own section (to a
+  // fail-open default) while every other section still reports, and the
+  // poll resolves rather than rejecting.
+  describe("never throws back at the renderer (defended sub-reads)", () => {
+    beforeEach(() => {
+      // Silence the intentional warn() the defend() helper logs.
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    it("degrades resourceMode to lightweight when loadConfig throws, keeping other sections", async () => {
+      loadConfig.mockImplementation(() => {
+        throw new Error("config read failed");
+      });
+      getModelSidecar.mockReturnValue({
+        isRunning: true,
+        endpoint: "http://127.0.0.1:8384",
+      });
+      const usage = await getUsage();
+      expect(usage.resourceMode).toBe("lightweight");
+      // The unrelated SLM section is unaffected by the config throw.
+      expect(usage.slm.text).toEqual({
+        running: true,
+        endpoint: "http://127.0.0.1:8384",
+      });
+    });
+
+    it("degrades the slm section to all-stopped when a sidecar peek throws", async () => {
+      getVisionSidecar.mockImplementation(() => {
+        throw new Error("sidecar registry corrupt");
+      });
+      const usage = await getUsage();
+      expect(usage.slm).toEqual({
+        text: { running: false, endpoint: null },
+        vision: { running: false, endpoint: null },
+        imagegen: { state: "unloaded" },
+      });
+      // Other sections still report normally.
+      expect(usage.resourceMode).toBe("lightweight");
+    });
+
+    it("degrades indexing to fail-open (admitted) when the watchdog throws", async () => {
+      isIndexingDeferredForMemory.mockImplementation(() => {
+        throw new Error("watchdog not running");
+      });
+      const usage = await getUsage();
+      expect(usage.indexing).toEqual({
+        deferredForMemory: false,
+        pressure: null,
+      });
+    });
+
+    it("degrades battery to gating-off when the battery read throws", async () => {
+      getBatteryStatus.mockImplementation(() => {
+        throw new Error("power source probe failed");
+      });
+      const usage = await getUsage();
+      expect(usage.battery).toEqual({
+        hasBattery: false,
+        isOnBattery: false,
+        isCharging: false,
+        percent: null,
+        gating: false,
+      });
+    });
+
+    it("resolves a complete snapshot even when every subsystem throws", async () => {
+      vi.spyOn(process, "memoryUsage").mockImplementation(() => {
+        throw new Error("x");
+      });
+      loadConfig.mockImplementation(() => {
+        throw new Error("x");
+      });
+      getModelSidecar.mockImplementation(() => {
+        throw new Error("x");
+      });
+      getVisionSidecar.mockImplementation(() => {
+        throw new Error("x");
+      });
+      getDiffusionSidecarState.mockImplementation(() => {
+        throw new Error("x");
+      });
+      isIndexingDeferredForMemory.mockImplementation(() => {
+        throw new Error("x");
+      });
+      memoryPressureSnapshot.mockImplementation(() => {
+        throw new Error("x");
+      });
+      getBatteryStatus.mockImplementation(() => {
+        throw new Error("x");
+      });
+      isBatteryLow.mockImplementation(() => {
+        throw new Error("x");
+      });
+      const usage = await getUsage();
+      expect(usage).toEqual({
+        resourceMode: "lightweight",
+        memory: {
+          rssBytes: 0,
+          heapUsedBytes: 0,
+          heapTotalBytes: 0,
+          externalBytes: 0,
+        },
+        slm: {
+          text: { running: false, endpoint: null },
+          vision: { running: false, endpoint: null },
+          imagegen: { state: "unloaded" },
+        },
+        // readPoolSize stays live — it has its own internal guard.
+        connections: { writers: 1, readers: 4 },
+        indexing: { deferredForMemory: false, pressure: null },
+        battery: {
+          hasBattery: false,
+          isOnBattery: false,
+          isCharging: false,
+          percent: null,
+          gating: false,
+        },
+      });
+    });
+  });
 });

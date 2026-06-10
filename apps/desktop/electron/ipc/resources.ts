@@ -73,47 +73,121 @@ function sidecarSnapshot(
   return { running: false, endpoint: null };
 }
 
+/**
+ * Run one defended sub-read. A transparency surface must never be able
+ * to destabilise the app it reports on, so any throw from a subsystem
+ * read degrades to that section's conservative default (and is logged
+ * once) instead of rejecting the whole `resources:getUsage` poll. This
+ * is the runtime guarantee behind the module-level contract: a single
+ * failing subsystem blanks only its own section, not the snapshot.
+ */
+function defend<T>(label: string, read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch (err) {
+    console.warn(
+      `[Tessera] resources:getUsage ${label} read failed; reporting conservative default:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return fallback;
+  }
+}
+
+// Conservative section defaults. These bias toward "least capable /
+// fail-open" so the dashboard under-promises rather than misreports
+// when a subsystem read fails: memory zeros, sidecars stopped, indexing
+// admitted (not falsely shown as blocked), and battery gating off.
+const MEMORY_FALLBACK: ResourceUsage["memory"] = {
+  rssBytes: 0,
+  heapUsedBytes: 0,
+  heapTotalBytes: 0,
+  externalBytes: 0,
+};
+const SLM_FALLBACK: ResourceUsage["slm"] = {
+  text: { running: false, endpoint: null },
+  vision: { running: false, endpoint: null },
+  imagegen: { state: "unloaded" },
+};
+const INDEXING_FALLBACK: ResourceUsage["indexing"] = {
+  deferredForMemory: false,
+  pressure: null,
+};
+const BATTERY_FALLBACK: ResourceUsage["battery"] = {
+  hasBattery: false,
+  isOnBattery: false,
+  isCharging: false,
+  percent: null,
+  gating: false,
+};
+
 export function registerResourcesHandlers(): void {
   idempotentHandle("resources:getUsage", async (): Promise<ResourceUsage> => {
-    const mem = process.memoryUsage();
-    const battery = getBatteryStatus();
-    const pressure = memoryPressureSnapshot();
-
     return {
-      resourceMode: loadConfig().resourceMode,
-      memory: {
-        rssBytes: mem.rss,
-        heapUsedBytes: mem.heapUsed,
-        heapTotalBytes: mem.heapTotal,
-        externalBytes: mem.external,
-      },
-      slm: {
-        text: sidecarSnapshot(getModelSidecar()),
-        vision: sidecarSnapshot(getVisionSidecar()),
-        imagegen: { state: getDiffusionSidecarState().state },
-      },
+      resourceMode: defend(
+        "resourceMode",
+        () => loadConfig().resourceMode,
+        "lightweight",
+      ),
+      memory: defend(
+        "memory",
+        () => {
+          const mem = process.memoryUsage();
+          return {
+            rssBytes: mem.rss,
+            heapUsedBytes: mem.heapUsed,
+            heapTotalBytes: mem.heapTotal,
+            externalBytes: mem.external,
+          };
+        },
+        MEMORY_FALLBACK,
+      ),
+      slm: defend(
+        "slm",
+        () => ({
+          text: sidecarSnapshot(getModelSidecar()),
+          vision: sidecarSnapshot(getVisionSidecar()),
+          imagegen: { state: getDiffusionSidecarState().state },
+        }),
+        SLM_FALLBACK,
+      ),
       connections: {
         writers: 1,
+        // `readPoolSize()` is already internally defended (it guards
+        // `availableParallelism()`), so it never throws here.
         readers: readPoolSize(),
       },
-      indexing: {
-        deferredForMemory: isIndexingDeferredForMemory(),
-        pressure: pressure
-          ? {
-              paused: pressure.paused,
-              rssBytes: pressure.rssBytes,
-              highWaterMarkBytes: pressure.highWaterMarkBytes,
-              lowWaterMarkBytes: pressure.lowWaterMarkBytes,
-            }
-          : null,
-      },
-      battery: {
-        hasBattery: battery.hasBattery,
-        isOnBattery: battery.isOnBattery,
-        isCharging: battery.isCharging,
-        percent: battery.percent,
-        gating: isBatteryLow(),
-      },
+      indexing: defend(
+        "indexing",
+        () => {
+          const pressure = memoryPressureSnapshot();
+          return {
+            deferredForMemory: isIndexingDeferredForMemory(),
+            pressure: pressure
+              ? {
+                  paused: pressure.paused,
+                  rssBytes: pressure.rssBytes,
+                  highWaterMarkBytes: pressure.highWaterMarkBytes,
+                  lowWaterMarkBytes: pressure.lowWaterMarkBytes,
+                }
+              : null,
+          };
+        },
+        INDEXING_FALLBACK,
+      ),
+      battery: defend(
+        "battery",
+        () => {
+          const battery = getBatteryStatus();
+          return {
+            hasBattery: battery.hasBattery,
+            isOnBattery: battery.isOnBattery,
+            isCharging: battery.isCharging,
+            percent: battery.percent,
+            gating: isBatteryLow(),
+          };
+        },
+        BATTERY_FALLBACK,
+      ),
     };
   });
 }
