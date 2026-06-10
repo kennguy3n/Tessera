@@ -19,10 +19,17 @@
  *   8. Status reflects last success / last error.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import * as path from "path";
 
 vi.mock("electron", () => ({
   app: { getPath: vi.fn(() => "/userData") },
 }));
+
+// `resolveBackupDir` builds the default with `path.join`, so the
+// expected separator is platform-dependent (`/` on POSIX, `\` on
+// Windows). Compute the expectation the same way so the assertion is
+// not pinned to a single OS's separator.
+const DEFAULT_BACKUP_DIR = path.join("/userData", "backups");
 
 const loadConfigMock = vi.fn();
 vi.mock("../config", () => ({
@@ -145,7 +152,7 @@ beforeEach(() => {
 describe("resolveBackupDir", () => {
   it("uses <userData>/backups when backupDir is empty", () => {
     expect(resolveBackupDir(fakeConfig({ backupDir: "" }))).toBe(
-      "/userData/backups",
+      DEFAULT_BACKUP_DIR,
     );
   });
 
@@ -157,7 +164,7 @@ describe("resolveBackupDir", () => {
 
   it("treats a whitespace-only backupDir as the default sentinel", () => {
     expect(resolveBackupDir(fakeConfig({ backupDir: "   " }))).toBe(
-      "/userData/backups",
+      DEFAULT_BACKUP_DIR,
     );
   });
 });
