@@ -1,6 +1,7 @@
 //! Top-level N-API entry points wiring the Rust core managers to the
 //! desktop app, including async tasks shared across bridge modules.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use napi::bindgen_prelude::{AsyncTask, Buffer};
@@ -19,7 +20,7 @@ use tessera_core::{
 };
 use tessera_sources::manager::SourceManager;
 use tessera_sources::progress::EmbeddingProgressTracker;
-use tessera_substrate::SubstrateManager;
+use tessera_substrate::{EnrichedKnowledge, SubstrateManager};
 
 use crate::artifacts;
 use crate::automations;
@@ -442,7 +443,22 @@ pub(crate) fn remove_source_from_substrate(source_id: &str) {
 /// Returns metadata describing the new backup file.
 pub fn bridge_create_backup(backup_dir: String) -> napi::Result<backup::BackupInfo> {
     let s = state()?;
-    backup::create(&s.shared_conn, s.db_key.as_deref(), &backup_dir).map_err(backup::to_napi)
+    // Hold the substrate lock across the copy so the attached snapshots
+    // are consistent with the main DB hot-copy. The substrate uses its
+    // own connections (never `shared_conn`), so this acquires no lock the
+    // Online Backup API needs — no deadlock, and the critical section is
+    // just one hot-copy long.
+    let guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    backup::create(
+        &s.shared_conn,
+        s.db_key.as_deref(),
+        &backup_dir,
+        guard.as_ref(),
+    )
+    .map_err(backup::to_napi)
 }
 
 #[napi]
@@ -487,8 +503,18 @@ pub fn bridge_export_bundle(
     extras: Vec<backup::BundleFileEntry>,
 ) -> napi::Result<backup::BundleInfo> {
     let s = state()?;
-    backup::export_bundle(&s.shared_conn, s.db_key.as_deref(), extras, &out_path)
-        .map_err(backup::to_napi)
+    let guard = s
+        .substrate
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    backup::export_bundle(
+        &s.shared_conn,
+        s.db_key.as_deref(),
+        extras,
+        &out_path,
+        guard.as_ref(),
+    )
+    .map_err(backup::to_napi)
 }
 
 #[napi]
@@ -897,19 +923,27 @@ pub fn bridge_search_sources_enriched(
     let limit = limit as usize;
 
     // Phase 1: substrate plane. Acquire, read, release before touching
-    // the source-manager lock.
+    // the source-manager lock. A degraded (`None`) substrate is not an
+    // error here: enriched search must still return the chunk hits, so
+    // it falls back to an empty retention map + empty knowledge plane,
+    // making the ranking identical to `bridge_search_sources`.
     let (retention_by_source, knowledge) = {
-        let mut substrate = s
+        let mut guard = s
             .substrate
             .lock()
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        let retention = substrate
-            .retention_by_source()
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        let knowledge = substrate
-            .search_knowledge(&query, limit)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        (retention, knowledge)
+        match guard.as_mut() {
+            Some(substrate) => {
+                let retention = substrate
+                    .retention_by_source()
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                let knowledge = substrate
+                    .search_knowledge(&query, limit)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                (retention, knowledge)
+            }
+            None => (HashMap::new(), EnrichedKnowledge::default()),
+        }
     };
 
     // Phase 2: chunk plane, retention-weighted.

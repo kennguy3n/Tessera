@@ -46,6 +46,11 @@ pub enum SubstrateError {
     /// A memory object referenced by id was not found.
     #[error("memory not found: {0}")]
     MemoryNotFound(String),
+
+    /// A filesystem operation in a snapshot/backup path failed (e.g.
+    /// creating the snapshot directory or clearing a stale temp file).
+    #[error("substrate io error: {0}")]
+    Io(String),
 }
 
 /// Convenience result alias for substrate operations.
