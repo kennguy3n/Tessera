@@ -59,11 +59,12 @@ class BatteryGatedSkip extends Error {
  * low-water mark.
  *
  * This extends the `sources:batchReindex` IPC admission gate (see
- * `ipc/sources.ts`) to the scheduler's automation-driven reindex path,
- * which calls `bridgeReindexSource` directly and would otherwise bypass
- * the watchdog entirely — letting a dense run of due `reindex_source`
- * automations admit full-source reindexes exactly when the watchdog wants
- * to back off.
+ * `ipc/sources.ts`) to the automation-driven reindex path (Schedule,
+ * OnGenerate, and OnKchatMessage automations all reach `executeLeafAction`
+ * via `runAutomation`), which calls `bridgeReindexSource` directly and
+ * would otherwise bypass the watchdog entirely — letting a dense run of
+ * due `reindex_source` automations admit full-source reindexes exactly
+ * when the watchdog wants to back off.
  */
 class MemoryGatedSkip extends Error {
   constructor() {
@@ -360,12 +361,16 @@ async function executeLeafAction(
       if (!action.source_id) {
         throw new Error("reindex_source missing source_id");
       }
-      // LW-7: defer background/scheduled reindexing while the memory
-      // watchdog has paused bulk-index admission. This gates ONLY the
-      // scheduler's automation-driven reindex — user-initiated single-
-      // source reindex (`sources:reindex`) stays ungated, mirroring the
-      // scope of the `sources:batchReindex` IPC gate. Without this, the
-      // scheduler's direct `bridgeReindexSource` call bypasses the
+      // LW-7: defer automation-driven reindexing while the memory
+      // watchdog has paused bulk-index admission. `executeLeafAction`
+      // runs for every automation path that reaches `runAutomation` —
+      // the scheduled `tick()`, `dispatchOnGenerate`, and
+      // `dispatchKchatMessage` — so reindex steps from Schedule,
+      // OnGenerate, and OnKchatMessage automations are all gated.
+      // User-initiated single-source reindex (`sources:reindex`) stays
+      // ungated, mirroring the scope of the `sources:batchReindex` IPC
+      // gate (only automated/bulk indexing backs off under pressure).
+      // Without this, the direct `bridgeReindexSource` call bypasses the
       // watchdog, so a dense run of due `reindex_source` automations
       // could admit full-source reindexes exactly when RSS is already
       // high. The skip is surfaced as a non-failure status by
