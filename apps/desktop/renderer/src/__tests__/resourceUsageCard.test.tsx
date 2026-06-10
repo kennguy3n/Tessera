@@ -127,6 +127,22 @@ describe("ResourceUsageCard", () => {
     expect(rss).not.toHaveTextContent("1024 MB");
   });
 
+  it("singularises the reader count on a single-core box ('1 reader')", async () => {
+    // `readPoolSize()` is `min(parallelism, MAX_READ_POOL_SIZE)`, so a
+    // single-core machine (or the `availableParallelism()` fallback)
+    // reports 1 reader — the label must read "1 reader", not "1 readers".
+    window.tessera.resources.getUsage = vi.fn().mockResolvedValue(
+      snapshot({ connections: { writers: 1, readers: 1 } }),
+    );
+    render(<ResourceUsageCard />);
+    await waitFor(() =>
+      expect(screen.getByTestId("resource-usage-body")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByTestId("resource-usage-connections"),
+    ).toHaveTextContent("1 writer + 1 reader");
+  });
+
   it("explains active battery gating", async () => {
     window.tessera.resources.getUsage = vi.fn().mockResolvedValue(
       snapshot({

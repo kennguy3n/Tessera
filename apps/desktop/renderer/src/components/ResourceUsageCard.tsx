@@ -35,6 +35,17 @@ function formatBytes(bytes: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
+/**
+ * `${n} ${noun}` with a naive +"s" plural. The read pool is sized
+ * `min(parallelism, MAX_READ_POOL_SIZE)` so it is 1 on a single-core box
+ * (or when `availableParallelism()` falls back) — hard-coding "readers"
+ * would render the ungrammatical "1 readers". Only used for the simple
+ * "writer"/"reader" nouns here, so the dumb pluraliser is sufficient.
+ */
+function countLabel(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 const labelStyle: React.CSSProperties = {
   fontSize: "var(--font-size-sm)",
   color: "var(--color-text-secondary)",
@@ -162,7 +173,7 @@ export default function ResourceUsageCard() {
           />
           <Row
             label="Database connections"
-            value={`${usage.connections.writers} writer + ${usage.connections.readers} readers`}
+            value={`${countLabel(usage.connections.writers, "writer")} + ${countLabel(usage.connections.readers, "reader")}`}
             testId="resource-usage-connections"
           />
           <Row
