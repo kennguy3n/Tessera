@@ -46,6 +46,24 @@ import {
   registerProtocolClient,
 } from "./kchat/kchatDeeplinkBridge";
 
+// LW-4: cap the V8 old-space (the GC-managed JS heap) at 512 MB so a
+// long session that accumulates document models, fiber trees, and
+// cached IPC payloads cannot let the renderer heap balloon unbounded —
+// the cap makes V8 collect more aggressively as it approaches the
+// ceiling instead of growing RSS. `js-flags` is the only mechanism
+// Electron exposes for renderer V8 tuning (there is no per-`BrowserWindow`
+// `webPreferences` knob for `--max-old-space-size`), and it must be set
+// before `app` is ready, hence this module-top-level call.
+//
+// It applies process-wide (main + renderers), which is intentional and
+// safe: the heavy substrate state lives in the N-API addon's *native*
+// Rust allocations, which are off-heap and unaffected by this V8 limit,
+// and the main process itself holds very little long-lived JS. 512 MB
+// is comfortably above the renderer's working set (well under the
+// ≤200 MB idle RSS target, which counts native + heap) while still
+// catching runaway growth.
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512");
+
 // `tessera-asset://` must be registered as a privileged scheme
 // BEFORE `app.whenReady` fires — Electron's
 // `protocol.registerSchemesAsPrivileged` is a one-shot, ready-state
