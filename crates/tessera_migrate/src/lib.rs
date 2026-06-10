@@ -98,6 +98,12 @@ static MIGRATIONS: &[Migration] = &[
             "../migrations/0005_secondary_indexes.down.sql"
         )),
     },
+    Migration {
+        version: 6,
+        name: "kchat_crypto_scheme",
+        up: include_str!("../migrations/0006_kchat_crypto_scheme.sql"),
+        down: None,
+    },
 ];
 
 /// Borrow the embedded migration set.
@@ -195,11 +201,15 @@ impl<'a> Migrator<'a> {
     /// is not used by production code paths.
     pub fn rollback_last(&self, conn: &mut Connection) -> Result<Option<i64>> {
         let applied = load_applied(conn)?;
+        // Only migrations that declared a `down` script are rollback-able;
+        // a forward-only migration (e.g. a bookkeeping-table add) has no
+        // defined inverse, so skip it rather than silently dropping its
+        // `_migrations` row without undoing its schema effect.
         let Some(migration) = self
             .migrations
             .iter()
             .rev()
-            .find(|m| applied.contains_key(&m.version))
+            .find(|m| applied.contains_key(&m.version) && m.down.is_some())
         else {
             return Ok(None);
         };
@@ -318,6 +328,8 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     }
     Ok(false)
 }
+
+pub mod crypto_upgrade;
 
 #[cfg(test)]
 mod tests;

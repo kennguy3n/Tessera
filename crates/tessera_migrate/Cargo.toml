@@ -15,6 +15,13 @@ blake3 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Used only by the crypto-upgrade tests to synthesise authentic legacy
+# (v1) AES-256-GCM-wrapped DEK rows so the v1->v2 re-wrap path can be
+# exercised against a realistic un-migrated database.
+aes-gcm = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
 
 [lints]
 workspace = true

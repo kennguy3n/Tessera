@@ -34,6 +34,18 @@ impl std::fmt::Display for SourceId {
     }
 }
 
+impl std::str::FromStr for SourceId {
+    type Err = uuid::Error;
+
+    /// Parse a [`SourceId`] from its canonical [`Display`](std::fmt::Display)
+    /// form. The inverse of `to_string()`, used to reconstruct an id from the
+    /// `source_id` TEXT column (e.g. when re-wrapping per-source DEKs during a
+    /// crypto-scheme upgrade).
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 /// Stable identity of a generated [`ArtifactType`] (document, slides,
 /// sheet, …). A random [`Uuid`] minted at creation time and never
