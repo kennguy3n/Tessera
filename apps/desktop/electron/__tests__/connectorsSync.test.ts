@@ -19,6 +19,38 @@ import { syncConfluence, disconnectConfluence } from "../ipc/connectors/confluen
 import { syncFigma, disconnectFigma } from "../ipc/connectors/figma";
 import { syncGoogleDrive } from "../ipc/connectors/gdrive";
 
+/**
+ * Build a `fetch` response body as a one-shot web `ReadableStream`.
+ * The Drive/OneDrive download paths now stream `resp.body` to disk via
+ * `Readable.fromWeb` instead of buffering `arrayBuffer()`, so download
+ * mocks must expose a `body` stream rather than an `arrayBuffer()`
+ * method.
+ */
+function streamBody(data: ArrayBuffer | Uint8Array): ReadableStream<Uint8Array> {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+/**
+ * A body stream that errors part-way through, simulating a non-network
+ * failure while reading the response body (the streaming equivalent of
+ * the old `arrayBuffer: async () => { throw }` mock). `pipeline`
+ * rejects with this error, so the connector's per-item catch sees a
+ * non-network throw and skips the item.
+ */
+function erroringStream(message: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(new Error(message));
+    },
+  });
+}
+
 interface FakeSource {
   id: string;
   path: string;
@@ -2594,7 +2626,7 @@ describe("Google Drive sync — manifest cleanup", () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("hello").buffer,
+          body: streamBody(new TextEncoder().encode("hello")),
         })
         // Second file's metadata fetch throws (transport-level
         // rejection — what fetch() does on DNS failure or socket reset).
@@ -2751,7 +2783,7 @@ describe("Token refresh + cascading deletions", () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("a").buffer,
+          body: streamBody(new TextEncoder().encode("a")),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -2764,7 +2796,7 @@ describe("Token refresh + cascading deletions", () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("b").buffer,
+          body: streamBody(new TextEncoder().encode("b")),
         });
 
       await syncGoogleDrive({
@@ -3135,17 +3167,15 @@ describe("OneDrive per-item download resilience", () => {
         .mockResolvedValueOnce(deltaResp)
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("aaaa").buffer,
+          body: streamBody(new TextEncoder().encode("aaaa")),
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => {
-            throw new Error("simulated body parse failure");
-          },
+          body: erroringStream("simulated body parse failure"),
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("cccc").buffer,
+          body: streamBody(new TextEncoder().encode("cccc")),
         });
 
       const r = await syncOneDrive({
