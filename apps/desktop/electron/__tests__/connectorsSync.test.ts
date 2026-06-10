@@ -19,6 +19,38 @@ import { syncConfluence, disconnectConfluence } from "../ipc/connectors/confluen
 import { syncFigma, disconnectFigma } from "../ipc/connectors/figma";
 import { syncGoogleDrive } from "../ipc/connectors/gdrive";
 
+/**
+ * Build a `fetch` response body as a one-shot web `ReadableStream`.
+ * The Drive/OneDrive download paths now stream `resp.body` to disk via
+ * `Readable.fromWeb` instead of buffering `arrayBuffer()`, so download
+ * mocks must expose a `body` stream rather than an `arrayBuffer()`
+ * method.
+ */
+function streamBody(data: ArrayBuffer | Uint8Array): ReadableStream<Uint8Array> {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+/**
+ * A body stream that errors part-way through, simulating a non-network
+ * failure while reading the response body (the streaming equivalent of
+ * the old `arrayBuffer: async () => { throw }` mock). `pipeline`
+ * rejects with this error, so the connector's per-item catch sees a
+ * non-network throw and skips the item.
+ */
+function erroringStream(message: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(new Error(message));
+    },
+  });
+}
+
 interface FakeSource {
   id: string;
   path: string;
@@ -2565,6 +2597,49 @@ describe("Google Drive sync — manifest cleanup", () => {
     },
   );
 
+  it(
+    "ignores orphaned .partial temp files in the 404 cleanup loop " +
+      "(regression: stale partial inflates removed count)",
+    async () => {
+      // Simulate an unclean termination: a `.partial` temp file for
+      // `file-9` survives on disk (the streaming catch never ran), and
+      // `file-9` is then deleted upstream (404). The cleanup loop must
+      // NOT count or unlink the orphaned partial — partials are never
+      // registered sources, so matching one would inflate `removed`.
+      const syncDir = path.join(dir, "gdrive-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      const orphanPartial = path.join(syncDir, "file-9.txt.partial");
+      await fsp.writeFile(orphanPartial, "truncated bytes");
+      const manifestPath = path.join(syncDir, "manifest.json");
+      // Manifest tracks file-9 (its completed download never happened,
+      // but the id is carried forward), so its metadata is fetched.
+      await fsp.writeFile(
+        manifestPath,
+        JSON.stringify([path.join(syncDir, "file-9.txt")]),
+        "utf8",
+      );
+
+      // file-9 metadata 404s → lands in failedFileIds.
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => "not found",
+      });
+
+      const r = await syncGoogleDrive({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      // The orphaned partial is NOT a source, so removed stays 0...
+      expect(r.removed).toBe(0);
+      // ...and the partial is left untouched (reclaimed later by a
+      // successful rename or the OS temp reaper, not this loop).
+      await expect(fsp.access(orphanPartial)).resolves.toBeUndefined();
+    },
+  );
+
   // ---------------------------------------------------------------
   // gdrive lacked the try/finally manifest
   // persistence pattern that all five other connectors have. A
@@ -2594,7 +2669,7 @@ describe("Google Drive sync — manifest cleanup", () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("hello").buffer,
+          body: streamBody(new TextEncoder().encode("hello")),
         })
         // Second file's metadata fetch throws (transport-level
         // rejection — what fetch() does on DNS failure or socket reset).
@@ -2751,7 +2826,7 @@ describe("Token refresh + cascading deletions", () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("a").buffer,
+          body: streamBody(new TextEncoder().encode("a")),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -2764,7 +2839,7 @@ describe("Token refresh + cascading deletions", () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("b").buffer,
+          body: streamBody(new TextEncoder().encode("b")),
         });
 
       await syncGoogleDrive({
@@ -3135,17 +3210,15 @@ describe("OneDrive per-item download resilience", () => {
         .mockResolvedValueOnce(deltaResp)
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("aaaa").buffer,
+          body: streamBody(new TextEncoder().encode("aaaa")),
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => {
-            throw new Error("simulated body parse failure");
-          },
+          body: erroringStream("simulated body parse failure"),
         })
         .mockResolvedValueOnce({
           ok: true,
-          arrayBuffer: async () => new TextEncoder().encode("cccc").buffer,
+          body: streamBody(new TextEncoder().encode("cccc")),
         });
 
       const r = await syncOneDrive({

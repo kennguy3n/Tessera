@@ -275,17 +275,21 @@ describe("handleWillQuit", () => {
   // radius: removing the Electron listeners cannot affect any
   // other shutdown step.
   it(
-    "runs the full shutdown order: stopBatteryMonitor → scheduler → sidecars → " +
-      "kchatLocalApi → detachDeeplink → disposeBridge → quit",
+    "runs the full shutdown order: stopBatteryMonitor → stopMemoryWatchdog → scheduler → " +
+      "sidecars → kchatLocalApi → detachDeeplink → disposeBridge → quit",
     async () => {
       const order: string[] = [];
-      // Wire EVERY dep — including the two optional ones
-      // (`stopBatteryMonitor`, `disposeBridge`) — so this test documents
-      // the complete production sequence rather than a subset. The
-      // dedicated tests below still pin the battery-monitor-first and
+      // Wire EVERY dep — including the three optional ones
+      // (`stopBatteryMonitor`, `stopMemoryWatchdog`, `disposeBridge`) — so
+      // this test documents the complete production sequence rather than a
+      // subset. The dedicated tests below still pin the
+      // battery-monitor-first, memory-watchdog-before-drains, and
       // disposeBridge-last guarantees in isolation.
       const stopBatteryMonitor = vi.fn().mockImplementation(() => {
         order.push("stopBatteryMonitor");
+      });
+      const stopMemoryWatchdog = vi.fn().mockImplementation(() => {
+        order.push("stopMemoryWatchdog");
       });
       const stopScheduler = vi.fn().mockImplementation(async () => {
         order.push("stopScheduler");
@@ -309,6 +313,7 @@ describe("handleWillQuit", () => {
       const { event } = makeEvent();
       await handleWillQuit(event, {
         stopBatteryMonitor,
+        stopMemoryWatchdog,
         stopScheduler,
         stopAllSidecars,
         stopKchatLocalApi,
@@ -319,6 +324,7 @@ describe("handleWillQuit", () => {
 
       expect(order).toEqual([
         "stopBatteryMonitor",
+        "stopMemoryWatchdog",
         "stopScheduler",
         "stopAllSidecars",
         "stopKchatLocalApi",
@@ -364,6 +370,54 @@ describe("handleWillQuit", () => {
     expect(order[0]).toBe("stopBatteryMonitor");
     expect(order).toEqual([
       "stopBatteryMonitor",
+      "stopScheduler",
+      "stopAllSidecars",
+      "quit",
+    ]);
+  });
+
+  // LW-7: `stopMemoryWatchdog` is injected via `deps` just like
+  // `stopBatteryMonitor`. Both are synchronous unref'd-timer stops that
+  // must run BEFORE the async drains so a stacked interval can't survive
+  // into a relaunched main process. This pins that both fire up-front and
+  // ahead of `stopScheduler`.
+  it("stops the memory watchdog up-front, before the async drains", async () => {
+    const order: string[] = [];
+    const stopBatteryMonitor = vi.fn().mockImplementation(() => {
+      order.push("stopBatteryMonitor");
+    });
+    const stopMemoryWatchdog = vi.fn().mockImplementation(() => {
+      order.push("stopMemoryWatchdog");
+    });
+    const stopScheduler = vi.fn().mockImplementation(async () => {
+      order.push("stopScheduler");
+    });
+    const stopAllSidecars = vi.fn().mockImplementation(async () => {
+      order.push("stopAllSidecars");
+    });
+    const quit = vi.fn().mockImplementation(() => {
+      order.push("quit");
+    });
+
+    const { event } = makeEvent();
+    await handleWillQuit(event, {
+      stopBatteryMonitor,
+      stopMemoryWatchdog,
+      stopScheduler,
+      stopAllSidecars,
+      stopKchatLocalApi: vi.fn().mockResolvedValue(undefined),
+      detachKchatDeeplinkBridge: vi.fn(),
+      quit,
+    });
+
+    expect(stopMemoryWatchdog).toHaveBeenCalledTimes(1);
+    // Both synchronous timer-stops run before any async drain starts.
+    expect(order.indexOf("stopMemoryWatchdog")).toBeLessThan(
+      order.indexOf("stopScheduler"),
+    );
+    expect(order).toEqual([
+      "stopBatteryMonitor",
+      "stopMemoryWatchdog",
       "stopScheduler",
       "stopAllSidecars",
       "quit",

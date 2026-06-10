@@ -8,6 +8,7 @@ import { detectComputeBackends } from "./modelManagement";
 import { reapOrphanedSidecars } from "./sidecarPidRegistry";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { startBatteryMonitor, stopBatteryMonitor } from "./batteryMonitor";
+import { startMemoryWatchdog, stopMemoryWatchdog } from "./memoryWatchdog";
 import { getLogger } from "./logger";
 import {
   markEnd,
@@ -848,6 +849,32 @@ async function initBridgeAndServices(): Promise<void> {
       message: err instanceof Error ? err.message : String(err),
     });
   }
+  // LW-7: begin sampling main-process RSS so the bulk-reindex admission
+  // gate (`sources:batchReindex`) can defer a large initial index when
+  // the process is already under memory pressure, then resume once it
+  // drops back below the low-water mark. Like the battery monitor it runs
+  // on an unref'd 10s timer (never holds the event loop open) and fails
+  // open — a sampler error or absent singleton admits indexing. Started
+  // before the scheduler so the first scheduled reindex already has a
+  // pressure reading to consult. Lives here (off the cold-start critical
+  // path) alongside the rest of the bridge-dependent services rather than
+  // in the boot wire — LW-8 moved it here when it relocated the inline
+  // boot sequence into this function.
+  //
+  // Guarded for the same reason as `startBatteryMonitor` above and
+  // `startScheduler` below: a synchronous throw here must not skip
+  // `setBridgeState("ready")` and wedge the renderer on the skeleton.
+  // The watchdog fails open, so a failed start degrades to "never
+  // defer", not a crash.
+  try {
+    startMemoryWatchdog();
+  } catch (err) {
+    // Best-effort log (see `safeLogError`): a throwing logger here must
+    // not skip `setBridgeState("ready")` below.
+    safeLogError("memoryWatchdog.start.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Start the automations scheduler now that the bridge backs its
   // dispatch. It ticks every 30s in the main process, dispatching due
   // `Schedule` automations directly against the native bridge. See
@@ -1331,6 +1358,15 @@ export async function handleWillQuit(
      * it runs up front, outside the async-drain try/catch blocks.
      */
     stopBatteryMonitor?: () => void;
+    /**
+     * Stop the LW-7 RSS watchdog poll timer. Injected (like
+     * `stopBatteryMonitor`) so the will-quit tests can spy on it and
+     * assert its ordering. Optional so existing tests that don't wire
+     * it keep compiling; production passes the real `stopMemoryWatchdog`.
+     * Synchronous and never-throwing, so it runs up front alongside the
+     * battery monitor, outside the async-drain try/catch blocks.
+     */
+    stopMemoryWatchdog?: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -1352,6 +1388,11 @@ export async function handleWillQuit(
   // Injected via `deps` for the same testability reason as every other
   // step (the `?.` keeps callers that don't wire it working).
   deps.stopBatteryMonitor?.();
+  // LW-7: stop the RSS watchdog poll timer alongside the battery monitor.
+  // Same rationale: unref'd interval that can't block exit, but clearing
+  // it here prevents a stacked interval when a test harness relaunches the
+  // main process. Synchronous and never-throwing, so outside the drains.
+  deps.stopMemoryWatchdog?.();
   // Outer `try/finally` guarantees `deps.quit()` runs even if one of
   // the inner `console.error` calls were to throw (e.g. a custom
   // `console` override in a future test/wrapper). The two inner
@@ -1443,6 +1484,7 @@ app.on("will-quit", (event) => {
     stopScheduler,
     stopAllSidecars,
     stopBatteryMonitor,
+    stopMemoryWatchdog,
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
     disposeBridge: () => {

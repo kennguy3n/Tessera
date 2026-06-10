@@ -62,6 +62,8 @@ import {
   getRequestedScopes,
   type ScopeComparison,
 } from "../../oauthScope";
+import { ConnectorSyncQueue, SYNC_CONCURRENCY } from "./syncQueue";
+import { loadConfig } from "../../config";
 import { disconnectOneDrive, syncOneDrive } from "./onedrive";
 import { disconnectNotion, syncNotion } from "./notion";
 import { disconnectJira, syncJira } from "./jira";
@@ -686,7 +688,46 @@ async function runSync(
  *   - Auth-prerequisite errors (`NotConnectedError`) still propagate
  *     as hard errors so the UI can prompt re-authentication.
  */
-export async function runConnectorSync(
+/**
+ * LW-6: process-wide gate that bounds how many connector syncs run at
+ * once. Capacity is `SYNC_CONCURRENCY[resourceMode]` (1 lightweight, 3
+ * performance), read live on each acquire so a Settings toggle applies
+ * to the next sync. `loadConfig()` is wrapped defensively: a config
+ * read failure must never wedge syncs, so we fall back to the
+ * lightweight cap (the safest, lowest-footprint choice).
+ *
+ * A single shared instance is correct here — there is one main process
+ * and one config — and it backs every sync entry point because they
+ * all funnel through `runConnectorSync` (`connectors:sync` and the
+ * legacy `connectors:gdrive:sync` handler both delegate here).
+ */
+const connectorSyncQueue = new ConnectorSyncQueue(() => {
+  try {
+    return SYNC_CONCURRENCY[loadConfig().resourceMode];
+  } catch {
+    return SYNC_CONCURRENCY.lightweight;
+  }
+});
+
+/**
+ * Public sync entry point. Serialises (lightweight) or lightly
+ * parallelises (performance) connector syncs via `connectorSyncQueue`
+ * so a multi-connector "Sync all" can't fan out heavy network + CPU +
+ * disk work simultaneously. The actual sync logic lives in
+ * `runConnectorSyncInner`; this wrapper only adds the concurrency gate
+ * so the gate is impossible to bypass from any caller.
+ */
+export function runConnectorSync(
+  ctx: IpcContext,
+  provider: ProviderId,
+  options?: { selectedFileIds?: string[] },
+): Promise<ConnectorSyncResult> {
+  return connectorSyncQueue.run(() =>
+    runConnectorSyncInner(ctx, provider, options),
+  );
+}
+
+async function runConnectorSyncInner(
   ctx: IpcContext,
   provider: ProviderId,
   options?: { selectedFileIds?: string[] },
