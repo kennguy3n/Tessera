@@ -10,6 +10,11 @@ import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import ModelDownloadBanner from "./components/ModelDownloadBanner";
+import CommandPalette from "./components/CommandPalette";
+import KeyboardShortcutsHelp from "./components/KeyboardShortcutsHelp";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useTheme } from "./hooks/useTheme";
+
 // LW-4: route-level code splitting. Each page (and the heavy editor
 // module graph it pulls in — TipTap/ProseMirror, the sheet formula
 // engine, Marp slide rendering) is loaded as its own lazy chunk on
@@ -26,10 +31,6 @@ const ArtifactEditorPage = lazy(() => import("./pages/ArtifactEditorPage"));
 const TasksPage = lazy(() => import("./pages/TasksPage"));
 const AutomationsPage = lazy(() => import("./pages/AutomationsPage"));
 const VisionPage = lazy(() => import("./pages/VisionPage"));
-import CommandPalette from "./components/CommandPalette";
-import KeyboardShortcutsHelp from "./components/KeyboardShortcutsHelp";
-import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import { useTheme } from "./hooks/useTheme";
 
 type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
 
