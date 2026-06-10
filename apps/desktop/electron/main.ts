@@ -21,6 +21,14 @@ import {
   getBridgeStateSnapshot,
   setBridgeState,
 } from "./bridgeLifecycle";
+import {
+  createTray,
+  destroyTray,
+  hasTray,
+  resumeForTray,
+  suspendForTray,
+} from "./tray";
+import { isAppSuspended, setAppSuspended } from "./appSuspension";
 // `./autoUpdater` is loaded dynamically inside `whenReady()` (see
 // `initAutoUpdater()` call site). Task 1: it pulls in
 // `electron-updater` (which itself imports `js-yaml` + `xml2js` +
@@ -170,6 +178,64 @@ if (!acquiredSingleInstanceLock) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+// LW-9 (minimize-to-tray): distinguishes "the user closed the window"
+// (which, with Close-to-tray on, hides it and suspends the app) from
+// "the app is genuinely quitting" (tray → Quit, app.quit(), OS
+// shutdown). The window `close` handler only swallows the close — via
+// `event.preventDefault()` + `hide()` — while this is `false`. The
+// tray Quit action and any future programmatic quit flip it to `true`
+// first so the SAME close that fires during quit is allowed through.
+let isQuitting = false;
+
+/**
+ * Begin a genuine app quit (as opposed to a close-to-tray hide). Sets
+ * the `isQuitting` latch so the window `close` handler stops swallowing
+ * the close, then asks Electron to quit (which runs the `will-quit`
+ * cleanup chain). Wired to the tray's "Quit Tessera" menu item.
+ */
+function quitApp(): void {
+  isQuitting = true;
+  app.quit();
+}
+
+/**
+ * Bring the main window back from the tray: show it, focus it, and —
+ * if the app was suspended while hidden — resume the scheduler and tell
+ * the renderer to un-pause its polling. Used by the tray click / "Show
+ * Tessera" menu item and the macOS dock `activate` path.
+ *
+ * Sidecars are intentionally NOT restarted here (see `resumeForTray`):
+ * they stay stopped until the user actually requests a generation.
+ */
+function showMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+  if (isAppSuspended()) {
+    resumeForTray({
+      setAppSuspended,
+      startScheduler,
+      notifyRenderer: notifyRendererSuspension,
+    });
+  }
+}
+
+/**
+ * Send a suspend/resume signal to the renderer so it can pause/resume
+ * its polling intervals (model-status poll, source-health poll, …).
+ * Best-effort: a destroyed or not-yet-loaded `webContents` is skipped
+ * rather than throwing into the tray event handler.
+ */
+function notifyRendererSuspension(channel: "app:suspend" | "app:resume"): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel);
+  }
+}
 
 // Catch otherwise-unhandled errors so they end up on disk instead of
 // silently crashing the renderer. We deliberately do NOT call
@@ -339,10 +405,14 @@ function installContentSecurityPolicy(): void {
 function createWindow(): void {
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     // Already open from a previous call (e.g. activate listener
-    // fired first). Bring it to the foreground so the user-visible
-    // result of "click dock icon" is consistent with the macOS
-    // expectation of bringing the app's window forward.
+    // fired first) — or hidden to the tray (LW-9). Bring it to the
+    // foreground so the user-visible result of "click dock icon" is
+    // consistent with the macOS expectation of bringing the app's
+    // window forward. `show()` is required on the close-to-tray path:
+    // the window is hidden, not minimized, so `restore()` alone would
+    // leave it invisible.
     if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.focus();
     return;
   }
@@ -441,7 +511,7 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(__dirname, "../../renderer-dist/index.html"));
   }
 
-  mainWindow.on("close", () => {
+  mainWindow.on("close", (event) => {
     if (mainWindow) {
       const bounds = mainWindow.getBounds();
       saveWindowState({
@@ -449,6 +519,41 @@ function createWindow(): void {
         windowY: bounds.y,
         windowWidth: bounds.width,
         windowHeight: bounds.height,
+      });
+    }
+    // LW-9 (minimize-to-tray): when "Close to tray" is on and this is a
+    // user-initiated close (NOT a real quit), swallow the close and hide
+    // the window instead, then reclaim resident cost (stop sidecars,
+    // pause scheduler). `isQuitting` is set by the tray's "Quit Tessera"
+    // item / any `quitApp()` so the close that fires during a genuine
+    // quit is allowed through. We re-read `loadConfig()` here (rather
+    // than caching at window-create) so toggling the setting takes
+    // effect without a relaunch. The window state was already persisted
+    // above, so hiding loses nothing.
+    //
+    // `hasTray()` is part of the condition because hiding-to-tray is
+    // only safe if a tray icon actually exists to restore from.
+    // `createTray` is wrapped in a try/catch on the boot path and can
+    // legitimately fail (Linux session with no StatusNotifier host),
+    // yet the user can still toggle "Close to tray" on. Without this
+    // guard, the close would hide the window with no icon to click and
+    // no recovery short of killing the process / editing `config.json`
+    // — a lockout (LW-9 review, PR #111). When there is no tray we fall
+    // through and let the window close normally.
+    if (
+      !isQuitting &&
+      mainWindow &&
+      loadConfig().closeToTray &&
+      hasTray()
+    ) {
+      event.preventDefault();
+      mainWindow.hide();
+      void suspendForTray({
+        setAppSuspended,
+        isAppSuspended,
+        stopScheduler,
+        stopAllSidecars,
+        notifyRenderer: notifyRendererSuspension,
       });
     }
   });
@@ -826,6 +931,14 @@ async function initBridgeAndServices(): Promise<void> {
       message: err instanceof Error ? err.message : String(err),
     });
   }
+  // LW-9: if the user quit during the (background, un-awaited) bridge
+  // init, the `will-quit` cleanup chain has already run `stopScheduler`
+  // / `stopBatteryMonitor` — starting them now would leave live timers
+  // racing process exit. `isQuitting` is set by `before-quit`/the tray
+  // Quit, both of which fire before `will-quit`, so this is a reliable
+  // latch. Skip starting the bridge-dependent services (and the `ready`
+  // broadcast, which is moot for a tearing-down renderer) on that path.
+  if (isQuitting) return;
   // LW-3: begin polling battery state so the scheduler and
   // `model:generate` can defer synthesis when the device is on a low
   // battery. The probe runs on a 60s unref'd timer (never holds the
@@ -1024,17 +1137,28 @@ app.whenReady().then(async () => {
   //
   // Safety while the password prompt is open: the prompt is itself a
   // `BrowserWindow`, so `BrowserWindow.getAllWindows().length === 0`
-  // is false and the listener no-ops. The duplicate-window race is
-  // also closed by `createWindow()` checking the existing-window set
-  // before constructing a new one (see `createWindow` docstring) —
-  // so even if Cocoa fires `activate` after the prompt closes but
-  // before this `whenReady` callback resumes, the handler safely
-  // creates the main window early; the `createWindow()` call below
-  // then finds it already open and returns.
+  // is false and the handler takes the `showMainWindow()` branch,
+  // which calls `createWindow()` when `mainWindow` is still null. That
+  // CANNOT happen in practice: the password prompt only exists on Linux
+  // sessions with no keyring (`safeStorage.isEncryptionAvailable()` is
+  // false), while `activate` only fires from a macOS dock click, where
+  // safeStorage is always available so the prompt never runs. The
+  // duplicate-window race is also closed by `createWindow()` checking
+  // the existing-window set before constructing a new one (see
+  // `createWindow` docstring) — so even if Cocoa fires `activate` after
+  // the prompt closes but before this `whenReady` callback resumes, the
+  // handler safely creates the main window early; the `createWindow()`
+  // call below then finds it already open and returns.
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+      return;
     }
+    // LW-9: with Close-to-tray on, the window is hidden (not closed) so
+    // it still counts in `getAllWindows()`. A dock-icon click must bring
+    // it back and resume the suspended app — `showMainWindow()` no-ops
+    // safely when the window is already visible.
+    showMainWindow();
   });
   // Register IPC handlers BEFORE the password-vault prompt awaits,
   // so that even if Cocoa fires `activate` and the listener above
@@ -1131,6 +1255,20 @@ app.whenReady().then(async () => {
   // `bridgeLifecycle.ts` for the readiness contract.
   createWindow();
   appInitComplete = true;
+  // LW-9 (minimize-to-tray): install the tray icon now that the window
+  // exists. The tray is always present (it carries the Quit affordance
+  // the user needs once the window is hidden); whether closing the
+  // window hides-to-tray or quits is governed per-close by the
+  // `closeToTray` config in the window `close` handler. Tray creation
+  // is best-effort — a Linux session with no system tray / appindicator
+  // must not wedge boot, so a failure is logged and swallowed.
+  try {
+    createTray({ onShow: showMainWindow, onQuit: quitApp });
+  } catch (err) {
+    getLogger().warn("tray.create.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Kick off bridge init + every bridge-dependent service in the
   // background. `void` (NOT `await`): boot-to-first-render must never
   // wait on it. `initBridgeAndServices` reports `ready`/`error` to the
@@ -1228,6 +1366,17 @@ app.whenReady().then(async () => {
   // at the registration site.
 });
 
+// LW-9 (minimize-to-tray): treat ANY quit Electron initiates — macOS
+// Cmd+Q, the app menu's Quit, an OS logout/shutdown, an auto-update
+// relaunch — as a genuine quit, so the window `close` handler stops
+// swallowing the close and hiding to tray. `quitApp()` (the tray's
+// Quit item) already sets this, but `before-quit` is the catch-all for
+// every quit path that does NOT route through the tray. It fires before
+// any window `close`, so the latch is set in time.
+app.on("before-quit", () => {
+  isQuitting = true;
+});
+
 app.on("window-all-closed", () => {
   // Suppress the quit if the main window hasn't been opened yet. See
   // the `appInitComplete` docstring above for the full scenario —
@@ -1296,6 +1445,18 @@ let schedulerShutdownStarted = false;
  */
 export function _resetWillQuitLatchForTests(): void {
   schedulerShutdownStarted = false;
+}
+
+/**
+ * Reset the LW-9 `isQuitting` latch (see line ~168). Mirrors the
+ * sibling `_resetAppInitForTests` / `_resetWillQuitLatchForTests`
+ * resets so a vitest process that drives a quit → re-init cycle in one
+ * run doesn't leave the latch stuck at `true` (which would make the
+ * close handler stop hiding-to-tray for every later case). Production
+ * code never calls this.
+ */
+export function _resetIsQuittingForTests(): void {
+  isQuitting = false;
 }
 
 /**
@@ -1467,6 +1628,11 @@ export async function handleWillQuit(
 }
 
 app.on("will-quit", (event) => {
+  // LW-9: remove the tray icon as we tear down. Synchronous and
+  // idempotent (`destroyTray` no-ops when no tray is installed, e.g. a
+  // headless Linux session where `createTray` failed), so it is safe to
+  // run before the async cleanup chain and outside its try/catch.
+  destroyTray();
   // Attach a `.catch()` so an exception thrown inside `handleWillQuit`
   // (the pathological "logger throws inside the scheduler catch" case
   // pinned by `willQuit.test.ts`'s

@@ -23,6 +23,10 @@ vi.mock("../appState", () => ({
 import type { NativeBridge, AutomationInfo } from "../appState";
 import { getKchatBackfillImpl } from "../appState";
 import {
+  setAppSuspended,
+  _resetAppSuspensionForTests,
+} from "../appSuspension";
+import {
   tick,
   runNow,
   stopScheduler,
@@ -85,6 +89,7 @@ beforeEach(() => {
   // level set by one test never leaks into the next. The default state
   // means `isBatteryLow()` is false, so existing tests are unaffected.
   stopBatteryMonitor();
+  _resetAppSuspensionForTests();
 });
 
 describe("scheduler.tick", () => {
@@ -115,6 +120,37 @@ describe("scheduler.tick", () => {
     expect(status.lastTickError).toBeNull();
     expect(status.lastTickAt).not.toBeNull();
     expect(status.inFlight).toBe(false);
+  });
+
+  it("self-gates while the app is suspended in the tray (LW-9)", async () => {
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation("a1", '{"kind":"reindex_source","source_id":"src-1"}'),
+    ]);
+    setAppSuspended(true);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    // Suspended: the tick must not even query for due automations, let
+    // alone dispatch one — no resources burn while hidden to the tray.
+    expect(bridge.bridgeDueScheduledAutomations).not.toHaveBeenCalled();
+    expect(bridge.bridgeReindexSource).not.toHaveBeenCalled();
+    expect(bridge.bridgeRecordAutomationRun).not.toHaveBeenCalled();
+  });
+
+  it("resumes dispatching after the suspension flag clears (LW-9)", async () => {
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation("a1", '{"kind":"reindex_source","source_id":"src-1"}'),
+    ]);
+    setAppSuspended(true);
+    await tick(bridge as unknown as NativeBridge);
+    expect(bridge.bridgeDueScheduledAutomations).not.toHaveBeenCalled();
+
+    // Mirrors resumeForTray clearing the flag: the very next tick fires.
+    setAppSuspended(false);
+    await tick(bridge as unknown as NativeBridge);
+    expect(bridge.bridgeReindexSource).toHaveBeenCalledWith("src-1");
   });
 
   it("records `failed: ...` when an action throws", async () => {

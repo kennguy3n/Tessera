@@ -1157,6 +1157,15 @@ export interface SettingsData {
    * The diffusion sidecar never auto-starts in either mode.
    */
   resourceMode: ResourceMode;
+  /**
+   * LW-9 (minimize-to-tray). When `true`, closing the main window hides
+   * it to the system tray and suspends the app (sidecars stopped,
+   * scheduler paused) instead of quitting; the user reopens via the
+   * tray icon and quits via the tray's "Quit Tessera" item. When
+   * `false` (default) closing the window quits as before. Toggled in
+   * Settings → General; mirrors `AppConfig.closeToTray`.
+   */
+  closeToTray: boolean;
 }
 
 /**

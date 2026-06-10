@@ -100,6 +100,7 @@ export default function SettingsPage() {
   const [resourceMode, setResourceMode] = useState<ResourceMode>(
     settings.resourceMode,
   );
+  const [closeToTray, setCloseToTray] = useState(settings.closeToTray);
 
   useEffect(() => {
     setTheme(settings.theme);
@@ -110,6 +111,7 @@ export default function SettingsPage() {
     setSimplifiedNav(settings.simplifiedNav);
     setAutoDownloadModel(settings.autoDownloadModel);
     setResourceMode(settings.resourceMode);
+    setCloseToTray(settings.closeToTray);
   }, [settings]);
 
   const handleSave = async () => {
@@ -137,6 +139,7 @@ export default function SettingsPage() {
       simplifiedNav,
       autoDownloadModel,
       resourceMode,
+      closeToTray,
     });
     refresh();
   };
@@ -266,6 +269,46 @@ export default function SettingsPage() {
                   On a fresh install, download the recommended local model in
                   the background. Turn off to stay in extraction-only mode and
                   download models manually.
+                </span>
+              </span>
+            </label>
+          </div>
+          <div style={{ marginTop: "var(--spacing-md)" }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "var(--spacing-sm)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={closeToTray}
+                data-testid="settings-close-to-tray"
+                onChange={(e) => setCloseToTray(e.target.checked)}
+              />
+              <span>
+                <span
+                  style={{
+                    display: "block",
+                    fontWeight:
+                      "var(--font-weight-medium)" as unknown as number,
+                    color: "var(--color-text-headline)",
+                  }}
+                >
+                  Close to tray
+                </span>
+                <span
+                  style={{
+                    fontSize: "var(--font-size-sm)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  Keep Tessera running in the system tray when you close the
+                  window. Models stop and background work pauses to free memory;
+                  reopen from the tray icon. Turn off to quit on close. Use
+                  &ldquo;Quit Tessera&rdquo; in the tray menu to exit fully.
                 </span>
               </span>
             </label>
