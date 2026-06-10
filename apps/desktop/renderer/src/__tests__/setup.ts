@@ -46,6 +46,24 @@ if (typeof Document !== "undefined") {
   }
 }
 
+// A representative `SubstrateMemoryInfo` for the default pin/unpin mocks,
+// which resolve with the mutated memory (not void). Tests that assert on a
+// specific memory override `pinMemory`/`unpinMemory` per-case.
+const MOCK_SUBSTRATE_MEMORY = {
+  id: "00000000-0000-4000-8000-000000000001",
+  scopeId: "00000000-0000-4000-8000-000000000000",
+  observationType: "fact",
+  content: "",
+  state: "candidate",
+  retentionScore: 0,
+  pinCount: 0,
+  retrievalCount: 0,
+  corroborationCount: 0,
+  createdAt: 0,
+  lastAccessedAt: 0,
+  sourceId: null,
+};
+
 const mockApi = {
   sources: {
     addLocalFolder: vi.fn().mockResolvedValue({
@@ -717,18 +735,26 @@ const mockApi = {
     extractObservations: vi.fn().mockResolvedValue(0),
     getMemories: vi.fn().mockResolvedValue([]),
     getConceptGraph: vi.fn().mockResolvedValue("{}"),
+    // Field names mirror `SubstrateDecayReportInfo` so component tests
+    // that read the report (decay dashboard) see real keys, not undefined.
     runDecaySweep: vi.fn().mockResolvedValue({
-      scanned: 0,
-      archived: 0,
-      deleted: 0,
+      scored: 0,
+      candidatesArchived: 0,
+      supersededArchived: 0,
     }),
+    // Field names mirror `SubstrateSynthesisInfo`.
     triggerSynthesis: vi.fn().mockResolvedValue({
-      scope: null,
-      generated: 0,
-      updated: 0,
+      windowId: "00000000-0000-4000-8000-000000000000",
+      scopeId: "00000000-0000-4000-8000-000000000000",
+      version: 1,
+      recap: "",
+      decisions: [],
+      openQuestions: [],
+      activeTasks: [],
     }),
-    pinMemory: vi.fn().mockResolvedValue(undefined),
-    unpinMemory: vi.fn().mockResolvedValue(undefined),
+    // pin/unpin resolve with the mutated `SubstrateMemoryInfo`, not void.
+    pinMemory: vi.fn().mockResolvedValue(MOCK_SUBSTRATE_MEMORY),
+    unpinMemory: vi.fn().mockResolvedValue(MOCK_SUBSTRATE_MEMORY),
     forgetMemory: vi.fn().mockResolvedValue(undefined),
     suggestRelatedSources: vi.fn().mockResolvedValue([]),
   },
