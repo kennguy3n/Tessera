@@ -177,9 +177,12 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 5_000,
   },
   // Recommended-model install (banner "Retry" / first-launch auto-
-  // download). Same single-flight-per-5s budget as `downloadModel`:
-  // it routes into the same per-slot download lock, so this throttle
-  // just keeps rapid retries from queueing redundant fetches.
+  // download). Same 1-start-per-5s budget as `downloadModel`, and like
+  // it the bucket is keyed PER capability slot
+  // (`runtime:downloadRecommended:<capability>`): it routes into the
+  // same per-slot download lock, so this throttle just keeps rapid
+  // retries from queueing redundant fetches without penalising a
+  // legitimate burst across distinct slots.
   "runtime:downloadRecommended": {
     tokensPerInterval: 1,
     intervalMs: 5_000,

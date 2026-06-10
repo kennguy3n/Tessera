@@ -385,13 +385,17 @@ export function registerRuntimeHandlers(): void {
       // purpose): bound *renderer-initiated* starts to 1 / 5s so a buggy
       // or compromised renderer can't hammer this channel with cheap-but-
       // unbounded manifest reads + install-state stats that all funnel
-      // into the per-slot download lock. Legitimate UI flows never trip
-      // it — the banner's "Retry" button hides itself the moment it's
+      // into the per-slot download lock. Keyed PER capability slot, like
+      // the sibling `runtime:downloadModel`: the channel accepts any
+      // capability, so a legitimate burst across slots (recommend text,
+      // then recommend vision) must not be throttled — only repeated
+      // starts on the SAME slot are. Legitimate UI flows never trip it
+      // anyway — the banner's "Retry" button hides itself the moment it's
       // clicked (status flips to "downloading"), and the first-launch
       // auto-download calls `downloadRecommendedModel` directly in the
       // main process, bypassing this handler entirely.
       defaultRateLimiter.consume(
-        "runtime:downloadRecommended",
+        `runtime:downloadRecommended:${cap}`,
         RATE_LIMIT_PROFILES["runtime:downloadRecommended"],
       );
       return downloadRecommendedModel(cap, progressEmitter(event));

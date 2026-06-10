@@ -92,29 +92,39 @@ describe("runtime:downloadRecommended rate limit", () => {
     // candidate so the body is a cheap no-op returning null.
     await expect(handler(event, "text")).resolves.toBeNull();
 
-    // Second call in the same 5s window: the bucket is empty, so the
-    // shared limiter throws RateLimitError naming this channel.
+    // Second call in the same 5s window: the per-slot bucket is empty, so
+    // the shared limiter throws RateLimitError naming the capability key.
     await expect(handler(event, "text")).rejects.toBeInstanceOf(RateLimitError);
     await expect(handler(event, "text")).rejects.toThrow(
-      /runtime:downloadRecommended/,
+      /runtime:downloadRecommended:text/,
     );
   });
 
-  it("uses an independent budget from runtime:downloadModel", async () => {
-    // Exhaust the downloadRecommended bucket.
+  it("keys the budget per capability slot and independently from downloadModel", async () => {
     const recommended = getHandler("runtime:downloadRecommended");
     const event = { sender: { isDestroyed: () => false } };
+
+    // Exhaust the text slot's budget.
     await recommended(event, "text");
     await expect(recommended(event, "text")).rejects.toBeInstanceOf(
       RateLimitError,
     );
 
-    // downloadModel has its own (unconsumed) bucket key, so consuming
-    // downloadRecommended must not have drawn from it. We assert the
-    // limiter tracks them under distinct keys.
+    // A different slot has its own bucket, so it still passes (the
+    // manifest resolves no candidate, so the body is a cheap null no-op).
+    await expect(recommended(event, "vision")).resolves.toBeNull();
+
+    // Distinct per-capability keys are tracked; neither the undiscriminated
+    // channel name nor downloadModel's bucket is ever used here.
+    expect(
+      defaultRateLimiter.inspect("runtime:downloadRecommended:text"),
+    ).toBeDefined();
+    expect(
+      defaultRateLimiter.inspect("runtime:downloadRecommended:vision"),
+    ).toBeDefined();
     expect(
       defaultRateLimiter.inspect("runtime:downloadRecommended"),
-    ).toBeDefined();
+    ).toBeUndefined();
     expect(defaultRateLimiter.inspect("runtime:downloadModel")).toBeUndefined();
   });
 });
