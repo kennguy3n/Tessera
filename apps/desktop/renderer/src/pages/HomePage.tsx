@@ -75,7 +75,19 @@ export default function HomePage() {
   const { sources, loading: sourcesLoading } = useSourceList();
   const { settings, loading: settingsLoading, refresh: refreshSettings } =
     useSettings();
-  const { insights, loading: insightsLoading } = useKnowledgeInsights();
+  const hasSources = sources.length > 0;
+  const hasArtifacts = recent.length > 0;
+  // Gate the substrate round-trip on there being something to describe.
+  // A fresh install with no sources / artifacts renders the onboarding
+  // empty state (early-returns below) and never shows the insights card,
+  // so fetching memories + the concept graph there is pure waste. Once
+  // the user has any source or artifact, the card renders and the hook
+  // fetches. (Devin Review PR #120.)
+  const knowledgeEnabled = hasSources || hasArtifacts;
+  const { insights, loading: insightsLoading } = useKnowledgeInsights(
+    5,
+    knowledgeEnabled,
+  );
   // Local optimistic flag so a successful Skip / Finish closes the
   // wizard immediately even if `refreshSettings()` is still in flight.
   // The IPC write has already succeeded by the time `onDismiss` fires
@@ -83,8 +95,6 @@ export default function HomePage() {
   // the persisted state.
   const [wizardDismissed, setWizardDismissed] = useState(false);
 
-  const hasSources = sources.length > 0;
-  const hasArtifacts = recent.length > 0;
   const isLoading = artifactsLoading || sourcesLoading || settingsLoading;
 
   // gate the wizard on all three signals.

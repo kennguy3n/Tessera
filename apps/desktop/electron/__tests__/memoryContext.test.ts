@@ -52,15 +52,26 @@ describe("selectMemoryLines", () => {
     expect(lines[0]).toContain("live");
   });
 
-  it("scopes to selected sources, falling back to global when none match", () => {
+  it("scopes strictly to selected sources and never leaks other sources", () => {
     const memories = [
       mem({ content: "from A", sourceId: "A" }),
       mem({ content: "from B", sourceId: "B" }),
     ];
     expect(selectMemoryLines(memories, ["A"]).join("\n")).toContain("from A");
     expect(selectMemoryLines(memories, ["A"]).join("\n")).not.toContain("from B");
-    // No memory belongs to the selected source -> fall back to global.
-    expect(selectMemoryLines(memories, ["Z"])).toHaveLength(2);
+    // When the user explicitly scopes to a source with no memories, we
+    // inject NOTHING rather than leaking unrelated-source context into
+    // the deliberately-scoped artifact. (Devin Review PR #120.)
+    expect(selectMemoryLines(memories, ["Z"])).toEqual([]);
+  });
+
+  it("uses the whole active set only when no scope is requested", () => {
+    const memories = [
+      mem({ content: "from A", sourceId: "A" }),
+      mem({ content: "from B", sourceId: "B" }),
+    ];
+    // Empty sourceIds == "draw on everything Tessera knows".
+    expect(selectMemoryLines(memories, [])).toHaveLength(2);
   });
 
   it("orders by corroboration/retrieval/pin signal", () => {

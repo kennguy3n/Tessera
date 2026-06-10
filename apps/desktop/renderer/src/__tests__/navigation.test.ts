@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  MAX_SIDEBAR_SHORTCUT_INDEX,
   PRIMARY_SIDEBAR_ITEMS,
   SECONDARY_SIDEBAR_ITEMS,
   SIDEBAR_ITEMS,
@@ -18,11 +19,18 @@ import {
  * tests assert they stay aligned no matter how the array evolves.
  */
 describe("sidebar navigation", () => {
-  it("derives shortcut keys from the visible sidebar order", () => {
+  it("derives shortcut keys from the visible sidebar order (up to the chord cap)", () => {
     SIDEBAR_ITEMS.forEach((item, idx) => {
-      const expectedKey = String(idx + 1);
-      expect(SIDEBAR_SHORTCUT_HINTS[item.to]).toBe(expectedKey);
-      expect(SIDEBAR_NAV_BY_KEY[expectedKey]).toBe(item.to);
+      const position = idx + 1;
+      if (position <= MAX_SIDEBAR_SHORTCUT_INDEX) {
+        const expectedKey = String(position);
+        expect(SIDEBAR_SHORTCUT_HINTS[item.to]).toBe(expectedKey);
+        expect(SIDEBAR_NAV_BY_KEY[expectedKey]).toBe(item.to);
+      } else {
+        // Positions past the cap can't own a single-keystroke Ctrl+N
+        // chord, so they intentionally carry no hint / key mapping.
+        expect(SIDEBAR_SHORTCUT_HINTS[item.to]).toBeUndefined();
+      }
     });
   });
 
@@ -44,13 +52,17 @@ describe("sidebar navigation", () => {
     ]);
   });
 
-  it("appends Memory and Knowledge Graph as shortcuts 9 and 10", () => {
-    // The substrate UI surfaces live in the secondary ("More tools")
-    // tier and extend the shortcut range without disturbing 1..8.
+  it("gives Memory the Ctrl+9 shortcut and leaves Knowledge Graph chord-less", () => {
+    // Memory is the 9th item, so it gets the last numeric chord.
     expect(SIDEBAR_NAV_BY_KEY["9"]).toBe("/memory");
-    expect(SIDEBAR_NAV_BY_KEY["10"]).toBe("/knowledge");
     expect(SIDEBAR_SHORTCUT_HINTS["/memory"]).toBe("9");
-    expect(SIDEBAR_SHORTCUT_HINTS["/knowledge"]).toBe("10");
+    // Knowledge Graph is the 10th item. "Ctrl+10" is not a pressable
+    // single keystroke, so it gets NO chord and NO hint chip — it is
+    // reachable via the sidebar click and the Cmd+K palette instead.
+    // (Devin Review PR #120 flagged the previously-rendered dead
+    // "Ctrl+10" hint.)
+    expect(SIDEBAR_NAV_BY_KEY["10"]).toBeUndefined();
+    expect(SIDEBAR_SHORTCUT_HINTS["/knowledge"]).toBeUndefined();
   });
 
   it("keeps the primary/secondary tiers in sync with SIDEBAR_ITEMS", () => {
@@ -88,11 +100,16 @@ describe("sidebar navigation", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("starts numbering at 1 and is dense up to SIDEBAR_ITEMS.length", () => {
+  it("starts numbering at 1 and is dense up to the chord cap", () => {
     const sortedKeys = Object.keys(SIDEBAR_NAV_BY_KEY)
       .map((k) => Number.parseInt(k, 10))
       .sort((a, b) => a - b);
     expect(sortedKeys[0]).toBe(1);
-    expect(sortedKeys[sortedKeys.length - 1]).toBe(SIDEBAR_ITEMS.length);
+    // The dense range stops at the chord cap (or the list length if
+    // there are fewer items than the cap), never advertising a key
+    // that can't be pressed.
+    const expectedMax = Math.min(SIDEBAR_ITEMS.length, MAX_SIDEBAR_SHORTCUT_INDEX);
+    expect(sortedKeys[sortedKeys.length - 1]).toBe(expectedMax);
+    expect(sortedKeys.length).toBe(expectedMax);
   });
 });

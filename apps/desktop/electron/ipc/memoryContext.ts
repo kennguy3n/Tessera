@@ -63,10 +63,22 @@ function titleCase(value: string): string {
 }
 
 /**
- * Select + format the memory lines. When `sourceIds` is non-empty we
- * prefer memories extracted from those sources; if none of the selected
- * sources have memories yet we fall back to the global active set so
- * generation still benefits from cross-source knowledge.
+ * Select + format the memory lines.
+ *
+ * Scoping is an explicit user signal and is honored strictly:
+ *  - When `sourceIds` is non-empty, ONLY memories extracted from those
+ *    sources are eligible. If none of the selected sources have
+ *    memories yet, we inject no memory lines rather than silently
+ *    pulling in memories from sources the user did not pick — a generic
+ *    global fallback there would leak unrelated-source context into a
+ *    deliberately scoped artifact. (Devin Review PR #120.)
+ *  - When `sourceIds` is empty (no scope requested), the whole active
+ *    working set is eligible — that's the intended "draw on everything
+ *    Tessera knows" path.
+ *
+ * Note: `memories` is already tenant/workspace-scoped by the bridge, so
+ * this is purely about respecting in-workspace source selection, never
+ * cross-tenant isolation (which the substrate enforces upstream).
  */
 export function selectMemoryLines(
   memories: SubstrateMemoryInfo[],
@@ -74,11 +86,10 @@ export function selectMemoryLines(
 ): string[] {
   const active = memories.filter(isActive);
   const selected = new Set(sourceIds);
-  const scoped =
+  const pool =
     selected.size > 0
       ? active.filter((m) => m.sourceId !== null && selected.has(m.sourceId))
       : active;
-  const pool = scoped.length > 0 ? scoped : active;
 
   return [...pool]
     .sort(compareMemories)

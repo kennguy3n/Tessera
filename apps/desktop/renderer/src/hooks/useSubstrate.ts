@@ -32,10 +32,21 @@ export interface UseMemoriesResult {
 /**
  * Load the memory plane for `scope` (default scope when omitted).
  * Re-fetches whenever `scope` changes.
+ *
+ * `enabled` (default `true`) gates the automatic fetch: when `false`,
+ * the hook performs no IPC and reports `loading: false` with an empty
+ * list. Callers use this to avoid round-tripping the substrate when
+ * the result would never be shown (e.g. the HomePage empty state that
+ * returns before the insights card renders). The returned `refresh`
+ * still works when invoked explicitly so an enabled-later or manual
+ * refresh path is unaffected.
  */
-export function useMemories(scope?: string | null): UseMemoriesResult {
+export function useMemories(
+  scope?: string | null,
+  enabled = true,
+): UseMemoriesResult {
   const [memories, setMemories] = useState<SubstrateMemoryInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -55,8 +66,17 @@ export function useMemories(scope?: string | null): UseMemoriesResult {
   }, [scope]);
 
   useEffect(() => {
+    if (!enabled) {
+      // Skip the round-trip entirely and settle into a clean,
+      // non-loading empty state so a gated caller never sees a
+      // spinner for data it isn't going to render.
+      setMemories([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     void refresh();
-  }, [refresh]);
+  }, [refresh, enabled]);
 
   return { memories, loading, error, refresh };
 }
@@ -141,11 +161,12 @@ export interface UseConceptGraphResult {
 export function useConceptGraph(
   scope?: string | null,
   maxNodes?: number | null,
+  enabled = true,
 ): UseConceptGraphResult {
   const [graph, setGraph] = useState<ConceptGraphView>(() =>
     parseConceptGraph("{}"),
   );
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -168,8 +189,15 @@ export function useConceptGraph(
   }, [scope, maxNodes]);
 
   useEffect(() => {
+    if (!enabled) {
+      // See `useMemories`: skip IPC and settle empty when gated off.
+      setGraph(parseConceptGraph("{}"));
+      setError(null);
+      setLoading(false);
+      return;
+    }
     void refresh();
-  }, [refresh]);
+  }, [refresh, enabled]);
 
   return { graph, loading, error, refresh };
 }
@@ -237,15 +265,18 @@ export function deriveKnowledgeInsights(
  * swallowed into an empty insights object so the HomePage never breaks
  * on a substrate that hasn't been populated yet.
  */
-export function useKnowledgeInsights(topN = 5): {
+export function useKnowledgeInsights(
+  topN = 5,
+  enabled = true,
+): {
   insights: KnowledgeInsights;
   loading: boolean;
 } {
-  const { memories, loading: memLoading } = useMemories(null);
-  const { graph, loading: graphLoading } = useConceptGraph(null, 256);
+  const { memories, loading: memLoading } = useMemories(null, enabled);
+  const { graph, loading: graphLoading } = useConceptGraph(null, 256, enabled);
   const insights = useMemo(
     () => deriveKnowledgeInsights(memories, graph, topN),
     [memories, graph, topN],
   );
-  return { insights, loading: memLoading || graphLoading };
+  return { insights, loading: enabled && (memLoading || graphLoading) };
 }

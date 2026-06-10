@@ -21,6 +21,59 @@ import {
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
 /**
+ * Shared layout CSS for every memory row. Hoisted to a module-level
+ * constant and injected ONCE by `MemoryPage` (not per-row): the rules
+ * are identical for every row, so emitting one `<style>` per memory
+ * shipped N duplicate stylesheets into the DOM for an N-item list.
+ * Rendering it a single time keeps the injected CSS O(1) regardless of
+ * how many memories are shown. (Devin Review PR #120.)
+ */
+const MEMORY_ROW_STYLES = `
+  .memory-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+  }
+  .memory-type {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-secondary);
+  }
+  .memory-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+  .memory-retention {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .memory-content {
+    margin: 0 0 var(--spacing-sm);
+    line-height: 1.5;
+  }
+  .memory-row-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+  }
+  .memory-cite {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .memory-actions {
+    display: inline-flex;
+    gap: var(--spacing-sm);
+  }
+`;
+
+/**
  * "What Tessera knows" dashboard. Surfaces the substrate memory plane —
  * the entities, facts, tasks, and decisions extracted from every source
  * — with their decay state, retention score, and source citation, plus
@@ -31,6 +84,7 @@ import type { SubstrateMemoryInfo } from "../types/ipc";
  * All data flows through `window.tessera.substrate.*` (Session 1 IPC).
  */
 export default function MemoryPage() {
+  const cspNonce = useCspNonce();
   const { memories, loading, error, refresh } = useMemories(null);
   const { pin, unpin, forget, pending } = useMemoryActions();
   const [bucket, setBucket] = useState<DecayBucket | "all">("all");
@@ -92,6 +146,7 @@ export default function MemoryPage() {
         />
       ) : (
         <>
+          <style nonce={cspNonce}>{MEMORY_ROW_STYLES}</style>
           <section
             aria-label="Memory filters"
             style={{ marginBottom: "var(--spacing-lg)" }}
@@ -217,7 +272,6 @@ function MemoryRow({
   onPinToggle: () => void;
   onForget: () => void;
 }) {
-  const cspNonce = useCspNonce();
   const bucket = decayBucket(memory.state);
   const pinned = memory.pinCount > 0;
   return (
@@ -269,50 +323,6 @@ function MemoryRow({
           </div>
         </div>
       </Card>
-      <style nonce={cspNonce}>{`
-        .memory-row-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: var(--spacing-sm);
-          margin-bottom: var(--spacing-sm);
-        }
-        .memory-type {
-          font-weight: 600;
-          font-size: var(--font-size-sm);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: var(--color-text-secondary);
-        }
-        .memory-badges {
-          display: inline-flex;
-          align-items: center;
-          gap: var(--spacing-sm);
-        }
-        .memory-retention {
-          font-size: var(--font-size-sm);
-          color: var(--color-text-secondary);
-        }
-        .memory-content {
-          margin: 0 0 var(--spacing-sm);
-          line-height: 1.5;
-        }
-        .memory-row-foot {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: var(--spacing-sm);
-          flex-wrap: wrap;
-        }
-        .memory-cite {
-          font-size: var(--font-size-sm);
-          color: var(--color-text-secondary);
-        }
-        .memory-actions {
-          display: inline-flex;
-          gap: var(--spacing-sm);
-        }
-      `}</style>
     </li>
   );
 }
