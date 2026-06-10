@@ -156,6 +156,14 @@ export class MemoryWatchdog {
   /** Begin polling. Idempotent — a second call is a no-op. */
   start(): void {
     if (this.timer) return;
+    // Take one sample synchronously so the watchdog reports truthful
+    // pressure from t=0 instead of `paused=false` for the first whole
+    // `pollIntervalMs`. Without this, a process that boots already over
+    // the high-water mark would admit bulk indexing for up to 10s before
+    // the first interval tick observed the pressure. Mirrors
+    // `startBatteryMonitor`, which likewise primes its state with an
+    // immediate read before arming its interval.
+    this.poll();
     this.timer = setInterval(() => this.poll(), this.pollIntervalMs);
     // Don't keep the event loop alive on account of the watchdog alone.
     this.timer.unref?.();
@@ -189,6 +197,17 @@ export function startMemoryWatchdog(
 
 export function stopMemoryWatchdog(): void {
   singleton?.stop();
+  // Drop the singleton entirely rather than merely stopping its timer.
+  // `isIndexingDeferredForMemory()` reads `singleton?.isPaused()`, so a
+  // stopped-but-retained watchdog that was paused at stop time would keep
+  // reporting `true` forever and silently wedge all bulk indexing — the
+  // exact opposite of the documented fail-open contract. Nulling the
+  // singleton makes `isIndexingDeferredForMemory()` fall back to `false`
+  // (admit) the moment the watchdog is torn down, matching how
+  // `stopBatteryMonitor` resets to the fail-open `AC_ALWAYS` snapshot.
+  // It also means a later `startMemoryWatchdog(options)` builds a fresh
+  // instance that actually honours the new options.
+  singleton = null;
 }
 
 /**

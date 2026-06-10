@@ -111,13 +111,15 @@ describe("MemoryWatchdog", () => {
     try {
       const sample = vi.fn(() => 100 * MB);
       const wd = new MemoryWatchdog({ sampleRssBytes: sample, pollIntervalMs: 1000 });
-      wd.start();
-      wd.start(); // second call must NOT install a second interval
+      wd.start(); // one immediate priming poll + arms the interval
+      wd.start(); // second call must NOT prime again or install a 2nd interval
       vi.advanceTimersByTime(3000);
-      expect(sample).toHaveBeenCalledTimes(3); // one interval, 3 ticks
+      // 1 priming poll on the first start() + 3 interval ticks; the second
+      // start() is a no-op so it neither re-primes nor double-counts.
+      expect(sample).toHaveBeenCalledTimes(4);
       wd.stop();
       vi.advanceTimersByTime(5000);
-      expect(sample).toHaveBeenCalledTimes(3); // no ticks after stop
+      expect(sample).toHaveBeenCalledTimes(4); // no ticks after stop
     } finally {
       vi.useRealTimers();
     }
@@ -143,5 +145,12 @@ describe("module singleton admission gate", () => {
     } finally {
       stopMemoryWatchdog();
     }
+    // After stop() the admission gate MUST fail open even though the
+    // watchdog was paused at teardown: a stopped watchdog can never keep
+    // indexing wedged. (Regression guard for the bug where stop() left the
+    // paused singleton in place and `isIndexingDeferredForMemory()` stayed
+    // `true` forever.)
+    expect(isIndexingDeferredForMemory()).toBe(false);
+    expect(memoryPressureSnapshot()).toBeNull();
   });
 });

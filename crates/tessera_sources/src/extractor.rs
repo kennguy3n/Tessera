@@ -104,9 +104,11 @@ fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
 /// indexer (`index_folder_with_progress`) when it has a batch of
 /// pre-walked paths to process. The parallel pass:
 ///
-///   1. Spawns work onto the bounded `extraction_pool()`, capped at
-///      `num_cpus / 2` threads so the UI / watcher / sidecar threads
-///      keep CPU headroom.
+///   1. Spawns work onto the bounded `extraction_pool()`, whose size is
+///      mode-gated (LW-7): `num_cpus / 4` capped at 4 in the default
+///      lightweight mode, `num_cpus / 2` capped at 8 in performance mode
+///      (see `target_extraction_threads`). Either way the pool leaves the
+///      UI / watcher / sidecar threads CPU headroom.
 ///   2. Preserves input order — the returned `Vec` is indexed
 ///      identically to the input slice — so callers that walk the
 ///      vector alongside their own per-path metadata (file id,
