@@ -141,15 +141,27 @@ export function registerResourcesHandlers(): void {
         },
         MEMORY_FALLBACK,
       ),
-      slm: defend(
-        "slm",
-        () => ({
-          text: sidecarSnapshot(getModelSidecar()),
-          vision: sidecarSnapshot(getVisionSidecar()),
-          imagegen: { state: getDiffusionSidecarState().state },
-        }),
-        SLM_FALLBACK,
-      ),
+      // Each capability is defended independently so a corrupt read of
+      // one slot (e.g. the vision registry) can't blank the other two —
+      // a healthy running text model must stay visible on the dashboard
+      // even if the vision peek throws.
+      slm: {
+        text: defend(
+          "slm.text",
+          () => sidecarSnapshot(getModelSidecar()),
+          SLM_FALLBACK.text,
+        ),
+        vision: defend(
+          "slm.vision",
+          () => sidecarSnapshot(getVisionSidecar()),
+          SLM_FALLBACK.vision,
+        ),
+        imagegen: defend(
+          "slm.imagegen",
+          () => ({ state: getDiffusionSidecarState().state }),
+          SLM_FALLBACK.imagegen,
+        ),
+      },
       connections: {
         writers: 1,
         // `readPoolSize()` is already internally defended (it guards

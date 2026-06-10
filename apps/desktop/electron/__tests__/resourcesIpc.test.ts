@@ -222,15 +222,23 @@ describe("resources:getUsage IPC handler", () => {
       });
     });
 
-    it("degrades the slm section to all-stopped when a sidecar peek throws", async () => {
+    it("isolates a per-sidecar peek failure to that capability only", async () => {
+      // A healthy running text model + loaded imagegen must stay visible
+      // even when the vision peek throws — the vision slot alone falls
+      // back to stopped, the other two report their real state.
+      getModelSidecar.mockReturnValue({
+        isRunning: true,
+        endpoint: "http://127.0.0.1:8384",
+      });
+      getDiffusionSidecarState.mockReturnValue({ state: "loaded" });
       getVisionSidecar.mockImplementation(() => {
         throw new Error("sidecar registry corrupt");
       });
       const usage = await getUsage();
       expect(usage.slm).toEqual({
-        text: { running: false, endpoint: null },
+        text: { running: true, endpoint: "http://127.0.0.1:8384" },
         vision: { running: false, endpoint: null },
-        imagegen: { state: "unloaded" },
+        imagegen: { state: "loaded" },
       });
       // Other sections still report normally.
       expect(usage.resourceMode).toBe("lightweight");
