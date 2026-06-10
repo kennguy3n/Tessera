@@ -1645,6 +1645,21 @@ export interface GenerateChunk {
   error?: string;
 }
 
+/**
+ * Resolved value of a `model:generate` dispatch (LW-3). The normal
+ * streaming path resolves `void` and delivers tokens via the
+ * `model:token` channel. When synthesis is paused because the device is
+ * on a low battery (≤20% and discharging), the handler resolves this
+ * sentinel INSTEAD of starting a stream, so the caller can surface
+ * "Generation paused — battery below 20%" without waiting on a token
+ * that will never arrive. Desktops / AC power / unknown battery state
+ * never gate (fail open), so this is only ever returned on a laptop
+ * that is genuinely low and unplugged.
+ */
+export interface GenerateBatteryGated {
+  status: "battery_low";
+}
+
 // -----------------------------------------------------------------
 // Connectors
 // -----------------------------------------------------------------
@@ -2288,7 +2303,9 @@ export interface ModelApi {
   status: () => Promise<ModelStatus>;
   start: (modelPath: string) => Promise<void>;
   stop: () => Promise<void>;
-  generate: (request: GenerateRequest) => Promise<void>;
+  generate: (
+    request: GenerateRequest,
+  ) => Promise<void | GenerateBatteryGated>;
   cancelJob: () => Promise<void>;
   onToken: (callback: (chunk: GenerateChunk) => void) => () => void;
 }

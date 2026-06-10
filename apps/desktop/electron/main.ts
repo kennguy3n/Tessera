@@ -7,6 +7,7 @@ import { initAppState, stopAllSidecars, getBridge } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
 import { reapOrphanedSidecars } from "./sidecarPidRegistry";
 import { startScheduler, stopScheduler } from "./scheduler";
+import { startBatteryMonitor, stopBatteryMonitor } from "./batteryMonitor";
 import { getLogger } from "./logger";
 import {
   markEnd,
@@ -870,6 +871,13 @@ app.whenReady().then(async () => {
       err,
     );
   }
+  // LW-3: begin polling battery state so the scheduler and
+  // `model:generate` can defer synthesis when the device is on a low
+  // battery. The probe runs on a 60s unref'd timer (never holds the
+  // event loop open) and fails open — desktops / AC / unknown state
+  // report "AC always" and never gate. Started before the scheduler so
+  // the first tick already has a battery reading to consult.
+  startBatteryMonitor();
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly
   // against the native bridge (i.e. without bouncing through the
@@ -1101,6 +1109,12 @@ export async function handleWillQuit(
   // `event.preventDefault()` + deferred `app.quit()` pattern Electron
   // documents for async cleanup in quit handlers.
   event.preventDefault();
+  // LW-3: stop the battery poll timer first. It's an unref'd interval
+  // (can't itself block exit) but stopping it here prevents a stacked
+  // interval when a test harness re-launches the main process, mirroring
+  // why we clear the scheduler interval up front. Synchronous and
+  // never-throwing, so it sits outside the async-drain try/catch blocks.
+  stopBatteryMonitor();
   // Outer `try/finally` guarantees `deps.quit()` runs even if one of
   // the inner `console.error` calls were to throw (e.g. a custom
   // `console` override in a future test/wrapper). The two inner

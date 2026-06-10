@@ -80,6 +80,30 @@ vi.mock("../appState", () => ({
   enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
+// model:start now validates the GGUF exists on disk (via fs/promises
+// `access`) BEFORE starting, so a doomed start can't stop the resident
+// sidecar in lightweight mode. These audit tests use synthetic paths
+// (`/models/llama-3.gguf`) that don't exist, so resolve `access` to
+// keep them exercising the audit pass-through rather than the new
+// not-found guard (which has its own coverage).
+vi.mock("fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs/promises")>();
+  // Partial mock: keep every real export (`batteryMonitor.ts`, pulled in
+  // via `ipc/model.ts`, imports `readFile`/`readdir`; other modules use
+  // the default export) and override only `access` so the synthetic
+  // GGUF paths these audit tests use resolve as present. We override on
+  // BOTH the named export and the `default` namespace because vitest's
+  // CJS/ESM interop resolves `import { access }` through `default` when
+  // a default export is present — overriding only the named export would
+  // let the real `access` leak through and reject the synthetic path.
+  const access = vi.fn().mockResolvedValue(undefined);
+  return {
+    ...actual,
+    access,
+    default: { ...(actual as { default?: object }).default, access },
+  };
+});
+
 const sidecarMock = {
   isRunning: false,
   setModelPath: vi.fn(),

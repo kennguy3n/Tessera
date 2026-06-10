@@ -362,7 +362,11 @@ export default function SettingsPage() {
               <strong>Performance</strong> allows text and vision models
               to run concurrently for workflows that interleave them, at
               the cost of higher memory use. Image generation never
-              starts automatically in either mode.
+              starts automatically in either mode. Switching to
+              Lightweight while several models are already running does
+              not stop the extras immediately — the single-model limit
+              applies the next time a model starts, so an in-progress
+              generation is never interrupted.
             </p>
           </div>
           <div>

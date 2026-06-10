@@ -1541,8 +1541,14 @@ export function getDiffusionSidecar(): DiffusionSidecar | null {
  *     this on every `settings:update` (even ones where the user
  *     re-saved the same value) is cheap.
  *   - Each sidecar slot may be `null` at call time:
- *       - `modelSidecar` / `visionSidecar` are `null` until
- *         `initAppState()` has constructed them (fallback mode).
+ *       - `modelSidecar` / `visionSidecar` are `null` until their
+ *         demand-load accessor (`ensureModelSidecar()` /
+ *         `ensureVisionSidecar()`) has constructed them on first use
+ *         (LW-1), or permanently in fallback mode (bridge unavailable),
+ *         where they are never constructed. A `settings:update` that
+ *         lands before first use is not lost: each accessor reads the
+ *         persisted `modelIdleTimeoutSecs` (via
+ *         `resolveSidecarIdleUnloadMs()`) at construction time.
  *       - `diffusionSidecar` is `null` until the lazy-load
  *         `import("./diffusionSidecar")` resolves. The lazy-load
  *         constructor reads the persisted value again so a settings
