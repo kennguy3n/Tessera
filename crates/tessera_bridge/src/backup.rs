@@ -219,10 +219,9 @@ pub fn list(backup_dir: &str) -> BridgeResult<Vec<BackupInfo>> {
 /// backup time).
 pub fn prune(backup_dir: &str, keep: u32) -> BridgeResult<Vec<String>> {
     let removed = core_backup::prune_backups(Path::new(backup_dir), keep as usize)?;
-    let dir = Path::new(backup_dir);
-    for name in &removed {
+    for backup_path in &removed {
         for arcname in [SUBSTRATE_EVIDENCE_ARCNAME, SUBSTRATE_CONCEPTS_ARCNAME] {
-            let _ = fs::remove_file(dir.join(format!("{name}.{arcname}")));
+            let _ = fs::remove_file(hotcopy_sidecar(backup_path, arcname));
         }
     }
     Ok(removed)
