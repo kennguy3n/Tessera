@@ -434,6 +434,11 @@ const api: TesseraApi = {
       ipcRenderer.invoke("runtime:downloadModel", modelId),
     downloadRecommended: (capability?: ModelCapability) =>
       ipcRenderer.invoke("runtime:downloadRecommended", capability),
+    // True cancellation of an in-flight download in the slot (the
+    // banner's "Skip — work without AI"). Aborts the transfer and
+    // cleans up the partial; resolves false when nothing was running.
+    cancelDownload: (capability?: ModelCapability) =>
+      ipcRenderer.invoke("runtime:cancelDownload", capability),
     deleteModel: (capability?: ModelCapability) =>
       ipcRenderer.invoke("runtime:deleteModel", capability),
     onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) =>

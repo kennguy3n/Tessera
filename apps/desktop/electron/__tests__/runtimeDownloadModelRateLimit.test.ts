@@ -46,28 +46,46 @@ const VISION_MODEL = { id: "vision-model-v1", capability: "vision" };
 // exercised. `isModelInstalled` resolves truthy so the handler returns
 // the existing record immediately after the rate-limit gate, never
 // reaching `downloadModel`.
-vi.mock("../modelManagement", () => ({
-  ALL_MODEL_CAPABILITIES: ["text", "vision", "imagegen"],
-  parseModelCapability: (s: string) =>
-    s === "text" || s === "vision" || s === "imagegen" ? s : null,
-  detectPlatformInfo: () => ({
-    platform: "linux-x64",
-    platformLabel: "Linux x64",
-    tier: "mid",
-  }),
-  detectComputeBackends: () => [],
-  loadManifest: () => ({ models: [TEXT_MODEL, VISION_MODEL] }),
-  resetManifestCache: () => undefined,
-  recommendModel: () => null,
-  downloadModel: vi.fn(),
-  deleteCurrentModel: vi.fn(),
-  getInstalledModel: vi.fn(),
-  getInstalledModels: vi.fn(),
-  isCapabilityAvailable: vi.fn(),
-  isModelInstalled: vi.fn().mockResolvedValue({ modelId: "installed" }),
-  listModelsForPlatform: () => [TEXT_MODEL, VISION_MODEL],
-  planDownload: vi.fn(),
-}));
+vi.mock("../modelManagement", () => {
+  // `modelDownloadControl` (loaded transitively via `runtime.ts`) imports
+  // `DownloadAbortedError` from this module; the mock must export it so the
+  // binding is a real constructor rather than `undefined`. Declared inside
+  // the factory because `vi.mock` is hoisted above file-scope declarations.
+  class FakeAbortedError extends Error {
+    constructor(message = "Download aborted") {
+      super(message);
+      this.name = "DownloadAbortedError";
+    }
+  }
+  return {
+    ALL_MODEL_CAPABILITIES: ["text", "vision", "imagegen"],
+    DownloadAbortedError: FakeAbortedError,
+    isDownloadAbortedError: (err: unknown) =>
+      err instanceof FakeAbortedError ||
+      (typeof err === "object" &&
+        err !== null &&
+        (err as { name?: unknown }).name === "AbortError"),
+    parseModelCapability: (s: string) =>
+      s === "text" || s === "vision" || s === "imagegen" ? s : null,
+    detectPlatformInfo: () => ({
+      platform: "linux-x64",
+      platformLabel: "Linux x64",
+      tier: "mid",
+    }),
+    detectComputeBackends: () => [],
+    loadManifest: () => ({ models: [TEXT_MODEL, VISION_MODEL] }),
+    resetManifestCache: () => undefined,
+    recommendModel: () => null,
+    downloadModel: vi.fn(),
+    deleteCurrentModel: vi.fn(),
+    getInstalledModel: vi.fn(),
+    getInstalledModels: vi.fn(),
+    isCapabilityAvailable: vi.fn(),
+    isModelInstalled: vi.fn().mockResolvedValue({ modelId: "installed" }),
+    listModelsForPlatform: () => [TEXT_MODEL, VISION_MODEL],
+    planDownload: vi.fn(),
+  };
+});
 
 vi.mock("../ipc/model", () => ({
   safeRendererSender: () => () => undefined,

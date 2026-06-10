@@ -2553,6 +2553,16 @@ export interface RuntimeApi {
     capability?: ModelCapability,
   ) => Promise<InstalledModelRecord | null>;
   /**
+   * Cancel any in-flight download in `capability`'s slot. Backs the
+   * ModelDownloadBanner's "Skip — work without AI" affordance: aborts
+   * the running transfer (first-launch auto-download or a "Retry"),
+   * tearing down the connection and cleaning up the `.partial` so no
+   * network/disk is consumed after opt-out — a true cancellation, not
+   * just a banner dismissal. Idempotent: resolves `false` when nothing
+   * was downloading. Defaults to the text slot when omitted.
+   */
+  cancelDownload: (capability?: ModelCapability) => Promise<boolean>;
+  /**
    * Delete the model currently installed in `capability`'s slot.
    * Defaults to the text slot when omitted so legacy single-slot
    * callers keep working unchanged.

@@ -18,7 +18,16 @@ vi.mock("electron", () => ({
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
 }));
 vi.mock("../config", () => ({ loadConfig: vi.fn() }));
-vi.mock("../modelManagement", () => ({ getInstalledModel: vi.fn() }));
+vi.mock("../modelManagement", () => ({
+  getInstalledModel: vi.fn(),
+  // Mirror the real classifier so the orchestrator can distinguish a
+  // user-initiated cancellation from a genuine setup failure.
+  isDownloadAbortedError: (err: unknown) =>
+    typeof err === "object" &&
+    err !== null &&
+    ((err as { name?: unknown }).name === "DownloadAbortedError" ||
+      (err as { name?: unknown }).name === "AbortError"),
+}));
 vi.mock("../ipc/runtime", () => ({
   downloadRecommendedModel: vi.fn(),
   resolveRecommendedModel: vi.fn(),
@@ -83,10 +92,25 @@ describe("maybeAutoDownloadRecommendedModel", () => {
     const d = deps();
     const outcome = await maybeAutoDownloadRecommendedModel(d);
     expect(outcome).toBe("downloaded");
+    // The gate-phase resolved model is handed straight to the download
+    // (third arg) so the manifest is NOT resolved a second time.
     expect(d.download).toHaveBeenCalledWith(
       AUTO_DOWNLOAD_CAPABILITY,
       d.broadcast,
+      model,
     );
+    // Resolution happens exactly once — in the gate phase.
+    expect(d.resolveRecommended).toHaveBeenCalledTimes(1);
+    expect(d.broadcastError).not.toHaveBeenCalled();
+  });
+
+  it("treats a cancelled download as a silent opt-out (no error broadcast)", async () => {
+    const aborted = Object.assign(new Error("Download cancelled by user"), {
+      name: "DownloadAbortedError",
+    });
+    const d = deps({ download: vi.fn().mockRejectedValue(aborted) });
+    expect(await maybeAutoDownloadRecommendedModel(d)).toBe("cancelled");
+    // A deliberate cancellation must NOT flash "Setup failed — retry".
     expect(d.broadcastError).not.toHaveBeenCalled();
   });
 
