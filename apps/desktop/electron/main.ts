@@ -776,7 +776,18 @@ async function initBridgeAndServices(): Promise<void> {
   // the first tick already has a battery reading to consult. Lives here
   // (off the cold-start critical path) alongside the rest of the
   // bridge-dependent services rather than in the boot wire.
-  startBatteryMonitor();
+  //
+  // Guarded for the same reason as `startScheduler` below: a synchronous
+  // throw here must not skip `setBridgeState("ready")` and wedge the
+  // renderer on the skeleton forever. Battery gating is best-effort and
+  // fails open, so a failed start degrades to "never gate", not a crash.
+  try {
+    startBatteryMonitor();
+  } catch (err) {
+    getLogger().error("batteryMonitor.start.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Start the automations scheduler now that the bridge backs its
   // dispatch. It ticks every 30s in the main process, dispatching due
   // `Schedule` automations directly against the native bridge. See
