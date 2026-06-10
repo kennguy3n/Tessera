@@ -444,7 +444,15 @@ async function runAutomation(
           );
         }
       }
-      if (failures.length > 0) {
+      if (failures.length > 0 && batterySkipped > 0) {
+        // A sequence can both fail some steps AND defer others on low
+        // battery. Report both so the count is honest: surfacing only
+        // the failures would imply the battery-skipped steps ran fine,
+        // hiding that they were deferred. The parenthetical keeps the
+        // leading `failed: N/M` shape (so existing failure parsing /
+        // alerting still matches) while disclosing the skip count.
+        status = `failed: ${failures.length}/${steps.length} steps failed (${batterySkipped} skipped: battery_low): ${failures.join("; ")}`;
+      } else if (failures.length > 0) {
         status = `failed: ${failures.length}/${steps.length} steps failed: ${failures.join("; ")}`;
       } else if (batterySkipped > 0) {
         status = `skipped: battery_low (${batterySkipped}/${steps.length} steps)`;

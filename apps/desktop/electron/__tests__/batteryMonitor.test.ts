@@ -90,6 +90,29 @@ describe("parseWmicBatteryOutput (Windows)", () => {
   it("reports no battery (AC always) when wmic emits no keys (desktop)", () => {
     expect(parseWmicBatteryOutput("\r\n\r\n")).toEqual(AC_ALWAYS);
   });
+
+  it("parses PowerShell Get-CimInstance Format-List output (colon separator)", () => {
+    // The modern probe shells out to `Get-CimInstance Win32_Battery |
+    // Format-List`, which emits `Key : Value` rather than wmic's
+    // `Key=Value`. The same parser must handle both separators.
+    const out =
+      "\r\nBatteryStatus            : 1\r\nEstimatedChargeRemaining : 12\r\n\r\n";
+    expect(parseWmicBatteryOutput(out)).toEqual({
+      hasBattery: true,
+      isOnBattery: true,
+      isCharging: false,
+      percent: 12,
+    });
+  });
+
+  it("parses PowerShell on-AC Format-List output", () => {
+    const out =
+      "BatteryStatus            : 2\r\nEstimatedChargeRemaining : 88\r\n";
+    const s = parseWmicBatteryOutput(out);
+    expect(s.isOnBattery).toBe(false);
+    expect(s.isCharging).toBe(true);
+    expect(s.percent).toBe(88);
+  });
 });
 
 describe("parseSysfsBattery (Linux)", () => {

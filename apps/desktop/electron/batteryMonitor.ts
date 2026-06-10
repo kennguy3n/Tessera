@@ -136,21 +136,27 @@ export function parsePmsetOutput(stdout: string): BatteryStatus {
 }
 
 /**
- * Parse `wmic path Win32_Battery get BatteryStatus,EstimatedChargeRemaining /format:list`
- * (Windows). Sample:
+ * Parse the `Win32_Battery` `BatteryStatus` / `EstimatedChargeRemaining`
+ * fields on Windows. Accepts BOTH the legacy `wmic … /format:list` shape
+ * (`Key=Value`) and the modern PowerShell `Get-CimInstance … | Format-List`
+ * shape (`Key : Value`), so the same parser serves both probes (see
+ * {@link probeWindows}). Samples:
  *
  * ```
- * BatteryStatus=1
+ * BatteryStatus=1                 // wmic /format:list
  * EstimatedChargeRemaining=74
+ *
+ * BatteryStatus            : 1    // PowerShell Format-List
+ * EstimatedChargeRemaining : 74
  * ```
  *
  * `BatteryStatus` is the Win32_Battery availability code: `1` =
- * discharging, `2` = on AC line power. Empty output (the `=` keys never
- * appear) means no battery device → desktop.
+ * discharging, `2` = on AC line power. Empty output (neither key appears)
+ * means no battery device → desktop.
  */
 export function parseWmicBatteryOutput(stdout: string): BatteryStatus {
-  const statusMatch = stdout.match(/BatteryStatus\s*=\s*(\d+)/i);
-  const pctMatch = stdout.match(/EstimatedChargeRemaining\s*=\s*(\d+)/i);
+  const statusMatch = stdout.match(/BatteryStatus\s*[:=]\s*(\d+)/i);
+  const pctMatch = stdout.match(/EstimatedChargeRemaining\s*[:=]\s*(\d+)/i);
   if (!statusMatch && !pctMatch) return { ...AC_ALWAYS };
 
   const statusCode = statusMatch ? Number(statusMatch[1]) : null;
@@ -200,7 +206,21 @@ async function probeMac(): Promise<BatteryStatus> {
   return parsePmsetOutput(stdout);
 }
 
-async function probeWindows(): Promise<BatteryStatus> {
+async function probeWindowsPowerShell(): Promise<BatteryStatus> {
+  const { stdout } = await execFileAsync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-CimInstance Win32_Battery | Select-Object BatteryStatus,EstimatedChargeRemaining | Format-List",
+    ],
+    { timeout: 4000 },
+  );
+  return parseWmicBatteryOutput(stdout);
+}
+
+async function probeWindowsWmic(): Promise<BatteryStatus> {
   const { stdout } = await execFileAsync(
     "wmic",
     [
@@ -213,6 +233,30 @@ async function probeWindows(): Promise<BatteryStatus> {
     { timeout: 4000 },
   );
   return parseWmicBatteryOutput(stdout);
+}
+
+/**
+ * Windows power-state probe. Prefers PowerShell `Get-CimInstance
+ * Win32_Battery` — the modern, supported API present on every Windows
+ * 8+ host — and falls back to legacy `wmic` only when the PowerShell
+ * invocation itself fails. `wmic` was deprecated in Windows 10 21H1 and
+ * is absent from recent Windows 11 builds, so leading with it would make
+ * battery awareness silently inoperative (fail-open) on most current
+ * machines; leading with CIM keeps the feature working there while wmic
+ * still covers older hosts that may lack the CIM cmdlet.
+ *
+ * Critically, the fallback fires only when the FIRST probe *throws*
+ * (command missing / blocked). A PowerShell probe that succeeds but
+ * returns no battery (a desktop) is authoritative AC_ALWAYS and must NOT
+ * fall through to wmic — otherwise we'd double-probe every desktop on
+ * each poll.
+ */
+async function probeWindows(): Promise<BatteryStatus> {
+  try {
+    return await probeWindowsPowerShell();
+  } catch {
+    return await probeWindowsWmic();
+  }
 }
 
 async function probeLinux(): Promise<BatteryStatus> {
@@ -298,7 +342,11 @@ export function stopBatteryMonitor(): void {
     clearInterval(pollHandle);
     pollHandle = null;
   }
-  current = AC_ALWAYS;
+  // Spread-copy (not a bare `current = AC_ALWAYS` reference) so the
+  // shared `AC_ALWAYS` constant can never be corrupted if a caller ever
+  // mutates the object returned by `getBatteryStatus()`. Matches every
+  // other reset/fallback path in this module.
+  current = { ...AC_ALWAYS };
 }
 
 /**

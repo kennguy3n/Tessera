@@ -769,4 +769,47 @@ describe("scheduler — multi-step sequence actions", () => {
     expect(recorded[0]).toBe("seq-batt");
     expect(recorded[1]).toBe("skipped: battery_low (1/2 steps)");
   });
+
+  it("reports BOTH failures and battery skips when a sequence has both", async () => {
+    // LW-3 review fix: when a sequence has a genuinely failing step AND a
+    // battery-deferred synthesis step, the recorded status must disclose
+    // both. Reporting only `failed: 1/3` would imply the other two steps
+    // ran fine and hide that one was deferred. Steps: reindex(fails) →
+    // generate(battery-skipped) → reindex(ok).
+    __setBatteryStatusForTests({
+      hasBattery: true,
+      isOnBattery: true,
+      isCharging: false,
+      percent: 8,
+    });
+    const bridge = newBridge();
+    bridge.bridgeReindexSource.mockImplementation((id: string) => {
+      if (id === "boom") throw new Error("source not found");
+    });
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "seq-mixed",
+        JSON.stringify({
+          kind: "sequence",
+          actions: [
+            { kind: "reindex_source", source_id: "boom" },
+            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+            { kind: "reindex_source", source_id: "ok" },
+          ],
+        }),
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    // The battery-gated generate never ran; both reindex steps were
+    // attempted (one threw, one succeeded).
+    expect(bridge.bridgeGenerateFromTemplate).not.toHaveBeenCalled();
+    expect(bridge.bridgeReindexSource.mock.calls).toEqual([["boom"], ["ok"]]);
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("seq-mixed");
+    expect(recorded[1]).toBe(
+      "failed: 1/3 steps failed (1 skipped: battery_low): step 1: source not found",
+    );
+  });
 });
