@@ -69,25 +69,6 @@ export type AutoDownloadOutcome =
   | "error";
 
 /**
- * Pure precondition gate. Split out from the side-effecting orchestration
- * so the decision logic is trivially unit-testable without Electron, the
- * filesystem, or the network.
- */
-export function shouldAutoDownloadModel(opts: {
-  autoDownloadModel: boolean;
-  onboardingCompleted: boolean;
-  modelInstalled: boolean;
-  online: boolean;
-}): boolean {
-  return (
-    opts.autoDownloadModel !== false &&
-    opts.onboardingCompleted === false &&
-    !opts.modelInstalled &&
-    opts.online
-  );
-}
-
-/**
  * Best-effort reachability probe for a download host. Resolves the host
  * via DNS with a short, unref'd timeout. Any failure (NXDOMAIN, timeout,
  * no network) resolves `false` — we degrade to "treat as offline" and
@@ -188,9 +169,20 @@ export async function maybeAutoDownloadRecommendedModel(
   const broadcast = deps.broadcast ?? broadcastProgress;
   const emitError = deps.broadcastError ?? broadcastError;
 
-  // Phase 1 — gating. Failures here (e.g. an unreadable config) are
-  // silent: the user never asked for a download, so we must NOT flash a
-  // "Setup failed" banner. Bail to "error" quietly.
+  // Phase 1 — gating. This staged sequence IS the single authoritative
+  // precondition gate; there is intentionally no separate pure predicate
+  // mirroring it. The checks run in increasing cost order and
+  // short-circuit, which is a privacy property and not just an
+  // optimisation: an opted-out or already-onboarded tenant must NOT be
+  // DNS-probed, so the network check is reached only after the cheap,
+  // I/O-free gates pass. A single all-inputs boolean predicate couldn't
+  // preserve that ordering, and maintaining one alongside this would only
+  // invite drift. Each early return names the exact reason for tests +
+  // the caller's debug log.
+  //
+  // Failures here (e.g. an unreadable config) are silent: the user never
+  // asked for a download, so we must NOT flash a "Setup failed" banner.
+  // Bail to "error" quietly.
   let recommended: ResolvedModel;
   try {
     const cfg = (deps.loadConfig ?? loadConfig)();

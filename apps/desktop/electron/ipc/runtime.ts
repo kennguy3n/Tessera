@@ -310,6 +310,23 @@ export function registerRuntimeHandlers(): void {
     async (event, modelId: unknown) => {
       const id = assertId(modelId, "modelId");
       const requested = findModelOrThrow(id);
+      // Defense-in-depth at the IPC boundary, mirroring
+      // `runtime:downloadRecommended` and making the rate limiter's
+      // documented "safety net" for this channel real: bound
+      // *renderer-initiated* starts to 1 / 5s so a buggy or compromised
+      // renderer can't hammer the channel with manifest reads +
+      // install-state stats that all funnel into the per-slot download
+      // lock. The budget is keyed PER capability slot so a legitimate
+      // burst across slots (e.g. grabbing the text model then the vision
+      // model from Settings) is never throttled — only repeated starts on
+      // the SAME slot are. Real UI flows never trip it: the slot panel
+      // disables itself (busyModelId + progress) the instant a download
+      // starts. The per-slot download lock still serialises the actual
+      // mutation; this just rejects abusive starts cheaply before that.
+      defaultRateLimiter.consume(
+        `runtime:downloadModel:${requested.capability}`,
+        RATE_LIMIT_PROFILES["runtime:downloadModel"],
+      );
       // Only stop the sidecar if we will actually mutate the model
       // file AND the affected slot is the one the sidecar is serving
       // (text today; vision/imagegen sidecars stop themselves in

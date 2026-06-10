@@ -28,7 +28,6 @@ vi.mock("../logger", () => ({
 }));
 
 import {
-  shouldAutoDownloadModel,
   downloadHostFor,
   maybeAutoDownloadRecommendedModel,
   AUTO_DOWNLOAD_CAPABILITY,
@@ -59,36 +58,6 @@ function deps(overrides: Partial<AutoDownloadDeps> = {}): AutoDownloadDeps {
     ...overrides,
   };
 }
-
-describe("shouldAutoDownloadModel", () => {
-  const base = {
-    autoDownloadModel: true,
-    onboardingCompleted: false,
-    modelInstalled: false,
-    online: true,
-  };
-  it("is true only when all preconditions hold", () => {
-    expect(shouldAutoDownloadModel(base)).toBe(true);
-  });
-  it("is false when the user opted out", () => {
-    expect(shouldAutoDownloadModel({ ...base, autoDownloadModel: false })).toBe(
-      false,
-    );
-  });
-  it("is false once onboarding is complete", () => {
-    expect(
-      shouldAutoDownloadModel({ ...base, onboardingCompleted: true }),
-    ).toBe(false);
-  });
-  it("is false when a model is already installed", () => {
-    expect(shouldAutoDownloadModel({ ...base, modelInstalled: true })).toBe(
-      false,
-    );
-  });
-  it("is false when offline", () => {
-    expect(shouldAutoDownloadModel({ ...base, online: false })).toBe(false);
-  });
-});
 
 describe("downloadHostFor", () => {
   it("returns the host for http/https URLs", () => {
