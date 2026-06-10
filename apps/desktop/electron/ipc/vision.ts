@@ -34,6 +34,8 @@ import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { VisionDescribeSchema } from "./schemas";
 import {
+  enforceSidecarExclusivity,
+  ensureVisionSidecar,
   getBridge,
   getVisionSidecar,
   isBridgeAvailable,
@@ -121,7 +123,9 @@ export function buildVisionExtraArgs(
  * Exported for tests.
  */
 export async function ensureVisionSidecarRunning(): Promise<void> {
-  const sidecar = getVisionSidecar();
+  // LW-1: lazily construct the vision sidecar on first use instead of
+  // at boot. Returns null only in fallback mode (bridge down).
+  const sidecar = ensureVisionSidecar();
   if (!sidecar) {
     throw new Error("Vision sidecar not initialised");
   }
@@ -157,6 +161,16 @@ export async function ensureVisionSidecarRunning(): Promise<void> {
       "Vision model projector file is missing on disk. Re-download the vision model from Settings.",
     );
   }
+
+  // LW-2: in lightweight mode, starting vision stops any running
+  // text / diffusion sidecar so only one model is resident at a time
+  // (no-op in performance mode — concurrent text + vision). This runs
+  // only AFTER every validation above has passed: enforcing exclusivity
+  // earlier would kill the user's running text sidecar even when the
+  // vision start is about to fail (no model installed, missing or
+  // deleted mmproj), leaving them with no sidecar at all. Mirrors the
+  // validate-then-enforce ordering in ipc/imagegen.ts.
+  await enforceSidecarExclusivity("vision");
 
   const platform = detectPlatformInfo();
   sidecar.setModelPath(record.path);

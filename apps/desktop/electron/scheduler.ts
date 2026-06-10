@@ -30,6 +30,22 @@
  * `artifacts:generateFromTemplate`.
  */
 import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo } from "./appState";
+import { isBatteryLow } from "./batteryMonitor";
+
+/**
+ * Thrown by {@link executeLeafAction} when a `GenerateFromTemplate`
+ * action is skipped because the device is on a low battery (LW-3).
+ * `runAutomation` catches it specifically and records a
+ * `"skipped: battery_low"` status rather than a `"failed: …"` one — a
+ * deferred synthesis is not a failure, and the automation should fire
+ * normally on the next due tick once the device is charged.
+ */
+class BatteryGatedSkip extends Error {
+  constructor() {
+    super("battery_low");
+    this.name = "BatteryGatedSkip";
+  }
+}
 
 const DEFAULT_TICK_MS = 30_000;
 
@@ -326,6 +342,16 @@ async function executeLeafAction(
       if (!action.template_id) {
         throw new Error("generate_from_template missing template_id");
       }
+      // LW-3: defer background/scheduled synthesis on a low battery.
+      // This gates ONLY the scheduler's automation-driven generation —
+      // user-initiated generation through `artifacts:generateFromTemplate`
+      // is never gated here (an explicit click should always run). The
+      // skip is surfaced as a non-failure status by `runAutomation`, and
+      // the automation fires normally on the next due tick once charged.
+      // `isBatteryLow()` fails open on desktops / AC / unknown state.
+      if (isBatteryLow()) {
+        throw new BatteryGatedSkip();
+      }
       const sourceIds = action.source_ids ?? [];
       bridge.bridgeGenerateFromTemplate(action.template_id, sourceIds);
       break;
@@ -378,9 +404,16 @@ async function runAutomation(
       try {
         await executeLeafAction(bridge, action);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        status = `failed: ${msg}`;
-        console.error(`[scheduler] automation ${a.id} (${a.name}) failed:`, e);
+        if (e instanceof BatteryGatedSkip) {
+          // LW-3: low-battery defer is a non-failure. Record a distinct
+          // status so the run advances `last_run_at` (no per-tick churn)
+          // and the UI shows "skipped" rather than a red failure badge.
+          status = "skipped: battery_low";
+        } else {
+          const msg = e instanceof Error ? e.message : String(e);
+          status = `failed: ${msg}`;
+          console.error(`[scheduler] automation ${a.id} (${a.name}) failed:`, e);
+        }
       }
     } else {
       // A multi-step `sequence` runs each leaf step independently: a
@@ -390,10 +423,19 @@ async function runAutomation(
       // renders the same shape regardless of which side computed it.
       const steps = flattenSteps(action);
       const failures: string[] = [];
+      let batterySkipped = 0;
       for (let i = 0; i < steps.length; i++) {
         try {
           await executeLeafAction(bridge, steps[i]);
         } catch (e) {
+          if (e instanceof BatteryGatedSkip) {
+            // LW-3: a low-battery defer of one step is not a failure —
+            // count it separately so it never inflates the `failed: N/M`
+            // tally, and so a sequence whose only "errors" are battery
+            // skips reports as skipped rather than failed.
+            batterySkipped++;
+            continue;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           failures.push(`step ${i + 1}: ${msg}`);
           console.error(
@@ -402,8 +444,18 @@ async function runAutomation(
           );
         }
       }
-      if (failures.length > 0) {
+      if (failures.length > 0 && batterySkipped > 0) {
+        // A sequence can both fail some steps AND defer others on low
+        // battery. Report both so the count is honest: surfacing only
+        // the failures would imply the battery-skipped steps ran fine,
+        // hiding that they were deferred. The parenthetical keeps the
+        // leading `failed: N/M` shape (so existing failure parsing /
+        // alerting still matches) while disclosing the skip count.
+        status = `failed: ${failures.length}/${steps.length} steps failed (${batterySkipped} skipped: battery_low): ${failures.join("; ")}`;
+      } else if (failures.length > 0) {
         status = `failed: ${failures.length}/${steps.length} steps failed: ${failures.join("; ")}`;
+      } else if (batterySkipped > 0) {
+        status = `skipped: battery_low (${batterySkipped}/${steps.length} steps)`;
       }
     }
   } catch (e) {

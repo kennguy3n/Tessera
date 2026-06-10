@@ -48,6 +48,8 @@ import {
   isCapabilityAvailable,
 } from "../modelManagement";
 import {
+  enforceSidecarExclusivity,
+  ensureDiffusionSidecar,
   getBridge,
   getDiffusionSidecar,
   getDiffusionSidecarState,
@@ -143,7 +145,13 @@ export async function probeImagegenAvailable(): Promise<boolean> {
  * Exported for tests.
  */
 export async function ensureDiffusionSidecarRunning(): Promise<void> {
-  const sidecar = getDiffusionSidecar();
+  // LW-1: construct the diffusion sidecar on demand here (first
+  // "Generate image"), rather than at boot. `ensureDiffusionSidecar()`
+  // awaits the one-time module load; it returns `null` only in
+  // fallback mode (bridge down → state "unloaded") or when an earlier
+  // load failed this session (state "failed"), both surfaced below via
+  // `getDiffusionSidecarState()`.
+  const sidecar = await ensureDiffusionSidecar();
   if (!sidecar) {
     // replace the generic
     // "not initialised" message with an error that reflects the
@@ -193,6 +201,11 @@ export async function ensureDiffusionSidecarRunning(): Promise<void> {
       "No image-generation model installed — download one from Settings → Model runtime → Image generation",
     );
   }
+  // LW-2: in lightweight mode, starting diffusion stops any running
+  // text / vision sidecar so only one model is resident at a time.
+  // No-op in performance mode. Diffusion still never AUTO-starts —
+  // this path runs only on an explicit "Generate image" action.
+  await enforceSidecarExclusivity("diffusion");
   sidecar.setModelPath(record.path);
   await sidecar.start(true);
   // Block until sd-server's HTTP listener is up. sd-server's cold

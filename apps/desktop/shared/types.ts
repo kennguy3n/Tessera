@@ -1146,7 +1146,30 @@ export interface SettingsData {
    * templates" / "Guided picker"), which persist their choice here.
    */
   createPageMode: CreatePageMode;
+  /**
+   * Resource-management profile. `"lightweight"` (default) keeps the
+   * idle footprint minimal: only one local model sidecar (text /
+   * vision / diffusion) may run at a time — starting one stops the
+   * others — and background work (connector sync, synthesis) is
+   * gated more aggressively. `"performance"` restores the historical
+   * behaviour where text + vision sidecars may run concurrently for
+   * workflows that interleave text generation with VLM description.
+   * The diffusion sidecar never auto-starts in either mode.
+   */
+  resourceMode: ResourceMode;
 }
+
+/**
+ * Resource-management profiles. `"lightweight"` enforces single-
+ * sidecar mutual exclusion and aggressive background gating so the
+ * idle footprint stays near the Electron + renderer + substrate
+ * floor (no SLM resident). `"performance"` preserves concurrent
+ * text + vision sidecars. Constrained to a fixed tuple so the
+ * renderer toggle, the IPC schema, and the persisted config all
+ * reference the same values.
+ */
+export const RESOURCE_MODES = ["lightweight", "performance"] as const;
+export type ResourceMode = (typeof RESOURCE_MODES)[number];
 
 /**
  * Default Create-page presentation mode. `"wizard"` is the
@@ -1620,6 +1643,21 @@ export interface GenerateChunk {
   token: string;
   done: boolean;
   error?: string;
+}
+
+/**
+ * Resolved value of a `model:generate` dispatch (LW-3). The normal
+ * streaming path resolves `void` and delivers tokens via the
+ * `model:token` channel. When synthesis is paused because the device is
+ * on a low battery (≤20% and discharging), the handler resolves this
+ * sentinel INSTEAD of starting a stream, so the caller can surface
+ * "Generation paused — battery below 20%" without waiting on a token
+ * that will never arrive. Desktops / AC power / unknown battery state
+ * never gate (fail open), so this is only ever returned on a laptop
+ * that is genuinely low and unplugged.
+ */
+export interface GenerateBatteryGated {
+  status: "battery_low";
 }
 
 // -----------------------------------------------------------------
@@ -2265,7 +2303,9 @@ export interface ModelApi {
   status: () => Promise<ModelStatus>;
   start: (modelPath: string) => Promise<void>;
   stop: () => Promise<void>;
-  generate: (request: GenerateRequest) => Promise<void>;
+  generate: (
+    request: GenerateRequest,
+  ) => Promise<void | GenerateBatteryGated>;
   cancelJob: () => Promise<void>;
   onToken: (callback: (chunk: GenerateChunk) => void) => () => void;
 }

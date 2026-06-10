@@ -13,8 +13,10 @@ import SourceHealthDashboard from "../components/SourceHealthDashboard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import {
   EXPORT_FORMATS,
+  RESOURCE_MODES,
   THEMES,
   type ExportFormat,
+  type ResourceMode,
   type Theme,
 } from "../types/ipc";
 import { MAX_MODEL_IDLE_TIMEOUT_SECS } from "../../../shared/types";
@@ -45,6 +47,11 @@ const MODEL_IDLE_TIMEOUT_BUCKETS: ReadonlyArray<{
   { value: 0, label: "Never (keep loaded)" },
 ];
 
+const RESOURCE_MODE_LABELS: Record<ResourceMode, string> = {
+  lightweight: "Lightweight (recommended)",
+  performance: "Performance",
+};
+
 const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
   dark: "Dark",
@@ -72,6 +79,7 @@ export default function SettingsPage() {
   const ignorePatternsId = useId();
   const exportFormatId = useId();
   const modelIdleTimeoutId = useId();
+  const resourceModeId = useId();
   const [theme, setTheme] = useState(settings.theme);
   const [defaultExportFormat, setDefaultExportFormat] = useState(
     settings.defaultExportFormat,
@@ -89,6 +97,9 @@ export default function SettingsPage() {
   const [autoDownloadModel, setAutoDownloadModel] = useState(
     settings.autoDownloadModel,
   );
+  const [resourceMode, setResourceMode] = useState<ResourceMode>(
+    settings.resourceMode,
+  );
 
   useEffect(() => {
     setTheme(settings.theme);
@@ -98,6 +109,7 @@ export default function SettingsPage() {
     setModelIdleTimeoutSecs(settings.modelIdleTimeoutSecs);
     setSimplifiedNav(settings.simplifiedNav);
     setAutoDownloadModel(settings.autoDownloadModel);
+    setResourceMode(settings.resourceMode);
   }, [settings]);
 
   const handleSave = async () => {
@@ -124,6 +136,7 @@ export default function SettingsPage() {
       modelIdleTimeoutSecs: clampedIdleTimeout,
       simplifiedNav,
       autoDownloadModel,
+      resourceMode,
     });
     refresh();
   };
@@ -307,6 +320,55 @@ export default function SettingsPage() {
 
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Performance</h3>
+          <div style={{ marginBottom: "var(--spacing-lg)" }}>
+            <label
+              htmlFor={resourceModeId}
+              style={{
+                display: "block",
+                fontSize: "var(--font-size-sm)",
+                fontWeight: "var(--font-weight-medium)" as unknown as number,
+                marginBottom: "var(--spacing-xs)",
+                color: "var(--color-text-headline)",
+              }}
+            >
+              Resource mode
+            </label>
+            <select
+              id={resourceModeId}
+              className="input"
+              value={resourceMode}
+              data-testid="settings-resource-mode"
+              onChange={(e) =>
+                setResourceMode(e.target.value as ResourceMode)
+              }
+            >
+              {RESOURCE_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {RESOURCE_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+            <p
+              style={{
+                fontSize: "var(--font-size-xs)",
+                color: "var(--color-text-secondary)",
+                marginTop: "var(--spacing-xs)",
+              }}
+            >
+              <strong>Lightweight</strong> keeps the idle footprint
+              minimal: only one local model (text, vision, or image
+              generation) runs at a time — starting one stops the
+              others — and background work is gated more aggressively.{" "}
+              <strong>Performance</strong> allows text and vision models
+              to run concurrently for workflows that interleave them, at
+              the cost of higher memory use. Image generation never
+              starts automatically in either mode. Switching to
+              Lightweight while several models are already running does
+              not stop the extras immediately — the single-model limit
+              applies the next time a model starts, so an in-progress
+              generation is never interrupted.
+            </p>
+          </div>
           <div>
             <label
               htmlFor={modelIdleTimeoutId}

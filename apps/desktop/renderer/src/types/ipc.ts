@@ -20,6 +20,7 @@ export {
   EXPORT_FORMATS,
   MAX_RECENT_ARTIFACTS,
   MAX_PINNED_ARTIFACTS,
+  RESOURCE_MODES,
 } from "../../../shared/types";
 
 export type {
@@ -96,6 +97,7 @@ export type {
   ReplaceCitationRequest,
   ReplaceCitationResult,
   ResolvedModel,
+  ResourceMode,
   RuntimeApi,
   SaveDialogOptions,
   SaveDialogResult,

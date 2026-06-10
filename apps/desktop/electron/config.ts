@@ -11,12 +11,14 @@ import {
   MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
+  RESOURCE_MODES,
   THEMES,
   type AppLockMode,
   type CreatePageMode,
   type ExportFormat,
   type ExternalProviderType,
   type ExternalProviderTokenUsage,
+  type ResourceMode,
   type Theme,
 } from "../shared/types";
 
@@ -184,6 +186,22 @@ export interface AppConfig {
    * the full 170+ template gallery on first contact.
    */
   createPageMode: CreatePageMode;
+  /**
+   * Resource-management profile. See `SettingsData.resourceMode` in
+   * `shared/types.ts` for the full semantics. Defaults to
+   * `"lightweight"` so a fresh install enforces single-sidecar
+   * mutual exclusion and the minimal idle footprint; power users who
+   * want concurrent text + vision sidecars flip this to
+   * `"performance"` in Settings → Performance.
+   *
+   * NOTE on upgrades: an *existing* install (config file present, but
+   * written by a pre-`resourceMode` build) is migrated to
+   * `"performance"` in `readConfigFromDisk`, not `"lightweight"`, so a
+   * user who relied on concurrent text + vision isn't silently switched
+   * to single-sidecar exclusion on first launch after upgrading. Only
+   * brand-new installs (no config file) get the `"lightweight"` default.
+   */
+  resourceMode: ResourceMode;
 }
 
 /** Default persisted hybrid config — mirrors Rust default. */
@@ -290,6 +308,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   simplifiedNav: true,
   autoDownloadModel: true,
   createPageMode: "wizard",
+  resourceMode: "lightweight",
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -497,6 +516,10 @@ const AppConfigSchema = z
     // corrupted value to `"wizard"` (the guided new-user flow) rather
     // than dropping the user into the full 170+ template gallery.
     createPageMode: z.enum(CREATE_PAGE_MODES).catch("wizard"),
+    // resource-management profile. Heals a corrupted value to
+    // `"lightweight"` (the minimal-footprint default) rather than
+    // silently granting the heavier concurrent-sidecar behaviour.
+    resourceMode: z.enum(RESOURCE_MODES).catch("lightweight"),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the
@@ -752,6 +775,25 @@ function readConfigFromDisk(configPath: string): AppConfig {
       const progressiveDisclosure = isPreDisclosureUpgrade
         ? { simplifiedNav: false, createPageMode: "gallery" as const }
         : {};
+      // LW-2 migration. `resourceMode` heals to `"lightweight"` when
+      // absent (see schema), which is right for a fresh install but
+      // would silently impose single-sidecar mutual exclusion on an
+      // *existing* user who upgraded from a pre-`resourceMode` build
+      // and may have relied on concurrent text + vision sidecars.
+      // Detect that upgrade (a config that completed onboarding under
+      // an older build, i.e. `onboardingCompleted === true`, yet has
+      // no `resourceMode` key) and preserve the prior concurrent
+      // behaviour by pinning `"performance"`. Mirrors the
+      // progressive-disclosure migration above. Fresh installs are
+      // untouched: they either have no config file (handled below) or
+      // `onboardingCompleted === false`, so they keep `"lightweight"`.
+      // The user can still flip the mode from Settings → Performance.
+      const isResourceModeUpgrade =
+        rawRecord.onboardingCompleted === true &&
+        rawRecord.resourceMode === undefined;
+      const resourceModeMigration = isResourceModeUpgrade
+        ? { resourceMode: "performance" as const }
+        : {};
       const externalProvider: ExternalProviderConfig = {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...healed.externalProvider,
@@ -773,6 +815,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_CONFIG,
         ...healed,
         ...progressiveDisclosure,
+        ...resourceModeMigration,
         externalProvider,
         externalProviderTokenUsage,
         hybridSearchConfig,

@@ -59,6 +59,11 @@ const DEFAULT_SETTINGS: SettingsData = {
   simplifiedNav: true,
   autoDownloadModel: true,
   createPageMode: "wizard",
+  // resource-management profile placeholder mirrors the main-process
+  // `DEFAULT_CONFIG` (`"lightweight"`) so the Settings → Performance
+  // toggle binds to the correct mode during the brief window before
+  // the IPC response lands. The real value loads via `refresh()`.
+  resourceMode: "lightweight",
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

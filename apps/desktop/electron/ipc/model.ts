@@ -9,8 +9,15 @@
  * renderer over `model:token`.
  */
 import { BrowserWindow } from "electron";
+import { access } from "fs/promises";
 import { idempotentHandle } from "./register";
-import { getBridge, getModelSidecar } from "../appState";
+import {
+  enforceSidecarExclusivity,
+  ensureModelSidecar,
+  getBridge,
+  getModelSidecar,
+} from "../appState";
+import { isBatteryLow } from "../batteryMonitor";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
@@ -132,9 +139,29 @@ export function registerModelHandlers(): void {
 
   idempotentHandle("model:start", async (_event, modelPath: unknown) => {
     const validated = assertString(modelPath, "modelPath", { maxLen: 4096 });
-    const sidecar = getModelSidecar();
+    // LW-1: lazily construct the text sidecar on first start instead
+    // of at boot. Returns null only in fallback mode (bridge down).
+    const sidecar = ensureModelSidecar();
     if (!sidecar) throw new Error("Model sidecar not initialized");
     if (sidecar.isRunning) return;
+    // Validate the GGUF actually exists on disk BEFORE enforcing
+    // single-sidecar exclusivity. Without this, a `model:start` with a
+    // stale/bad path would, in lightweight mode, stop the user's running
+    // vision / diffusion sidecar and THEN fail `waitForReady()` —
+    // leaving them with no sidecar at all. Validating first means a
+    // doomed start is a clean no-op that never disturbs the resident
+    // sidecar. Mirrors the validate-then-enforce ordering in
+    // `ensureVisionSidecarRunning` (mmproj access check) and
+    // `ensureDiffusionSidecarRunning` (capability / model-record checks).
+    try {
+      await access(validated);
+    } catch {
+      throw new Error(`Model file not found on disk: ${validated}`);
+    }
+    // LW-2: in lightweight mode, starting text stops any running
+    // vision / diffusion sidecar so only one model is resident at a
+    // time. No-op in performance mode.
+    await enforceSidecarExclusivity("text");
     sidecar.setModelPath(validated);
     await sidecar.start(true);
     // Block until llama-server's HTTP listener is up so the very
@@ -198,6 +225,33 @@ export function registerModelHandlers(): void {
   idempotentHandle("model:generate", async (event, request: unknown) => {
     const parsed = GenerateRequestSchema.parse(request);
 
+    // Resolve the dispatch target up front (this is a pure, synchronous
+    // read of the external-provider config + keychain state) so the
+    // battery gate below can branch on it.
+    const adapter = resolveGenerationAdapter();
+
+    // LW-3: pause synthesis when the device is on a low battery (≤20%
+    // and discharging). Resolve a typed sentinel INSTEAD of starting a
+    // stream so the renderer can show "Generation paused — battery
+    // below 20%" rather than hanging on a token that never arrives. We
+    // check before touching the AbortController slot / sidecar so a
+    // gated call leaves no half-set-up generation state behind.
+    // `isBatteryLow()` fails open — desktops, AC power, and unknown
+    // battery state all return false — so this never blocks generation
+    // on a plugged-in or non-laptop host.
+    //
+    // The gate applies ONLY to the local llama-server sidecar, which is
+    // the actual battery cost: a local generation pegs CPU/GPU for the
+    // duration. External-provider generation runs entirely on the
+    // remote API — local power use is just network + token rendering,
+    // negligible next to the screen already being on — so gating it
+    // would needlessly block a user who deliberately configured a cloud
+    // provider precisely to offload compute (arguably the *right* thing
+    // to do on a dying battery). See PR #105 review thread.
+    if (adapter.kind !== "external" && isBatteryLow()) {
+      return { status: "battery_low" as const };
+    }
+
     // Dispatch decision:
     //
     //   1. If the External Provider is enabled, configured and has a
@@ -231,8 +285,6 @@ export function registerModelHandlers(): void {
       "model:token",
     );
     let sentDone = false;
-
-    const adapter = resolveGenerationAdapter();
 
     if (adapter.kind === "external") {
       // Token-usage accounting for the optional external provider.

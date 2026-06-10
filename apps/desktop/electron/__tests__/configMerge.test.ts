@@ -347,4 +347,41 @@ describe("loadConfig defensive normalisation", () => {
     expect(cfg.simplifiedNav).toBe(true);
     expect(cfg.createPageMode).toBe("wizard");
   });
+
+  // LW-2 resourceMode migration: an existing user who completed
+  // onboarding under a pre-`resourceMode` build (config has
+  // `onboardingCompleted: true` but no `resourceMode` key) must keep
+  // the prior concurrent text + vision behaviour — i.e. be migrated to
+  // `"performance"`, NOT silently switched to single-sidecar
+  // `"lightweight"` exclusion on first launch after upgrading.
+  it("migrates an existing pre-resourceMode user to performance, not lightweight", () => {
+    writeConfig({ onboardingCompleted: true });
+    const cfg = loadConfig();
+    expect(cfg.resourceMode).toBe("performance");
+  });
+
+  // Fresh installs (no config file) get the lightweight default — the
+  // migration must NOT touch them.
+  it("gives a fresh install the lightweight resourceMode default", () => {
+    const cfg = loadConfig();
+    expect(cfg.resourceMode).toBe("lightweight");
+  });
+
+  // A config mid-onboarding (onboardingCompleted false) is a new user,
+  // so it keeps the lightweight default rather than being migrated.
+  it("treats an in-progress onboarding config as a new user for resourceMode", () => {
+    writeConfig({ onboardingCompleted: false });
+    const cfg = loadConfig();
+    expect(cfg.resourceMode).toBe("lightweight");
+  });
+
+  // Idempotent / explicit-choice: once `resourceMode` exists on disk
+  // (the user already ran this build, or deliberately picked a mode),
+  // that value is respected and the migration is a no-op — including an
+  // onboarded user who explicitly chose lightweight.
+  it("respects an explicit resourceMode for an onboarded user", () => {
+    writeConfig({ onboardingCompleted: true, resourceMode: "lightweight" });
+    const cfg = loadConfig();
+    expect(cfg.resourceMode).toBe("lightweight");
+  });
 });
