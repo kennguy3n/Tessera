@@ -65,6 +65,11 @@ vi.mock("electron", () => ({
     // evaluation, so the mock has to expose this method.
     setAsDefaultProtocolClient: vi.fn().mockReturnValue(true),
     off: vi.fn(),
+    // LW-4: `main.ts` caps the V8 old-space at module load via
+    // `app.commandLine.appendSwitch("js-flags", …)`. That runs during
+    // import, so the mock must expose `commandLine.appendSwitch` or the
+    // whole module evaluation throws before any will-quit spec runs.
+    commandLine: { appendSwitch: vi.fn() },
   },
   BrowserWindow: class {
     static getAllWindows() {

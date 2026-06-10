@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Card from "./Card";
 import Button from "./Button";
+import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 import type {
   InstalledModelRecord,
   ModelDownloadProgress,
@@ -159,52 +160,65 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   // function of the shipped manifest which doesn't change at runtime.
   // The initial `refresh()` covers them once on mount; the poll covers
   // only what can change.
+  // Tracks mount state so an async tick that is still in flight when the
+  // component unmounts (or when the poll is paused on window-hide and the
+  // tree later tears down) can't call `setState` on a dead component.
+  // Previously this was the effect-local `cancelled` flag; pulling it to
+  // a ref lets the suspendable poll own the interval lifecycle.
+  const runtimeMountedRef = useRef(true);
   useEffect(() => {
-    if (!tessera) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const [status, current] = await Promise.all([
-          tessera.model.status(),
-          tessera.runtime.getCurrentModel("text"),
-        ]);
-        if (cancelled) return;
-        setState((s) => {
-          // Skip poll updates while a user-initiated operation is in
-          // flight (download / swap / delete). Otherwise the poll could
-          // overwrite optimistic state — e.g. `handleDelete` nulls
-          // `current` before the main process finishes evicting the
-          // file, and a poll tick landing in that window would re-fetch
-          // the still-on-disk model and "resurrect" it in the UI for
-          // up to 5s. The functional setState reads `s.busyModelId` at
-          // commit time, so the gate is race-free against `setState`
-          // calls from the user-action handlers.
-          if (s.busyModelId !== null) return s;
-          return { ...s, status, current };
-        });
-      } catch {
-        if (cancelled) return;
-        // Match RuntimeStatus's failure-mode: surface as a stopped
-        // sidecar in `status`, but leave `current` untouched so a
-        // transient IPC blip doesn't blank out the model record the
-        // user just downloaded. Also gated on `busyModelId` so we
-        // don't flip `status` to "error" while a download is mid-flight
-        // (the download path manages its own status reporting).
-        setState((s) => {
-          if (s.busyModelId !== null) return s;
-          return {
-            ...s,
-            status: { available: false, modelName: null, status: "error" },
-          };
-        });
-      }
-    };
-    const id = setInterval(tick, 5000);
+    runtimeMountedRef.current = true;
     return () => {
-      cancelled = true;
-      clearInterval(id);
+      runtimeMountedRef.current = false;
     };
+  }, []);
+
+  const pollRuntime = useCallback(async () => {
+    if (!tessera) return;
+    try {
+      const [status, current] = await Promise.all([
+        tessera.model.status(),
+        tessera.runtime.getCurrentModel("text"),
+      ]);
+      if (!runtimeMountedRef.current) return;
+      setState((s) => {
+        // Skip poll updates while a user-initiated operation is in
+        // flight (download / swap / delete). Otherwise the poll could
+        // overwrite optimistic state — e.g. `handleDelete` nulls
+        // `current` before the main process finishes evicting the
+        // file, and a poll tick landing in that window would re-fetch
+        // the still-on-disk model and "resurrect" it in the UI for
+        // up to 5s. The functional setState reads `s.busyModelId` at
+        // commit time, so the gate is race-free against `setState`
+        // calls from the user-action handlers.
+        if (s.busyModelId !== null) return s;
+        return { ...s, status, current };
+      });
+    } catch {
+      if (!runtimeMountedRef.current) return;
+      // Match RuntimeStatus's failure-mode: surface as a stopped
+      // sidecar in `status`, but leave `current` untouched so a
+      // transient IPC blip doesn't blank out the model record the
+      // user just downloaded. Also gated on `busyModelId` so we
+      // don't flip `status` to "error" while a download is mid-flight
+      // (the download path manages its own status reporting).
+      setState((s) => {
+        if (s.busyModelId !== null) return s;
+        return {
+          ...s,
+          status: { available: false, modelName: null, status: "error" },
+        };
+      });
+    }
   }, [tessera]);
+
+  // LW-4: pause the 5s runtime status poll while hidden, resume on show.
+  // `enabled` gates on the bridge being present (matching the old early
+  // return); no `immediate` because the separate `refresh()` effect does
+  // the one-shot initial load (including the expensive hardware probe).
+  useSuspendablePolling(() => void pollRuntime(), 5000, {
+    enabled: !!tessera,
+  });
 
   const performDownload = useCallback(
     async (modelId: string) => {

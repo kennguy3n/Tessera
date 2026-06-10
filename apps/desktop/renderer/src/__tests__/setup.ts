@@ -690,6 +690,14 @@ const mockApi = {
     getArchives: vi.fn().mockResolvedValue([]),
     rotate: vi.fn().mockResolvedValue(null),
   },
+  // LW-4: window-visibility signals. Defaults return a no-op
+  // unsubscribe so components using `useSuspendablePolling` mount and
+  // unmount cleanly without a real IPC channel; tests that need to
+  // drive suspend/resume override these per-case.
+  appLifecycle: {
+    onSuspend: vi.fn().mockReturnValue(() => {}),
+    onResume: vi.fn().mockReturnValue(() => {}),
+  },
 };
 
 Object.defineProperty(window, "tessera", {
