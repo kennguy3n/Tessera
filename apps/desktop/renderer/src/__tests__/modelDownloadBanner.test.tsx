@@ -57,6 +57,7 @@ describe("ModelDownloadBanner", () => {
     window.tessera.runtime.downloadRecommended = vi
       .fn()
       .mockReturnValue(new Promise(() => {}));
+    window.tessera.runtime.cancelDownload = vi.fn().mockResolvedValue(true);
     window.tessera.runtime.onDownloadProgress = vi
       .fn()
       .mockReturnValue(() => undefined);
@@ -164,7 +165,7 @@ describe("ModelDownloadBanner", () => {
     });
   });
 
-  it("Skip dismisses and persists autoDownloadModel:false", async () => {
+  it("Skip cancels the in-flight download, dismisses, and persists autoDownloadModel:false", async () => {
     let emit: ((p: ModelDownloadProgress) => void) | null = null;
     window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
       emit = cb;
@@ -183,6 +184,35 @@ describe("ModelDownloadBanner", () => {
     expect(
       screen.queryByTestId("model-download-banner"),
     ).not.toBeInTheDocument();
+    // True cancellation: the in-flight transfer is aborted (text slot)…
+    expect(window.tessera.runtime.cancelDownload).toHaveBeenCalledWith("text");
+    // …and the opt-out is persisted so next launch does not auto-start.
+    expect(updateMock).toHaveBeenCalledWith({ autoDownloadModel: false });
+  });
+
+  it("Skip still dismisses + opts out when cancellation rejects (already complete)", async () => {
+    window.tessera.runtime.cancelDownload = vi
+      .fn()
+      .mockRejectedValue(new Error("nothing in flight"));
+    let emit: ((p: ModelDownloadProgress) => void) | null = null;
+    window.tessera.runtime.onDownloadProgress = vi.fn((cb) => {
+      emit = cb;
+      return () => undefined;
+    });
+
+    render(<ModelDownloadBanner />);
+    await waitFor(() => expect(emit).not.toBeNull());
+    act(() => emit!(progress(20)));
+
+    fireEvent.click(screen.getByTestId("model-download-banner-skip"));
+
+    // A rejected cancellation (download already finished) must not block
+    // the dismissal or the durable opt-out.
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("model-download-banner"),
+      ).not.toBeInTheDocument(),
+    );
     expect(updateMock).toHaveBeenCalledWith({ autoDownloadModel: false });
   });
 

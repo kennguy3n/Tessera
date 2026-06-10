@@ -1690,6 +1690,43 @@ export function planDownload(
   };
 }
 
+/**
+ * Error raised when a download is cancelled via its `AbortSignal`
+ * (e.g. the user clicks "Skip — work without AI" in the
+ * ModelDownloadBanner, which fires `runtime:cancelDownload`).
+ *
+ * Distinguished from a genuine network/checksum failure so callers can
+ * treat a deliberate cancellation as benign — the first-launch
+ * auto-download maps it to a silent `"cancelled"` outcome instead of
+ * broadcasting `runtime:downloadError` (which would flash a misleading
+ * "Setup failed" banner). The download lock's `.partial` cleanup runs
+ * regardless, so a cancelled transfer leaves no half-written file
+ * behind.
+ */
+export class DownloadAbortedError extends Error {
+  constructor(message = "Download aborted") {
+    super(message);
+    this.name = "DownloadAbortedError";
+  }
+}
+
+/**
+ * True when `err` represents a download cancellation: either our own
+ * {@link DownloadAbortedError} (the abort reason we pass to
+ * `AbortController.abort`) or a stock `AbortError`/`DOMException` that
+ * `fetch` raises when a signal aborts without an explicit reason. Both
+ * are treated as "the caller asked to stop", not a transient fault to
+ * retry or a failure to surface.
+ */
+export function isDownloadAbortedError(err: unknown): boolean {
+  if (err instanceof DownloadAbortedError) return true;
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { name?: unknown }).name === "AbortError"
+  );
+}
+
 export interface DownloadProgress {
   modelId: string;
   /**
@@ -1715,9 +1752,22 @@ export interface DownloadDeps {
     url: string,
     onProgress: (downloadedBytes: number, totalBytes: number) => void,
     destPath: string,
+    signal?: AbortSignal,
   ) => Promise<{ totalBytes: number }>;
   hasher?: (filePath: string) => Promise<string>;
   now?: () => Date;
+  /**
+   * When supplied, the download is cancellable: the signal is passed to
+   * `fetch` and checked at each retry/streaming checkpoint, and an
+   * abort short-circuits BEFORE any filesystem mutation (eviction /
+   * `.partial` write) when it fires while the call is still queued
+   * behind the per-slot download lock. On abort the call rejects with a
+   * {@link DownloadAbortedError} and the standard `.partial` cleanup
+   * runs, so no half-written file survives. Cancellation is wired by
+   * the `runtime:cancelDownload` IPC via the per-capability
+   * `downloadCancellations` registry.
+   */
+  signal?: AbortSignal;
   /**
    * Tar+gzip archive extractor. Overridable for unit tests so we can
    * exercise the archive-aware download path without producing real
@@ -1832,12 +1882,28 @@ export function createDefaultFetcher(
   maxAttempts: number = DEFAULT_FETCH_MAX_ATTEMPTS,
   sleep: (ms: number) => Promise<void> = defaultSleep,
 ): NonNullable<DownloadDeps["fetcher"]> {
-  return async (url, onProgress, destPath) => {
+  return async (url, onProgress, destPath, signal) => {
     // Resolve `fetch` lazily at call time (not at factory-creation
     // time) so the production fetcher honours a `globalThis.fetch`
     // swapped in after module load — e.g. test mocks, or a runtime
     // proxy install.
     const doFetch = fetchImpl ?? globalThis.fetch;
+    // Cancellation checkpoint. Called at the top of every attempt and
+    // after each backoff sleep so an abort that fires while we are
+    // between retries (or sleeping) bails promptly instead of issuing
+    // another doomed request. The in-flight `fetch`/stream read is
+    // aborted directly by passing `signal` into the request, so the
+    // common case (abort mid-transfer) is instantaneous; this guard
+    // covers the gaps the request can't see. We surface the signal's
+    // abort `reason` when it is an Error (we always abort with a
+    // `DownloadAbortedError`) so callers can classify it.
+    const throwIfAborted = (): void => {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new DownloadAbortedError();
+      }
+    };
     // Bytes written *during this call*. We deliberately do NOT seed this
     // from an existing on-disk `.partial`: a leftover partial can only
     // outlive the call that wrote it via a hard crash/kill, and we
@@ -1857,6 +1923,7 @@ export function createDefaultFetcher(
 
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      throwIfAborted();
       if (attempt > 0) {
         // Every attempt past the first follows a failure, so back off
         // before re-requesting. Grows exponentially, capped at the max.
@@ -1865,9 +1932,16 @@ export function createDefaultFetcher(
           RETRY_MAX_DELAY_MS,
         );
         await sleep(delay);
+        throwIfAborted();
       }
       const resuming = downloaded > 0;
-      const init: RequestInit = {};
+      // Pass the caller's `AbortSignal` straight into the request so an
+      // abort tears down the in-flight connection and the streaming
+      // body read immediately (undici rejects the `fetch` promise and
+      // the reader with the signal's reason). `init.signal` is left
+      // `undefined` when no signal was supplied, preserving the prior
+      // uncancellable behaviour for callers that don't opt in.
+      const init: RequestInit = { signal };
       if (resuming) {
         const headers: Record<string, string> = {
           Range: `bytes=${downloaded}-`,
@@ -1880,6 +1954,10 @@ export function createDefaultFetcher(
       try {
         resp = await doFetch(url, init);
       } catch (err) {
+        // A user-initiated cancellation is terminal: do NOT retry it
+        // like a transient connection blip. Rethrow so the caller's
+        // `.partial` cleanup runs and the abort propagates unchanged.
+        if (isDownloadAbortedError(err)) throw err;
         // Connection failed before any response (DNS, TCP reset,
         // refused). Retry — `downloaded` is unchanged so the next
         // attempt resumes from the same offset.
@@ -1990,6 +2068,10 @@ export function createDefaultFetcher(
       }
 
       if (pumpError) {
+        // A mid-stream abort (signal fired while reading the body)
+        // is terminal — rethrow so cleanup runs instead of retrying a
+        // transfer the caller explicitly cancelled.
+        if (isDownloadAbortedError(pumpError)) throw pumpError;
         lastErr = pumpError;
         continue;
       }
@@ -2274,6 +2356,19 @@ async function downloadModelLocked(
   if (alreadyInstalled) {
     return alreadyInstalled;
   }
+  // Cancellation can fire while this call is still QUEUED behind the
+  // per-slot download lock (e.g. a Retry queued behind an in-flight
+  // download whose initiator then clicks "Skip"). Bail here — before
+  // the sidecar-stop, eviction, or any `.partial` write — so a
+  // cancelled download never tears down a perfectly good installed
+  // model or stops the running sidecar for nothing. Mid-transfer
+  // aborts are handled by the fetcher (which propagates a
+  // `DownloadAbortedError` that the catch below cleans up after).
+  if (deps.signal?.aborted) {
+    throw deps.signal.reason instanceof Error
+      ? deps.signal.reason
+      : new DownloadAbortedError();
+  }
   // Not the fast path — we will mutate the filesystem. Run the
   // pre-mutation hook (e.g. sidecar-stop) exactly once now, INSIDE
   // the lock, so the entire `(stop → evict → download → commit)`
@@ -2377,6 +2472,7 @@ async function downloadModelLocked(
         });
       },
       partial,
+      deps.signal,
     );
 
     if (requested.sha256) {
@@ -2450,6 +2546,7 @@ async function downloadModelLocked(
           });
         },
         mmprojPartial,
+        deps.signal,
       );
       if (requested.mmprojSha256) {
         const got = await hasher(mmprojPartial);

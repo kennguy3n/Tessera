@@ -145,10 +145,20 @@ export default function ModelDownloadBanner() {
       });
   }, []);
 
-  // Skip dismisses the banner AND persists the opt-out so the next
-  // launch's auto-download trigger stays off. The user can re-enable
-  // it from Settings → Model Runtime.
+  // Skip is a TRUE opt-out: it (1) cancels any in-flight download so we
+  // stop consuming network/disk the instant the user opts out, (2)
+  // dismisses the banner, and (3) persists the opt-out so the next
+  // launch's auto-download trigger stays off. (The plain "X"/Dismiss
+  // button only hides the banner and lets a near-complete download
+  // finish in the background.) The user can re-enable from Settings →
+  // Model Runtime. Cancellation is fire-and-forget and best-effort: if
+  // the download already finished there is simply nothing to abort, so
+  // a rejection (or an older preload without the channel) is ignored.
   const onSkip = useCallback(() => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    void api?.runtime?.cancelDownload?.("text").catch(() => {
+      // Already complete / nothing in flight — opt-out below still applies.
+    });
     setDismissed(true);
     void update({ autoDownloadModel: false }).catch(() => {
       // A failed persist still dismisses for this session; the toggle

@@ -39,6 +39,7 @@ import { loadConfig } from "./config";
 import type { ModelDownloadError } from "../shared/types";
 import {
   getInstalledModel,
+  isDownloadAbortedError,
   type DownloadProgress,
   type InstalledModelRecord,
   type ModelCapability,
@@ -66,6 +67,7 @@ export type AutoDownloadOutcome =
   | "onboarded"
   | "no-candidate"
   | "offline"
+  | "cancelled"
   | "error";
 
 /**
@@ -152,6 +154,7 @@ export interface AutoDownloadDeps {
   download?: (
     capability: ModelCapability,
     emit: (p: DownloadProgress) => void,
+    preresolved?: ResolvedModel | null,
   ) => Promise<InstalledModelRecord | null>;
   broadcast?: (p: DownloadProgress) => void;
   broadcastError?: (e: ModelDownloadError) => void;
@@ -226,7 +229,16 @@ export async function maybeAutoDownloadRecommendedModel(
   });
   try {
     const download = deps.download ?? downloadRecommendedModel;
-    const record = await download(AUTO_DOWNLOAD_CAPABILITY, broadcast);
+    // Hand the gate-phase `ResolvedModel` straight to the download so it
+    // is NOT resolved a second time. The gate already resolved it (to
+    // read the host for the DNS probe), and reusing that exact identity
+    // means the model we install is provably the one the gate validated
+    // and probed — collapsing the prior double resolution.
+    const record = await download(
+      AUTO_DOWNLOAD_CAPABILITY,
+      broadcast,
+      recommended,
+    );
     if (!record) {
       // The gate phase resolved a candidate, but the download path
       // returned no record — e.g. a manifest race that re-resolved to
@@ -241,6 +253,16 @@ export async function maybeAutoDownloadRecommendedModel(
     log.info("model.autoDownload.done", { modelId: recommended.id });
     return "downloaded";
   } catch (err) {
+    // A user-initiated cancellation (the banner's "Skip — work without
+    // AI" firing `runtime:cancelDownload`) is NOT a setup failure: the
+    // user deliberately stopped it. Stay silent — do NOT broadcast
+    // `runtime:downloadError`, which would flash a misleading "Setup
+    // failed — retry" on the very banner the user just dismissed. The
+    // `.partial` was already cleaned up inside the download lock.
+    if (isDownloadAbortedError(err)) {
+      log.info("model.autoDownload.cancelled", { modelId: recommended.id });
+      return "cancelled";
+    }
     safeWarn(log, "model.autoDownload.failed", err);
     try {
       emitError({

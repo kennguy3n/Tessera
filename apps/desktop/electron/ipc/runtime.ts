@@ -34,6 +34,7 @@ import {
 import { assertId } from "./validate";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { safeRendererSender } from "./model";
+import { downloadCancellations } from "../modelDownloadControl";
 
 function userDataDir(): string {
   return app.getPath("userData");
@@ -184,12 +185,31 @@ export function resolveRecommendedModel(
  * is delivered via `emit`. The already-installed fast path emits the
  * same completion event so a redundant call still flips observers to
  * "ready" without re-downloading bytes.
+ *
+ * `preresolved` lets a caller that has ALREADY resolved the recommended
+ * model hand it in so the manifest is not resolved a second time. The
+ * first-launch auto-download resolves the model during its gate phase
+ * (to read the download host for the DNS reachability probe) and passes
+ * that exact `ResolvedModel` through here — collapsing the previous
+ * double resolution and guaranteeing the model we install is identical
+ * to the one the gate validated and probed (no window for the two
+ * phases to pick different manifest entries). The IPC handler passes
+ * nothing, so the renderer-initiated path resolves here exactly once.
+ *
+ * The download is cancellable: an `AbortController` is registered in the
+ * per-capability `downloadCancellations` registry for the duration of
+ * the transfer so a `runtime:cancelDownload` (the banner's "Skip")
+ * aborts the in-flight fetch and cleans up the `.partial`. A cancelled
+ * download rejects with a `DownloadAbortedError`; the synthetic
+ * completion event is NOT emitted in that case (the `await` throws
+ * before reaching it), so observers never see a false "ready".
  */
 export async function downloadRecommendedModel(
   capability: ModelCapability,
   emit: (p: DownloadProgress) => void,
+  preresolved?: ResolvedModel | null,
 ): Promise<InstalledModelRecord | null> {
-  const recommended = resolveRecommendedModel(capability);
+  const recommended = preresolved ?? resolveRecommendedModel(capability);
   if (!recommended) return null;
 
   const completion: DownloadProgress = {
@@ -215,11 +235,22 @@ export async function downloadRecommendedModel(
     return installed;
   }
 
-  const record = await downloadModel(userDataDir(), recommended, emit, {
-    beforeMutation: sidecarStopperFor(capability),
-  });
-  emit(completion);
-  return record;
+  // Register a cancellation handle for this slot for the lifetime of
+  // the transfer, deregistering in `finally` so a settled controller is
+  // never retained. On a cancel the `await` rejects, we skip the
+  // completion emit, and `downloadModel`'s `.partial` cleanup has
+  // already run inside the lock.
+  const controller = downloadCancellations.begin(capability);
+  try {
+    const record = await downloadModel(userDataDir(), recommended, emit, {
+      beforeMutation: sidecarStopperFor(capability),
+      signal: controller.signal,
+    });
+    emit(completion);
+    return record;
+  } finally {
+    downloadCancellations.end(capability, controller);
+  }
 }
 
 export function registerRuntimeHandlers(): void {
@@ -364,9 +395,25 @@ export function registerRuntimeHandlers(): void {
       // delete a model the other tab had just successfully installed.
       // Moving it inside the lock makes the entire
       // (stop -> evict -> download) sequence atomic per slot.
-      return downloadModel(userDataDir(), requested, progressEmitter(event), {
-        beforeMutation: sidecarStopperFor(requested.capability),
-      });
+      //
+      // Register a cancellation handle so `runtime:cancelDownload` can
+      // abort this explicit install too — cancellation is keyed by
+      // capability slot, so "Skip" cancels whatever is downloading in
+      // the text slot regardless of which channel started it.
+      const controller = downloadCancellations.begin(requested.capability);
+      try {
+        return await downloadModel(
+          userDataDir(),
+          requested,
+          progressEmitter(event),
+          {
+            beforeMutation: sidecarStopperFor(requested.capability),
+            signal: controller.signal,
+          },
+        );
+      } finally {
+        downloadCancellations.end(requested.capability, controller);
+      }
     },
   );
 
@@ -399,6 +446,27 @@ export function registerRuntimeHandlers(): void {
         RATE_LIMIT_PROFILES["runtime:downloadRecommended"],
       );
       return downloadRecommendedModel(cap, progressEmitter(event));
+    },
+  );
+
+  // Cancel any in-flight download in a capability slot. Backs the
+  // ModelDownloadBanner's "Skip — work without AI" affordance, turning
+  // it into a TRUE cancellation: it aborts the running transfer (the
+  // first-launch auto-download or a banner "Retry"), which tears down
+  // the connection and cleans up the `.partial`, instead of merely
+  // hiding the banner and letting the bytes finish in the background.
+  //
+  // Intentionally NOT rate-limited: cancellation is cheap and fully
+  // idempotent (aborting an already-aborted or non-existent download is
+  // a no-op), so a runaway renderer spamming it wastes nothing — and a
+  // limiter could wrongly REJECT a legitimate "stop using my bandwidth"
+  // request, which is the opposite of what defense-in-depth should do
+  // here. Returns whether a transfer was actually interrupted.
+  idempotentHandle(
+    "runtime:cancelDownload",
+    async (_event, capability: unknown) => {
+      const cap = coerceCapability(capability);
+      return downloadCancellations.cancel(cap);
     },
   );
 

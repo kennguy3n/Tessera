@@ -18,7 +18,11 @@ import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 
-import { createDefaultFetcher } from "../modelManagement";
+import {
+  createDefaultFetcher,
+  DownloadAbortedError,
+  isDownloadAbortedError,
+} from "../modelManagement";
 
 let workdir: string;
 let dest: string;
@@ -329,5 +333,149 @@ describe("createDefaultFetcher — in-session Range resume", () => {
     expect(calls).toBe(4);
     // Sleep runs before attempts 1, 2, 3 (not before the first attempt).
     expect(delays).toEqual([500, 1000, 2000]);
+  });
+});
+
+describe("createDefaultFetcher — AbortSignal cancellation", () => {
+  it("passes the signal into fetch so the request is cancellable", async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const body = Buffer.from("payload");
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      seen = init?.signal ?? undefined;
+      return new Response(streamOf(body), {
+        status: 200,
+        headers: { "content-length": String(body.length) },
+      });
+    }) as unknown as typeof fetch;
+
+    const fetcher = createDefaultFetcher(fetchImpl, undefined, noSleep);
+    await fetcher("https://x/model", () => {}, dest, controller.signal);
+
+    expect(seen).toBe(controller.signal);
+  });
+
+  it("does not set a signal on the request when none is supplied", async () => {
+    const body = Buffer.from("payload");
+    let hadSignal: boolean | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      hadSignal = init?.signal != null;
+      return new Response(streamOf(body), {
+        status: 200,
+        headers: { "content-length": String(body.length) },
+      });
+    }) as unknown as typeof fetch;
+
+    const fetcher = createDefaultFetcher(fetchImpl, undefined, noSleep);
+    await fetcher("https://x/model", () => {}, dest);
+
+    expect(hadSignal).toBe(false);
+  });
+
+  it("throws immediately (no fetch) when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new DownloadAbortedError("Download cancelled by user"));
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response(streamOf(Buffer.from("x")), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const fetcher = createDefaultFetcher(fetchImpl, undefined, noSleep);
+    await expect(
+      fetcher("https://x/model", () => {}, dest, controller.signal),
+    ).rejects.toThrow(DownloadAbortedError);
+    // The pre-attempt checkpoint short-circuits before issuing a request.
+    expect(calls).toBe(0);
+  });
+
+  it("does NOT retry an abort raised by fetch — it propagates terminally", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    // Simulate undici rejecting the in-flight request with an AbortError
+    // (the stock shape when a signal aborts without an explicit reason).
+    const fetchImpl = (async () => {
+      calls += 1;
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    }) as unknown as typeof fetch;
+
+    const fetcher = createDefaultFetcher(fetchImpl, 4, noSleep);
+    const err = await fetcher(
+      "https://x/model",
+      () => {},
+      dest,
+      controller.signal,
+    ).catch((e: unknown) => e);
+
+    // A stock AbortError is classified as a cancellation, so it is
+    // rethrown on the FIRST attempt instead of consuming all retries.
+    expect(isDownloadAbortedError(err)).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("aborts mid-stream and stops reading the body", async () => {
+    const controller = new AbortController();
+    const full = Buffer.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    // A stream that aborts the controller partway through, then errors
+    // with the signal's reason on the next pull — mirroring how undici's
+    // body reader rejects once the request signal fires.
+    const abortingStream = (): ReadableStream<Uint8Array> => {
+      let offset = 0;
+      const chunkSize = 4;
+      return new ReadableStream<Uint8Array>({
+        pull(c) {
+          if (controller.signal.aborted) {
+            c.error(controller.signal.reason);
+            return;
+          }
+          if (offset >= 12) {
+            controller.abort(
+              new DownloadAbortedError("Download cancelled by user"),
+            );
+            c.error(controller.signal.reason);
+            return;
+          }
+          const end = Math.min(offset + chunkSize, full.length);
+          c.enqueue(new Uint8Array(full.subarray(offset, end)));
+          offset = end;
+        },
+      });
+    };
+    const fetchImpl = (async () =>
+      new Response(abortingStream(), {
+        status: 200,
+        headers: { "content-length": String(full.length) },
+      })) as unknown as typeof fetch;
+
+    const fetcher = createDefaultFetcher(fetchImpl, 4, noSleep);
+    const err = await fetcher(
+      "https://x/model",
+      () => {},
+      dest,
+      controller.signal,
+    ).catch((e: unknown) => e);
+
+    // The mid-stream abort is terminal (not retried as a transient drop).
+    expect(isDownloadAbortedError(err)).toBe(true);
+  });
+});
+
+describe("isDownloadAbortedError", () => {
+  it("recognises our DownloadAbortedError", () => {
+    expect(isDownloadAbortedError(new DownloadAbortedError())).toBe(true);
+  });
+
+  it("recognises a stock AbortError (no explicit reason)", () => {
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    expect(isDownloadAbortedError(err)).toBe(true);
+  });
+
+  it("does not misclassify ordinary network failures", () => {
+    expect(isDownloadAbortedError(new Error("ECONNRESET"))).toBe(false);
+    expect(isDownloadAbortedError(null)).toBe(false);
+    expect(isDownloadAbortedError("AbortError")).toBe(false);
   });
 });

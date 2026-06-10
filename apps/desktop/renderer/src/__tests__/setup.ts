@@ -568,6 +568,7 @@ const mockApi = {
     }),
     downloadModel: vi.fn(),
     downloadRecommended: vi.fn().mockResolvedValue(null),
+    cancelDownload: vi.fn().mockResolvedValue(false),
     deleteModel: vi.fn().mockResolvedValue(undefined),
     onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
     onDownloadError: vi.fn().mockReturnValue(() => undefined),
