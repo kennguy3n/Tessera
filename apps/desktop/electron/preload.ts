@@ -720,6 +720,21 @@ const api: TesseraApi = {
       rotatedCount: number;
     } | null> => ipcRenderer.invoke("audit:rotate"),
   },
+  // LW-4: main-process window-lifecycle signals. When the window is
+  // hidden (minimized / minimized-to-tray / `app.hide()` on macOS) the
+  // main process emits `app:suspend`, and `app:resume` when it becomes
+  // visible again. The renderer subscribes so it can pause work that is
+  // pointless while invisible — recurring status polls (model 5s, source
+  // health, connector status), the KChat presence/bridge polls, etc. —
+  // and resume on show. This is the renderer-pause half of the
+  // background-throttling story; `setBackgroundThrottling` (Electron
+  // default) only throttles timers, it doesn't stop them. Both helpers
+  // return an unsubscribe function for the React cleanup phase.
+  appLifecycle: {
+    onSuspend: (cb: () => void) =>
+      subscribeIpc<void>("app:suspend", () => cb()),
+    onResume: (cb: () => void) => subscribeIpc<void>("app:resume", () => cb()),
+  },
 };
 
 contextBridge.exposeInMainWorld("tessera", api);

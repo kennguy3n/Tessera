@@ -449,6 +449,37 @@ function createWindow(): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  // LW-4: tell the renderer to pause/resume its recurring polls when the
+  // window's visibility changes. `hide` covers minimize-to-tray (LW-9)
+  // and macOS `app.hide()`; `minimize` covers the taskbar/dock minimize.
+  // `show`/`restore` are the inverse. We route every event through
+  // `setRendererSuspended`, which de-dupes via a transition flag so the
+  // renderer never receives a redundant suspend-while-suspended or a
+  // resume it didn't need (e.g. the `show` that fires on first paint).
+  mainWindow.on("hide", () => setRendererSuspended(true));
+  mainWindow.on("minimize", () => setRendererSuspended(true));
+  mainWindow.on("show", () => setRendererSuspended(false));
+  mainWindow.on("restore", () => setRendererSuspended(false));
+}
+
+/**
+ * Whether the renderer is currently in the suspended (window-hidden)
+ * state. Module-scoped so {@link setRendererSuspended} can emit the
+ * `app:suspend` / `app:resume` IPC only on an actual transition — the
+ * underlying BrowserWindow events (`hide`/`minimize`/`show`/`restore`)
+ * can fire redundantly (e.g. `show` on first paint, or `minimize`
+ * followed by `hide`), and the renderer should see one clean edge.
+ */
+let rendererSuspended = false;
+
+function setRendererSuspended(suspended: boolean): void {
+  if (suspended === rendererSuspended) return;
+  rendererSuspended = suspended;
+  // `mainWindow` may already be torn down (`closed`) when a late event
+  // arrives; `isDestroyed()` guards the webContents access.
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(suspended ? "app:suspend" : "app:resume");
 }
 
 /**

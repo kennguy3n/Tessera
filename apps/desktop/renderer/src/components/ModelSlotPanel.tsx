@@ -49,6 +49,7 @@
  * vision/imagegen paths in `modelSlotPanel.test.tsx`.
  */
 import { useCallback, useEffect, useState } from "react";
+import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
 import Card from "./Card";
 import Button from "./Button";
 import type {
@@ -193,29 +194,29 @@ export default function ModelSlotPanel({
   // it in the UI for up to 5s. The functional setState reads
   // `s.busyModelId` at commit time, so the gate is race-free
   // against the user-action handlers.
-  useEffect(() => {
-    if (!tessera) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const current = await tessera.runtime.getCurrentModel(capability);
-        if (cancelled) return;
-        setState((s) => {
-          if (s.busyModelId !== null) return s;
-          return { ...s, current };
-        });
-      } catch {
-        // Swallow — a transient IPC blip shouldn't blank out the
-        // record the user just downloaded. The next successful
-        // tick will re-sync.
-      }
-    };
-    const id = setInterval(tick, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [tessera, capability]);
+  // LW-4: pause this 5s slot-reconciliation poll while the window is
+  // hidden. The `busyModelId` gate inside the functional setState keeps
+  // it race-free against the user-action handlers (see above).
+  useSuspendablePolling(
+    () => {
+      if (!tessera) return;
+      void (async () => {
+        try {
+          const current = await tessera.runtime.getCurrentModel(capability);
+          setState((s) => {
+            if (s.busyModelId !== null) return s;
+            return { ...s, current };
+          });
+        } catch {
+          // Swallow — a transient IPC blip shouldn't blank out the
+          // record the user just downloaded. The next successful
+          // tick will re-sync.
+        }
+      })();
+    },
+    5000,
+    { enabled: !!tessera },
+  );
 
   const performDownload = useCallback(
     async (modelId: string) => {
