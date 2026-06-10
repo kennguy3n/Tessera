@@ -155,12 +155,13 @@ pub fn init_bridge(
     // open a pool of read-only connections backing the
     // SourceStore's hot read paths (BM25 FTS5, embedding-row scan,
     // chunk hydration, age lookup). The size is auto-tuned from the
-    // host CPU count and capped at `MAX_READ_POOL_SIZE` (4) via
-    // `default_read_pool_size` — large enough to keep search latency
-    // off the writer mutex when a writer is mid-transaction (WAL
-    // gives readers a snapshot without blocking the writer), small
-    // enough that we don't burn an unbounded number of OS file
-    // descriptors on a many-core host.
+    // host CPU count and capped at `MAX_READ_POOL_SIZE` (2 on this
+    // single-user desktop build) via `default_read_pool_size` — large
+    // enough to keep search latency off the writer mutex when a writer
+    // is mid-transaction (WAL gives readers a snapshot without blocking
+    // the writer) and to overlap a user search with a background ingest
+    // read, small enough that we don't burn idle file descriptors +
+    // page caches on a many-core host that a single-user app can't use.
     //
     // For `:memory:` test paths the pool is unconditionally
     // empty (in-memory DBs can't be shared across connections);

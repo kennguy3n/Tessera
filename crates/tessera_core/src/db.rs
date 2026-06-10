@@ -679,12 +679,16 @@ impl SharedReadPool {
 ///
 /// SQLite's WAL mode lets a single writer and many readers coexist, but
 /// each pool connection costs an OS file descriptor and a cached page
-/// pool, and Tessera's hot read paths (BM25 FTS5, embedding-row scan,
-/// chunk hydration, age lookup) are at most a handful of concurrent
-/// queries. Past four readers the round-robin in [`SharedReadPool`] sees
-/// diminishing returns while the per-connection memory grows linearly,
-/// so we clamp the auto-sized pool here.
-pub const MAX_READ_POOL_SIZE: usize = 4;
+/// pool. Tessera is a single-user desktop app, not a server: its
+/// concurrent-read demand is the search + ingest pattern — at most one
+/// user-facing query (BM25 FTS5, embedding-row scan, chunk hydration,
+/// age lookup) overlapping one background ingest read. Two readers
+/// cover that overlap; a third only ever sits idle while adding a file
+/// descriptor and a per-connection page cache (and, under SQLCipher, a
+/// full schema-decrypt at prewarm). So we cap at 2 on desktop rather
+/// than the 4 a multi-client server would want — the round-robin in
+/// [`SharedReadPool`] would see pure diminishing returns past that.
+pub const MAX_READ_POOL_SIZE: usize = 2;
 
 /// Auto-size the read pool from the host CPU count, capped at
 /// [`MAX_READ_POOL_SIZE`].
@@ -696,8 +700,7 @@ pub const MAX_READ_POOL_SIZE: usize = 4;
 /// the pool is small or empty.
 pub fn default_read_pool_size() -> usize {
     std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1)
+        .map_or(1, std::num::NonZeroUsize::get)
         .min(MAX_READ_POOL_SIZE)
 }
 
@@ -1625,6 +1628,16 @@ mod tests {
     }
 
     // ===== SharedReadPool tests =====
+
+    #[test]
+    fn read_pool_cap_is_two_on_desktop() {
+        // LW-5: deliberately pin the single-user-desktop cap. This is a
+        // product/resource decision (overlap one search with one ingest
+        // read, no more), not an incidental constant — if someone bumps
+        // it back toward a server-sized pool this test should make them
+        // justify it.
+        assert_eq!(MAX_READ_POOL_SIZE, 2);
+    }
 
     #[test]
     fn default_read_pool_size_is_clamped_to_cpu_count() {
