@@ -13,7 +13,15 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
-rusqlite = { workspace = true }
+# `backup` enables the SQLite Online Backup API (sqlite3_backup_*),
+# used by `backup.rs` to hot-copy the live SQLCipher database without
+# blocking the running app. The bundled SQLCipher already provides the
+# C symbols; this flag just exposes the safe `rusqlite::backup` wrapper.
+rusqlite = { workspace = true, features = ["backup"] }
+# Workspace-bundle archive (`.tessera-backup`) = tar.gz with a manifest.
+tar = "0.4"
+flate2 = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

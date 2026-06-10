@@ -18,7 +18,20 @@
  */
 import { BrowserWindow, dialog } from "electron";
 import { idempotentHandle } from "./register";
-import { OpenImageDialogSchema, SaveDialogOptionsSchema } from "./schemas";
+import {
+  OpenBundleDialogSchema,
+  OpenDirectoryDialogSchema,
+  OpenImageDialogSchema,
+  SaveDialogOptionsSchema,
+} from "./schemas";
+
+/**
+ * Extension (no leading dot) of the workspace bundle archive accepted
+ * by `dialog:openBundle`. Kept as a constant so the picker filter and
+ * any future validation reference the same token. Mirrors the
+ * `.tessera-backup` suffix the Rust bundle exporter writes.
+ */
+export const BUNDLE_EXTENSION = "tessera-backup";
 
 /**
  * Extensions accepted by `dialog:pickImage`. Matches the formats the
@@ -97,6 +110,53 @@ export function registerDialogHandlers(): void {
     }
     // `showOpenDialog` returns an array even with `openFile` (no
     // multi-select), so we explicitly pull the first element.
+    return { canceled: false, filePath: result.filePaths[0] };
+  });
+
+  // `dialog:openDirectory` — opens an OS folder picker and returns the
+  // chosen absolute directory path (or `null` if the user cancelled).
+  // Used by Settings → Backup to let the user pick where backups are
+  // written. `createDirectory: true` lets macOS users create a fresh
+  // folder inline; `dontAddToRecent` keeps the OS "recent" list clean.
+  idempotentHandle("dialog:openDirectory", async (event, options: unknown) => {
+    const parsed = OpenDirectoryDialogSchema.parse(options ?? {});
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions: Electron.OpenDialogOptions = {
+      title: parsed.title ?? "Choose a folder",
+      properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, filePath: null };
+    }
+    return { canceled: false, filePath: result.filePaths[0] };
+  });
+
+  // `dialog:openBundle` — opens an OS file picker locked to the
+  // `.tessera-backup` archive extension and returns the chosen absolute
+  // path (or `null` if cancelled). Used by Settings → Backup "Import
+  // workspace bundle". `openFile` (singular, no directories / multi-
+  // select) keeps the surface tight; `dontAddToRecent` keeps the OS
+  // recent-documents list clean.
+  idempotentHandle("dialog:openBundle", async (event, options: unknown) => {
+    const parsed = OpenBundleDialogSchema.parse(options ?? {});
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions: Electron.OpenDialogOptions = {
+      title: parsed.title ?? "Choose a workspace bundle",
+      properties: ["openFile", "dontAddToRecent"],
+      filters: [
+        { name: "Tessera workspace bundle", extensions: [BUNDLE_EXTENSION] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, filePath: null };
+    }
     return { canceled: false, filePath: result.filePaths[0] };
   });
 }

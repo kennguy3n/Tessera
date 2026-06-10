@@ -302,6 +302,17 @@ export function registerSettingsHandlers(): void {
       resourceMode: config.resourceMode,
       // LW-9: close-to-tray preference (heals to `false` on disk).
       closeToTray: config.closeToTray,
+      // Backup scheduler preferences. The renderer mirrors these in the
+      // Settings → Backup panel; writes go through the dedicated
+      // `backup:configure` channel (which also refreshes the live
+      // scheduler), but they're surfaced here too so the generic
+      // settings read returns a complete `SettingsData`. `backupDir` is
+      // the raw stored value (empty string = "use default"); the
+      // resolved absolute path is exposed via `backup:status`.
+      autoBackup: config.autoBackup,
+      backupDir: config.backupDir,
+      backupIntervalHours: config.backupIntervalHours,
+      backupRetentionCount: config.backupRetentionCount,
     } as SettingsData;
   });
 

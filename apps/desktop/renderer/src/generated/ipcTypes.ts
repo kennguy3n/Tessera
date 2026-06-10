@@ -181,6 +181,23 @@ export type GenerateImageInput = {
   sectionIndex?: number | undefined;
 };
 
+export type BackupConfigureInput = {
+  autoBackup?: boolean | undefined;
+  backupDir?: string | undefined;
+  backupIntervalHours?: number | undefined;
+  backupRetentionCount?: number | undefined;
+};
+
+export type BackupRestoreInput = { backupPath: string };
+
+export type BundleExportInput = { outPath: string };
+
+export type BundleImportInput = { bundlePath: string };
+
+export type OpenDirectoryDialogInput = { title?: string | undefined };
+
+export type OpenBundleDialogInput = { title?: string | undefined };
+
 export type AutomationAction =
   | { kind: "reindex_source"; source_id: string }
   | {
