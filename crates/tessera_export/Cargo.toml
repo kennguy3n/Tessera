@@ -15,6 +15,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 zip = { workspace = true }
+# Session 7: ML-DSA-65 (FIPS 204) provenance signing of export
+# artifacts. `knowledge_crypto` supplies the signer/verifier; `ml-dsa`
+# is used only to rebuild a verifying key from the bytes stored in a
+# `.sig` sidecar; `base64` encodes signature/key bytes in that sidecar.
+knowledge_crypto = { workspace = true }
+ml-dsa = { workspace = true }
+base64 = { workspace = true }
 docx-rs = "0.4"
 rust_xlsxwriter = "0.95"
 typst = { version = "0.12", optional = true }

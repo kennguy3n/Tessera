@@ -4486,11 +4486,14 @@ dependencies = [
 name = "tessera_export"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "chrono",
  "comemo",
+ "crypto",
  "docx-rs",
  "ecow",
+ "ml-dsa",
  "quick-xml 0.36.2",
  "rust_xlsxwriter",
  "serde",

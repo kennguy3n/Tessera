@@ -91,6 +91,24 @@ pub fn build_evidence_pack(
     Ok(output_path.to_string())
 }
 
+/// Build an evidence pack on disk and write a detached ML-DSA-65
+/// provenance signature beside it (`<output_path>.sig`).
+///
+/// Provenance-aware counterpart to [`build_evidence_pack`]: the
+/// archive bytes are identical, and the sidecar lets a recipient
+/// prove the pack's origin and integrity (see [`crate::signing`]).
+/// Returns `(pack_path, sidecar_path)`.
+pub fn build_evidence_pack_signed(
+    artifact: &Artifact,
+    citations: &[Citation],
+    output_path: &str,
+    signer: &crate::signing::ExportSigner,
+) -> Result<(String, std::path::PathBuf)> {
+    build_evidence_pack(artifact, citations, output_path)?;
+    let sidecar = signer.sign_file(std::path::Path::new(output_path))?;
+    Ok((output_path.to_string(), sidecar))
+}
+
 /// Build a ZIP evidence pack in memory and return the raw bytes.
 ///
 /// Used by the "Share to KChat" path so the artifact + citations
@@ -221,6 +239,26 @@ mod tests {
                 "entry {name} must match between disk and in-memory variants"
             );
         }
+    }
+
+    #[test]
+    fn signed_evidence_pack_verifies_against_sidecar() {
+        use crate::signing::{verify_file, ExportSigner};
+
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("evidence.zip");
+        let art = sample_artifact();
+        let cits = sample_citations();
+        let signer = ExportSigner::generate();
+
+        let (pack, sidecar) =
+            build_evidence_pack_signed(&art, &cits, output.to_str().unwrap(), &signer).unwrap();
+        assert_eq!(pack, output.to_str().unwrap());
+        assert_eq!(sidecar, dir.path().join("evidence.zip.sig"));
+        assert!(
+            verify_file(std::path::Path::new(&pack), &sidecar).unwrap(),
+            "freshly signed evidence pack verifies"
+        );
     }
 
     #[test]
