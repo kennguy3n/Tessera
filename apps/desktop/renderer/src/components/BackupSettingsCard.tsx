@@ -49,6 +49,13 @@ export default function BackupSettingsCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Number inputs are edited as free text ("draft") so an in-progress
+  // value like "" or "1" mid-typing never fires IPC or trips the
+  // backend's min/max validation. The draft is committed — parsed,
+  // clamped, and persisted — only on blur / Enter, then re-synced from
+  // the authoritative status below.
+  const [intervalDraft, setIntervalDraft] = useState("");
+  const [retentionDraft, setRetentionDraft] = useState("");
 
   const refresh = useCallback(async () => {
     if (!backup) return;
@@ -99,19 +106,56 @@ export default function BackupSettingsCard({
     [configure],
   );
 
-  const handleRetentionChange = useCallback(
-    (value: number) => {
-      void configure({ backupRetentionCount: value });
-    },
-    [configure],
-  );
+  // Re-sync the editable drafts whenever the authoritative status
+  // changes (initial load, a clamp applied by the main process, or a
+  // config change from elsewhere). Keyed on the numeric fields so an
+  // unrelated status update (e.g. lastBackupError) doesn't clobber an
+  // in-progress edit.
+  const statusInterval = status?.backupIntervalHours;
+  const statusRetention = status?.backupRetentionCount;
+  useEffect(() => {
+    if (statusInterval !== undefined) setIntervalDraft(String(statusInterval));
+  }, [statusInterval]);
+  useEffect(() => {
+    if (statusRetention !== undefined)
+      setRetentionDraft(String(statusRetention));
+  }, [statusRetention]);
 
-  const handleIntervalChange = useCallback(
-    (value: number) => {
-      void configure({ backupIntervalHours: value });
-    },
-    [configure],
-  );
+  // Commit a number-input draft: parse, clamp to [min, max], and persist
+  // only if the value actually changed. An unparseable/empty draft
+  // reverts to the authoritative value rather than sending a bad write.
+  const commitInterval = useCallback(() => {
+    const parsed = Number(intervalDraft);
+    if (!Number.isFinite(parsed) || intervalDraft.trim() === "") {
+      if (statusInterval !== undefined) setIntervalDraft(String(statusInterval));
+      return;
+    }
+    const clamped = Math.max(
+      MIN_BACKUP_INTERVAL_HOURS,
+      Math.min(MAX_BACKUP_INTERVAL_HOURS, Math.floor(parsed)),
+    );
+    setIntervalDraft(String(clamped));
+    if (clamped !== statusInterval) {
+      void configure({ backupIntervalHours: clamped });
+    }
+  }, [intervalDraft, statusInterval, configure]);
+
+  const commitRetention = useCallback(() => {
+    const parsed = Number(retentionDraft);
+    if (!Number.isFinite(parsed) || retentionDraft.trim() === "") {
+      if (statusRetention !== undefined)
+        setRetentionDraft(String(statusRetention));
+      return;
+    }
+    const clamped = Math.max(
+      MIN_BACKUP_RETENTION_COUNT,
+      Math.min(MAX_BACKUP_RETENTION_COUNT, Math.floor(parsed)),
+    );
+    setRetentionDraft(String(clamped));
+    if (clamped !== statusRetention) {
+      void configure({ backupRetentionCount: clamped });
+    }
+  }, [retentionDraft, statusRetention, configure]);
 
   const handleChooseFolder = useCallback(async () => {
     if (!dialog || !backup) return;
@@ -318,12 +362,13 @@ export default function BackupSettingsCard({
             type="number"
             min={MIN_BACKUP_INTERVAL_HOURS}
             max={MAX_BACKUP_INTERVAL_HOURS}
-            value={status?.backupIntervalHours ?? ""}
+            value={intervalDraft}
             disabled={busy || loading}
             style={{ width: 100 }}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (Number.isFinite(v)) handleIntervalChange(Math.floor(v));
+            onChange={(e) => setIntervalDraft(e.target.value)}
+            onBlur={commitInterval}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
             }}
           />
         </label>
@@ -333,12 +378,13 @@ export default function BackupSettingsCard({
             type="number"
             min={MIN_BACKUP_RETENTION_COUNT}
             max={MAX_BACKUP_RETENTION_COUNT}
-            value={status?.backupRetentionCount ?? ""}
+            value={retentionDraft}
             disabled={busy || loading}
             style={{ width: 100 }}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (Number.isFinite(v)) handleRetentionChange(Math.floor(v));
+            onChange={(e) => setRetentionDraft(e.target.value)}
+            onBlur={commitRetention}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
             }}
           />
         </label>

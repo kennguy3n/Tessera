@@ -467,9 +467,14 @@ pub fn export_bundle(
     // lock during compression.
     let tmp_db = out_path.with_extension("bundle-db.partial");
     let _ = fs::remove_file(&tmp_db);
-    backup_db_to_file(source, key, &tmp_db)?;
 
+    // Run the hot copy and everything that follows inside a closure so
+    // the `tmp_db` cleanup below executes on *every* exit path,
+    // including an early failure of `backup_db_to_file` itself. Without
+    // this the partial copy would leak on disk after a failed export
+    // (only reclaimed on the next attempt).
     let result = (|| -> Result<BundleInfo> {
+        backup_db_to_file(source, key, &tmp_db)?;
         let mut entries = Vec::new();
         let db_sha = sha256_file(&tmp_db)?;
         let db_size = fs::metadata(&tmp_db).map_err(Error::Io)?.len();

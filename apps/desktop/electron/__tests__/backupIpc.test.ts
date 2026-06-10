@@ -254,7 +254,7 @@ describe("backup:exportBundle / importBundle", () => {
     const bridge = {
       bridgeImportBundle: vi.fn(() => ({
         stagedDbPath: "/userData/tessera.db.pending-restore",
-        restoredSidecars: ["tessera-config.json"],
+        restoredFiles: ["tessera-config.json"],
       })),
     };
     getBridgeMock.mockReturnValue(bridge);
