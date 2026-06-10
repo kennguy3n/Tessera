@@ -23,6 +23,7 @@ use tessera_substrate::SubstrateManager;
 
 use crate::artifacts;
 use crate::automations;
+use crate::backup;
 use crate::citations;
 use crate::exporter;
 use crate::sources;
@@ -106,7 +107,24 @@ struct AppState {
     /// Acquired LAST in the documented lock order (after
     /// `automation_store`) on the rare path that stacks it with another
     /// store lock.
-    substrate: Mutex<SubstrateManager>,
+    ///
+    /// Wrapped in `Option` so a substrate-open failure degrades
+    /// gracefully: the core app (sources, artifacts, search,
+    /// citations, backup) keeps working and only the additive
+    /// substrate surface returns an "unavailable" error. See
+    /// `init_bridge`.
+    substrate: Mutex<Option<SubstrateManager>>,
+    /// Absolute path to the live SQLCipher database file. Captured at
+    /// `init_bridge` so backup/restore operations can stage a restore
+    /// next to the live file without the renderer having to re-derive
+    /// the path (which must match exactly for the swap to be correct).
+    db_path: String,
+    /// Raw 64-hex SQLCipher key (or `None` for an unencrypted DB),
+    /// captured at `init_bridge`. The backup path re-applies it to the
+    /// destination connection so hot copies are written back encrypted
+    /// under the user's key, and validates a backup decrypts before a
+    /// restore is staged. Never logged or surfaced to the renderer.
+    db_key: Option<String>,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -237,12 +255,30 @@ pub fn init_bridge(
     // Open the additive knowledge substrate. It manages its own
     // SQLCipher sibling files (never the main DB), all derived from the
     // same `db_key`, so a single user secret protects everything and
-    // there is nothing extra to provision. A substrate-open failure
-    // must not break the core app, but in practice it only fails on a
-    // malformed key or unwritable DB directory — both of which would
-    // already have failed the main-DB open above — so we surface it.
-    let substrate = SubstrateManager::open(&db_path, key_ref)
-        .map_err(|e| napi::Error::from_reason(format!("substrate open failed: {e}")))?;
+    // there is nothing extra to provision.
+    //
+    // A substrate-open failure must NOT break the core app: the
+    // substrate's sibling files (`*.substrate-evidence.db`,
+    // `*.substrate-concepts.db`) can become independently corrupted,
+    // fail a schema migration, or hit a file-level lock while the main
+    // DB is perfectly healthy. In that case every core feature
+    // (sources, artifacts, search, citations, backup) must keep working
+    // and only the additive substrate surface is disabled — so we log
+    // and fall back to `None` (degraded mode) instead of propagating the
+    // error up through `initAppState()` to a fatal `setBridgeState
+    // ("error", …)` screen. The substrate N-API exports return a clean
+    // "unavailable" error in this mode, and a later restart re-attempts
+    // the open once the underlying file issue is resolved.
+    let substrate = match SubstrateManager::open(&db_path, key_ref) {
+        Ok(manager) => Some(manager),
+        Err(e) => {
+            eprintln!(
+                "[substrate] open failed; continuing with knowledge substrate disabled \
+                 (core features unaffected): {e}"
+            );
+            None
+        }
+    };
 
     let embedding_progress = source_manager.embedding_progress_handle();
 
@@ -265,6 +301,8 @@ pub fn init_bridge(
             download_progress: Arc::new(sources::DownloadProgressTracker::new()),
             shared_conn: conn,
             substrate: Mutex::new(substrate),
+            db_path,
+            db_key: key_ref.map(str::to_owned),
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
@@ -298,10 +336,21 @@ fn state() -> napi::Result<&'static AppState> {
         .ok_or_else(|| napi::Error::from_reason("Bridge not initialized. Call init_bridge first."))
 }
 
+/// Error surfaced by the substrate N-API exports when the substrate
+/// failed to open at `init_bridge` (graceful-degradation mode). Core
+/// features are unaffected; the additive knowledge surface is simply
+/// disabled until the underlying sibling-file issue is resolved and the
+/// app is restarted.
+pub(crate) const SUBSTRATE_UNAVAILABLE: &str =
+    "knowledge substrate unavailable: it failed to open at startup (core features are \
+     unaffected; restart after resolving the substrate database files)";
+
 /// Crate-internal accessor to the substrate manager's mutex, used by
 /// the `substrate` module's N-API exports. Kept here because
-/// `AppState`'s fields are private to this module.
-pub(crate) fn substrate_lock() -> napi::Result<&'static Mutex<SubstrateManager>> {
+/// `AppState`'s fields are private to this module. The inner `Option`
+/// is `None` when the substrate failed to open (degraded mode); call
+/// sites unwrap it with [`SUBSTRATE_UNAVAILABLE`].
+pub(crate) fn substrate_lock() -> napi::Result<&'static Mutex<Option<SubstrateManager>>> {
     Ok(&state()?.substrate)
 }
 
@@ -327,10 +376,13 @@ pub(crate) fn extract_observations_for_source(source_id: &str) -> napi::Result<u
         mgr.get_chunks_for_source(&tessera_core::SourceId(uuid))
             .map_err(|e| napi::Error::from_reason(e.to_string()))?
     };
-    let mut substrate = s
+    let mut guard = s
         .substrate
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let substrate = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     substrate
         .extract_observations(source_id, &chunks)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -339,7 +391,8 @@ pub(crate) fn extract_observations_for_source(source_id: &str) -> napi::Result<u
 /// Best-effort wrapper around [`extract_observations_for_source`] used
 /// on the auto-ingest path. Indexing is the source of truth, so an
 /// extraction failure is logged and swallowed rather than failing the
-/// user-visible add/reindex.
+/// user-visible add/reindex. When the substrate is in degraded mode
+/// (`None`), this is a silent no-op so source-adds keep working.
 pub(crate) fn run_observations_for_source(source_id: &str) {
     match extract_observations_for_source(source_id) {
         Ok(count) if count > 0 => {
@@ -348,6 +401,106 @@ pub(crate) fn run_observations_for_source(source_id: &str) {
         Ok(_) => {}
         Err(e) => eprintln!("[substrate] observation extraction failed for {source_id}: {e}"),
     }
+}
+
+/// Best-effort substrate cleanup when a Tessera source is removed.
+/// Purges the per-source observations blob and drops every memory
+/// object carrying that `source_id` from the aggregate memory plane, so
+/// a removed source's extracted *content* is no longer recoverable.
+/// (Derived concept-graph nodes are deduplicated/shared and content-free
+/// — see [`SubstrateManager::remove_source`] for why they're retained.)
+/// Run AFTER the core source removal commits and never fails the
+/// user-visible remove. A no-op when the substrate is in degraded mode
+/// (`None`).
+pub(crate) fn remove_source_from_substrate(source_id: &str) {
+    let Ok(s) = state() else { return };
+    let Ok(mut guard) = s.substrate.lock() else {
+        eprintln!("[substrate] cleanup skipped for {source_id}: substrate lock poisoned");
+        return;
+    };
+    let Some(substrate) = guard.as_mut() else {
+        return;
+    };
+    if let Err(e) = substrate.remove_source(source_id) {
+        eprintln!("[substrate] cleanup failed for removed source {source_id}: {e}");
+    }
+}
+
+// --- Backup & recovery ---
+//
+// These wrappers forward the SQLCipher key and live database path
+// captured at `init_bridge` so the renderer never has to handle the
+// key material or re-derive the on-disk path. Hot copies run against
+// the same `shared_conn` every other store writes through, so the
+// SQLite Online Backup API observes a transactionally-consistent
+// snapshot without blocking the single writer for more than the copy
+// itself.
+
+#[napi]
+/// Create a hot backup of the live database into `backup_dir`.
+/// Returns metadata describing the new backup file.
+pub fn bridge_create_backup(backup_dir: String) -> napi::Result<backup::BackupInfo> {
+    let s = state()?;
+    backup::create(&s.shared_conn, s.db_key.as_deref(), &backup_dir).map_err(backup::to_napi)
+}
+
+#[napi]
+/// List existing backups in `backup_dir`, newest first. A missing
+/// directory yields an empty list rather than an error.
+pub fn bridge_list_backups(backup_dir: String) -> napi::Result<Vec<backup::BackupInfo>> {
+    backup::list(&backup_dir).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Delete backups in `backup_dir` beyond the `keep` most recent
+/// (always keeps at least one). Returns the filenames removed.
+pub fn bridge_prune_backups(backup_dir: String, keep: u32) -> napi::Result<Vec<String>> {
+    backup::prune(&backup_dir, keep).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Validate that `backup_path` decrypts under the live key, then stage
+/// it as a `*.pending-restore` sibling of the live database. The swap
+/// itself happens at next launch via `bridge_apply_pending_restore`.
+/// Returns the staged file path.
+pub fn bridge_stage_restore(backup_path: String) -> napi::Result<String> {
+    let s = state()?;
+    backup::stage_restore(&backup_path, &s.db_path, s.db_key.as_deref()).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Apply a previously-staged restore for the database at `db_path` by
+/// swapping the pending file into place. Returns `true` when a swap
+/// occurred. Called at startup BEFORE `init_bridge` opens the
+/// database, so it deliberately does not depend on bridge state.
+pub fn bridge_apply_pending_restore(db_path: String) -> napi::Result<bool> {
+    backup::apply_pending_restore(&db_path).map_err(backup::to_napi)
+}
+
+#[napi]
+/// Export a full workspace bundle (hot DB copy + caller-supplied
+/// sidecar files) into a single `.tessera-backup` archive at
+/// `out_path`. Returns the archive path, size, and entry count.
+pub fn bridge_export_bundle(
+    out_path: String,
+    extras: Vec<backup::BundleFileEntry>,
+) -> napi::Result<backup::BundleInfo> {
+    let s = state()?;
+    backup::export_bundle(&s.shared_conn, s.db_key.as_deref(), extras, &out_path)
+        .map_err(backup::to_napi)
+}
+
+#[napi]
+/// Import a workspace bundle from `bundle_path`: verify every entry's
+/// SHA-256 against the manifest, stage the contained database for the
+/// next launch, and atomically restore the matched sidecar `targets`.
+pub fn bridge_import_bundle(
+    bundle_path: String,
+    targets: Vec<backup::BundleRestoreTarget>,
+) -> napi::Result<backup::BundleImportReport> {
+    let s = state()?;
+    backup::import_bundle(&bundle_path, &s.db_path, targets, s.db_key.as_deref())
+        .map_err(backup::to_napi)
 }
 
 // --- Sources ---
@@ -602,6 +755,14 @@ pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_removed(&source_id);
     }
+    // Additive: purge the removed source's knowledge-substrate
+    // artifacts (per-source observations blob + its memory objects) so
+    // a deleted source leaves no recoverable extracted content behind.
+    // Runs AFTER the core removal commits, acquires the `substrate`
+    // lock last (sequential, never overlapping `source_manager`), and
+    // is best-effort — a substrate cleanup failure (or degraded mode)
+    // must not fail the user-visible source removal.
+    remove_source_from_substrate(&source_id);
     Ok(())
 }
 

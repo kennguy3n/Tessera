@@ -12,6 +12,7 @@ import { registerAppLockHandlers } from "./appLock";
 import { registerAutomationsHandlers } from "./automations";
 import { registerArtifactsHandlers } from "./artifacts";
 import { registerAuditHandlers } from "./audit";
+import { registerBackupHandlers } from "./backup";
 import { registerCitationsHandlers } from "./citations";
 import { registerConnectorsLegacyHandlers } from "./connectorsLegacy";
 import { registerDiagnosticsHandlers } from "./diagnostics";
@@ -49,6 +50,10 @@ export function registerAllIpcHandlers(): void {
   registerSubstrateHandlers();
   registerAutomationsHandlers();
   registerDialogHandlers();
+  // Local backup & recovery (`backup:*`). Registered after the dialog
+  // handlers it leans on (`dialog:openDirectory` for the folder
+  // picker); ordering is cosmetic since registration is idempotent.
+  registerBackupHandlers();
   registerSlidesHandlers();
   registerKchatHandlers();
   registerAuditHandlers();

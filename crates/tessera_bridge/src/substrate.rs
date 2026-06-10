@@ -12,7 +12,7 @@ use napi_derive::napi;
 
 use tessera_substrate::{DecaySweepSummary, MemoryRecord, SynthesisSummary};
 
-use crate::napi_exports::{extract_observations_for_source, substrate_lock};
+use crate::napi_exports::{extract_observations_for_source, substrate_lock, SUBSTRATE_UNAVAILABLE};
 
 /// A memory object as surfaced to the renderer.
 #[napi(object)]
@@ -135,9 +135,12 @@ pub fn bridge_extract_observations(source_id: String) -> napi::Result<u32> {
 /// UUID; `null`/omitted uses the single default scope.
 #[napi]
 pub fn bridge_get_memories(scope: Option<String>) -> napi::Result<Vec<SubstrateMemory>> {
-    let manager = substrate_lock()?
+    let guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_ref()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     let records = manager
         .list_memories(scope.as_deref())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -148,9 +151,12 @@ pub fn bridge_get_memories(scope: Option<String>) -> napi::Result<Vec<SubstrateM
 /// `Candidate` to `Reinforced`. Returns the updated memory.
 #[napi]
 pub fn bridge_pin_memory(id: String) -> napi::Result<SubstrateMemory> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .pin_memory(&id)
         .map(SubstrateMemory::from)
@@ -161,9 +167,12 @@ pub fn bridge_pin_memory(id: String) -> napi::Result<SubstrateMemory> {
 /// updated memory.
 #[napi]
 pub fn bridge_unpin_memory(id: String) -> napi::Result<SubstrateMemory> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .unpin_memory(&id)
         .map(SubstrateMemory::from)
@@ -174,9 +183,12 @@ pub fn bridge_unpin_memory(id: String) -> napi::Result<SubstrateMemory> {
 /// recoverable from the persisted memory plane.
 #[napi]
 pub fn bridge_forget_memory(id: String) -> napi::Result<()> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .forget_memory(&id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -191,9 +203,12 @@ pub fn bridge_get_concept_graph(
     scope: Option<String>,
     max_nodes: Option<u32>,
 ) -> napi::Result<String> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .concept_graph_json(scope.as_deref(), max_nodes.map(|n| n as usize))
         .map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -204,9 +219,12 @@ pub fn bridge_get_concept_graph(
 /// archived. Called on a 6-hour timer by the Electron main process.
 #[napi]
 pub fn bridge_run_decay_sweep() -> napi::Result<SubstrateDecayReport> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .run_decay_sweep()
         .map(SubstrateDecayReport::from)
@@ -219,9 +237,12 @@ pub fn bridge_run_decay_sweep() -> napi::Result<SubstrateDecayReport> {
 /// uses the default scope.
 #[napi]
 pub fn bridge_trigger_synthesis(scope: Option<String>) -> napi::Result<SubstrateSynthesis> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .trigger_synthesis(scope.as_deref())
         .map(SubstrateSynthesis::from)

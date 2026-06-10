@@ -1166,7 +1166,167 @@ export interface SettingsData {
    * Settings → General; mirrors `AppConfig.closeToTray`.
    */
   closeToTray: boolean;
+  /**
+   * When `true` (default) the main process runs a periodic hot backup
+   * of the encrypted database on the {@link backupIntervalHours}
+   * cadence, pruning to {@link backupRetentionCount}. Flipping it off
+   * (Settings → Backup) stops the timer; existing backups are kept.
+   * Mirrors `AppConfig.autoBackup`.
+   */
+  autoBackup: boolean;
+  /**
+   * Absolute directory the automatic + manual backups are written to.
+   * Empty string means "use the built-in default"
+   * (`<userData>/backups`), which the main process resolves at
+   * runtime since `userData` is not known to the renderer. Chosen via
+   * the native folder picker in Settings → Backup. Mirrors
+   * `AppConfig.backupDir`.
+   */
+  backupDir: string;
+  /**
+   * Interval in hours between automatic backups. Bounded to
+   * `[1, 168]` (1 hour … 1 week) at the IPC boundary. Mirrors
+   * `AppConfig.backupIntervalHours`.
+   */
+  backupIntervalHours: number;
+  /**
+   * Number of most-recent backups to keep; older ones are pruned
+   * after each successful backup. Bounded to `[1, 30]`. Mirrors
+   * `AppConfig.backupRetentionCount`.
+   */
+  backupRetentionCount: number;
 }
+
+// -----------------------------------------------------------------
+// Backup & recovery
+// -----------------------------------------------------------------
+
+/**
+ * Metadata for a single backup file on disk. Mirrors the Rust
+ * `tessera_bridge::backup::BackupInfo`. `createdAtMs` /
+ * `sizeBytes` are plain numbers (within `Number.MAX_SAFE_INTEGER`
+ * for any realistic timestamp / file size).
+ */
+export interface BackupInfo {
+  /** Absolute path to the backup file. */
+  path: string;
+  /** Bare filename (no directory component). */
+  fileName: string;
+  /** Creation time in milliseconds since the Unix epoch. */
+  createdAtMs: number;
+  /** Size of the backup file in bytes. */
+  sizeBytes: number;
+}
+
+/**
+ * Result of a bundle export. Mirrors
+ * `tessera_bridge::backup::BundleInfo`.
+ */
+export interface BundleInfo {
+  /** Absolute path to the written `.tessera-backup` archive. */
+  path: string;
+  /** Size of the archive in bytes. */
+  sizeBytes: number;
+  /** Number of entries (database + sidecars) packed. */
+  entryCount: number;
+}
+
+/**
+ * Outcome of a bundle import. Mirrors
+ * `tessera_bridge::backup::BundleImportReport`.
+ */
+export interface BundleImportReport {
+  /** Absolute path of the staged `*.pending-restore` database file. */
+  stagedDbPath: string;
+  /** Absolute paths of the sidecar files replaced on disk. */
+  restoredFiles: string[];
+}
+
+/**
+ * A sidecar file to fold into a bundle on export. Mirrors
+ * `tessera_bridge::backup::BundleFileEntry`.
+ */
+export interface BundleFileEntry {
+  /** Logical role tag recorded in the manifest (e.g. `"settings"`). */
+  role: string;
+  /** Stable name used inside the archive (no directory component). */
+  arcname: string;
+  /** Absolute path of the file to read. */
+  path: string;
+}
+
+/**
+ * A sidecar file target to restore on import, matched by arcname.
+ * Mirrors `tessera_bridge::backup::BundleRestoreTarget`.
+ */
+export interface BundleRestoreTarget {
+  /** Archive name to look for (matches a {@link BundleFileEntry.arcname}). */
+  arcname: string;
+  /** Absolute path the file is written to (atomically) on import. */
+  path: string;
+}
+
+/**
+ * Effective backup configuration + scheduler health, returned by
+ * `backup:status` and `backup:configure`. Combines the persisted
+ * `AppConfig` backup fields (with `backupDir` already resolved to the
+ * absolute directory in use) with live scheduler state so the Settings
+ * → Backup panel and the HomePage indicator can render without a
+ * second round-trip.
+ */
+export interface BackupStatus {
+  /** Whether the automatic-backup scheduler is enabled. */
+  autoBackup: boolean;
+  /**
+   * Absolute directory backups are written to — the resolved path, not
+   * the empty-string sentinel. The renderer shows this verbatim.
+   */
+  backupDir: string;
+  /** Interval in hours between automatic backups. */
+  backupIntervalHours: number;
+  /** Number of most-recent backups retained. */
+  backupRetentionCount: number;
+  /** Whether the interval timer is currently armed. */
+  schedulerRunning: boolean;
+  /** Whether a backup is in flight right now. */
+  backupInFlight: boolean;
+  /**
+   * Epoch-ms timestamp of the last successful backup observed by the
+   * scheduler this session, or `null` if none has run yet. This is the
+   * in-memory scheduler view; the authoritative "newest backup on disk"
+   * comes from `backup:list`.
+   */
+  lastBackupAt: number | null;
+  /** Message from the last failed backup this session, or `null`. */
+  lastBackupError: string | null;
+}
+
+/**
+ * Result of staging a single-file restore (`backup:restore`) or a
+ * bundle import (`backup:importBundle`). Both stage the database for a
+ * swap at next launch rather than mutating the live DB, so
+ * `requiresRestart` is always `true` — the renderer uses it to drive
+ * the "restart to finish restoring" confirmation.
+ */
+export interface BackupRestoreResult {
+  /** Absolute path of the staged `*.pending-restore` database file. */
+  stagedPath: string;
+  /** Always `true`: the swap happens at the next launch. */
+  requiresRestart: boolean;
+}
+
+/** Lower bound (inclusive) on {@link SettingsData.backupRetentionCount}. */
+export const MIN_BACKUP_RETENTION_COUNT = 1;
+/** Upper bound (inclusive) on {@link SettingsData.backupRetentionCount}. */
+export const MAX_BACKUP_RETENTION_COUNT = 30;
+/** Lower bound (inclusive) on {@link SettingsData.backupIntervalHours}. */
+export const MIN_BACKUP_INTERVAL_HOURS = 1;
+/** Upper bound (inclusive) on {@link SettingsData.backupIntervalHours} (1 week). */
+export const MAX_BACKUP_INTERVAL_HOURS = 168;
+/** Default automatic-backup cadence, in hours. */
+export const DEFAULT_BACKUP_INTERVAL_HOURS = 24;
+/** Default number of backups retained. */
+export const DEFAULT_BACKUP_RETENTION_COUNT = 7;
 
 /**
  * Resource-management profiles. `"lightweight"` enforces single-
@@ -2684,6 +2844,70 @@ export interface DialogApi {
    * dialog, otherwise `{ canceled: false, filePath: <absolute path> }`.
    */
   pickImage: (options?: OpenImageDialogOptions) => Promise<OpenImageDialogResult>;
+  /**
+   * Open a native folder picker (Settings → Backup "choose folder").
+   * Returns `{ canceled: true, filePath: null }` if dismissed, else
+   * `{ canceled: false, filePath: <absolute directory> }`.
+   */
+  openDirectory: (
+    options?: OpenDirectoryDialogOptions,
+  ) => Promise<OpenImageDialogResult>;
+  /**
+   * Open a native file picker locked to `.tessera-backup` archives
+   * (Settings → Backup "Import workspace bundle"). Same result shape as
+   * {@link pickImage}: `{ canceled: true, filePath: null }` if
+   * dismissed, else `{ canceled: false, filePath: <absolute path> }`.
+   */
+  openBundle: (
+    options?: OpenBundleDialogOptions,
+  ) => Promise<OpenImageDialogResult>;
+}
+
+/** Options for `dialog:openDirectory`. Only the title is exposed. */
+export interface OpenDirectoryDialogOptions {
+  title?: string;
+}
+
+/** Options for `dialog:openBundle`. Only the title is exposed. */
+export interface OpenBundleDialogOptions {
+  title?: string;
+}
+
+/**
+ * Renderer-facing API for the local backup & recovery system
+ * (`backup:*` channels). Restores never mutate the live database — they
+ * stage a file that is swapped in at the next launch — so the
+ * restore/import calls resolve with `requiresRestart: true` and the UI
+ * prompts for a relaunch.
+ */
+export interface BackupApi {
+  /** Run a hot backup now; resolves with the new file's metadata. */
+  create: () => Promise<BackupInfo>;
+  /** List existing backups, newest first. */
+  list: () => Promise<BackupInfo[]>;
+  /** Effective config + scheduler health in one round-trip. */
+  status: () => Promise<BackupStatus>;
+  /** Stage a single backup file for restore at next launch. */
+  restore: (backupPath: string) => Promise<BackupRestoreResult>;
+  /** Patch the backup-scheduler config; resolves with the new status. */
+  configure: (patch: BackupConfigureInput) => Promise<BackupStatus>;
+  /** Export a full `.tessera-backup` workspace archive to `outPath`. */
+  exportBundle: (outPath: string) => Promise<BundleInfo>;
+  /** Verify + stage a `.tessera-backup` archive for restore at launch. */
+  importBundle: (bundlePath: string) => Promise<BundleImportReport>;
+}
+
+/**
+ * Renderer-side mirror of the `backup:configure` payload. Every field
+ * optional so the UI can PATCH a single control. Kept in `shared/` so
+ * the preload and renderer agree on the shape without importing from
+ * `electron/`.
+ */
+export interface BackupConfigureInput {
+  autoBackup?: boolean;
+  backupDir?: string;
+  backupIntervalHours?: number;
+  backupRetentionCount?: number;
 }
 
 /**
@@ -2831,6 +3055,8 @@ export interface TesseraApi {
   substrate: SubstrateApi;
   automations: AutomationApi;
   dialog: DialogApi;
+  /** Local backup & recovery surface (`backup:*`). */
+  backup: BackupApi;
   slides: SlidesApi;
   updates: UpdatesApi;
   kchat: KchatApi;

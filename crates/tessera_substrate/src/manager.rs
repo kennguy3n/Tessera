@@ -250,6 +250,58 @@ impl SubstrateManager {
         self.save_memories(scope, &memories)
     }
 
+    /// Purge every substrate artifact derived from a Tessera source when
+    /// that source is removed, so a deleted source leaves no recoverable
+    /// extracted content behind. Idempotent: a source with no substrate
+    /// data is a clean no-op.
+    ///
+    /// In the single-user default scope this:
+    /// 1. destroys the per-source raw observations blob
+    ///    (`tessera.observations:<id>`). The evidence store exposes no
+    ///    single-`kind` row delete, so the blob is overwritten with an
+    ///    empty AEAD-sealed payload — `INSERT OR REPLACE` discards the
+    ///    prior ciphertext, making the extracted observation text
+    ///    unrecoverable; and
+    /// 2. drops every `MemoryObject` in the aggregate memory plane whose
+    ///    `source_id` metadata points at the removed source, so those
+    ///    memories no longer surface in [`Self::list_memories`].
+    ///
+    /// The derived concept-graph nodes — a structural `source:<id>` node
+    /// (whose label is just the source id the user already knows) and
+    /// entity-label nodes that are *deduplicated and shared* across
+    /// sources — are intentionally left in place: they carry no document
+    /// content, an entity node may still be referenced by other present
+    /// sources, and the upstream `PersistentConceptGraph` exposes no
+    /// per-source persistent node deletion. They age out through the
+    /// normal graph lifecycle. (Purging them safely would require
+    /// per-source provenance + a persistent node-delete API upstream.)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstrateError`] on store or (de)serialization failure.
+    pub fn remove_source(&mut self, source_id: &str) -> Result<()> {
+        let scope = self.default_scope;
+
+        // 1. Destroy the per-source raw observations blob, but only if
+        //    one was ever written — avoids leaving a spurious empty row
+        //    for a source that never produced observations.
+        let obs_kind = observations_kind(source_id);
+        if self.evidence.load_memory_blob(scope, &obs_kind)?.is_some() {
+            let empty = serde_json::to_vec(&Vec::<Observation>::new())?;
+            self.evidence.save_memory_blob(scope, &obs_kind, &empty)?;
+        }
+
+        // 2. Drop every memory carrying this source_id from the plane.
+        let mut memories = self.load_memories(scope)?;
+        let before = memories.len();
+        memories.retain(|m| memory_source_id(m).as_deref() != Some(source_id));
+        if memories.len() != before {
+            self.save_memories(scope, &memories)?;
+        }
+
+        Ok(())
+    }
+
     /// Recompute retention scores for every memory and apply decay
     /// transitions (`Candidate -> Archived`, `Superseded -> Archived`).
     ///

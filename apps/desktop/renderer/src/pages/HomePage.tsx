@@ -7,6 +7,7 @@ import Button from "../components/Button";
 import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
 import OnboardingWizard from "../components/OnboardingWizard";
+import BackupStatusIndicator from "../components/BackupStatusIndicator";
 import ContextMenu, {
   type ContextMenuItem,
 } from "../components/ContextMenu";
@@ -188,6 +189,8 @@ export default function HomePage() {
           Settings
         </Button>
       </section>
+
+      <BackupStatusIndicator onOpenSettings={() => navigate("/settings")} />
 
       <section
         aria-label="Sources summary"

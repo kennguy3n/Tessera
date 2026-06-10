@@ -195,6 +195,85 @@ fn pin_unpin_forget_lifecycle() {
 }
 
 #[test]
+fn remove_source_purges_only_that_sources_memories() {
+    let mut manager = SubstrateManager::open(":memory:", Some(TEST_KEY_HEX)).expect("open");
+    let source_a = "a1111111-1111-4111-8111-111111111111";
+    let source_b = "b2222222-2222-4222-8222-222222222222";
+
+    manager
+        .extract_observations(source_a, &sample_chunks())
+        .unwrap();
+    let after_a = manager.list_memories(None).expect("list").len();
+    manager
+        .extract_observations(source_b, &sample_chunks())
+        .unwrap();
+    let only_b = manager.list_memories(None).expect("list").len() - after_a;
+    assert!(only_b > 0, "source B must contribute memories");
+
+    // Removing source A drops exactly A's memories, leaving B's intact.
+    manager.remove_source(source_a).expect("remove source a");
+    let remaining = manager.list_memories(None).expect("list");
+    assert_eq!(
+        remaining.len(),
+        only_b,
+        "only source B's memories should remain after removing A"
+    );
+    assert!(
+        remaining
+            .iter()
+            .all(|m| m.source_id.as_deref() == Some(source_b)),
+        "no memory attributed to the removed source may survive"
+    );
+}
+
+#[test]
+fn remove_source_is_idempotent_and_safe_for_unknown_source() {
+    let mut manager = SubstrateManager::open(":memory:", Some(TEST_KEY_HEX)).expect("open");
+    let source_id = "c3333333-3333-4333-8333-333333333333";
+    manager
+        .extract_observations(source_id, &sample_chunks())
+        .unwrap();
+
+    manager.remove_source(source_id).expect("first remove");
+    assert!(
+        manager.list_memories(None).expect("list").is_empty(),
+        "the only source's memories must all be gone"
+    );
+
+    // A second remove (now a no-op) and removing a source that never
+    // had any substrate data must both succeed cleanly.
+    manager.remove_source(source_id).expect("idempotent remove");
+    manager
+        .remove_source("d4444444-4444-4444-8444-444444444444")
+        .expect("removing an unknown source is a clean no-op");
+}
+
+#[test]
+fn removed_source_artifacts_stay_gone_across_reopen() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let main_db = dir.path().join("tessera.db");
+    let source_id = "e5555555-5555-4555-8555-555555555555";
+
+    {
+        let mut manager =
+            SubstrateManager::open(main_db.to_str().unwrap(), Some(TEST_KEY_HEX)).expect("open");
+        manager
+            .extract_observations(source_id, &sample_chunks())
+            .unwrap();
+        manager.remove_source(source_id).expect("remove");
+    }
+
+    // Reopen with the same key: the purge must be durable, not just an
+    // in-memory drop.
+    let manager =
+        SubstrateManager::open(main_db.to_str().unwrap(), Some(TEST_KEY_HEX)).expect("reopen");
+    assert!(
+        manager.list_memories(None).expect("list").is_empty(),
+        "a removed source's memories must not resurrect after reopen"
+    );
+}
+
+#[test]
 fn fresh_memories_survive_a_decay_sweep() {
     let mut manager = SubstrateManager::open(":memory:", Some(TEST_KEY_HEX)).expect("open");
     let source_id = "88888888-8888-4888-8888-888888888888";

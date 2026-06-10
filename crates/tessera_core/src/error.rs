@@ -70,6 +70,12 @@ pub enum Error {
     /// Appending to or reading the audit log failed.
     Audit(String),
 
+    #[error("Backup error: {0}")]
+    /// A backup/restore operation failed: hot-copy via the SQLite
+    /// Online Backup API, archive (de)serialization, manifest
+    /// validation, or a restore-staging file swap.
+    Backup(String),
+
     #[error("Not found: {0}")]
     /// A generic "entity not found" for cases without a dedicated
     /// variant.
