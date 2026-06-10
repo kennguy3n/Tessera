@@ -41,24 +41,42 @@ vi.mock("../appState", () => ({
 // short-circuits to null without touching the filesystem or network.
 // `parseModelCapability` must round-trip "text" so `coerceCapability`
 // accepts the input before the rate-limit gate is reached.
-vi.mock("../modelManagement", () => ({
-  ALL_MODEL_CAPABILITIES: ["text", "vision", "imagegen"],
-  parseModelCapability: (s: string) =>
-    s === "text" || s === "vision" || s === "imagegen" ? s : null,
-  detectPlatformInfo: () => ({ platform: "linux-x64", tier: "mid" }),
-  detectComputeBackends: () => [],
-  loadManifest: () => ({ models: [] }),
-  resetManifestCache: () => undefined,
-  recommendModel: () => null,
-  downloadModel: vi.fn(),
-  deleteCurrentModel: vi.fn(),
-  getInstalledModel: vi.fn(),
-  getInstalledModels: vi.fn(),
-  isCapabilityAvailable: vi.fn(),
-  isModelInstalled: vi.fn(),
-  listModelsForPlatform: () => [],
-  planDownload: vi.fn(),
-}));
+vi.mock("../modelManagement", () => {
+  // `modelDownloadControl` (loaded transitively via `runtime.ts`) imports
+  // `DownloadAbortedError` from this module; the mock must export it so the
+  // binding is a real constructor rather than `undefined`. Declared inside
+  // the factory because `vi.mock` is hoisted above file-scope declarations.
+  class FakeAbortedError extends Error {
+    constructor(message = "Download aborted") {
+      super(message);
+      this.name = "DownloadAbortedError";
+    }
+  }
+  return {
+    ALL_MODEL_CAPABILITIES: ["text", "vision", "imagegen"],
+    DownloadAbortedError: FakeAbortedError,
+    isDownloadAbortedError: (err: unknown) =>
+      err instanceof FakeAbortedError ||
+      (typeof err === "object" &&
+        err !== null &&
+        (err as { name?: unknown }).name === "AbortError"),
+    parseModelCapability: (s: string) =>
+      s === "text" || s === "vision" || s === "imagegen" ? s : null,
+    detectPlatformInfo: () => ({ platform: "linux-x64", tier: "mid" }),
+    detectComputeBackends: () => [],
+    loadManifest: () => ({ models: [] }),
+    resetManifestCache: () => undefined,
+    recommendModel: () => null,
+    downloadModel: vi.fn(),
+    deleteCurrentModel: vi.fn(),
+    getInstalledModel: vi.fn(),
+    getInstalledModels: vi.fn(),
+    isCapabilityAvailable: vi.fn(),
+    isModelInstalled: vi.fn(),
+    listModelsForPlatform: () => [],
+    planDownload: vi.fn(),
+  };
+});
 
 // `progressEmitter` wraps this; a no-op sender keeps the handler body
 // from reaching into a real BrowserWindow.
