@@ -32,6 +32,7 @@ import {
   type ResolvedModel,
 } from "../modelManagement";
 import { assertId } from "./validate";
+import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { safeRendererSender } from "./model";
 
 function userDataDir(): string {
@@ -363,6 +364,19 @@ export function registerRuntimeHandlers(): void {
     "runtime:downloadRecommended",
     async (event, capability: unknown) => {
       const cap = coerceCapability(capability);
+      // Defense-in-depth at the IPC boundary (the rate limiter's stated
+      // purpose): bound *renderer-initiated* starts to 1 / 5s so a buggy
+      // or compromised renderer can't hammer this channel with cheap-but-
+      // unbounded manifest reads + install-state stats that all funnel
+      // into the per-slot download lock. Legitimate UI flows never trip
+      // it — the banner's "Retry" button hides itself the moment it's
+      // clicked (status flips to "downloading"), and the first-launch
+      // auto-download calls `downloadRecommendedModel` directly in the
+      // main process, bypassing this handler entirely.
+      defaultRateLimiter.consume(
+        "runtime:downloadRecommended",
+        RATE_LIMIT_PROFILES["runtime:downloadRecommended"],
+      );
       return downloadRecommendedModel(cap, progressEmitter(event));
     },
   );

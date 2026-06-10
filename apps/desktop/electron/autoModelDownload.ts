@@ -234,7 +234,18 @@ export async function maybeAutoDownloadRecommendedModel(
   });
   try {
     const download = deps.download ?? downloadRecommendedModel;
-    await download(AUTO_DOWNLOAD_CAPABILITY, broadcast);
+    const record = await download(AUTO_DOWNLOAD_CAPABILITY, broadcast);
+    if (!record) {
+      // The gate phase resolved a candidate, but the download path
+      // returned no record — e.g. a manifest race that re-resolved to
+      // no candidate, or an injected `download` dep that legitimately
+      // declines (cancelled, disk-full). Nothing was fetched and no
+      // completion event was emitted, so reporting "downloaded" would
+      // be a lie. Treat it as "no candidate"; this is NOT a surfaced
+      // failure, so we stay silent (no `runtime:downloadError`).
+      log.info("model.autoDownload.noCandidate", { modelId: recommended.id });
+      return "no-candidate";
+    }
     log.info("model.autoDownload.done", { modelId: recommended.id });
     return "downloaded";
   } catch (err) {

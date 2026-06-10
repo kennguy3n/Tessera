@@ -188,6 +188,17 @@ describe("maybeAutoDownloadRecommendedModel", () => {
     });
   });
 
+  it("reports no-candidate (not downloaded) when the download resolves to null", async () => {
+    // The gate phase resolved a candidate, but the download path
+    // returns null (manifest race, or a dep that declines). We must
+    // NOT claim "downloaded": nothing was fetched and no completion
+    // event was emitted. It is also not a surfaced failure.
+    const d = deps({ download: vi.fn().mockResolvedValue(null) });
+    const outcome = await maybeAutoDownloadRecommendedModel(d);
+    expect(outcome).toBe("no-candidate");
+    expect(d.broadcastError).not.toHaveBeenCalled();
+  });
+
   it("fails silently (no error broadcast) when gating itself throws", async () => {
     const d = deps({
       loadConfig: () => {
