@@ -10,25 +10,74 @@ use tessera_core::error::{Error, Result};
 use crate::image_metadata::{extract_image_metadata, is_image_extension};
 use crate::pdf_extractor::extract_pdf_text;
 
-/// process-wide rayon pool sized to `num_cpus / 2`
-/// (min 1, max 8) so bulk extraction parallelises across CPU cores
-/// without starving the rest of the app — most notably the UI thread,
-/// the file watcher's notify loop, and the model sidecar's HTTP
-/// transport. The pool is initialised once on first use and reused
-/// across every subsequent bulk-extract call to avoid the per-call
-/// startup cost of a fresh `ThreadPoolBuilder::build()`.
+/// Resource profile that scales the extraction thread pool. Selected
+/// once at process start from the `TESSERA_RESOURCE_MODE` environment
+/// variable (set by the Electron main process from the persisted
+/// `resourceMode` setting). Defaults to [`ResourceMode::Lightweight`]
+/// — the safest choice for a backgrounded desktop app — when the
+/// variable is absent or unrecognised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceMode {
+    /// Reclaim-first profile: indexing yields most of the machine to
+    /// the UI / watcher / sidecar. Thread pool ≈ `num_cpus / 4`.
+    Lightweight,
+    /// Throughput-first profile: matches the historical sizing of
+    /// `num_cpus / 2` for users who opted into a heavier footprint.
+    Performance,
+}
+
+impl ResourceMode {
+    /// Parse the `TESSERA_RESOURCE_MODE` env var. Unset / unknown /
+    /// non-UTF-8 all fall back to [`ResourceMode::Lightweight`] so a
+    /// misconfiguration can never accidentally select the heavier
+    /// profile.
+    fn from_env() -> Self {
+        match std::env::var("TESSERA_RESOURCE_MODE") {
+            Ok(v) if v.eq_ignore_ascii_case("performance") => Self::Performance,
+            _ => Self::Lightweight,
+        }
+    }
+}
+
+/// Pure, host-independent pool sizing so the clamp logic can be unit
+/// tested without spawning real threads or mutating process env.
 ///
-/// Pool sizing rationale:
+/// Sizing rationale:
 ///
-///   - **Min 1**: `num_cpus() / 2` is `0` on a uniprocessor machine,
+///   - **Lightweight** (`num_cpus / 4`, min 1, max 4): when Tessera
+///     should "feel like Slack/Telegram", a bulk index must not
+///     monopolise the box. Quartering the cores (vs halving) leaves
+///     the UI thread, the file-watcher notify loop, and the model
+///     sidecar's HTTP transport with comfortable headroom even
+///     mid-index. Capped at 4 because beyond that the FS page cache
+///     thrash (each worker `read()`s a different file) erases the
+///     marginal throughput gain on a backgrounded app.
+///   - **Performance** (`num_cpus / 2`, min 1, max 8): the historical
+///     sizing, preserved verbatim for users who opt into a heavier
+///     footprint.
+///   - **Min 1**: integer division floors to `0` on 1–3 core hosts,
 ///     and rayon rejects `num_threads(0)`. The min-1 clamp keeps the
 ///     pool valid on every host.
-///   - **Max 8**: extraction is I/O-bound for the large-PDF case and
-///     CPU-bound for the small-Markdown case. On 32+ core servers,
-///     spinning up 16+ workers thrashes the FS page cache (each
-///     thread `read()`s a different file simultaneously) without
-///     producing a proportional throughput gain. The cap balances
-///     the two regimes.
+fn target_extraction_threads(available: usize, mode: ResourceMode) -> usize {
+    let available = available.max(1);
+    match mode {
+        ResourceMode::Lightweight => (available / 4).clamp(1, 4),
+        ResourceMode::Performance => (available / 2).clamp(1, 8),
+    }
+}
+
+/// process-wide rayon pool sized by [`target_extraction_threads`] so
+/// bulk extraction parallelises across CPU cores without starving the
+/// rest of the app. The pool is initialised once on first use and
+/// reused across every subsequent bulk-extract call to avoid the
+/// per-call startup cost of a fresh `ThreadPoolBuilder::build()`.
+///
+/// Because the pool is built once and memoised, the resource mode is
+/// effectively latched at the first bulk extract of the process
+/// lifetime. A live Lightweight↔Performance toggle therefore takes
+/// effect on the next launch — the dynamic, within-session lever for
+/// memory pressure is the Electron RSS watchdog (LW-7), which gates
+/// *admission* of new bulk work rather than resizing a live pool.
 ///
 /// Returns `None` if pool initialisation fails (rayon throws on
 /// thread-spawn failure, which only happens on hosts with severely
@@ -38,7 +87,7 @@ fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
     static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
         let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        let target = (available / 2).clamp(1, 8);
+        let target = target_extraction_threads(available, ResourceMode::from_env());
         rayon::ThreadPoolBuilder::new()
             .num_threads(target)
             .thread_name(|i| format!("tessera-extract-{i}"))
@@ -55,9 +104,11 @@ fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
 /// indexer (`index_folder_with_progress`) when it has a batch of
 /// pre-walked paths to process. The parallel pass:
 ///
-///   1. Spawns work onto the bounded `extraction_pool()`, capped at
-///      `num_cpus / 2` threads so the UI / watcher / sidecar threads
-///      keep CPU headroom.
+///   1. Spawns work onto the bounded `extraction_pool()`, whose size is
+///      mode-gated (LW-7): `num_cpus / 4` capped at 4 in the default
+///      lightweight mode, `num_cpus / 2` capped at 8 in performance mode
+///      (see `target_extraction_threads`). Either way the pool leaves the
+///      UI / watcher / sidecar threads CPU headroom.
 ///   2. Preserves input order — the returned `Vec` is indexed
 ///      identically to the input slice — so callers that walk the
 ///      vector alongside their own per-path metadata (file id,
@@ -383,6 +434,50 @@ fn extract_xlsx(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn lightweight_quarters_cores_capped_at_four() {
+        // num_cpus / 4, clamped to [1, 4].
+        assert_eq!(target_extraction_threads(1, ResourceMode::Lightweight), 1);
+        assert_eq!(target_extraction_threads(3, ResourceMode::Lightweight), 1);
+        assert_eq!(target_extraction_threads(4, ResourceMode::Lightweight), 1);
+        assert_eq!(target_extraction_threads(8, ResourceMode::Lightweight), 2);
+        assert_eq!(target_extraction_threads(16, ResourceMode::Lightweight), 4);
+        // Cap holds on a big server — never more than 4 in lightweight.
+        assert_eq!(target_extraction_threads(64, ResourceMode::Lightweight), 4);
+    }
+
+    #[test]
+    fn performance_halves_cores_capped_at_eight() {
+        // num_cpus / 2, clamped to [1, 8] — the historical sizing.
+        assert_eq!(target_extraction_threads(1, ResourceMode::Performance), 1);
+        assert_eq!(target_extraction_threads(2, ResourceMode::Performance), 1);
+        assert_eq!(target_extraction_threads(8, ResourceMode::Performance), 4);
+        assert_eq!(target_extraction_threads(16, ResourceMode::Performance), 8);
+        assert_eq!(target_extraction_threads(64, ResourceMode::Performance), 8);
+    }
+
+    #[test]
+    fn zero_available_never_yields_invalid_pool_size() {
+        // `available_parallelism` can never return 0, but defend the
+        // floor anyway: rayon rejects num_threads(0).
+        assert_eq!(target_extraction_threads(0, ResourceMode::Lightweight), 1);
+        assert_eq!(target_extraction_threads(0, ResourceMode::Performance), 1);
+    }
+
+    #[test]
+    fn lightweight_is_always_leaner_than_performance() {
+        // The whole point of the profile split: for any host size,
+        // lightweight must request no more threads than performance.
+        for cores in 1..=128 {
+            let lw = target_extraction_threads(cores, ResourceMode::Lightweight);
+            let perf = target_extraction_threads(cores, ResourceMode::Performance);
+            assert!(
+                lw <= perf,
+                "lightweight ({lw}) must be <= performance ({perf}) at {cores} cores",
+            );
+        }
+    }
 
     #[test]
     fn extract_plain_text_file() {

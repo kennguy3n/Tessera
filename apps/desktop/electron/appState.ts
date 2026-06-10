@@ -1121,6 +1121,27 @@ function resolveNativeAddon(): NativeBridge | null {
 }
 
 export async function initAppState(): Promise<boolean> {
+  // Publish the resource profile to the in-process native addon before
+  // it can build any thread pool. `tessera_sources` reads
+  // `TESSERA_RESOURCE_MODE` once, when its extraction rayon pool is
+  // first constructed (on the first bulk index), to size the pool
+  // (lightweight = num_cpus/4, performance = num_cpus/2). Setting it
+  // here — ahead of the first `sources:*` call — guarantees the addon
+  // observes the persisted setting rather than the lightweight default.
+  // A live toggle takes effect on next launch; the RSS watchdog is the
+  // within-session lever (see `memoryWatchdog.ts`).
+  try {
+    // `?? "lightweight"` is belt-and-suspenders: the zod schema's
+    // `.catch("lightweight")` already guarantees a valid value today, but
+    // were that fallback ever dropped, `process.env.X = undefined` would
+    // coerce to the literal string "undefined" — a silently wrong env var.
+    // The fallback keeps the addon defaulting to the safe low-footprint
+    // profile regardless.
+    process.env.TESSERA_RESOURCE_MODE = loadConfig().resourceMode ?? "lightweight";
+  } catch {
+    process.env.TESSERA_RESOURCE_MODE = "lightweight";
+  }
+
   bridge = resolveNativeAddon();
   if (!bridge) {
     console.warn(

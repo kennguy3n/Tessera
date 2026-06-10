@@ -8,6 +8,7 @@ import { detectComputeBackends } from "./modelManagement";
 import { reapOrphanedSidecars } from "./sidecarPidRegistry";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { startBatteryMonitor, stopBatteryMonitor } from "./batteryMonitor";
+import { startMemoryWatchdog, stopMemoryWatchdog } from "./memoryWatchdog";
 import { getLogger } from "./logger";
 import {
   markEnd,
@@ -927,6 +928,15 @@ app.whenReady().then(async () => {
   // report "AC always" and never gate. Started before the scheduler so
   // the first tick already has a battery reading to consult.
   startBatteryMonitor();
+  // LW-7: begin sampling main-process RSS so the bulk-reindex admission
+  // gate (`sources:batchReindex`) can defer a large initial index when
+  // the process is already under memory pressure, then resume once it
+  // drops back below the low-water mark. Like the battery monitor it runs
+  // on an unref'd 10s timer (never holds the event loop open) and fails
+  // open — a sampler error or absent singleton admits indexing. Started
+  // before the scheduler so the first scheduled reindex already has a
+  // pressure reading to consult.
+  startMemoryWatchdog();
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly
   // against the native bridge (i.e. without bouncing through the
@@ -1155,6 +1165,15 @@ export async function handleWillQuit(
      * it runs up front, outside the async-drain try/catch blocks.
      */
     stopBatteryMonitor?: () => void;
+    /**
+     * Stop the LW-7 RSS watchdog poll timer. Injected (like
+     * `stopBatteryMonitor`) so the will-quit tests can spy on it and
+     * assert its ordering. Optional so existing tests that don't wire
+     * it keep compiling; production passes the real `stopMemoryWatchdog`.
+     * Synchronous and never-throwing, so it runs up front alongside the
+     * battery monitor, outside the async-drain try/catch blocks.
+     */
+    stopMemoryWatchdog?: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -1176,6 +1195,11 @@ export async function handleWillQuit(
   // Injected via `deps` for the same testability reason as every other
   // step (the `?.` keeps callers that don't wire it working).
   deps.stopBatteryMonitor?.();
+  // LW-7: stop the RSS watchdog poll timer alongside the battery monitor.
+  // Same rationale: unref'd interval that can't block exit, but clearing
+  // it here prevents a stacked interval when a test harness relaunches the
+  // main process. Synchronous and never-throwing, so outside the drains.
+  deps.stopMemoryWatchdog?.();
   // Outer `try/finally` guarantees `deps.quit()` runs even if one of
   // the inner `console.error` calls were to throw (e.g. a custom
   // `console` override in a future test/wrapper). The two inner
@@ -1267,6 +1291,7 @@ app.on("will-quit", (event) => {
     stopScheduler,
     stopAllSidecars,
     stopBatteryMonitor,
+    stopMemoryWatchdog,
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
     disposeBridge: () => {

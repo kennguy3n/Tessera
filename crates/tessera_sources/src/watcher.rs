@@ -117,6 +117,40 @@ impl FileWatcher {
     /// per save burst rather than per-keystroke or per-rename-
     /// fsync event.
     pub fn recv_coalesced_batch(&self, max_wait: Duration, window: Duration) -> Vec<FileEvent> {
+        coalesce_events(self.drain_burst(max_wait, window))
+    }
+
+    /// LW-7 directory-burst variant of [`Self::recv_coalesced_batch`].
+    ///
+    /// Returns the same per-path-coalesced burst, but additionally folds
+    /// any directory that saw at least [`DEFAULT_DIRECTORY_BURST_THRESHOLD`]
+    /// distinct file changes into a single [`WatchTrigger::DirectoryRescan`].
+    /// This is the entrypoint the bridge watcher tick should prefer when a
+    /// bulk operation (a `git checkout`, an archive extract, an `rsync` of a
+    /// folder) lands many files in one directory inside a single window:
+    /// instead of handing the indexer N per-file triggers it hands one
+    /// directory-level rescan, so the indexer walks the directory once and
+    /// reconciles the whole folder against its index in a single pass —
+    /// bounding peak work (and peak RSS) regardless of burst size. Lone
+    /// changes still flow through as per-file [`WatchTrigger::File`]s so the
+    /// common single-save path is unchanged.
+    pub fn recv_coalesced_triggers(
+        &self,
+        max_wait: Duration,
+        window: Duration,
+    ) -> Vec<WatchTrigger> {
+        coalesce_directory_bursts(
+            coalesce_events(self.drain_burst(max_wait, window)),
+            DEFAULT_DIRECTORY_BURST_THRESHOLD,
+        )
+    }
+
+    /// Block up to `max_wait` for the first event, then drain the channel
+    /// for a fixed `window` more, returning the raw (un-coalesced) burst.
+    /// Shared by both [`Self::recv_coalesced_batch`] and
+    /// [`Self::recv_coalesced_triggers`] so the timing contract lives in one
+    /// place.
+    fn drain_burst(&self, max_wait: Duration, window: Duration) -> Vec<FileEvent> {
         let Ok(first) = self.receiver.recv_timeout(max_wait) else {
             return Vec::new();
         };
@@ -133,7 +167,7 @@ impl FileWatcher {
                 Err(_) => break,
             }
         }
-        coalesce_events(raw)
+        raw
     }
 }
 
@@ -211,6 +245,98 @@ pub fn coalesce_events(events: Vec<FileEvent>) -> Vec<FileEvent> {
                 .expect("path is in `order` iff it was inserted into `by_path`")
         })
         .collect()
+}
+
+/// Default fan-out threshold for [`coalesce_directory_bursts`]. When a
+/// single coalescing window contains changes to **2 or more distinct
+/// files under the same parent directory**, those per-file events
+/// collapse into one [`WatchTrigger::DirectoryRescan`]. A lone file
+/// change stays a per-file trigger. 2 is deliberately aggressive: the
+/// common bulk-mutation patterns a desktop app sees — `git checkout`,
+/// `npm install`, an editor "Save All", an `rsync` pull — touch many
+/// files in one directory at once, and a single directory re-walk is
+/// far cheaper than N independent index passes that each re-open the
+/// store and re-run the FTS writer.
+pub const DEFAULT_DIRECTORY_BURST_THRESHOLD: usize = 2;
+
+/// The unit of work the indexer's watcher tick should act on after
+/// both coalescing layers have run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchTrigger {
+    /// A single file changed in isolation — index just this path.
+    File(FileEvent),
+    /// Enough files under one directory changed within the window
+    /// that re-walking the directory once is cheaper than handling
+    /// each file event.
+    ///
+    /// A re-scan is a **reconcile**: the indexer re-walks `dir`,
+    /// (re)indexes present files, and drops index rows for files no
+    /// longer on disk. This is why removals can safely fold into a
+    /// rescan — the reconcile observes the deletion just as a per-file
+    /// `Removed` would, without the indexer having to special-case it.
+    DirectoryRescan(PathBuf),
+}
+
+/// Second-stage coalescing: collapse a per-path event list (already
+/// deduped by [`coalesce_events`]) into a mix of per-file triggers and
+/// per-directory re-scans.
+///
+/// Algorithm (single pass + grouping, all pure):
+///
+///   1. Group the incoming events by parent directory, preserving the
+///      first-appearance order of both directories and the files
+///      within them (so the indexer still frees deleted-file rows
+///      before allocating new ones, matching [`coalesce_events`]).
+///   2. A directory whose group holds `>= threshold` distinct files
+///      emits exactly one [`WatchTrigger::DirectoryRescan`], placed at
+///      the position of that directory's *first* event.
+///   3. A directory below the threshold emits its files unchanged as
+///      [`WatchTrigger::File`], in order.
+///
+/// A `threshold` of 0 or 1 is clamped to 2 — a threshold below 2 would
+/// turn every single-file save into a full-directory rescan, which is
+/// strictly more work and never desirable.
+///
+/// Pure helper (no I/O, no state) so the fan-out policy is unit
+/// testable without standing up a real watcher.
+pub fn coalesce_directory_bursts(events: Vec<FileEvent>, threshold: usize) -> Vec<WatchTrigger> {
+    let threshold = threshold.max(2);
+
+    // Ordered directory keys + per-directory event lists, both in
+    // first-appearance order. A plain Vec-of-(dir, events) keeps the
+    // ordering guarantee without pulling in `indexmap`.
+    let mut dir_order: Vec<PathBuf> = Vec::new();
+    let mut groups: HashMap<PathBuf, Vec<FileEvent>> = HashMap::new();
+
+    for ev in events {
+        // A path with no parent (e.g. a bare filename or the FS root)
+        // groups under an empty path; it can still coalesce with its
+        // siblings, which is the correct behaviour.
+        let dir = ev
+            .path()
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        if let Some(bucket) = groups.get_mut(&dir) {
+            bucket.push(ev);
+        } else {
+            dir_order.push(dir.clone());
+            groups.insert(dir, vec![ev]);
+        }
+    }
+
+    let mut out: Vec<WatchTrigger> = Vec::with_capacity(dir_order.len());
+    for dir in dir_order {
+        let bucket = groups
+            .remove(&dir)
+            .expect("dir is in `dir_order` iff it was inserted into `groups`");
+        if bucket.len() >= threshold {
+            out.push(WatchTrigger::DirectoryRescan(dir));
+        } else {
+            out.extend(bucket.into_iter().map(WatchTrigger::File));
+        }
+    }
+    out
 }
 
 fn translate_event(event: &Event) -> Vec<FileEvent> {
@@ -426,6 +552,46 @@ mod tests {
     }
 
     #[test]
+    fn recv_coalesced_triggers_folds_a_directory_burst_into_one_rescan() {
+        // A bulk extract-into-one-folder burst: several distinct files
+        // created in the same directory inside a single window must
+        // surface as exactly one DirectoryRescan trigger (not N per-file
+        // triggers), so the indexer walks the folder once.
+        let dir = tempfile::tempdir().unwrap();
+        let watcher = FileWatcher::new(dir.path()).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+
+        for i in 0..5 {
+            std::fs::write(dir.path().join(format!("doc-{i}.txt")), format!("body-{i}")).unwrap();
+        }
+
+        let triggers =
+            watcher.recv_coalesced_triggers(Duration::from_secs(2), DEFAULT_COALESCE_WINDOW);
+        assert!(
+            !triggers.is_empty(),
+            "expected at least one trigger for the burst"
+        );
+        // Every distinct file landed in the same directory, so the five
+        // (or more, if the OS double-stamps) per-path events collapse to a
+        // single directory rescan rooted at the temp dir.
+        assert_eq!(
+            triggers.len(),
+            1,
+            "a single-directory burst must yield exactly one trigger; got {triggers:?}",
+        );
+        match &triggers[0] {
+            WatchTrigger::DirectoryRescan(p) => {
+                assert_eq!(
+                    p,
+                    dir.path(),
+                    "rescan must be rooted at the burst directory"
+                );
+            }
+            file @ WatchTrigger::File(_) => panic!("expected DirectoryRescan, got {file:?}"),
+        }
+    }
+
+    #[test]
     fn watcher_detects_file_creation() {
         let dir = tempfile::tempdir().unwrap();
         let watcher = FileWatcher::new(dir.path()).unwrap();
@@ -479,5 +645,94 @@ mod tests {
             has_remove || !events.is_empty(),
             "Expected remove event, got: {events:?}"
         );
+    }
+
+    #[test]
+    fn dir_burst_collapses_two_plus_files_in_one_dir_to_one_rescan() {
+        let raw = vec![
+            FileEvent::Modified(p("/proj/src/a.rs")),
+            FileEvent::Created(p("/proj/src/b.rs")),
+            FileEvent::Modified(p("/proj/src/c.rs")),
+        ];
+        let out = coalesce_directory_bursts(raw, DEFAULT_DIRECTORY_BURST_THRESHOLD);
+        assert_eq!(out, vec![WatchTrigger::DirectoryRescan(p("/proj/src"))]);
+    }
+
+    #[test]
+    fn dir_burst_leaves_a_lone_file_change_as_a_file_trigger() {
+        let raw = vec![FileEvent::Modified(p("/proj/src/only.rs"))];
+        let out = coalesce_directory_bursts(raw, DEFAULT_DIRECTORY_BURST_THRESHOLD);
+        assert_eq!(
+            out,
+            vec![WatchTrigger::File(FileEvent::Modified(p(
+                "/proj/src/only.rs"
+            )))]
+        );
+    }
+
+    #[test]
+    fn dir_burst_groups_per_directory_independently() {
+        // Two files in /a (rescan) + one file in /b (stays per-file).
+        let raw = vec![
+            FileEvent::Modified(p("/a/one.txt")),
+            FileEvent::Modified(p("/b/solo.txt")),
+            FileEvent::Created(p("/a/two.txt")),
+        ];
+        let out = coalesce_directory_bursts(raw, DEFAULT_DIRECTORY_BURST_THRESHOLD);
+        // /a appears first, so its rescan leads; /b's lone file follows.
+        assert_eq!(
+            out,
+            vec![
+                WatchTrigger::DirectoryRescan(p("/a")),
+                WatchTrigger::File(FileEvent::Modified(p("/b/solo.txt"))),
+            ]
+        );
+    }
+
+    #[test]
+    fn dir_burst_preserves_first_appearance_order_of_directories() {
+        // /z bursts first, then /a bursts — output must keep /z before
+        // /a so the indexer processes them in observed order.
+        let raw = vec![
+            FileEvent::Modified(p("/z/1")),
+            FileEvent::Modified(p("/z/2")),
+            FileEvent::Modified(p("/a/1")),
+            FileEvent::Modified(p("/a/2")),
+        ];
+        let out = coalesce_directory_bursts(raw, DEFAULT_DIRECTORY_BURST_THRESHOLD);
+        assert_eq!(
+            out,
+            vec![
+                WatchTrigger::DirectoryRescan(p("/z")),
+                WatchTrigger::DirectoryRescan(p("/a")),
+            ]
+        );
+    }
+
+    #[test]
+    fn dir_burst_folds_removals_into_the_rescan() {
+        // A bulk delete (e.g. `rm src/*.tmp`) — the rescan reconciles
+        // the deletions, so we must NOT leak per-file Removed triggers.
+        let raw = vec![
+            FileEvent::Removed(p("/src/a.tmp")),
+            FileEvent::Removed(p("/src/b.tmp")),
+        ];
+        let out = coalesce_directory_bursts(raw, DEFAULT_DIRECTORY_BURST_THRESHOLD);
+        assert_eq!(out, vec![WatchTrigger::DirectoryRescan(p("/src"))]);
+    }
+
+    #[test]
+    fn dir_burst_threshold_below_two_is_clamped() {
+        // A threshold of 0 or 1 would turn every single save into a
+        // full rescan; the clamp prevents that pathology.
+        let raw = vec![FileEvent::Modified(p("/d/only.txt"))];
+        for bad in [0usize, 1usize] {
+            let out = coalesce_directory_bursts(raw.clone(), bad);
+            assert_eq!(
+                out,
+                vec![WatchTrigger::File(FileEvent::Modified(p("/d/only.txt")))],
+                "threshold {bad} should clamp to 2 and leave a lone file per-file",
+            );
+        }
     }
 }
