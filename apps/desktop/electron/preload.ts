@@ -188,6 +188,8 @@ const api: TesseraApi = {
     removeSource: (id: string) => ipcRenderer.invoke("sources:remove", id),
     searchSources: (query: string, limit: number) =>
       ipcRenderer.invoke("sources:search", query, limit),
+    searchEnriched: (query: string, limit: number) =>
+      ipcRenderer.invoke("sources:searchEnriched", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
     // bulk re-index. Calls the main-process
@@ -529,6 +531,12 @@ const api: TesseraApi = {
         scope ?? null,
         maxNodes ?? null,
       ),
+    suggestRelatedSources: (selectedSourceIds, maxSuggestions) =>
+      ipcRenderer.invoke(
+        "substrate:suggestRelatedSources",
+        selectedSourceIds,
+        maxSuggestions ?? null,
+      ),
     runDecaySweep: () => ipcRenderer.invoke("substrate:runDecaySweep"),
     triggerSynthesis: (scope) =>
       ipcRenderer.invoke("substrate:triggerSynthesis", scope ?? null),
@@ -548,6 +556,27 @@ const api: TesseraApi = {
       ipcRenderer.invoke("dialog:showSaveDialog", options),
     pickImage: (options?: OpenImageDialogOptions) =>
       ipcRenderer.invoke("dialog:pickImage", options ?? {}),
+    openDirectory: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openDirectory", options ?? {}),
+    openBundle: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openBundle", options ?? {}),
+  },
+  backup: {
+    create: () => ipcRenderer.invoke("backup:create"),
+    list: () => ipcRenderer.invoke("backup:list"),
+    status: () => ipcRenderer.invoke("backup:status"),
+    restore: (backupPath: string) =>
+      ipcRenderer.invoke("backup:restore", { backupPath }),
+    configure: (patch: {
+      autoBackup?: boolean;
+      backupDir?: string;
+      backupIntervalHours?: number;
+      backupRetentionCount?: number;
+    }) => ipcRenderer.invoke("backup:configure", patch),
+    exportBundle: (outPath: string) =>
+      ipcRenderer.invoke("backup:exportBundle", { outPath }),
+    importBundle: (bundlePath: string) =>
+      ipcRenderer.invoke("backup:importBundle", { bundlePath }),
   },
   slides: {
     startPresentation: (request: StartPresentationRequest) =>

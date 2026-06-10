@@ -11,6 +11,10 @@ import {
   startSubstrateDecayScheduler,
   stopSubstrateDecayScheduler,
 } from "./substrateDecayScheduler";
+import {
+  startBackupScheduler,
+  stopBackupScheduler,
+} from "./backupScheduler";
 import { startBatteryMonitor, stopBatteryMonitor } from "./batteryMonitor";
 import { startMemoryWatchdog, stopMemoryWatchdog } from "./memoryWatchdog";
 import { getLogger } from "./logger";
@@ -1024,6 +1028,19 @@ async function initBridgeAndServices(): Promise<void> {
       message: err instanceof Error ? err.message : String(err),
     });
   }
+  // Start the automatic-backup scheduler now that the bridge is up. It
+  // runs a hot backup of the encrypted database on the configured
+  // cadence (default 24h) and prunes to the retention count, so a user
+  // who never opens Settings still gets disk-failure protection. Guarded
+  // for the same reason as `startScheduler`: a failure to arm the timer
+  // is non-fatal to the UI and MUST NOT skip `setBridgeState("ready")`.
+  try {
+    startBackupScheduler();
+  } catch (err) {
+    safeLogError("backupScheduler.start.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Bridge + services are up: tell every renderer to hydrate.
   // `setBridgeState` swallows its own per-window broadcast failures
   // internally (see `bridgeLifecycle.ts`), so this final step cannot
@@ -1516,6 +1533,14 @@ export async function handleWillQuit(
     stopKchatLocalApi: () => Promise<void>;
     detachKchatDeeplinkBridge: () => void;
     /**
+     * Stop the automatic-backup scheduler and wait for any in-flight
+     * backup to finish before the bridge is disposed, so a hot copy is
+     * never torn down mid-write. Optional so existing willQuit tests
+     * don't have to wire a new mock; production passes the real
+     * `stopBackupScheduler`. Awaited like the other async drains.
+     */
+    stopBackupScheduler?: () => Promise<void>;
+    /**
      * graceful database checkpoint, run after the
      * scheduler and every sidecar have been drained so no further
      * writes can land in the WAL between our checkpoint and process
@@ -1642,6 +1667,19 @@ export async function handleWillQuit(
       console.error("[tessera] kchatDeeplink detach failed:", e);
     }
     try {
+      // Stop the backup scheduler and drain any in-flight hot copy
+      // BEFORE the WAL checkpoint + bridge dispose below. A backup runs
+      // the SQLite Online Backup API against the shared connection; if
+      // it were still copying when `bridgeDispose` checkpointed and the
+      // process exited, the copy would be torn down mid-write. Draining
+      // here guarantees the connection is quiescent before teardown.
+      // Errors are swallowed — we're on the quit path and a hung backup
+      // must not block exit.
+      await deps.stopBackupScheduler?.();
+    } catch (e) {
+      console.error("[tessera] backup scheduler shutdown failed:", e);
+    }
+    try {
       // run `PRAGMA wal_checkpoint(TRUNCATE)` LAST,
       // after the scheduler and every sidecar have been drained, so
       // no further writes can land in the WAL between our checkpoint
@@ -1687,6 +1725,7 @@ app.on("will-quit", (event) => {
     stopSubstrateDecayScheduler,
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
+    stopBackupScheduler,
     disposeBridge: () => {
       // graceful DB checkpoint, called last so the
       // WAL is folded into the main file before the process exits.

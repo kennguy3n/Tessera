@@ -16,7 +16,12 @@
  * in `apps/desktop/shared/types.ts`.
  */
 import { getBridge } from "../appState";
-import { assertId, assertNumber, assertOptionalString } from "./validate";
+import {
+  assertId,
+  assertNumber,
+  assertOptionalString,
+  assertStringArray,
+} from "./validate";
 import { idempotentHandle } from "./register";
 
 /** Scope labels are short ("default") or a 36-char UUID. */
@@ -67,6 +72,27 @@ export function registerSubstrateHandlers(): void {
               integer: true,
             });
       return requireBridge().bridgeGetConceptGraph(s, cap);
+    },
+  );
+
+  idempotentHandle(
+    "substrate:suggestRelatedSources",
+    async (_event, selectedSourceIds, maxSuggestions) => {
+      // Each entry must be a valid source UUID; cap the working-set
+      // size so a malicious renderer can't force an unbounded
+      // concept-graph walk.
+      const ids = assertStringArray(selectedSourceIds, "selectedSourceIds", {
+        maxLen: 1_000,
+      }).map((id) => assertId(id, "selectedSourceId"));
+      const cap =
+        maxSuggestions === null || maxSuggestions === undefined
+          ? null
+          : assertNumber(maxSuggestions, "maxSuggestions", {
+              min: 1,
+              max: 100,
+              integer: true,
+            });
+      return requireBridge().bridgeSuggestRelatedSources(ids, cap);
     },
   );
 

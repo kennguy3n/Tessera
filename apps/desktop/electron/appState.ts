@@ -64,14 +64,21 @@ import type {
   ReplaceCitationRequest,
   ReplaceCitationResult,
   ResourceMode,
+  EnrichedSearchResultInfo,
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
   SubstrateDecayReportInfo,
   SubstrateMemoryInfo,
+  SubstrateRelatedSuggestionInfo,
   SubstrateSynthesisInfo,
   TaskInfo,
   TemplateInfo,
+  BackupInfo,
+  BundleInfo,
+  BundleImportReport,
+  BundleFileEntry,
+  BundleRestoreTarget,
 } from "../shared/types";
 
 // Re-export the canonical shared types so existing call sites that
@@ -109,12 +116,16 @@ export type {
   KchatThreadContextMessageInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
+  EnrichedSearchResult,
+  EnrichedSearchResultInfo,
   SearchHit,
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
+  SubstrateConceptInfo,
   SubstrateDecayReportInfo,
   SubstrateMemoryInfo,
+  SubstrateRelatedSuggestionInfo,
   SubstrateSynthesisInfo,
   TaskInfo,
   TemplateInfo,
@@ -122,6 +133,11 @@ export type {
   EmbeddingModelInfo,
   EmbeddingModelStatusInfo,
   EmbeddingDownloadProgressInfo,
+  BackupInfo,
+  BundleInfo,
+  BundleImportReport,
+  BundleFileEntry,
+  BundleRestoreTarget,
 } from "../shared/types";
 
 export interface NativeBridge {
@@ -254,6 +270,18 @@ export interface NativeBridge {
   bridgeListSources(): SourceInfo[];
   bridgeRemoveSource(sourceId: string): void;
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];
+  /**
+   * Observation-enriched search. Returns the same chunk `hits` as
+   * {@link bridgeSearchSources} (retention-weighted via the substrate's
+   * per-source retention scores) plus the additive knowledge plane
+   * (entities, facts, concepts, memories) for the renderer's
+   * "Knowledge" tab. Exported from `tessera_bridge`'s `napi_exports.rs`
+   * as `bridge_search_sources_enriched`.
+   */
+  bridgeSearchSourcesEnriched(
+    query: string,
+    limit: number,
+  ): EnrichedSearchResultInfo;
   bridgeGetSourceDetail(sourceId: string): SourceDetailInfo;
   bridgeReindexSource(sourceId: string): SourceInfo;
   bridgeGetIndexingProgress(sourceId: string): IndexingProgressInfo;
@@ -880,7 +908,7 @@ export interface NativeBridge {
 
   // --- Knowledge substrate (additive native layer) ---------------------
   //
-  // The eight functions below are exported from `tessera_bridge`'s
+  // The nine functions below are exported from `tessera_bridge`'s
   // `substrate.rs` module (snake_case `bridge_*` on the Rust side,
   // camelCased here by napi-derive). They delegate to the
   // `SubstrateManager` held in `AppState`, which writes only to the
@@ -919,6 +947,19 @@ export interface NativeBridge {
     maxNodes?: number | null,
   ): string;
   /**
+   * Suggest sources related to an already-selected working set via the
+   * concept graph (the artifact-creation "You have N sources about
+   * [entity]" affordance). `selectedSourceIds` is the user's current
+   * selection; suggestions exclude already-selected sources and are
+   * capped at `maxSuggestions` (default 10 when `null`/omitted).
+   * Exported from `tessera_bridge`'s `substrate.rs` as
+   * `bridge_suggest_related_sources`.
+   */
+  bridgeSuggestRelatedSources(
+    selectedSourceIds: string[],
+    maxSuggestions?: number | null,
+  ): SubstrateRelatedSuggestionInfo[];
+  /**
    * Recompute retention scores for every memory and apply decay
    * transitions. Returns a report of how many objects were scored and
    * archived. Called on a 6-hour timer by the main process
@@ -931,6 +972,59 @@ export interface NativeBridge {
    * synthesis object.
    */
   bridgeTriggerSynthesis(scope?: string | null): SubstrateSynthesisInfo;
+
+  // --- Backup & recovery ---
+  //
+  // Hot copies run against the same shared connection every other
+  // store writes through, so the SQLite Online Backup API observes a
+  // transactionally-consistent snapshot. The SQLCipher key and live
+  // database path are captured Rust-side at `initBridge`, so the
+  // renderer never handles key material or re-derives the on-disk path.
+  /**
+   * Hot-copy the live database into `backupDir` (created if absent)
+   * using the SQLite Online Backup API, re-encrypted under the live
+   * SQLCipher key. Written to a `*.partial` temp file and atomically
+   * renamed, so a crash never leaves a usable-looking truncated file.
+   */
+  bridgeCreateBackup(backupDir: string): BackupInfo;
+  /** List backups in `backupDir`, newest first. A missing directory
+   *  yields an empty list rather than throwing. */
+  bridgeListBackups(backupDir: string): BackupInfo[];
+  /** Delete backups beyond the `keep` most recent (always keeps at
+   *  least one). Returns the filenames removed. */
+  bridgePruneBackups(backupDir: string, keep: number): string[];
+  /**
+   * Validate that `backupPath` decrypts under the live key, then stage
+   * it as a `*.pending-restore` sibling of the live DB. The swap
+   * happens at next launch via {@link bridgeApplyPendingRestore}.
+   * Returns the staged file path. Requires an app restart to take
+   * effect — the live connection is never swapped underneath open
+   * statements.
+   */
+  bridgeStageRestore(backupPath: string): string;
+  /**
+   * Apply a previously-staged restore for the DB at `dbPath` by
+   * swapping the pending file into place. Returns `true` when a swap
+   * occurred. Called at startup BEFORE {@link initBridge} opens the
+   * database, so it does not depend on bridge state.
+   */
+  bridgeApplyPendingRestore(dbPath: string): boolean;
+  /**
+   * Export a full workspace bundle (hot DB copy + caller-supplied
+   * sidecar files) into a single `.tessera-backup` tar.gz archive at
+   * `outPath` with a SHA-256 manifest.
+   */
+  bridgeExportBundle(outPath: string, extras: BundleFileEntry[]): BundleInfo;
+  /**
+   * Import a workspace bundle from `bundlePath`: verify every entry's
+   * SHA-256 against the manifest, stage the contained database for the
+   * next launch, and atomically restore the matched sidecar `targets`.
+   * Requires an app restart for the database swap to take effect.
+   */
+  bridgeImportBundle(
+    bundlePath: string,
+    targets: BundleRestoreTarget[],
+  ): BundleImportReport;
 }
 
 let bridge: NativeBridge | null = null;
@@ -1270,6 +1364,27 @@ export async function initAppState(): Promise<boolean> {
       bridge = null;
       return false;
     }
+  }
+
+  // Apply a previously-staged restore BEFORE the bridge opens the
+  // database. A restore (single backup or bundle import) is never
+  // applied to the live connection — it is staged as a
+  // `*.pending-restore` sibling and swapped in here, at the one moment
+  // the DB file is guaranteed closed. This makes restore crash-safe:
+  // the swap is an atomic rename, so a crash mid-restore either leaves
+  // the old DB intact (rename not yet done) or the new DB in place
+  // (rename done) — never a half-written file. A swap failure must not
+  // block boot; the staged file is left for the next attempt.
+  try {
+    const swapped = bridge.bridgeApplyPendingRestore(dbPath);
+    if (swapped) {
+      console.log("[Tessera] Applied staged database restore at startup.");
+    }
+  } catch (restoreErr) {
+    console.error(
+      "[Tessera] Failed to apply staged database restore; continuing with the existing database.",
+      restoreErr,
+    );
   }
 
   try {

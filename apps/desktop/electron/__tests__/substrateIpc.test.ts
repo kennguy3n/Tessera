@@ -49,6 +49,13 @@ const bridgeMock = {
   bridgeUnpinMemory: vi.fn().mockReturnValue(sampleMemory),
   bridgeForgetMemory: vi.fn().mockReturnValue(undefined),
   bridgeGetConceptGraph: vi.fn().mockReturnValue('{"nodes":[],"edges":[]}'),
+  bridgeSuggestRelatedSources: vi.fn().mockReturnValue([
+    {
+      entity: "acme corp",
+      sourceIds: ["55555555-5555-4555-8555-555555555555"],
+      score: 1,
+    },
+  ]),
   bridgeRunDecaySweep: vi
     .fn()
     .mockReturnValue({ scored: 3, candidatesArchived: 1, supersededArchived: 0 }),
@@ -88,7 +95,7 @@ beforeEach(() => {
 });
 
 describe("substrate IPC handlers", () => {
-  it("registers all eight channels", () => {
+  it("registers all nine channels", () => {
     expect([...captured.keys()].sort()).toEqual(
       [
         "substrate:extractObservations",
@@ -97,6 +104,7 @@ describe("substrate IPC handlers", () => {
         "substrate:getMemories",
         "substrate:pinMemory",
         "substrate:runDecaySweep",
+        "substrate:suggestRelatedSources",
         "substrate:triggerSynthesis",
         "substrate:unpinMemory",
       ].sort(),
@@ -167,6 +175,50 @@ describe("substrate IPC handlers", () => {
       invoke("substrate:getConceptGraph", null, 1.5),
     ).rejects.toThrow();
     expect(bridgeMock.bridgeGetConceptGraph).not.toHaveBeenCalled();
+  });
+
+  it("forwards a selected-source set and default cap to suggestRelatedSources", async () => {
+    const selected = ["33333333-3333-4333-8333-333333333333"];
+    const suggestions = (await invoke(
+      "substrate:suggestRelatedSources",
+      selected,
+      null,
+    )) as Array<{ entity: string }>;
+    expect(suggestions[0].entity).toBe("acme corp");
+    expect(bridgeMock.bridgeSuggestRelatedSources).toHaveBeenCalledWith(
+      selected,
+      null,
+    );
+  });
+
+  it("passes an explicit max-suggestions cap through to suggestRelatedSources", async () => {
+    await invoke(
+      "substrate:suggestRelatedSources",
+      ["33333333-3333-4333-8333-333333333333"],
+      5,
+    );
+    expect(bridgeMock.bridgeSuggestRelatedSources).toHaveBeenCalledWith(
+      ["33333333-3333-4333-8333-333333333333"],
+      5,
+    );
+  });
+
+  it("rejects a malformed source id in the selected set before touching the bridge", async () => {
+    await expect(
+      invoke("substrate:suggestRelatedSources", ["not a uuid!"], null),
+    ).rejects.toThrow();
+    expect(bridgeMock.bridgeSuggestRelatedSources).not.toHaveBeenCalled();
+  });
+
+  it("rejects an out-of-range max-suggestions cap", async () => {
+    await expect(
+      invoke(
+        "substrate:suggestRelatedSources",
+        ["33333333-3333-4333-8333-333333333333"],
+        0,
+      ),
+    ).rejects.toThrow();
+    expect(bridgeMock.bridgeSuggestRelatedSources).not.toHaveBeenCalled();
   });
 
   it("throws when the native bridge is unavailable", async () => {

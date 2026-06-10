@@ -22,6 +22,7 @@
 //!   process-global `AppState`, so this adapter is a plain struct the
 //!   bridge stores in a `Mutex` field — no handle table.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -42,7 +43,10 @@ use synthesis_pipeline::{SummaryBundle, SynthesisObject, SynthesisObjectType, Sy
 use uuid::Uuid;
 
 use crate::error::{Result, SubstrateError};
-use crate::types::{DecaySweepSummary, MemoryRecord, SynthesisSummary};
+use crate::types::{
+    DecaySweepSummary, EnrichedKnowledge, KnowledgeConcept, MemoryRecord, RelatedSourceSuggestion,
+    SynthesisSummary,
+};
 
 /// HKDF context that separates the substrate master key from Tessera's
 /// raw SQLCipher key. Bumping the `vN` suffix rotates every substrate
@@ -63,6 +67,12 @@ const MEMORIES_KIND: &str = "tessera.memories";
 /// "observations" plane). Keyed per source so re-indexing one source
 /// replaces only its observations.
 const OBSERVATIONS_KIND_PREFIX: &str = "tessera.observations:";
+
+/// Label prefix for the per-source node in the concept graph. Entity
+/// nodes are linked `PartOf` one of these so the graph records which
+/// Tessera source a concept co-occurs in. The suffix is the Tessera
+/// source id (a UUID string).
+const SOURCE_NODE_PREFIX: &str = "source:";
 
 /// UUIDv5 namespace seed for substrate scopes and the source nodes in
 /// the concept graph. Constant so ids are reproducible across runs.
@@ -250,6 +260,58 @@ impl SubstrateManager {
         self.save_memories(scope, &memories)
     }
 
+    /// Purge every substrate artifact derived from a Tessera source when
+    /// that source is removed, so a deleted source leaves no recoverable
+    /// extracted content behind. Idempotent: a source with no substrate
+    /// data is a clean no-op.
+    ///
+    /// In the single-user default scope this:
+    /// 1. destroys the per-source raw observations blob
+    ///    (`tessera.observations:<id>`). The evidence store exposes no
+    ///    single-`kind` row delete, so the blob is overwritten with an
+    ///    empty AEAD-sealed payload — `INSERT OR REPLACE` discards the
+    ///    prior ciphertext, making the extracted observation text
+    ///    unrecoverable; and
+    /// 2. drops every `MemoryObject` in the aggregate memory plane whose
+    ///    `source_id` metadata points at the removed source, so those
+    ///    memories no longer surface in [`Self::list_memories`].
+    ///
+    /// The derived concept-graph nodes — a structural `source:<id>` node
+    /// (whose label is just the source id the user already knows) and
+    /// entity-label nodes that are *deduplicated and shared* across
+    /// sources — are intentionally left in place: they carry no document
+    /// content, an entity node may still be referenced by other present
+    /// sources, and the upstream `PersistentConceptGraph` exposes no
+    /// per-source persistent node deletion. They age out through the
+    /// normal graph lifecycle. (Purging them safely would require
+    /// per-source provenance + a persistent node-delete API upstream.)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstrateError`] on store or (de)serialization failure.
+    pub fn remove_source(&mut self, source_id: &str) -> Result<()> {
+        let scope = self.default_scope;
+
+        // 1. Destroy the per-source raw observations blob, but only if
+        //    one was ever written — avoids leaving a spurious empty row
+        //    for a source that never produced observations.
+        let obs_kind = observations_kind(source_id);
+        if self.evidence.load_memory_blob(scope, &obs_kind)?.is_some() {
+            let empty = serde_json::to_vec(&Vec::<Observation>::new())?;
+            self.evidence.save_memory_blob(scope, &obs_kind, &empty)?;
+        }
+
+        // 2. Drop every memory carrying this source_id from the plane.
+        let mut memories = self.load_memories(scope)?;
+        let before = memories.len();
+        memories.retain(|m| memory_source_id(m).as_deref() != Some(source_id));
+        if memories.len() != before {
+            self.save_memories(scope, &memories)?;
+        }
+
+        Ok(())
+    }
+
     /// Recompute retention scores for every memory and apply decay
     /// transitions (`Candidate -> Archived`, `Superseded -> Archived`).
     ///
@@ -387,6 +449,285 @@ impl SubstrateManager {
         })
     }
 
+    /// Observation-enriched search over the single-user memory plane
+    /// and concept graph.
+    ///
+    /// This is the knowledge-plane companion to Tessera's existing
+    /// chunk-level hybrid search (BM25 + vector + recency, in
+    /// `tessera_sources`). It does **not** rank or return chunks — the
+    /// bridge layer composes the two. Here we match the substrate's
+    /// extracted observations and concepts against `query`:
+    ///
+    /// * `memories` — every non-deleted memory whose surface text
+    ///   matches the query, ranked by lexical relevance, then by live
+    ///   retention score (so active memories rank above fading ones).
+    /// * `entities` / `facts` — the `entity` and `fact`/`claim`/
+    ///   `decision` projections of `memories`, pre-split for the UI.
+    /// * `concepts` — concept-graph nodes whose label matches the
+    ///   query, each carrying the Tessera sources it co-occurs in.
+    ///
+    /// Each list is capped at `limit`. A blank query returns empty
+    /// lists rather than the whole corpus.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstrateError`] on store or (de)serialization failure.
+    pub fn search_knowledge(&mut self, query: &str, limit: usize) -> Result<EnrichedKnowledge> {
+        let tokens = query_tokens(query);
+        if tokens.is_empty() || limit == 0 {
+            return Ok(EnrichedKnowledge {
+                entities: Vec::new(),
+                facts: Vec::new(),
+                concepts: Vec::new(),
+                memories: Vec::new(),
+            });
+        }
+
+        let scope = self.default_scope;
+        let memories = self.load_memories(scope)?;
+        let now = Utc::now();
+
+        // Score every live memory by lexical relevance; keep only
+        // matches. The retention score is recomputed at `now` (not the
+        // stored value) so ranking reflects current decay even between
+        // sweeps.
+        let mut scored: Vec<(f64, f64, MemoryRecord)> = Vec::new();
+        for memory in &memories {
+            if memory.state == MemoryState::Deleted {
+                continue;
+            }
+            let content = memory_content(memory).unwrap_or_default();
+            let relevance = text_relevance(&content.to_lowercase(), &tokens);
+            if relevance <= 0.0 {
+                continue;
+            }
+            let retention = compute_retention_score(memory, now).total;
+            scored.push((relevance, retention, memory_to_record(memory)));
+        }
+        // Relevance desc, then retention desc, then id asc for a stable
+        // order when both signals tie.
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| a.2.id.cmp(&b.2.id))
+        });
+        let ranked: Vec<MemoryRecord> = scored.into_iter().map(|(_, _, record)| record).collect();
+
+        let entities: Vec<MemoryRecord> = ranked
+            .iter()
+            .filter(|r| r.observation_type == "entity")
+            .take(limit)
+            .cloned()
+            .collect();
+        let facts: Vec<MemoryRecord> = ranked
+            .iter()
+            .filter(|r| matches!(r.observation_type.as_str(), "fact" | "claim" | "decision"))
+            .take(limit)
+            .cloned()
+            .collect();
+        let memories_out: Vec<MemoryRecord> = ranked.into_iter().take(limit).collect();
+
+        let concepts = self.search_concepts(&tokens, limit)?;
+
+        Ok(EnrichedKnowledge {
+            entities,
+            facts,
+            concepts,
+            memories: memories_out,
+        })
+    }
+
+    /// Maximum retention score per Tessera source, keyed by source id.
+    ///
+    /// Tessera's hybrid search ranks chunks; the substrate tracks
+    /// retention per *memory*. This bridges the two planes: for each
+    /// source that has at least one memory, we take the strongest
+    /// (max) live retention score across its memories. The bridge feeds
+    /// this map into the hybrid RRF fusion as a fourth signal so chunks
+    /// from sources with active memories rank above fading above
+    /// archived.
+    ///
+    /// Scores are recomputed at `now` rather than read from the stored
+    /// field so ranking reflects current decay even between sweeps.
+    /// Sources with no memories are simply absent (the fusion treats a
+    /// missing entry as "no retention signal", preserving the existing
+    /// BM25 + vector + recency ranking for un-extracted sources).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstrateError`] on store or (de)serialization failure.
+    pub fn retention_by_source(&self) -> Result<HashMap<String, f64>> {
+        let memories = self.load_memories(self.default_scope)?;
+        let now = Utc::now();
+        let mut out: HashMap<String, f64> = HashMap::new();
+        for memory in &memories {
+            if memory.state == MemoryState::Deleted {
+                continue;
+            }
+            let Some(source_id) = memory_source_id(memory) else {
+                continue;
+            };
+            let score = compute_retention_score(memory, now).total;
+            out.entry(source_id)
+                .and_modify(|existing| {
+                    if score > *existing {
+                        *existing = score;
+                    }
+                })
+                .or_insert(score);
+        }
+        Ok(out)
+    }
+
+    /// Suggest sources related to an already-selected working set, via
+    /// the concept graph.
+    ///
+    /// Powers the "You have N sources about [entity]. Include them?"
+    /// affordance on the artifact-creation flow. For every concept the
+    /// selected sources are linked to (`entity --PartOf--> source`), we
+    /// gather the *other* sources that share the concept and surface
+    /// them as a suggestion ranked by how many related sources it
+    /// pulls in.
+    ///
+    /// `selected_source_ids` that are not valid / not in the graph are
+    /// ignored. Suggestions never include an already-selected source.
+    /// Returns at most `max_suggestions` entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstrateError`] on store failure.
+    pub fn suggest_related_sources(
+        &mut self,
+        selected_source_ids: &[String],
+        max_suggestions: usize,
+    ) -> Result<Vec<RelatedSourceSuggestion>> {
+        if selected_source_ids.is_empty() || max_suggestions == 0 {
+            return Ok(Vec::new());
+        }
+        let scope = self.default_scope;
+        self.concepts.load_scope(scope)?;
+        let graph = self.concepts.graph();
+
+        let selected: HashSet<&str> = selected_source_ids.iter().map(String::as_str).collect();
+
+        // Resolve the selected source ids to their per-source nodes.
+        let selected_nodes: HashSet<concept_graph::NodeId> = graph
+            .iter_nodes()
+            .filter(|n| n.scope_id == scope)
+            .filter(|n| {
+                source_id_from_label(&n.label).is_some_and(|sid| selected.contains(sid.as_str()))
+            })
+            .map(|n| n.id)
+            .collect();
+        if selected_nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Entities of the selected sources: incoming `PartOf` edges
+        // (`entity --PartOf--> source`).
+        let mut entity_nodes: HashSet<concept_graph::NodeId> = HashSet::new();
+        for edge in graph.iter_edges() {
+            if edge.relation == RelationType::PartOf && selected_nodes.contains(&edge.to) {
+                entity_nodes.insert(edge.from);
+            }
+        }
+
+        // For each shared entity, collect the related (non-selected)
+        // sources. `BTreeMap` keeps suggestions deterministic before
+        // the score sort.
+        let mut by_entity: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for entity_node in entity_nodes {
+            let Some(node) = graph.get_node(entity_node) else {
+                continue;
+            };
+            let mut related: Vec<String> = graph
+                .neighbors(entity_node, Some(RelationType::PartOf))
+                .into_iter()
+                .filter_map(|nid| graph.get_node(nid))
+                .filter_map(|n| source_id_from_label(&n.label))
+                .filter(|sid| !selected.contains(sid.as_str()))
+                .collect();
+            related.sort();
+            related.dedup();
+            if !related.is_empty() {
+                by_entity.insert(node.label.clone(), related);
+            }
+        }
+
+        let mut suggestions: Vec<RelatedSourceSuggestion> = by_entity
+            .into_iter()
+            .map(|(entity, source_ids)| RelatedSourceSuggestion {
+                score: u32::try_from(source_ids.len()).unwrap_or(u32::MAX),
+                entity,
+                source_ids,
+            })
+            .collect();
+        // Most related sources first; ties broken by entity label for a
+        // stable, reproducible ordering.
+        suggestions.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.entity.cmp(&b.entity)));
+        suggestions.truncate(max_suggestions);
+        Ok(suggestions)
+    }
+
+    /// Match concept-graph nodes against the query tokens, resolving
+    /// each match's related Tessera sources. Used by
+    /// [`Self::search_knowledge`].
+    fn search_concepts(
+        &mut self,
+        tokens: &[String],
+        limit: usize,
+    ) -> Result<Vec<KnowledgeConcept>> {
+        let scope = self.default_scope;
+        self.concepts.load_scope(scope)?;
+        let graph = self.concepts.graph();
+
+        let mut scored: Vec<(f64, usize, KnowledgeConcept)> = Vec::new();
+        for node in graph.iter_nodes() {
+            if node.scope_id != scope {
+                continue;
+            }
+            // Per-source nodes are graph plumbing, not concepts.
+            if source_id_from_label(&node.label).is_some() {
+                continue;
+            }
+            let relevance = text_relevance(&node.label.to_lowercase(), tokens);
+            if relevance <= 0.0 {
+                continue;
+            }
+            let related_source_ids: Vec<String> = graph
+                .neighbors(node.id, Some(RelationType::PartOf))
+                .into_iter()
+                .filter_map(|nid| graph.get_node(nid))
+                .filter_map(|n| source_id_from_label(&n.label))
+                .collect();
+            scored.push((
+                relevance,
+                related_source_ids.len(),
+                KnowledgeConcept {
+                    id: node.id.to_string(),
+                    label: node.label.clone(),
+                    definition: node.definition.clone(),
+                    state: node.state.as_str().to_string(),
+                    related_source_ids,
+                },
+            ));
+        }
+        // Relevance desc, then number of related sources desc, then
+        // label asc for a stable order.
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.1.cmp(&a.1))
+                .then_with(|| a.2.label.cmp(&b.2.label))
+        });
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, concept)| concept)
+            .collect())
+    }
+
     // ───────────────────────────── internals ─────────────────────────
 
     fn load_memories(&self, scope: ScopeId) -> Result<Vec<MemoryObject>> {
@@ -445,7 +786,7 @@ impl SubstrateManager {
         // Rehydrate the scope so dedup sees previously-persisted nodes.
         self.concepts.load_scope(scope)?;
 
-        let source_label = format!("source:{source_id}");
+        let source_label = source_node_label(source_id);
         let source_node = self.ensure_node(scope, &source_label, "tessera source")?;
 
         for label in entity_labels {
@@ -639,6 +980,70 @@ fn memory_observation_type(memory: &MemoryObject) -> Option<String> {
     memory_metadata_str(memory, "observation_type")
 }
 
+/// Build the concept-graph label for a Tessera source node.
+fn source_node_label(source_id: &str) -> String {
+    format!("{SOURCE_NODE_PREFIX}{source_id}")
+}
+
+/// Recover the Tessera source id from a per-source node label, or
+/// `None` if `label` is not a source node (e.g. an entity node).
+fn source_id_from_label(label: &str) -> Option<String> {
+    label
+        .strip_prefix(SOURCE_NODE_PREFIX)
+        .map(ToString::to_string)
+}
+
+/// Tokenize a free-text query into lowercase alphanumeric terms of at
+/// least two characters, de-duplicated while preserving order. Used by
+/// the substrate's lexical matching for [`SubstrateManager::search_knowledge`].
+fn query_tokens(query: &str) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut tokens = Vec::new();
+    for raw in query.split(|c: char| !c.is_alphanumeric()) {
+        if raw.len() < 2 {
+            continue;
+        }
+        let token = raw.to_lowercase();
+        if seen.insert(token.clone()) {
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
+/// Lexical relevance of `text` against pre-tokenized query `tokens`, in
+/// `0.0 ..= 2.0`.
+///
+/// The base score is the fraction of query tokens that appear as a
+/// substring of the (already lowercased) `text`. A whole-token
+/// word-boundary match adds a small bonus so "tessera" ranks an exact
+/// word above a hit buried inside "tesserae". Returns `0.0` when no
+/// token matches, which the callers use to drop non-matching items.
+fn text_relevance(text_lower: &str, tokens: &[String]) -> f64 {
+    if tokens.is_empty() {
+        return 0.0;
+    }
+    let mut matched = 0usize;
+    let mut word_bonus = 0.0;
+    for token in tokens {
+        if text_lower.contains(token.as_str()) {
+            matched += 1;
+            if text_lower
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|w| w == token)
+            {
+                word_bonus += 1.0;
+            }
+        }
+    }
+    if matched == 0 {
+        return 0.0;
+    }
+    let coverage = matched as f64 / tokens.len() as f64;
+    let boundary = word_bonus / tokens.len() as f64;
+    coverage + boundary
+}
+
 fn memory_to_record(memory: &MemoryObject) -> MemoryRecord {
     MemoryRecord {
         id: memory.id.to_string(),
@@ -816,5 +1221,105 @@ mod tests {
             summary.recap, "No memories have been captured yet.",
             "an all-archived working set must not look populated"
         );
+    }
+
+    const SOURCE_A: &str = "11111111-1111-4111-8111-111111111111";
+    const SOURCE_B: &str = "22222222-2222-4222-8222-222222222222";
+
+    /// Seed two sources whose chunk text shares the capitalised entity
+    /// "Acme" (extracted by the lexicon observation pipeline) so the
+    /// resulting memory plane + concept graph can be queried end to end.
+    fn seed_two_sources_sharing_acme() -> SubstrateManager {
+        let mut manager = SubstrateManager::open(":memory:", None).expect("open substrate");
+        manager
+            .extract_observations(SOURCE_A, &["Acme shipped the contract.".to_string()])
+            .expect("extract A");
+        manager
+            .extract_observations(SOURCE_B, &["Acme renewed with Globex.".to_string()])
+            .expect("extract B");
+        manager
+    }
+
+    #[test]
+    fn search_knowledge_returns_matching_entities_and_concepts() {
+        let mut manager = seed_two_sources_sharing_acme();
+
+        let knowledge = manager.search_knowledge("Acme", 10).expect("search");
+        // The shared entity surfaces as an observation-typed memory.
+        assert!(
+            knowledge.entities.iter().any(|e| e.content == "Acme"),
+            "expected an 'Acme' entity, got {:?}",
+            knowledge
+                .entities
+                .iter()
+                .map(|e| &e.content)
+                .collect::<Vec<_>>()
+        );
+        // The concept graph resolves "Acme" to BOTH sources it
+        // co-occurs in.
+        let acme = knowledge
+            .concepts
+            .iter()
+            .find(|c| c.label == "Acme")
+            .expect("Acme concept present");
+        assert!(acme.related_source_ids.contains(&SOURCE_A.to_string()));
+        assert!(acme.related_source_ids.contains(&SOURCE_B.to_string()));
+    }
+
+    #[test]
+    fn search_knowledge_empty_query_is_a_noop() {
+        let mut manager = seed_two_sources_sharing_acme();
+        let knowledge = manager.search_knowledge("   ", 10).expect("search");
+        assert!(knowledge.entities.is_empty());
+        assert!(knowledge.facts.is_empty());
+        assert!(knowledge.concepts.is_empty());
+        assert!(knowledge.memories.is_empty());
+        // A zero limit is likewise a no-op even for a matching query.
+        let none = manager.search_knowledge("Acme", 0).expect("search");
+        assert!(none.memories.is_empty());
+    }
+
+    #[test]
+    fn retention_by_source_reports_live_scores_per_source() {
+        let manager = seed_two_sources_sharing_acme();
+        let map = manager.retention_by_source().expect("retention map");
+        // Both freshly-extracted sources have at least one live memory,
+        // so both appear with a positive retention score.
+        let a = map.get(SOURCE_A).copied().expect("source A scored");
+        let b = map.get(SOURCE_B).copied().expect("source B scored");
+        assert!(a > 0.0, "fresh source A should have positive retention");
+        assert!(b > 0.0, "fresh source B should have positive retention");
+    }
+
+    #[test]
+    fn suggest_related_sources_surfaces_co_occurring_source() {
+        let mut manager = seed_two_sources_sharing_acme();
+        let suggestions = manager
+            .suggest_related_sources(&[SOURCE_A.to_string()], 5)
+            .expect("suggest");
+        // "Acme" links A to B → exactly one suggestion pointing at B.
+        let acme = suggestions
+            .iter()
+            .find(|s| s.entity == "Acme")
+            .expect("Acme suggestion present");
+        assert_eq!(acme.source_ids, vec![SOURCE_B.to_string()]);
+        assert!(
+            !acme.source_ids.contains(&SOURCE_A.to_string()),
+            "an already-selected source must never be suggested back"
+        );
+    }
+
+    #[test]
+    fn suggest_related_sources_empty_selection_is_a_noop() {
+        let mut manager = seed_two_sources_sharing_acme();
+        assert!(manager
+            .suggest_related_sources(&[], 5)
+            .expect("suggest")
+            .is_empty());
+        // A zero cap likewise yields nothing.
+        assert!(manager
+            .suggest_related_sources(&[SOURCE_A.to_string()], 0)
+            .expect("suggest")
+            .is_empty());
     }
 }

@@ -1,6 +1,6 @@
 //! N-API surface for the additive knowledge substrate.
 //!
-//! These eight entry points are the FOUNDATIONAL contract the UI and
+//! These nine entry points are the FOUNDATIONAL contract the UI and
 //! search sessions wire to. They mirror Tessera's existing
 //! `napi-derive` style (snake_case `bridge_*` functions returning
 //! `napi::Result<T>` with `#[napi(object)]` DTOs), and they delegate to
@@ -10,9 +10,11 @@
 
 use napi_derive::napi;
 
-use tessera_substrate::{DecaySweepSummary, MemoryRecord, SynthesisSummary};
+use tessera_substrate::{
+    DecaySweepSummary, KnowledgeConcept, MemoryRecord, RelatedSourceSuggestion, SynthesisSummary,
+};
 
-use crate::napi_exports::{extract_observations_for_source, substrate_lock};
+use crate::napi_exports::{extract_observations_for_source, substrate_lock, SUBSTRATE_UNAVAILABLE};
 
 /// A memory object as surfaced to the renderer.
 #[napi(object)]
@@ -60,6 +62,57 @@ impl From<MemoryRecord> for SubstrateMemory {
             created_at: record.created_at,
             last_accessed_at: record.last_accessed_at,
             source_id: record.source_id,
+        }
+    }
+}
+
+/// A concept-graph node surfaced to the renderer as part of an
+/// enriched search (the "Knowledge" tab).
+#[napi(object)]
+pub struct SubstrateConcept {
+    /// Concept node id (UUID).
+    pub id: String,
+    /// Human-readable concept label (the extracted entity surface).
+    pub label: String,
+    /// Short definition / provenance tag for the node.
+    pub definition: String,
+    /// Concept lifecycle state: `candidate`, `canonical`,
+    /// `superseded`, `contradicted`, or `deleted`.
+    pub state: String,
+    /// Tessera source ids (UUID strings) this concept co-occurs in.
+    pub related_source_ids: Vec<String>,
+}
+
+impl From<KnowledgeConcept> for SubstrateConcept {
+    fn from(concept: KnowledgeConcept) -> Self {
+        Self {
+            id: concept.id,
+            label: concept.label,
+            definition: concept.definition,
+            state: concept.state,
+            related_source_ids: concept.related_source_ids,
+        }
+    }
+}
+
+/// A concept-graph-derived suggestion of related sources for the
+/// artifact-creation flow ("You have N sources about [entity].").
+#[napi(object)]
+pub struct SubstrateRelatedSuggestion {
+    /// Concept label the suggestion is anchored on.
+    pub entity: String,
+    /// Related Tessera source ids (UUID strings) not already selected.
+    pub source_ids: Vec<String>,
+    /// Ranking signal: the number of related sources.
+    pub score: u32,
+}
+
+impl From<RelatedSourceSuggestion> for SubstrateRelatedSuggestion {
+    fn from(suggestion: RelatedSourceSuggestion) -> Self {
+        Self {
+            entity: suggestion.entity,
+            source_ids: suggestion.source_ids,
+            score: suggestion.score,
         }
     }
 }
@@ -135,22 +188,55 @@ pub fn bridge_extract_observations(source_id: String) -> napi::Result<u32> {
 /// UUID; `null`/omitted uses the single default scope.
 #[napi]
 pub fn bridge_get_memories(scope: Option<String>) -> napi::Result<Vec<SubstrateMemory>> {
-    let manager = substrate_lock()?
+    let guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_ref()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     let records = manager
         .list_memories(scope.as_deref())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(records.into_iter().map(SubstrateMemory::from).collect())
 }
 
+/// Suggest sources related to an already-selected working set, via the
+/// concept graph. Powers the artifact-creation "You have N sources
+/// about [entity]. Include them?" affordance.
+///
+/// `selected_source_ids` is the user's current selection (source UUID
+/// strings); suggestions never include an already-selected source and
+/// are capped at `max_suggestions` (a `null`/omitted limit applies a
+/// default of 10). Returns suggestions ranked by how many related
+/// sources each concept pulls in.
+#[napi]
+pub fn bridge_suggest_related_sources(
+    selected_source_ids: Vec<String>,
+    max_suggestions: Option<u32>,
+) -> napi::Result<Vec<SubstrateRelatedSuggestion>> {
+    let max = max_suggestions.map_or(10, |n| n as usize);
+    let mut manager = substrate_lock()?
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let suggestions = manager
+        .suggest_related_sources(&selected_source_ids, max)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(suggestions
+        .into_iter()
+        .map(SubstrateRelatedSuggestion::from)
+        .collect())
+}
+
 /// Pin a memory by id — the strongest retention signal — promoting a
 /// `Candidate` to `Reinforced`. Returns the updated memory.
 #[napi]
 pub fn bridge_pin_memory(id: String) -> napi::Result<SubstrateMemory> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .pin_memory(&id)
         .map(SubstrateMemory::from)
@@ -161,9 +247,12 @@ pub fn bridge_pin_memory(id: String) -> napi::Result<SubstrateMemory> {
 /// updated memory.
 #[napi]
 pub fn bridge_unpin_memory(id: String) -> napi::Result<SubstrateMemory> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .unpin_memory(&id)
         .map(SubstrateMemory::from)
@@ -174,9 +263,12 @@ pub fn bridge_unpin_memory(id: String) -> napi::Result<SubstrateMemory> {
 /// recoverable from the persisted memory plane.
 #[napi]
 pub fn bridge_forget_memory(id: String) -> napi::Result<()> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .forget_memory(&id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -191,9 +283,12 @@ pub fn bridge_get_concept_graph(
     scope: Option<String>,
     max_nodes: Option<u32>,
 ) -> napi::Result<String> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .concept_graph_json(scope.as_deref(), max_nodes.map(|n| n as usize))
         .map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -204,9 +299,12 @@ pub fn bridge_get_concept_graph(
 /// archived. Called on a 6-hour timer by the Electron main process.
 #[napi]
 pub fn bridge_run_decay_sweep() -> napi::Result<SubstrateDecayReport> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .run_decay_sweep()
         .map(SubstrateDecayReport::from)
@@ -219,9 +317,12 @@ pub fn bridge_run_decay_sweep() -> napi::Result<SubstrateDecayReport> {
 /// uses the default scope.
 #[napi]
 pub fn bridge_trigger_synthesis(scope: Option<String>) -> napi::Result<SubstrateSynthesis> {
-    let mut manager = substrate_lock()?
+    let mut guard = substrate_lock()?
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| napi::Error::from_reason(SUBSTRATE_UNAVAILABLE))?;
     manager
         .trigger_synthesis(scope.as_deref())
         .map(SubstrateSynthesis::from)

@@ -23,9 +23,13 @@ import {
   CREATE_PAGE_MODES,
   EXPORT_FORMATS,
   EXTERNAL_PROVIDER_TYPES,
+  MAX_BACKUP_INTERVAL_HOURS,
+  MAX_BACKUP_RETENTION_COUNT,
   MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
+  MIN_BACKUP_INTERVAL_HOURS,
+  MIN_BACKUP_RETENTION_COUNT,
   RESOURCE_MODES,
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -456,6 +460,7 @@ export const HybridSearchConfigUpdateSchema = z
       .max(10 * 365 * 24 * 60 * 60)
       .optional(),
     candidatePoolSize: z.number().int().min(0).max(10_000).optional(),
+    retentionWeight: z.number().finite().min(0).max(10).optional(),
   })
   // Use `.strict()` rather than the default `.strip()` so a renderer
   // bug or compromised IPC caller that sends a field the schema
@@ -724,3 +729,91 @@ export const GenerateImageSchema = z
   })
   .strict();
 export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;
+
+// --- Backup & recovery ---
+//
+// The `backup:*` channels drive the local backup/restore system. Every
+// path the renderer supplies (a backup file to restore, a bundle to
+// import/export) flows into the Rust bridge which re-validates
+// containment and decryption, but we still bound the strings here so a
+// hostile renderer can't hand a multi-megabyte path straight to the
+// filesystem layer. The bounds on the configure schema match the
+// on-disk `AppConfigSchema` so a value that round-trips disk → IPC can
+// never be rejected at one layer but accepted at the other.
+
+/** A filesystem path argument. Non-empty, bounded well under the OS
+ *  `PATH_MAX` but generous enough for deeply-nested userData dirs. */
+const BackupPath = z.string().min(1).max(4096);
+
+// `backup:configure` — partial update of the backup-scheduler config.
+// Every field optional so the renderer can PATCH a single toggle. The
+// handler persists via `updateConfig` and refreshes the scheduler so a
+// cadence change takes effect without an app restart. Strict so an
+// unknown key (e.g. a typo'd field) is rejected rather than silently
+// dropped.
+export const BackupConfigureSchema = z
+  .object({
+    autoBackup: z.boolean().optional(),
+    // Empty string is the explicit "use the `<userData>/backups`
+    // default" sentinel (see `AppConfig.backupDir`), so unlike the
+    // other path schemas this one allows a zero-length value.
+    backupDir: z.string().max(4096).optional(),
+    backupIntervalHours: z
+      .number()
+      .int()
+      .min(MIN_BACKUP_INTERVAL_HOURS)
+      .max(MAX_BACKUP_INTERVAL_HOURS)
+      .optional(),
+    backupRetentionCount: z
+      .number()
+      .int()
+      .min(MIN_BACKUP_RETENTION_COUNT)
+      .max(MAX_BACKUP_RETENTION_COUNT)
+      .optional(),
+  })
+  .strict();
+export type BackupConfigureInput = z.infer<typeof BackupConfigureSchema>;
+
+// `backup:restore` — stage a single backup file for restore at next
+// launch. The bridge validates the file decrypts under the live key
+// before staging, so a wrong-key or corrupt file is rejected here
+// (synchronously) rather than bricking the next boot.
+export const BackupRestoreSchema = z
+  .object({ backupPath: BackupPath })
+  .strict();
+export type BackupRestoreInput = z.infer<typeof BackupRestoreSchema>;
+
+// `backup:exportBundle` — write a full `.tessera-backup` archive to the
+// user-chosen path. The handler assembles the sidecar entries (config
+// JSON, etc.) itself; the renderer only supplies the destination.
+export const BundleExportSchema = z
+  .object({ outPath: BackupPath })
+  .strict();
+export type BundleExportInput = z.infer<typeof BundleExportSchema>;
+
+// `backup:importBundle` — verify + stage a `.tessera-backup` archive.
+// The handler supplies the sidecar restore targets; the renderer only
+// supplies the source archive path.
+export const BundleImportSchema = z
+  .object({ bundlePath: BackupPath })
+  .strict();
+export type BundleImportInput = z.infer<typeof BundleImportSchema>;
+
+// `dialog:openDirectory` — native folder picker used by the Settings →
+// Backup "choose backup folder" button. Mirrors `OpenImageDialogSchema`
+// (strict, bounded title) for the same OS-dialog-hardening reasons.
+export const OpenDirectoryDialogSchema = z
+  .object({ title: z.string().max(512).optional() })
+  .strict();
+export type OpenDirectoryDialogInput = z.infer<
+  typeof OpenDirectoryDialogSchema
+>;
+
+// `dialog:openBundle` — native open-file picker locked to the
+// `.tessera-backup` archive extension, used by Settings → Backup
+// "Import workspace bundle". Same strict/bounded-title hardening as the
+// other dialog schemas.
+export const OpenBundleDialogSchema = z
+  .object({ title: z.string().max(512).optional() })
+  .strict();
+export type OpenBundleDialogInput = z.infer<typeof OpenBundleDialogSchema>;

@@ -102,6 +102,46 @@ export function registerSourcesHandlers(): void {
     },
   );
 
+  idempotentHandle(
+    "sources:searchEnriched",
+    async (_event, query: unknown, limit: unknown) => {
+      const q = assertString(query, "query", { maxLen: 10_000 });
+      const n = assertNumber(limit, "limit", {
+        integer: true,
+        min: 1,
+        max: 1_000,
+      });
+      const bridge = getBridge();
+      if (bridge) {
+        const result = bridge.bridgeSearchSourcesEnriched(q, n);
+        // Transform raw chunk hits into the renderer's `SearchHit`
+        // shape (identical mapping to `sources:search`); the knowledge
+        // planes pass through unchanged.
+        return {
+          hits: result.hits.map((r) => ({
+            sourcePath: r.sourcePath,
+            sourceId: r.sourceId,
+            chunkHash: r.chunkHash,
+            chunkContent: r.content,
+            relevanceScore: r.relevance,
+            excerpt: r.excerpt,
+          })),
+          entities: result.entities,
+          facts: result.facts,
+          concepts: result.concepts,
+          memories: result.memories,
+        };
+      }
+      return {
+        hits: [],
+        entities: [],
+        facts: [],
+        concepts: [],
+        memories: [],
+      };
+    },
+  );
+
   idempotentHandle("sources:getDetail", async (_event, id: unknown) => {
     const validated = assertId(id, "sourceId");
     const bridge = getBridge();
