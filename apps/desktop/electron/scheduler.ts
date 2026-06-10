@@ -31,6 +31,7 @@
  */
 import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo } from "./appState";
 import { isBatteryLow } from "./batteryMonitor";
+import { isIndexingDeferredForMemory } from "./memoryWatchdog";
 
 /**
  * Thrown by {@link executeLeafAction} when a `GenerateFromTemplate`
@@ -44,6 +45,30 @@ class BatteryGatedSkip extends Error {
   constructor() {
     super("battery_low");
     this.name = "BatteryGatedSkip";
+  }
+}
+
+/**
+ * Thrown by {@link executeLeafAction} when a `reindex_source` step is
+ * deferred because the LW-7 memory watchdog has paused bulk-index
+ * admission (main-process RSS above the high-water mark). Like
+ * {@link BatteryGatedSkip}, `runAutomation` catches it specifically and
+ * records a `"skipped: memory_pressure"` status rather than a `"failed: …"`
+ * one — a deferred reindex is not a failure, and the automation should
+ * fire normally on the next due tick once RSS drops back below the
+ * low-water mark.
+ *
+ * This extends the `sources:batchReindex` IPC admission gate (see
+ * `ipc/sources.ts`) to the scheduler's automation-driven reindex path,
+ * which calls `bridgeReindexSource` directly and would otherwise bypass
+ * the watchdog entirely — letting a dense run of due `reindex_source`
+ * automations admit full-source reindexes exactly when the watchdog wants
+ * to back off.
+ */
+class MemoryGatedSkip extends Error {
+  constructor() {
+    super("memory_pressure");
+    this.name = "MemoryGatedSkip";
   }
 }
 
@@ -335,6 +360,22 @@ async function executeLeafAction(
       if (!action.source_id) {
         throw new Error("reindex_source missing source_id");
       }
+      // LW-7: defer background/scheduled reindexing while the memory
+      // watchdog has paused bulk-index admission. This gates ONLY the
+      // scheduler's automation-driven reindex — user-initiated single-
+      // source reindex (`sources:reindex`) stays ungated, mirroring the
+      // scope of the `sources:batchReindex` IPC gate. Without this, the
+      // scheduler's direct `bridgeReindexSource` call bypasses the
+      // watchdog, so a dense run of due `reindex_source` automations
+      // could admit full-source reindexes exactly when RSS is already
+      // high. The skip is surfaced as a non-failure status by
+      // `runAutomation`, and the automation fires normally on the next
+      // due tick once RSS drops below the low-water mark.
+      // `isIndexingDeferredForMemory()` fails open (a sampler error or
+      // absent watchdog singleton admits indexing).
+      if (isIndexingDeferredForMemory()) {
+        throw new MemoryGatedSkip();
+      }
       bridge.bridgeReindexSource(action.source_id);
       break;
     }
@@ -409,6 +450,12 @@ async function runAutomation(
           // status so the run advances `last_run_at` (no per-tick churn)
           // and the UI shows "skipped" rather than a red failure badge.
           status = "skipped: battery_low";
+        } else if (e instanceof MemoryGatedSkip) {
+          // LW-7: memory-pressure defer is a non-failure, same as the
+          // battery skip above — record a distinct status so the UI
+          // shows "skipped" not a red failure, and the automation re-runs
+          // normally on its next due tick once RSS recovers.
+          status = "skipped: memory_pressure";
         } else {
           const msg = e instanceof Error ? e.message : String(e);
           status = `failed: ${msg}`;
@@ -424,6 +471,7 @@ async function runAutomation(
       const steps = flattenSteps(action);
       const failures: string[] = [];
       let batterySkipped = 0;
+      let memorySkipped = 0;
       for (let i = 0; i < steps.length; i++) {
         try {
           await executeLeafAction(bridge, steps[i]);
@@ -436,6 +484,13 @@ async function runAutomation(
             batterySkipped++;
             continue;
           }
+          if (e instanceof MemoryGatedSkip) {
+            // LW-7: a memory-pressure defer of one step is likewise not a
+            // failure — counted separately from `failures` for the same
+            // reason as the battery skip above.
+            memorySkipped++;
+            continue;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           failures.push(`step ${i + 1}: ${msg}`);
           console.error(
@@ -444,18 +499,31 @@ async function runAutomation(
           );
         }
       }
-      if (failures.length > 0 && batterySkipped > 0) {
-        // A sequence can both fail some steps AND defer others on low
-        // battery. Report both so the count is honest: surfacing only
-        // the failures would imply the battery-skipped steps ran fine,
-        // hiding that they were deferred. The parenthetical keeps the
-        // leading `failed: N/M` shape (so existing failure parsing /
-        // alerting still matches) while disclosing the skip count.
-        status = `failed: ${failures.length}/${steps.length} steps failed (${batterySkipped} skipped: battery_low): ${failures.join("; ")}`;
+      // Resource-defer skips (LW-3 battery, LW-7 memory) are disclosed in
+      // two shapes: a parenthetical appended to the `failed: N/M` line
+      // when some steps also failed, and a standalone `skipped: …` status
+      // when nothing failed. Both are built from the same ordered clause
+      // lists (battery first, then memory) so the strings are
+      // deterministic and a battery-only sequence reads exactly as it did
+      // before LW-7.
+      const skipParenParts: string[] = [];
+      if (batterySkipped > 0) skipParenParts.push(`${batterySkipped} skipped: battery_low`);
+      if (memorySkipped > 0) skipParenParts.push(`${memorySkipped} skipped: memory_pressure`);
+      const skipStatusParts: string[] = [];
+      if (batterySkipped > 0) skipStatusParts.push(`battery_low (${batterySkipped}/${steps.length} steps)`);
+      if (memorySkipped > 0) skipStatusParts.push(`memory_pressure (${memorySkipped}/${steps.length} steps)`);
+      if (failures.length > 0 && skipParenParts.length > 0) {
+        // A sequence can both fail some steps AND defer others. Report
+        // both so the count is honest: surfacing only the failures would
+        // imply the deferred steps ran fine, hiding that they were
+        // skipped. The parenthetical keeps the leading `failed: N/M` shape
+        // (so existing failure parsing / alerting still matches) while
+        // disclosing each skip reason.
+        status = `failed: ${failures.length}/${steps.length} steps failed (${skipParenParts.join(", ")}): ${failures.join("; ")}`;
       } else if (failures.length > 0) {
         status = `failed: ${failures.length}/${steps.length} steps failed: ${failures.join("; ")}`;
-      } else if (batterySkipped > 0) {
-        status = `skipped: battery_low (${batterySkipped}/${steps.length} steps)`;
+      } else if (skipStatusParts.length > 0) {
+        status = `skipped: ${skipStatusParts.join(", ")}`;
       }
     }
   } catch (e) {
