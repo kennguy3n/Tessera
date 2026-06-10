@@ -726,7 +726,21 @@ async function initBridgeAndServices(): Promise<void> {
     // `EncryptionUnavailableError`.
     markStart("bridge-init");
     await initAppState();
-    markEnd("bridge-init");
+    const bridgeInitMs = markEnd("bridge-init");
+    // Log bridge-init timing as its own structured event. The
+    // `startup-perf` boot table (emitted from `ready-to-show`) measures
+    // boot-to-first-paint and INTENTIONALLY excludes bridge-init, since
+    // that work is off the cold-start critical path now (LW-8). Without
+    // this line a bridge-init regression — SQLCipher open + tombstone
+    // replay + FTS purge getting slower — would be invisible to the
+    // structured logs / fleet monitoring. `markEnd` returns `null` only
+    // when perf marks are disabled (e.g. some test envs), so we skip
+    // the event rather than log a meaningless value.
+    if (bridgeInitMs !== null) {
+      getLogger().info("startup.bridgeInit", {
+        durationMs: Math.round(bridgeInitMs * 100) / 100,
+      });
+    }
   } catch (err) {
     markEnd("bridge-init");
     const message = err instanceof Error ? err.message : String(err);

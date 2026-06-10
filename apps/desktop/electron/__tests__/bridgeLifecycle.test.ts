@@ -16,8 +16,19 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// Controllable fake window list so the DEFAULT broadcaster (the real
+// `broadcastToAllWindows`, exercised when no `broadcast` override is
+// passed) can be driven with windows whose `send()` throws.
+const fakeWindows = vi.hoisted(
+  () =>
+    [] as Array<{
+      isDestroyed: () => boolean;
+      webContents: { send: (channel: string, payload: unknown) => void };
+    }>,
+);
+
 vi.mock("electron", () => ({
-  BrowserWindow: { getAllWindows: () => [] },
+  BrowserWindow: { getAllWindows: () => fakeWindows },
 }));
 
 import {
@@ -30,6 +41,7 @@ import type { BridgeStateView } from "../../shared/types";
 
 beforeEach(() => {
   _resetBridgeStateForTests();
+  fakeWindows.length = 0;
 });
 
 describe("bridge lifecycle state", () => {
@@ -94,6 +106,41 @@ describe("bridge lifecycle state", () => {
     // The state still advanced even though the broadcast failed — the
     // renderer learns it via the getBridgeState invoke on next mount.
     expect(getBridgeStateSnapshot()).toEqual({ state: "ready", error: null });
+  });
+
+  it("default broadcaster isolates a throwing window so later windows still receive", () => {
+    // Three live windows; the middle one's send() throws. The
+    // per-window try/catch must let windows 1 and 3 still receive the
+    // transition instead of the throw short-circuiting the loop.
+    const received: string[] = [];
+    const makeWin = (id: string, throws: boolean) => ({
+      isDestroyed: () => false,
+      webContents: {
+        send: (_channel: string, _payload: unknown) => {
+          if (throws) throw new Error(`send failed for ${id}`);
+          received.push(id);
+        },
+      },
+    });
+    fakeWindows.push(makeWin("a", false), makeWin("b", true), makeWin("c", false));
+
+    // No `broadcast` override → exercises the real broadcastToAllWindows.
+    expect(() => setBridgeState("ready")).not.toThrow();
+    expect(received).toEqual(["a", "c"]);
+    expect(getBridgeStateSnapshot()).toEqual({ state: "ready", error: null });
+  });
+
+  it("default broadcaster skips destroyed windows", () => {
+    const received: string[] = [];
+    const makeWin = (id: string, destroyed: boolean) => ({
+      isDestroyed: () => destroyed,
+      webContents: {
+        send: (_channel: string, _payload: unknown) => received.push(id),
+      },
+    });
+    fakeWindows.push(makeWin("live", false), makeWin("dead", true));
+    setBridgeState("ready");
+    expect(received).toEqual(["live"]);
   });
 
   it("_resetBridgeStateForTests returns to initializing", () => {

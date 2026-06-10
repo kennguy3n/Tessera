@@ -65,8 +65,21 @@ function broadcastToAllWindows(
   payload: BridgeStateView,
 ): void {
   for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
+    if (win.isDestroyed()) continue;
+    // Per-window isolation: a throw on one window's `send()` must not
+    // skip the windows after it in the loop. In practice
+    // `webContents.send()` is a documented no-op (not a throw) for a
+    // destroyed `webContents`, so this is defence-in-depth — but it
+    // makes "every live renderer gets the transition" hold even if a
+    // single window's IPC is in a bad state, instead of silently
+    // dropping the broadcast for windows N+1…end.
+    try {
       win.webContents.send(channel, payload);
+    } catch (err) {
+      console.warn(
+        "[Tessera] bridge-state send to a window failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 }
