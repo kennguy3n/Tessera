@@ -176,14 +176,23 @@ impl SubstrateManager {
         Ok(u32::try_from(observations.len()).unwrap_or(u32::MAX))
     }
 
-    /// List all memory objects for a scope (default scope when `None`).
+    /// List every memory object in the substrate.
+    ///
+    /// The substrate keeps a single, single-user **memory plane** in the
+    /// default scope (see the module docs): observation extraction, pin,
+    /// unpin, forget, decay, and synthesis all read and write that one
+    /// plane. Listing therefore always returns the default scope's
+    /// memories. The `_scope` parameter is retained for N-API signature
+    /// stability and forward compatibility, but is intentionally not used
+    /// to pick a different memory plane — doing so would let a caller list
+    /// ids it could never pin/forget (those paths target the default
+    /// scope), which is exactly the asymmetry this design avoids.
     ///
     /// # Errors
     ///
     /// Returns [`SubstrateError`] on store or (de)serialization failure.
-    pub fn list_memories(&self, scope: Option<&str>) -> Result<Vec<MemoryRecord>> {
-        let scope = self.resolve_scope(scope);
-        let memories = self.load_memories(scope)?;
+    pub fn list_memories(&self, _scope: Option<&str>) -> Result<Vec<MemoryRecord>> {
+        let memories = self.load_memories(self.default_scope)?;
         Ok(memories.iter().map(memory_to_record).collect())
     }
 
@@ -221,8 +230,8 @@ impl SubstrateManager {
         })
     }
 
-    /// Forget a single memory: remove it from every scope's persisted
-    /// memory plane so its content is no longer recoverable.
+    /// Forget a single memory: remove it from the single-user memory
+    /// plane (the default scope) so its content is no longer recoverable.
     ///
     /// # Errors
     ///
@@ -295,18 +304,26 @@ impl SubstrateManager {
     /// # Errors
     ///
     /// Returns [`SubstrateError`] on store or (de)serialization failure.
-    pub fn trigger_synthesis(&mut self, scope: Option<&str>) -> Result<SynthesisSummary> {
-        let scope = self.resolve_scope(scope);
+    pub fn trigger_synthesis(&mut self, _scope: Option<&str>) -> Result<SynthesisSummary> {
+        // Synthesis summarizes the single-user memory plane, so it always
+        // operates on the default scope (matching extract/list/pin/forget).
+        // `_scope` is retained for N-API signature stability.
+        let scope = self.default_scope;
         let memories = self.load_memories(scope)?;
 
         let mut decisions = Vec::new();
         let mut open_questions = Vec::new();
         let mut active_tasks = Vec::new();
         let mut entities = Vec::new();
+        // Count only memories that are still part of the working set; the
+        // recap headline must not include archived/deleted memories or it
+        // reports a working set far larger than the actionable content.
+        let mut active_count = 0usize;
         for memory in &memories {
             if memory.state == MemoryState::Archived || memory.state == MemoryState::Deleted {
                 continue;
             }
+            active_count += 1;
             let Some(content) = memory_content(memory) else {
                 continue;
             };
@@ -319,7 +336,7 @@ impl SubstrateManager {
             }
         }
 
-        let recap = build_recap(memories.len(), &entities, &decisions, &active_tasks);
+        let recap = build_recap(active_count, &entities, &decisions, &active_tasks);
         let bundle = SummaryBundle {
             recap: recap.clone(),
             decisions: decisions.clone(),
@@ -488,17 +505,37 @@ fn derive_master_key(db_path: &str, db_key_hex: Option<&str>) -> Result<MasterKe
 }
 
 /// Decode a 64-char hex SQLCipher key into 32 raw bytes.
+///
+/// Indexing is done over the raw bytes (not the `&str`) so a malformed
+/// key containing multi-byte UTF-8 codepoints can never panic on a
+/// character-boundary slice — any non-ASCII-hex input is reported as
+/// [`SubstrateError::InvalidKeyHex`].
 fn decode_db_key(hex: &str) -> Result<MasterKey> {
-    if hex.len() != MASTER_KEY_LEN * 2 {
+    let bytes = hex.as_bytes();
+    if bytes.len() != MASTER_KEY_LEN * 2 {
         return Err(SubstrateError::InvalidKeyLength(hex.len()));
     }
     let mut out = [0u8; MASTER_KEY_LEN];
     for (i, byte) in out.iter_mut().enumerate() {
-        let slice = &hex[i * 2..i * 2 + 2];
-        *byte = u8::from_str_radix(slice, 16)
-            .map_err(|_| SubstrateError::InvalidKeyHex(slice.to_string()))?;
+        if let (Some(hi), Some(lo)) = (hex_nibble(bytes[i * 2]), hex_nibble(bytes[i * 2 + 1])) {
+            *byte = (hi << 4) | lo;
+        } else {
+            let pair = String::from_utf8_lossy(&bytes[i * 2..i * 2 + 2]).into_owned();
+            return Err(SubstrateError::InvalidKeyHex(pair));
+        }
     }
     Ok(out)
+}
+
+/// Map a single ASCII hex digit to its 0–15 value, or `None` if the byte
+/// is not an ASCII hex digit.
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Compute the substrate sibling DB paths for a Tessera `db_path`.
@@ -729,5 +766,52 @@ mod tests {
         let memories = manager.list_memories(None).expect("list");
         assert_eq!(memories[0].state, "candidate");
         assert!(memories[0].retention_score >= 0.9);
+    }
+
+    #[test]
+    fn recap_counts_only_active_memories_after_archival() {
+        let mut manager = SubstrateManager::open(":memory:", None).expect("open substrate");
+        let scope = manager.default_scope;
+
+        // Two fresh, active facts plus three long-aged candidates that the
+        // sweep will archive.
+        let mut seed = vec![aged_useful_fact(scope, 0), aged_useful_fact(scope, 0)];
+        seed.extend((0..3).map(|_| aged_useful_fact(scope, 365 * 5)));
+        manager.save_memories(scope, &seed).expect("seed memories");
+
+        let report = manager.run_decay_sweep().expect("decay sweep");
+        assert_eq!(
+            report.candidates_archived, 3,
+            "the three aged facts archive"
+        );
+
+        let summary = manager.trigger_synthesis(None).expect("synthesis");
+        // The headline must reflect the 2 active memories, not all 5.
+        assert!(
+            summary.recap.contains("2 memories"),
+            "recap should count only active memories, got: {}",
+            summary.recap
+        );
+        assert!(
+            !summary.recap.contains("5 memories"),
+            "recap must not count archived memories, got: {}",
+            summary.recap
+        );
+    }
+
+    #[test]
+    fn recap_reports_empty_when_all_memories_archived() {
+        let mut manager = SubstrateManager::open(":memory:", None).expect("open substrate");
+        let scope = manager.default_scope;
+        let seed: Vec<MemoryObject> = (0..4).map(|_| aged_useful_fact(scope, 365 * 5)).collect();
+        manager.save_memories(scope, &seed).expect("seed memories");
+
+        manager.run_decay_sweep().expect("decay sweep");
+
+        let summary = manager.trigger_synthesis(None).expect("synthesis");
+        assert_eq!(
+            summary.recap, "No memories have been captured yet.",
+            "an all-archived working set must not look populated"
+        );
     }
 }

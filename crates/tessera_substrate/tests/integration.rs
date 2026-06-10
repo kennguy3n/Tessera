@@ -203,7 +203,7 @@ fn fresh_memories_survive_a_decay_sweep() {
         .unwrap();
 
     let report = manager.run_decay_sweep().expect("decay sweep");
-    assert_eq!(report.scored as u32, count, "every memory is rescored");
+    assert_eq!(report.scored, count, "every memory is rescored");
     assert_eq!(
         report.candidates_archived, 0,
         "freshly-extracted memories must not be archived immediately"
