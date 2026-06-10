@@ -265,6 +265,16 @@ fn backup_db_to_file(source: &SharedConnection, key: Option<&str>, dest_path: &P
         apply_pragma_key(&dest, k)?;
     }
 
+    // The source lock is held for the whole `step` loop — including the
+    // brief `BACKUP_BUSY_RETRY` sleeps below. This is required, not
+    // incidental: the `Backup` handle borrows `src_guard`, and SQLite's
+    // Online Backup API needs the source connection to stay live across
+    // steps. In Tessera's single-writer / shared-connection model the
+    // only contender for this lock is the app's own request path, and a
+    // hot copy with `BACKUP_ALL_PAGES` normally finishes in one step, so
+    // the retry sleeps are rare and short. Releasing the lock mid-copy
+    // would mean dropping the handle and restarting the backup, so we
+    // deliberately hold it through the loop.
     let src_guard = source
         .lock()
         .map_err(|e| Error::Backup(format!("source connection lock poisoned: {e}")))?;
