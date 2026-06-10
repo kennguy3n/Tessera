@@ -120,11 +120,47 @@ export function collectStartupPerf(): PerfMark[] {
 }
 
 /**
+ * The boot stage whose end marks "the renderer produced its first
+ * paint" — the cold-start end anchor. Recorded on the main window's
+ * `ready-to-show` (see `createWindow` in `main.ts`).
+ */
+export const FIRST_RENDER_STAGE = "window-show";
+
+/**
+ * End anchor for the cold-start total: the first-paint instant.
+ *
+ * LW-8 moved bridge initialisation (`initAppState` → `open_store` +
+ * tombstone replay + FTS purge) OFF the cold-start critical path — it
+ * now runs in the background AFTER `createWindow()`, so its
+ * `bridge-init` measure ends *later* in wall-clock than `window-show`.
+ * Anchoring on "the latest mark" (as this once did) would therefore
+ * fold that background work back into the cold-start number, defeating
+ * the entire point of the deferral. We instead anchor explicitly on the
+ * `window-show` measure's end — the boot-to-first-render instant — and
+ * fall back to the latest mark only for a boot that never opened a
+ * window (so the number is never `NaN`).
+ */
+function firstRenderEndMs(marks: PerfMark[]): number {
+  const firstRender = marks.find((m) => m.name === FIRST_RENDER_STAGE);
+  if (firstRender) return firstRender.endMs;
+  // Fallback for a boot that never opened a window. Both current callers
+  // (`coldStartTotalMs`, `logStartupPerfTable`) already short-circuit on
+  // `marks.length === 0`, but guard the bare-array access here too so a
+  // future in-module caller can't trip an out-of-bounds read: an empty
+  // run has no end anchor, so report 0 rather than read `marks[-1]`.
+  return marks.length > 0 ? marks[marks.length - 1].endMs : 0;
+}
+
+/**
  * Total cold-start duration in ms: the span from the earliest Tessera
  * boot mark (`app-ready` start, anchored at main-bundle module load)
- * to the latest one (`window-show` end, recorded on the main window's
- * `ready-to-show`). This is the boot-to-first-render number the CI
- * cold-start gate asserts against.
+ * to the first-paint instant (`window-show` end, recorded on the main
+ * window's `ready-to-show`). This is the boot-to-first-render number
+ * the cold-start gate asserts against.
+ *
+ * Note this is deliberately NOT "earliest start → latest end": after
+ * LW-8 the background `bridge-init` measure ends after first paint, and
+ * it must be excluded (see {@link firstRenderEndMs}).
  *
  * Returns `null` when instrumentation is disabled or no marks have
  * been recorded yet.
@@ -132,7 +168,7 @@ export function collectStartupPerf(): PerfMark[] {
 export function coldStartTotalMs(): number | null {
   const marks = collectStartupPerf();
   if (marks.length === 0) return null;
-  return marks[marks.length - 1].endMs - marks[0].startMs;
+  return firstRenderEndMs(marks) - marks[0].startMs;
 }
 
 /**
@@ -154,7 +190,7 @@ export function logStartupPerfTable(
       startMs: round2(m.startMs),
       durationMs: round2(m.durationMs),
     })),
-    totalMs: round2(marks[marks.length - 1].endMs - marks[0].startMs),
+    totalMs: round2(firstRenderEndMs(marks) - marks[0].startMs),
   });
 }
 

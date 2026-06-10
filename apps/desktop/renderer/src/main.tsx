@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import BridgeGate from "./components/BridgeGate";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import "./styles/tokens.css";
@@ -14,7 +15,9 @@ function renderApp() {
       <ErrorBoundary>
         <ToastProvider>
           <BrowserRouter>
-            <App />
+            <BridgeGate>
+              <App />
+            </BridgeGate>
           </BrowserRouter>
         </ToastProvider>
       </ErrorBoundary>

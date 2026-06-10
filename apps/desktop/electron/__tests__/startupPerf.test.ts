@@ -30,6 +30,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  coldStartTotalMs,
   collectStartupPerf,
   enableStartupPerf,
   logStartupPerfTable,
@@ -48,7 +49,13 @@ const ELECTRON_DIR = path.resolve(__dirname, "..");
  * at the top of `main.ts`) before any build step runs.
  */
 function read(file: string): string {
-  return fs.readFileSync(path.join(ELECTRON_DIR, file), "utf-8");
+  // Normalise CRLF -> LF so the structural source scans below (which embed
+  // `\n` in their `indexOf` patterns) match regardless of the line endings
+  // git checked out — on Windows the working tree is CRLF, which otherwise
+  // makes every multi-line pattern miss and read as -1.
+  return fs
+    .readFileSync(path.join(ELECTRON_DIR, file), "utf-8")
+    .replace(/\r\n/g, "\n");
 }
 
 /**
@@ -221,6 +228,54 @@ describe("startup performance", () => {
       logStartupPerfTable((event) => captured.push({ event }));
       expect(captured).toHaveLength(0);
     });
+
+    it("coldStartTotalMs anchors on window-show, excluding background bridge-init (LW-8)", () => {
+      // Boot-to-first-render: app-ready then the window paints.
+      markStart("app-ready");
+      markEnd("app-ready");
+      markStart("window-show");
+      markEnd("window-show");
+      // LW-8: bridge-init now runs OFF the critical path and ends LATER
+      // in wall-clock than first paint. Spin briefly so its end mark is
+      // strictly after window-show's.
+      markStart("bridge-init");
+      const t0 = performance.now();
+      while (performance.now() - t0 < 2) {
+        /* burn ~2ms so bridge-init:end > window-show:end deterministically */
+      }
+      markEnd("bridge-init");
+
+      const marks = collectStartupPerf();
+      const earliestStart = Math.min(...marks.map((m) => m.startMs));
+      const windowShow = marks.find((m) => m.name === "window-show");
+      const latestEnd = Math.max(...marks.map((m) => m.endMs));
+      expect(windowShow).toBeDefined();
+
+      const total = coldStartTotalMs();
+      expect(total).not.toBeNull();
+      // The total is anchored on the first-paint instant…
+      expect(total).toBeCloseTo(
+        (windowShow as { endMs: number }).endMs - earliestStart,
+        5,
+      );
+      // …and NOT on the last (background) mark — bridge-init ended later
+      // but must not inflate the cold-start number.
+      expect(latestEnd).toBeGreaterThan((windowShow as { endMs: number }).endMs);
+      expect(total as number).toBeLessThan(latestEnd - earliestStart);
+    });
+
+    it("coldStartTotalMs falls back to the last mark when no window-show was recorded", () => {
+      // A boot that never opened a window (e.g. headless failure path)
+      // must still produce a finite number rather than NaN/null.
+      markStart("app-ready");
+      markEnd("app-ready");
+      markStart("bridge-init");
+      markEnd("bridge-init");
+      const marks = collectStartupPerf();
+      const earliestStart = Math.min(...marks.map((m) => m.startMs));
+      const latestEnd = Math.max(...marks.map((m) => m.endMs));
+      expect(coldStartTotalMs()).toBeCloseTo(latestEnd - earliestStart, 5);
+    });
   });
 
   describe("main.ts wires the perf markers at the documented stages", () => {
@@ -245,6 +300,42 @@ describe("startup performance", () => {
       expect(source).toMatch(
         /ready-to-show[\s\S]{0,500}markEnd\(["']window-show["']\)[\s\S]{0,500}logStartupPerfTable\(/,
       );
+    });
+
+    it("creates the window BEFORE kicking off background bridge init (LW-8 window-first)", () => {
+      const source = read("main.ts");
+      // The cold-start win depends on the window painting before the
+      // heavy bridge init runs. Pin the ordering structurally so a
+      // refactor that moves `createWindow()` back after the bridge init
+      // fails here instead of silently regressing the budget.
+      const createIdx = source.indexOf("createWindow();\n  appInitComplete");
+      // Match the call SITE (`…();`) — the doc comment also mentions the
+      // helper by name, so anchor on the trailing semicolon.
+      const bridgeIdx = source.indexOf("void initBridgeAndServices();");
+      expect(createIdx).toBeGreaterThan(-1);
+      expect(bridgeIdx).toBeGreaterThan(-1);
+      expect(createIdx).toBeLessThan(bridgeIdx);
+    });
+
+    it("does not await initAppState on the whenReady critical path before the window", () => {
+      const source = read("main.ts");
+      // `await initAppState()` must live ONLY inside the
+      // `initBridgeAndServices` helper (dispatched via `void`), never
+      // directly on the `whenReady` path ahead of `createWindow()`.
+      const whenReadyIdx = source.indexOf("app.whenReady().then(");
+      const createIdx = source.indexOf(
+        "createWindow();\n  appInitComplete",
+        whenReadyIdx,
+      );
+      const awaitInitIdx = source.indexOf("await initAppState()");
+      expect(whenReadyIdx).toBeGreaterThan(-1);
+      expect(createIdx).toBeGreaterThan(-1);
+      // The only `await initAppState()` is defined earlier in the file
+      // (inside `initBridgeAndServices`, above the whenReady block), so
+      // it must NOT appear between whenReady start and createWindow.
+      const onCriticalPath =
+        awaitInitIdx > whenReadyIdx && awaitInitIdx < createIdx;
+      expect(onCriticalPath).toBe(false);
     });
   });
 });
