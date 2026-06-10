@@ -63,6 +63,7 @@ import type {
   KchatThreadContextMessageInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
+  ResourceMode,
   SearchHitInfo,
   SourceDetailInfo,
   SourceInfo,
@@ -864,6 +865,23 @@ export interface NativeBridge {
 
 let bridge: NativeBridge | null = null;
 let modelSidecar: ModelSidecar | null = null;
+// Gate for demand-loaded sidecar construction (LW-1). The text and
+// vision `ModelSidecar` objects are NO LONGER constructed during
+// `initAppState()` — building them probes the filesystem for the
+// llama-server binary (`resolveSidecarBinary` does up to 5
+// `fs.existsSync` calls) and installs idle-unload timers, all wasted
+// work for a session where the user never generates. Instead the
+// `ensureModelSidecar()` / `ensureVisionSidecar()` accessors lazily
+// construct on first use (a `model:start` / vision request).
+//
+// This flag preserves the historical "null in fallback mode"
+// contract: it flips to `true` only at the point `initAppState()`
+// previously constructed the sidecars (i.e. after the native bridge
+// initialised successfully). When the bridge is unavailable
+// `initAppState()` returns early before setting it, so the ensure
+// accessors keep returning `null` and the IPC handlers surface the
+// same "sidecar not initialised" errors as before.
+let sidecarsEnabled = false;
 // KChat auth + REST + WebSocket client. Singleton because every IPC
 // handler reads the same connection state (sidebar presence, share
 // button enable/disable, channel browser) and a stray second
@@ -1176,52 +1194,18 @@ export async function initAppState(): Promise<boolean> {
     return false;
   }
 
-  // read the persisted `modelIdleTimeoutSecs`
-  // setting once at boot so every freshly-constructed sidecar
-  // (text / vision / diffusion) starts with the user's preferred
-  // idle window instead of the historical hardcoded default
-  // (`idleUnloadMs: 60_000` / `30_000`). The on-disk schema
-  // `.catch(DEFAULT_MODEL_IDLE_TIMEOUT_SECS)` so a corrupted value
-  // heals to 60 s — we never observe an undefined here.
-  //
-  // The renderer can later mutate this via `settings:update`, which
-  // calls back into `applyModelIdleTimeoutToSidecars(...)` to push
-  // the new window to whichever sidecars are already running. The
-  // diffusion sidecar's `.then(...)` block reads the same value
-  // again so a value installed after the lazy load completes still
-  // takes effect.
-  const persistedIdleTimeoutSecs = loadConfig().modelIdleTimeoutSecs;
-  // Use the same normaliser the runtime path uses
-  // (`applyModelIdleTimeoutToSidecars`) so the boot path cannot pass
-  // a non-floored / negative value through the schema's catch fallback.
-  // See `normalizeModelIdleTimeoutSecsToMs` JSDoc for the
-  // defense-in-depth rationale.
-  const persistedIdleTimeoutMs = normalizeModelIdleTimeoutSecsToMs(
-    persistedIdleTimeoutSecs,
-  );
-
-  modelSidecar = new ModelSidecar({
-    binaryPath: resolveSidecarBinary(),
-    port: 8384,
-    label: "text",
-    idleUnloadMs: persistedIdleTimeoutMs,
-  });
-  // Vision sidecar reuses the same llama-server binary but binds a
-  // distinct port so it can run concurrently with the text sidecar
-  // — concurrent text + vision is a real workflow (the artifact
-  // generator pulls VLM descriptions of source images while the
-  // text generator is mid-stream).
-  //
-  // `modelPath` and `extraArgs` are unset here intentionally; the
-  // vision IPC handler populates both from the installed vision
-  // record (which carries `path` + `mmprojPath`) before calling
-  // `start()`. Starting now without a model would throw.
-  visionSidecar = new ModelSidecar({
-    binaryPath: resolveSidecarBinary(),
-    port: 8385,
-    label: "vision",
-    idleUnloadMs: persistedIdleTimeoutMs,
-  });
+  // LW-1: the text (8384) and vision (8385) sidecars are NO LONGER
+  // constructed here. Building them eagerly probed the filesystem
+  // for the llama-server binary and armed idle-unload timers on
+  // every boot, even for sessions that never generate. Construction
+  // now happens lazily in `ensureModelSidecar()` / `ensureVisionSidecar()`
+  // on the first `model:start` / vision request, where the binary
+  // path is resolved and the persisted idle window is read fresh
+  // (see `resolveSidecarIdleUnloadMs`). Flipping `sidecarsEnabled`
+  // here — at the exact point construction used to happen, after the
+  // bridge initialised — preserves the historical contract that the
+  // accessors return `null` in fallback mode (bridge unavailable).
+  sidecarsEnabled = true;
 
   // defer the `./diffusionSidecar` module load. The
   // diffusion sidecar is constructed (and the construction is what
@@ -1292,7 +1276,7 @@ export async function initAppState(): Promise<boolean> {
     });
 
   console.log(
-    "[Tessera] Model sidecars configured (text=8384 vision=8385; diffusion=8386 deferred)",
+    "[Tessera] Model sidecars armed (text=8384 vision=8385 demand-loaded; diffusion=8386 deferred)",
   );
 
   return true;
@@ -1353,8 +1337,154 @@ export function isBridgeAvailable(): boolean {
   return bridge !== null;
 }
 
+/**
+ * Non-constructing peek at the text sidecar slot. Returns `null`
+ * until `ensureModelSidecar()` has lazily built it (or in fallback
+ * mode where the bridge never came up). Hot, frequently-polled paths
+ * — `model:status` (5 s renderer poll), `model:stop`, the idle-timer
+ * apply loop, and the mutual-exclusion enforcer — MUST use this peek
+ * so a status poll never triggers construction of a sidecar the user
+ * never asked for (which would defeat LW-1's demand-loading).
+ */
 export function getModelSidecar(): ModelSidecar | null {
   return modelSidecar;
+}
+
+/**
+ * Resolve the idle-unload window (milliseconds) for a freshly
+ * constructed sidecar from the persisted `modelIdleTimeoutSecs`
+ * setting, run through the shared normaliser so the lazy-construction
+ * path cannot drift from the runtime `applyModelIdleTimeoutToSidecars`
+ * path. Read fresh on every construction so a `settings:update` that
+ * landed before first use is honoured without an extra apply call.
+ */
+function resolveSidecarIdleUnloadMs(): number {
+  return normalizeModelIdleTimeoutSecsToMs(loadConfig().modelIdleTimeoutSecs);
+}
+
+/**
+ * Demand-load accessor for the text sidecar (LW-1). Constructs the
+ * `ModelSidecar` on first call — resolving the llama-server binary
+ * and reading the persisted idle window at that point, not at boot —
+ * and memoises it in the module slot. Returns `null` in fallback mode
+ * (bridge unavailable) so `model:start` surfaces the same
+ * "Model sidecar not initialized" error as before. Use this from the
+ * construct-and-start path (`model:start`); use `getModelSidecar()`
+ * everywhere else.
+ */
+export function ensureModelSidecar(): ModelSidecar | null {
+  if (!sidecarsEnabled) return null;
+  if (modelSidecar === null) {
+    modelSidecar = new ModelSidecar({
+      binaryPath: resolveSidecarBinary(),
+      port: 8384,
+      label: "text",
+      idleUnloadMs: resolveSidecarIdleUnloadMs(),
+    });
+    console.log("[Tessera] Text sidecar constructed on demand (port 8384)");
+  }
+  return modelSidecar;
+}
+
+/**
+ * Demand-load accessor for the vision sidecar (LW-1). Mirrors
+ * `ensureModelSidecar()`. `modelPath` / `extraArgs` are intentionally
+ * left unset here — `ensureVisionSidecarRunning()` in `ipc/vision.ts`
+ * populates them from the installed vision record (which carries
+ * `path` + `mmprojPath`) before calling `start()`; constructing with
+ * no model would be fine, starting without one would throw.
+ */
+export function ensureVisionSidecar(): ModelSidecar | null {
+  if (!sidecarsEnabled) return null;
+  if (visionSidecar === null) {
+    visionSidecar = new ModelSidecar({
+      binaryPath: resolveSidecarBinary(),
+      port: 8385,
+      label: "vision",
+      idleUnloadMs: resolveSidecarIdleUnloadMs(),
+    });
+    console.log("[Tessera] Vision sidecar constructed on demand (port 8385)");
+  }
+  return visionSidecar;
+}
+
+/** A local model sidecar slot subject to single-sidecar exclusion. */
+export type SidecarKind = "text" | "vision" | "diffusion";
+
+/**
+ * Enforce single-sidecar mutual exclusion (LW-2) before starting the
+ * `starting` sidecar. In `"lightweight"` resource mode (the default)
+ * only one of text / vision / diffusion may run at a time, so this
+ * stops whichever OTHER sidecars are currently running. In
+ * `"performance"` mode this is a no-op and the historical concurrent
+ * text + vision behaviour is preserved.
+ *
+ * Construction is deliberately avoided: this reads the raw module
+ * slots (not the `ensure*` accessors) and only acts on slots that are
+ * both constructed AND running, so checking exclusivity never spins
+ * up a sidecar. Diffusion mid-lazy-load has no running process, so
+ * there is nothing to wait on or stop in that window.
+ *
+ * Stops are best-effort and run concurrently — a stop failure on one
+ * sidecar is logged but must not block starting the requested one.
+ */
+export async function enforceSidecarExclusivity(
+  starting: SidecarKind,
+): Promise<void> {
+  await stopOtherSidecarsForExclusivity(
+    starting,
+    loadConfig().resourceMode,
+    [
+      { kind: "text", sidecar: modelSidecar },
+      { kind: "vision", sidecar: visionSidecar },
+      { kind: "diffusion", sidecar: diffusionSidecar },
+    ],
+  );
+}
+
+/**
+ * Pure decision + stop helper behind [`enforceSidecarExclusivity`].
+ * Takes the resource `mode` and an explicit `slots` list so tests can
+ * drive the single-sidecar policy without spawning real sidecar
+ * processes (the production wrapper reads `loadConfig().resourceMode`
+ * and the module-private slots). Mirrors the `stopSidecarsList`
+ * split used by `stopAllSidecars`.
+ *
+ * In `"performance"` mode this is a no-op (concurrent sidecars
+ * allowed). In `"lightweight"` mode it stops every slot that is NOT
+ * the one being started AND is currently running. Stops are
+ * best-effort and concurrent; a failure is logged but never blocks
+ * starting the requested sidecar.
+ *
+ * Exported for `__tests__/resourceMode.test.ts`. Production code
+ * should call `enforceSidecarExclusivity()` instead.
+ */
+export async function stopOtherSidecarsForExclusivity(
+  starting: SidecarKind,
+  mode: ResourceMode,
+  slots: Array<{
+    kind: SidecarKind;
+    sidecar: { isRunning: boolean; stop(): Promise<void> } | null;
+  }>,
+): Promise<void> {
+  if (mode !== "lightweight") return;
+  await Promise.all(
+    slots
+      .filter(
+        (e): e is {
+          kind: SidecarKind;
+          sidecar: { isRunning: boolean; stop(): Promise<void> };
+        } => e.kind !== starting && e.sidecar !== null && e.sidecar.isRunning,
+      )
+      .map((e) =>
+        e.sidecar.stop().catch((err) => {
+          console.error(
+            `[Tessera] Failed to stop ${e.kind} sidecar for single-sidecar exclusion (starting ${starting}):`,
+            err,
+          );
+        }),
+      ),
+  );
 }
 
 /**

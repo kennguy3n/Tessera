@@ -1146,7 +1146,30 @@ export interface SettingsData {
    * templates" / "Guided picker"), which persist their choice here.
    */
   createPageMode: CreatePageMode;
+  /**
+   * Resource-management profile. `"lightweight"` (default) keeps the
+   * idle footprint minimal: only one local model sidecar (text /
+   * vision / diffusion) may run at a time — starting one stops the
+   * others — and background work (connector sync, synthesis) is
+   * gated more aggressively. `"performance"` restores the historical
+   * behaviour where text + vision sidecars may run concurrently for
+   * workflows that interleave text generation with VLM description.
+   * The diffusion sidecar never auto-starts in either mode.
+   */
+  resourceMode: ResourceMode;
 }
+
+/**
+ * Resource-management profiles. `"lightweight"` enforces single-
+ * sidecar mutual exclusion and aggressive background gating so the
+ * idle footprint stays near the Electron + renderer + substrate
+ * floor (no SLM resident). `"performance"` preserves concurrent
+ * text + vision sidecars. Constrained to a fixed tuple so the
+ * renderer toggle, the IPC schema, and the persisted config all
+ * reference the same values.
+ */
+export const RESOURCE_MODES = ["lightweight", "performance"] as const;
+export type ResourceMode = (typeof RESOURCE_MODES)[number];
 
 /**
  * Default Create-page presentation mode. `"wizard"` is the

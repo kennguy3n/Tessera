@@ -26,6 +26,7 @@ import {
   MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
+  RESOURCE_MODES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   THEMES,
@@ -319,6 +320,11 @@ export const SettingsUpdateSchema = z.object({
   // "Show all templates" / "Guided picker" links and the Settings
   // toggle are the only writers.
   createPageMode: z.enum(CREATE_PAGE_MODES).optional(),
+  // resource-management profile. Pure enum; the Settings →
+  // Performance toggle is the only writer. Switching to
+  // `"lightweight"` does not itself stop a running sidecar — the
+  // next sidecar start enforces mutual exclusion.
+  resourceMode: z.enum(RESOURCE_MODES).optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 

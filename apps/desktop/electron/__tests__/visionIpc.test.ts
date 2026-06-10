@@ -79,6 +79,13 @@ vi.mock("../appState", () => ({
   getBridge: () => bridgeStub,
   isBridgeAvailable: () => bridgeStub !== null,
   getVisionSidecar: () => visionSidecarStub,
+  // LW-1: ensureVisionSidecarRunning now constructs via
+  // ensureVisionSidecar; return the same stub so the existing
+  // assertions (setModelPath / start / waitForReady) are unchanged.
+  ensureVisionSidecar: () => visionSidecarStub,
+  // LW-2: ensureVisionSidecarRunning calls enforceSidecarExclusivity
+  // before start. No-op stub — exclusion has its own dedicated test.
+  enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("fs/promises", async () => {

@@ -56,6 +56,11 @@ const sidecarMock = {
 
 vi.mock("../appState", () => ({
   getModelSidecar: () => sidecarMock,
+  // LW-1 / LW-2: model:start references these; the generation-controller
+  // tests exercise model:generate (peek path) but the handler module
+  // imports all three, so stub them to keep the module graph intact.
+  ensureModelSidecar: () => sidecarMock,
+  enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {

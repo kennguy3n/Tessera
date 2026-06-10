@@ -10,7 +10,12 @@
  */
 import { BrowserWindow } from "electron";
 import { idempotentHandle } from "./register";
-import { getBridge, getModelSidecar } from "../appState";
+import {
+  enforceSidecarExclusivity,
+  ensureModelSidecar,
+  getBridge,
+  getModelSidecar,
+} from "../appState";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
@@ -132,9 +137,15 @@ export function registerModelHandlers(): void {
 
   idempotentHandle("model:start", async (_event, modelPath: unknown) => {
     const validated = assertString(modelPath, "modelPath", { maxLen: 4096 });
-    const sidecar = getModelSidecar();
+    // LW-1: lazily construct the text sidecar on first start instead
+    // of at boot. Returns null only in fallback mode (bridge down).
+    const sidecar = ensureModelSidecar();
     if (!sidecar) throw new Error("Model sidecar not initialized");
     if (sidecar.isRunning) return;
+    // LW-2: in lightweight mode, starting text stops any running
+    // vision / diffusion sidecar so only one model is resident at a
+    // time. No-op in performance mode.
+    await enforceSidecarExclusivity("text");
     sidecar.setModelPath(validated);
     await sidecar.start(true);
     // Block until llama-server's HTTP listener is up so the very

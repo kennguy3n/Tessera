@@ -71,6 +71,13 @@ const bridgeMock = {
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getModelSidecar: () => sidecarMock,
+  // LW-1: model:start now lazily constructs via ensureModelSidecar.
+  // The mock returns the same stub so the audit assertions are
+  // unchanged.
+  ensureModelSidecar: () => sidecarMock,
+  // LW-2: model:start calls enforceSidecarExclusivity before start.
+  // No-op stub here — single-sidecar exclusion has its own test.
+  enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 const sidecarMock = {

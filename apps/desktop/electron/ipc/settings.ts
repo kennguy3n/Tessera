@@ -296,6 +296,10 @@ export function registerSettingsHandlers(): void {
       simplifiedNav: config.simplifiedNav,
       autoDownloadModel: config.autoDownloadModel,
       createPageMode: config.createPageMode,
+      // resource-management profile. Heals to `"lightweight"` via the
+      // on-disk schema so the renderer's Performance toggle always
+      // reflects a valid mode.
+      resourceMode: config.resourceMode,
     } as SettingsData;
   });
 
@@ -485,6 +489,12 @@ export function registerSettingsHandlers(): void {
       );
     if (parsed.createPageMode !== undefined)
       auditSettingsField("createPageMode", parsed.createPageMode);
+    // resource-management profile. Pure persisted enum; switching to
+    // `"lightweight"` does not stop a running sidecar here — mutual
+    // exclusion is enforced lazily at the next sidecar `start()` via
+    // `enforceSidecarExclusivity` in `appState.ts`.
+    if (parsed.resourceMode !== undefined)
+      auditSettingsField("resourceMode", parsed.resourceMode);
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -501,6 +511,7 @@ export function registerSettingsHandlers(): void {
       simplifiedNav: persisted.simplifiedNav,
       autoDownloadModel: persisted.autoDownloadModel,
       createPageMode: persisted.createPageMode,
+      resourceMode: persisted.resourceMode,
     } as SettingsData;
   });
 

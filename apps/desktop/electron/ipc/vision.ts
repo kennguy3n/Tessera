@@ -34,6 +34,8 @@ import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { VisionDescribeSchema } from "./schemas";
 import {
+  enforceSidecarExclusivity,
+  ensureVisionSidecar,
   getBridge,
   getVisionSidecar,
   isBridgeAvailable,
@@ -121,11 +123,18 @@ export function buildVisionExtraArgs(
  * Exported for tests.
  */
 export async function ensureVisionSidecarRunning(): Promise<void> {
-  const sidecar = getVisionSidecar();
+  // LW-1: lazily construct the vision sidecar on first use instead of
+  // at boot. Returns null only in fallback mode (bridge down).
+  const sidecar = ensureVisionSidecar();
   if (!sidecar) {
     throw new Error("Vision sidecar not initialised");
   }
   if (sidecar.isRunning) return;
+
+  // LW-2: in lightweight mode, starting vision stops any running
+  // text / diffusion sidecar so only one model is resident at a
+  // time. No-op in performance mode (concurrent text + vision).
+  await enforceSidecarExclusivity("vision");
 
   const record = await getInstalledModel(userDataDir(), "vision");
   if (!record) {

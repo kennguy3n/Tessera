@@ -48,6 +48,7 @@ import {
   isCapabilityAvailable,
 } from "../modelManagement";
 import {
+  enforceSidecarExclusivity,
   getBridge,
   getDiffusionSidecar,
   getDiffusionSidecarState,
@@ -193,6 +194,11 @@ export async function ensureDiffusionSidecarRunning(): Promise<void> {
       "No image-generation model installed — download one from Settings → Model runtime → Image generation",
     );
   }
+  // LW-2: in lightweight mode, starting diffusion stops any running
+  // text / vision sidecar so only one model is resident at a time.
+  // No-op in performance mode. Diffusion still never AUTO-starts —
+  // this path runs only on an explicit "Generate image" action.
+  await enforceSidecarExclusivity("diffusion");
   sidecar.setModelPath(record.path);
   await sidecar.start(true);
   // Block until sd-server's HTTP listener is up. sd-server's cold

@@ -11,12 +11,14 @@ import {
   MAX_MODEL_IDLE_TIMEOUT_SECS,
   MAX_PINNED_ARTIFACTS,
   MAX_RECENT_ARTIFACTS,
+  RESOURCE_MODES,
   THEMES,
   type AppLockMode,
   type CreatePageMode,
   type ExportFormat,
   type ExternalProviderType,
   type ExternalProviderTokenUsage,
+  type ResourceMode,
   type Theme,
 } from "../shared/types";
 
@@ -184,6 +186,15 @@ export interface AppConfig {
    * the full 170+ template gallery on first contact.
    */
   createPageMode: CreatePageMode;
+  /**
+   * Resource-management profile. See `SettingsData.resourceMode` in
+   * `shared/types.ts` for the full semantics. Defaults to
+   * `"lightweight"` so a fresh install enforces single-sidecar
+   * mutual exclusion and the minimal idle footprint; power users who
+   * want concurrent text + vision sidecars flip this to
+   * `"performance"` in Settings → Performance.
+   */
+  resourceMode: ResourceMode;
 }
 
 /** Default persisted hybrid config — mirrors Rust default. */
@@ -290,6 +301,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   simplifiedNav: true,
   autoDownloadModel: true,
   createPageMode: "wizard",
+  resourceMode: "lightweight",
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -497,6 +509,10 @@ const AppConfigSchema = z
     // corrupted value to `"wizard"` (the guided new-user flow) rather
     // than dropping the user into the full 170+ template gallery.
     createPageMode: z.enum(CREATE_PAGE_MODES).catch("wizard"),
+    // resource-management profile. Heals a corrupted value to
+    // `"lightweight"` (the minimal-footprint default) rather than
+    // silently granting the heavier concurrent-sidecar behaviour.
+    resourceMode: z.enum(RESOURCE_MODES).catch("lightweight"),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the

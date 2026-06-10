@@ -95,6 +95,10 @@ vi.mock("../appState", () => ({
   isBridgeAvailable: () => bridgeStub !== null,
   getDiffusionSidecar: () => diffusionSidecarStub,
   getDiffusionSidecarState: () => diffusionSidecarStateStub,
+  // LW-2: ensureDiffusionSidecarRunning calls enforceSidecarExclusivity
+  // before start. No-op stub — single-sidecar exclusion has its own
+  // dedicated test in resourceMode.test.ts.
+  enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../modelManagement", async () => {

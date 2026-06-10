@@ -47,6 +47,10 @@ vi.mock("electron", () => ({
 
 vi.mock("../appState", () => ({
   getModelSidecar: () => ({ isRunning: false }),
+  // LW-1 / LW-2: model.ts imports these for model:start; the token-usage
+  // gate tests route through the external provider, so stub them.
+  ensureModelSidecar: () => ({ isRunning: false }),
+  enforceSidecarExclusivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 const externalProvider = {
