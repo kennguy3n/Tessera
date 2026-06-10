@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   MemoryWatchdog,
   nextPausedState,
@@ -127,6 +127,17 @@ describe("MemoryWatchdog", () => {
 });
 
 describe("module singleton admission gate", () => {
+  // These tests assert on the process-wide `singleton` in memoryWatchdog.ts,
+  // which starts `null`. That holds under vitest's default worker-per-file
+  // isolation, but NOT if isolation is ever disabled (`isolate: false` /
+  // `threads: false`) and another file leaves a watchdog running. Reset the
+  // singleton around each test so the "fails open" precondition is explicit
+  // rather than implicitly relying on module-load order. `stopMemoryWatchdog`
+  // is null-safe (`singleton?.stop()` then nulls it), so this is a no-op when
+  // nothing is running.
+  beforeEach(() => stopMemoryWatchdog());
+  afterEach(() => stopMemoryWatchdog());
+
   it("fails open before any watchdog is started", () => {
     // No singleton yet → indexing is admitted, snapshot is null.
     expect(isIndexingDeferredForMemory()).toBe(false);
