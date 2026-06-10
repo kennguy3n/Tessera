@@ -698,6 +698,35 @@ const mockApi = {
     onSuspend: vi.fn().mockReturnValue(() => {}),
     onResume: vi.fn().mockReturnValue(() => {}),
   },
+  // LW-12 resource-usage dashboard snapshot. Default is a lightweight,
+  // fully-idle box (no models resident, on AC, indexing idle) so the
+  // Settings → Performance card renders its populated state in tests;
+  // cases that need a specific reading override per-case.
+  resources: {
+    getUsage: vi.fn().mockResolvedValue({
+      resourceMode: "lightweight",
+      memory: {
+        rssBytes: 180 * 1024 * 1024,
+        heapUsedBytes: 60 * 1024 * 1024,
+        heapTotalBytes: 90 * 1024 * 1024,
+        externalBytes: 8 * 1024 * 1024,
+      },
+      slm: {
+        text: { running: false, endpoint: null },
+        vision: { running: false, endpoint: null },
+        imagegen: { state: "unloaded" },
+      },
+      connections: { writers: 1, readers: 2 },
+      indexing: { deferredForMemory: false, pressure: null },
+      battery: {
+        hasBattery: false,
+        isOnBattery: false,
+        isCharging: true,
+        percent: null,
+        gating: false,
+      },
+    }),
+  },
 };
 
 Object.defineProperty(window, "tessera", {

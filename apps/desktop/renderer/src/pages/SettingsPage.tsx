@@ -10,6 +10,8 @@ import EmbeddingModelCard from "../components/EmbeddingModelCard";
 import KchatSettingsCard from "../components/KchatSettingsCard";
 import AuditActivityCard from "../components/AuditActivityCard";
 import SourceHealthDashboard from "../components/SourceHealthDashboard";
+import ResourceUsageCard from "../components/ResourceUsageCard";
+import { RESOURCE_MODE_LABELS } from "../constants/resourceMode";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import {
   EXPORT_FORMATS,
@@ -46,11 +48,6 @@ const MODEL_IDLE_TIMEOUT_BUCKETS: ReadonlyArray<{
   { value: 60 * 60, label: "1 hour" },
   { value: 0, label: "Never (keep loaded)" },
 ];
-
-const RESOURCE_MODE_LABELS: Record<ResourceMode, string> = {
-  lightweight: "Lightweight (recommended)",
-  performance: "Performance",
-};
 
 const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
@@ -437,6 +434,8 @@ export default function SettingsPage() {
             </p>
           </div>
         </Card>
+
+        <ResourceUsageCard />
 
         <ModelRuntimeCard />
 

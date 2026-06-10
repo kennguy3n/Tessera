@@ -371,6 +371,11 @@ const api: TesseraApi = {
     reportCrash: (report: RendererCrashReport) =>
       ipcRenderer.invoke("diagnostics:reportCrash", report),
   },
+  // LW-12 read-only resource-usage snapshot for the Settings →
+  // Performance dashboard. See `electron/ipc/resources.ts`.
+  resources: {
+    getUsage: () => ipcRenderer.invoke("resources:getUsage"),
+  },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),
     set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
