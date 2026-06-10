@@ -4,6 +4,7 @@
 
 pub mod artifacts;
 pub mod automations;
+pub mod backup;
 pub mod citations;
 pub mod exporter;
 pub mod napi_exports;

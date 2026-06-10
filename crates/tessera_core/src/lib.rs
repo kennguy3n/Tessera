@@ -2,6 +2,7 @@
 //! database layer shared across all Tessera crates.
 #![warn(missing_docs)]
 
+pub mod backup;
 pub mod config;
 pub mod crypto;
 pub mod db;
@@ -10,6 +11,11 @@ pub mod error;
 pub mod pqc;
 pub mod types;
 
+pub use backup::{
+    apply_pending_restore, create_backup, export_bundle, import_bundle, list_backups,
+    prune_backups, stage_restore, BackupInfo, BundleImportReport, BundleInfo, BundleManifest,
+    BundleManifestEntry, BundleSource, BundleTarget,
+};
 pub use config::TesseraConfig;
 pub use db::{
     default_read_pool_size, empty_read_pool, open_shared, open_shared_in_memory,

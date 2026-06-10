@@ -295,7 +295,7 @@ fn apply_wal_pragmas(conn: &Connection) -> Result<String> {
 /// we concatenate them with `; ` so the renderer sees the full
 /// diagnostic without truncation. On a healthy database the single
 /// returned row is `"ok"`.
-fn run_integrity_check(conn: &Connection) -> Result<()> {
+pub(crate) fn run_integrity_check(conn: &Connection) -> Result<()> {
     let mut stmt = conn
         .prepare("PRAGMA integrity_check")
         .map_err(|e| Error::DatabaseState(format!("prepare integrity_check failed: {e}")))?;
@@ -810,7 +810,7 @@ pub fn open_shared_read_pool_with_key(
 /// either a truncated key or accidentally-passed passphrase and
 /// should fail fast rather than be silently passed to SQLCipher's
 /// KDF (which would derive a different key from the same bytes).
-fn validate_hex_key(key: &str) -> Result<()> {
+pub(crate) fn validate_hex_key(key: &str) -> Result<()> {
     if key.len() != DB_KEY_HEX_LEN {
         return Err(Error::DatabaseState(format!(
             "db key must be {DB_KEY_HEX_LEN} hex characters, got {}",
@@ -829,7 +829,7 @@ fn validate_hex_key(key: &str) -> Result<()> {
 /// `x'...'` literal so the KDF is bypassed; the supplied hex is the
 /// final cipher key. We've already validated `key` is hex-safe, so
 /// embedding it in the PRAGMA literal is not a SQL-injection risk.
-fn apply_pragma_key(conn: &Connection, key: &str) -> Result<()> {
+pub(crate) fn apply_pragma_key(conn: &Connection, key: &str) -> Result<()> {
     conn.execute_batch(&format!("PRAGMA key = \"x'{key}'\";"))
         .map_err(|e| Error::DatabaseState(format!("PRAGMA key failed: {e}")))
 }
