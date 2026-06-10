@@ -14,6 +14,27 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 rusqlite = { workspace = true }
+# Post-quantum crypto substrate (Session 7). Supplies XChaCha20-Poly1305
+# AEAD + HKDF-SHA256 derivation for the per-source DEK wrapping scheme and
+# (under the `pqc` feature) the hybrid X25519 + ML-KEM-768 KEM used to wrap
+# the SQLCipher key for harvest-now-decrypt-later protection.
+knowledge_crypto = { workspace = true }
+# Legacy DEK-wrap primitives retained so existing (v1) wrapped DEKs and
+# AEAD-sealed chunks remain decryptable after the upgrade to XChaCha20.
+aes-gcm = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+zeroize = { workspace = true }
+
+[features]
+# Experimental, default-OFF post-quantum key encapsulation for the
+# SQLCipher key-derivation path. When enabled, the `pqc` module exposes a
+# hybrid X25519 + ML-KEM-768 KEM that wraps the raw SQLCipher key so a
+# captured database file is protected against future quantum decryption
+# ("harvest now, decrypt later"). OFF by default because it is not yet
+# wired into the default open path and the wire format is not frozen.
+pqc = []
 
 [dev-dependencies]
 tempfile = { workspace = true }
