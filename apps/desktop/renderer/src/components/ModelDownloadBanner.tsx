@@ -53,6 +53,14 @@ export default function ModelDownloadBanner() {
   // every mount so React 18 StrictMode's mount→unmount→remount cycle
   // leaves it `true`.
   const mountedRef = useRef(true);
+  // Set when the user clicks "Skip" so an in-flight Retry promise that
+  // rejects *because we just cancelled it* is treated as a deliberate
+  // cancellation rather than a download failure — mirroring the
+  // main-process path where a `DownloadAbortedError` maps to a silent
+  // "cancelled" outcome (no error), never "failed". Without this the
+  // Retry-then-Skip race would leave the (already dismissed) banner in
+  // a stale `failed` state.
+  const skipRequestedRef = useRef(false);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -129,6 +137,9 @@ export default function ModelDownloadBanner() {
   const onRetry = useCallback(() => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api?.runtime) return;
+    // A fresh attempt clears any prior Skip intent so this promise's
+    // outcome is honoured normally.
+    skipRequestedRef.current = false;
     setDismissed(false);
     setStatus("downloading");
     setPercent(0);
@@ -141,6 +152,10 @@ export default function ModelDownloadBanner() {
       })
       .catch(() => {
         if (!mountedRef.current) return;
+        // A rejection caused by the user clicking Skip is a deliberate
+        // cancellation, not a failure — leave the (now dismissed) banner
+        // out of the "failed" state.
+        if (skipRequestedRef.current) return;
         setStatus("failed");
       });
   }, []);
@@ -156,6 +171,9 @@ export default function ModelDownloadBanner() {
   // a rejection (or an older preload without the channel) is ignored.
   const onSkip = useCallback(() => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
+    // Mark intent BEFORE aborting so the in-flight Retry promise's
+    // rejection (if any) is classified as a cancellation, not a failure.
+    skipRequestedRef.current = true;
     void api?.runtime?.cancelDownload?.("text").catch(() => {
       // Already complete / nothing in flight — opt-out below still applies.
     });

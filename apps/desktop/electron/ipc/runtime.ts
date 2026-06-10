@@ -222,26 +222,31 @@ export async function downloadRecommendedModel(
     percent: 100,
   };
 
-  // Fast path: already installed in its slot. Re-emit completion so a
-  // late observer (e.g. a banner that mounted after the download
-  // finished) still resolves to "ready" rather than hanging.
-  const installed = await isModelInstalled(
-    userDataDir(),
-    capability,
-    recommended.id,
-  );
-  if (installed) {
-    emit(completion);
-    return installed;
-  }
-
-  // Register a cancellation handle for this slot for the lifetime of
-  // the transfer, deregistering in `finally` so a settled controller is
-  // never retained. On a cancel the `await` rejects, we skip the
-  // completion emit, and `downloadModel`'s `.partial` cleanup has
-  // already run inside the lock.
+  // Register the cancellation handle BEFORE the already-installed probe,
+  // not just around the transfer: `isModelInstalled` is an async stat,
+  // and a "Skip" landing in that gap would otherwise find nothing to
+  // abort and let the download proceed. With the controller live across
+  // the whole body, a cancel in that window aborts the signal, and the
+  // not-installed branch hands an already-aborted signal to
+  // `downloadModel`, whose pre-mutation guard bails before touching the
+  // filesystem. `finally` deregisters so a settled controller is never
+  // retained. On a cancel the `await` rejects, we skip the completion
+  // emit, and `downloadModel`'s `.partial` cleanup has already run.
   const controller = downloadCancellations.begin(capability);
   try {
+    // Fast path: already installed in its slot. Re-emit completion so a
+    // late observer (e.g. a banner that mounted after the download
+    // finished) still resolves to "ready" rather than hanging.
+    const installed = await isModelInstalled(
+      userDataDir(),
+      capability,
+      recommended.id,
+    );
+    if (installed) {
+      emit(completion);
+      return installed;
+    }
+
     const record = await downloadModel(userDataDir(), recommended, emit, {
       beforeMutation: sidecarStopperFor(capability),
       signal: controller.signal,
@@ -378,14 +383,6 @@ export function registerRuntimeHandlers(): void {
       // channel: `downloadModel` already handles both fresh-install
       // and swap, so a second handler that called the same function
       // only invited drift.
-      const installed = await isModelInstalled(
-        userDataDir(),
-        requested.capability,
-        requested.id,
-      );
-      if (installed) {
-        return installed;
-      }
       // The sidecar-stop runs INSIDE `withDownloadLock` via the
       // `beforeMutation` deps hook. Previously this call lived in the
       // IPC handler BEFORE the lock was acquired, which left a race
@@ -399,9 +396,22 @@ export function registerRuntimeHandlers(): void {
       // Register a cancellation handle so `runtime:cancelDownload` can
       // abort this explicit install too — cancellation is keyed by
       // capability slot, so "Skip" cancels whatever is downloading in
-      // the text slot regardless of which channel started it.
+      // the text slot regardless of which channel started it. We
+      // register BEFORE the `isModelInstalled` stat (not just around the
+      // transfer) so a cancel landing in that async gap still aborts:
+      // the not-installed branch then hands an already-aborted signal to
+      // `downloadModel`, whose pre-mutation guard bails before touching
+      // the filesystem.
       const controller = downloadCancellations.begin(requested.capability);
       try {
+        const installed = await isModelInstalled(
+          userDataDir(),
+          requested.capability,
+          requested.id,
+        );
+        if (installed) {
+          return installed;
+        }
         return await downloadModel(
           userDataDir(),
           requested,

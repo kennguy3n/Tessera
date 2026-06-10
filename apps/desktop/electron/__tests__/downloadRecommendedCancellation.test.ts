@@ -172,6 +172,47 @@ describe("downloadRecommendedModel — cancellation registry lifecycle", () => {
     expect(downloadCancellations.isActive("text")).toBe(false);
   });
 
+  it("registers the controller BEFORE the installed-state probe so a cancel in that gap still aborts", async () => {
+    // Hold `isModelInstalled` pending to simulate the async stat being
+    // in flight when the user clicks Skip. Before the fix the controller
+    // was only registered AFTER this probe resolved, so a cancel landing
+    // here found nothing to abort and the download proceeded.
+    let releaseProbe: (v: null) => void = () => {};
+    isModelInstalledMock.mockImplementation(
+      () =>
+        new Promise<null>((resolve) => {
+          releaseProbe = resolve;
+        }),
+    );
+    let sawAbortedSignal: boolean | undefined;
+    downloadModelMock.mockImplementation(
+      async (
+        _dir: string,
+        _model: unknown,
+        _emit: unknown,
+        deps: { signal?: AbortSignal },
+      ) => {
+        sawAbortedSignal = deps.signal?.aborted === true;
+        if (deps.signal?.aborted) throw deps.signal.reason;
+        return RECORD;
+      },
+    );
+
+    const promise = downloadRecommendedModel("text", () => {}, RESOLVED as never);
+
+    // The slot is already active while the probe is still pending.
+    expect(downloadCancellations.isActive("text")).toBe(true);
+    // Skip during the probe aborts the registered controller.
+    expect(downloadCancellations.cancel("text")).toBe(true);
+    // Probe now resolves "not installed", so the transfer phase runs —
+    // and receives the already-aborted signal, bailing immediately.
+    releaseProbe(null);
+
+    await expect(promise).rejects.toBeTruthy();
+    expect(sawAbortedSignal).toBe(true);
+    expect(downloadCancellations.isActive("text")).toBe(false);
+  });
+
   it("deregisters even when the download throws", async () => {
     downloadModelMock.mockRejectedValue(new Error("disk full"));
 

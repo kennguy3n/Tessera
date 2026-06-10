@@ -216,6 +216,50 @@ describe("ModelDownloadBanner", () => {
     expect(updateMock).toHaveBeenCalledWith({ autoDownloadModel: false });
   });
 
+  it("treats a Retry that Skip cancels as a cancellation, not a failure", async () => {
+    // Retry owns a promise that we reject to simulate the cancellation
+    // tearing down the in-flight transfer.
+    let rejectRetry: (e: unknown) => void = () => {};
+    window.tessera.runtime.downloadRecommended = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRetry = reject;
+        }),
+    );
+    let emitErr: ((e: ModelDownloadError) => void) | null = null;
+    window.tessera.runtime.onDownloadError = vi.fn((cb) => {
+      emitErr = cb;
+      return () => undefined;
+    });
+
+    render(<ModelDownloadBanner />);
+    await waitFor(() => expect(emitErr).not.toBeNull());
+    // Surface a failure so the Retry affordance is available, then Retry.
+    act(() =>
+      emitErr!({
+        capability: "text",
+        modelId: "text-model-v1",
+        message: "network",
+      }),
+    );
+    fireEvent.click(screen.getByTestId("model-download-banner-retry"));
+    // Skip while the Retry is in flight: it cancels the download…
+    fireEvent.click(screen.getByTestId("model-download-banner-skip"));
+    expect(window.tessera.runtime.cancelDownload).toHaveBeenCalledWith("text");
+
+    // …and the resulting rejection is classified as a deliberate cancel,
+    // so it is swallowed cleanly: the banner stays dismissed and never
+    // flips back to a "failed" UI.
+    await act(async () => {
+      rejectRetry(new Error("Download cancelled by user"));
+      await Promise.resolve();
+    });
+    expect(
+      screen.queryByTestId("model-download-banner"),
+    ).not.toBeInTheDocument();
+    expect(updateMock).toHaveBeenCalledWith({ autoDownloadModel: false });
+  });
+
   it("auto-dismisses the ready state after the timeout", async () => {
     vi.useFakeTimers();
     let emit: ((p: ModelDownloadProgress) => void) | null = null;

@@ -355,11 +355,16 @@ describe("createDefaultFetcher — AbortSignal cancellation", () => {
     expect(seen).toBe(controller.signal);
   });
 
-  it("does not set a signal on the request when none is supplied", async () => {
+  it("leaves the request's abort signal undefined when none is supplied", async () => {
+    // The fetcher always builds `init = { signal }`; when the caller
+    // opts out of cancellation the value is `undefined`, which `fetch`
+    // treats identically to an absent signal (no active AbortSignal).
+    // We assert the value rather than key presence so the intent —
+    // "no signal is in effect" — is captured precisely.
     const body = Buffer.from("payload");
-    let hadSignal: boolean | undefined;
+    let observedSignal: AbortSignal | null | undefined = null;
     const fetchImpl = (async (_url: string, init?: RequestInit) => {
-      hadSignal = init?.signal != null;
+      observedSignal = init?.signal;
       return new Response(streamOf(body), {
         status: 200,
         headers: { "content-length": String(body.length) },
@@ -369,7 +374,7 @@ describe("createDefaultFetcher — AbortSignal cancellation", () => {
     const fetcher = createDefaultFetcher(fetchImpl, undefined, noSleep);
     await fetcher("https://x/model", () => {}, dest);
 
-    expect(hadSignal).toBe(false);
+    expect(observedSignal).toBeUndefined();
   });
 
   it("throws immediately (no fetch) when the signal is already aborted", async () => {
