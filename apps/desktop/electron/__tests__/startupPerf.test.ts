@@ -49,7 +49,13 @@ const ELECTRON_DIR = path.resolve(__dirname, "..");
  * at the top of `main.ts`) before any build step runs.
  */
 function read(file: string): string {
-  return fs.readFileSync(path.join(ELECTRON_DIR, file), "utf-8");
+  // Normalise CRLF -> LF so the structural source scans below (which embed
+  // `\n` in their `indexOf` patterns) match regardless of the line endings
+  // git checked out — on Windows the working tree is CRLF, which otherwise
+  // makes every multi-line pattern miss and read as -1.
+  return fs
+    .readFileSync(path.join(ELECTRON_DIR, file), "utf-8")
+    .replace(/\r\n/g, "\n");
 }
 
 /**

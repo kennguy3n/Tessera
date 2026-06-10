@@ -343,6 +343,37 @@ describe("CSP session handler hoist: main.ts", () => {
     ).toBeLessThan(awaitPromptIdx);
   });
 
+  it("registers the bridge-state IPC handler BEFORE await maybeInitPasswordVault in app.whenReady", () => {
+    // LW-8 invariant: the renderer's BridgeGate invokes
+    // `getBridgeState()` the moment <App/> mounts so it knows whether to
+    // keep showing the "Loading workspace…" skeleton. `createWindow()`
+    // (and therefore that mount) can fire on the early macOS `activate`
+    // path BEFORE the `await maybeInitPasswordVault()` continuation
+    // resumes. If `ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...)` hadn't
+    // run yet, that first invoke rejects with "No handler registered for
+    // 'app:bridgeState:get'" and the renderer can wedge on the skeleton.
+    //
+    // Pinning the registration ahead of the vault prompt — the same
+    // anchor used for `registerIpcHandlers()` above — guarantees the
+    // bridge-readiness channel is live before ANY window (early-activate
+    // or the unconditional late call) can be created. A future refactor
+    // that moves the handler registration after window creation would
+    // silently break the mount-time invoke; this assertion catches it.
+    const whenReadyIdx = source.indexOf("app.whenReady()");
+    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    const handlerIdx = source.indexOf("ipcMain.handle(BRIDGE_STATE_GET_CHANNEL", whenReadyIdx);
+    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
+    expect(
+      handlerIdx,
+      "could not find ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...) after app.whenReady()",
+    ).toBeGreaterThan(-1);
+    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    expect(
+      handlerIdx,
+      "ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...) must be registered BEFORE await maybeInitPasswordVault() so the renderer's mount-time getBridgeState() invoke always finds a live handler, even on the early-activate createWindow() path",
+    ).toBeLessThan(awaitPromptIdx);
+  });
+
   it("createWindow is idempotent on the mainWindow reference", () => {
     // The hoisted activate listener (see test above) plus the
     // unconditional `createWindow()` call at the end of `whenReady`

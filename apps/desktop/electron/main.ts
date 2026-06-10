@@ -697,6 +697,30 @@ function installCSPDevtoolsLogger(): void {
 let appInitComplete = false;
 
 /**
+ * Log an error without ever throwing back into the caller. `getLogger()`
+ * and the underlying transport are normally robust, but a logger that
+ * throws (uninitialised, disk full, internal fault) inside a catch block
+ * on the cold-start path would escape it and skip the `setBridgeState()`
+ * call that follows — wedging the renderer on the "Loading workspace…"
+ * skeleton forever even though the bridge is up. `initBridgeAndServices`
+ * documents a "NEVER throws" contract, so every diagnostic it emits from
+ * a catch handler must be best-effort. A last-resort `console.error`
+ * keeps the failure visible if structured logging itself is the thing
+ * that broke.
+ */
+function safeLogError(event: string, fields: Record<string, unknown>): void {
+  try {
+    getLogger().error(event, fields);
+  } catch (logErr) {
+    try {
+      console.error(`[Tessera] logger threw while logging ${event}:`, logErr);
+    } catch {
+      // Nothing left to do — never let logging wedge the boot path.
+    }
+  }
+}
+
+/**
  * LW-8 (cold-start budget): initialise the native bridge and every
  * bridge-dependent service OFF the cold-start critical path.
  *
@@ -748,7 +772,9 @@ async function initBridgeAndServices(): Promise<void> {
   } catch (err) {
     markEnd("bridge-init");
     const message = err instanceof Error ? err.message : String(err);
-    getLogger().error("bridge.init.failed", { message });
+    // Best-effort log: a throwing logger must not skip the
+    // `setBridgeState("error")` below (see `safeLogError`).
+    safeLogError("bridge.init.failed", { message });
     // Surface the failure to the renderer (it leaves the skeleton and
     // shows an error state) rather than wedging boot on a half-open
     // bridge.
@@ -784,7 +810,10 @@ async function initBridgeAndServices(): Promise<void> {
   try {
     startBatteryMonitor();
   } catch (err) {
-    getLogger().error("batteryMonitor.start.failed", {
+    // Best-effort log (see `safeLogError`): even the diagnostic must not
+    // throw, or it would skip `setBridgeState("ready")` and wedge the
+    // renderer on the skeleton — the exact failure this guard prevents.
+    safeLogError("batteryMonitor.start.failed", {
       message: err instanceof Error ? err.message : String(err),
     });
   }
@@ -802,7 +831,9 @@ async function initBridgeAndServices(): Promise<void> {
   try {
     startScheduler();
   } catch (err) {
-    getLogger().error("scheduler.start.failed", {
+    // Best-effort log (see `safeLogError`): a throwing logger here must
+    // not skip `setBridgeState("ready")` below.
+    safeLogError("scheduler.start.failed", {
       message: err instanceof Error ? err.message : String(err),
     });
   }
