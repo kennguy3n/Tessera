@@ -185,7 +185,7 @@ function buildSubstrate(ds: ShowcaseDataset) {
   const nodeDefs: { id: string; label: string; state: string }[] = [
     { id: "n-org", label: org, state: "Canonical" },
     { id: "n-market", label: market, state: "Canonical" },
-    { id: "n-role", label: role, state: "Candidate" },
+    { id: "n-role", label: role, state: "Canonical" },
     ...docTerms.map((t, i) => ({
       id: `n-doc-${i}`,
       label: t,
