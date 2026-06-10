@@ -597,8 +597,8 @@ version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
+ "crypto",
+ "evidence_store",
  "rand 0.10.1",
  "rusqlite",
  "serde",
@@ -611,12 +611,12 @@ dependencies = [
 [[package]]
 name = "connector_framework"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "observation_engine 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
+ "evidence_store",
+ "observation_engine",
  "permission_service",
  "reqwest",
  "serde",
@@ -630,14 +630,14 @@ dependencies = [
 [[package]]
 name = "connectors"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
  "connector_framework",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
+ "evidence_store",
  "hmac 0.13.0",
- "observation_engine 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "observation_engine",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -797,31 +797,6 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 name = "crypto"
 version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
-dependencies = [
- "blake3",
- "chacha20poly1305",
- "chrono",
- "hkdf 0.13.0",
- "hmac 0.13.0",
- "ml-dsa",
- "ml-kem",
- "pqcrypto-sphincsplus",
- "pqcrypto-traits",
- "rand 0.10.1",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "uuid",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "crypto"
-version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1215,28 +1190,8 @@ version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "inference_router 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "rand 0.10.1",
- "rand_core 0.6.4",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
- "whatlang",
- "zeroize",
-]
-
-[[package]]
-name = "evidence_store"
-version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
-dependencies = [
- "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "inference_router 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
+ "inference_router",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "rusqlite",
@@ -2287,23 +2242,7 @@ version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "libc",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "inference_router"
-version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
-dependencies = [
- "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
  "libc",
  "serde",
  "serde_json",
@@ -2719,24 +2658,9 @@ version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "inference_router 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "memory_manager"
-version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
-dependencies = [
- "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "inference_router 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
+ "evidence_store",
+ "inference_router",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3123,27 +3047,9 @@ version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "memory_manager 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "unicode-normalization",
- "uuid",
- "whatlang",
-]
-
-[[package]]
-name = "observation_engine"
-version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
-dependencies = [
- "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
- "memory_manager 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
+ "evidence_store",
+ "memory_manager",
  "serde",
  "serde_json",
  "tempfile",
@@ -3332,10 +3238,10 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "permission_service"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1#de716e4df1c507cb92df3dd960479af5a95244d1"
+source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "crypto",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "rusqlite",
@@ -4604,10 +4510,10 @@ version = "1.2.0"
 source = "git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537#b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537"
 dependencies = [
  "chrono",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "inference_router 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "memory_manager 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
+ "crypto",
+ "evidence_store",
+ "inference_router",
+ "memory_manager",
  "rand 0.10.1",
  "serde",
  "serde_json",
@@ -4675,7 +4581,7 @@ dependencies = [
  "chrono",
  "connector_framework",
  "connectors",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=de716e4df1c507cb92df3dd960479af5a95244d1)",
+ "evidence_store",
  "napi",
  "napi-build",
  "napi-derive",
@@ -4840,10 +4746,10 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "concept_graph",
- "crypto 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "evidence_store 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "memory_manager 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
- "observation_engine 1.2.0 (git+https://github.com/kennguy3n/knowledge?rev=b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537)",
+ "crypto",
+ "evidence_store",
+ "memory_manager",
+ "observation_engine",
  "serde",
  "serde_json",
  "synthesis_pipeline",

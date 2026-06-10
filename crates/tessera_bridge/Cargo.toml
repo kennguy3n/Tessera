@@ -68,13 +68,13 @@ connector-github = ["connectors-v2"]
 # Knowledge substrate connector layer, pinned by rev for reproducible
 # cross-repo builds. Optional + gated behind `connectors-v2` so a
 # `--no-default-features` build never pulls the knowledge graph in.
-connector_framework = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1", default-features = false, optional = true }
-connectors = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1", default-features = false, optional = true }
+connector_framework = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537", default-features = false, optional = true }
+connectors = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537", default-features = false, optional = true }
 # `ScopeId` lives in `evidence_store` and is required to build a
 # `ConnectorConfig`. Pulled directly (rather than re-exported) so the
 # connector layer can bind synced content to the per-tenant scope that
 # the substrate's evidence/observation pipeline keys on.
-evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1", default-features = false, optional = true }
+evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537", default-features = false, optional = true }
 # Standard base64 for encoding fetched connector bodies onto the JSON
 # FFI boundary. Optional + only pulled in by `connectors-v2`, so a
 # `--no-default-features` build stays lean.
