@@ -142,7 +142,13 @@ export const FIRST_RENDER_STAGE = "window-show";
  */
 function firstRenderEndMs(marks: PerfMark[]): number {
   const firstRender = marks.find((m) => m.name === FIRST_RENDER_STAGE);
-  return firstRender ? firstRender.endMs : marks[marks.length - 1].endMs;
+  if (firstRender) return firstRender.endMs;
+  // Fallback for a boot that never opened a window. Both current callers
+  // (`coldStartTotalMs`, `logStartupPerfTable`) already short-circuit on
+  // `marks.length === 0`, but guard the bare-array access here too so a
+  // future in-module caller can't trip an out-of-bounds read: an empty
+  // run has no end anchor, so report 0 rather than read `marks[-1]`.
+  return marks.length > 0 ? marks[marks.length - 1].endMs : 0;
 }
 
 /**

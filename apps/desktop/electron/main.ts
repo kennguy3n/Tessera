@@ -727,15 +727,19 @@ async function initBridgeAndServices(): Promise<void> {
     markStart("bridge-init");
     await initAppState();
     const bridgeInitMs = markEnd("bridge-init");
-    // Log bridge-init timing as its own structured event. The
-    // `startup-perf` boot table (emitted from `ready-to-show`) measures
-    // boot-to-first-paint and INTENTIONALLY excludes bridge-init, since
-    // that work is off the cold-start critical path now (LW-8). Without
-    // this line a bridge-init regression — SQLCipher open + tombstone
-    // replay + FTS purge getting slower — would be invisible to the
-    // structured logs / fleet monitoring. `markEnd` returns `null` only
-    // when perf marks are disabled (e.g. some test envs), so we skip
-    // the event rather than log a meaningless value.
+    // Log bridge-init timing as its own structured event. The cold-start
+    // headline TOTAL (`startup-perf`'s `totalMs`, anchored on the
+    // `window-show` end via `firstRenderEndMs` in `startupPerf.ts`)
+    // INTENTIONALLY excludes bridge-init, since that work is off the
+    // cold-start critical path now (LW-8). NB: the table's informational
+    // `stages` list can still show a `bridge-init` row when init happens
+    // to finish before first paint — only the headline `totalMs` metric
+    // excludes it. Without this dedicated event a bridge-init regression
+    // — SQLCipher open + tombstone replay + FTS purge getting slower —
+    // would be invisible to the structured logs / fleet monitoring.
+    // `markEnd` returns `null` only when perf marks are disabled (e.g.
+    // some test envs), so we skip the event rather than log a
+    // meaningless value.
     if (bridgeInitMs !== null) {
       getLogger().info("startup.bridgeInit", {
         durationMs: Math.round(bridgeInitMs * 100) / 100,
@@ -777,8 +781,24 @@ async function initBridgeAndServices(): Promise<void> {
   // dispatch. It ticks every 30s in the main process, dispatching due
   // `Schedule` automations directly against the native bridge. See
   // `scheduler.ts` for the run-control protocol.
-  startScheduler();
+  //
+  // Guard it so this function honours its "NEVER throws" contract
+  // structurally, not just by knowledge that `startScheduler` can't
+  // throw today: a failure to start the scheduler is non-fatal to the
+  // UI (the bridge IS up), and we MUST still reach `setBridgeState(
+  // "ready")` below — otherwise the renderer would hang on the skeleton
+  // forever, the exact failure mode this lifecycle exists to avoid.
+  try {
+    startScheduler();
+  } catch (err) {
+    getLogger().error("scheduler.start.failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Bridge + services are up: tell every renderer to hydrate.
+  // `setBridgeState` swallows its own per-window broadcast failures
+  // internally (see `bridgeLifecycle.ts`), so this final step cannot
+  // throw — the contract holds end-to-end.
   setBridgeState("ready");
 }
 
