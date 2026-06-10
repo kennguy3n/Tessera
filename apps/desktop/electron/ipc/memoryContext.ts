@@ -115,6 +115,16 @@ interface RawGraphEdge {
  * the top relationships as readable lines ("Atlas — is a → Project").
  * Defensive: malformed JSON or unexpected shapes yield no lines rather
  * than throwing into the generation path.
+ *
+ * Unlike {@link selectMemoryLines}, relations are intentionally NOT
+ * source-scoped. The concept-graph wire shape attributes nodes/edges to
+ * a `scope_id` (the workspace scope), never to an individual source —
+ * concepts are aggregate entities synthesized ACROSS sources, and an
+ * edge like "Atlas — is_a → Project" has no single owning source to
+ * filter on. Relationships are therefore workspace-level distilled
+ * knowledge, surfaced regardless of the per-artifact source selection;
+ * the source scoping that applies to raw memory lines does not map onto
+ * them. (Devin Review PR #120.)
  */
 export function selectRelationLines(conceptGraphJson: string): string[] {
   let parsed: unknown;
@@ -170,6 +180,9 @@ export function buildMemoryContext(
 
   let relationLines: string[] = [];
   try {
+    // Relations are workspace-level aggregate knowledge and are NOT
+    // source-scoped like the memory lines above — see selectRelationLines
+    // for why the wire shape makes per-source filtering inapplicable.
     relationLines = selectRelationLines(bridge.bridgeGetConceptGraph(null, 64));
   } catch {
     relationLines = [];

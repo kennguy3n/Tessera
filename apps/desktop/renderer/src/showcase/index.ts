@@ -177,10 +177,15 @@ function buildSubstrate(ds: ShowcaseDataset) {
   ];
 
   // Concept graph: org hub linked to market/role + derived document concepts.
+  // `state` here MUST be a concept-graph `NodeState` (PascalCase of
+  // `candidate | canonical | superseded | contradicted | deleted`) — NOT a
+  // memory decay state. `parseConceptGraph` normalizes anything else to
+  // `unknown` and renders it with the neutral grey fallback, which would
+  // defeat the showcase. (Devin Review PR #120.)
   const nodeDefs: { id: string; label: string; state: string }[] = [
     { id: "n-org", label: org, state: "Canonical" },
-    { id: "n-market", label: market, state: "Consolidated" },
-    { id: "n-role", label: role, state: "Reinforced" },
+    { id: "n-market", label: market, state: "Canonical" },
+    { id: "n-role", label: role, state: "Candidate" },
     ...docTerms.map((t, i) => ({
       id: `n-doc-${i}`,
       label: t,
