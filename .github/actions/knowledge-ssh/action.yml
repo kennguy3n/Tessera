@@ -1,0 +1,65 @@
+name: Authenticate the private knowledge git dependency
+description: >-
+  Configures git + cargo to fetch the private `kennguy3n/knowledge` git
+  dependency (pinned in the workspace Cargo.toml over https) using a
+  read-only SSH deploy key. Must run after `actions/checkout` and before
+  any cargo step that resolves the dependency graph (clippy/build/test/
+  metadata/vet). Fail-fast: it errors immediately with a clear message if
+  the deploy key secret is missing. Works on the ubuntu/windows/macos
+  GitHub-hosted runners (all ship Git + OpenSSH and a bash shell).
+inputs:
+  ssh-key:
+    description: >-
+      Read-only SSH deploy key (the PRIVATE half) for kennguy3n/knowledge.
+      Pass the repo secret KNOWLEDGE_DEPLOY_KEY.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Configure SSH deploy key for kennguy3n/knowledge
+      shell: bash
+      env:
+        # Keep the secret out of `run:` interpolation; read it from the
+        # environment so it never lands in the rendered command line.
+        KNOWLEDGE_SSH_KEY: ${{ inputs.ssh-key }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${KNOWLEDGE_SSH_KEY:-}" ]; then
+          echo "::error::knowledge deploy key is empty — add the repo secret KNOWLEDGE_DEPLOY_KEY (setup steps in .github/actions/knowledge-ssh/README.md)."
+          exit 1
+        fi
+
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+
+        # Write the private key (preserving the trailing newline OpenSSH
+        # requires) and lock it down.
+        printf '%s\n' "$KNOWLEDGE_SSH_KEY" > ~/.ssh/knowledge_deploy
+        chmod 600 ~/.ssh/knowledge_deploy
+
+        # Pin github.com's host keys so the first connection isn't an
+        # interactive trust prompt (which would hang the runner).
+        ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+
+        # Absolute path to the key. In Git Bash on the Windows runner this
+        # is an MSYS-style path (/c/Users/...), which Git-for-Windows' ssh
+        # accepts in GIT_SSH_COMMAND.
+        key_path="$(cd ~/.ssh && pwd)/knowledge_deploy"
+
+        # Rewrite ONLY the knowledge https remote to ssh so the deploy key
+        # authenticates it. Scoped to this one repo so it never touches the
+        # token-based https checkout of Tessera itself.
+        git config --global \
+          url."git@github.com:kennguy3n/knowledge".insteadOf \
+          "https://github.com/kennguy3n/knowledge"
+
+        # Persist for every subsequent step in the job. CARGO_NET_GIT_FETCH_WITH_CLI
+        # makes cargo shell out to `git` (which honours the insteadOf rewrite
+        # and GIT_SSH_COMMAND) instead of its built-in libgit2 fetcher.
+        {
+          echo "GIT_SSH_COMMAND=ssh -i '${key_path}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true"
+        } >> "$GITHUB_ENV"
+
+        echo "Configured read-only SSH deploy key for kennguy3n/knowledge."

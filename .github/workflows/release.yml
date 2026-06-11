@@ -98,6 +98,22 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.88
 
+      # Authenticate the private kennguy3n/knowledge git dependency over a
+      # read-only SSH deploy key before the release `cargo build` resolves it.
+      - name: Authenticate knowledge git dependency
+        uses: ./.github/actions/knowledge-ssh
+        with:
+          ssh-key: ${{ secrets.KNOWLEDGE_DEPLOY_KEY }}
+
+      # Fold the active toolchain's `rustc --version` into the cache key so a
+      # toolchain bump invalidates the cached `target/` (mirrors ci.yml). Without
+      # this, a `target/` built under the old compiler is restored on top of a
+      # new rustc, which at best wastes a rebuild and at worst surfaces confusing
+      # "found invalid metadata" / incremental-cache errors.
+      - name: Record rustc version
+        shell: bash
+        run: rustc --version --verbose > rustc-version.txt
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -107,8 +123,15 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          # `release-` discriminator keeps this namespace separate from the
+          # debug-profile CI cache (ci.yml). Both cache `target/`, but with
+          # different build profiles; isolating them avoids cross-profile churn
+          # and stops the combined debug+release artifacts from inflating toward
+          # GitHub's per-repo cache budget (which would trigger evictions).
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-${{ hashFiles('rustc-version.txt') }}-
+            ${{ runner.os }}-cargo-release-
 
       - name: Install dependencies
         run: npm ci
