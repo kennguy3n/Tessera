@@ -428,4 +428,79 @@ describe("ConnectorsList", () => {
       expect(await screen.findByText("Connect GitHub")).toBeInTheDocument();
     },
   );
+
+  it(
+    "clears the 'scopes narrowed' banner immediately on a successful " +
+      "reconnect, before the post-reconnect scope re-inspection resolves",
+    async () => {
+      // Slack is connected with narrowed scopes, so the banner is shown.
+      mockApi.connectors.status.mockImplementation(async (p: string) => ({
+        provider: p,
+        connected: p === "slack",
+        status: p === "slack" ? "connected" : "disconnected",
+      }));
+      // First inspection (mount) reports narrowed scopes; the second
+      // (post-reconnect) is left pending so we can prove the banner is
+      // cleared from the optimistic state rather than from fresh data —
+      // i.e. it never flashes the stale "narrowed" state.
+      let inspectCalls = 0;
+      let resolvePending: ((v: ConnectorScopeComparison | null) => void) | null =
+        null;
+      mockApi.connectors.inspectScopes.mockImplementation(
+        async (p: string): Promise<ConnectorScopeComparison | null> => {
+          if (p !== "slack") return null;
+          inspectCalls += 1;
+          if (inspectCalls === 1) {
+            return {
+              provider: "slack",
+              requested: ["channels:read", "users:read"],
+              granted: ["channels:read"],
+              missing: ["users:read"],
+              fullyGranted: false,
+            };
+          }
+          return new Promise((resolve) => {
+            resolvePending = resolve;
+          });
+        },
+      );
+      mockApi.connectors.authenticate.mockResolvedValue({
+        provider: "slack",
+        connected: true,
+        status: "connected",
+      });
+
+      await act(async () => {
+        render(<ConnectorsList />);
+      });
+      expect(
+        await screen.findByText(/Some requested permissions weren't granted/),
+      ).toBeInTheDocument();
+
+      // Reconnect → fill credentials → authenticate.
+      fireEvent.click(
+        screen.getByLabelText("Reconnect Slack to restore permissions"),
+      );
+      fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+        target: { value: "ID" },
+      });
+      fireEvent.change(screen.getByLabelText("OAuth Client Secret"), {
+        target: { value: "SECRET" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText("Authenticate"));
+      });
+
+      // The post-reconnect inspection is still pending, yet the stale
+      // banner is already gone — no flash of the just-fixed state.
+      expect(
+        screen.queryByText(/Some requested permissions weren't granted/),
+      ).not.toBeInTheDocument();
+
+      // Release the pending inspection so no promise is left dangling.
+      await act(async () => {
+        resolvePending?.(null);
+      });
+    },
+  );
 });

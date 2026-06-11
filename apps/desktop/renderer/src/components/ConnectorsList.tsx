@@ -248,6 +248,18 @@ export default function ConnectorsList({
         clientSecret.trim(),
       );
       setStatuses((prev) => ({ ...prev, [descriptor.provider]: next }));
+      // Drop the pre-reconnect scope diff in the same render that marks
+      // the provider connected. Otherwise this provider would briefly
+      // satisfy `narrowed` (connected + stale `fullyGranted: false`) and
+      // flash the "scopes narrowed" banner the user just reconnected to
+      // clear, until the un-awaited `pollAll()` below resolves with the
+      // fresh diff (which re-adds the entry only if scopes are still
+      // genuinely narrowed).
+      setScopeInfo((prev) => {
+        if (!(descriptor.provider in prev)) return prev;
+        const { [descriptor.provider]: _dropped, ...rest } = prev;
+        return rest;
+      });
       setAuthOpenFor(null);
       setClientId("");
       setClientSecret("");

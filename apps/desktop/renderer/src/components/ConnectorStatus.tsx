@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ConnectorStatusInfo } from "../types/ipc";
 import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
+import { CONNECTOR_DESCRIPTORS } from "./connectorDescriptors";
 
 interface ConnectorStatusProps {
   provider: string;
@@ -25,18 +26,15 @@ interface ConnectorStatusProps {
   onReconnect?: () => void;
 }
 
-const PROVIDER_LABELS: Record<string, string> = {
-  google_drive: "Google Drive",
-  onedrive: "OneDrive",
-  notion: "Notion",
-  jira: "Jira",
-  confluence: "Confluence",
-  figma: "Figma",
-  hubspot: "HubSpot",
-  slack: "Slack",
-  email: "Email",
-  github: "GitHub",
-};
+// Fallback display names, derived from the canonical connector
+// descriptors so this table can never drift from the labels the gallery
+// shows. `ConnectorsList` always passes an explicit `label`, so this only
+// applies to standalone `<ConnectorStatus>` usages (e.g. the Google Drive
+// card on `SourcesPage`) or any provider absent from the descriptor set
+// (which falls back to the raw provider id below).
+const PROVIDER_LABELS: Record<string, string> = Object.fromEntries(
+  CONNECTOR_DESCRIPTORS.map((d) => [d.provider, d.label]),
+);
 
 export default function ConnectorStatus({
   provider,
