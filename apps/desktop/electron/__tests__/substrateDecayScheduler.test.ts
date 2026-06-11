@@ -5,9 +5,10 @@
  * `bridge.bridgeRunDecaySweep()` directly in the main process. We use
  * fake timers + a stubbed bridge to assert:
  *
- *   1. The interval fires a sweep every `DECAY_INTERVAL_MS`.
- *   2. `start` is idempotent (no stacked intervals) and `stop` cancels
- *      future ticks.
+ *   1. `start` runs an immediate catch-up sweep, then fires a sweep
+ *      every `DECAY_INTERVAL_MS`.
+ *   2. `start` is idempotent (no stacked intervals, no double catch-up)
+ *      and `stop` cancels future ticks.
  *   3. `runSubstrateDecaySweepOnce` no-ops when the bridge is absent
  *      (cold start) and swallows bridge-side errors (a bad sweep can't
  *      crash the main process or cancel the timer).
@@ -59,27 +60,35 @@ afterEach(() => {
 });
 
 describe("substrate decay scheduler", () => {
-  it("fires a sweep on every interval tick", () => {
+  it("runs a catch-up sweep on start, then on every interval tick", () => {
     startSubstrateDecayScheduler();
-    expect(bridgeMock.bridgeRunDecaySweep).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(DECAY_INTERVAL_MS);
+    // Immediate catch-up sweep so decay isn't gated on 6h of continuous
+    // uptime (a desktop app rarely accumulates that in one session).
     expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(DECAY_INTERVAL_MS);
+    expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(DECAY_INTERVAL_MS);
+    expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(3);
+  });
+
+  it("is idempotent — a second start neither double-sweeps nor stacks intervals", () => {
+    startSubstrateDecayScheduler();
+    startSubstrateDecayScheduler();
+    // The second start is a no-op: exactly one catch-up sweep, not two.
+    expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(1);
+    // One interval fires one tick (not two) — proving no stacked interval.
     vi.advanceTimersByTime(DECAY_INTERVAL_MS);
     expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(2);
   });
 
-  it("is idempotent — a second start does not stack intervals", () => {
-    startSubstrateDecayScheduler();
-    startSubstrateDecayScheduler();
-    vi.advanceTimersByTime(DECAY_INTERVAL_MS);
-    expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(1);
-  });
-
   it("stops firing after stop()", () => {
     startSubstrateDecayScheduler();
+    // The start-time catch-up sweep has already fired once.
+    expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(1);
     stopSubstrateDecayScheduler();
     vi.advanceTimersByTime(DECAY_INTERVAL_MS * 3);
-    expect(bridgeMock.bridgeRunDecaySweep).not.toHaveBeenCalled();
+    // No further sweeps after stop().
+    expect(bridgeMock.bridgeRunDecaySweep).toHaveBeenCalledTimes(1);
   });
 
   it("stop() is safe to call when never started", () => {
