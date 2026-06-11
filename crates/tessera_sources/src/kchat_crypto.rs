@@ -1,5 +1,5 @@
 //! Per-source data-encryption-key (DEK) layer for KChat chat-body
-//! evidence .
+//! evidence.
 //!
 //! # Threat model and design
 //!
@@ -18,295 +18,151 @@
 //! 2. `secure_delete = ON` zero-fills the freed pages.
 //! 3. `VACUUM` rebuilds the file so the freelist is also rewritten.
 //!
-//! This module adds the second layer the user-knowledge note
-//! "When writing code for ken in any of his repos … do real
-//! implementation .. avoid stub" calls for: a per-source AEAD
-//! encryption key whose **destruction alone** renders any surviving
-//! ciphertext bytes unrecoverable, even if a forensic recovery of
-//! the SQLCipher pages succeeds AND the SQLCipher master key later
-//! leaks. This pairs with the existing scrub:
+//! This module adds the second layer: a per-source AEAD encryption
+//! key whose **destruction alone** renders any surviving ciphertext
+//! bytes unrecoverable, even if a forensic recovery of the SQLCipher
+//! pages succeeds AND the SQLCipher master key later leaks. On
+//! cryptoshred the existing DELETE wipes the content columns AND
+//! `forget_dek` + the deleted `kchat_source_deks` row destroy the DEK,
+//! so any leaked backup holding the AEAD ciphertext for this source is
+//! permanently undecryptable.
 //!
-//! - On ingest, KChat post chunks are stored with their plaintext
-//!   in `chunks.content` (so FTS5 can tokenize them) AND an
-//!   AEAD-encrypted copy in `chunks.content_aead` (under a random
-//!   nonce stored in `chunks.content_aead_nonce`). The two
-//!   columns are populated in lock-step so the AEAD copy is a true
-//!   shadow of what FTS5 indexed.
+//! # Session 7 upgrade: XChaCha20-Poly1305 + post-quantum-ready KDF
 //!
-//! - On retrieval (search snippets), callers can read either
-//!   column. The plaintext column is the canonical one. The AEAD
-//!   column is the long-term-forgetting belt-and-braces.
+//! The wrap/unwrap and chunk-seal primitives are now supplied by the
+//! `knowledge` substrate's audited `crypto` crate:
 //!
-//! - On cryptoshred, the existing DELETE wipes BOTH columns AND
-//!   `delete_dek_for_source` zeros the in-memory DEK and drops the
-//!   wrapped-DEK row. After that point:
-//!     * The plaintext column is gone (DELETE + secure_delete + VACUUM).
-//!     * The AEAD column is gone (same DELETE).
-//!     * The DEK is gone (the SQLCipher row is deleted and the
-//!       in-memory copy is zeroized).
-//!     * Any leaked backup / forensic image holding the AEAD
-//!       ciphertext bytes for this source is now permanently
-//!       undecryptable, because the DEK that authenticated those
-//!       bytes never existed anywhere outside this database.
+//! - **DEK wrapping** is delegated to [`tessera_core::crypto`], which
+//!   wraps the per-source DEK with **XChaCha20-Poly1305** under an
+//!   **HKDF-SHA256**-derived KEK (`knowledge_crypto::derive_key`). The
+//!   wrapping is *versioned*: legacy databases carry AES-256-GCM (v1)
+//!   wrapped DEKs (12-byte nonce) and stay readable; new writes use
+//!   XChaCha20-Poly1305 (v2, 24-byte nonce). The scheme is inferred
+//!   from the nonce length, so no schema change is required.
 //!
-//! When MLS-derived KEKs land in a future iteration (Block D), the
-//! root KEK source can be swapped for one derived from the user's
-//! MLS leaf key without changing the AEAD layer or the on-disk
-//! schema — only [`KekProvider::derive_source_kek`] gets a new
-//! implementation.
+//! - **Chunk-content sealing** mirrors that versioning here. New
+//!   chunks are sealed with XChaCha20-Poly1305 (24-byte nonce);
+//!   existing AES-256-GCM-sealed chunks (12-byte nonce) keep
+//!   decrypting via the legacy path. [`KchatCrypto::open_chunk`]
+//!   dispatches on the stored nonce length.
+//!
+//! Crucially, the **DEK value never changes** across the upgrade — only
+//! its wrapper and the chunk AEAD primitive do — so content sealed
+//! before the upgrade stays readable after a key re-wrap (see
+//! `tessera_migrate`'s crypto-upgrade migration).
 //!
 //! # Key hierarchy
 //!
 //! ```text
 //!     SQLCipher master key (32-byte, stored in OS keychain)
 //!                              │
-//!                              │ HKDF-SHA256 with info=
-//!                              │   "tessera/kchat-source-dek/v1/<source_id>"
+//!                              │ HKDF-SHA256 (knowledge_crypto::derive_key)
+//!                              │   context = "tessera/kchat-source-dek/v2/<id>"
 //!                              ▼
 //!                  Per-source KEK (32-byte)
 //!                              │
-//!                              │ AES-256-GCM wrap of a 32-byte
+//!                              │ XChaCha20-Poly1305 wrap of a 32-byte
 //!                              │ randomly-generated DEK
 //!                              ▼
-//!                Wrapped DEK + 12-byte nonce
+//!                Wrapped DEK + 24-byte nonce
 //!                  (rows in `kchat_source_deks`)
 //! ```
 //!
-//! The KEK is **never persisted** — it is derived on demand from
-//! the SQLCipher master key and the source id. The DEK is what
-//! actually encrypts chunk content; it is randomly generated once
-//! on first ingest and rotated on key-rotation events (future).
+//! The KEK is **never persisted** — it is derived on demand from the
+//! SQLCipher master key and the source id. The DEK is what actually
+//! encrypts chunk content; it is randomly generated once on first
+//! ingest and rotated on key-rotation events (future).
 //!
-//! # Why HKDF-SHA256 and AES-256-GCM
+//! # Why XChaCha20-Poly1305
 //!
-//! - **HKDF-SHA256**: standard NIST-approved KDF. Uses the
-//!   SQLCipher master key as the input keying material (which is
-//!   already 256 bits of uniform-random entropy from the OS
-//!   keychain). The salt is empty (acceptable when the IKM is
-//!   already uniform random) and the `info` parameter binds the
-//!   derived key to a specific source_id so two sources cannot
-//!   collide on the same KEK.
-//!
-//! - **AES-256-GCM**: pure-Rust via the audited `aes-gcm` crate.
-//!   AEAD authentication means a tampered ciphertext (or a
-//!   tampered associated-data binding such as the source_id) fails
-//!   to decrypt instead of silently producing wrong plaintext.
-//!   12-byte nonces are randomly generated; with 96 bits of nonce
-//!   space the collision probability is negligible for the volume
-//!   of post chunks any single Tessera install will ever produce
-//!   (~2^48 ingests per source per key rotation is the safety
-//!   margin).
+//! - **192-bit nonce**: the extended-nonce ChaCha variant lets us pick
+//!   nonces at random with a negligible collision probability across
+//!   the lifetime of a source (vs AES-GCM's 96-bit nonce, where random
+//!   nonces become a concern past ~2^32 messages). This removes the
+//!   need for a stateful nonce counter.
+//! - **Software-constant-time**: ChaCha20 has no table lookups, so it
+//!   avoids the cache-timing pitfalls of software AES on hosts without
+//!   AES-NI — relevant for the heterogeneous SME desktops Tessera runs
+//!   on.
+//! - **Audited shared implementation**: routing through the
+//!   `knowledge` crypto crate means the substrate and Tessera share one
+//!   reviewed AEAD construction rather than maintaining two.
 //!
 //! # Defense-in-depth notes
 //!
-//! - The associated-data (AAD) of every chunk-content seal binds
-//!   the source_id so a chunk encrypted under source A cannot be
-//!   forge-substituted into the chunks row of source B. A future
-//!   refactor that mixes up source_id in the DEK lookup would fail
-//!   to decrypt rather than returning attacker-influenced
-//!   plaintext.
-//!
-//! - All Key material in this module is wrapped in
+//! - The associated-data (AAD) of every chunk-content seal binds the
+//!   source_id (and scheme version) so a chunk encrypted under source A
+//!   cannot be forge-substituted into the chunks row of source B, and a
+//!   v1 ciphertext cannot be reinterpreted under the v2 AAD.
+//! - All key material in this module is wrapped in
 //!   [`zeroize::Zeroizing`] so the bytes are scrubbed on drop. The
-//!   `unsafe_code = "forbid"` lint is enforced workspace-wide;
-//!   `aes-gcm` and `hkdf` are pure-safe Rust.
+//!   `unsafe_code = "forbid"` lint is enforced workspace-wide.
 
 use std::sync::Mutex;
 
-use aes_gcm::{
-    aead::{Aead, KeyInit, Payload},
-    Aes256Gcm, Nonce,
-};
-use hkdf::Hkdf;
 use rand::{rngs::OsRng, RngCore};
-use sha2::Sha256;
+use tessera_core::crypto::{self, DEK_LEN};
 use tessera_core::error::{Error, Result};
 use tessera_core::SourceId;
 use zeroize::Zeroizing;
 
-/// Length of a wrapped DEK ciphertext (32-byte DEK + 16-byte GCM tag).
-const WRAPPED_DEK_LEN: usize = 32 + 16;
+/// Re-exported so existing callers (`manager`, `store`,
+/// `tessera_migrate`) keep importing these from `kchat_crypto`. The
+/// scheme-aware wrap/unwrap logic itself lives in `tessera_core::crypto`
+/// because `tessera_migrate` needs the same primitive without depending
+/// on `tessera_sources`.
+pub use tessera_core::crypto::{CryptoScheme, MasterKey, WrappedDek};
 
-/// Length of an AES-GCM nonce (12 bytes per the NIST spec).
-const AES_GCM_NONCE_LEN: usize = 12;
+/// Length of an AES-GCM nonce (12 bytes) — the legacy (v1) chunk-seal
+/// nonce length. Only referenced by the backward-compatibility tests
+/// that synthesise authentic v1 ciphertext; the production read path
+/// detects the scheme via [`CryptoScheme::from_nonce_len`].
+#[cfg(test)]
+const AES_GCM_NONCE_LEN: usize = crypto::AES_GCM_NONCE_LEN;
 
-/// `info` parameter version prefix for the HKDF KEK derivation.
-/// Bumping this string forces a full DEK re-wrap on next ingest;
-/// retained as a stable wire contract so a future caller cannot
-/// silently invalidate every wrapped DEK by renaming the prefix.
-const KEK_HKDF_INFO_PREFIX: &str = "tessera/kchat-source-dek/v1/";
+/// Length of an XChaCha20-Poly1305 nonce (24 bytes) — the v2 chunk-seal
+/// nonce length used for all new writes.
+const XCHACHA_NONCE_LEN: usize = crypto::XCHACHA_NONCE_LEN;
 
-/// `aad` parameter prefix bound into every chunk-content seal. Mixes
-/// the source_id so a chunk's ciphertext from source A cannot be
-/// substituted into source B's chunks row even if both DEKs are
-/// somehow available to the attacker (defence in depth).
-const AEAD_CONTEXT_PREFIX: &str = "tessera/kchat-post-chunk/v1/";
+/// `aad` prefix bound into every **v1 (legacy)** chunk-content seal.
+/// Retained verbatim so existing AES-GCM-sealed chunks keep
+/// authenticating on the read path.
+const CHUNK_AAD_V1_PREFIX: &str = "tessera/kchat-post-chunk/v1/";
 
-/// The 32-byte SQLCipher master key, in raw form. Used as input keying
-/// material for the HKDF KEK derivation. Wrapped in [`Zeroizing`] so
-/// the bytes are scrubbed on drop.
-///
-/// Production code constructs this from the 64-hex-character key
-/// the bridge already validates in `tessera_core::db::open_shared_with_key`;
-/// tests construct one from a deterministic seed.
-#[derive(Clone)]
-pub struct MasterKey(Zeroizing<[u8; 32]>);
+/// `aad` prefix bound into every **v2** chunk-content seal
+/// (XChaCha20-Poly1305). Mixes the source_id so a chunk's ciphertext
+/// from source A cannot be substituted into source B's chunks row.
+const CHUNK_AAD_V2_PREFIX: &str = "tessera/kchat-post-chunk/v2/";
 
-impl std::fmt::Debug for MasterKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Never log the bytes. A Display/Debug impl that printed the
-        // raw key would defeat the keychain isolation outright.
-        f.write_str("MasterKey(<redacted; 32 bytes>)")
-    }
-}
-
-impl MasterKey {
-    /// Construct from a 64-hex-character key (the same format
-    /// `tessera_core::db::open_shared_with_key` validates). The
-    /// length-and-charset check is duplicated here so a future
-    /// caller that skips the db-open path still gets the same
-    /// guarantee.
-    pub fn from_hex(hex: &str) -> Result<Self> {
-        if hex.len() != 64 {
-            return Err(Error::DatabaseState(format!(
-                "MasterKey::from_hex: expected 64 hex chars, got {}",
-                hex.len()
-            )));
-        }
-        let mut bytes = [0u8; 32];
-        for (i, byte) in bytes.iter_mut().enumerate() {
-            let hi = decode_hex_nibble(hex.as_bytes()[i * 2])?;
-            let lo = decode_hex_nibble(hex.as_bytes()[i * 2 + 1])?;
-            *byte = (hi << 4) | lo;
-        }
-        Ok(Self(Zeroizing::new(bytes)))
-    }
-
-    /// Construct directly from 32 raw bytes. Used by tests and by the
-    /// in-memory path where there is no SQLCipher master key file.
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(Zeroizing::new(bytes))
-    }
-
-    fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-fn decode_hex_nibble(b: u8) -> Result<u8> {
-    match b {
-        b'0'..=b'9' => Ok(b - b'0'),
-        b'a'..=b'f' => Ok(b - b'a' + 10),
-        b'A'..=b'F' => Ok(b - b'A' + 10),
-        _ => Err(Error::DatabaseState(format!(
-            "MasterKey::from_hex: non-hex byte 0x{b:02x}"
-        ))),
-    }
-}
-
-/// Wrap of [`MasterKey`] that derives per-source KEKs on demand.
-///
-/// Held inside the [`KchatCrypto`] facade so callers never see the
-/// raw master key. The struct is `Clone` because the underlying
-/// `Zeroizing<[u8; 32]>` is cheap to copy and the Mutex'd cache below
-/// is the real synchronisation point.
-#[derive(Clone)]
-pub struct KekProvider {
-    master: MasterKey,
-}
-
-impl KekProvider {
-    /// Wraps a master key for deriving per-source KEKs.
-    pub fn new(master: MasterKey) -> Self {
-        Self { master }
-    }
-
-    /// Derive the 32-byte KEK for the given source_id. Returns
-    /// `Zeroizing<[u8;32]>` so the derived key is scrubbed on drop.
-    ///
-    /// Cheap (one HKDF-Extract + Expand). Not cached: the derivation
-    /// is deterministic from `(master, source_id)`, so a cache would
-    /// only save microseconds per ingest at the cost of holding extra
-    /// key material in memory longer than strictly necessary. The
-    /// hot path is the DEK lookup / wrap / unwrap, which IS cached.
-    pub fn derive_source_kek(&self, source_id: &SourceId) -> Zeroizing<[u8; 32]> {
-        let hk = Hkdf::<Sha256>::new(None, self.master.as_bytes());
-        let info = format!("{}{}", KEK_HKDF_INFO_PREFIX, source_id);
-        let mut okm = Zeroizing::new([0u8; 32]);
-        hk.expand(info.as_bytes(), okm.as_mut())
-            .expect("HKDF-SHA256 expand of 32 bytes never fails");
-        okm
-    }
-}
-
-/// A single wrapped + nonce pair stored in `kchat_source_deks`.
-/// Returned by the store layer's `load_wrapped_dek_for_source`
-/// and consumed by [`KchatCrypto::unwrap_dek`].
-#[derive(Debug, Clone)]
-pub struct WrappedDek {
-    /// AES-GCM nonce used when wrapping the DEK under the source KEK.
-    pub wrap_nonce: [u8; AES_GCM_NONCE_LEN],
-    /// The KEK-encrypted DEK (ciphertext + tag).
-    pub wrapped: [u8; WRAPPED_DEK_LEN],
-}
-
-impl WrappedDek {
-    /// Pack the wrap_nonce + wrapped bytes the way the store reads
-    /// them back out of SQLite (BLOBs of fixed length). Returns
-    /// `None` if either input is the wrong length so a future
-    /// schema migration that widens the columns is caught at the
-    /// boundary rather than silently producing garbage decryption.
-    pub fn from_blobs(wrap_nonce: &[u8], wrapped: &[u8]) -> Result<Self> {
-        if wrap_nonce.len() != AES_GCM_NONCE_LEN {
-            return Err(Error::DatabaseState(format!(
-                "WrappedDek::from_blobs: wrap_nonce expected {AES_GCM_NONCE_LEN} bytes, got {}",
-                wrap_nonce.len()
-            )));
-        }
-        if wrapped.len() != WRAPPED_DEK_LEN {
-            return Err(Error::DatabaseState(format!(
-                "WrappedDek::from_blobs: wrapped expected {WRAPPED_DEK_LEN} bytes, got {}",
-                wrapped.len()
-            )));
-        }
-        let mut nonce = [0u8; AES_GCM_NONCE_LEN];
-        nonce.copy_from_slice(wrap_nonce);
-        let mut w = [0u8; WRAPPED_DEK_LEN];
-        w.copy_from_slice(wrapped);
-        Ok(Self {
-            wrap_nonce: nonce,
-            wrapped: w,
-        })
-    }
-}
-
-/// Raw 32-byte data-encryption-key. Always wrapped in `Zeroizing`
-/// so the bytes are scrubbed on drop.
-type DekBytes = Zeroizing<[u8; 32]>;
+/// Raw 32-byte data-encryption-key. Always wrapped in `Zeroizing` so the
+/// bytes are scrubbed on drop.
+type DekBytes = Zeroizing<[u8; DEK_LEN]>;
 
 /// A KChat-post chunk's content encrypted under a per-source DEK.
 ///
-/// Both fields are fixed-length on the AEAD side:
-///   - `nonce`: 12 bytes (AES-GCM standard).
-///   - `ciphertext`: input plaintext length + 16-byte tag.
+/// The `nonce` length identifies the AEAD scheme that produced the
+/// ciphertext: 12 bytes → legacy AES-256-GCM (v1), 24 bytes →
+/// XChaCha20-Poly1305 (v2). New seals are always v2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedChunk {
-    /// 12-byte AES-GCM nonce used to seal this chunk.
+    /// AEAD nonce used to seal this chunk (12 bytes for legacy v1,
+    /// 24 bytes for v2).
     pub nonce: Vec<u8>,
     /// Chunk ciphertext: plaintext length plus a 16-byte AEAD tag.
     pub ciphertext: Vec<u8>,
 }
 
-/// The facade callers use to encrypt/decrypt chunk content. Holds
-/// the KEK provider and a small in-memory cache of unwrapped DEKs
-/// keyed by source_id. The cache is bounded by the number of
-/// concurrently-active KChat sources, which is small (a typical
-/// Tessera workspace has < 100 linked channels).
+/// The facade callers use to encrypt/decrypt chunk content. Holds the
+/// master key and a small in-memory cache of unwrapped DEKs keyed by
+/// source_id. The cache is bounded by the number of concurrently-active
+/// KChat sources, which is small (a typical Tessera workspace has < 100
+/// linked channels).
 pub struct KchatCrypto {
-    kek_provider: KekProvider,
-    // Mutex<...> because the cache is read-modify-write; the lock is
-    // only held for the cache map operation, never across the
-    // AES-GCM seal/open call.
+    master: MasterKey,
+    // Mutex<...> because the cache is read-modify-write. The DEK is cloned
+    // out from under the lock (a cheap 32-byte `Zeroizing` copy) so the AEAD
+    // seal/open never runs while the mutex is held; concurrent ops on
+    // distinct sources therefore don't serialise on each other's crypto work.
     dek_cache: Mutex<std::collections::HashMap<String, DekBytes>>,
 }
 
@@ -315,89 +171,35 @@ impl KchatCrypto {
     /// cache.
     pub fn new(master: MasterKey) -> Self {
         Self {
-            kek_provider: KekProvider::new(master),
+            master,
             dek_cache: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Generate a fresh 32-byte DEK, wrap it under the per-source
-    /// KEK, and return both the wrapped form (to persist) and the
-    /// raw DEK (to use immediately). Called by the store layer the
-    /// first time a chunk needs to be sealed for a source whose
-    /// `kchat_source_deks` row does not yet exist.
+    /// Generate a fresh 32-byte DEK, wrap it under the per-source KEK
+    /// (XChaCha20-Poly1305, v2), and return the wrapped form to persist.
+    /// Also populates the in-memory cache with the raw DEK so the
+    /// immediately-following `seal_chunk` does not have to unwrap a copy
+    /// of the same bytes the caller is about to persist.
     pub fn generate_and_wrap_dek(&self, source_id: &SourceId) -> Result<WrappedDek> {
-        let mut dek = Zeroizing::new([0u8; 32]);
+        let mut dek = Zeroizing::new([0u8; DEK_LEN]);
         OsRng.fill_bytes(dek.as_mut());
 
-        let kek = self.kek_provider.derive_source_kek(source_id);
-        let cipher = Aes256Gcm::new_from_slice(kek.as_ref())
-            .map_err(|e| Error::DatabaseState(format!("KEK init failed: {e}")))?;
+        let wrapped = crypto::wrap_dek(&self.master, source_id, &dek)?;
 
-        let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let aad = wrap_aad(source_id);
-        let ciphertext = cipher
-            .encrypt(
-                nonce,
-                Payload {
-                    msg: dek.as_ref(),
-                    aad: aad.as_bytes(),
-                },
-            )
-            .map_err(|e| Error::DatabaseState(format!("DEK wrap failed: {e}")))?;
-
-        if ciphertext.len() != WRAPPED_DEK_LEN {
-            return Err(Error::DatabaseState(format!(
-                "DEK wrap produced unexpected ciphertext length {}, expected {WRAPPED_DEK_LEN}",
-                ciphertext.len()
-            )));
-        }
-        let mut wrapped = [0u8; WRAPPED_DEK_LEN];
-        wrapped.copy_from_slice(&ciphertext);
-
-        // Populate the cache atomically with the freshly-generated
-        // DEK so the immediately-following seal_chunk call doesn't
-        // unwrap a copy of the same bytes the caller is about to
-        // persist.
         self.dek_cache
             .lock()
             .expect("dek_cache mutex poisoned")
             .insert(source_id.to_string(), dek);
 
-        Ok(WrappedDek {
-            wrap_nonce: nonce_bytes,
-            wrapped,
-        })
+        Ok(wrapped)
     }
 
-    /// Unwrap a wrapped DEK and cache it. Called by the store the
-    /// first time a chunk needs to be unsealed for a source whose
-    /// DEK isn't already in cache.
+    /// Unwrap a wrapped DEK (legacy v1 or current v2, auto-detected) and
+    /// cache it. Called by the store the first time a chunk needs to be
+    /// unsealed for a source whose DEK isn't already in cache.
     pub fn unwrap_dek(&self, source_id: &SourceId, wrapped: &WrappedDek) -> Result<()> {
-        let kek = self.kek_provider.derive_source_kek(source_id);
-        let cipher = Aes256Gcm::new_from_slice(kek.as_ref())
-            .map_err(|e| Error::DatabaseState(format!("KEK init failed: {e}")))?;
-        let nonce = Nonce::from_slice(&wrapped.wrap_nonce);
-        let aad = wrap_aad(source_id);
-        let dek_bytes = cipher
-            .decrypt(
-                nonce,
-                Payload {
-                    msg: &wrapped.wrapped,
-                    aad: aad.as_bytes(),
-                },
-            )
-            .map_err(|e| Error::DatabaseState(format!("DEK unwrap failed: {e}")))?;
-        if dek_bytes.len() != 32 {
-            return Err(Error::DatabaseState(format!(
-                "DEK unwrap produced unexpected length {}, expected 32",
-                dek_bytes.len()
-            )));
-        }
-        let mut dek = Zeroizing::new([0u8; 32]);
-        dek.copy_from_slice(&dek_bytes);
+        let dek = crypto::unwrap_dek(&self.master, source_id, wrapped)?;
         self.dek_cache
             .lock()
             .expect("dek_cache mutex poisoned")
@@ -405,87 +207,95 @@ impl KchatCrypto {
         Ok(())
     }
 
-    /// Encrypt chunk content under the per-source DEK. The
-    /// associated-data binds source_id so a chunk's ciphertext from
-    /// source A cannot be substituted into source B's row.
+    /// Clone the cached DEK for `source_id` out from under the cache lock so
+    /// the AEAD seal/open runs without the mutex held. The returned copy is
+    /// `Zeroizing`, so it is scrubbed when the calling operation finishes.
+    fn cached_dek(&self, source_id: &SourceId) -> Option<DekBytes> {
+        self.dek_cache
+            .lock()
+            .expect("dek_cache mutex poisoned")
+            .get(&source_id.to_string())
+            .cloned()
+    }
+
+    /// Encrypt chunk content under the per-source DEK with
+    /// XChaCha20-Poly1305 (v2). The associated-data binds source_id and
+    /// the scheme version.
     pub fn seal_chunk(&self, source_id: &SourceId, plaintext: &[u8]) -> Result<SealedChunk> {
-        let guard = self.dek_cache.lock().expect("dek_cache mutex poisoned");
-        let dek = guard.get(&source_id.to_string()).ok_or_else(|| {
+        let dek = self.cached_dek(source_id).ok_or_else(|| {
             Error::DatabaseState(format!(
                 "seal_chunk: DEK for source {source_id} not loaded; call generate_and_wrap_dek or unwrap_dek first"
             ))
         })?;
-        let cipher = Aes256Gcm::new_from_slice(dek.as_ref())
-            .map_err(|e| Error::DatabaseState(format!("DEK init failed: {e}")))?;
-        let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        let aad = chunk_aad(source_id);
-        let ciphertext = cipher
-            .encrypt(
-                nonce,
-                Payload {
-                    msg: plaintext,
-                    aad: aad.as_bytes(),
-                },
-            )
+
+        let mut nonce = [0u8; XCHACHA_NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce);
+        let aad = chunk_aad(CryptoScheme::XChaCha20Poly1305V2, source_id);
+        let ciphertext = knowledge_crypto::encrypt_aead(&dek, &nonce, plaintext, aad.as_bytes())
             .map_err(|e| Error::DatabaseState(format!("chunk seal failed: {e}")))?;
+
         Ok(SealedChunk {
-            nonce: nonce_bytes.to_vec(),
+            nonce: nonce.to_vec(),
             ciphertext,
         })
     }
 
-    /// Decrypt chunk content. Errors if the AEAD tag does not
-    /// verify (tampered ciphertext, wrong DEK, wrong source_id
-    /// AAD).
+    /// Decrypt chunk content, dispatching on the stored nonce length so
+    /// both legacy AES-256-GCM (v1) and current XChaCha20-Poly1305 (v2)
+    /// ciphertext decrypt correctly. Errors if the AEAD tag does not
+    /// verify (tampered ciphertext, wrong DEK, wrong source_id AAD).
     pub fn open_chunk(&self, source_id: &SourceId, sealed: &SealedChunk) -> Result<Vec<u8>> {
-        if sealed.nonce.len() != AES_GCM_NONCE_LEN {
-            return Err(Error::DatabaseState(format!(
-                "open_chunk: nonce expected {AES_GCM_NONCE_LEN} bytes, got {}",
-                sealed.nonce.len()
-            )));
-        }
-        let guard = self.dek_cache.lock().expect("dek_cache mutex poisoned");
-        let dek = guard.get(&source_id.to_string()).ok_or_else(|| {
+        let scheme = CryptoScheme::from_nonce_len(sealed.nonce.len())?;
+        let dek = self.cached_dek(source_id).ok_or_else(|| {
             Error::DatabaseState(format!(
                 "open_chunk: DEK for source {source_id} not loaded; call unwrap_dek first"
             ))
         })?;
-        let cipher = Aes256Gcm::new_from_slice(dek.as_ref())
-            .map_err(|e| Error::DatabaseState(format!("DEK init failed: {e}")))?;
-        let nonce = Nonce::from_slice(&sealed.nonce);
-        let aad = chunk_aad(source_id);
-        cipher
-            .decrypt(
-                nonce,
-                Payload {
-                    msg: &sealed.ciphertext,
-                    aad: aad.as_bytes(),
-                },
-            )
-            .map_err(|e| Error::DatabaseState(format!("chunk open failed: {e}")))
+        let aad = chunk_aad(scheme, source_id);
+
+        match scheme {
+            CryptoScheme::AesGcmV1 => {
+                use aes_gcm::aead::{Aead, KeyInit, Payload};
+                use aes_gcm::{Aes256Gcm, Nonce};
+
+                let cipher = Aes256Gcm::new_from_slice(dek.as_ref())
+                    .map_err(|e| Error::DatabaseState(format!("DEK init failed: {e}")))?;
+                let nonce = Nonce::from_slice(&sealed.nonce);
+                cipher
+                    .decrypt(
+                        nonce,
+                        Payload {
+                            msg: &sealed.ciphertext,
+                            aad: aad.as_bytes(),
+                        },
+                    )
+                    .map_err(|e| Error::DatabaseState(format!("chunk open (v1) failed: {e}")))
+            }
+            CryptoScheme::XChaCha20Poly1305V2 => {
+                let mut nonce = [0u8; XCHACHA_NONCE_LEN];
+                nonce.copy_from_slice(&sealed.nonce);
+                knowledge_crypto::decrypt_aead(&dek, &nonce, &sealed.ciphertext, aad.as_bytes())
+                    .map_err(|e| Error::DatabaseState(format!("chunk open (v2) failed: {e}")))
+            }
+        }
     }
 
-    /// Drop the cached DEK for `source_id` and overwrite the bytes
-    /// in place. Called by `cryptoshred_kchat_source_evidence` so
-    /// the in-memory copy of the DEK is gone immediately after the
-    /// SQLite row is deleted. Idempotent — calling on a
-    /// source whose DEK was never loaded is a no-op (no error).
+    /// Drop the cached DEK for `source_id` and overwrite the bytes in
+    /// place. Called by `cryptoshred_kchat_source_evidence` so the
+    /// in-memory copy of the DEK is gone immediately after the SQLite row
+    /// is deleted. Idempotent — calling on a source whose DEK was never
+    /// loaded is a no-op (no error).
     pub fn forget_dek(&self, source_id: &SourceId) {
-        // The DekBytes Drop impl runs the Zeroize unconditionally
-        // so simply removing the entry is sufficient — the
-        // Zeroizing<[u8; 32]> guarantees the bytes are scrubbed
-        // before the heap slot is freed.
+        // The DekBytes Drop impl runs Zeroize unconditionally so simply
+        // removing the entry scrubs the bytes before the heap slot is
+        // freed.
         self.dek_cache
             .lock()
             .expect("dek_cache mutex poisoned")
             .remove(&source_id.to_string());
     }
 
-    /// Test-only: number of DEKs currently held in the in-memory
-    /// cache. Used by unit tests to assert `forget_dek` actually
-    /// drops the entry.
+    /// Test-only: number of DEKs currently held in the in-memory cache.
     #[cfg(test)]
     pub fn cache_size(&self) -> usize {
         self.dek_cache
@@ -494,11 +304,11 @@ impl KchatCrypto {
             .len()
     }
 
-    /// Return `true` when a DEK for `source_id` is currently held
-    /// in the in-memory cache. Used by post-ingest tests to assert
-    /// that `forget_dek` evicts the cache slot in addition to
-    /// dropping the on-disk wrapped row. (Public to crate so
-    /// integration-style tests in `manager.rs` can reach in.)
+    /// Return `true` when a DEK for `source_id` is currently held in the
+    /// in-memory cache. Used by the ingest path as a fast-path guard to skip
+    /// the DB read + KEK derivation + AEAD unwrap when the DEK is already
+    /// loaded, and by post-ingest tests to assert that `forget_dek` evicts the
+    /// cache slot in addition to dropping the on-disk wrapped row.
     pub fn has_dek(&self, source_id: &SourceId) -> bool {
         self.dek_cache
             .lock()
@@ -507,12 +317,13 @@ impl KchatCrypto {
     }
 }
 
-fn wrap_aad(source_id: &SourceId) -> String {
-    format!("{}wrap/{}", KEK_HKDF_INFO_PREFIX, source_id)
-}
-
-fn chunk_aad(source_id: &SourceId) -> String {
-    format!("{}{}", AEAD_CONTEXT_PREFIX, source_id)
+/// Associated data bound into a chunk-content seal, scoped per source
+/// and per scheme version.
+fn chunk_aad(scheme: CryptoScheme, source_id: &SourceId) -> String {
+    match scheme {
+        CryptoScheme::AesGcmV1 => format!("{CHUNK_AAD_V1_PREFIX}{source_id}"),
+        CryptoScheme::XChaCha20Poly1305V2 => format!("{CHUNK_AAD_V2_PREFIX}{source_id}"),
+    }
 }
 
 #[cfg(test)]
@@ -520,53 +331,43 @@ mod tests {
     use super::*;
 
     fn fixed_master_key() -> MasterKey {
-        let mut bytes = [0u8; 32];
+        let mut bytes = [0u8; DEK_LEN];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(7).wrapping_add(13);
         }
         MasterKey::from_bytes(bytes)
     }
 
-    #[test]
-    fn from_hex_round_trips_to_from_bytes() {
-        let hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let a = MasterKey::from_hex(hex).unwrap();
-        let mut expected = [0u8; 32];
-        for i in 0..32 {
-            expected[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
+    /// Seal a chunk under the *legacy* v1 AES-256-GCM scheme so the
+    /// backward-compatible read path can be exercised. Mirrors the
+    /// original pre-Session-7 `seal_chunk`.
+    fn seal_chunk_v1_for_test(
+        crypto: &KchatCrypto,
+        source_id: &SourceId,
+        plaintext: &[u8],
+    ) -> SealedChunk {
+        use aes_gcm::aead::{Aead, KeyInit, Payload};
+        use aes_gcm::{Aes256Gcm, Nonce};
+
+        let guard = crypto.dek_cache.lock().unwrap();
+        let dek = guard.get(&source_id.to_string()).unwrap();
+        let cipher = Aes256Gcm::new_from_slice(dek.as_ref()).unwrap();
+        let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let aad = chunk_aad(CryptoScheme::AesGcmV1, source_id);
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce_bytes),
+                Payload {
+                    msg: plaintext,
+                    aad: aad.as_bytes(),
+                },
+            )
+            .unwrap();
+        SealedChunk {
+            nonce: nonce_bytes.to_vec(),
+            ciphertext,
         }
-        let b = MasterKey::from_bytes(expected);
-        assert_eq!(a.as_bytes(), b.as_bytes());
-    }
-
-    #[test]
-    fn from_hex_rejects_short_input() {
-        let err = MasterKey::from_hex("dead").unwrap_err();
-        assert!(matches!(err, Error::DatabaseState(_)));
-    }
-
-    #[test]
-    fn from_hex_rejects_non_hex_byte() {
-        let err =
-            MasterKey::from_hex("ZZZZ456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-                .unwrap_err();
-        assert!(matches!(err, Error::DatabaseState(_)));
-    }
-
-    #[test]
-    fn kek_derivation_is_deterministic_and_source_scoped() {
-        let p = KekProvider::new(fixed_master_key());
-        let source_a = SourceId::new();
-        let source_b = SourceId::new();
-
-        let kek_a1 = p.derive_source_kek(&source_a);
-        let kek_a2 = p.derive_source_kek(&source_a);
-        let kek_b = p.derive_source_kek(&source_b);
-
-        // Same source twice → same KEK.
-        assert_eq!(kek_a1.as_ref(), kek_a2.as_ref());
-        // Different sources → different KEK.
-        assert_ne!(kek_a1.as_ref(), kek_b.as_ref());
     }
 
     #[test]
@@ -574,8 +375,8 @@ mod tests {
         let crypto = KchatCrypto::new(fixed_master_key());
         let source = SourceId::new();
         let wrapped = crypto.generate_and_wrap_dek(&source).unwrap();
-        assert_eq!(wrapped.wrap_nonce.len(), AES_GCM_NONCE_LEN);
-        assert_eq!(wrapped.wrapped.len(), WRAPPED_DEK_LEN);
+        assert_eq!(wrapped.scheme(), CryptoScheme::XChaCha20Poly1305V2);
+        assert_eq!(wrapped.wrap_nonce().len(), XCHACHA_NONCE_LEN);
         // generate_and_wrap_dek populates the cache.
         assert_eq!(crypto.cache_size(), 1);
 
@@ -601,6 +402,7 @@ mod tests {
             "Ω 1234567890 …".repeat(128).as_str(),
         ] {
             let sealed = crypto.seal_chunk(&source, case.as_bytes()).unwrap();
+            assert_eq!(sealed.nonce.len(), XCHACHA_NONCE_LEN, "new seals are v2");
             let open = crypto.open_chunk(&source, &sealed).unwrap();
             assert_eq!(open, case.as_bytes(), "round-trip failed for {case:?}");
             // Nonce is fresh on every call.
@@ -613,11 +415,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_v1_sealed_chunk_still_opens() {
+        // Backward compatibility: a chunk sealed under the pre-upgrade
+        // AES-256-GCM scheme (12-byte nonce) must still decrypt via the
+        // nonce-length-dispatched read path.
+        let crypto = KchatCrypto::new(fixed_master_key());
+        let source = SourceId::new();
+        crypto.generate_and_wrap_dek(&source).unwrap();
+        let v1 = seal_chunk_v1_for_test(&crypto, &source, b"legacy secret body");
+        assert_eq!(v1.nonce.len(), AES_GCM_NONCE_LEN);
+        let open = crypto.open_chunk(&source, &v1).unwrap();
+        assert_eq!(open, b"legacy secret body");
+    }
+
+    #[test]
     fn cross_source_aad_substitution_fails_to_decrypt() {
-        // The AAD binds source_id, so a chunk encrypted under
-        // source A and pasted into source B's row must fail to
-        // decrypt rather than silently producing attacker-influenced
-        // plaintext.
         let crypto = KchatCrypto::new(fixed_master_key());
         let source_a = SourceId::new();
         let source_b = SourceId::new();
@@ -630,9 +442,6 @@ mod tests {
 
     #[test]
     fn forget_dek_makes_open_fail_after_persisted_wrap_is_dropped() {
-        // Models the cryptoshred path: after the wrapped-DEK row is
-        // deleted AND `forget_dek` drops the in-memory copy, the
-        // sealed ciphertext is unrecoverable.
         let crypto = KchatCrypto::new(fixed_master_key());
         let source = SourceId::new();
         crypto.generate_and_wrap_dek(&source).unwrap();
@@ -649,9 +458,6 @@ mod tests {
         let source = SourceId::new();
         crypto.generate_and_wrap_dek(&source).unwrap();
         let mut sealed = crypto.seal_chunk(&source, b"hello world").unwrap();
-        // Flip a single bit in the ciphertext middle (the AEAD tag
-        // occupies the last 16 bytes; tampering anywhere in the
-        // ciphertext OR the tag must fail).
         let mid = sealed.ciphertext.len() / 2;
         sealed.ciphertext[mid] ^= 0x01;
         let err = crypto.open_chunk(&source, &sealed).unwrap_err();
@@ -659,23 +465,12 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_dek_from_blobs_rejects_wrong_lengths() {
-        // Defence-in-depth: the store layer reads BLOBs with no
-        // length type guard, so a future schema migration that
-        // changes the column widths must be caught at the boundary.
-        let err = WrappedDek::from_blobs(&[0u8; 8], &[0u8; WRAPPED_DEK_LEN]).unwrap_err();
-        assert!(matches!(err, Error::DatabaseState(_)));
-        let err = WrappedDek::from_blobs(&[0u8; AES_GCM_NONCE_LEN], &[0u8; 10]).unwrap_err();
-        assert!(matches!(err, Error::DatabaseState(_)));
-    }
-
-    #[test]
-    fn open_chunk_rejects_wrong_nonce_length() {
+    fn open_chunk_rejects_unknown_nonce_length() {
         let crypto = KchatCrypto::new(fixed_master_key());
         let source = SourceId::new();
         crypto.generate_and_wrap_dek(&source).unwrap();
         let bad = SealedChunk {
-            nonce: vec![0u8; AES_GCM_NONCE_LEN - 1],
+            nonce: vec![0u8; 16],
             ciphertext: vec![0u8; 16],
         };
         let err = crypto.open_chunk(&source, &bad).unwrap_err();
@@ -684,15 +479,11 @@ mod tests {
 
     #[test]
     fn unwrap_fails_under_wrong_master_key() {
-        // Generates a wrapped DEK under one master, then attempts to
-        // unwrap under a different master — proves the KEK derivation
-        // really is master-keyed and a leaked DB without the master
-        // key remains unreadable.
         let crypto_a = KchatCrypto::new(fixed_master_key());
         let source = SourceId::new();
         let wrapped = crypto_a.generate_and_wrap_dek(&source).unwrap();
 
-        let mut other = [0u8; 32];
+        let mut other = [0u8; DEK_LEN];
         for (i, b) in other.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(11).wrapping_add(29);
         }

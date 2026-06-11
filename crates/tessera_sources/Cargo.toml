@@ -25,8 +25,14 @@ ignore = { workspace = true }
 kamadak-exif = { workspace = true }
 image = { workspace = true }
 lopdf = { workspace = true }
+# Post-quantum crypto substrate (Session 7): XChaCha20-Poly1305 AEAD +
+# HKDF-SHA256 key derivation, used (via `tessera_core::crypto`) to wrap
+# per-source DEKs and seal chunk content.
+knowledge_crypto = { workspace = true }
+# Legacy AES-256-GCM retained for the backward-compatible read path:
+# decrypting v1-wrapped DEKs and v1-sealed chunks written before the
+# Session 7 upgrade.
 aes-gcm = { workspace = true }
-hkdf = { workspace = true }
 sha2 = { workspace = true }
 rand = { workspace = true }
 zeroize = { workspace = true }

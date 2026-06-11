@@ -80,6 +80,18 @@ hkdf = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 zeroize = { version = "1.8", default-features = false, features = ["zeroize_derive"] }
+# Session 7: post-quantum crypto substrate from the knowledge repo. Pinned to a
+# rev so the build is reproducible (the package is named `crypto` upstream; we
+# alias it to `knowledge_crypto` to avoid colliding with the generic name).
+# Provides XChaCha20-Poly1305 AEAD, HKDF-SHA256 key derivation, hybrid
+# X25519 + ML-KEM-768 KEM, and ML-DSA-65 (FIPS 204) signatures.
+knowledge_crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
+# ML-DSA-65 (FIPS 204) wire types. Pinned to the exact version the
+# knowledge `crypto` crate links so `EncodedVerifyingKey<MlDsa65>` and
+# `Signature<MlDsa65>` unify to one type across the dependency graph;
+# tessera_export uses it only to reconstruct a verifying key from the
+# bytes recorded in an export `.sig` sidecar.
+ml-dsa = { version = "0.1.1", features = ["zeroize"] }
 rayon = "1.10"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 # Phase 19 Task 1: ONNX Runtime + HuggingFace tokenizers for the

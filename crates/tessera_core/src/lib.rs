@@ -4,8 +4,11 @@
 
 pub mod backup;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod error;
+#[cfg(feature = "pqc")]
+pub mod pqc;
 pub mod types;
 
 pub use backup::{

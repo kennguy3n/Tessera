@@ -1335,7 +1335,7 @@ impl SourceStore {
                 wrap_nonce = excluded.wrap_nonce,
                 wrapped_dek = excluded.wrapped_dek,
                 created_at = excluded.created_at",
-            params![id_str, &wrapped.wrap_nonce[..], &wrapped.wrapped[..], now],
+            params![id_str, wrapped.wrap_nonce(), wrapped.wrapped(), now],
         )
         .map_err(Error::Sqlite)?;
         Ok(())

@@ -11,6 +11,7 @@ pub mod html;
 pub mod markdown;
 pub mod mermaid;
 pub mod pdf;
+pub mod signing;
 #[cfg(feature = "typst")]
 pub mod typst;
 #[cfg(feature = "xlsx")]

@@ -135,9 +135,31 @@ pub fn export_to_file(
     Ok(())
 }
 
+/// Export an artifact to `path` and additionally write a detached
+/// ML-DSA-65 provenance signature at `<path>.sig`.
+///
+/// This is the provenance-aware counterpart to [`export_to_file`]:
+/// it produces the exact same artifact bytes, then signs them with
+/// `signer` so a recipient can prove the file's origin and integrity
+/// (see [`crate::signing`]). Returns the sidecar path. Existing
+/// callers that do not need provenance keep using [`export_to_file`]
+/// unchanged.
+pub fn export_to_file_signed(
+    artifact: &Artifact,
+    citations: &[Citation],
+    format: ExportFormat,
+    path: &std::path::Path,
+    include_citations: bool,
+    signer: &crate::signing::ExportSigner,
+) -> Result<std::path::PathBuf> {
+    export_to_file(artifact, citations, format, path, include_citations)?;
+    signer.sign_file(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::signing::{verify_file, ExportSigner};
     use tessera_artifacts::Artifact;
     use tessera_core::ArtifactType;
 
@@ -277,6 +299,31 @@ mod tests {
         let out = export(&artifact, &citations, ExportFormat::Markdown, false).unwrap();
         assert!(!out.contains("## Sources"), "sources section leaked: {out}");
         assert!(!out.contains("Brief.pdf"));
+    }
+
+    /// `export_to_file_signed` writes the artifact plus a detached
+    /// `.sig` sidecar that verifies against the produced bytes, and
+    /// any post-hoc tampering with the artifact breaks verification.
+    #[test]
+    fn signed_export_writes_verifiable_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = Artifact::new("Signed".to_string(), ArtifactType::Document, None);
+        let path = dir.path().join("signed.pdf");
+        let signer = ExportSigner::generate();
+
+        let sidecar =
+            export_to_file_signed(&artifact, &[], ExportFormat::Pdf, &path, true, &signer).unwrap();
+        assert_eq!(sidecar, dir.path().join("signed.pdf.sig"));
+        assert!(
+            verify_file(&path, &sidecar).unwrap(),
+            "fresh export verifies"
+        );
+
+        std::fs::write(&path, b"%PDF-1.7 tampered").unwrap();
+        assert!(
+            !verify_file(&path, &sidecar).unwrap(),
+            "tampered export must fail verification"
+        );
     }
 
     /// The toggle holds for HTML too — same dispatch path.

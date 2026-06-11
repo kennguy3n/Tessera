@@ -60,7 +60,7 @@ fn fresh_db_applies_every_migration() {
     let mut conn = Connection::open_in_memory().expect("open");
     let report = Migrator::new().run(&mut conn).expect("run");
 
-    assert_eq!(report.applied, vec![1, 2, 3, 4, 5]);
+    assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
     assert!(report.already_applied.is_empty());
 
     // The final schema must match the legacy ad-hoc `init_schema`.
@@ -138,9 +138,9 @@ fn upgrade_path_applies_only_missing_migrations() {
         .expect("apply v1");
     assert_eq!(report.applied, vec![1]);
 
-    // Bringing it up to the full set must apply only 2..=5.
-    let report = Migrator::new().run(&mut conn).expect("upgrade to v5");
-    assert_eq!(report.applied, vec![2, 3, 4, 5]);
+    // Bringing it up to the full set must apply only 2..=6.
+    let report = Migrator::new().run(&mut conn).expect("upgrade to head");
+    assert_eq!(report.applied, vec![2, 3, 4, 5, 6]);
     assert_eq!(report.already_applied, vec![1]);
 
     // And the upgraded schema is complete.
@@ -153,7 +153,7 @@ fn running_twice_is_a_noop() {
     let mut conn = Connection::open_in_memory().expect("open");
 
     let first = Migrator::new().run(&mut conn).expect("first run");
-    assert_eq!(first.applied, vec![1, 2, 3, 4, 5]);
+    assert_eq!(first.applied, vec![1, 2, 3, 4, 5, 6]);
 
     let second = Migrator::new().run(&mut conn).expect("second run");
     assert!(
@@ -161,10 +161,10 @@ fn running_twice_is_a_noop() {
         "second run should apply nothing, applied {:?}",
         second.applied
     );
-    assert_eq!(second.already_applied, vec![1, 2, 3, 4, 5]);
+    assert_eq!(second.already_applied, vec![1, 2, 3, 4, 5, 6]);
 
     // Exactly one bookkeeping row per migration — no duplicates.
-    assert_eq!(bookkeeping(&conn).len(), 5);
+    assert_eq!(bookkeeping(&conn).len(), 6);
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn legacy_db_without_bookkeeping_reconciles_without_error() {
         .expect("drop bookkeeping");
 
     let report = Migrator::new().run(&mut conn).expect("reconcile");
-    assert_eq!(report.applied, vec![1, 2, 3, 4, 5]);
+    assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
 
     // Columns are present exactly once (no duplicate-add corruption).
     let chunk_cols = columns(&conn, "chunks");
@@ -232,7 +232,7 @@ fn legacy_partial_chunks_table_gets_missing_columns_added() {
     .expect("seed legacy chunks");
 
     let report = Migrator::new().run(&mut conn).expect("upgrade legacy");
-    assert_eq!(report.applied, vec![1, 2, 3, 4, 5]);
+    assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
 
     let chunk_cols = columns(&conn, "chunks");
     for col in ["kind", "content_aead", "content_aead_nonce"] {
@@ -267,10 +267,13 @@ fn rollback_last_runs_down_stub_and_clears_bookkeeping() {
     assert!(index_names(&conn).contains("idx_chunks_hash_file"));
 
     // 0005 carries a `.down.sql` that drops the secondary indexes.
+    // 0006 (crypto-scheme bookkeeping) is forward-only with no `down`,
+    // so rollback_last skips it and unwinds the highest rollback-able
+    // migration, 0005.
     let rolled_back = migrator.rollback_last(&mut conn).expect("rollback");
     assert_eq!(rolled_back, Some(5));
     assert!(!index_names(&conn).contains("idx_chunks_hash_file"));
-    assert_eq!(bookkeeping(&conn).len(), 4);
+    assert_eq!(bookkeeping(&conn).len(), 5);
 
     // Re-running re-applies only the rolled-back migration.
     let report = migrator.run(&mut conn).expect("re-apply");
