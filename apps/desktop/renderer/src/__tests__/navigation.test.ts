@@ -36,6 +36,7 @@ describe("sidebar navigation", () => {
       "/automations",
       "/vision",
       "/settings",
+      "/memory",
     ]);
   });
 
@@ -65,6 +66,14 @@ describe("sidebar navigation", () => {
     expect(SIDEBAR_NAV_BY_KEY["8"]).toBe("/settings");
     expect(SIDEBAR_SHORTCUT_HINTS["/vision"]).toBe("7");
     expect(SIDEBAR_SHORTCUT_HINTS["/settings"]).toBe("8");
+  });
+
+  it("appends Memory at keyboard shortcut 9 without shifting Settings", () => {
+    // Memory is a secondary-tier tool appended to the END of
+    // SIDEBAR_ITEMS so it claims the next free chord (Ctrl/Cmd+9) and
+    // leaves every existing shortcut — notably Settings on 8 — pinned.
+    expect(SIDEBAR_NAV_BY_KEY["9"]).toBe("/memory");
+    expect(SIDEBAR_SHORTCUT_HINTS["/memory"]).toBe("9");
   });
 
   it("uses every key exactly once across both maps", () => {

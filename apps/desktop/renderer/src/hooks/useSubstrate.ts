@@ -1,0 +1,213 @@
+import { useCallback, useEffect, useState } from "react";
+import type { SubstrateMemoryInfo } from "../types/ipc";
+import {
+  parseConceptGraph,
+  type ConceptGraphView,
+} from "../utils/conceptGraph";
+
+/**
+ * Renderer hooks over the additive knowledge-substrate IPC surface
+ * (`window.tessera.substrate.*`, registered in
+ * `electron/ipc/substrate.ts`). These mirror the established
+ * `useSources` / `useArtifacts` pattern: a small stateful hook that
+ * owns the `loading` / `error` lifecycle and exposes a `refresh`
+ * callback, plus action hooks that wrap the mutating bridge calls.
+ *
+ * All calls are guarded on `window.tessera` being present so the hooks
+ * degrade cleanly in a cold-start window (before the preload bridge is
+ * wired) and in the test harness.
+ */
+
+function getApi() {
+  return typeof window !== "undefined" ? window.tessera : undefined;
+}
+
+/**
+ * A single stable empty graph, reused for both the initial state and the
+ * gated-off ("disabled") path of {@link useConceptGraph}. Reusing one
+ * reference keeps `graph` referentially stable across disabled-path effect
+ * runs — React bails out via `Object.is` instead of forcing a redundant
+ * re-render with a logically-unchanged value. Safe to share because
+ * `parseConceptGraph` deep-freezes the view, so the immutability the
+ * callers rely on (they only ever replace it via `setGraph`) is now
+ * enforced at runtime rather than by convention.
+ */
+const EMPTY_CONCEPT_GRAPH: ConceptGraphView = parseConceptGraph("{}");
+
+export interface UseMemoriesResult {
+  memories: SubstrateMemoryInfo[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}
+
+/**
+ * Load the memory plane for `scope` (default scope when omitted).
+ * Re-fetches whenever `scope` changes.
+ *
+ * `enabled` (default `true`) gates the automatic fetch: when `false`,
+ * the hook performs no IPC and reports `loading: false` with an empty
+ * list. The returned `refresh` still works when invoked explicitly so
+ * an enabled-later or manual refresh path is unaffected.
+ */
+export function useMemories(
+  scope?: string | null,
+  enabled = true,
+): UseMemoriesResult {
+  const [memories, setMemories] = useState<SubstrateMemoryInfo[]>([]);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const api = getApi();
+      if (api) {
+        const list = await api.substrate.getMemories(scope ?? null);
+        setMemories(list);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [scope]);
+
+  useEffect(() => {
+    if (!enabled) {
+      // Skip the round-trip entirely and settle into a clean,
+      // non-loading empty state so a gated caller never sees a
+      // spinner for data it isn't going to render.
+      setMemories([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    void refresh();
+  }, [refresh, enabled]);
+
+  return { memories, loading, error, refresh };
+}
+
+export interface UseMemoryActionsResult {
+  pin: (id: string) => Promise<SubstrateMemoryInfo | null>;
+  unpin: (id: string) => Promise<SubstrateMemoryInfo | null>;
+  forget: (id: string) => Promise<boolean>;
+  pending: string | null;
+  error: string | null;
+}
+
+/**
+ * Mutating memory actions (pin / unpin / forget). `pending` holds the
+ * id of the in-flight memory so a row can show a busy state and disable
+ * its buttons; only one mutation runs at a time per hook instance.
+ */
+export function useMemoryActions(): UseMemoryActionsResult {
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = useCallback(
+    async <T>(
+      id: string,
+      op: (api: NonNullable<ReturnType<typeof getApi>>) => Promise<T>,
+      fallback: T,
+    ): Promise<T> => {
+      const api = getApi();
+      if (!api) {
+        setError("Tessera bridge not available");
+        return fallback;
+      }
+      setPending(id);
+      setError(null);
+      try {
+        return await op(api);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        return fallback;
+      } finally {
+        setPending(null);
+      }
+    },
+    [],
+  );
+
+  const pin = useCallback(
+    (id: string) => run(id, (api) => api.substrate.pinMemory(id), null),
+    [run],
+  );
+  const unpin = useCallback(
+    (id: string) => run(id, (api) => api.substrate.unpinMemory(id), null),
+    [run],
+  );
+  const forget = useCallback(
+    (id: string) =>
+      run(
+        id,
+        async (api) => {
+          await api.substrate.forgetMemory(id);
+          return true;
+        },
+        false,
+      ),
+    [run],
+  );
+
+  return { pin, unpin, forget, pending, error };
+}
+
+export interface UseConceptGraphResult {
+  graph: ConceptGraphView;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}
+
+/**
+ * Load + parse the concept graph for `scope` (default scope when
+ * omitted), bounded by `maxNodes`. The bridge returns a JSON string;
+ * we parse it through {@link parseConceptGraph} so the component only
+ * ever sees the typed, validated view.
+ */
+export function useConceptGraph(
+  scope?: string | null,
+  maxNodes?: number | null,
+  enabled = true,
+): UseConceptGraphResult {
+  const [graph, setGraph] = useState<ConceptGraphView>(EMPTY_CONCEPT_GRAPH);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const api = getApi();
+      if (api) {
+        const json = await api.substrate.getConceptGraph(
+          scope ?? null,
+          maxNodes ?? null,
+        );
+        setGraph(parseConceptGraph(json));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [scope, maxNodes]);
+
+  useEffect(() => {
+    if (!enabled) {
+      // See `useMemories`: skip IPC and settle empty when gated off. Reuse the
+      // shared empty graph so the value stays referentially stable.
+      setGraph(EMPTY_CONCEPT_GRAPH);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    void refresh();
+  }, [refresh, enabled]);
+
+  return { graph, loading, error, refresh };
+}
