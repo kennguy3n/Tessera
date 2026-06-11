@@ -108,7 +108,7 @@ function sourcePathFor(ds: ShowcaseDataset, sourceId: string): string {
 function tokenize(query: string): string[] {
   return query
     .toLowerCase()
-    .split(/[^a-z0-9§]+/i)
+    .split(/[^a-z0-9§]+/)
     .filter((t) => t.length >= 2);
 }
 
@@ -354,9 +354,9 @@ export function buildShowcaseApi(personaId: string): unknown {
           .slice(0, maxSuggestions);
       },
       runDecaySweep: async () => ({
-        memoriesScanned: plane.entities.length + plane.facts.length,
+        scored: plane.entities.length + plane.facts.length,
         candidatesArchived: 0,
-        promotions: 0,
+        supersededArchived: 0,
       }),
     },
     // Local backup & recovery (Settings → Backup). Fully interactive in the
