@@ -108,11 +108,19 @@ async function runMergedEvidenceSearch(
       ? api.kchat.searchPosts(query, limit)
       : Promise.resolve([] as KchatPostSearchHit[]),
   ]);
+  // Guard on Array.isArray, not just the settled status: a host can
+  // *fulfil* with a non-array (e.g. `undefined` from an older preload,
+  // a locked-down enterprise tier, or a partial bridge). Iterating that
+  // would throw and — because the callers run this inside `Promise.all`
+  // — reject the whole search, leaving the panel stuck on a blank
+  // pre-search state. Treating a non-array as "no hits" keeps the
+  // defence-in-depth promise: a broken path contributes nothing rather
+  // than taking the other path's results down with it.
   const rows: EvidenceRow[] = [];
-  if (fileResult.status === "fulfilled") {
+  if (fileResult.status === "fulfilled" && Array.isArray(fileResult.value)) {
     for (const hit of fileResult.value) rows.push({ kind: "file", hit });
   }
-  if (postResult.status === "fulfilled") {
+  if (postResult.status === "fulfilled" && Array.isArray(postResult.value)) {
     for (const hit of postResult.value) {
       rows.push({ kind: "kchat_post", hit });
     }
