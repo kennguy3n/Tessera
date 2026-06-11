@@ -253,7 +253,7 @@ export function buildShowcaseApi(personaId: string): unknown {
   const byId = new Map(artifacts.map((a) => [a.id, a]));
 
   const real: Record<string, Record<string, unknown>> = {
-    // Bridge-readiness surface (LW-8). The real app gates `<App/>` behind
+    // Bridge-readiness surface. The real app gates `<App/>` behind
     // `lifecycle.getBridgeState()` resolving to `ready`; the showcase has no
     // native store to open, so report `ready` immediately. Without this the
     // Proxy fallback resolves the snapshot read to `undefined`, which
