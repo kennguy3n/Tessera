@@ -280,6 +280,9 @@ export function buildShowcaseApi(personaId: string): unknown {
   // pin/unpin/forget behave like the real bridge during screenshot capture.
   const { memories: substrateMemories, conceptGraphJson } = buildSubstrate(ds);
   const memoryById = new Map(substrateMemories.map((m) => [m.id, { ...m }]));
+  // Scope the memory plane is keyed under; reused for the synthesis result
+  // so the showcase mock honors the real `SubstrateSynthesisInfo` shape.
+  const substrateScopeId = substrateMemories[0]?.scopeId ?? `sc-${ds.id}-scope`;
 
   const real: Record<string, Record<string, unknown>> = {
     // Bridge lifecycle: report `ready` so `useBridgeReady` mounts the real
@@ -380,7 +383,19 @@ export function buildShowcaseApi(personaId: string): unknown {
         candidatesArchived: 0,
         supersededArchived: 0,
       }),
-      triggerSynthesis: async () => ({ memoriesCreated: 0, conceptsLinked: 0 }),
+      // Honor the real `SubstrateSynthesisInfo` contract (shared/types.ts):
+      // a synthesis run returns a window/scope-stamped recap, not an
+      // ad-hoc counter object. Grounded to the persona so any future
+      // synthesis UI renders real demo content. (Devin Review PR #120.)
+      triggerSynthesis: async () => ({
+        windowId: `sc-${ds.id}-synth`,
+        scopeId: substrateScopeId,
+        version: 1,
+        recap: `Synthesized ${memoryById.size} active memories for ${ds.persona.org}.`,
+        decisions: [],
+        openQuestions: [],
+        activeTasks: [],
+      }),
     },
     runtime: {
       // Report the REAL PlatformInfo shape (RuntimeStatus / ModelRuntimeCard
