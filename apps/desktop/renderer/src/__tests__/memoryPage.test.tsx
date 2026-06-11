@@ -79,6 +79,20 @@ describe("MemoryPage", () => {
     );
   });
 
+  it("shows only the error + retry on fetch failure, not the empty state", async () => {
+    window.tessera.substrate.getMemories = vi
+      .fn()
+      .mockRejectedValue(new Error("bridge unavailable"));
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("bridge unavailable"),
+    );
+    expect(screen.getByText("Retry")).toBeInTheDocument();
+    // The "No memories yet" prompt must NOT render alongside the error —
+    // a failed fetch is not the same as an empty substrate.
+    expect(screen.queryByText("No memories yet")).not.toBeInTheDocument();
+  });
+
   it("filters by decay bucket", async () => {
     renderPage();
     await waitFor(() =>

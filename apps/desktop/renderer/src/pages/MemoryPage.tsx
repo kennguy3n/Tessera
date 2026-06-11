@@ -139,7 +139,11 @@ export default function MemoryPage() {
 
       {loading ? (
         <p>Loading memories...</p>
-      ) : memories.length === 0 ? (
+      ) : error ? null : memories.length === 0 ? (
+        // Only show the "no memories yet" empty state on a *successful*
+        // empty fetch. On error the card above already explains the
+        // failure + offers Retry; rendering the empty state too would
+        // wrongly imply the substrate has no data. (Devin Review PR #120.)
         <EmptyState
           title="No memories yet"
           message="Tessera extracts entities, facts, tasks, and decisions from your sources as they are indexed. Add and index a source to start building memory."
