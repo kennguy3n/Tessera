@@ -1,0 +1,151 @@
+# The knowledge plane: what Tessera extracts, links, and remembers
+
+*Part 7 of the Tessera showcase series — the substrate underneath.*
+
+The first six posts followed people from messy sources to a finished, source-cited artifact.
+This one goes one layer down, to the **knowledge substrate** that makes that retrieval sharp:
+the engines that, on ingest, turn raw indexed text into structured *observations*, score them
+with a decay-based *memory* model, and link recurring entities into a *concept graph*.
+
+Two ground rules for this post, in keeping with the rest of the showcase:
+
+1. **The data is genuine.** Every entity, fact, and concept below was produced by running the
+   substrate's exact classification rules over the persona's real indexed content. The derivation
+   script ([`scripts/showcase/derive_knowledge.py`](../../scripts/showcase/derive_knowledge.py))
+   mirrors the `knowledge` crate's `observation_engine` and writes deterministic output to
+   [`apps/desktop/renderer/src/showcase/generated/*.knowledge.ts`](../../apps/desktop/renderer/src/showcase/generated).
+   Nothing here is hand-authored — including the occasional rough sentence fragment, which is
+   what real extraction over real prose actually looks like.
+2. **We're explicit about what ships.** The extraction engines and their data plane ship on
+   `main`. Some of the richer *browsing* UI is built and unit-tested but not yet wired into the
+   shipping renderer. The "What ships today" section at the end draws that line precisely.
+
+---
+
+## Step 1 — observations: structure from prose
+
+When a source is indexed, the observation engine classifies each sentence into one of a small
+set of types, using the same keyword and pattern rules the `knowledge` crate uses:
+
+- **Entities** — proper nouns, identifier codes (`INC-4471`, `LT-2291`), and regulatory refs
+  (`45 CFR §164.402`).
+- **Decisions** — sentences carrying decision verbs (decided / approved / recommend / must /
+  classify / escalate).
+- **Tasks** — TODO / action / "need to" / imperative leads.
+- **Questions** — interrogatives.
+- **Facts** — declarative sentences that are none of the above (often carrying a quantity or
+  an obligation).
+
+Run over Maya's four HIPAA-incident sources, the engine surfaces these entities — each one
+traceable to the exact source file it came from:
+
+| Entity | Memory state | Retention | Corroboration | First seen in |
+|--------|--------------|:---------:|:-------------:|---------------|
+| `LT-2291` (the stolen laptop) | reinforced | 0.94 | 2 sources | `01-helpdesk-ticket-INC-4471.md` |
+| `Privacy Office` | consolidated | 0.78 | 2 sources | `01-helpdesk-ticket-INC-4471.md` |
+| `45 CFR §164.402` (breach rule) | candidate | 0.62 | 1 source | `04-policy-and-context.md` |
+| `CHG-2208` (the unremediated change) | candidate | 0.62 | 1 source | `02-endpoint-mdm-report.md` |
+| `ICD-10` (diagnosis coding) | candidate | 0.62 | 1 source | `03-ehr-export-log.md` |
+| `INC-4471` (the incident itself) | candidate | 0.62 | 1 source | `01-helpdesk-ticket-INC-4471.md` |
+
+This is the difference between "the text is searchable" and "the system knows what's in the
+text." The stolen-laptop asset tag, the breach-classification regulation, and the change
+ticket that *caused* the exposure are now first-class objects, not just substrings.
+
+## Step 2 — memory: not everything is equally important
+
+Every observation carries a **memory state** and a **retention score**, and the
+`memory_manager` ages them over time on a decay curve (active → fading → archived). Three
+signals push a memory up instead of letting it fade:
+
+- **Corroboration** — the same entity appearing in more than one source. `LT-2291` shows up
+  in both the helpdesk ticket and the endpoint MDM report, so it's corroborated twice.
+- **Retrieval** — how often it's actually been pulled into work.
+- **Pinning** — an explicit "this matters" signal.
+
+That's why `LT-2291` sits at **reinforced / 0.94** while a once-seen regulatory reference sits
+at **candidate / 0.62**: the laptop is the spine of the whole incident and is mentioned
+everywhere, so the system weights it accordingly. The retention score is not decoration — it
+becomes a **fourth ranking signal** in search (below).
+
+## Step 3 — the concept graph: linking sources through shared entities
+
+Entities that recur across files become **concept nodes**, each linked to every source it
+co-occurs in. From Maya's corpus:
+
+- **`LT-2291`** → linked across `01-helpdesk-ticket` **and** `02-endpoint-mdm-report` — the
+  ticket says the laptop was stolen; the MDM report says that same asset was unencrypted. The
+  graph connects the *event* to the *control failure*.
+- **`Privacy Office`** → linked across `01-helpdesk-ticket` **and** `04-policy-and-context` —
+  who got escalated to, tied to the policy that says they must run the four-factor assessment.
+- **`45 CFR §164.402`** → the breach-classification rule, anchored in the policy file.
+
+In the Create flow, this graph powers **"related source" suggestions**: as you select sources
+for a new artifact, Tessera proposes others that share concepts with your selection
+(`substrate:suggestRelatedSources`). In the showcase each persona is a single indexed folder,
+so there's nothing cross-source to suggest — but the wiring is the same one a multi-folder
+workspace uses.
+
+## Step 4 — hybrid retrieval, tuned
+
+When the model drafts a section, the text it sees comes from hybrid retrieval that the user
+can shape in **Settings → Search**:
+
+- **Hybrid mode** blends lexical BM25 with semantic vector similarity (reciprocal-rank fusion),
+  so a query hits both exact terms and paraphrases.
+- **Temporal decay** adds a recency bias with an adjustable **half-life** — sources older than
+  the half-life contribute half as much at equal content relevance.
+- **Memory retention** from Step 2 joins as a fourth fusion signal, nudging corroborated,
+  frequently-used knowledge up the ranking.
+
+![Settings — hybrid search, recency decay, and embedding-model controls](../assets/screenshots/flow-05-settings-search.png)
+
+The embedding model is chosen in the same screen: a zero-download lexical embedder for
+strict-offline setups, or a downloadable multilingual model for non-English corpora. Switching
+triggers a background re-embed; the schema is unchanged.
+
+## Step 5 — durability: signed export and zero-config backup
+
+A knowledge plane is only trustworthy if the artifacts built on it are verifiable and the store
+is recoverable. Two shipping surfaces close that loop:
+
+- **Export Evidence Pack** (document/base editors): a ZIP of the artifact + its cited sources +
+  an **ML-DSA-65 (FIPS 204) provenance signature**, so a recipient can confirm the package
+  wasn't altered after export — post-quantum-ready, on-device.
+- **Backup & Recovery** (Settings): scheduled local hot-copy backups via SQLite's Online Backup
+  API, retention pruning, one-click backup/restore, and encrypted workspace-bundle
+  export/import — and it covers the substrate's encrypted sibling DBs, not just the main store.
+
+![Settings — Source Health and Backup & Recovery](../assets/screenshots/flow-06-settings-backup.png)
+
+## What ships today — and what's staged
+
+In the spirit of the rest of this showcase, here's the honest line between shipping and staged
+as of this `main`:
+
+**Shipping in the app today:**
+
+- Observation extraction, decay-based memory, and the concept graph as the on-device knowledge
+  substrate (the `knowledge` crate behind `crates/tessera_substrate`), with encrypted sibling
+  DBs.
+- The data plane over IPC: `sources:searchEnriched` (enriched hybrid results) and
+  `substrate:suggestRelatedSources` (concept-graph suggestions in Create).
+- The user-facing controls shown above: **Settings → Search** (hybrid + recency half-life),
+  embedding-model selection, **Source Health**, **Backup & Recovery**, the home-screen backup
+  indicator, and **Export Evidence Pack** with PQC signatures.
+
+**Built and unit-tested, but not yet wired into the shipping renderer:**
+
+- A dedicated **Memory page** and **concept-graph panel** for browsing the substrate directly.
+- The enriched **"Knowledge" tab** in the citation panel (entities/facts/concepts alongside
+  source chunks). The component and its tests exist; it isn't mounted in an editor yet.
+- **HomePage knowledge insights** beyond the backup/source signals.
+
+Those surfaces are staged in a follow-up branch. We'd rather show you the substrate as the
+real, inspectable data it produces — the tables above are generated straight from it — than
+screenshot a panel that isn't in the build you'd install today.
+
+---
+
+Next: [How Tessera's approach compares to its competitors — honestly →](08-competitive-assessment.md) ·
+or back to the [showcase index](../README.md)

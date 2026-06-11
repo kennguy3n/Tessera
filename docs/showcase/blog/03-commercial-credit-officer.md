@@ -67,6 +67,11 @@ The template enforces that every memo covers collateral, covenants, and downside
 so nothing structurally important gets skipped under deadline pressure. And the borrower's
 financials, like all the sensitive material in this series, stay on the bank's machine.
 
+**Outcome:** Priya produces a structured credit memo plus a FY2026E–FY2028E projection grid
+(revenue $32.2M→$36.5M, DSCR 2.40x→2.60x) the committee can edit and re-run — every figure
+traceable to its source row, collateral/covenants/downside scenarios guaranteed present by the
+template, and the borrower's NPI never sent to a vendor cloud.
+
 ---
 
 Next: [Sofia turns program notes into a funder-ready grant proposal →](04-nonprofit-development-director.md)

@@ -68,6 +68,12 @@ exact contract language in one click. And the tracker turns a static summary int
 checklist of dates that can't be allowed to slip — the failure mode that actually costs
 clients money.
 
+**Outcome:** David turns a 40-page agreement into a one-page, house-format abstract plus a
+nine-row obligation tracker — non-renewal notice (2027-12-31), breach-notification window, and
+liability-cap negotiation all now dated, owned, and clause-cited (§1.2, §4.3, §3.2). A partner
+can jump from "this is risky" to the exact contract language in one click, and the privileged
+contract never leaves the firm's machine.
+
 ---
 
 Next: [Priya builds a credit memo the committee can interrogate →](03-commercial-credit-officer.md)

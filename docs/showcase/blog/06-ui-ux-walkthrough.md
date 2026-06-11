@@ -70,7 +70,45 @@ personas you've now seen all four:
   and a raw Marp markdown mode.
 
 Every editor exports to the formats that matter for that artifact — Markdown / HTML / PDF /
-DOCX for documents, CSV / XLSX for sheets and bases, PPTX for slides.
+DOCX for documents, CSV / XLSX for sheets and bases, PPTX for slides. Documents and bases
+also offer **Export Evidence Pack** (visible in the editor header above): a single ZIP that
+bundles the artifact, the source files it cited, and a **post-quantum provenance signature**
+(ML-DSA-65 / FIPS 204) so a recipient — a regulator, an auditor, a credit committee — can
+verify the package wasn't altered after it left the author's machine.
+
+## Step 5 — the knowledge substrate underneath
+
+Indexing isn't just "throw text in a search box." On ingest, Tessera's knowledge substrate
+extracts structured **observations** (entities, facts, decisions, tasks) from your sources,
+scores them with a decay-based **memory** model, and links recurring entities into a
+**concept graph** across the files they co-occur in. That substrate then feeds three places
+you can see and control today.
+
+**Search you can tune.** Settings → Search exposes how retrieval ranks hits: a **hybrid**
+toggle that blends lexical (BM25) and semantic (vector) scoring, and a **temporal decay**
+control with an adjustable recency half-life so freshly-edited sources outrank stale ones at
+equal content relevance. The embedding model that powers semantic search is selectable in
+the same screen — a zero-download lexical embedder for offline/privacy-strict setups, or a
+downloadable multilingual model when the corpus isn't pure English.
+
+![Settings — hybrid search, recency decay, and embedding-model controls](../assets/screenshots/flow-05-settings-search.png)
+
+**Source health and zero-config backup.** The same Settings page surfaces a **Source Health**
+table (per-source last-sync, health, chunk count, storage) and a **Backup & Recovery** card:
+automatic local hot-copy backups on a schedule, retention pruning, one-click "Back up now,"
+restore from any recent snapshot, and encrypted workspace-bundle export/import. Because it
+uses SQLite's Online Backup API against the encrypted single-file store (and its substrate
+sibling DBs), backups are consistent and never leave the machine unless you export a bundle.
+
+![Settings — Source Health and Backup & Recovery](../assets/screenshots/flow-06-settings-backup.png)
+
+The home screen carries a quiet freshness signal from the same system — a **"Last backup"**
+line and live source-status counts — so a returning user knows their work is protected
+without opening Settings.
+
+A full walk through the knowledge plane — what gets extracted, how memory retention and the
+concept graph behave, and what ships today versus what's staged — is the
+[next post](07-knowledge-plane.md).
 
 ## The thing that ties it together: provenance
 
@@ -85,4 +123,5 @@ or building a sales QBR.
 
 ---
 
-Back to the [series introduction](00-introduction.md) · or the [showcase index](../README.md)
+Next: [The knowledge plane — what Tessera extracts and remembers →](07-knowledge-plane.md) ·
+or back to the [series introduction](00-introduction.md) / [showcase index](../README.md)
