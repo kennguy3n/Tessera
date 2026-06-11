@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useCspNonce } from "../utils/cspNonce";
 import { useConceptGraph } from "../hooks/useSubstrate";
 import {
@@ -241,6 +241,19 @@ export default function ConceptGraphPanel({
     return [...set].sort();
   }, [graph.nodes]);
 
+  // If the graph reloads (Refresh, or a parent re-fetch) and the currently
+  // selected scope is no longer present, the view memo would filter down to
+  // zero nodes — and the scope <select> is hidden when fewer than two scopes
+  // remain, stranding the user on an empty graph with no way to clear the
+  // now-invisible filter. Fall back to "all" (and drop the stale selection)
+  // whenever the active scope drops out of the graph.
+  useEffect(() => {
+    if (scopeFilter !== "all" && !scopes.includes(scopeFilter)) {
+      setScopeFilter("all");
+      setSelectedId(null);
+    }
+  }, [scopes, scopeFilter]);
+
   // Apply the client-side scope filter to produce the view actually
   // rendered. Edges to filtered-out nodes are dropped so no dangling
   // lines remain.
@@ -291,14 +304,26 @@ export default function ConceptGraphPanel({
 
   // Source evidence: memories whose content mentions the concept label.
   // Best-effort correlation (the substrate doesn't expose a concept→
-  // evidence join in the Session 1 bridge surface), de-duplicated and
-  // capped so the detail panel stays readable.
+  // evidence join in the Session 1 bridge surface), capped so the detail
+  // panel stays readable. We match on WORD BOUNDARIES rather than a raw
+  // substring so a short label ("AI", "Go") doesn't spuriously match every
+  // memory containing those letters mid-word ("maintain", "category"). Labels
+  // with no word characters to anchor on fall back to a substring test.
   const selectedEvidence = useMemo(() => {
     if (!selectedNode) return [];
-    const needle = selectedNode.label.trim().toLowerCase();
-    if (!needle) return [];
+    const label = selectedNode.label.trim();
+    if (!label) return [];
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const matcher = /\w/.test(label)
+      ? new RegExp(`\\b${escaped}\\b`, "i")
+      : null;
+    const needle = label.toLowerCase();
     return memories
-      .filter((m) => m.content.toLowerCase().includes(needle))
+      .filter((m) =>
+        matcher
+          ? matcher.test(m.content)
+          : m.content.toLowerCase().includes(needle),
+      )
       .slice(0, 8);
   }, [selectedNode, memories]);
 

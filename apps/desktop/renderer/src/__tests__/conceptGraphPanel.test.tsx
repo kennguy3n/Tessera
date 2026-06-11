@@ -108,4 +108,73 @@ describe("ConceptGraphPanel", () => {
     );
     expect(screen.getByTestId("concept-node-beacon")).toBeInTheDocument();
   });
+
+  it("resets a stale scope filter when a refresh drops the selected scope", async () => {
+    // First load has scope-a + scope-b; the refreshed graph has only scope-a.
+    window.tessera.substrate.getConceptGraph = vi
+      .fn()
+      .mockResolvedValueOnce(GRAPH_JSON)
+      .mockResolvedValue(
+        JSON.stringify({
+          nodes: [
+            {
+              id: "atlas",
+              label: "Atlas",
+              state: "canonical",
+              scope_id: "scope-a",
+              connections_count: 0,
+            },
+          ],
+          edges: [],
+          scope_filter: [],
+          depth: 2,
+          truncation: "complete",
+        }),
+      );
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+    );
+    // Narrow to scope-b (only "beacon" remains in view).
+    fireEvent.change(screen.getByLabelText("Filter concept graph by scope"), {
+      target: { value: "scope-b" },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-beacon")).toBeInTheDocument(),
+    );
+    // Refresh: scope-b is gone from the new graph. The stale filter must
+    // fall back to "all" rather than stranding the user on an empty graph.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("concept-graph-empty")).not.toBeInTheDocument();
+    // Only one scope remains, so the scope <select> is no longer rendered.
+    expect(
+      screen.queryByLabelText("Filter concept graph by scope"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("correlates evidence on word boundaries, not mid-word substrings", async () => {
+    const memories: SubstrateMemoryInfo[] = [
+      {
+        ...EVIDENCE[0],
+        id: "mem-midword",
+        content: "Atlassian ships Jira and Confluence to teams.",
+      },
+    ];
+    render(<ConceptGraphPanel memories={memories} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("concept-node-atlas"));
+    const detail = await screen.findByTestId("concept-detail");
+    // "Atlassian" must NOT be surfaced as evidence for the concept "Atlas".
+    expect(
+      within(detail).queryByText(/Atlassian ships Jira/),
+    ).not.toBeInTheDocument();
+    expect(
+      within(detail).getByText("No source evidence found for this concept."),
+    ).toBeInTheDocument();
+  });
 });

@@ -173,7 +173,9 @@ export default function MemoryPage() {
       const result = wasPinned ? await unpin(mem.id) : await pin(mem.id);
       if (result) {
         addToast(wasPinned ? "Memory unpinned" : "Memory pinned", "success");
-        await refresh();
+        // Reconcile against the substrate without a loading flash: the row
+        // already reflects the change optimistically.
+        await refresh({ silent: true });
         clearOverride(mem.id);
       } else {
         addToast("Couldn't update this memory. Please try again.", "error");
@@ -199,7 +201,7 @@ export default function MemoryPage() {
       const ok = await forget(mem.id);
       if (ok) {
         addToast("Memory forgotten", "success");
-        await refresh();
+        await refresh({ silent: true });
         clearOverride(mem.id);
       } else {
         addToast("Couldn't forget this memory. Please try again.", "error");
@@ -307,7 +309,7 @@ export default function MemoryPage() {
                     <MemoryRow
                       key={mem.id}
                       memory={mem}
-                      busy={pending === mem.id}
+                      busy={pending.has(mem.id)}
                       onPinToggle={() => void handlePinToggle(mem)}
                       onForget={() => void handleForget(mem)}
                     />

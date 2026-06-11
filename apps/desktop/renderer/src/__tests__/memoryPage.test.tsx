@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import MemoryPage from "../pages/MemoryPage";
 import type { SubstrateMemoryInfo } from "../types/ipc";
@@ -130,6 +130,36 @@ describe("MemoryPage", () => {
     await waitFor(() =>
       expect(window.tessera.substrate.getMemories).toHaveBeenCalledTimes(2),
     );
+  });
+
+  it("does not flash the loading state while reconciling after a pin", async () => {
+    let resolveRefresh: (v: SubstrateMemoryInfo[]) => void = () => {};
+    window.tessera.substrate.getMemories = vi
+      .fn()
+      .mockResolvedValueOnce(SAMPLE) // initial mount
+      .mockImplementationOnce(
+        () =>
+          new Promise<SubstrateMemoryInfo[]>((res) => {
+            resolveRefresh = res;
+          }),
+      );
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("memory-list")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("memory-pin-m1"));
+    // The post-mutation refresh is in flight (deliberately unresolved).
+    await waitFor(() =>
+      expect(window.tessera.substrate.getMemories).toHaveBeenCalledTimes(2),
+    );
+    // A *silent* refresh must keep the list mounted — it must not tear the
+    // page down to the "Loading memories…" placeholder on every mutation.
+    expect(screen.queryByText("Loading memories...")).not.toBeInTheDocument();
+    expect(screen.getByTestId("memory-list")).toBeInTheDocument();
+    // Let the in-flight refresh settle so its state updates flush within act.
+    await act(async () => {
+      resolveRefresh(SAMPLE);
+    });
   });
 
   it("forgets a memory after confirmation", async () => {

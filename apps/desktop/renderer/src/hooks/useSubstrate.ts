@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 import {
   parseConceptGraph,
@@ -34,11 +34,25 @@ function getApi() {
  */
 const EMPTY_CONCEPT_GRAPH: ConceptGraphView = parseConceptGraph("{}");
 
+/**
+ * Options for a {@link UseMemoriesResult.refresh} call.
+ *
+ * `silent` re-fetches WITHOUT flipping `loading` back to `true`. It exists
+ * for background reconciliation after a mutation (pin / unpin / forget):
+ * the row already updated optimistically, so toggling the page-level
+ * loading flag would tear the whole list down and re-mount it on every
+ * action — an avoidable flash. A silent refresh swaps in the canonical
+ * data underneath the rendered list instead.
+ */
+export interface RefreshOptions {
+  silent?: boolean;
+}
+
 export interface UseMemoriesResult {
   memories: SubstrateMemoryInfo[];
   loading: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: RefreshOptions) => Promise<void>;
 }
 
 /**
@@ -57,28 +71,43 @@ export function useMemories(
   const [memories, setMemories] = useState<SubstrateMemoryInfo[]>([]);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic request token. Only the most-recently-issued fetch is
+  // allowed to commit its result, so a slow response for an old `scope`
+  // can never clobber the state of a newer one (and a late response after
+  // the hook gated off is ignored). The disabled-path effect bumps it too.
+  const requestRef = useRef(0);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const api = getApi();
-      if (api) {
-        const list = await api.substrate.getMemories(scope ?? null);
-        setMemories(list);
+  const refresh = useCallback(
+    async (options?: RefreshOptions) => {
+      const token = ++requestRef.current;
+      const silent = options?.silent ?? false;
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const api = getApi();
+        if (api) {
+          const list = await api.substrate.getMemories(scope ?? null);
+          if (token === requestRef.current) setMemories(list);
+        }
+      } catch (err) {
+        if (token === requestRef.current) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (token === requestRef.current && !silent) setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [scope]);
+    },
+    [scope],
+  );
 
   useEffect(() => {
     if (!enabled) {
       // Skip the round-trip entirely and settle into a clean,
       // non-loading empty state so a gated caller never sees a
-      // spinner for data it isn't going to render.
+      // spinner for data it isn't going to render. Bump the request
+      // token so any fetch still in flight from a previously-enabled
+      // render can't commit its result over this empty state.
+      requestRef.current++;
       setMemories([]);
       setError(null);
       setLoading(false);
@@ -94,18 +123,29 @@ export interface UseMemoryActionsResult {
   pin: (id: string) => Promise<SubstrateMemoryInfo | null>;
   unpin: (id: string) => Promise<SubstrateMemoryInfo | null>;
   forget: (id: string) => Promise<boolean>;
-  pending: string | null;
+  /** Set of memory ids with a mutation currently in flight. */
+  pending: ReadonlySet<string>;
   error: string | null;
 }
 
+const EMPTY_PENDING: ReadonlySet<string> = new Set();
+
 /**
- * Mutating memory actions (pin / unpin / forget). `pending` holds the
- * id of the in-flight memory so a row can show a busy state and disable
- * its buttons; only one mutation runs at a time per hook instance.
+ * Mutating memory actions (pin / unpin / forget). `pending` is the set of
+ * memory ids with a mutation in flight, so each row can independently show
+ * a busy state and disable its buttons. At most one mutation runs per id
+ * at a time: a duplicate request for an id already in flight is ignored
+ * (rather than overwriting the busy tracking and clearing it early), while
+ * mutations on *different* rows are free to run concurrently.
  */
 export function useMemoryActions(): UseMemoryActionsResult {
-  const [pending, setPending] = useState<string | null>(null);
+  const [pending, setPending] = useState<ReadonlySet<string>>(EMPTY_PENDING);
   const [error, setError] = useState<string | null>(null);
+  // Synchronous source of truth for in-flight ids. A ref (not the `pending`
+  // state) is read in `run` so two clicks in the same tick see each other
+  // before React has re-rendered; `pending` is just its render-visible
+  // mirror.
+  const inFlight = useRef<Set<string>>(new Set());
 
   const run = useCallback(
     async <T>(
@@ -118,7 +158,11 @@ export function useMemoryActions(): UseMemoryActionsResult {
         setError("Tessera bridge not available");
         return fallback;
       }
-      setPending(id);
+      // Enforce one-mutation-per-id: ignore a duplicate while the previous
+      // one for the same id is still resolving.
+      if (inFlight.current.has(id)) return fallback;
+      inFlight.current.add(id);
+      setPending(new Set(inFlight.current));
       setError(null);
       try {
         return await op(api);
@@ -126,7 +170,8 @@ export function useMemoryActions(): UseMemoryActionsResult {
         setError(err instanceof Error ? err.message : String(err));
         return fallback;
       } finally {
-        setPending(null);
+        inFlight.current.delete(id);
+        setPending(new Set(inFlight.current));
       }
     },
     [],
@@ -160,7 +205,7 @@ export interface UseConceptGraphResult {
   graph: ConceptGraphView;
   loading: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: RefreshOptions) => Promise<void>;
 }
 
 /**
@@ -177,30 +222,42 @@ export function useConceptGraph(
   const [graph, setGraph] = useState<ConceptGraphView>(EMPTY_CONCEPT_GRAPH);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  // See `useMemories`: only the latest fetch may commit, so a slow response
+  // for an old `scope`/`maxNodes` can't overwrite a newer one.
+  const requestRef = useRef(0);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const api = getApi();
-      if (api) {
-        const json = await api.substrate.getConceptGraph(
-          scope ?? null,
-          maxNodes ?? null,
-        );
-        setGraph(parseConceptGraph(json));
+  const refresh = useCallback(
+    async (options?: RefreshOptions) => {
+      const token = ++requestRef.current;
+      const silent = options?.silent ?? false;
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const api = getApi();
+        if (api) {
+          const json = await api.substrate.getConceptGraph(
+            scope ?? null,
+            maxNodes ?? null,
+          );
+          if (token === requestRef.current) setGraph(parseConceptGraph(json));
+        }
+      } catch (err) {
+        if (token === requestRef.current) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (token === requestRef.current && !silent) setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [scope, maxNodes]);
+    },
+    [scope, maxNodes],
+  );
 
   useEffect(() => {
     if (!enabled) {
       // See `useMemories`: skip IPC and settle empty when gated off. Reuse the
-      // shared empty graph so the value stays referentially stable.
+      // shared empty graph so the value stays referentially stable, and bump
+      // the request token so an in-flight fetch can't commit over it.
+      requestRef.current++;
       setGraph(EMPTY_CONCEPT_GRAPH);
       setError(null);
       setLoading(false);
