@@ -123,10 +123,15 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
+          # `release-` discriminator keeps this namespace separate from the
+          # debug-profile CI cache (ci.yml). Both cache `target/`, but with
+          # different build profiles; isolating them avoids cross-profile churn
+          # and stops the combined debug+release artifacts from inflating toward
+          # GitHub's per-repo cache budget (which would trigger evictions).
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-release-${{ hashFiles('rustc-version.txt') }}-
+            ${{ runner.os }}-cargo-release-
 
       - name: Install dependencies
         run: npm ci
