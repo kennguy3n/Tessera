@@ -176,18 +176,31 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
     if (isOpen) loadCitations();
   }, [isOpen, loadCitations]);
 
-  // Keyboard shortcut: Escape closes the panel.
+  // Keyboard shortcut: Escape dismisses the innermost open surface
+  // first, falling back to closing the whole panel only when no
+  // sub-dialog is open. Without this hierarchy a single Escape would
+  // close both an open sub-dialog AND the panel underneath it (the
+  // panel's listener and the dialog's listener both fired), yanking
+  // the panel out from under the user. Centralizing the precedence
+  // here keeps it in one place and lets the sub-dialogs stay listener-free.
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      if (pendingDelete) {
+        setPendingDelete(null);
+      } else if (replaceFor) {
+        setReplaceFor(null);
+      } else if (showAdd) {
+        setShowAdd(false);
+      } else {
         onClose();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, pendingDelete, replaceFor, showAdd]);
 
   const confirmRemove = async (citationId: string) => {
     try {
@@ -945,19 +958,9 @@ function ConfirmRemoveDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  // Trap Escape so the destructive dialog never disappears
-  // without an explicit user choice.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onCancel]);
-
+  // Escape handling is owned by the parent CitationPanel, which
+  // dismisses the innermost open surface first — so Escape here
+  // cancels the removal without also closing the panel.
   return (
     <div
       className="citation-confirm-dialog"

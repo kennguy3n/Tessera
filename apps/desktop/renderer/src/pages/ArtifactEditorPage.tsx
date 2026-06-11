@@ -120,6 +120,10 @@ export default function ArtifactEditorPage() {
     draftContentRef.current = next;
   }, []);
 
+  // Stable reference so CitationPanel's Escape-key effect (keyed on
+  // [isOpen, onClose, ...]) doesn't re-subscribe on every editor render.
+  const closeCitations = useCallback(() => setCitationsOpen(false), []);
+
   // Reset the draft when the user navigates to a different artifact so
   // we don't leak a previous artifact's draft into the new export.
   useEffect(() => {
@@ -715,7 +719,7 @@ export default function ArtifactEditorPage() {
       <CitationPanel
         artifactId={artifact.id}
         isOpen={citationsOpen}
-        onClose={() => setCitationsOpen(false)}
+        onClose={closeCitations}
       />
     </div>
   );
