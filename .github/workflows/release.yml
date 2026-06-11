@@ -105,6 +105,15 @@ jobs:
         with:
           ssh-key: ${{ secrets.KNOWLEDGE_DEPLOY_KEY }}
 
+      # Fold the active toolchain's `rustc --version` into the cache key so a
+      # toolchain bump invalidates the cached `target/` (mirrors ci.yml). Without
+      # this, a `target/` built under the old compiler is restored on top of a
+      # new rustc, which at best wastes a rebuild and at worst surfaces confusing
+      # "found invalid metadata" / incremental-cache errors.
+      - name: Record rustc version
+        shell: bash
+        run: rustc --version --verbose > rustc-version.txt
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -114,8 +123,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('rustc-version.txt') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Install dependencies
         run: npm ci
