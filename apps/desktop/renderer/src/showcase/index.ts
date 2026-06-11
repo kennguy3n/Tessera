@@ -371,9 +371,10 @@ export function buildShowcaseApi(personaId: string): unknown {
       },
       create: async () => {
         const now = Date.parse(NOW);
+        const fileName = `tessera-${new Date(now).toISOString().slice(0, 10)}.sqlite3`;
         const info = {
-          path: `${backupDir}/tessera-now.sqlite3`,
-          fileName: `tessera-${new Date(now).toISOString().slice(0, 10)}.sqlite3`,
+          path: `${backupDir}/${fileName}`,
+          fileName,
           createdAtMs: now,
           sizeBytes: 4_720_000,
         };
