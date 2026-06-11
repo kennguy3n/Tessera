@@ -2476,6 +2476,68 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn retention_promotes_low_bm25_chunk_when_vector_disabled() {
+        // Regression: the retention signal must be able to promote a
+        // chunk that BM25 ranked *past* the top-`limit` cutoff — that
+        // is its entire purpose (surface chunks from active-memory
+        // sources). Before the pool-sizing fix the candidate pool
+        // collapsed to exactly `limit` whenever the vector signal was
+        // off (no embeddings / `vector_weight = 0`), so retention could
+        // only reorder *within* the BM25 top-`limit` and never pulled a
+        // high-retention chunk in from below the cutoff.
+        let strong_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            strong_dir.path().join("strong.txt"),
+            "alpha alpha alpha alpha alpha",
+        )
+        .unwrap();
+        let weak_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            weak_dir.path().join("weak.txt"),
+            "alpha beta gamma delta epsilon zeta eta theta iota kappa",
+        )
+        .unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let strong = manager
+            .add_local_folder(strong_dir.path().to_str().unwrap())
+            .unwrap();
+        let weak = manager
+            .add_local_folder(weak_dir.path().to_str().unwrap())
+            .unwrap();
+
+        // Drive the BM25-only path: with vector off, the candidate pool
+        // used to be capped at exactly `limit`.
+        manager
+            .update_hybrid_config(&HybridSearchConfigInput {
+                vector_weight: Some(0.0),
+                ..HybridSearchConfigInput::default()
+            })
+            .unwrap();
+
+        // Baseline: by BM25 alone (limit=1) the higher-TF doc wins, so
+        // the weak doc sits below the top-`limit` cutoff.
+        let baseline = manager.search("alpha", 1).unwrap();
+        assert_eq!(baseline.len(), 1);
+        assert_eq!(baseline[0].source_id, strong.id.to_string());
+
+        // Fuse retention with the weak-BM25 source scored far higher.
+        // It must be promoted into the single top slot, which is only
+        // possible if the candidate pool was oversampled past `limit`.
+        let mut retention = std::collections::HashMap::new();
+        retention.insert(weak.id.to_string(), 1_000.0);
+        let promoted = manager
+            .search_with_retention("alpha", 1, retention)
+            .unwrap();
+        assert_eq!(promoted.len(), 1);
+        assert_eq!(
+            promoted[0].source_id,
+            weak.id.to_string(),
+            "a high-retention chunk below the BM25 top-`limit` cutoff must be promoted"
+        );
+    }
+
     // ----------------------------------------------------------------
     // KChat-channel idempotency
     // ----------------------------------------------------------------
