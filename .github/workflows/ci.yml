@@ -49,7 +49,9 @@ jobs:
               - '.github/workflows/ci.yml'
               # The knowledge-ssh composite action gates every cargo step, so
               # an action-only edit must still exercise the rust/supply-chain jobs.
-              - '.github/actions/**'
+              # Scoped to this action specifically so an unrelated future action
+              # doesn't needlessly trigger the full Rust matrix.
+              - '.github/actions/knowledge-ssh/**'
             typescript:
               - 'apps/**'
               - 'package.json'
