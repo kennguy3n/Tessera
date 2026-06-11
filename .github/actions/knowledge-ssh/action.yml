@@ -4,9 +4,9 @@ description: >-
   dependency (pinned in the workspace Cargo.toml over https) using a
   read-only SSH deploy key. Must run after `actions/checkout` and before
   any cargo step that resolves the dependency graph (clippy/build/test/
-  metadata/vet). No-op-safe to run in every Rust job. Works on the
-  ubuntu/windows/macos GitHub-hosted runners (all ship Git + OpenSSH and
-  a bash shell).
+  metadata/vet). Fail-fast: it errors immediately with a clear message if
+  the deploy key secret is missing. Works on the ubuntu/windows/macos
+  GitHub-hosted runners (all ship Git + OpenSSH and a bash shell).
 inputs:
   ssh-key:
     description: >-
@@ -26,7 +26,7 @@ runs:
         set -euo pipefail
 
         if [ -z "${KNOWLEDGE_SSH_KEY:-}" ]; then
-          echo "::error::knowledge deploy key is empty — add the repo secret KNOWLEDGE_DEPLOY_KEY (see docs/adr/0011-knowledge-substrate-integration.md)."
+          echo "::error::knowledge deploy key is empty — add the repo secret KNOWLEDGE_DEPLOY_KEY (setup steps in .github/actions/knowledge-ssh/README.md)."
           exit 1
         fi
 
@@ -58,7 +58,7 @@ runs:
         # makes cargo shell out to `git` (which honours the insteadOf rewrite
         # and GIT_SSH_COMMAND) instead of its built-in libgit2 fetcher.
         {
-          echo "GIT_SSH_COMMAND=ssh -i ${key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          echo "GIT_SSH_COMMAND=ssh -i '${key_path}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
           echo "CARGO_NET_GIT_FETCH_WITH_CLI=true"
         } >> "$GITHUB_ENV"
 
