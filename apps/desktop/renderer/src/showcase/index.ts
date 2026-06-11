@@ -17,12 +17,17 @@
 // Llama/Qwen Instruct build) here or in the generator without adding it to the
 // product model registry first.
 
-import type { ShowcaseDataset } from "./types";
+import type { ShowcaseDataset, ShowcaseKnowledgePlane } from "./types";
 import { healthcareDataset } from "./generated/healthcare";
 import { legalDataset } from "./generated/legal";
 import { financeDataset } from "./generated/finance";
 import { nonprofitDataset } from "./generated/nonprofit";
 import { retailDataset } from "./generated/retail";
+import { healthcareKnowledge } from "./generated/healthcare.knowledge";
+import { legalKnowledge } from "./generated/legal.knowledge";
+import { financeKnowledge } from "./generated/finance.knowledge";
+import { nonprofitKnowledge } from "./generated/nonprofit.knowledge";
+import { retailKnowledge } from "./generated/retail.knowledge";
 
 const DATASETS: Record<string, ShowcaseDataset> = {
   healthcare: healthcareDataset,
@@ -30,6 +35,17 @@ const DATASETS: Record<string, ShowcaseDataset> = {
   finance: financeDataset,
   nonprofit: nonprofitDataset,
   retail: retailDataset,
+};
+
+// Additive knowledge planes (entities / facts / concepts) derived from the
+// SAME genuine artifacts via scripts/showcase/derive_knowledge.py. Feed the
+// enriched "Knowledge" tab, hybrid search, and concept-graph suggestions.
+const KNOWLEDGE: Record<string, ShowcaseKnowledgePlane> = {
+  healthcare: healthcareKnowledge,
+  legal: legalKnowledge,
+  finance: financeKnowledge,
+  nonprofit: nonprofitKnowledge,
+  retail: retailKnowledge,
 };
 
 export function showcasePersonaFromQuery(): string | null {
@@ -80,6 +96,74 @@ function buildSources(ds: ShowcaseDataset) {
   ];
 }
 
+// Map a derived source id (`sc-<persona>-src-NN`) back to its input filename
+// and a plausible on-disk path so search hits carry real provenance.
+function sourcePathFor(ds: ShowcaseDataset, sourceId: string): string {
+  const folderPath = `~/Documents/${ds.persona.org.replace(/[^A-Za-z0-9]+/g, "-")}`;
+  const num = sourceId.split("-").pop();
+  const file = ds.sourceFiles.find((f) => f.split("-", 1)[0] === num) ?? ds.sourceFiles[0];
+  return `${folderPath}/${file}`;
+}
+
+function tokenize(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/[^a-z0-9§]+/)
+    .filter((t) => t.length >= 2);
+}
+
+function textMatches(text: string, tokens: string[]): boolean {
+  if (tokens.length === 0) return true;
+  const lc = text.toLowerCase();
+  return tokens.some((t) => lc.includes(t));
+}
+
+// Hybrid-search hits over the persona's facts (each genuine observation is a
+// retrievable chunk). When the query is empty we surface the strongest facts so
+// the demo search box is never blank; otherwise we rank by token overlap and
+// fall back to retention so retention-weighting (the substrate's 4th RRF
+// signal) is visible.
+function buildSearchHits(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query: string, limit: number) {
+  const tokens = tokenize(query);
+  const scored = plane.facts
+    .map((f) => {
+      const overlap = tokens.filter((t) => f.content.toLowerCase().includes(t)).length;
+      const relevance = tokens.length === 0 ? f.retentionScore : overlap + f.retentionScore;
+      return { f, overlap, relevance };
+    })
+    .filter((s) => tokens.length === 0 || s.overlap > 0)
+    .sort((a, b) => b.relevance - a.relevance)
+    .slice(0, limit);
+  return scored.map(({ f, relevance }, i) => ({
+    sourcePath: sourcePathFor(ds, f.sourceId ?? `sc-${ds.id}-src-local`),
+    sourceId: f.sourceId ?? `sc-${ds.id}-src-local`,
+    chunkHash: f.id,
+    chunkContent: f.content,
+    // Normalise into a 0..1 search-relevance band, highest first.
+    relevanceScore: Number((0.94 - i * 0.04 + (relevance > 1 ? 0.02 : 0)).toFixed(3)),
+    excerpt: f.content,
+  }));
+}
+
+// Filter a knowledge plane by a query, mirroring `sources:searchEnriched`.
+function buildEnriched(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query: string, limit: number) {
+  const tokens = tokenize(query);
+  const entities = plane.entities.filter((e) => textMatches(e.content, tokens));
+  const facts = plane.facts.filter((f) => textMatches(f.content, tokens));
+  const concepts = plane.concepts.filter(
+    (c) => textMatches(c.label, tokens) || textMatches(c.definition, tokens),
+  );
+  // `memories` is the full ranked match set (entities + facts) by retention.
+  const memories = [...entities, ...facts].sort((a, b) => b.retentionScore - a.retentionScore);
+  return {
+    hits: buildSearchHits(ds, plane, query, limit),
+    entities,
+    facts,
+    concepts,
+    memories,
+  };
+}
+
 function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number) {
   // Deliberate fallback: when an artifact reports `count` of 0 (e.g. a sheet or
   // base where citations aren't surfaced per-cell), show citations for every
@@ -127,6 +211,8 @@ const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
   autoDownloadModel: true,
   createPageMode: "wizard",
   closeToTray: false,
+  modelIdleTimeoutSecs: 60,
+  resourceMode: "lightweight",
 });
 
 /**
@@ -141,11 +227,42 @@ export function buildShowcaseApi(personaId: string): unknown {
 
   const artifacts = buildArtifacts(ds);
   const sources = buildSources(ds);
+  const plane = KNOWLEDGE[personaId] ?? { entities: [], facts: [], concepts: [] };
   let settings = settingsData(artifacts);
+
+  // Mutable backup state so Settings → Backup is fully interactive in the demo
+  // (configure persists, "Back up now" prepends a new entry).
+  const backupDir = `~/.config/Tessera/backups`;
+  let backupStatus = {
+    autoBackup: true,
+    backupDir,
+    backupIntervalHours: 24,
+    backupRetentionCount: 7,
+    schedulerRunning: true,
+    backupInFlight: false,
+    lastBackupAt: Date.parse(NOW) - 6 * 3600 * 1000,
+    lastBackupError: null as string | null,
+  };
+  const backups = [0, 1, 2].map((i) => ({
+    path: `${backupDir}/tessera-2026-05-${String(12 - i).padStart(2, "0")}.sqlite3`,
+    fileName: `tessera-2026-05-${String(12 - i).padStart(2, "0")}.sqlite3`,
+    createdAtMs: Date.parse(NOW) - i * 24 * 3600 * 1000,
+    sizeBytes: 4_600_000 - i * 120_000,
+  }));
 
   const byId = new Map(artifacts.map((a) => [a.id, a]));
 
   const real: Record<string, Record<string, unknown>> = {
+    // Bridge-readiness surface. The real app gates `<App/>` behind
+    // `lifecycle.getBridgeState()` resolving to `ready`; the showcase has no
+    // native store to open, so report `ready` immediately. Without this the
+    // Proxy fallback resolves the snapshot read to `undefined`, which
+    // `useBridgeReady` would store and then dereference (`.state`), crashing
+    // the shell before any persona content renders.
+    lifecycle: {
+      getBridgeState: async () => ({ state: "ready", error: null }),
+      onBridgeState: () => () => {},
+    },
     settings: {
       get: async () => ({ ...settings }),
       update: async (patch: Record<string, unknown>) => {
@@ -156,10 +273,48 @@ export function buildShowcaseApi(personaId: string): unknown {
         bm25Weight: 1, vectorWeight: 1, rrfK: 60, recencyDecayEnabled: true,
         recencyHalflifeSecs: 2592000, candidatePoolSize: 0,
       }),
+      updateHybridSearchConfig: async (patch: Record<string, unknown>) => ({
+        bm25Weight: 1, vectorWeight: 1, rrfK: 60, recencyDecayEnabled: true,
+        recencyHalflifeSecs: 2592000, candidatePoolSize: 0, ...patch,
+      }),
+      getEmbeddingModelStatus: async () => ({
+        currentModelId: "onnx:all-MiniLM-L6-v2:384d",
+        models: [
+          {
+            slug: "all-MiniLM-L6-v2", displayName: "Semantic — English (MiniLM)",
+            dim: 384, modelSizeBytes: 23_068_672, tokenizerSizeBytes: 466_944,
+            languages: "English", installed: true, modelId: "onnx:all-MiniLM-L6-v2:384d",
+          },
+          {
+            slug: "paraphrase-multilingual-MiniLM-L12-v2",
+            displayName: "Semantic — Multilingual (XLM-R)",
+            dim: 384, modelSizeBytes: 125_829_120, tokenizerSizeBytes: 5_242_880,
+            languages: "50+ languages", installed: false,
+            modelId: "onnx:paraphrase-multilingual-MiniLM-L12-v2:384d",
+          },
+        ],
+        download: {
+          status: "idle" as const, slug: null, bytesTotal: null,
+          bytesDownloaded: 0, lastError: null,
+        },
+        nonAsciiChunks: 0,
+        totalChunks: ds.sourceFiles.length * 6,
+      }),
+      getEmbeddingDownloadProgress: async () => null,
+      downloadEmbeddingModel: async () => ({ ok: true }),
+      switchEmbeddingModel: async () => ({ ok: true }),
     },
     sources: {
       listSources: async () => sources,
-      searchSources: async () => [],
+      // Hybrid search (BM25 + vector + RRF, retention-weighted) over the
+      // persona's genuine observations.
+      searchSources: async (query = "", limit = 10) =>
+        buildSearchHits(ds, plane, query, limit),
+      // Observation-enriched search: the chunk hits PLUS the additive
+      // knowledge plane (entities / facts / concepts) shown in the
+      // CitationPanel "Knowledge" tab. Mirrors `sources:searchEnriched`.
+      searchEnriched: async (query = "", limit = 10) =>
+        buildEnriched(ds, plane, query, limit),
       getDetail: async (id: string) => ({
         source: sources.find((s) => s.id === id) ?? sources[0],
         files: ds.sourceFiles.map((f) => ({
@@ -167,7 +322,87 @@ export function buildShowcaseApi(personaId: string): unknown {
         })),
       }),
       getIndexingProgress: async () => null,
-      healthReport: async () => ({ issues: [] }),
+      healthReport: async () => ({
+        generatedAt: NOW,
+        sources: sources.map((s) => ({
+          sourceId: s.id,
+          sourceType: s.sourceType,
+          path: s.path,
+          lastIndexed: NOW,
+          status: "ready",
+          health: "healthy" as const,
+          chunkCount: ds.sourceFiles.length * 6,
+          storageBytes: ds.sourceFiles.length * 18_000,
+          staleFiles: 0,
+        })),
+      }),
+    },
+    // Knowledge substrate: concept-graph-driven "related sources" suggestions
+    // for the artifact-creation flow, plus decay/synthesis no-ops. Built from
+    // the persona's genuine concept graph.
+    substrate: {
+      suggestRelatedSources: async (selectedSourceIds: string[] = [], maxSuggestions = 10) => {
+        const selected = new Set(selectedSourceIds);
+        return plane.concepts
+          .map((c) => ({
+            entity: c.label,
+            sourceIds: c.relatedSourceIds.filter((s) => !selected.has(s)),
+            score: c.relatedSourceIds.length,
+          }))
+          .filter((s) => s.sourceIds.length > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, maxSuggestions);
+      },
+      runDecaySweep: async () => ({
+        scored: plane.entities.length + plane.facts.length,
+        candidatesArchived: 0,
+        supersededArchived: 0,
+      }),
+    },
+    // Local backup & recovery (Settings → Backup). Fully interactive in the
+    // demo: configure persists, "Back up now" prepends a fresh entry, and the
+    // HomePage freshness indicator reads `list()`.
+    backup: {
+      status: async () => ({ ...backupStatus }),
+      list: async () => backups.map((b) => ({ ...b })),
+      configure: async (patch: Record<string, unknown>) => {
+        backupStatus = { ...backupStatus, ...patch };
+        return { ...backupStatus };
+      },
+      create: async () => {
+        const now = Date.parse(NOW);
+        const fileName = `tessera-${new Date(now).toISOString().slice(0, 10)}.sqlite3`;
+        const info = {
+          path: `${backupDir}/${fileName}`,
+          fileName,
+          createdAtMs: now,
+          sizeBytes: 4_720_000,
+        };
+        backups.unshift(info);
+        backupStatus = { ...backupStatus, lastBackupAt: now };
+        return { ...info };
+      },
+      restore: async (path: string) => ({
+        stagedPath: `${path}.pending-restore`,
+        requiresRestart: true,
+      }),
+      exportBundle: async (outPath: string) => ({
+        path: outPath,
+        sizeBytes: 5_100_000,
+        entryCount: 4,
+      }),
+      importBundle: async () => ({
+        stagedDbPath: `${backupDir}/import.pending-restore`,
+        restoredFiles: [`${backupDir}/settings.json`],
+      }),
+    },
+    // Native dialogs — return canceled so the demo never blocks on a real OS
+    // picker, but the methods exist so the Settings handlers don't throw.
+    dialog: {
+      openDirectory: async () => ({ canceled: true, filePath: null }),
+      showSaveDialog: async () => ({ canceled: true }),
+      openBundle: async () => ({ canceled: true, filePath: null }),
+      pickImage: async () => ({ canceled: true, filePath: null }),
     },
     artifacts: {
       list: async () => artifacts,
@@ -231,8 +466,14 @@ export function buildShowcaseApi(personaId: string): unknown {
         vision: null,
         imagegen: null,
       }),
-      recommendModel: async () => ({ id: installedModel.modelId, name: MODEL_NAME }),
-      listModels: async () => [{ id: installedModel.modelId, name: MODEL_NAME }],
+      recommendModel: async () => ({
+        id: installedModel.modelId, name: MODEL_NAME,
+        formatLabel: "GGUF (Q1_0_g128)", downloadSizeMb: installedModel.downloadSizeMb,
+      }),
+      listModels: async () => [{
+        id: installedModel.modelId, name: MODEL_NAME,
+        formatLabel: "GGUF (Q1_0_g128)", downloadSizeMb: installedModel.downloadSizeMb,
+      }],
       isCapabilityAvailable: async () => true,
       onDownloadProgress: () => () => {},
     },
@@ -264,6 +505,28 @@ export function buildShowcaseApi(personaId: string): unknown {
       listTeams: async () => [],
       listChannels: async () => [],
     },
+    // Tamper-evident audit log (Settings → Activity). The showcase persona is
+    // a fresh local workspace, so there are no audit rows or rotated archives.
+    audit: {
+      listRecent: async () => [],
+      listArchives: async () => [],
+    },
+    // External (cloud) LLM provider is intentionally unconfigured: the whole
+    // demo runs on the on-device model, so the card renders its "not
+    // configured" state rather than crashing on an undefined config.
+    externalProvider: {
+      get: async () => null,
+      set: async () => ({ ok: true }),
+      test: async () => ({ ok: false, error: "not configured" }),
+      listModels: async () => [],
+      getTokenUsage: async () => null,
+      resetTokenUsage: async () => ({ ok: true }),
+    },
+    // Live resource meter. Returning null keeps the card in its "Measuring…"
+    // state (the real card polls this every few seconds).
+    resources: {
+      getUsage: async () => null,
+    },
   };
 
   const passthrough = (namespace: string) =>
@@ -285,12 +548,25 @@ export function buildShowcaseApi(personaId: string): unknown {
       },
     );
 
+  // Memoise the per-namespace proxies so `window.tessera.<ns>` returns a
+  // STABLE reference across accesses. The real preload exposes each namespace
+  // as a fixed object; components legitimately use `window.tessera.<ns>` as a
+  // `useEffect`/`useMemo` dependency (e.g. KchatSidebarSection's `[kchat, …]`).
+  // Minting a fresh proxy on every `get` would make those deps change every
+  // render, spinning the effect → setState → re-render loop forever ("Maximum
+  // update depth exceeded"). Caching keeps the identity stable.
+  const namespaceCache = new Map<string, unknown>();
   return new Proxy(
     {},
     {
       get(_t, namespace: string | symbol) {
         if (typeof namespace === "symbol") return undefined;
-        return passthrough(namespace);
+        let ns = namespaceCache.get(namespace);
+        if (!ns) {
+          ns = passthrough(namespace);
+          namespaceCache.set(namespace, ns);
+        }
+        return ns;
       },
     },
   );

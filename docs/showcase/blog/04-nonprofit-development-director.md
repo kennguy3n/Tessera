@@ -67,6 +67,11 @@ requires *and* the short-form deck a board expects, from the same grounded sourc
 budget tables and SMART goals are structured by the template, so the proposal is complete on
 the first pass instead of bouncing back for missing sections.
 
+**Outcome:** From one set of program notes and outcomes data, Sofia gets both a funder-ready
+grant proposal and a ten-slide board deck — the long form a funder requires and the short form a
+board expects, grounded in the same sources so the numbers can't drift between them. Complete on
+the first pass, with every figure cited back to the data she already had.
+
 ---
 
 Next: [Marcus runs a QBR off real pipeline data →](05-retail-sales-ops-lead.md)

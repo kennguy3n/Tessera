@@ -33,3 +33,49 @@ export interface ShowcaseDataset {
   sourceFiles: string[];
   artifacts: ShowcaseArtifact[];
 }
+
+/**
+ * An observation-typed memory item surfaced in the "Knowledge" tab of an
+ * enriched search. Shape-compatible with the renderer's `SubstrateMemoryInfo`
+ * (apps/desktop/shared/types.ts). Populated by the deterministic substrate
+ * derivation (`scripts/showcase/derive_knowledge.py`), which extracts these
+ * from the SAME genuine model-generated artifacts the rest of the showcase
+ * uses — nothing here is hand-authored marketing copy.
+ */
+export interface ShowcaseMemoryItem {
+  id: string;
+  scopeId: string;
+  observationType: string;
+  content: string;
+  state: string;
+  retentionScore: number;
+  pinCount: number;
+  retrievalCount: number;
+  corroborationCount: number;
+  createdAt: number;
+  lastAccessedAt: number;
+  sourceId: string | null;
+}
+
+/** A concept-graph node surfaced in the "Knowledge" tab. Shape-compatible
+ * with the renderer's `SubstrateConceptInfo`. */
+export interface ShowcaseConcept {
+  id: string;
+  label: string;
+  definition: string;
+  state: string;
+  relatedSourceIds: string[];
+}
+
+/**
+ * The additive knowledge plane (entities / facts / concepts) the substrate
+ * exposes for a persona, derived deterministically from that persona's genuine
+ * artifacts. Loaded into the mock bridge so the live renderer's enriched
+ * "Knowledge" tab and concept-graph source suggestions render real, traceable
+ * data instead of empty chrome.
+ */
+export interface ShowcaseKnowledgePlane {
+  entities: ShowcaseMemoryItem[];
+  facts: ShowcaseMemoryItem[];
+  concepts: ShowcaseConcept[];
+}

@@ -61,6 +61,12 @@ citations mean that when someone challenges the "105% of plan" headline, Marcus 
 the export row. And because the pipeline-coverage weakness came straight from the data rather
 than from spin, the QBR is the kind leadership can actually make decisions on.
 
+**Outcome:** Two source files yield both a leadership QBR deck and an operational CRM base with
+typed, filterable fields (Region, Stage, Health as real dropdown option sets) — narrative and
+operating view kept consistent because they share the same grounded data. When someone
+challenges the "105% of plan" headline, Marcus points at the export row instead of defending a
+vibe.
+
 ---
 
 Next: [How the Create flow and editors actually work →](06-ui-ux-walkthrough.md)

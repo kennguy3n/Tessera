@@ -121,11 +121,20 @@ encryption-at-rest posture. See
   entities/facts/tasks/decisions on ingest; `memory_manager` applies a
   decay state machine (active → fading → archived) with retention
   scoring; `concept_graph` builds a typed graph (is_a / part_of /
-  supersedes / contradicts), all surfaced in the UI (Memory page,
-  concept-graph panel, HomePage insights).
+  supersedes / contradicts). These engines and their N-API/IPC data
+  plane (`sources:searchEnriched`, `substrate:suggestRelatedSources`)
+  ship on `main`. The dedicated knowledge UI surfaces (a Memory page, a
+  concept-graph panel, an enriched "Knowledge" citation tab, HomePage
+  insights) are **built and unit-tested but not yet wired into the
+  shipping renderer** — they are staged in a follow-up branch, so the
+  substrate today is a backend/data-plane capability plus the
+  user-facing surfaces listed below, not a standalone knowledge browser.
 - **Search.** Hybrid retrieval is enriched with matching
   entities/concepts/memories and adds memory retention as a fourth RRF
-  signal, plus concept-graph-driven "related source" suggestions.
+  signal. The user-facing controls that ship today are the Settings →
+  Search card (hybrid lexical+vector toggle, temporal-decay toggle,
+  recency half-life) and concept-graph-driven "related source"
+  suggestions in the Create flow.
 - **Connectors v2.** `connector_framework` + `connectors` back the
   existing `connectors:*` IPC (behind `useV2Connectors`, default on),
   with synced content flowing through evidence → observation → memory;

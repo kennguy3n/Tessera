@@ -85,6 +85,12 @@ structure is enforced by the template (she can't accidentally skip the four-fact
 analysis), every claim is traceable to a source file, and **the PHI never left her laptop**.
 That combination is what makes an AI tool usable in healthcare compliance at all.
 
+**Outcome:** Maya walks away with a 12-section, ~1,700-word report that covers all four HITECH
+factors (the template makes skipping one impossible), a breach-vs-incident determination with
+rationale ready for GC review, and an 8-record incident tracker with INC-4471 classified — every
+claim traceable to one of four source files, the PHI never off her laptop, and the whole package
+exportable as a PQC-signed evidence pack a regulator can verify.
+
 ---
 
 Next: [David turns a 40-page SaaS contract into a one-page summary →](02-legal-paralegal.md)

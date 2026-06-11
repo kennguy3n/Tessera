@@ -39,6 +39,30 @@ Between them they cover all four Tessera artifact types — **document, slides, 
 and five regulated or detail-heavy markets where "the AI made something up" is not an
 acceptable outcome.
 
+Each story is framed around a real **job to be done** — not "play with an AI," but a concrete
+deliverable with a deadline, a reviewer, and a consequence for getting it wrong:
+
+| Persona | Job to be done | The deliverable's stakes |
+|---------|----------------|--------------------------|
+| Maya (healthcare) | File a defensible HIPAA breach risk assessment in 5 days | A regulator and General Counsel will read it |
+| David (legal) | Abstract a 40-page SaaS contract so no deadline lapses | Partners sign off; a missed renewal is malpractice-adjacent |
+| Priya (finance) | Tie a borrower's financials and risks to a credit recommendation | A credit committee will interrogate every number |
+| Sofia (nonprofit) | Turn program data into a funder-ready proposal and board deck | Funding and board confidence ride on it |
+| Marcus (retail) | Consolidate pipeline and account health into a QBR | Leadership makes resourcing calls from it |
+
+### Going deeper
+
+Beyond the five journeys, three posts open the hood:
+
+- **[The UI/UX walkthrough](06-ui-ux-walkthrough.md)** — the Create flow, the four editors, and
+  the new substrate controls (search tuning, source health, backup/restore, signed export).
+- **[The knowledge plane](07-knowledge-plane.md)** — what Tessera extracts, links, and remembers
+  on ingest, shown with genuine derived data, and an explicit line between what ships and what's
+  staged.
+- **[An honest competitive assessment](08-competitive-assessment.md)** — where Notion, Coda,
+  Claude Projects, NotebookLM, and the local-RAG tools are genuinely better, and where Tessera
+  wins, with the gaps stated without spin.
+
 ## What makes this different from a normal demo
 
 **1. The artifacts are genuinely generated, not written.**
