@@ -163,7 +163,10 @@ def is_entity(ent: str) -> bool:
     if re.search(r"\b[A-Za-z]{2,}\.", ent):
         return False
     if ID_RE.fullmatch(ent) or ent.startswith("§") or "CFR" in ent:
-        return True  # identifier codes / regulatory refs are always salient
+        # Identifier codes / regulatory refs are always salient. This path
+        # intentionally OVERRIDES STOPWORDS — a code like FY25/FY26 is filtered
+        # from the proper-noun path but kept here as a tracked identifier.
+        return True
     words = ent.split()
     if len(words) < 2:
         return False  # drop single generic capitalised words
