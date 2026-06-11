@@ -98,6 +98,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.88
 
+      # Authenticate the private kennguy3n/knowledge git dependency over a
+      # read-only SSH deploy key before the release `cargo build` resolves it.
+      - name: Authenticate knowledge git dependency
+        uses: ./.github/actions/knowledge-ssh
+        with:
+          ssh-key: ${{ secrets.KNOWLEDGE_DEPLOY_KEY }}
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:

@@ -88,6 +88,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Authenticate the private kennguy3n/knowledge git dependency over a
+      # read-only SSH deploy key before any cargo step resolves it.
+      - name: Authenticate knowledge git dependency
+        uses: ./.github/actions/knowledge-ssh
+        with:
+          ssh-key: ${{ secrets.KNOWLEDGE_DEPLOY_KEY }}
+
       # Fold the active toolchain's `rustc --version` into the cache key
       # so a toolchain bump (e.g. 1.88 -> 1.89, or a nightly date change)
       # invalidates the cache. Without this, the `target/` dir cached
@@ -350,6 +357,14 @@ jobs:
       - name: Install Rust toolchain
         if: needs.changes.outputs.rust == 'true'
         uses: dtolnay/rust-toolchain@1.88
+
+      # `cargo vet` resolves the full dependency graph (incl. the private
+      # knowledge git dependency), so it needs the deploy key too.
+      - name: Authenticate knowledge git dependency
+        if: needs.changes.outputs.rust == 'true'
+        uses: ./.github/actions/knowledge-ssh
+        with:
+          ssh-key: ${{ secrets.KNOWLEDGE_DEPLOY_KEY }}
 
       - name: Cache cargo
         if: needs.changes.outputs.rust == 'true'
