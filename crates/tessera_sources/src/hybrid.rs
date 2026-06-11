@@ -606,21 +606,30 @@ where
         return Ok(Vec::new());
     }
 
-    // Pool sizing: oversample BM25 + vector candidates so the fusion
-    // has enough material to rerank, but ONLY when both signals are
-    // contributing. When the vector signal is disabled (provider is
-    // None, e.g. fresh install with no embeddings; OR `vector_weight`
-    // is explicitly set to 0.0, the `SearchEngine::new()` BM25-only
-    // path), RRF is monotonic over the single remaining BM25 ranking
-    // — the top-`limit` IDs after fusion are exactly the top-`limit`
-    // BM25 hits in BM25 order, so fetching 4× candidates from FTS
-    // would be wasted work (extra rows materialised, extra HashMap
-    // accumulator entries built, extra `ages_secs_for_chunks` IDs
-    // probed). Reduce to `limit` for the BM25-only path so the
-    // backwards-compatible `SearchEngine::new()` call site doesn't pay
-    // a perf regression for the hybrid feature it isn't using.
+    // Pool sizing: oversample candidates so the fusion has enough
+    // material to rerank. The pool stays at exactly `limit` only on the
+    // BM25 + recency path (vector and retention both off): RRF is
+    // monotonic over the single BM25 ranking and recency is a per-chunk
+    // multiplier that only permutes *within* the candidate set, so the
+    // top-`limit` output set is exactly the top-`limit` BM25 hits.
+    // Fetching 4× candidates there would be wasted work (extra rows
+    // materialised, extra accumulator entries, extra
+    // `ages_secs_for_chunks` / `source_ids_for_chunks` probes) — the
+    // backwards-compatible `SearchEngine::new()` path must not pay for a
+    // feature it isn't using.
+    //
+    // The moment a *reranking* signal beyond raw BM25 is active — vector
+    // OR retention — a chunk BM25 ranked just past the cutoff can
+    // legitimately be promoted into the top-`limit`, so the pool must be
+    // oversampled. Retention in particular exists precisely to surface
+    // chunks from active-memory sources that BM25 ranked low; gating the
+    // oversample on `vector_active` alone silently confined retention to
+    // reordering within the BM25 top-`limit` whenever vector happened to
+    // be off (fresh install / `vector_weight = 0`), defeating it on the
+    // embeddings-disabled `search_with_retention` path.
     let vector_active = provider.is_some() && config.vector_weight > 0.0;
-    let pool = if vector_active {
+    let retention_active = config.retention_weight > 0.0 && !retention_by_source.is_empty();
+    let pool = if vector_active || retention_active {
         config.pool_size(limit)
     } else {
         limit
@@ -686,15 +695,15 @@ where
 
     // Fourth signal: substrate retention. Only resolve chunk→source
     // and build the ranking when the caller actually supplied
-    // retention data and the weight is active — otherwise this is the
-    // historical BM25 + vector + recency path with zero extra I/O.
-    let retention: Vec<RankedCandidate> =
-        if retention_by_source.is_empty() || config.retention_weight <= 0.0 {
-            Vec::new()
-        } else {
-            let chunk_sources = store.source_ids_for_chunks(&candidate_ids)?;
-            rank_chunks_by_retention(&candidate_ids, &chunk_sources, retention_by_source)
-        };
+    // retention data and the weight is active (`retention_active`) —
+    // otherwise this is the historical BM25 + vector + recency path
+    // with zero extra I/O.
+    let retention: Vec<RankedCandidate> = if retention_active {
+        let chunk_sources = store.source_ids_for_chunks(&candidate_ids)?;
+        rank_chunks_by_retention(&candidate_ids, &chunk_sources, retention_by_source)
+    } else {
+        Vec::new()
+    };
 
     let fused = fuse_rankings_with_retention(&bm25, &vector, &retention, &ages, config);
 
