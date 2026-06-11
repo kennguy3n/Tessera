@@ -87,10 +87,10 @@ fn provenance_message(content: &[u8]) -> Vec<u8> {
 /// The on-disk, JSON-serialised export signature sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportSignature {
-    /// Always [`SIDECAR_FORMAT`]; distinguishes the file from other
+    /// Always `SIDECAR_FORMAT`; distinguishes the file from other
     /// JSON sidecars.
     pub format: String,
-    /// Sidecar schema version ([`SIDECAR_VERSION`]).
+    /// Sidecar schema version (`SIDECAR_VERSION`).
     pub version: u32,
     /// Signature algorithm identifier (`"ML-DSA-65"`).
     pub algorithm: String,
@@ -103,7 +103,7 @@ pub struct ExportSignature {
     /// Base64 BLAKE3-256 hash of the artifact bytes (quick integrity
     /// check independent of the lattice signature).
     pub content_hash_b64: String,
-    /// Base64 ML-DSA-65 signature over [`provenance_message`].
+    /// Base64 ML-DSA-65 signature over `provenance_message`.
     pub signature_b64: String,
     /// Base64 encoded ML-DSA-65 verifying key (~2 kB) needed to check
     /// the signature.

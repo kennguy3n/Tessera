@@ -30,6 +30,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       typescript: ${{ steps.filter.outputs.typescript }}
+      supply_chain: ${{ steps.filter.outputs.supply_chain }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +59,16 @@ jobs:
               - 'package-lock.json'
               - 'templates/**'
               - 'schemas/**'
+              - '.github/workflows/ci.yml'
+            # The cargo-vet store change set runs ONLY `cargo vet --locked`
+            # (the supply-chain job), not the full Rust build matrix — a vet
+            # store edit doesn't touch any compiled code. `cargo vet` still
+            # validates against the real dependency graph, so this keeps the
+            # gate meaningful (a weakened exemption can't slip in untested)
+            # without burning ~10 min of clippy/build/test/rustdoc on every
+            # exemption-policy edit.
+            supply_chain:
+              - 'supply-chain/**'
               - '.github/workflows/ci.yml'
 
   rust:
@@ -348,31 +359,31 @@ jobs:
   supply-chain:
     name: Supply-chain audit
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.typescript == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.typescript == 'true' || needs.changes.outputs.supply_chain == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux build deps
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.supply_chain == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Install Rust toolchain
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.supply_chain == 'true'
         uses: dtolnay/rust-toolchain@1.88
 
       # `cargo vet` resolves the full dependency graph (incl. the private
       # knowledge git dependency), so it needs the deploy key too.
       - name: Authenticate knowledge git dependency
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.supply_chain == 'true'
         uses: ./.github/actions/knowledge-ssh
         with:
           ssh-key: ${{ secrets.KNOWLEDGE_DEPLOY_KEY }}
 
       - name: Cache cargo
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.supply_chain == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -384,13 +395,13 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-vet-
 
       - name: Install cargo-vet
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.supply_chain == 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-vet@0.10
 
       - name: cargo vet (supply-chain audit)
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.supply_chain == 'true'
         run: cargo vet --locked
 
       - name: Setup Node.js

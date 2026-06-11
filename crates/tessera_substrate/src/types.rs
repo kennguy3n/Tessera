@@ -117,7 +117,7 @@ pub struct EnrichedKnowledge {
 /// set the user has already selected
 /// (`SubstrateManager::suggest_related_sources`).
 ///
-/// "You have N sources about [entity]. Include them?" — `entity` is the
+/// "You have N sources about `[entity]`. Include them?" — `entity` is the
 /// shared concept, `source_ids` are the related (not-yet-selected)
 /// Tessera sources, and `score` is the number of related sources (used
 /// for ranking suggestions).

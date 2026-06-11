@@ -648,7 +648,7 @@ impl SubstrateManager {
     /// Suggest sources related to an already-selected working set, via
     /// the concept graph.
     ///
-    /// Powers the "You have N sources about [entity]. Include them?"
+    /// Powers the "You have N sources about `[entity]`. Include them?"
     /// affordance on the artifact-creation flow. For every concept the
     /// selected sources are linked to (`entity --PartOf--> source`), we
     /// gather the *other* sources that share the concept and surface
