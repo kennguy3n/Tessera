@@ -55,3 +55,13 @@ fetch the knowledge dependency over the deploy key and run to completion.
 > PRs from forks, so the cargo jobs can't authenticate there. This repo is
 > single-owner with no external forks, so that path doesn't apply today; if
 > that changes, gate the cargo jobs on `github.event.pull_request.head.repo.fork == false`.
+
+> Self-hosted-runner note: the private key is written to `~/.ssh/knowledge_deploy`
+> and intentionally **persists for the rest of the job** — later cargo steps
+> resolve the dependency graph through the `GIT_SSH_COMMAND` that points at it,
+> so it cannot be deleted inside this action. On GitHub-hosted runners the VM is
+> ephemeral and discarded after the job, so the key never outlives it. Composite
+> actions don't support a `post:` cleanup hook, so if you ever move to a
+> **self-hosted** runner, add a final `if: always()` step to each cargo job that
+> runs `rm -f ~/.ssh/knowledge_deploy` (and the matching `known_hosts` /
+> `insteadOf` config) to scrub the key from the persistent disk.
