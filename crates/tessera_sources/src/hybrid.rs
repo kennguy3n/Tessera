@@ -612,6 +612,10 @@ where
     // monotonic over the single BM25 ranking and recency is a per-chunk
     // multiplier that only permutes *within* the candidate set, so the
     // top-`limit` output set is exactly the top-`limit` BM25 hits.
+    // (This holds *because* `pool == limit` here: with exactly `limit`
+    // candidates, `take(limit)` keeps all of them no matter how recency
+    // reorders. On the oversampled paths below, recency can and does
+    // change which chunks survive the cutoff.)
     // Fetching 4× candidates there would be wasted work (extra rows
     // materialised, extra accumulator entries, extra
     // `ages_secs_for_chunks` / `source_ids_for_chunks` probes) — the
