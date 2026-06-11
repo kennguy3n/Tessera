@@ -853,10 +853,28 @@ pub fn run_sync(
     // O(n²) it would be scanning the Vec on each push.
     let mut deferred_set: HashSet<String> = HashSet::new();
 
+    // Document ids this run deletes at the source, scanned up front so
+    // Phase 1 can skip them. A backlog id that is also deleted this run
+    // must NOT be re-fetched: some providers still serve recently-trashed
+    // bodies, so fetching one would ingest a file (and register a source)
+    // that the Phase-2 deletion can't clean up — the host's delete path
+    // keys off the PRIOR manifest, which never saw this still-deferred,
+    // never-ingested doc. Skipping the fetch leaves nothing to orphan.
+    let deleted_ids: HashSet<String> = run
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            ConnectorEvent::DocumentDeleted { document_id, .. } => {
+                Some(document_id.as_str().to_string())
+            }
+            _ => None,
+        })
+        .collect();
+
     // ── Phase 1: drain the deferred backlog (id-addressable) ────────────
     for id in pending {
         let key = id.as_str().to_string();
-        if handled.contains(&key) || deferred_set.contains(&key) {
+        if handled.contains(&key) || deferred_set.contains(&key) || deleted_ids.contains(&key) {
             continue;
         }
         if budget == 0 {
@@ -888,7 +906,6 @@ pub fn run_sync(
     }
 
     // ── Phase 2: process this run's fresh events ────────────────────────
-    let mut deleted_ids: HashSet<String> = HashSet::new();
     for event in run.events {
         let (document_id, kind) = match &event {
             ConnectorEvent::DocumentCreated { document_id, .. } => {
@@ -901,7 +918,6 @@ pub fn run_sync(
             }
             ConnectorEvent::DocumentDeleted { document_id, .. } => {
                 outcome.deleted += 1;
-                deleted_ids.insert(document_id.as_str().to_string());
                 outcome.documents.push(FetchedDocV2 {
                     document_id: document_id.as_str().to_string(),
                     event_kind: SyncEventKind::Deleted,
@@ -1302,6 +1318,7 @@ mod tests {
             _token: &OAuth2Token,
             document_id: &SourceDocumentId,
         ) -> connector_framework::Result<FetchedContent> {
+            let nth = self.fetch_calls.fetch_add(1, Ordering::SeqCst);
             let ok = || FetchedContent {
                 body: format!("body-of-{}", document_id.as_str()).into_bytes(),
                 mime_type: "text/plain".to_string(),
@@ -1316,7 +1333,7 @@ mod tests {
                 }
                 FetchBehaviour::Error => Err(ConnectorError::Transport("boom".to_string())),
                 FetchBehaviour::FailFirstThenOk => {
-                    if self.fetch_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    if nth == 0 {
                         Err(ConnectorError::Transport("boom".to_string()))
                     } else {
                         Ok(ok())
@@ -1779,6 +1796,37 @@ mod tests {
             vec!["old2".to_string()],
             "deleted old1 is pruned; undrained old2 stays pending"
         );
+    }
+
+    #[test]
+    fn run_sync_does_not_fetch_backlog_id_deleted_this_run() {
+        // "d1" is in the backlog AND deleted at the source this run, with
+        // budget to spare. It must NOT be re-fetched: ingesting a body for
+        // a doc the host is about to delete (whose deletion can't be
+        // cleaned up — it was never in the prior manifest) would orphan a
+        // file/source on disk. Only the deletion event is surfaced.
+        let connector = FakeConnector::new(vec![deleted("d1")], FetchBehaviour::Ok);
+        let sink = RecordingSink::default();
+        let pending = [SourceDocumentId::new("d1")];
+        let outcome = run_sync(
+            &connector,
+            &cfg(),
+            &token(),
+            &SyncState::new(ConnectorInstanceId::new_v4()),
+            &sink,
+            SyncOptions::default(),
+            &pending,
+        )
+        .unwrap();
+        // No body was fetched (no Updated doc, nothing ingested), only the
+        // deletion is emitted, and nothing lingers in the backlog.
+        assert_eq!(connector.fetch_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(outcome.deleted, 1);
+        assert_eq!(outcome.documents.len(), 1);
+        assert_eq!(outcome.documents[0].event_kind, SyncEventKind::Deleted);
+        assert!(outcome.documents[0].body_base64.is_none());
+        assert!(sink.ingested.lock().unwrap().is_empty());
+        assert!(outcome.pending_fetch.is_empty());
     }
 
     #[test]
