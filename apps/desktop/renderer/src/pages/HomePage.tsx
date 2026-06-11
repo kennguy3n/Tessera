@@ -16,7 +16,17 @@ import { notifyArtifactsChanged, useRecentArtifacts } from "../hooks/useArtifact
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { useSourceList } from "../hooks/useSources";
 import { useSettings } from "../hooks/useSettings";
-import type { ArtifactInfo, SourceInfo } from "../types/ipc";
+import {
+  observationTypeLabel,
+  useKnowledgeInsights,
+  type ConceptNode,
+  type KnowledgeInsights,
+} from "../hooks/useSubstrateInsights";
+import type {
+  ArtifactInfo,
+  SourceInfo,
+  SubstrateMemoryInfo,
+} from "../types/ipc";
 
 /**
  * Canonical list of source statuses surfaced by
@@ -82,6 +92,19 @@ export default function HomePage() {
   const hasSources = sources.length > 0;
   const hasArtifacts = recent.length > 0;
   const isLoading = artifactsLoading || sourcesLoading || settingsLoading;
+
+  // Gate the substrate round-trip on there being something to describe.
+  // A fresh install renders the onboarding empty state (early-returns
+  // below) and never shows the insights card, so fetching memories +
+  // the concept graph there is pure waste. Once the user has any source
+  // or artifact the card renders and the hook fetches.
+  const knowledgeEnabled = hasSources || hasArtifacts;
+  const {
+    insights,
+    loading: insightsLoading,
+    error: insightsError,
+    bridgeAvailable: substrateAvailable,
+  } = useKnowledgeInsights(5, knowledgeEnabled);
 
   // gate the wizard on all three signals.
   // `settingsLoading` is intentionally included so we never flash the
@@ -255,6 +278,22 @@ export default function HomePage() {
         </div>
       </section>
 
+      {substrateAvailable && (
+        <section
+          aria-label="Knowledge insights"
+          style={{ marginBottom: "var(--spacing-xl)" }}
+        >
+          <h2 style={{ marginBottom: "var(--spacing-md)" }}>
+            Knowledge insights
+          </h2>
+          <KnowledgeInsightsCard
+            insights={insights}
+            loading={insightsLoading}
+            error={insightsError}
+          />
+        </section>
+      )}
+
       {hasArtifacts && (
         <section aria-label="Recent artifacts">
           <h2 style={{ marginBottom: "var(--spacing-md)" }}>Recent Artifacts</h2>
@@ -271,6 +310,179 @@ export default function HomePage() {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * "Knowledge insights" summary surfaced on the HomePage below the
+ * source-status card. Reads the substrate memory plane + concept graph
+ * (via `useKnowledgeInsights`) and renders three headline metrics plus
+ * the top reinforced memories and most-connected concepts, giving the
+ * user an at-a-glance sense of "what Tessera knows" without leaving
+ * Home. Renders distinct loading / error / empty states; the parent
+ * only mounts this when the native bridge is available.
+ */
+function KnowledgeInsightsCard({
+  insights,
+  loading,
+  error,
+}: {
+  insights: KnowledgeInsights;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading) {
+    return (
+      <Card data-testid="knowledge-insights-loading">
+        <p className="card-description" role="status" aria-live="polite">
+          Loading knowledge insights…
+        </p>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card data-testid="knowledge-insights-error">
+        <p
+          className="card-description"
+          role="alert"
+          style={{ color: "var(--color-text-secondary)" }}
+        >
+          Knowledge insights are unavailable right now. Your sources and
+          artifacts are unaffected.
+        </p>
+      </Card>
+    );
+  }
+
+  const isEmpty =
+    insights.totalMemories === 0 && insights.conceptCount === 0;
+  if (isEmpty) {
+    return (
+      <Card data-testid="knowledge-insights-empty">
+        <div className="card-description">
+          No knowledge extracted yet. Tessera builds memories and concepts as
+          it indexes your sources — open a source and run{" "}
+          <strong>Extract Tasks &amp; Decisions</strong> to seed the substrate.
+        </div>
+      </Card>
+    );
+  }
+
+  const metrics: Array<[string, number]> = [
+    ["Active memories", insights.activeMemories],
+    ["Concepts", insights.conceptCount],
+    ["Total memories", insights.totalMemories],
+  ];
+
+  return (
+    <div
+      data-testid="knowledge-insights"
+      style={{ display: "grid", gap: "var(--spacing-md)" }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: "var(--spacing-md)",
+          flexWrap: "wrap",
+        }}
+      >
+        {metrics.map(([label, value]) => (
+          <Card key={label}>
+            <div
+              className="card-title"
+              data-testid={`knowledge-metric-${label}`}
+            >
+              {value}
+            </div>
+            <div className="card-description">{label}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: "var(--spacing-md)",
+        }}
+      >
+        <Card>
+          <div className="card-description" style={{ marginBottom: "0.25rem" }}>
+            Top reinforced memories
+          </div>
+          {insights.topReinforced.length === 0 ? (
+            <div className="card-description">
+              No active memories yet.
+            </div>
+          ) : (
+            <ul
+              data-testid="knowledge-top-memories"
+              style={{
+                margin: 0,
+                paddingLeft: "1.1rem",
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-text)",
+              }}
+            >
+              {insights.topReinforced.map((mem: SubstrateMemoryInfo) => (
+                <li key={mem.id} style={{ marginBottom: "var(--spacing-xs)" }}>
+                  <span
+                    style={{
+                      fontSize: "var(--font-size-xs)",
+                      color: "var(--color-text-secondary)",
+                      marginRight: "0.375rem",
+                    }}
+                  >
+                    {observationTypeLabel(mem.observationType)}
+                  </span>
+                  {mem.content}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <div className="card-description" style={{ marginBottom: "0.25rem" }}>
+            Most-connected concepts
+          </div>
+          {insights.topConcepts.length === 0 ? (
+            <div className="card-description">No concepts extracted yet.</div>
+          ) : (
+            <ul
+              data-testid="knowledge-top-concepts"
+              style={{
+                margin: 0,
+                paddingLeft: "1.1rem",
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-text)",
+              }}
+            >
+              {insights.topConcepts.map((concept: ConceptNode) => (
+                <li
+                  key={concept.id}
+                  style={{ marginBottom: "var(--spacing-xs)" }}
+                >
+                  {concept.label || "(unlabeled)"}
+                  <span
+                    style={{
+                      fontSize: "var(--font-size-xs)",
+                      color: "var(--color-text-secondary)",
+                      marginLeft: "0.375rem",
+                    }}
+                  >
+                    · {concept.connectionsCount} link
+                    {concept.connectionsCount === 1 ? "" : "s"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
