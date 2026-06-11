@@ -96,7 +96,7 @@ impl From<KnowledgeConcept> for SubstrateConcept {
 }
 
 /// A concept-graph-derived suggestion of related sources for the
-/// artifact-creation flow ("You have N sources about [entity].").
+/// artifact-creation flow ("You have N sources about `[entity]`.").
 #[napi(object)]
 pub struct SubstrateRelatedSuggestion {
     /// Concept label the suggestion is anchored on.
@@ -202,7 +202,7 @@ pub fn bridge_get_memories(scope: Option<String>) -> napi::Result<Vec<SubstrateM
 
 /// Suggest sources related to an already-selected working set, via the
 /// concept graph. Powers the artifact-creation "You have N sources
-/// about [entity]. Include them?" affordance.
+/// about `[entity]`. Include them?" affordance.
 ///
 /// `selected_source_ids` is the user's current selection (source UUID
 /// strings); suggestions never include an already-selected source and
