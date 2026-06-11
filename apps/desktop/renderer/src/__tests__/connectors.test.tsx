@@ -675,6 +675,21 @@ describe("connectorDescriptors", () => {
     it("returns false when nothing matches", () => {
       expect(connectorMatchesQuery(drive, "salesforce")).toBe(false);
     });
+
+    it("matches multi-word queries per token across different fields", () => {
+      // "google" hits the label, "docs" hits a keyword alias — neither
+      // field contains the full phrase, so this only passes with
+      // token-AND matching (not verbatim-substring matching).
+      expect(connectorMatchesQuery(drive, "google docs")).toBe(true);
+      // Extra whitespace between/around tokens is ignored.
+      expect(connectorMatchesQuery(drive, "  drive   storage ")).toBe(true);
+    });
+
+    it("requires every token to match (token-AND, not token-OR)", () => {
+      // "google" matches but "salesforce" does not, so the combined
+      // query must fail.
+      expect(connectorMatchesQuery(drive, "google salesforce")).toBe(false);
+    });
   });
 
   describe("groupConnectorsByCategory", () => {

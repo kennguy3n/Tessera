@@ -269,11 +269,15 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
 ];
 
 /**
- * Case-insensitive predicate used by the gallery's search box. A
- * descriptor matches when the trimmed query is a substring of its
- * label, provider id, category, or any of its `keywords`. An empty
- * (or whitespace-only) query matches everything so clearing the box
- * restores the full list.
+ * Case-insensitive predicate used by the gallery's search box. The
+ * query is split into whitespace-separated tokens and a descriptor
+ * matches only when *every* token is a substring of at least one of
+ * its fields (label, provider id, category, or any `keywords`). This
+ * token-AND behaviour lets a user combine terms across fields — e.g.
+ * "google docs" matches Google Drive (token "google" hits the label,
+ * "docs" hits a keyword) — instead of requiring the whole phrase to
+ * appear verbatim in a single field. An empty (or whitespace-only)
+ * query matches everything so clearing the box restores the full list.
  *
  * Exported (and kept pure) so the matching contract can be unit
  * tested directly as data without rendering the component.
@@ -282,15 +286,17 @@ export function connectorMatchesQuery(
   descriptor: ConnectorDescriptor,
   query: string,
 ): boolean {
-  const q = query.trim().toLowerCase();
-  if (q === "") return true;
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
   const haystack: string[] = [
     descriptor.label,
     descriptor.provider,
     descriptor.category ?? "",
     ...(descriptor.keywords ?? []),
-  ];
-  return haystack.some((field) => field.toLowerCase().includes(q));
+  ].map((field) => field.toLowerCase());
+  return tokens.every((token) =>
+    haystack.some((field) => field.includes(token)),
+  );
 }
 
 export interface ConnectorCategoryGroup {

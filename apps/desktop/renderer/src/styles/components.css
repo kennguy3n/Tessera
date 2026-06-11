@@ -2228,6 +2228,15 @@
   margin-left: auto;
 }
 
+/* Disconnected cards surface their state through the shared `StatusBadge`
+   (which renders the raw lowercase status key). Capitalize it only inside
+   the connector card so it reads "Disconnected" — matching the capitalized
+   "Connected"/"Offline" text the connected `ConnectorStatus` renders — without
+   altering `StatusBadge` everywhere else it is used (e.g. HomePage counts). */
+.connector-status-badge .badge {
+  text-transform: capitalize;
+}
+
 .connector-status-actions {
   display: flex;
   align-items: center;
