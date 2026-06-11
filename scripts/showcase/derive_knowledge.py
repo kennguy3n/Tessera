@@ -43,7 +43,7 @@ PERSONAS = ["healthcare", "legal", "finance", "nonprofit", "retail"]
 
 # Deterministic "now" matching the rest of the showcase (NOW in index.ts =
 # 2026-05-12T15:04:00Z). Memory timestamps are expressed in epoch seconds.
-NOW_S = 1778677440  # 2026-05-12T15:04:00Z
+NOW_S = 1778598240  # 2026-05-12T15:04:00Z (== Date.parse(NOW) in index.ts)
 
 # Mirror of the engine's sentence-class keyword tables (English default set).
 DECISION_KW = re.compile(
