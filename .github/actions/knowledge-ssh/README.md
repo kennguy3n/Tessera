@@ -18,6 +18,12 @@ scoped so Tessera's own token-based https checkout is untouched), and sets
 It is wired into every cargo job: `rust` and `supply-chain` in
 `.github/workflows/ci.yml`, and `build` in `.github/workflows/release.yml`.
 
+> Scope note: git's `insteadOf` is prefix-based, so this rewrite also
+> matches a hypothetical `kennguy3n/knowledge-*` repo. None exist today.
+> If one is ever added as a dependency, give it its own deploy key + rule
+> rather than reusing this one (this key is read-scoped to `knowledge`),
+> otherwise its fetch will fail with a clear SSH permission error.
+
 ## One-time setup
 
 1. **Generate a dedicated keypair** (no passphrase) on any machine:
