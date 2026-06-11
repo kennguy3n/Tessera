@@ -47,6 +47,9 @@ jobs:
               - 'rust-toolchain.toml'
               - 'apps/desktop/native/**'
               - '.github/workflows/ci.yml'
+              # The knowledge-ssh composite action gates every cargo step, so
+              # an action-only edit must still exercise the rust/supply-chain jobs.
+              - '.github/actions/**'
             typescript:
               - 'apps/**'
               - 'package.json'
