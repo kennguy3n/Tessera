@@ -845,17 +845,24 @@ pub fn run_sync(
     // the fresh event stream is fetched only once.
     let mut handled: HashSet<String> = HashSet::new();
     // Deferred ids (undrained backlog + fresh overflow), in deferral
-    // order. De-duplicated and pruned of deletions before return.
+    // order. Pruned of deletions and successful re-fetches before return.
     let mut deferred: Vec<String> = Vec::new();
+    // O(1) membership companion to `deferred` (which only preserves
+    // order): every defer site dedupes against this set, so a run that
+    // overflows by thousands of documents stays linear instead of the
+    // O(n²) it would be scanning the Vec on each push.
+    let mut deferred_set: HashSet<String> = HashSet::new();
 
     // ── Phase 1: drain the deferred backlog (id-addressable) ────────────
     for id in pending {
         let key = id.as_str().to_string();
-        if handled.contains(&key) || deferred.contains(&key) {
+        if handled.contains(&key) || deferred_set.contains(&key) {
             continue;
         }
         if budget == 0 {
-            deferred.push(key);
+            if deferred_set.insert(key.clone()) {
+                deferred.push(key);
+            }
             continue;
         }
         budget -= 1;
@@ -872,7 +879,11 @@ pub fn run_sync(
                 handled.insert(key);
                 outcome.documents.push(doc);
             }
-            FetchResult::Deferred => deferred.push(key),
+            FetchResult::Deferred => {
+                if deferred_set.insert(key.clone()) {
+                    deferred.push(key);
+                }
+            }
         }
     }
 
@@ -933,7 +944,7 @@ pub fn run_sync(
         if budget == 0 {
             // Out of budget this run — defer rather than advance the
             // cursor past an un-fetched body.
-            if !deferred.contains(&key) {
+            if deferred_set.insert(key.clone()) {
                 deferred.push(key);
             }
             continue;
@@ -953,18 +964,22 @@ pub fn run_sync(
                 outcome.documents.push(doc);
             }
             FetchResult::Deferred => {
-                if !deferred.contains(&key) {
+                if deferred_set.insert(key.clone()) {
                     deferred.push(key);
                 }
             }
         }
     }
 
-    // A document deleted at the source this run never needs its body
-    // re-fetched — drop it from the backlog so a deleted doc can't linger
-    // there being retried forever.
-    if !deleted_ids.is_empty() {
-        deferred.retain(|id| !deleted_ids.contains(id));
+    // Drop ids we no longer need to carry forward:
+    //  - documents deleted at the source this run never need a body, and
+    //  - documents a later phase successfully materialised: an id present
+    //    in BOTH the backlog and this run's fresh events whose Phase-1
+    //    re-fetch failed transiently but whose Phase-2 fetch then
+    //    succeeded must not linger as stale `pending` (it is already
+    //    ingested) and trigger a redundant re-fetch next run.
+    if !deleted_ids.is_empty() || !handled.is_empty() {
+        deferred.retain(|id| !deleted_ids.contains(id) && !handled.contains(id));
     }
     outcome.pending_fetch = deferred;
 
@@ -1222,6 +1237,7 @@ mod tests {
         fetch_behaviour: FetchBehaviour,
         initial_calls: AtomicUsize,
         incremental_calls: AtomicUsize,
+        fetch_calls: AtomicUsize,
     }
 
     #[derive(Clone, Copy)]
@@ -1229,6 +1245,9 @@ mod tests {
         Ok,
         Unimplemented,
         Error,
+        /// Fail the first `fetch_content` call (simulating a transient
+        /// error), then succeed on every subsequent call.
+        FailFirstThenOk,
     }
 
     impl FakeConnector {
@@ -1239,6 +1258,7 @@ mod tests {
                 fetch_behaviour: fetch,
                 initial_calls: AtomicUsize::new(0),
                 incremental_calls: AtomicUsize::new(0),
+                fetch_calls: AtomicUsize::new(0),
             }
         }
     }
@@ -1282,18 +1302,26 @@ mod tests {
             _token: &OAuth2Token,
             document_id: &SourceDocumentId,
         ) -> connector_framework::Result<FetchedContent> {
+            let ok = || FetchedContent {
+                body: format!("body-of-{}", document_id.as_str()).into_bytes(),
+                mime_type: "text/plain".to_string(),
+                title: Some(format!("Title {}", document_id.as_str())),
+                metadata: json!({"doc": document_id.as_str()}),
+                source_url: Some(format!("https://example/{}", document_id.as_str())),
+            };
             match self.fetch_behaviour {
-                FetchBehaviour::Ok => Ok(FetchedContent {
-                    body: format!("body-of-{}", document_id.as_str()).into_bytes(),
-                    mime_type: "text/plain".to_string(),
-                    title: Some(format!("Title {}", document_id.as_str())),
-                    metadata: json!({"doc": document_id.as_str()}),
-                    source_url: Some(format!("https://example/{}", document_id.as_str())),
-                }),
+                FetchBehaviour::Ok => Ok(ok()),
                 FetchBehaviour::Unimplemented => {
                     Err(ConnectorError::Unimplemented("fetch".to_string()))
                 }
                 FetchBehaviour::Error => Err(ConnectorError::Transport("boom".to_string())),
+                FetchBehaviour::FailFirstThenOk => {
+                    if self.fetch_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err(ConnectorError::Transport("boom".to_string()))
+                    } else {
+                        Ok(ok())
+                    }
+                }
             }
         }
 
@@ -1750,6 +1778,37 @@ mod tests {
             outcome.pending_fetch,
             vec!["old2".to_string()],
             "deleted old1 is pruned; undrained old2 stays pending"
+        );
+    }
+
+    #[test]
+    fn run_sync_prunes_backlog_id_resolved_by_fresh_event() {
+        // "d1" is carried in the backlog AND changed again at the source
+        // this run. Its Phase-1 re-fetch fails transiently, but the fresh
+        // Phase-2 event re-fetches it successfully. It must NOT remain in
+        // pending_fetch — it is already ingested, so carrying it forward
+        // would cause a redundant re-fetch next run.
+        let connector = FakeConnector::new(vec![updated("d1")], FetchBehaviour::FailFirstThenOk);
+        let sink = RecordingSink::default();
+        let pending = [SourceDocumentId::new("d1")];
+        let outcome = run_sync(
+            &connector,
+            &cfg(),
+            &token(),
+            &SyncState::new(ConnectorInstanceId::new_v4()),
+            &sink,
+            SyncOptions::default(),
+            &pending,
+        )
+        .unwrap();
+        // Phase 1 fetch failed (warning recorded); Phase 2 fetch succeeded.
+        assert_eq!(outcome.warnings.len(), 1);
+        assert_eq!(outcome.documents.len(), 1);
+        assert!(outcome.documents[0].body_base64.is_some());
+        assert_eq!(sink.ingested.lock().unwrap().len(), 1);
+        assert!(
+            outcome.pending_fetch.is_empty(),
+            "a backlog id resolved by a fresh event must not stay pending"
         );
     }
 
