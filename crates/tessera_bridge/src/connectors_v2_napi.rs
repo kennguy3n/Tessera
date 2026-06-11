@@ -173,6 +173,10 @@ pub fn bridge_connectors_v2_refresh(
 /// Rejects on connector/config failure. Per-document fetch/ingest
 /// issues are returned as non-fatal warnings inside the outcome.
 #[napi(ts_return_type = "Promise<string>")]
+// NAPI boundary: each parameter maps to a positional JS argument the
+// renderer passes, so they cannot be collapsed into a struct without
+// breaking the `bridgeConnectorsV2Sync` call contract.
+#[allow(clippy::too_many_arguments)]
 pub fn bridge_connectors_v2_sync(
     provider: String,
     auth_config_json: String,
@@ -181,6 +185,7 @@ pub fn bridge_connectors_v2_sync(
     scope_id: Option<String>,
     fetch_content: Option<bool>,
     max_fetch: Option<u32>,
+    pending_json: Option<String>,
 ) -> AsyncTask<ConnectorsV2SyncTask> {
     AsyncTask::new(ConnectorsV2SyncTask {
         provider,
@@ -190,6 +195,7 @@ pub fn bridge_connectors_v2_sync(
         scope_id,
         fetch_content,
         max_fetch,
+        pending_json,
     })
 }
 
@@ -207,6 +213,7 @@ pub struct ConnectorsV2SyncTask {
     scope_id: Option<String>,
     fetch_content: Option<bool>,
     max_fetch: Option<u32>,
+    pending_json: Option<String>,
 }
 
 impl Task for ConnectorsV2SyncTask {
@@ -229,6 +236,14 @@ impl Task for ConnectorsV2SyncTask {
                 .map_or(SyncOptions::default().max_fetch, |m| m as usize),
         };
 
+        // Deferred-fetch backlog from the previous run (document ids).
+        // Absent / blank / `"null"` means an empty backlog.
+        let pending: Vec<String> = match &self.pending_json {
+            Some(s) if !s.trim().is_empty() && s.trim() != "null" => serde_json::from_str(s)
+                .map_err(|e| NapiError::from_reason(format!("invalid pending JSON: {e}")))?,
+            _ => Vec::new(),
+        };
+
         let sink = NoopEvidenceSink;
         let outcome = connectors_v2::sync(
             &self.provider,
@@ -238,6 +253,7 @@ impl Task for ConnectorsV2SyncTask {
             self.scope_id.as_deref(),
             &sink,
             opts,
+            &pending,
         )
         .map_err(|e| to_napi(&e))?;
 

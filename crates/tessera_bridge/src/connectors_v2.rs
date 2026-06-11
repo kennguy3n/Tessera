@@ -57,7 +57,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use base64::Engine as _;
@@ -671,6 +671,19 @@ pub struct SyncOutcome {
     /// still succeeds; the host can surface these for observability.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Source-side document ids whose body was **not** materialised this
+    /// run and must be re-fetched later — the per-run `max_fetch` budget
+    /// was exhausted before reaching them, or a (likely transient) fetch
+    /// error occurred. The connector cursor advances past these
+    /// documents (it is a single terminal watermark for the whole
+    /// drained batch and cannot be split), so without carrying these ids
+    /// forward their content would be lost until the source happens to
+    /// touch them again. The host persists this list and feeds it back
+    /// as `pending` on the next run, where [`run_sync`] drains it via the
+    /// id-addressable [`Connector::fetch_content`]. Order is
+    /// deferral-order (oldest first) and ids are de-duplicated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_fetch: Vec<String>,
 }
 
 // ─────────────────────────── sync orchestration ────────────────────────────
@@ -696,6 +709,65 @@ impl Default for SyncOptions {
     }
 }
 
+/// Outcome of materialising a single document's body.
+enum FetchResult {
+    /// Body materialised; the doc carries it and should be emitted.
+    Materialised(FetchedDocV2),
+    /// Provider has no fetchable content for this document
+    /// ([`ConnectorError::Unimplemented`]). Emit the metadata-only doc
+    /// (the host's ingest skips body-less docs, so this produces no
+    /// index entry) — there is nothing to retry, so it is **not**
+    /// deferred.
+    NoContent(FetchedDocV2),
+    /// Fetch failed for a (likely transient) reason. The id must be
+    /// retried on a future run rather than dropped — the caller records
+    /// it in [`SyncOutcome::pending_fetch`].
+    Deferred,
+}
+
+/// Fetch one document's body via the id-addressable
+/// [`Connector::fetch_content`], ingest it into `sink`, and build the
+/// host-facing [`FetchedDocV2`]. Pure per-document work shared by the
+/// backlog-drain and fresh-event phases of [`run_sync`].
+fn fetch_document(
+    connector: &dyn Connector,
+    config: &ConnectorConfig,
+    token: &OAuth2Token,
+    sink: &dyn EvidenceSink,
+    document_id: &SourceDocumentId,
+    kind: SyncEventKind,
+    warnings: &mut Vec<String>,
+) -> FetchResult {
+    let mut doc = FetchedDocV2 {
+        document_id: document_id.as_str().to_string(),
+        event_kind: kind,
+        title: None,
+        mime_type: None,
+        source_url: None,
+        body_base64: None,
+        metadata: serde_json::Value::Null,
+    };
+
+    match connector.fetch_content(config, token, document_id) {
+        Ok(content) => {
+            if let Err(err) = sink.ingest(&config.scope_id, document_id, &content) {
+                warnings.push(format!("ingest {}: {err}", document_id.as_str()));
+            }
+            doc.title.clone_from(&content.title);
+            doc.mime_type = Some(content.mime_type.clone());
+            doc.source_url.clone_from(&content.source_url);
+            doc.body_base64 = Some(base64_encode(&content.body));
+            doc.metadata = content.metadata;
+            FetchResult::Materialised(doc)
+        }
+        Err(connector_framework::ConnectorError::Unimplemented(_)) => FetchResult::NoContent(doc),
+        Err(e) => {
+            warnings.push(format!("fetch {}: {e}", document_id.as_str()));
+            FetchResult::Deferred
+        }
+    }
+}
+
 /// Run one sync pass against `connector`, fetching changed content and
 /// piping it through `sink`, and returning a host-facing [`SyncOutcome`].
 ///
@@ -704,6 +776,28 @@ impl Default for SyncOptions {
 /// failures are collected as non-fatal warnings so a single bad
 /// document cannot abort the whole run (important when a sync touches
 /// thousands of documents for a tenant).
+///
+/// # Bounded, lossless content fetching
+///
+/// The `connector_framework` connectors drain **every** page of their
+/// change feed into a single [`SyncRunResult`] and return one terminal
+/// [`SyncRunResult::next_cursor`] for the whole batch (a connector loops
+/// internally up to its own page cap — e.g. tens of thousands of pages —
+/// so one call routinely surfaces far more than `max_fetch` events). The
+/// cursor is opaque and cannot be split, so once we persist it the
+/// source will not re-surface those documents until they change again.
+///
+/// Fetching every body in one run is unbounded (memory / throughput /
+/// the JSON payload back across the host boundary), so `max_fetch` caps
+/// the bodies materialised per run. To avoid the cursor silently
+/// advancing past un-fetched documents — which would lose their content
+/// indefinitely — every created/updated document whose body is not
+/// obtained this run (budget exhausted, or a transient fetch error) is
+/// recorded in [`SyncOutcome::pending_fetch`]. The host persists that
+/// list and feeds it back as `pending`; this function drains it FIRST on
+/// the next run (oldest deferrals first) via the id-addressable
+/// [`Connector::fetch_content`], so every document is eventually indexed
+/// while per-run work stays bounded by `max_fetch`.
 ///
 /// # Errors
 ///
@@ -717,6 +811,7 @@ pub fn run_sync(
     state: &SyncState,
     sink: &dyn EvidenceSink,
     opts: SyncOptions,
+    pending: &[SourceDocumentId],
 ) -> Result<SyncOutcome> {
     let is_initial = matches!(state.mode, SyncMode::Full)
         && state.cursor.is_none()
@@ -736,8 +831,49 @@ pub fn run_sync(
         next_cursor: run.next_cursor,
         ..SyncOutcome::default()
     };
-    let mut fetches = 0usize;
 
+    // Total content-fetch budget for THIS run, shared between draining
+    // the deferred backlog and fetching freshly-changed documents. When
+    // `fetch_content` is off (metadata-only "what changed" probe) the
+    // budget is zero and the inbound backlog passes through untouched.
+    let mut budget = if opts.fetch_content { opts.max_fetch } else { 0 };
+    // Ids materialised this run, so a doc present in BOTH the backlog and
+    // the fresh event stream is fetched only once.
+    let mut handled: HashSet<String> = HashSet::new();
+    // Deferred ids (undrained backlog + fresh overflow), in deferral
+    // order. De-duplicated and pruned of deletions before return.
+    let mut deferred: Vec<String> = Vec::new();
+
+    // ── Phase 1: drain the deferred backlog (id-addressable) ────────────
+    for id in pending {
+        let key = id.as_str().to_string();
+        if handled.contains(&key) || deferred.contains(&key) {
+            continue;
+        }
+        if budget == 0 {
+            deferred.push(key);
+            continue;
+        }
+        budget -= 1;
+        match fetch_document(
+            connector,
+            config,
+            token,
+            sink,
+            id,
+            SyncEventKind::Updated,
+            &mut outcome.warnings,
+        ) {
+            FetchResult::Materialised(doc) | FetchResult::NoContent(doc) => {
+                handled.insert(key);
+                outcome.documents.push(doc);
+            }
+            FetchResult::Deferred => deferred.push(key),
+        }
+    }
+
+    // ── Phase 2: process this run's fresh events ────────────────────────
+    let mut deleted_ids: HashSet<String> = HashSet::new();
     for event in run.events {
         let (document_id, kind) = match &event {
             ConnectorEvent::DocumentCreated { document_id, .. } => {
@@ -750,6 +886,7 @@ pub fn run_sync(
             }
             ConnectorEvent::DocumentDeleted { document_id, .. } => {
                 outcome.deleted += 1;
+                deleted_ids.insert(document_id.as_str().to_string());
                 outcome.documents.push(FetchedDocV2 {
                     document_id: document_id.as_str().to_string(),
                     event_kind: SyncEventKind::Deleted,
@@ -767,45 +904,65 @@ pub fn run_sync(
             }
         };
 
-        let mut doc = FetchedDocV2 {
-            document_id: document_id.as_str().to_string(),
-            event_kind: kind,
-            title: None,
-            mime_type: None,
-            source_url: None,
-            body_base64: None,
-            metadata: serde_json::Value::Null,
-        };
+        let key = document_id.as_str().to_string();
+        // Already materialised while draining the backlog above — the
+        // body we just fetched is current, so skip the duplicate fetch.
+        if handled.contains(&key) {
+            continue;
+        }
 
-        if opts.fetch_content && fetches < opts.max_fetch {
-            fetches += 1;
-            match connector.fetch_content(config, token, &document_id) {
-                Ok(content) => {
-                    if let Err(err) = sink.ingest(&config.scope_id, &document_id, &content) {
-                        outcome
-                            .warnings
-                            .push(format!("ingest {}: {err}", document_id.as_str()));
-                    }
-                    doc.title.clone_from(&content.title);
-                    doc.mime_type = Some(content.mime_type.clone());
-                    doc.source_url.clone_from(&content.source_url);
-                    doc.body_base64 = Some(base64_encode(&content.body));
-                    doc.metadata = content.metadata;
-                }
-                Err(connector_framework::ConnectorError::Unimplemented(_)) => {
-                    // Provider does not expose content fetch; keep the
-                    // event as a metadata-only signal.
-                }
-                Err(e) => {
-                    outcome
-                        .warnings
-                        .push(format!("fetch {}: {e}", document_id.as_str()));
+        if !opts.fetch_content {
+            // Metadata-only probe: surface the event without a body and
+            // without deferring (there is no content phase to defer to).
+            outcome.documents.push(FetchedDocV2 {
+                document_id: key,
+                event_kind: kind,
+                title: None,
+                mime_type: None,
+                source_url: None,
+                body_base64: None,
+                metadata: serde_json::Value::Null,
+            });
+            continue;
+        }
+
+        if budget == 0 {
+            // Out of budget this run — defer rather than advance the
+            // cursor past an un-fetched body.
+            if !deferred.contains(&key) {
+                deferred.push(key);
+            }
+            continue;
+        }
+        budget -= 1;
+        match fetch_document(
+            connector,
+            config,
+            token,
+            sink,
+            &document_id,
+            kind,
+            &mut outcome.warnings,
+        ) {
+            FetchResult::Materialised(doc) | FetchResult::NoContent(doc) => {
+                handled.insert(key);
+                outcome.documents.push(doc);
+            }
+            FetchResult::Deferred => {
+                if !deferred.contains(&key) {
+                    deferred.push(key);
                 }
             }
         }
-
-        outcome.documents.push(doc);
     }
+
+    // A document deleted at the source this run never needs its body
+    // re-fetched — drop it from the backlog so a deleted doc can't linger
+    // there being retried forever.
+    if !deleted_ids.is_empty() {
+        deferred.retain(|id| !deleted_ids.contains(id));
+    }
+    outcome.pending_fetch = deferred;
 
     Ok(outcome)
 }
@@ -941,12 +1098,19 @@ fn existing_auth_config(auth_config: &serde_json::Value) -> serde_json::Value {
 /// piping it through `sink`.
 ///
 /// `state_json` is the persisted [`SyncState`] from the previous run
-/// (or `null`/absent for a first sync). The returned [`SyncOutcome`]
-/// carries the new cursor for the host to persist.
+/// (or `null`/absent for a first sync). `pending` is the host's
+/// deferred-fetch backlog from the previous run (document ids whose
+/// bodies were not materialised yet); it is drained first within the
+/// `max_fetch` budget. The returned [`SyncOutcome`] carries the new
+/// cursor and the updated backlog for the host to persist.
 ///
 /// # Errors
 ///
 /// Propagates connector and config errors.
+// Boundary function threading the connector wire params (auth, token,
+// state, scope, sink, options, deferred-fetch backlog) into one run;
+// these are inherently positional and mirror the NAPI signature.
+#[allow(clippy::too_many_arguments)]
 pub fn sync(
     provider: &str,
     auth_config: serde_json::Value,
@@ -955,6 +1119,7 @@ pub fn sync(
     scope_id: Option<&str>,
     sink: &dyn EvidenceSink,
     opts: SyncOptions,
+    pending: &[String],
 ) -> Result<SyncOutcome> {
     let scope = parse_scope(scope_id, provider)?;
     let (connector, config, instance) = resolve_connector(provider, auth_config, scope)?;
@@ -972,7 +1137,20 @@ pub fn sync(
         _ => SyncState::new(instance),
     };
 
-    run_sync(&*connector, &config, &token, &state, sink, opts)
+    let pending_ids: Vec<SourceDocumentId> = pending
+        .iter()
+        .map(|id| SourceDocumentId::new(id.clone()))
+        .collect();
+
+    run_sync(
+        &*connector,
+        &config,
+        &token,
+        &state,
+        sink,
+        opts,
+        &pending_ids,
+    )
 }
 
 #[cfg(test)]
@@ -1310,6 +1488,7 @@ mod tests {
             &state,
             &sink,
             SyncOptions::default(),
+            &[],
         )
         .unwrap();
 
@@ -1367,6 +1546,7 @@ mod tests {
             &state,
             &sink,
             SyncOptions::default(),
+            &[],
         )
         .unwrap();
         assert_eq!(connector.incremental_calls.load(Ordering::SeqCst), 1);
@@ -1384,6 +1564,7 @@ mod tests {
             &SyncState::new(ConnectorInstanceId::new_v4()),
             &sink,
             SyncOptions::default(),
+            &[],
         )
         .unwrap();
         assert_eq!(outcome.documents.len(), 1);
@@ -1392,11 +1573,15 @@ mod tests {
             outcome.warnings.is_empty(),
             "unimplemented is not a warning"
         );
+        assert!(
+            outcome.pending_fetch.is_empty(),
+            "a provider with no content fetch has nothing to retry"
+        );
         assert!(sink.ingested.lock().unwrap().is_empty());
     }
 
     #[test]
-    fn run_sync_records_fetch_errors_as_warnings() {
+    fn run_sync_defers_fetch_errors_instead_of_dropping() {
         let connector = FakeConnector::new(vec![created("d1")], FetchBehaviour::Error);
         let sink = RecordingSink::default();
         let outcome = run_sync(
@@ -1406,10 +1591,16 @@ mod tests {
             &SyncState::new(ConnectorInstanceId::new_v4()),
             &sink,
             SyncOptions::default(),
+            &[],
         )
         .unwrap();
         assert_eq!(outcome.warnings.len(), 1);
         assert!(outcome.warnings[0].contains("fetch d1"));
+        // A transient fetch failure must not silently drop the document:
+        // the cursor advances, so the id is deferred for a future retry
+        // rather than emitted body-less.
+        assert!(outcome.documents.is_empty());
+        assert_eq!(outcome.pending_fetch, vec!["d1".to_string()]);
     }
 
     #[test]
@@ -1422,12 +1613,16 @@ mod tests {
             &SyncState::new(ConnectorInstanceId::new_v4()),
             &FailingSink,
             SyncOptions::default(),
+            &[],
         )
         .unwrap();
         assert_eq!(outcome.warnings.len(), 1);
         assert!(outcome.warnings[0].contains("ingest d1"));
-        // The doc is still returned to the host for the search-index path.
+        // The doc is still returned to the host for the search-index path
+        // (the body WAS fetched; only the substrate ingest failed), so it
+        // is not deferred.
         assert_eq!(outcome.documents.len(), 1);
+        assert!(outcome.pending_fetch.is_empty());
     }
 
     #[test]
@@ -1448,10 +1643,12 @@ mod tests {
             &SyncState::new(ConnectorInstanceId::new_v4()),
             &sink,
             opts,
+            &[],
         )
         .unwrap();
-        // All three events are recorded, but only two bodies fetched.
-        assert_eq!(outcome.documents.len(), 3);
+        // Two bodies fetched within budget; the third is deferred (not
+        // dropped) so the cursor advancing past it does not lose content.
+        assert_eq!(outcome.documents.len(), 2);
         assert_eq!(sink.ingested.lock().unwrap().len(), 2);
         let with_body = outcome
             .documents
@@ -1459,6 +1656,97 @@ mod tests {
             .filter(|d| d.body_base64.is_some())
             .count();
         assert_eq!(with_body, 2);
+        assert_eq!(outcome.pending_fetch, vec!["d3".to_string()]);
+        // Event counters still reflect every event observed.
+        assert_eq!(outcome.created, 3);
+    }
+
+    #[test]
+    fn run_sync_drains_pending_backlog_first() {
+        // No fresh events; the backlog from a prior run is drained.
+        let connector = FakeConnector::new(vec![], FetchBehaviour::Ok);
+        let sink = RecordingSink::default();
+        let pending = [SourceDocumentId::new("old1"), SourceDocumentId::new("old2")];
+        let outcome = run_sync(
+            &connector,
+            &cfg(),
+            &token(),
+            &SyncState::new(ConnectorInstanceId::new_v4()),
+            &sink,
+            SyncOptions::default(),
+            &pending,
+        )
+        .unwrap();
+        assert_eq!(outcome.documents.len(), 2);
+        assert_eq!(sink.ingested.lock().unwrap().len(), 2);
+        assert!(outcome.documents.iter().all(|d| d.body_base64.is_some()));
+        assert!(
+            outcome.pending_fetch.is_empty(),
+            "a fully-drained backlog leaves nothing pending"
+        );
+    }
+
+    #[test]
+    fn run_sync_backlog_drain_is_bounded_by_budget() {
+        // Budget of 2 must cover backlog + fresh events: the backlog
+        // drains first, leaving fresh events to defer.
+        let connector = FakeConnector::new(vec![created("new1")], FetchBehaviour::Ok);
+        let sink = RecordingSink::default();
+        let opts = SyncOptions {
+            fetch_content: true,
+            max_fetch: 2,
+        };
+        let pending = [
+            SourceDocumentId::new("old1"),
+            SourceDocumentId::new("old2"),
+            SourceDocumentId::new("old3"),
+        ];
+        let outcome = run_sync(
+            &connector,
+            &cfg(),
+            &token(),
+            &SyncState::new(ConnectorInstanceId::new_v4()),
+            &sink,
+            opts,
+            &pending,
+        )
+        .unwrap();
+        // old1, old2 drained; old3 and new1 deferred (backlog first, then
+        // fresh overflow), preserving deferral order.
+        assert_eq!(outcome.documents.len(), 2);
+        assert_eq!(
+            outcome.pending_fetch,
+            vec!["old3".to_string(), "new1".to_string()]
+        );
+    }
+
+    #[test]
+    fn run_sync_prunes_deleted_ids_from_backlog() {
+        // A doc still pending from a prior run is deleted at the source;
+        // it must not be retried (and must not linger in the backlog).
+        let connector = FakeConnector::new(vec![deleted("old1")], FetchBehaviour::Ok);
+        let sink = RecordingSink::default();
+        let opts = SyncOptions {
+            fetch_content: true,
+            max_fetch: 0,
+        };
+        let pending = [SourceDocumentId::new("old1"), SourceDocumentId::new("old2")];
+        let outcome = run_sync(
+            &connector,
+            &cfg(),
+            &token(),
+            &SyncState::new(ConnectorInstanceId::new_v4()),
+            &sink,
+            opts,
+            &pending,
+        )
+        .unwrap();
+        assert_eq!(outcome.deleted, 1);
+        assert_eq!(
+            outcome.pending_fetch,
+            vec!["old2".to_string()],
+            "deleted old1 is pruned; undrained old2 stays pending"
+        );
     }
 
     #[test]
