@@ -1,22 +1,38 @@
 /**
- * Multi-provider connector list.
+ * Searchable, categorized connector gallery.
  *
- * Renders one row per supported connector (Google Drive, OneDrive,
- * Notion, Jira, Confluence, Figma) with an inline "Connect" button
- * for disconnected providers, falling through to the existing
- * `ConnectorStatus` card when connected so the user gets the same
- * Sync Now / Disconnect controls for every provider.
+ * Renders the supported connectors (Google Drive, OneDrive, Notion,
+ * Jira, Confluence, Figma, HubSpot, Slack, Email/Gmail, GitHub)
+ * grouped into categories (Storage, Docs & Wiki, Chat, …) with a
+ * search box, per-connector health + last-sync, a one-click
+ * reconnect/reauth affordance, and a "what we read / what we never
+ * touch" scope-transparency disclosure.
  *
- * The OAuth client_id / client_secret entry modal is shared across
- * all six providers — only the labelled help text differs by
- * provider (e.g. "Microsoft Entra ID" vs "Google Cloud Console").
+ * Connected providers fall through to the existing `ConnectorStatus`
+ * card so the user gets the same Sync Now / Disconnect controls for
+ * every provider; disconnected providers show a "Connect" button
+ * that opens the shared OAuth credential modal — only the labelled
+ * help text differs by provider (e.g. "Microsoft Entra ID" vs
+ * "Google Cloud Console").
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ConnectorStatusInfo } from "../types/ipc";
+import type {
+  ConnectorScopeComparison,
+  ConnectorStatusInfo,
+} from "../types/ipc";
 import Button from "./Button";
+import Card from "./Card";
 import Modal from "./Modal";
+import SearchInput from "./SearchInput";
+import EmptyState from "./EmptyState";
+import StatusBadge from "./StatusBadge";
 import ConnectorStatus from "./ConnectorStatus";
-import { CONNECTOR_DESCRIPTORS } from "./connectorDescriptors";
+import {
+  CONNECTOR_DESCRIPTORS,
+  connectorMatchesQuery,
+  groupConnectorsByCategory,
+  type ConnectorDescriptor,
+} from "./connectorDescriptors";
 
 interface ConnectorsListProps {
   onChange?: () => void;
@@ -28,6 +44,64 @@ interface ConnectorsListProps {
    * the Drive card twice.
    */
   excludeProviders?: ReadonlyArray<string>;
+}
+
+/**
+ * Read-only inspection of the requested-vs-granted OAuth scope diff
+ * for a connector, guarded against showcase / partial-mock bridges
+ * that don't implement `inspectScopes`. Returns `null` (treated as
+ * "no narrowing to report") on any failure so a connector card never
+ * crashes the gallery just because scope inspection is unavailable.
+ */
+async function safeInspectScopes(
+  provider: string,
+): Promise<ConnectorScopeComparison | null> {
+  const api = typeof window !== "undefined" ? window.tessera : undefined;
+  if (!api || typeof api.connectors.inspectScopes !== "function") return null;
+  try {
+    return await api.connectors.inspectScopes(provider);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The "what we read / what we never touch" transparency disclosure.
+ * Rendered for every connector (connected or not) so the user can
+ * audit the data surface before authorising. Uses a native
+ * `<details>`/`<summary>` so it is keyboard-operable for free.
+ */
+function ScopeTransparency({ descriptor }: { descriptor: ConnectorDescriptor }) {
+  const reads = descriptor.reads ?? [];
+  const neverTouches = descriptor.neverTouches ?? [];
+  if (reads.length === 0 && neverTouches.length === 0) return null;
+  return (
+    <details className="connector-scopes">
+      <summary aria-label={`Data access for ${descriptor.label}`}>
+        What we read / what we never touch
+      </summary>
+      {reads.length > 0 && (
+        <div className="connector-scopes-group">
+          <span className="connector-scopes-label">We read</span>
+          <ul>
+            {reads.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {neverTouches.length > 0 && (
+        <div className="connector-scopes-group">
+          <span className="connector-scopes-label">We never touch</span>
+          <ul>
+            {neverTouches.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </details>
+  );
 }
 
 export default function ConnectorsList({
@@ -49,6 +123,13 @@ export default function ConnectorsList({
   const [statuses, setStatuses] = useState<Record<string, ConnectorStatusInfo>>(
     {},
   );
+  // Per-provider requested-vs-granted scope diff, fetched for
+  // connected providers so a "scopes narrowed" banner + Reconnect CTA
+  // can surface without the user first attempting a sync.
+  const [scopeInfo, setScopeInfo] = useState<
+    Record<string, ConnectorScopeComparison>
+  >({});
+  const [query, setQuery] = useState("");
   const [authOpenFor, setAuthOpenFor] = useState<string | null>(null);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -87,24 +168,49 @@ export default function ConnectorsList({
     };
   }, [descriptors]);
 
+  // Invoked fire-and-forget from the mount effect and from the
+  // authenticate/disconnect handlers, so it must never reject: an
+  // unhandled rejection would surface as a noisy console error (or a
+  // test failure) for no actionable reason. Per-provider IPC failures
+  // are already absorbed below; the outer try/catch additionally guards
+  // the trailing `setState` calls so every caller can safely ignore the
+  // returned promise.
   const pollAll = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;
-    const next: Record<string, ConnectorStatusInfo> = {};
-    await Promise.all(
-      descriptors.map(async (d) => {
-        try {
-          next[d.provider] = await api.connectors.status(d.provider);
-        } catch {
-          next[d.provider] = {
-            provider: d.provider,
-            connected: false,
-            status: "error",
-          };
-        }
-      }),
-    );
-    setStatuses(next);
+    try {
+      const nextStatuses: Record<string, ConnectorStatusInfo> = {};
+      const nextScopes: Record<string, ConnectorScopeComparison> = {};
+      await Promise.all(
+        descriptors.map(async (d) => {
+          let info: ConnectorStatusInfo;
+          try {
+            info = await api.connectors.status(d.provider);
+          } catch {
+            info = {
+              provider: d.provider,
+              connected: false,
+              status: "error",
+            };
+          }
+          nextStatuses[d.provider] = info;
+          // Scope inspection is meaningful only for a connected
+          // provider (it reads the stored token). Skipping the call
+          // for disconnected providers avoids a guaranteed `null`
+          // round-trip per poll.
+          if (info.connected) {
+            const cmp = await safeInspectScopes(d.provider);
+            if (cmp) nextScopes[d.provider] = cmp;
+          }
+        }),
+      );
+      setStatuses(nextStatuses);
+      setScopeInfo(nextScopes);
+    } catch {
+      // Unexpected failure (e.g. a React state update error). Swallow
+      // it rather than reject — there is no recovery action and the
+      // next poll/action will retry from a clean slate.
+    }
   }, [descriptors]);
 
   useEffect(() => {
@@ -114,6 +220,26 @@ export default function ConnectorsList({
   const descriptor = authOpenFor
     ? descriptors.find((d) => d.provider === authOpenFor)
     : null;
+
+  const openAuthModal = useCallback((provider: string) => {
+    setClientId("");
+    setClientSecret("");
+    setAuthError(null);
+    setAuthOpenFor(provider);
+  }, []);
+
+  // Stable per-provider reconnect handlers so `ConnectorStatus` (a child
+  // that polls on its own interval) doesn't see a new callback identity
+  // every render. Recomputed only when the descriptor set or the modal
+  // opener changes, so the handlers can never close over a stale
+  // `openAuthModal`.
+  const reconnectHandlers = useMemo(() => {
+    const handlers: Record<string, () => void> = {};
+    for (const d of descriptors) {
+      handlers[d.provider] = () => openAuthModal(d.provider);
+    }
+    return handlers;
+  }, [descriptors, openAuthModal]);
 
   const handleAuthenticate = async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -135,9 +261,25 @@ export default function ConnectorsList({
         clientSecret.trim(),
       );
       setStatuses((prev) => ({ ...prev, [descriptor.provider]: next }));
+      // Drop the pre-reconnect scope diff in the same render that marks
+      // the provider connected. Otherwise this provider would briefly
+      // satisfy `narrowed` (connected + stale `fullyGranted: false`) and
+      // flash the "scopes narrowed" banner the user just reconnected to
+      // clear, until the un-awaited `pollAll()` below resolves with the
+      // fresh diff (which re-adds the entry only if scopes are still
+      // genuinely narrowed).
+      setScopeInfo((prev) => {
+        if (!(descriptor.provider in prev)) return prev;
+        const { [descriptor.provider]: _dropped, ...rest } = prev;
+        return rest;
+      });
       setAuthOpenFor(null);
       setClientId("");
       setClientSecret("");
+      // Re-poll so the freshly-connected provider's scope diff (and
+      // any newly-cleared "scopes narrowed" banner) reflects the new
+      // token rather than the pre-reconnect state.
+      pollAll();
       onChange?.();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err));
@@ -146,80 +288,133 @@ export default function ConnectorsList({
     }
   };
 
-  return (
-    <div
-      className="connectors-list"
-      style={{ display: "grid", gap: "var(--spacing-sm)" }}
-      aria-label="Remote connectors"
-    >
-      {descriptors.map((d) => {
-        const status = statuses[d.provider];
-        const connected = status?.connected ?? false;
-        if (connected) {
-          return (
-            <ConnectorStatus
-              key={d.provider}
-              provider={d.provider}
-              label={d.label}
-              onSync={onChange}
-              onDisconnect={() => {
-                pollAll();
-                onChange?.();
-              }}
-            />
-          );
-        }
-        return (
-          <div
-            key={d.provider}
-            className="connector-status"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "var(--spacing-sm) var(--spacing-md)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-md)",
+  const visibleDescriptors = useMemo(
+    () => descriptors.filter((d) => connectorMatchesQuery(d, query)),
+    [descriptors, query],
+  );
+  const groups = useMemo(
+    () => groupConnectorsByCategory(visibleDescriptors),
+    [visibleDescriptors],
+  );
+
+  const renderConnectorCard = (d: ConnectorDescriptor) => {
+    const status = statuses[d.provider];
+    const connected = status?.connected ?? false;
+    const scopes = scopeInfo[d.provider];
+    const narrowed = connected && scopes ? !scopes.fullyGranted : false;
+    return (
+      <Card
+        key={d.provider}
+        className="connector-card"
+        data-testid={`connector-card-${d.provider}`}
+      >
+        {connected ? (
+          <ConnectorStatus
+            provider={d.provider}
+            label={d.label}
+            onSync={onChange}
+            onReconnect={reconnectHandlers[d.provider]}
+            onDisconnect={() => {
+              pollAll();
+              onChange?.();
             }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--spacing-sm)",
-              }}
-            >
+          />
+        ) : (
+          <div className="connector-status">
+            <div className="connector-status-header">
               <span
                 aria-hidden="true"
                 className="connector-status-dot"
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: "50%",
-                  background: "var(--color-muted, #6b7280)",
-                  display: "inline-block",
-                }}
+                style={{ background: "var(--color-muted, #6b7280)" }}
               />
               <span className="connector-status-name">{d.label}</span>
-              <span className="connector-status-badge" role="status">
-                Disconnected
+              <span className="connector-status-badge">
+                <StatusBadge status="disconnected" />
               </span>
             </div>
+            <div className="connector-status-actions">
+              <Button
+                variant="secondary"
+                onClick={() => openAuthModal(d.provider)}
+                aria-label={`Connect ${d.label}`}
+              >
+                Connect
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {narrowed && (
+          <div className="connector-scope-warning" role="alert">
+            <span>
+              Some requested permissions weren't granted
+              {scopes && scopes.missing.length > 0
+                ? ` (${scopes.missing.join(", ")})`
+                : ""}
+              . Reconnect to restore full access.
+            </span>
             <Button
               variant="secondary"
-              onClick={() => {
-                setClientId("");
-                setClientSecret("");
-                setAuthError(null);
-                setAuthOpenFor(d.provider);
-              }}
-              aria-label={`Connect ${d.label}`}
+              onClick={() => openAuthModal(d.provider)}
+              aria-label={`Reconnect ${d.label} to restore permissions`}
             >
-              Connect
+              Reconnect
             </Button>
           </div>
-        );
-      })}
+        )}
+
+        <ScopeTransparency descriptor={d} />
+      </Card>
+    );
+  };
+
+  return (
+    <div className="connector-gallery" aria-label="Remote connectors">
+      <div className="connector-gallery-search">
+        <SearchInput
+          value={query}
+          onSearch={setQuery}
+          placeholder="Search connectors…"
+          aria-label="Search connectors"
+        />
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState
+          title="No connectors found"
+          message={`No connector matches “${query.trim()}”. Try a different name or clear the search.`}
+          action={
+            <Button variant="secondary" onClick={() => setQuery("")}>
+              Clear search
+            </Button>
+          }
+        />
+      ) : (
+        groups.map((group) => {
+          const headingId = `connector-category-${group.category
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")}`;
+          return (
+            <section
+              key={group.category}
+              className="connector-category"
+              aria-labelledby={headingId}
+            >
+              <div className="connector-category-header">
+                <h3 id={headingId} className="connector-category-title">
+                  {group.category}
+                </h3>
+                <span className="connector-category-count">
+                  {group.descriptors.length}
+                </span>
+              </div>
+              <div className="connector-grid">
+                {group.descriptors.map(renderConnectorCard)}
+              </div>
+            </section>
+          );
+        })
+      )}
 
       <Modal
         isOpen={authOpenFor !== null}

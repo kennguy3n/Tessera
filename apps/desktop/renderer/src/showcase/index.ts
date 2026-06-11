@@ -488,12 +488,30 @@ export function buildShowcaseApi(personaId: string): unknown {
       status: async () => ({ provider: "google_drive", connected: false, status: "disconnected" }),
       list: async () => [],
       listDriveFiles: async () => [],
-      getAllRedirectUris: async () => [],
+      // Maps provider → loopback redirect URI. The contract is a
+      // `Record<string, string>` (see `ConnectorApi`); returning an
+      // object (not `[]`) means the credential modal resolves a real
+      // URI instead of being stuck on "Loading…". Google Drive stays
+      // on `localhost` for OAuth backward-compatibility; everything
+      // else uses the spec-preferred `127.0.0.1` loopback.
+      getAllRedirectUris: async () => ({
+        google_drive: "http://localhost:9876/callback",
+        onedrive: "http://127.0.0.1:9877/callback",
+        notion: "http://127.0.0.1:9878/callback",
+        jira: "http://127.0.0.1:9879/callback",
+        confluence: "http://127.0.0.1:9880/callback",
+        figma: "http://127.0.0.1:9881/callback",
+        hubspot: "http://127.0.0.1:9882/callback",
+        slack: "http://127.0.0.1:9883/callback",
+        email: "http://127.0.0.1:9884/callback",
+        github: "http://127.0.0.1:9885/callback",
+      }),
       authenticate: async () => ({ connected: false, status: "disconnected" }),
       disconnect: async () => ({ connected: false, status: "disconnected" }),
       selectItems: async () => ({ ok: true }),
       sync: async () => ({ ok: true }),
       syncDrive: async () => ({ ok: true }),
+      inspectScopes: async () => null,
     },
     // KChat is an enterprise messaging connector unrelated to the demo; report
     // it unavailable so the sidebar section renders nothing instead of polling.

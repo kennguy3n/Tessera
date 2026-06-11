@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ConnectorStatusInfo } from "../types/ipc";
 import { useSuspendablePolling } from "../hooks/useSuspendablePolling";
+import { CONNECTOR_DESCRIPTORS } from "./connectorDescriptors";
 
 interface ConnectorStatusProps {
   provider: string;
@@ -11,22 +12,36 @@ interface ConnectorStatusProps {
    * label table is used (Google Drive, OneDrive, Notion, …).
    */
   label?: string;
+  /**
+   * Optional one-click reauthentication affordance. When supplied, a
+   * "Reconnect" button is rendered alongside Sync/Disconnect so the
+   * user can re-run the OAuth flow without first disconnecting —
+   * useful when a refresh token has been revoked upstream or the
+   * granted scopes were narrowed. The owner (e.g. `ConnectorsList`)
+   * wires this to open the shared credential modal. Left undefined
+   * by callers that own their own connect flow (e.g. the Google
+   * Drive card on `SourcesPage`), in which case no button renders
+   * and behaviour is unchanged.
+   */
+  onReconnect?: () => void;
 }
 
-const PROVIDER_LABELS: Record<string, string> = {
-  google_drive: "Google Drive",
-  onedrive: "OneDrive",
-  notion: "Notion",
-  jira: "Jira",
-  confluence: "Confluence",
-  figma: "Figma",
-};
+// Fallback display names, derived from the canonical connector
+// descriptors so this table can never drift from the labels the gallery
+// shows. `ConnectorsList` always passes an explicit `label`, so this only
+// applies to standalone `<ConnectorStatus>` usages (e.g. the Google Drive
+// card on `SourcesPage`) or any provider absent from the descriptor set
+// (which falls back to the raw provider id below).
+const PROVIDER_LABELS: Record<string, string> = Object.fromEntries(
+  CONNECTOR_DESCRIPTORS.map((d) => [d.provider, d.label]),
+);
 
 export default function ConnectorStatus({
   provider,
   onSync,
   onDisconnect,
   label,
+  onReconnect,
 }: ConnectorStatusProps) {
   const [status, setStatus] = useState<ConnectorStatusInfo>({
     provider,
@@ -187,6 +202,16 @@ export default function ConnectorStatus({
           >
             {syncing ? "Syncing..." : "Sync Now"}
           </button>
+          {onReconnect && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={onReconnect}
+              aria-label={`Reconnect ${providerLabel}`}
+            >
+              Reconnect
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-danger btn-sm"
