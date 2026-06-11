@@ -18,15 +18,10 @@
  * unavailable.
  */
 import type { NativeBridge } from "../appState";
-import type { SubstrateMemoryInfo } from "../../shared/types";
-
-/** Decay states that still belong to the live working set. */
-const ACTIVE_STATES: ReadonlySet<string> = new Set([
-  "candidate",
-  "reinforced",
-  "consolidated",
-  "canonical",
-]);
+import {
+  isActiveMemoryState,
+  type SubstrateMemoryInfo,
+} from "../../shared/types";
 
 /** Max memory lines folded into the context (keeps prompts bounded). */
 const MAX_MEMORY_LINES = 12;
@@ -34,7 +29,19 @@ const MAX_MEMORY_LINES = 12;
 const MAX_RELATION_LINES = 8;
 
 function isActive(memory: SubstrateMemoryInfo): boolean {
-  return ACTIVE_STATES.has(memory.state.toLowerCase());
+  return isActiveMemoryState(memory.state);
+}
+
+/**
+ * Collapse any internal whitespace (newlines, tabs, runs of spaces) in a
+ * memory's content into single spaces so it stays on one markdown list
+ * line. Substrate observations are short single-line strings in practice,
+ * but a multi-line value would otherwise break the list structure (the
+ * continuation line wouldn't be indented under the `-`). (Devin Review
+ * PR #120.)
+ */
+function toSingleLine(content: string): string {
+  return content.replace(/\s+/g, " ").trim();
 }
 
 /** Strongest-signal-first ordering, with deterministic tie-breaks. */
@@ -96,7 +103,7 @@ export function selectMemoryLines(
     .slice(0, MAX_MEMORY_LINES)
     .map((m) => {
       const pct = Math.round(Math.max(0, Math.min(1, m.retentionScore)) * 100);
-      return `- [${titleCase(m.observationType)}] ${m.content} (${m.state}, ${pct}% retained)`;
+      return `- [${titleCase(m.observationType)}] ${toSingleLine(m.content)} (${m.state}, ${pct}% retained)`;
     });
 }
 

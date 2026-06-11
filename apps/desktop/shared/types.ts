@@ -2879,6 +2879,35 @@ export interface SubstrateMemoryInfo {
 }
 
 /**
+ * Raw substrate decay states that count as "active" — i.e. still part of
+ * the live working set. Mirrors the working-set states emitted by
+ * `tessera_substrate::manager::memory_state_str` (`candidate`,
+ * `reinforced`, `consolidated`, `canonical`); `superseded` / `archived`
+ * / `deleted` are excluded.
+ *
+ * Single source of truth shared across the main process (memory-context
+ * builder) and the renderer (memory hooks + bucket/filter helpers) so
+ * the set can't drift between modules if the Rust decay machine gains a
+ * new state. Values are compared case-insensitively, so callers should
+ * lowercase the wire value before lookup. (Devin Review PR #120.)
+ */
+export const ACTIVE_MEMORY_STATES: ReadonlySet<string> = new Set([
+  "candidate",
+  "reinforced",
+  "consolidated",
+  "canonical",
+]);
+
+/**
+ * True when a raw substrate decay `state` belongs to the live working
+ * set (see {@link ACTIVE_MEMORY_STATES}). Lowercases the input so a
+ * PascalCase wire value (e.g. `"Canonical"`) still matches.
+ */
+export function isActiveMemoryState(state: string): boolean {
+  return ACTIVE_MEMORY_STATES.has(state.toLowerCase());
+}
+
+/**
  * Outcome of a substrate decay sweep (`bridge_run_decay_sweep`).
  * Mirrors `tessera_substrate::DecaySweepSummary`.
  */

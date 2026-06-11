@@ -65,6 +65,160 @@ export interface ConceptGraphPanelProps {
 
 const CANVAS_WIDTH = 720;
 
+/**
+ * Static panel CSS, hoisted to a module-level constant so the rules are
+ * identical for every mount and don't depend on props. The only dynamic
+ * style is `.cg-detail`'s `max-height` (driven by the `height` prop),
+ * which is applied as an inline style on the element itself rather than
+ * baked into this stylesheet — otherwise two panels with different
+ * `height` props mounted at once would collide in the cascade (last to
+ * render wins for ALL instances). Keeping the dynamic bit inline removes
+ * that implicit coupling to route exclusivity. (Devin Review PR #120.)
+ */
+const CONCEPT_GRAPH_STYLES = `
+  .cg-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+  .cg-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+  }
+  .cg-title { margin: 0; font-size: var(--font-size-md); }
+  .cg-toolbar-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+  .cg-scope-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .cg-status {
+    padding: var(--spacing-md);
+    color: var(--color-text-secondary);
+  }
+  .cg-error { color: var(--color-danger); }
+  .cg-body {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+    gap: var(--spacing-md);
+    align-items: start;
+  }
+  .cg-canvas {
+    width: 100%;
+    height: auto;
+    background: var(--color-surface-soft, #f9fafb);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md, 8px);
+  }
+  .cg-node { cursor: pointer; }
+  .cg-node:focus { outline: none; }
+  .cg-node:focus circle {
+    stroke: var(--color-primary, #2563eb);
+    stroke-width: 3;
+  }
+  .cg-node-label {
+    font-size: 11px;
+    fill: var(--color-text, #111827);
+    pointer-events: none;
+  }
+  .cg-edge-label {
+    font-size: 9px;
+    opacity: 0.85;
+    pointer-events: none;
+  }
+  .cg-detail {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md, 8px);
+    padding: var(--spacing-md);
+    background: var(--color-surface, #fff);
+    overflow-y: auto;
+  }
+  .cg-detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+  }
+  .cg-detail-title { margin: 0; font-size: var(--font-size-md); }
+  .cg-detail-meta {
+    margin: 0.25rem 0 var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .cg-detail-section { margin-top: var(--spacing-md); }
+  .cg-detail-subhead {
+    margin: 0 0 0.375rem;
+    font-size: var(--font-size-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-secondary);
+  }
+  .cg-detail-empty {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .cg-detail-list, .cg-evidence-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    font-size: var(--font-size-sm);
+  }
+  .cg-detail-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .cg-rel-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .cg-evidence-item {
+    border-left: 2px solid var(--color-border);
+    padding-left: var(--spacing-sm);
+  }
+  .cg-evidence-content { margin: 0; }
+  .cg-evidence-cite {
+    margin: 0.2rem 0 0;
+    font-size: var(--font-size-xs, 0.75rem);
+    color: var(--color-text-secondary);
+  }
+  .cg-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+  }
+  .cg-legend-item, .cg-legend-trunc {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .cg-legend-trunc { font-style: italic; }
+  .cg-legend-swatch {
+    width: 12px;
+    height: 3px;
+    border-radius: 2px;
+  }
+  @media (max-width: 720px) {
+    .cg-body { grid-template-columns: 1fr; }
+  }
+`;
+
 export default function ConceptGraphPanel({
   scope = null,
   maxNodes = 120,
@@ -318,7 +472,11 @@ export default function ConceptGraphPanel({
             </g>
           </svg>
 
-          <aside className="cg-detail" aria-live="polite">
+          <aside
+            className="cg-detail"
+            aria-live="polite"
+            style={{ maxHeight: `${height}px` }}
+          >
             {selectedNode ? (
               <div data-testid="concept-detail">
                 <div className="cg-detail-head">
@@ -428,150 +586,7 @@ export default function ConceptGraphPanel({
         </div>
       )}
 
-      <style nonce={cspNonce}>{`
-        .cg-panel {
-          display: flex;
-          flex-direction: column;
-          gap: var(--spacing-sm);
-        }
-        .cg-toolbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: var(--spacing-sm);
-        }
-        .cg-title { margin: 0; font-size: var(--font-size-md); }
-        .cg-toolbar-controls {
-          display: flex;
-          align-items: center;
-          gap: var(--spacing-sm);
-        }
-        .cg-scope-filter {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.375rem;
-          font-size: var(--font-size-sm);
-          color: var(--color-text-secondary);
-        }
-        .cg-status {
-          padding: var(--spacing-md);
-          color: var(--color-text-secondary);
-        }
-        .cg-error { color: var(--color-danger); }
-        .cg-body {
-          display: grid;
-          grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
-          gap: var(--spacing-md);
-          align-items: start;
-        }
-        .cg-canvas {
-          width: 100%;
-          height: auto;
-          background: var(--color-surface-soft, #f9fafb);
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-md, 8px);
-        }
-        .cg-node { cursor: pointer; }
-        .cg-node:focus { outline: none; }
-        .cg-node:focus circle {
-          stroke: var(--color-primary, #2563eb);
-          stroke-width: 3;
-        }
-        .cg-node-label {
-          font-size: 11px;
-          fill: var(--color-text, #111827);
-          pointer-events: none;
-        }
-        .cg-edge-label {
-          font-size: 9px;
-          opacity: 0.85;
-          pointer-events: none;
-        }
-        .cg-detail {
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-md, 8px);
-          padding: var(--spacing-md);
-          background: var(--color-surface, #fff);
-          max-height: ${height}px;
-          overflow-y: auto;
-        }
-        .cg-detail-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: var(--spacing-sm);
-        }
-        .cg-detail-title { margin: 0; font-size: var(--font-size-md); }
-        .cg-detail-meta {
-          margin: 0.25rem 0 var(--spacing-sm);
-          font-size: var(--font-size-sm);
-          color: var(--color-text-secondary);
-        }
-        .cg-detail-section { margin-top: var(--spacing-md); }
-        .cg-detail-subhead {
-          margin: 0 0 0.375rem;
-          font-size: var(--font-size-sm);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: var(--color-text-secondary);
-        }
-        .cg-detail-empty {
-          margin: 0;
-          font-size: var(--font-size-sm);
-          color: var(--color-text-secondary);
-        }
-        .cg-detail-list, .cg-evidence-list {
-          list-style: none;
-          margin: 0;
-          padding: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 0.375rem;
-          font-size: var(--font-size-sm);
-        }
-        .cg-detail-list li {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-        }
-        .cg-rel-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          flex: 0 0 auto;
-        }
-        .cg-evidence-item {
-          border-left: 2px solid var(--color-border);
-          padding-left: var(--spacing-sm);
-        }
-        .cg-evidence-content { margin: 0; }
-        .cg-evidence-cite {
-          margin: 0.2rem 0 0;
-          font-size: var(--font-size-xs, 0.75rem);
-          color: var(--color-text-secondary);
-        }
-        .cg-legend {
-          display: flex;
-          flex-wrap: wrap;
-          gap: var(--spacing-md);
-          font-size: var(--font-size-sm);
-          color: var(--color-text-secondary);
-        }
-        .cg-legend-item, .cg-legend-trunc {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.375rem;
-        }
-        .cg-legend-trunc { font-style: italic; }
-        .cg-legend-swatch {
-          width: 12px;
-          height: 3px;
-          border-radius: 2px;
-        }
-        @media (max-width: 720px) {
-          .cg-body { grid-template-columns: 1fr; }
-        }
-      `}</style>
+      <style nonce={cspNonce}>{CONCEPT_GRAPH_STYLES}</style>
     </div>
   );
 }

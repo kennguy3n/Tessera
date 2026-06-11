@@ -1,4 +1,4 @@
-import type { SubstrateMemoryInfo } from "../types/ipc";
+import { ACTIVE_MEMORY_STATES, type SubstrateMemoryInfo } from "../types/ipc";
 
 /**
  * Display helpers for the memory plane (MemoryPage).
@@ -23,14 +23,6 @@ export const DECAY_BUCKETS: readonly DecayBucket[] = [
   "archived",
 ];
 
-/** Raw substrate states that map onto the live "active" bucket. */
-const ACTIVE_STATES: ReadonlySet<string> = new Set([
-  "candidate",
-  "reinforced",
-  "consolidated",
-  "canonical",
-]);
-
 /** Raw states that are on their way out but still retained. */
 const FADING_STATES: ReadonlySet<string> = new Set(["superseded"]);
 
@@ -43,7 +35,7 @@ const FADING_STATES: ReadonlySet<string> = new Set(["superseded"]);
  */
 export function decayBucket(state: string): DecayBucket {
   const lowered = state.toLowerCase();
-  if (ACTIVE_STATES.has(lowered)) return "active";
+  if (ACTIVE_MEMORY_STATES.has(lowered)) return "active";
   if (FADING_STATES.has(lowered)) return "fading";
   return "archived";
 }

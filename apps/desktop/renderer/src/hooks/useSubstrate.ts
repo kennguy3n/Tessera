@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { SubstrateMemoryInfo } from "../types/ipc";
+import { isActiveMemoryState, type SubstrateMemoryInfo } from "../types/ipc";
 import {
   parseConceptGraph,
   type ConceptGraphView,
@@ -24,12 +24,13 @@ function getApi() {
 
 /**
  * A single stable empty graph, reused for both the initial state and the
- * gated-off ("disabled") path of {@link useConceptGraph}. `parseConceptGraph`
- * mints a structurally-identical-but-new object on every call, so reusing one
+ * gated-off ("disabled") path of {@link useConceptGraph}. Reusing one
  * reference keeps `graph` referentially stable across disabled-path effect
  * runs — React bails out via `Object.is` instead of forcing a redundant
- * re-render with a logically-unchanged value. Safe to share because the view
- * is treated as immutable (callers only ever replace it via `setGraph`).
+ * re-render with a logically-unchanged value. Safe to share because
+ * `parseConceptGraph` deep-freezes the view, so the immutability the
+ * callers rely on (they only ever replace it via `setGraph`) is now
+ * enforced at runtime rather than by convention.
  */
 const EMPTY_CONCEPT_GRAPH: ConceptGraphView = parseConceptGraph("{}");
 
@@ -223,17 +224,9 @@ export interface KnowledgeInsights {
   mostConnected: SubstrateMemoryInfo[];
 }
 
-/** Decay states that count as "active" (still in the working set). */
-const ACTIVE_STATES: ReadonlySet<string> = new Set([
-  "candidate",
-  "reinforced",
-  "consolidated",
-  "canonical",
-]);
-
 /** True when a memory is still part of the live working set. */
 export function isActiveMemory(memory: SubstrateMemoryInfo): boolean {
-  return ACTIVE_STATES.has(memory.state.toLowerCase());
+  return isActiveMemoryState(memory.state);
 }
 
 /**

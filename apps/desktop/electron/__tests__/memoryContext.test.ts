@@ -99,6 +99,22 @@ describe("selectMemoryLines", () => {
     );
     expect(selectMemoryLines(many, [])).toHaveLength(12);
   });
+
+  it("collapses internal whitespace so multi-line content stays one list line", () => {
+    const [line] = selectMemoryLines(
+      [
+        mem({
+          content: "Atlas team\n  owns   the\n\tmigration",
+          observationType: "decision",
+          state: "canonical",
+          retentionScore: 1,
+        }),
+      ],
+      [],
+    );
+    expect(line).toBe("- [Decision] Atlas team owns the migration (canonical, 100% retained)");
+    expect(line).not.toContain("\n");
+  });
 });
 
 describe("selectRelationLines", () => {

@@ -32,6 +32,31 @@ describe("parseConceptGraph", () => {
     }
   });
 
+  it("returns a deeply-frozen, immutable view (nodes/edges arrays + elements)", () => {
+    const json = JSON.stringify({
+      nodes: [
+        { id: "a", label: "Atlas", state: "canonical", scope_id: "s1", connections_count: 1 },
+      ],
+      edges: [
+        { id: "e1", from: "a", to: "a", relation_type: "is_a", scope_id: "s1" },
+      ],
+      scope_filter: ["s1"],
+      depth: 1,
+      truncation: "complete",
+    });
+    const view = parseConceptGraph(json);
+    expect(Object.isFrozen(view)).toBe(true);
+    expect(Object.isFrozen(view.nodes)).toBe(true);
+    expect(Object.isFrozen(view.edges)).toBe(true);
+    expect(Object.isFrozen(view.scopeFilter)).toBe(true);
+    expect(Object.isFrozen(view.nodes[0])).toBe(true);
+    expect(Object.isFrozen(view.edges[0])).toBe(true);
+    // Mutating the immutable view throws in strict mode (modules are strict).
+    expect(() => view.nodes.push(view.nodes[0])).toThrow();
+    // The shared empty view is frozen too.
+    expect(Object.isFrozen(parseConceptGraph("{}").nodes)).toBe(true);
+  });
+
   it("normalizes PascalCase node state and snake_case relation_type", () => {
     const json = JSON.stringify({
       nodes: [

@@ -167,13 +167,35 @@ function normalizeTruncation(value: unknown): GraphTruncation {
   ) as GraphTruncation;
 }
 
-const EMPTY_VIEW: ConceptGraphView = {
+/**
+ * Recursively freeze a parsed view so the immutability invariant is
+ * enforced at runtime, not just by convention. Consumers treat the view
+ * as read-only and several share a single reference (e.g. the empty view
+ * and `useSubstrate`'s `EMPTY_CONCEPT_GRAPH`); freezing means an errant
+ * `graph.nodes.push(...)` throws in strict mode instead of silently
+ * corrupting every other consumer holding the same reference. All reads
+ * (filter / find / map / `[...nodes].sort`) already copy before
+ * mutating, so freezing is safe. (Devin Review PR #120.)
+ */
+function freezeView(view: ConceptGraphView): ConceptGraphView {
+  for (const n of view.nodes) {
+    if (n.positionHint) Object.freeze(n.positionHint);
+    Object.freeze(n);
+  }
+  Object.freeze(view.nodes);
+  for (const e of view.edges) Object.freeze(e);
+  Object.freeze(view.edges);
+  Object.freeze(view.scopeFilter);
+  return Object.freeze(view);
+}
+
+const EMPTY_VIEW: ConceptGraphView = freezeView({
   nodes: [],
   edges: [],
   scopeFilter: [],
   depth: 0,
   truncation: "complete",
-};
+});
 
 /**
  * Parse the JSON string returned by `substrate.getConceptGraph` into a
@@ -192,10 +214,10 @@ export function parseConceptGraph(json: string): ConceptGraphView {
   try {
     raw = JSON.parse(json);
   } catch {
-    return { ...EMPTY_VIEW };
+    return EMPTY_VIEW;
   }
   const root = asRecord(raw);
-  if (!root) return { ...EMPTY_VIEW };
+  if (!root) return EMPTY_VIEW;
 
   const rawNodes = Array.isArray(root.nodes) ? root.nodes : [];
   const nodes: ConceptGraphNode[] = [];
@@ -248,13 +270,13 @@ export function parseConceptGraph(json: string): ConceptGraphView {
     ? root.scope_filter.filter((s): s is string => typeof s === "string")
     : [];
 
-  return {
+  return freezeView({
     nodes,
     edges,
     scopeFilter,
     depth: Math.max(0, Math.trunc(asFiniteNumber(root.depth))),
     truncation: normalizeTruncation(root.truncation),
-  };
+  });
 }
 
 /** A node placed at an absolute (x, y) coordinate by the layout pass. */
