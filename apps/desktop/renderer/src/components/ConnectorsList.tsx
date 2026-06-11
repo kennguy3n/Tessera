@@ -15,7 +15,7 @@
  * help text differs by provider (e.g. "Microsoft Entra ID" vs
  * "Google Cloud Console").
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ConnectorScopeComparison,
   ConnectorStatusInfo,
@@ -215,22 +215,18 @@ export default function ConnectorsList({
     setAuthOpenFor(provider);
   }, []);
 
-  // Stable per-provider reconnect handlers so `ConnectorStatus` (a
-  // child that polls on its own interval) doesn't see a new callback
-  // identity every render. Keyed by provider so the gallery can hand
-  // each connected card its own "Reconnect" affordance.
-  const reconnectHandlers = useRef<Record<string, () => void>>({});
-  const getReconnectHandler = useCallback(
-    (provider: string) => {
-      let handler = reconnectHandlers.current[provider];
-      if (!handler) {
-        handler = () => openAuthModal(provider);
-        reconnectHandlers.current[provider] = handler;
-      }
-      return handler;
-    },
-    [openAuthModal],
-  );
+  // Stable per-provider reconnect handlers so `ConnectorStatus` (a child
+  // that polls on its own interval) doesn't see a new callback identity
+  // every render. Recomputed only when the descriptor set or the modal
+  // opener changes, so the handlers can never close over a stale
+  // `openAuthModal`.
+  const reconnectHandlers = useMemo(() => {
+    const handlers: Record<string, () => void> = {};
+    for (const d of descriptors) {
+      handlers[d.provider] = () => openAuthModal(d.provider);
+    }
+    return handlers;
+  }, [descriptors, openAuthModal]);
 
   const handleAuthenticate = async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -292,7 +288,7 @@ export default function ConnectorsList({
             provider={d.provider}
             label={d.label}
             onSync={onChange}
-            onReconnect={getReconnectHandler(d.provider)}
+            onReconnect={reconnectHandlers[d.provider]}
             onDisconnect={() => {
               pollAll();
               onChange?.();

@@ -488,7 +488,20 @@ export function buildShowcaseApi(personaId: string): unknown {
       status: async () => ({ provider: "google_drive", connected: false, status: "disconnected" }),
       list: async () => [],
       listDriveFiles: async () => [],
-      getAllRedirectUris: async () => [],
+      // Maps provider → loopback redirect URI. The contract is a
+      // `Record<string, string>` (see `ConnectorApi`); returning an
+      // object (not `[]`) means the credential modal resolves a real
+      // URI instead of being stuck on "Loading…". Google Drive stays
+      // on `localhost` for OAuth backward-compatibility; everything
+      // else uses the spec-preferred `127.0.0.1` loopback.
+      getAllRedirectUris: async () => ({
+        google_drive: "http://localhost:9876/callback",
+        onedrive: "http://127.0.0.1:9877/callback",
+        notion: "http://127.0.0.1:9878/callback",
+        jira: "http://127.0.0.1:9879/callback",
+        confluence: "http://127.0.0.1:9880/callback",
+        figma: "http://127.0.0.1:9881/callback",
+      }),
       authenticate: async () => ({ connected: false, status: "disconnected" }),
       disconnect: async () => ({ connected: false, status: "disconnected" }),
       selectItems: async () => ({ ok: true }),

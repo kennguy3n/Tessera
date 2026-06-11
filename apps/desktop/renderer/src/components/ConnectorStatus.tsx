@@ -32,6 +32,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   jira: "Jira",
   confluence: "Confluence",
   figma: "Figma",
+  hubspot: "HubSpot",
+  slack: "Slack",
+  email: "Email",
+  github: "GitHub",
 };
 
 export default function ConnectorStatus({
