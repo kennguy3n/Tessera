@@ -836,7 +836,11 @@ pub fn run_sync(
     // the deferred backlog and fetching freshly-changed documents. When
     // `fetch_content` is off (metadata-only "what changed" probe) the
     // budget is zero and the inbound backlog passes through untouched.
-    let mut budget = if opts.fetch_content { opts.max_fetch } else { 0 };
+    let mut budget = if opts.fetch_content {
+        opts.max_fetch
+    } else {
+        0
+    };
     // Ids materialised this run, so a doc present in BOTH the backlog and
     // the fresh event stream is fetched only once.
     let mut handled: HashSet<String> = HashSet::new();
