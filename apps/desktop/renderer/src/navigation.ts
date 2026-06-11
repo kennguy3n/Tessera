@@ -6,6 +6,7 @@ import {
   CheckSquare,
   Zap,
   Eye,
+  Brain,
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -58,6 +59,7 @@ export const SECONDARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/tasks", label: "Tasks", Icon: CheckSquare },
   { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/vision", label: "Vision", Icon: Eye },
+  { to: "/memory", label: "Memory", Icon: Brain },
 ];
 
 /**
@@ -68,12 +70,15 @@ export const SECONDARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
  *
  * This order is the original, pre-tiering sidebar order (Home,
  * Sources, Create, Templates, Tasks, Automations, Vision, Settings)
- * and is intentionally NOT `[...PRIMARY, ...SECONDARY]`: a naive
- * concatenation would move Settings from index 8 to index 4 and
- * silently reassign every `Ctrl/Cmd+N` shortcut. Preserving the
- * legacy order keeps each shortcut pinned to the same destination
- * regardless of which tier an item now lives in, so collapsing or
- * expanding "More tools" never changes what a shortcut does.
+ * with newer tools appended at the end (Memory) and is intentionally
+ * NOT `[...PRIMARY, ...SECONDARY]`: a naive concatenation would move
+ * Settings from index 8 to index 4 and silently reassign every
+ * `Ctrl/Cmd+N` shortcut. Preserving the legacy order — and appending
+ * rather than interleaving new entries — keeps each shortcut pinned to
+ * the same destination regardless of which tier an item now lives in,
+ * so collapsing or expanding "More tools" never changes what a
+ * shortcut does. Memory therefore takes the next free chord
+ * (`Ctrl/Cmd+9`) while Settings stays on `Ctrl/Cmd+8`.
  *
  * Kept as an explicit literal (rather than derived from the two
  * tier arrays) so the canonical shortcut order is reviewable in one
@@ -91,6 +96,7 @@ export const SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/vision", label: "Vision", Icon: Eye },
   { to: "/settings", label: "Settings", Icon: Settings },
+  { to: "/memory", label: "Memory", Icon: Brain },
 ];
 
 /** Map of `"1"..."N"` → route path, derived from `SIDEBAR_ITEMS`
