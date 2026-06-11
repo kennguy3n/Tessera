@@ -4,7 +4,9 @@ The workspace depends on the **private** `kennguy3n/knowledge` repo as a
 git dependency (pinned in the root `Cargo.toml`). GitHub-hosted CI runners
 have no credential for it, so any `cargo` step that resolves the dependency
 graph (`clippy`, `build`, `test`, `metadata`, `vet`) fails at the git-fetch
-step. See `docs/adr/0011-knowledge-substrate-integration.md`.
+step. The design rationale for the substrate integration is captured in
+ADR-0011 (`docs/adr/0011-knowledge-substrate-integration.md`), which lands
+with the companion integration PR.
 
 This composite action fixes that with a **read-only SSH deploy key**: it
 writes the key, pins github.com's host keys, rewrites *only* the
