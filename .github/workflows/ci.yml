@@ -52,6 +52,11 @@ jobs:
               # Scoped to this action specifically so an unrelated future action
               # doesn't needlessly trigger the full Rust matrix.
               - '.github/actions/knowledge-ssh/**'
+              # The cargo-vet store gates the supply-chain job (whose cargo steps
+              # only run when `rust` is true), so an edit to it must trigger that
+              # job — both to validate the edit and to keep the gate meaningful
+              # (a weakened exemption can't slip in untested).
+              - 'supply-chain/**'
             typescript:
               - 'apps/**'
               - 'package.json'
