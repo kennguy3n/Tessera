@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import type { ReactNode } from "react";
 import Button from "./Button";
 import RelevanceBadge from "./RelevanceBadge";
@@ -184,18 +190,45 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
     if (isOpen) loadCitations();
   }, [isOpen, loadCitations]);
 
+  // Sub-dialog state (Add / Replace / Confirm-remove) lives in this
+  // always-mounted panel, so without this it would survive a
+  // close/reopen cycle — the Close button and Escape both call
+  // onClose() without touching it — and even bleed across an artifact
+  // switch, re-rendering a dialog bound to the *previous* artifact's
+  // citation. Resetting whenever the panel closes or the artifact
+  // changes guarantees the panel always reopens clean and a dialog
+  // opened for one artifact never lingers onto another.
+  useEffect(() => {
+    setShowAdd(false);
+    setPendingDelete(null);
+    setReplaceFor(null);
+  }, [isOpen, artifactId]);
+
+  // Mirror the sub-dialog precedence into a ref, updated synchronously
+  // *before paint*, so the single Escape listener below can read the
+  // current state without being keyed on it. Using a layout effect
+  // (not a passive one) closes the window where a just-painted
+  // sub-dialog could be Escaped while the listener's captured state is
+  // still stale — the ref is current by the time the browser can
+  // deliver the next keystroke.
+  const escapeStateRef = useRef({ pendingDelete, replaceFor, showAdd });
+  useLayoutEffect(() => {
+    escapeStateRef.current = { pendingDelete, replaceFor, showAdd };
+  }, [pendingDelete, replaceFor, showAdd]);
+
   // Keyboard shortcut: Escape dismisses the innermost open surface
   // first, falling back to closing the whole panel only when no
   // sub-dialog is open. Without this hierarchy a single Escape would
-  // close both an open sub-dialog AND the panel underneath it (the
-  // panel's listener and the dialog's listener both fired), yanking
-  // the panel out from under the user. Centralizing the precedence
-  // here keeps it in one place and lets the sub-dialogs stay listener-free.
+  // close both an open sub-dialog AND the panel underneath it. The
+  // listener subscribes once per open (keyed only on [isOpen, onClose])
+  // and reads the latest precedence from escapeStateRef, so toggling a
+  // sub-dialog never tears down and re-adds the window listener.
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
+      const { pendingDelete, replaceFor, showAdd } = escapeStateRef.current;
       if (pendingDelete) {
         setPendingDelete(null);
       } else if (replaceFor) {
@@ -208,7 +241,7 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onClose, pendingDelete, replaceFor, showAdd]);
+  }, [isOpen, onClose]);
 
   const confirmRemove = async (citationId: string) => {
     try {
