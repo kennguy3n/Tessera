@@ -57,10 +57,17 @@ const OBSERVATION_TYPE_LABELS: Readonly<Record<string, string>> = {
 
 export function observationTypeLabel(type: string): string {
   const lowered = type.toLowerCase();
-  return (
-    OBSERVATION_TYPE_LABELS[lowered] ??
-    (type ? type[0].toUpperCase() + type.slice(1) : "Observation")
-  );
+  const known = OBSERVATION_TYPE_LABELS[lowered];
+  if (known) return known;
+  if (!lowered) return "Observation";
+  // Unknown tag: normalize to Title Case from the lowercased form so an
+  // all-caps (`HYPOTHESIS`) or snake/kebab-cased (`open_question`) variant
+  // still renders cleanly (`Hypothesis`, `Open Question`).
+  return lowered
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 /**
@@ -194,14 +201,6 @@ export function deriveKnowledgeInsights(
   };
 }
 
-const EMPTY_INSIGHTS: KnowledgeInsights = {
-  totalMemories: 0,
-  activeMemories: 0,
-  conceptCount: 0,
-  topReinforced: [],
-  topConcepts: [],
-};
-
 export interface UseKnowledgeInsightsResult {
   insights: KnowledgeInsights;
   loading: boolean;
@@ -229,6 +228,21 @@ export function useKnowledgeInsights(
   const [error, setError] = useState<string | null>(null);
   const [bridgeAvailable, setBridgeAvailable] = useState(true);
 
+  // Synchronize `loading` with `enabled` during render (React's
+  // derived-state pattern) so a false→true transition flips `loading`
+  // back to `true` in the same commit the effect is scheduled. Without
+  // this, `loading` would stay `false` (its initial value) until the
+  // post-paint effect runs, flashing the misleading "No knowledge
+  // extracted yet" empty state for one frame once the gate opens.
+  const [prevEnabled, setPrevEnabled] = useState(enabled);
+  if (enabled !== prevEnabled) {
+    setPrevEnabled(enabled);
+    setLoading(enabled);
+  }
+
+  // `topN` is intentionally absent from the effect deps: it only feeds
+  // the derived `useMemo` below, never the fetch, so re-fetching when it
+  // changes would be wasted IPC.
   useEffect(() => {
     let cancelled = false;
     if (!enabled) {
@@ -304,6 +318,12 @@ export interface UseSourceMemoriesResult {
  * this renderer-only change off the IPC schema. Memories are returned
  * sorted strongest-retention-first. A missing `sourceId` (route still
  * resolving) settles to a clean empty state without an IPC round-trip.
+ *
+ * Unlike the HomePage summary (which filters to the active working set
+ * via {@link isActiveMemoryState}), this deliberately surfaces every
+ * state `getMemories` returns: the source detail page is the place to
+ * see the full provenance of what was extracted from a source, so a
+ * superseded/archived observation is still meaningful history here.
  */
 export function useSourceMemories(
   sourceId: string | undefined,
@@ -312,6 +332,15 @@ export function useSourceMemories(
   const [loading, setLoading] = useState(Boolean(sourceId));
   const [error, setError] = useState<string | null>(null);
   const [bridgeAvailable, setBridgeAvailable] = useState(true);
+
+  // See `useKnowledgeInsights`: keep `loading` in sync with `sourceId`
+  // during render so navigating between sources never flashes the
+  // "No observations extracted" empty state before the fetch starts.
+  const [prevSourceId, setPrevSourceId] = useState(sourceId);
+  if (sourceId !== prevSourceId) {
+    setPrevSourceId(sourceId);
+    setLoading(Boolean(sourceId));
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -360,5 +389,3 @@ export function useSourceMemories(
 
   return { memories, loading, error, bridgeAvailable };
 }
-
-export { EMPTY_INSIGHTS };
