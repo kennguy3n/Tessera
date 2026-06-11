@@ -21,6 +21,8 @@ export {
   MAX_RECENT_ARTIFACTS,
   MAX_PINNED_ARTIFACTS,
   RESOURCE_MODES,
+  ACTIVE_MEMORY_STATES,
+  isActiveMemoryState,
 } from "../../../shared/types";
 
 export type {
@@ -124,8 +126,10 @@ export type {
   SourceDetailInfo,
   SourceInfo,
   SubstrateConceptInfo,
+  SubstrateDecayReportInfo,
   SubstrateMemoryInfo,
   SubstrateRelatedSuggestionInfo,
+  SubstrateSynthesisInfo,
   StartPresentationRequest,
   StartPresentationResult,
   TaskApi,

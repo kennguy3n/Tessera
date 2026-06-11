@@ -32,6 +32,7 @@ import {
   assertStringArray,
 } from "./validate";
 import { MarpExportSchema, TypstExportSchema } from "./schemas";
+import { buildMemoryContext } from "./memoryContext";
 import { getSafeExportRoots, getDenyExportRoots } from "./shared";
 import { BATCH_MAX_ITEMS, runBatch } from "./batch";
 import {
@@ -593,7 +594,19 @@ export function registerArtifactsHandlers(): void {
       );
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
-      const artifact = bridge.bridgeGenerateFromTemplate(tpl, ids);
+      // Augment the source pack with relevant knowledge-substrate
+      // memories before generation so the artifact draws on extracted
+      // entities/facts/decisions, not just raw source hits. Memory lines
+      // are strictly source-scoped; workspace concept relations are only
+      // folded in for unscoped generation (see buildMemoryContext).
+      // Best-effort and additive: an empty/unavailable substrate yields
+      // no context and generation is unchanged.
+      const memoryContext = buildMemoryContext(bridge, ids);
+      const artifact = bridge.bridgeGenerateFromTemplate(
+        tpl,
+        ids,
+        memoryContext.length > 0 ? memoryContext : undefined,
+      );
       // Fire any `OnGenerate` automations tied to this template
       // immediately, off the request critical path. Awaiting would
       // make the user wait on downstream re-indexes / cascade

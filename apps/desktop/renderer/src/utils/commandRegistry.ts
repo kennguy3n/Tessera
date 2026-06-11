@@ -37,7 +37,7 @@
  * module load if a future contributor duplicates a chord).
  */
 
-import { SIDEBAR_ITEMS } from "../navigation";
+import { MAX_SIDEBAR_SHORTCUT_INDEX, SIDEBAR_ITEMS } from "../navigation";
 
 /**
  * Categories used by both the Cmd+K palette grouping and the
@@ -164,8 +164,11 @@ function buildSidebarCommands(): Command[] {
       title: `Go to ${item.label}`,
       description: `Navigate to the ${item.label} page`,
       category: "Navigation",
+      // Only the first MAX_SIDEBAR_SHORTCUT_INDEX items get a numeric
+      // Ctrl/Cmd+N chord; "10"+ can't be a single keystroke, so they
+      // are palette-only (and render no hint chip — see navigation.ts).
       chord:
-        idx <= 9
+        idx <= MAX_SIDEBAR_SHORTCUT_INDEX
           ? { mod: true, key: String(idx) }
           : null,
       keywords: [item.label.toLowerCase()],

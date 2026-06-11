@@ -31,6 +31,8 @@ const ArtifactEditorPage = lazy(() => import("./pages/ArtifactEditorPage"));
 const TasksPage = lazy(() => import("./pages/TasksPage"));
 const AutomationsPage = lazy(() => import("./pages/AutomationsPage"));
 const VisionPage = lazy(() => import("./pages/VisionPage"));
+const MemoryPage = lazy(() => import("./pages/MemoryPage"));
+const KnowledgePage = lazy(() => import("./pages/KnowledgePage"));
 
 type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
 
@@ -171,6 +173,14 @@ export default function App() {
             <Route
               path="/vision"
               element={page("VisionPage", <VisionPage />)}
+            />
+            <Route
+              path="/memory"
+              element={page("MemoryPage", <MemoryPage />)}
+            />
+            <Route
+              path="/knowledge"
+              element={page("KnowledgePage", <KnowledgePage />)}
             />
             <Route
               path="/artifacts/:id/edit"

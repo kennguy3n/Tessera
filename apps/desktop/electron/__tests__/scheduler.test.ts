@@ -22,6 +22,7 @@ vi.mock("../appState", () => ({
 
 import type { NativeBridge, AutomationInfo } from "../appState";
 import { getKchatBackfillImpl } from "../appState";
+import type { SubstrateMemoryInfo } from "../../shared/types";
 import {
   setAppSuspended,
   _resetAppSuspensionForTests,
@@ -76,6 +77,26 @@ interface BridgeMock {
   bridgeReindexSource: ReturnType<typeof vi.fn>;
   bridgeGenerateFromTemplate: ReturnType<typeof vi.fn>;
   bridgeRecordAutomationRun: ReturnType<typeof vi.fn>;
+  bridgeGetMemories: ReturnType<typeof vi.fn>;
+  bridgeGetConceptGraph: ReturnType<typeof vi.fn>;
+}
+
+/** Minimal valid `SubstrateMemoryInfo` for the augmentation test. */
+function mem(over: Partial<SubstrateMemoryInfo>): SubstrateMemoryInfo {
+  return {
+    id: over.id ?? "id",
+    scopeId: "scope",
+    observationType: over.observationType ?? "fact",
+    content: over.content ?? "content",
+    state: over.state ?? "canonical",
+    retentionScore: over.retentionScore ?? 0.5,
+    pinCount: over.pinCount ?? 0,
+    retrievalCount: over.retrievalCount ?? 0,
+    corroborationCount: over.corroborationCount ?? 0,
+    createdAt: 0,
+    lastAccessedAt: 0,
+    sourceId: over.sourceId ?? null,
+  };
 }
 
 function newBridge(): BridgeMock {
@@ -86,6 +107,10 @@ function newBridge(): BridgeMock {
     bridgeReindexSource: vi.fn().mockReturnValue({}),
     bridgeGenerateFromTemplate: vi.fn().mockReturnValue({}),
     bridgeRecordAutomationRun: vi.fn(),
+    // Default to an empty substrate so generation augmentation degrades to
+    // no context (3rd arg `undefined`); the augmentation test overrides these.
+    bridgeGetMemories: vi.fn().mockReturnValue([]),
+    bridgeGetConceptGraph: vi.fn().mockReturnValue("{}"),
   };
 }
 
@@ -123,6 +148,7 @@ describe("scheduler.tick", () => {
     expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith(
       "prd-v1",
       ["s1", "s2"],
+      undefined,
     );
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("a1", "ok");
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("a2", "ok");
@@ -131,6 +157,60 @@ describe("scheduler.tick", () => {
     expect(status.lastTickError).toBeNull();
     expect(status.lastTickAt).not.toBeNull();
     expect(status.inFlight).toBe(false);
+  });
+
+  it("augments scheduled generation with substrate memory context, scoped to the automation's sources", async () => {
+    const bridge = newBridge();
+    // Memory from the scoped source is eligible; one from another source
+    // must be excluded by `selectMemoryLines`' strict source scoping.
+    bridge.bridgeGetMemories.mockReturnValue([
+      mem({
+        content: "Atlas is the data platform",
+        observationType: "fact",
+        state: "canonical",
+        sourceId: "s1",
+        retentionScore: 0.9,
+        corroborationCount: 3,
+      }),
+      mem({ content: "unrelated", sourceId: "other", state: "canonical" }),
+    ]);
+    bridge.bridgeGetConceptGraph.mockReturnValue(
+      JSON.stringify({
+        nodes: [
+          { id: "atlas", label: "Atlas" },
+          { id: "platform", label: "Platform" },
+        ],
+        edges: [{ from: "atlas", to: "platform", relation_type: "is_a" }],
+      }),
+    );
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "gen",
+        '{"kind":"generate_from_template","template_id":"tmpl","source_ids":["s1"]}',
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeGetMemories).toHaveBeenCalledWith(null);
+    const call = bridge.bridgeGenerateFromTemplate.mock.calls[0];
+    expect(call[0]).toBe("tmpl");
+    expect(call[1]).toEqual(["s1"]);
+    // The scoped memory is distilled into the additive 3rd-arg context;
+    // the unrelated-source memory is dropped.
+    expect(call[2]).toEqual(
+      expect.arrayContaining([
+        "- [Fact] Atlas is the data platform (canonical, 90% retained)",
+      ]),
+    );
+    expect(call[2]).not.toContain("- [Fact] unrelated (canonical, 50% retained)");
+    // The automation is source-scoped, so workspace-level concept
+    // relations are omitted entirely (they have no per-source attribution
+    // to filter on) and the concept graph isn't fetched. (Devin Review PR #120.)
+    expect(call[2]).not.toContain("- Atlas — is a → Platform");
+    expect(call[2]).not.toContain("### Concept relationships");
+    expect(bridge.bridgeGetConceptGraph).not.toHaveBeenCalled();
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("gen", "ok");
   });
 
   it("self-gates while the app is suspended in the tray (LW-9)", async () => {
@@ -289,7 +369,11 @@ describe("scheduler.tick", () => {
 
     await tick(bridge as unknown as NativeBridge);
 
-    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith("t", []);
+    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith(
+      "t",
+      [],
+      undefined,
+    );
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("gen", "ok");
   });
 
@@ -758,7 +842,11 @@ describe("scheduler — multi-step sequence actions", () => {
     await tick(bridge as unknown as NativeBridge);
 
     expect(bridge.bridgeReindexSource.mock.calls).toEqual([["s1"], ["s2"]]);
-    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith("t1", ["s3"]);
+    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith(
+      "t1",
+      ["s3"],
+      undefined,
+    );
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("seq-ok", "ok");
   });
 

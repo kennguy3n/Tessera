@@ -30,6 +30,7 @@
  * `artifacts:generateFromTemplate`.
  */
 import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo } from "./appState";
+import { buildMemoryContext } from "./ipc/memoryContext";
 import { isBatteryLow } from "./batteryMonitor";
 import { isIndexingDeferredForMemory } from "./memoryWatchdog";
 import { isAppSuspended } from "./appSuspension";
@@ -410,7 +411,20 @@ async function executeLeafAction(
         throw new BatteryGatedSkip();
       }
       const sourceIds = action.source_ids ?? [];
-      bridge.bridgeGenerateFromTemplate(action.template_id, sourceIds);
+      // Augment scheduled generation with the same knowledge-substrate
+      // context as the interactive path (`artifacts:generateFromTemplate`)
+      // so automated artifacts also draw on extracted entities/facts/
+      // decisions, not just raw source hits. `buildMemoryContext` keeps
+      // memory lines strictly source-scoped and only folds in workspace
+      // concept relations for unscoped generation. Best-effort and
+      // additive: an empty/unavailable substrate yields no context and
+      // generation is unchanged.
+      const memoryContext = buildMemoryContext(bridge, sourceIds);
+      bridge.bridgeGenerateFromTemplate(
+        action.template_id,
+        sourceIds,
+        memoryContext.length > 0 ? memoryContext : undefined,
+      );
       break;
     }
     case "backfill_kchat_channel": {

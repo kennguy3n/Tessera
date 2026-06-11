@@ -7,6 +7,8 @@ import {
   Zap,
   Eye,
   Settings,
+  Brain,
+  Network,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -58,6 +60,8 @@ export const SECONDARY_SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/tasks", label: "Tasks", Icon: CheckSquare },
   { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/vision", label: "Vision", Icon: Eye },
+  { to: "/memory", label: "Memory", Icon: Brain },
+  { to: "/knowledge", label: "Knowledge Graph", Icon: Network },
 ];
 
 /**
@@ -91,22 +95,51 @@ export const SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/vision", label: "Vision", Icon: Eye },
   { to: "/settings", label: "Settings", Icon: Settings },
+  { to: "/memory", label: "Memory", Icon: Brain },
+  { to: "/knowledge", label: "Knowledge Graph", Icon: Network },
 ];
 
-/** Map of `"1"..."N"` → route path, derived from `SIDEBAR_ITEMS`
- *  display order. Used by `useKeyboardShortcuts` to navigate. */
+/**
+ * Highest 1-indexed sidebar position that can own a `Ctrl/Cmd+N`
+ * shortcut. A keyboard chord is a single non-modifier key, and the
+ * only digit keys are `0`–`9`; there is no way to press "10" as one
+ * keystroke (a keydown reports `key: "1"` then `key: "0"`, never
+ * `"10"`). So positions 1..9 get a numeric chord and anything beyond
+ * that is reachable via the sidebar click + the Cmd+K palette, but
+ * carries NO shortcut hint.
+ *
+ * This is the single source of truth for the cutoff: `commandRegistry`
+ * imports it to decide which sidebar commands get a chord, and the two
+ * maps below use it so the hint chips can never advertise a chord the
+ * registry doesn't actually bind. (Devin Review PR #120 caught the
+ * 10th item — Knowledge Graph — rendering a dead "Ctrl+10" hint.)
+ */
+export const MAX_SIDEBAR_SHORTCUT_INDEX = 9;
+
+/** Map of `"1".."9"` → route path, derived from `SIDEBAR_ITEMS`
+ *  display order. Used by `useKeyboardShortcuts` to navigate. Only
+ *  the first `MAX_SIDEBAR_SHORTCUT_INDEX` items get a key — see that
+ *  constant for why 10+ are intentionally excluded. */
 export const SIDEBAR_NAV_BY_KEY: Readonly<Record<string, string>> =
   Object.freeze(
     Object.fromEntries(
-      SIDEBAR_ITEMS.map((item, idx) => [String(idx + 1), item.to]),
+      SIDEBAR_ITEMS.slice(0, MAX_SIDEBAR_SHORTCUT_INDEX).map((item, idx) => [
+        String(idx + 1),
+        item.to,
+      ]),
     ),
   );
 
-/** Inverse of `SIDEBAR_NAV_BY_KEY`: route path → `"1"..."N"`. Used
- *  by `Sidebar` to render the shortcut hint chip on each row. */
+/** Inverse of `SIDEBAR_NAV_BY_KEY`: route path → `"1".."9"`. Used
+ *  by `Sidebar` to render the shortcut hint chip on each row. Items
+ *  past `MAX_SIDEBAR_SHORTCUT_INDEX` are absent here, so they render
+ *  no hint chip (matching the registry, which binds them no chord). */
 export const SIDEBAR_SHORTCUT_HINTS: Readonly<Record<string, string>> =
   Object.freeze(
     Object.fromEntries(
-      SIDEBAR_ITEMS.map((item, idx) => [item.to, String(idx + 1)]),
+      SIDEBAR_ITEMS.slice(0, MAX_SIDEBAR_SHORTCUT_INDEX).map((item, idx) => [
+        item.to,
+        String(idx + 1),
+      ]),
     ),
   );

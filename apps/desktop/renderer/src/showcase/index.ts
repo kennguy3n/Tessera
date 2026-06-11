@@ -99,6 +99,137 @@ function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number
   }));
 }
 
+const NOW_SECS = Math.floor(Date.parse(NOW) / 1000);
+
+/**
+ * Build a DEV-only knowledge-substrate dataset (memory plane + concept
+ * graph) for one persona so the Memory page, Knowledge Graph panel and
+ * Home insights card render with real, persona-grounded content in
+ * screenshots instead of empty states. This mirrors the real bridge
+ * shapes: `getMemories` → `SubstrateMemoryInfo[]`, `getConceptGraph` →
+ * a JSON *string* with the exact field casing the production serializer
+ * emits (PascalCase `state`, snake_case `relation_type`/`truncation`).
+ */
+function buildSubstrate(ds: ShowcaseDataset) {
+  const scopeId = `sc-${ds.id}-scope`;
+  const sourceId = `sc-${ds.id}-src-local`;
+  const org = ds.persona.org;
+  const market = ds.persona.market;
+  const role = ds.persona.role;
+  // Derive a few concept surface terms from the indexed source filenames
+  // (drop extensions, humanize) so the graph reflects the persona's data.
+  const docTerms = ds.sourceFiles
+    .slice(0, 3)
+    .map((f) =>
+      f
+        .replace(/^.*\//, "")
+        .replace(/\.[A-Za-z0-9]+$/, "")
+        .replace(/[_-]+/g, " ")
+        .trim(),
+    )
+    .filter((t) => t.length > 0);
+
+  const mem = (
+    slug: string,
+    observationType: string,
+    content: string,
+    state: string,
+    retentionScore: number,
+    signal: { pin?: number; retrieval?: number; corroboration?: number } = {},
+  ): {
+    id: string;
+    scopeId: string;
+    observationType: string;
+    content: string;
+    state: string;
+    retentionScore: number;
+    pinCount: number;
+    retrievalCount: number;
+    corroborationCount: number;
+    createdAt: number;
+    lastAccessedAt: number;
+    sourceId: string | null;
+  } => ({
+    id: `sc-${ds.id}-mem-${slug}`,
+    scopeId,
+    observationType,
+    content,
+    state,
+    retentionScore,
+    pinCount: signal.pin ?? 0,
+    retrievalCount: signal.retrieval ?? 0,
+    corroborationCount: signal.corroboration ?? 1,
+    createdAt: NOW_SECS - 86_400 * 9,
+    lastAccessedAt: NOW_SECS - 3_600,
+    sourceId,
+  });
+
+  const memories = [
+    mem("org", "entity", `${org} is the organization at the center of this workspace.`, "canonical", 0.97, { pin: 1, retrieval: 14, corroboration: 5 }),
+    mem("market", "entity", `${org} operates in the ${market} market.`, "consolidated", 0.88, { retrieval: 9, corroboration: 4 }),
+    mem("role", "entity", `The primary author is a ${role}.`, "reinforced", 0.72, { retrieval: 5, corroboration: 2 }),
+    mem("fact-1", "fact", docTerms[0] ? `Key figures are sourced from "${docTerms[0]}".` : `Key figures are grounded in indexed sources.`, "canonical", 0.91, { pin: 1, retrieval: 11, corroboration: 3 }),
+    mem("fact-2", "fact", docTerms[1] ? `Operational context is drawn from "${docTerms[1]}".` : `Operational context is drawn from indexed sources.`, "reinforced", 0.64, { retrieval: 4, corroboration: 2 }),
+    mem("decision-1", "decision", `Decided to standardize reporting on the ${org} template set.`, "consolidated", 0.83, { retrieval: 7, corroboration: 3 }),
+    mem("task-1", "task", `Review the latest ${market} figures before the next artifact generation.`, "candidate", 0.41, { retrieval: 1, corroboration: 1 }),
+    mem("fact-old", "fact", `Earlier ${market} estimate, replaced by a newer corroborated figure.`, "superseded", 0.28, { retrieval: 2, corroboration: 1 }),
+    mem("task-done", "task", `Initial source import for ${org} completed.`, "archived", 0.12, { retrieval: 1, corroboration: 1 }),
+  ];
+
+  // Concept graph: org hub linked to market/role + derived document concepts.
+  // `state` here MUST be a concept-graph `NodeState` (PascalCase of
+  // `candidate | canonical | superseded | contradicted | deleted`) — NOT a
+  // memory decay state. `parseConceptGraph` normalizes anything else to
+  // `unknown` and renders it with the neutral grey fallback, which would
+  // defeat the showcase. (Devin Review PR #120.)
+  const nodeDefs: { id: string; label: string; state: string }[] = [
+    { id: "n-org", label: org, state: "Canonical" },
+    { id: "n-market", label: market, state: "Canonical" },
+    { id: "n-role", label: role, state: "Canonical" },
+    ...docTerms.map((t, i) => ({
+      id: `n-doc-${i}`,
+      label: t,
+      state: i === 0 ? "Canonical" : "Candidate",
+    })),
+    { id: "n-old", label: `Prior ${market} estimate`, state: "Superseded" },
+  ];
+  const edgeDefs: { from: string; to: string; relation_type: string }[] = [
+    { from: "n-org", to: "n-market", relation_type: "part_of" },
+    { from: "n-role", to: "n-org", relation_type: "assigned_to" },
+    ...docTerms.map((_t, i) => ({
+      from: `n-doc-${i}`,
+      to: "n-org",
+      relation_type: i === 2 ? "decided_by" : "derived_from",
+    })),
+    { from: "n-market", to: "n-old", relation_type: "supersedes" },
+  ];
+  const connections = new Map<string, number>();
+  for (const e of edgeDefs) {
+    connections.set(e.from, (connections.get(e.from) ?? 0) + 1);
+    connections.set(e.to, (connections.get(e.to) ?? 0) + 1);
+  }
+  const conceptGraphJson = JSON.stringify({
+    nodes: nodeDefs.map((n) => ({
+      id: n.id,
+      label: n.label,
+      state: n.state,
+      scope_id: scopeId,
+      connections_count: connections.get(n.id) ?? 0,
+    })),
+    edges: edgeDefs.map((e, i) => ({
+      id: `e-${i}`,
+      from: e.from,
+      to: e.to,
+      relation_type: e.relation_type,
+      scope_id: scopeId,
+    })),
+    scope_filter: [],
+    truncation: "complete",
+  });
+
+  return { memories, conceptGraphJson };
+}
+
 // Mirrors the `ternary-bonsai-4b-gguf` entry in sidecars/models.json (Tessera's
 // design text model). This is the model that actually generated the artifacts
 // above, via the PrismML llama.cpp runtime.
@@ -145,7 +276,22 @@ export function buildShowcaseApi(personaId: string): unknown {
 
   const byId = new Map(artifacts.map((a) => [a.id, a]));
 
+  // Knowledge-substrate (Session 1) showcase data. `memoryById` is mutable so
+  // pin/unpin/forget behave like the real bridge during screenshot capture.
+  const { memories: substrateMemories, conceptGraphJson } = buildSubstrate(ds);
+  const memoryById = new Map(substrateMemories.map((m) => [m.id, { ...m }]));
+  // Scope the memory plane is keyed under; reused for the synthesis result
+  // so the showcase mock honors the real `SubstrateSynthesisInfo` shape.
+  const substrateScopeId = substrateMemories[0]?.scopeId ?? `sc-${ds.id}-scope`;
+
   const real: Record<string, Record<string, unknown>> = {
+    // Bridge lifecycle: report `ready` so `useBridgeReady` mounts the real
+    // app shell instead of hanging on the boot skeleton (the showcase bridge
+    // is fully synchronous/in-memory, so it is ready immediately).
+    lifecycle: {
+      getBridgeState: async () => ({ state: "ready", error: null }),
+      onBridgeState: () => () => {},
+    },
     settings: {
       get: async () => ({ ...settings }),
       update: async (patch: Record<string, unknown>) => {
@@ -205,6 +351,51 @@ export function buildShowcaseApi(personaId: string): unknown {
         const a = byId.get(artifactId);
         return a ? buildCitations(ds, a.artifactType, a.citationCount) : [];
       },
+    },
+    // Knowledge substrate (Session 1). Memory plane + concept graph wired with
+    // persona-grounded data so the Memory page, Knowledge Graph panel and Home
+    // insights card render real content. pin/unpin/forget mutate in place.
+    substrate: {
+      extractObservations: async () => 0,
+      getMemories: async (scope?: string | null) => {
+        const all = [...memoryById.values()];
+        return scope ? all.filter((m) => m.scopeId === scope) : all;
+      },
+      pinMemory: async (id: string) => {
+        const m = memoryById.get(id);
+        if (!m) throw new Error(`Unknown memory: ${id}`);
+        m.pinCount += 1;
+        m.retentionScore = Math.min(1, m.retentionScore + 0.05);
+        return { ...m };
+      },
+      unpinMemory: async (id: string) => {
+        const m = memoryById.get(id);
+        if (!m) throw new Error(`Unknown memory: ${id}`);
+        m.pinCount = Math.max(0, m.pinCount - 1);
+        return { ...m };
+      },
+      forgetMemory: async (id: string) => {
+        memoryById.delete(id);
+      },
+      getConceptGraph: async () => conceptGraphJson,
+      runDecaySweep: async () => ({
+        scored: memoryById.size,
+        candidatesArchived: 0,
+        supersededArchived: 0,
+      }),
+      // Honor the real `SubstrateSynthesisInfo` contract (shared/types.ts):
+      // a synthesis run returns a window/scope-stamped recap, not an
+      // ad-hoc counter object. Grounded to the persona so any future
+      // synthesis UI renders real demo content. (Devin Review PR #120.)
+      triggerSynthesis: async () => ({
+        windowId: `sc-${ds.id}-synth`,
+        scopeId: substrateScopeId,
+        version: 1,
+        recap: `Synthesized ${memoryById.size} active memories for ${ds.persona.org}.`,
+        decisions: [],
+        openQuestions: [],
+        activeTasks: [],
+      }),
     },
     runtime: {
       // Report the REAL PlatformInfo shape (RuntimeStatus / ModelRuntimeCard
@@ -266,7 +457,7 @@ export function buildShowcaseApi(personaId: string): unknown {
     },
   };
 
-  const passthrough = (namespace: string) =>
+  const makePassthrough = (namespace: string) =>
     new Proxy(
       {},
       {
@@ -285,12 +476,26 @@ export function buildShowcaseApi(personaId: string): unknown {
       },
     );
 
+  // Cache one Proxy per namespace so repeated `window.tessera.<ns>` reads
+  // return a STABLE object identity. Components routinely capture a namespace
+  // into a `useEffect`/`useMemo` dependency (e.g. `KchatSidebarSection` deps on
+  // `window.tessera.kchat`); minting a fresh Proxy on every access would change
+  // that identity every render and spin those effects into an infinite update
+  // loop. The real preload bridge exposes stable namespace objects, so this
+  // matches production semantics.
+  const namespaceCache = new Map<string, unknown>();
+
   return new Proxy(
     {},
     {
       get(_t, namespace: string | symbol) {
         if (typeof namespace === "symbol") return undefined;
-        return passthrough(namespace);
+        let ns = namespaceCache.get(namespace);
+        if (!ns) {
+          ns = makePassthrough(namespace);
+          namespaceCache.set(namespace, ns);
+        }
+        return ns;
       },
     },
   );
