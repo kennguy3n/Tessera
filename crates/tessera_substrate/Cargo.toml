@@ -9,7 +9,7 @@ description = "Adapter that wraps the kennguy3n/knowledge substrate (evidence st
 
 [dependencies]
 # knowledge substrate crates (git, pinned in the workspace manifest).
-knowledge-crypto = { workspace = true }
+knowledge_crypto = { workspace = true }
 evidence_store = { workspace = true }
 observation_engine = { workspace = true }
 memory_manager = { workspace = true }

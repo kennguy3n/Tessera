@@ -46,7 +46,13 @@ rusqlite = { version = "0.36", features = ["bundled-sqlcipher-vendored-openssl",
 # store, memory_manager) from the same git checkout automatically.
 # Pinned to the snapshot-API rev (knowledge#220) so the substrate can
 # produce consistent encrypted backups of its sibling DBs.
-knowledge-crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+#
+# Single source of truth for the upstream `crypto` crate across the whole
+# workspace: the substrate (evidence/observation/memory/concept) AND the
+# Session-7 post-quantum layer (tessera_core/tessera_sources/tessera_export)
+# both depend on this one alias/rev, so only ONE copy of `crypto` (and its
+# ML-KEM/ML-DSA transitive tree) is ever compiled and audited.
+knowledge_crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
 evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
 observation_engine = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
 memory_manager = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
@@ -80,12 +86,11 @@ hkdf = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 zeroize = { version = "1.8", default-features = false, features = ["zeroize_derive"] }
-# Session 7: post-quantum crypto substrate from the knowledge repo. Pinned to a
-# rev so the build is reproducible (the package is named `crypto` upstream; we
-# alias it to `knowledge_crypto` to avoid colliding with the generic name).
-# Provides XChaCha20-Poly1305 AEAD, HKDF-SHA256 key derivation, hybrid
-# X25519 + ML-KEM-768 KEM, and ML-DSA-65 (FIPS 204) signatures.
-knowledge_crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "de716e4df1c507cb92df3dd960479af5a95244d1" }
+# Session 7 post-quantum crypto (XChaCha20-Poly1305 AEAD, HKDF-SHA256 key
+# derivation, hybrid X25519 + ML-KEM-768 KEM, ML-DSA-65 / FIPS 204 signatures)
+# is provided by the SAME `knowledge_crypto` alias declared above — do not add a
+# second `crypto` entry at a different rev, or the workspace will compile two
+# copies of the crypto crate.
 # ML-DSA-65 (FIPS 204) wire types. Pinned to the exact version the
 # knowledge `crypto` crate links so `EncodedVerifyingKey<MlDsa65>` and
 # `Signature<MlDsa65>` unify to one type across the dependency graph;

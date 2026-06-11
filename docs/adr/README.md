@@ -22,3 +22,4 @@ the record stays verifiable).
 | [0008](0008-n-api-bridge.md) | N-API bridge between Electron and Rust |
 | [0009](0009-single-file-db.md) | Single shared SQLite connection / single-file DB |
 | [0010](0010-csp-nonce.md) | Per-session CSP nonce for the renderer |
+| [0011](0011-knowledge-substrate-integration.md) | Integrate the knowledge substrate as an additive native layer |

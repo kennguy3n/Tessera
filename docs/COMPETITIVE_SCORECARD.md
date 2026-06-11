@@ -1,6 +1,8 @@
 # Competitive Scorecard
 
-How Tessera stacks up after the parallel competitive-upgrade release,
+How Tessera stacks up after the parallel competitive-upgrade release
+**and the subsequent knowledge-substrate integration** (see
+[ADR-0011](adr/0011-knowledge-substrate-integration.md)),
 scored on the six dimensions from the prior critique. Tessera is a
 **local-first desktop app** (Electron + Rust core, single-file encrypted
 SQLite) with **KChat (Mattermost v4)** as its collaboration layer — it is
@@ -13,12 +15,12 @@ board); "After" reflects this release.
 
 | Dimension | Before | After | What moved it |
 |---|:---:|:---:|---|
-| Architecture | 7 | 9 | Versioned migration framework + typed errors + auto-sized read pool |
-| Features | 7 | 9 | Comments, conditional formatting, form view, presenter mode, task deps + Gantt, multi-step automations |
+| Architecture | 7 | 9 | Versioned migration framework + typed errors + auto-sized read pool; **knowledge substrate as an additive native layer (encrypted sibling DBs)** |
+| Features | 7 | 9 | Comments, conditional formatting, form view, presenter mode, task deps + Gantt, multi-step automations; **observation extraction, decay-based memory, concept graph, connectors v2, local backup/restore** |
 | Performance | 6 | 9 | Incremental IVF, 100K/500K benches, virtual scrolling, read-pool pre-warm, 3s cold-start CI gate |
 | Cost / install size | 7 | 8 | Symbol stripping, locale pruning, delta updates, resumable model downloads, sharper CI cache |
-| Security | 8 | 9 | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates |
-| Maintainability | 6 | 9 | 10 ADRs, `missing_docs` + `cargo doc` gate, generated IPC types, error boundaries, dependency inventory |
+| Security | 8 | 9 | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates; **XChaCha20-Poly1305 DEK wrapping, optional ML-KEM-768 KEM, ML-DSA-65 export signing** |
+| Maintainability | 6 | 9 | 11 ADRs, `missing_docs` + `cargo doc` gate, generated IPC types, error boundaries, dependency inventory; **single upstream-`crypto` source of truth** |
 
 ---
 
@@ -93,7 +95,7 @@ no server-side data custody to breach.
 
 ## Maintainability — 6 → 9
 
-- **10 ADRs** under `docs/adr/` for the load-bearing decisions.
+- **11 ADRs** under `docs/adr/` for the load-bearing decisions.
 - `#![warn(missing_docs)]` on public Rust crates + a `cargo doc --no-deps`
   CI step.
 - Renderer TypeScript types **auto-generated** from the zod IPC schemas,
@@ -101,6 +103,54 @@ no server-side data custody to breach.
 - React **error boundaries** around every editor/page writing
   `crash-report.json` on crash.
 - Auto-generated `docs/DEPENDENCIES.md` license inventory.
+
+---
+
+## Knowledge substrate integration
+
+The `kennguy3n/knowledge` Rust substrate — previously documented but
+never invoked — is now wired in as an **additive** native layer behind a
+thin Tessera-owned adapter (`crates/tessera_substrate`), keeping the
+existing `tessera_sources` storage/search and the N-API/IPC contract
+unchanged. New data lives in **separately-encrypted sibling DB files**
+keyed from the same master key, preserving the single-file local-first,
+encryption-at-rest posture. See
+[ADR-0011](adr/0011-knowledge-substrate-integration.md).
+
+- **Memory & knowledge.** `observation_engine` extracts
+  entities/facts/tasks/decisions on ingest; `memory_manager` applies a
+  decay state machine (active → fading → archived) with retention
+  scoring; `concept_graph` builds a typed graph (is_a / part_of /
+  supersedes / contradicts), all surfaced in the UI (Memory page,
+  concept-graph panel, HomePage insights).
+- **Search.** Hybrid retrieval is enriched with matching
+  entities/concepts/memories and adds memory retention as a fourth RRF
+  signal, plus concept-graph-driven "related source" suggestions.
+- **Connectors v2.** `connector_framework` + `connectors` back the
+  existing `connectors:*` IPC (behind `useV2Connectors`, default on),
+  with synced content flowing through evidence → observation → memory;
+  legacy connectors remain a reversible fallback.
+- **Resilience.** Zero-config local backup/restore via SQLite's Online
+  Backup API (hot copies, scheduler, retention pruning, bundle
+  export/import) now also covers the substrate sibling DBs.
+- **Post-quantum-ready crypto.** Per-source DEKs are wrapped with
+  XChaCha20-Poly1305 (legacy AES-GCM stays readable, discriminated by
+  nonce length); an optional hybrid X25519 + ML-KEM-768 KEM sits behind
+  the `pqc` feature; exports carry ML-DSA-65 (FIPS 204) provenance
+  signatures.
+
+*vs. competitors:* structured, on-device knowledge extraction and a
+local concept graph over the user's own sources — with post-quantum-ready
+encryption and zero-config local backup — go beyond the raw
+text-search-and-store model of Notion/Coda while keeping everything
+offline-capable.
+
+*Known limitation:* because `kennguy3n/knowledge` is a private git
+dependency, CI cannot clone it and fails at the fetch step;
+substrate-touching changes are validated locally (`cargo +1.88
+fmt`/`clippy`/`test`, desktop `lint`/`type-check`/`test`) until a CI
+credential (deploy key / submodule / private registry / vendoring) is in
+place.
 
 *vs. competitors:* documentation and generated-contract discipline that
 is unusually strong for a desktop app of this size.
