@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import ConnectorsList from "../components/ConnectorsList";
 import { CONNECTOR_DESCRIPTORS } from "../components/connectorDescriptors";
+import type { ConnectorScopeComparison } from "../types/ipc";
 
 const mockApi = {
   connectors: {
@@ -41,6 +42,14 @@ const mockApi = {
       confluence: "http://127.0.0.1:9880/callback",
       figma: "http://127.0.0.1:9881/callback",
     })),
+    // Read-only scope inspection. Default returns `null` (the
+    // not-connected contract) so disconnected-provider tests don't
+    // render a "scopes narrowed" banner; individual tests override
+    // this when they want to exercise the narrowed-scope path.
+    inspectScopes: vi.fn(
+      async (_provider: string): Promise<ConnectorScopeComparison | null> =>
+        null,
+    ),
   },
 };
 
@@ -217,6 +226,206 @@ describe("ConnectorsList", () => {
       expect(
         screen.queryByText(/127\.0\.0\.1:9876/),
       ).not.toBeInTheDocument();
+    },
+  );
+
+  it("groups connectors under category section headings", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+    // Wait for the list to settle, then assert the category section
+    // headings (rendered as <h3>) are present. The exact set is
+    // driven by the descriptors, but Storage/Docs & Wiki/Chat are
+    // guaranteed by the 10 shipped providers.
+    await screen.findByText("Google Drive");
+    for (const heading of ["Storage", "Docs & Wiki", "Chat", "CRM", "Code"]) {
+      expect(
+        screen.getByRole("heading", { name: heading }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("filters the list to connectors matching the search query", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+    await screen.findByText("Slack");
+
+    const search = screen.getByLabelText("Search connectors");
+    await act(async () => {
+      fireEvent.change(search, { target: { value: "slack" } });
+    });
+
+    // Slack survives the filter; an unrelated provider is removed.
+    expect(screen.getByText("Slack")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
+    expect(screen.queryByText("Notion")).not.toBeInTheDocument();
+  });
+
+  it("matches connectors by keyword alias, not just label", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+    await screen.findByText("OneDrive");
+
+    const search = screen.getByLabelText("Search connectors");
+    await act(async () => {
+      // "sharepoint" appears only in OneDrive's keyword aliases.
+      fireEvent.change(search, { target: { value: "sharepoint" } });
+    });
+    expect(screen.getByText("OneDrive")).toBeInTheDocument();
+    expect(screen.queryByText("Google Drive")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state with a clear-search action when nothing matches", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+    await screen.findByText("Figma");
+
+    const search = screen.getByLabelText("Search connectors");
+    await act(async () => {
+      fireEvent.change(search, { target: { value: "no-such-connector" } });
+    });
+    expect(screen.getByText("No connectors found")).toBeInTheDocument();
+    expect(screen.queryByText("Figma")).not.toBeInTheDocument();
+
+    // The "Clear search" action restores the full list.
+    await act(async () => {
+      fireEvent.click(screen.getByText("Clear search"));
+    });
+    expect(await screen.findByText("Figma")).toBeInTheDocument();
+  });
+
+  it("renders the scope-transparency disclosure for every connector", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+    await screen.findByText("Notion");
+    // Each connector card carries a "what we read / what we never
+    // touch" disclosure; check one provider's accessible label.
+    expect(
+      screen.getByLabelText("Data access for Notion"),
+    ).toBeInTheDocument();
+  });
+
+  it(
+    "surfaces a 'scopes narrowed' banner with a Reconnect CTA when a " +
+      "connected provider did not grant every requested scope",
+    async () => {
+      // Slack is connected but the user unchecked one scope at the
+      // consent screen, so inspectScopes reports it as not fully
+      // granted with a concrete `missing` entry.
+      mockApi.connectors.status.mockImplementation(async (p: string) => ({
+        provider: p,
+        connected: p === "slack",
+        status: p === "slack" ? "connected" : "disconnected",
+      }));
+      mockApi.connectors.inspectScopes.mockImplementation(
+        async (p: string) =>
+          p === "slack"
+            ? {
+                provider: "slack",
+                requested: ["channels:read", "users:read"],
+                granted: ["channels:read"],
+                missing: ["users:read"],
+                fullyGranted: false,
+              }
+            : null,
+      );
+
+      await act(async () => {
+        render(<ConnectorsList />);
+      });
+
+      // The banner names the missing scope and offers a Reconnect CTA.
+      expect(
+        await screen.findByText(/Some requested permissions weren't granted/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/users:read/)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText("Reconnect Slack to restore permissions"),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it(
+    "does NOT show the 'scopes narrowed' banner when all requested " +
+      "scopes were granted",
+    async () => {
+      mockApi.connectors.status.mockImplementation(async (p: string) => ({
+        provider: p,
+        connected: p === "slack",
+        status: p === "slack" ? "connected" : "disconnected",
+      }));
+      mockApi.connectors.inspectScopes.mockImplementation(
+        async (p: string) =>
+          p === "slack"
+            ? {
+                provider: "slack",
+                requested: ["channels:read", "users:read"],
+                granted: ["channels:read", "users:read"],
+                missing: [],
+                fullyGranted: true,
+              }
+            : null,
+      );
+
+      await act(async () => {
+        render(<ConnectorsList />);
+      });
+      await screen.findByText("Slack");
+      expect(
+        screen.queryByText(/Some requested permissions weren't granted/),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it(
+    "offers a one-click Reconnect affordance on a connected provider " +
+      "that opens the credential modal",
+    async () => {
+      mockApi.connectors.status.mockImplementation(async (p: string) => ({
+        provider: p,
+        connected: p === "github",
+        status: p === "github" ? "connected" : "disconnected",
+      }));
+
+      await act(async () => {
+        render(<ConnectorsList />);
+      });
+
+      const reconnect = await screen.findByLabelText("Reconnect GitHub");
+      await act(async () => {
+        fireEvent.click(reconnect);
+      });
+      // The shared credential modal opens, titled for the provider.
+      expect(await screen.findByText("Connect GitHub")).toBeInTheDocument();
     },
   );
 });

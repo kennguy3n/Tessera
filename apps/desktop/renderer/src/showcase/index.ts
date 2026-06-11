@@ -494,6 +494,7 @@ export function buildShowcaseApi(personaId: string): unknown {
       selectItems: async () => ({ ok: true }),
       sync: async () => ({ ok: true }),
       syncDrive: async () => ({ ok: true }),
+      inspectScopes: async () => null,
     },
     // KChat is an enterprise messaging connector unrelated to the demo; report
     // it unavailable so the sidebar section renders nothing instead of polling.

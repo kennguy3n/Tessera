@@ -11,6 +11,18 @@ interface ConnectorStatusProps {
    * label table is used (Google Drive, OneDrive, Notion, …).
    */
   label?: string;
+  /**
+   * Optional one-click reauthentication affordance. When supplied, a
+   * "Reconnect" button is rendered alongside Sync/Disconnect so the
+   * user can re-run the OAuth flow without first disconnecting —
+   * useful when a refresh token has been revoked upstream or the
+   * granted scopes were narrowed. The owner (e.g. `ConnectorsList`)
+   * wires this to open the shared credential modal. Left undefined
+   * by callers that own their own connect flow (e.g. the Google
+   * Drive card on `SourcesPage`), in which case no button renders
+   * and behaviour is unchanged.
+   */
+  onReconnect?: () => void;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -27,6 +39,7 @@ export default function ConnectorStatus({
   onSync,
   onDisconnect,
   label,
+  onReconnect,
 }: ConnectorStatusProps) {
   const [status, setStatus] = useState<ConnectorStatusInfo>({
     provider,
@@ -187,6 +200,16 @@ export default function ConnectorStatus({
           >
             {syncing ? "Syncing..." : "Sync Now"}
           </button>
+          {onReconnect && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={onReconnect}
+              aria-label={`Reconnect ${providerLabel}`}
+            >
+              Reconnect
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-danger btn-sm"

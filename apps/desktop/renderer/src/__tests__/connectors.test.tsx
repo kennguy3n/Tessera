@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import ConnectorStatus from "../components/ConnectorStatus";
 import DriveFilePicker from "../components/DriveFilePicker";
+import {
+  CONNECTOR_DESCRIPTORS,
+  CONNECTOR_CATEGORY_ORDER,
+  UNCATEGORIZED_LABEL,
+  connectorMatchesQuery,
+  groupConnectorsByCategory,
+  type ConnectorDescriptor,
+} from "../components/connectorDescriptors";
 
 const mockApi = {
   connectors: {
@@ -581,4 +589,133 @@ describe("DriveFilePicker", () => {
       expect(screen.queryByText(/fetch failed/i)).not.toBeInTheDocument();
     },
   );
+
+  it(
+    "renders a Reconnect button (and fires onReconnect) only when the " +
+      "onReconnect prop is supplied",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      const onReconnect = vi.fn();
+      render(<ConnectorStatus provider="notion" onReconnect={onReconnect} />);
+
+      const reconnect = await screen.findByLabelText("Reconnect Notion");
+      await act(async () => {
+        fireEvent.click(reconnect);
+      });
+      expect(onReconnect).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("omits the Reconnect button when onReconnect is not supplied", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "notion",
+      connected: true,
+      status: "connected",
+    });
+    render(<ConnectorStatus provider="notion" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sync Now")).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("Reconnect Notion")).not.toBeInTheDocument();
+  });
+});
+
+describe("connectorDescriptors", () => {
+  it("ships exactly the 10 Connectors v2 providers, each fully categorized", () => {
+    const providers = CONNECTOR_DESCRIPTORS.map((d) => d.provider);
+    expect(providers).toEqual([
+      "google_drive",
+      "onedrive",
+      "notion",
+      "jira",
+      "confluence",
+      "figma",
+      "hubspot",
+      "slack",
+      "email",
+      "github",
+    ]);
+    // Every descriptor must carry a known category plus
+    // scope-transparency copy so no card renders without its
+    // grouping or its "what we read / never touch" disclosure.
+    for (const d of CONNECTOR_DESCRIPTORS) {
+      expect(d.category).toBeDefined();
+      expect(CONNECTOR_CATEGORY_ORDER).toContain(d.category);
+      expect((d.reads ?? []).length).toBeGreaterThan(0);
+      expect((d.neverTouches ?? []).length).toBeGreaterThan(0);
+    }
+  });
+
+  describe("connectorMatchesQuery", () => {
+    const drive = CONNECTOR_DESCRIPTORS.find(
+      (d) => d.provider === "google_drive",
+    )!;
+
+    it("matches everything on an empty / whitespace query", () => {
+      expect(connectorMatchesQuery(drive, "")).toBe(true);
+      expect(connectorMatchesQuery(drive, "   ")).toBe(true);
+    });
+
+    it("matches case-insensitively on the label", () => {
+      expect(connectorMatchesQuery(drive, "google")).toBe(true);
+      expect(connectorMatchesQuery(drive, "GOOGLE DRIVE")).toBe(true);
+    });
+
+    it("matches on provider id, category, and keyword aliases", () => {
+      expect(connectorMatchesQuery(drive, "google_drive")).toBe(true);
+      expect(connectorMatchesQuery(drive, "storage")).toBe(true);
+      expect(connectorMatchesQuery(drive, "gdrive")).toBe(true);
+    });
+
+    it("returns false when nothing matches", () => {
+      expect(connectorMatchesQuery(drive, "salesforce")).toBe(false);
+    });
+  });
+
+  describe("groupConnectorsByCategory", () => {
+    it("groups descriptors in CONNECTOR_CATEGORY_ORDER and omits empty buckets", () => {
+      const groups = groupConnectorsByCategory(CONNECTOR_DESCRIPTORS);
+      const categories = groups.map((g) => g.category);
+      // Order must be a subsequence of the canonical order (empty
+      // buckets dropped, no reordering).
+      const orderIndex = categories.map((c) =>
+        CONNECTOR_CATEGORY_ORDER.indexOf(c as never),
+      );
+      const sorted = [...orderIndex].sort((a, b) => a - b);
+      expect(orderIndex).toEqual(sorted);
+      // Every shipped descriptor is accounted for exactly once.
+      const total = groups.reduce((n, g) => n + g.descriptors.length, 0);
+      expect(total).toBe(CONNECTOR_DESCRIPTORS.length);
+    });
+
+    it("collects unknown / missing categories into a trailing 'Other' bucket", () => {
+      const orphan: ConnectorDescriptor = {
+        provider: "mystery",
+        label: "Mystery",
+        consoleUrl: "https://example.com",
+        help: "",
+      };
+      const groups = groupConnectorsByCategory([
+        ...CONNECTOR_DESCRIPTORS,
+        orphan,
+      ]);
+      const last = groups[groups.length - 1];
+      expect(last.category).toBe(UNCATEGORIZED_LABEL);
+      expect(last.descriptors.map((d) => d.provider)).toContain("mystery");
+    });
+
+    it("preserves original relative order within a bucket", () => {
+      const groups = groupConnectorsByCategory(CONNECTOR_DESCRIPTORS);
+      const storage = groups.find((g) => g.category === "Storage");
+      expect(storage?.descriptors.map((d) => d.provider)).toEqual([
+        "google_drive",
+        "onedrive",
+      ]);
+    });
+  });
 });
