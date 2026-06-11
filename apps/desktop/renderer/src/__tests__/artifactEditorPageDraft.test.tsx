@@ -1,7 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  act,
+  configure,
+} from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import ArtifactEditorPage from "../pages/ArtifactEditorPage";
+
+// Slow/loaded CI runners (notably windows-2022) intermittently need more than
+// testing-library's 1000ms default for the initial async artifact load → parse
+// → mount to populate the editor fields, which caused flaky failures here
+// (e.g. "Q4 KPIs" / "Ship Faster" not yet present). Give the async queries —
+// and the matching per-test budget — generous headroom so a genuine regression
+// still fails (within the 10s query window), while transient runner slowness
+// does not. No assertion is weakened; only the wait ceiling is raised.
+vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
+configure({ asyncUtilTimeout: 10_000 });
 
 const SHEET_INITIAL = JSON.stringify({
   columns: ["Col"],
