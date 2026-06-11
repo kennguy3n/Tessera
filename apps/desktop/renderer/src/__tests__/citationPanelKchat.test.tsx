@@ -401,4 +401,32 @@ describe("CitationPanel + KChat post retrieval", () => {
     await within(dialog).findByText("/repo/docs/q3-launch.md");
     expect(within(dialog).queryByText("KChat")).not.toBeInTheDocument();
   });
+
+  it("renders file hits when KChat retrieval fulfils with a non-array (undefined)", async () => {
+    // Regression: a host can *fulfil* `searchPosts` with a non-array
+    // (older preload / locked-down tier / partial bridge). Iterating
+    // that used to throw and reject the whole `Promise.all` in
+    // handleSearch, so the dialog never left its pre-search state and
+    // the file results — which DID resolve — stayed hidden. The merged
+    // search now treats a non-array as "no KChat hits".
+    (
+      window.tessera.sources.searchSources as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([fileHit()]);
+    (
+      window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
+    ).mockResolvedValue(undefined as unknown as KchatPostSearchHit[]);
+
+    const dialog = await openAddDialog();
+    fireEvent.change(
+      within(dialog).getByLabelText(/search sources for new citation/i),
+      { target: { value: "Q3" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
+
+    // Search completes (tabs appear) and the file hit renders despite
+    // the malformed KChat payload.
+    await within(dialog).findByRole("tablist", { name: /search result views/i });
+    await within(dialog).findByText("/repo/docs/q3-launch.md");
+    expect(within(dialog).queryByText("KChat")).not.toBeInTheDocument();
+  });
 });

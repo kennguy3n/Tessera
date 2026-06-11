@@ -18,6 +18,7 @@ import StopGenerationButton from "../components/StopGenerationButton";
 import ShareToKchatModal, {
   type KchatShareFormat,
 } from "../components/ShareToKchatModal";
+import CitationPanel from "../components/CitationPanel";
 import { useTrackArtifactView } from "../hooks/useRecentlyViewedArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { notifyArtifactsChanged } from "../hooks/useArtifacts";
@@ -107,6 +108,7 @@ export default function ArtifactEditorPage() {
   // before we know whether to render it.
   const [kchatConnected, setKchatConnected] = useState<boolean | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [citationsOpen, setCitationsOpen] = useState(false);
 
   // Tracks the latest *uncommitted* editor content. Editors publish into
   // this ref via their `onDraftChange` prop synchronously on every edit
@@ -117,6 +119,10 @@ export default function ArtifactEditorPage() {
   const handleDraftChange = useCallback((next: string) => {
     draftContentRef.current = next;
   }, []);
+
+  // Stable reference so CitationPanel's Escape-key effect (keyed on
+  // [isOpen, onClose, ...]) doesn't re-subscribe on every editor render.
+  const closeCitations = useCallback(() => setCitationsOpen(false), []);
 
   // Reset the draft when the user navigates to a different artifact so
   // we don't leak a previous artifact's draft into the new export.
@@ -657,6 +663,13 @@ export default function ArtifactEditorPage() {
                 Share to KChat
               </Button>
             )}
+            <Button
+              variant="secondary"
+              onClick={() => setCitationsOpen(true)}
+              data-testid="open-citations"
+            >
+              Citations
+            </Button>
             <Button variant="secondary" onClick={() => navigate("/")}>
               Back
             </Button>
@@ -703,6 +716,11 @@ export default function ArtifactEditorPage() {
           defaultFormat={pickDefaultShareFormat(artifact.artifactType)}
         />
       )}
+      <CitationPanel
+        artifactId={artifact.id}
+        isOpen={citationsOpen}
+        onClose={closeCitations}
+      />
     </div>
   );
 }
