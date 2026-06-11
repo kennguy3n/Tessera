@@ -63,11 +63,14 @@ export function observationTypeLabel(type: string): string {
   // Unknown tag: normalize to Title Case from the lowercased form so an
   // all-caps (`HYPOTHESIS`) or snake/kebab-cased (`open_question`) variant
   // still renders cleanly (`Hypothesis`, `Open Question`).
-  return lowered
+  const titled = lowered
     .split(/[_\s-]+/)
     .filter(Boolean)
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(" ");
+  // A delimiter-only tag (e.g. `"___"`) splits to nothing; fall back to
+  // the neutral label rather than rendering an empty string.
+  return titled || "Observation";
 }
 
 /**

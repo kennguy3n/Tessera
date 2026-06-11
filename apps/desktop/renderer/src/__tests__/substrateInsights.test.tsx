@@ -50,6 +50,7 @@ describe("useSubstrateInsights pure helpers", () => {
       expect(observationTypeLabel("hypothesis")).toBe("Hypothesis");
       expect(observationTypeLabel("HYPOTHESIS")).toBe("Hypothesis");
       expect(observationTypeLabel("open_question")).toBe("Open Question");
+      expect(observationTypeLabel("___")).toBe("Observation");
       expect(observationTypeLabel("")).toBe("Observation");
     });
   });
