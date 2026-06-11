@@ -2760,9 +2760,13 @@ describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pas
     // would surface deterministically as a vitest test timeout. A is provably
     // still in-flight because `releaseA()` has not been called yet.
     let aResolved = false;
-    void a.then(() => {
-      aResolved = true;
-    });
+    // `.catch` guards against an unhandled rejection if a future refactor lets
+    // A fail before `releaseA()`; A only resolves in this test's design.
+    void a
+      .then(() => {
+        aResolved = true;
+      })
+      .catch(() => {});
     await b;
     expect(aResolved).toBe(false);
 
