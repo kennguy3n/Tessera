@@ -188,16 +188,16 @@ def classify(sentence: str) -> str:
     return "fact"
 
 
-def state_for(corroboration: int, pins: int) -> tuple[str, float]:
-    """Mirror MemoryState progression. `corroboration` is a source-count proxy
-    (the number of distinct source files an observation appears in), not a count
+def state_for(source_count: int, pins: int) -> tuple[str, float]:
+    """Mirror MemoryState progression. `source_count` is the number of distinct
+    source files an observation appears in (a corroboration proxy), NOT a count
     of independent corroboration events; more sources / pins => further along the
     candidate->canonical path with a higher retention score."""
     if pins > 0:
-        return "reinforced", min(0.97, 0.88 + 0.03 * corroboration)
-    if corroboration >= 3:
-        return "canonical", min(0.95, 0.84 + 0.03 * corroboration)
-    if corroboration == 2:
+        return "reinforced", min(0.97, 0.88 + 0.03 * source_count)
+    if source_count >= 3:
+        return "canonical", min(0.95, 0.84 + 0.03 * source_count)
+    if source_count == 2:
         return "consolidated", 0.78
     return "candidate", 0.62
 
