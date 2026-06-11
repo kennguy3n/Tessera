@@ -16,6 +16,7 @@ import {
   DECAY_BUCKETS,
   filterMemories,
   formatRetention,
+  formatSourceId,
   observationTypeLabel,
   sortByRetention,
   type DecayBucket,
@@ -401,7 +402,7 @@ function MemoryRow({
         <div className="memory-row-foot">
           <span className="memory-cite" data-testid={`memory-cite-${memory.id}`}>
             {memory.sourceId
-              ? `Source ${memory.sourceId.slice(0, 8)}…`
+              ? `Source ${formatSourceId(memory.sourceId)}`
               : "No source citation"}
             {pinned ? ` · pinned ${memory.pinCount}×` : ""}
           </span>

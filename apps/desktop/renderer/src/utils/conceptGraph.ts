@@ -305,6 +305,15 @@ export interface LayoutOptions {
 }
 
 /**
+ * Locale-independent string comparison by UTF-16 code unit. Unlike
+ * `String.prototype.localeCompare`, the result never depends on the host's
+ * locale/collation, so a sort keyed on it is reproducible across machines.
+ */
+function compareCodepoint(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
  * Compute a fully deterministic radial layout for the concept graph.
  *
  * Determinism is a hard requirement: the layout feeds both the SVG
@@ -313,7 +322,11 @@ export interface LayoutOptions {
  * dependence on wall-clock or insertion-order hashing). Nodes are
  * ordered by `connectionsCount` (desc), then `label`, then `id` so the
  * ordering is stable regardless of the order the substrate emitted
- * them. The single most-connected node anchors the center; the rest are
+ * them. The label/id tie-breaks use a locale-INDEPENDENT codepoint
+ * comparison (not `localeCompare`) so the "byte-identical coordinates"
+ * guarantee holds across machines with different OS locales — relevant
+ * if a layout is ever persisted/shared rather than recomputed locally.
+ * The single most-connected node anchors the center; the rest are
  * distributed over concentric rings (≤ 10 per ring) at even angular
  * intervals. Node radius scales linearly with `connectionsCount`
  * between `minRadius` and `maxRadius`.
@@ -332,8 +345,8 @@ export function computeRadialLayout(
     if (b.connectionsCount !== a.connectionsCount) {
       return b.connectionsCount - a.connectionsCount;
     }
-    if (a.label !== b.label) return a.label.localeCompare(b.label);
-    return a.id.localeCompare(b.id);
+    if (a.label !== b.label) return compareCodepoint(a.label, b.label);
+    return compareCodepoint(a.id, b.id);
   });
 
   const maxConnections = ordered.reduce(

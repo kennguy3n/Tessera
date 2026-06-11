@@ -37,12 +37,15 @@ const EMPTY_CONCEPT_GRAPH: ConceptGraphView = parseConceptGraph("{}");
 /**
  * Options for a {@link UseMemoriesResult.refresh} call.
  *
- * `silent` re-fetches WITHOUT flipping `loading` back to `true`. It exists
- * for background reconciliation after a mutation (pin / unpin / forget):
- * the row already updated optimistically, so toggling the page-level
- * loading flag would tear the whole list down and re-mount it on every
- * action — an avoidable flash. A silent refresh swaps in the canonical
- * data underneath the rendered list instead.
+ * `silent` re-fetches WITHOUT disturbing the page-level loading/error UI.
+ * It exists for background reconciliation after a mutation (pin / unpin /
+ * forget): the row already updated optimistically, so toggling the loading
+ * flag would tear the whole list down and re-mount it on every action — an
+ * avoidable flash. A silent refresh swaps in the canonical data underneath
+ * the rendered list instead. Crucially it also does NOT surface its own
+ * `error`: a transient blip during background reconciliation must not blank
+ * a list the user is already looking at (the mutation succeeded and the
+ * success toast already fired). Foreground refreshes still report errors.
  */
 export interface RefreshOptions {
   silent?: boolean;
@@ -81,8 +84,13 @@ export function useMemories(
     async (options?: RefreshOptions) => {
       const token = ++requestRef.current;
       const silent = options?.silent ?? false;
-      if (!silent) setLoading(true);
-      setError(null);
+      // A silent refresh is non-disruptive background reconciliation: it
+      // neither shows the spinner nor touches `error`, so a failed reconcile
+      // can't blank a list the user is looking at.
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const api = getApi();
         if (api) {
@@ -90,11 +98,14 @@ export function useMemories(
           if (token === requestRef.current) setMemories(list);
         }
       } catch (err) {
-        if (token === requestRef.current) {
+        if (token === requestRef.current && !silent) {
           setError(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        if (token === requestRef.current && !silent) setLoading(false);
+        // Clear the spinner for whichever fetch is now latest — even a silent
+        // one — so a silent refresh that supersedes an in-flight foreground
+        // load can't leave `loading` stuck true.
+        if (token === requestRef.current) setLoading(false);
       }
     },
     [scope],
@@ -125,7 +136,6 @@ export interface UseMemoryActionsResult {
   forget: (id: string) => Promise<boolean>;
   /** Set of memory ids with a mutation currently in flight. */
   pending: ReadonlySet<string>;
-  error: string | null;
 }
 
 const EMPTY_PENDING: ReadonlySet<string> = new Set();
@@ -140,7 +150,6 @@ const EMPTY_PENDING: ReadonlySet<string> = new Set();
  */
 export function useMemoryActions(): UseMemoryActionsResult {
   const [pending, setPending] = useState<ReadonlySet<string>>(EMPTY_PENDING);
-  const [error, setError] = useState<string | null>(null);
   // Synchronous source of truth for in-flight ids. A ref (not the `pending`
   // state) is read in `run` so two clicks in the same tick see each other
   // before React has re-rendered; `pending` is just its render-visible
@@ -153,21 +162,20 @@ export function useMemoryActions(): UseMemoryActionsResult {
       op: (api: NonNullable<ReturnType<typeof getApi>>) => Promise<T>,
       fallback: T,
     ): Promise<T> => {
+      // Mutation failures (missing bridge, IPC rejection) are surfaced to the
+      // user by the caller via a toast + the returned fallback, so the hook
+      // deliberately keeps no `error` state of its own — it would be dead,
+      // never-rendered state. The fallback return is the failure signal.
       const api = getApi();
-      if (!api) {
-        setError("Tessera bridge not available");
-        return fallback;
-      }
+      if (!api) return fallback;
       // Enforce one-mutation-per-id: ignore a duplicate while the previous
       // one for the same id is still resolving.
       if (inFlight.current.has(id)) return fallback;
       inFlight.current.add(id);
       setPending(new Set(inFlight.current));
-      setError(null);
       try {
         return await op(api);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+      } catch {
         return fallback;
       } finally {
         inFlight.current.delete(id);
@@ -198,7 +206,7 @@ export function useMemoryActions(): UseMemoryActionsResult {
     [run],
   );
 
-  return { pin, unpin, forget, pending, error };
+  return { pin, unpin, forget, pending };
 }
 
 export interface UseConceptGraphResult {
@@ -230,8 +238,13 @@ export function useConceptGraph(
     async (options?: RefreshOptions) => {
       const token = ++requestRef.current;
       const silent = options?.silent ?? false;
-      if (!silent) setLoading(true);
-      setError(null);
+      // See `useMemories.refresh`: a silent refresh stays non-disruptive —
+      // no spinner, no `error` mutation — and the spinner is always cleared
+      // for the latest token so a silent refresh can't strand `loading` true.
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const api = getApi();
         if (api) {
@@ -242,11 +255,11 @@ export function useConceptGraph(
           if (token === requestRef.current) setGraph(parseConceptGraph(json));
         }
       } catch (err) {
-        if (token === requestRef.current) {
+        if (token === requestRef.current && !silent) {
           setError(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        if (token === requestRef.current && !silent) setLoading(false);
+        if (token === requestRef.current) setLoading(false);
       }
     },
     [scope, maxNodes],

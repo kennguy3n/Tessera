@@ -151,6 +151,21 @@ export function formatRetention(score: number): string {
   return `${Math.round(clamped * 100)}%`;
 }
 
+/** Number of leading characters shown for an abbreviated source id. */
+const SOURCE_ID_PREVIEW = 8;
+
+/**
+ * Abbreviate an opaque substrate source id for a compact citation label.
+ * Shows the first {@link SOURCE_ID_PREVIEW} characters, appending an
+ * ellipsis ONLY when the id was actually longer than that — so a short id
+ * (e.g. `"abc"`) renders as `"abc"` rather than the misleading `"abc…"`.
+ */
+export function formatSourceId(sourceId: string): string {
+  return sourceId.length > SOURCE_ID_PREVIEW
+    ? `${sourceId.slice(0, SOURCE_ID_PREVIEW)}…`
+    : sourceId;
+}
+
 /**
  * Sort memories by retention strength (descending) for the default
  * dashboard order. The primary key is the retention score; ties break

@@ -162,6 +162,53 @@ describe("MemoryPage", () => {
     });
   });
 
+  it("keeps the list mounted when a post-mutation silent refresh fails", async () => {
+    // After a successful pin the page reconciles via a *silent* refresh. If
+    // that background fetch fails (a transient blip), it must NOT surface a
+    // page-level error — which would replace the whole list with the retry
+    // card even though the mutation itself succeeded and the user saw a toast.
+    window.tessera.substrate.getMemories = vi
+      .fn()
+      .mockResolvedValueOnce(SAMPLE) // initial mount
+      .mockRejectedValueOnce(new Error("network blip")); // silent reconcile
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("memory-list")).toBeInTheDocument(),
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("memory-pin-m1"));
+    });
+    await waitFor(() =>
+      expect(window.tessera.substrate.getMemories).toHaveBeenCalledTimes(2),
+    );
+    // List stays; no error alert blanked the page.
+    expect(screen.getByTestId("memory-list")).toBeInTheDocument();
+    expect(screen.queryByText("network blip")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("abbreviates long source ids but leaves short ones without an ellipsis", async () => {
+    window.tessera.substrate.getMemories = vi.fn().mockResolvedValue([
+      mem({ id: "short", content: "short id", sourceId: "abc" }),
+      mem({ id: "long", content: "long id", sourceId: "0123456789abcdef" }),
+    ]);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("memory-list")).toBeInTheDocument(),
+    );
+    // A short id is shown verbatim — no misleading trailing ellipsis.
+    expect(screen.getByTestId("memory-cite-short")).toHaveTextContent(
+      "Source abc",
+    );
+    expect(screen.getByTestId("memory-cite-short").textContent).not.toContain(
+      "…",
+    );
+    // A long id is truncated to 8 chars + ellipsis.
+    expect(screen.getByTestId("memory-cite-long")).toHaveTextContent(
+      "Source 01234567…",
+    );
+  });
+
   it("forgets a memory after confirmation", async () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();

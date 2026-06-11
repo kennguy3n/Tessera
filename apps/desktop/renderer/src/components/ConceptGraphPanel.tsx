@@ -8,6 +8,7 @@ import {
   type ConceptRelation,
   type PositionedNode,
 } from "../utils/conceptGraph";
+import { formatSourceId } from "../utils/memories";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
 /**
@@ -241,12 +242,19 @@ export default function ConceptGraphPanel({
     return [...set].sort();
   }, [graph.nodes]);
 
-  // If the graph reloads (Refresh, or a parent re-fetch) and the currently
-  // selected scope is no longer present, the view memo would filter down to
-  // zero nodes — and the scope <select> is hidden when fewer than two scopes
-  // remain, stranding the user on an empty graph with no way to clear the
-  // now-invisible filter. Fall back to "all" (and drop the stale selection)
-  // whenever the active scope drops out of the graph.
+  // The scope filter actually applied to the view. If a graph reload drops
+  // the currently-selected scope, fall back to "all" *synchronously* here —
+  // rather than waiting for the reset effect below to run after paint — so
+  // the view never renders an empty frame for the now-absent scope (which
+  // would briefly flash the "no concepts" empty state).
+  const effectiveScopeFilter =
+    scopeFilter !== "all" && scopes.includes(scopeFilter) ? scopeFilter : "all";
+
+  // Keep the stored filter (and selection) in sync with the effective value:
+  // when the active scope drops out of the graph, reset the <select> to "all"
+  // (it's hidden below two scopes, so a stale value would be unclearable) and
+  // drop the now-absent selection. The view already fell back above, so this
+  // effect only reconciles state — it can't cause an empty-frame flash.
   useEffect(() => {
     if (scopeFilter !== "all" && !scopes.includes(scopeFilter)) {
       setScopeFilter("all");
@@ -258,14 +266,14 @@ export default function ConceptGraphPanel({
   // rendered. Edges to filtered-out nodes are dropped so no dangling
   // lines remain.
   const view: ConceptGraphView = useMemo(() => {
-    if (scopeFilter === "all") return graph;
-    const nodes = graph.nodes.filter((n) => n.scopeId === scopeFilter);
+    if (effectiveScopeFilter === "all") return graph;
+    const nodes = graph.nodes.filter((n) => n.scopeId === effectiveScopeFilter);
     const ids = new Set(nodes.map((n) => n.id));
     const edges = graph.edges.filter(
       (e) => ids.has(e.from) && ids.has(e.to),
     );
     return { ...graph, nodes, edges };
-  }, [graph, scopeFilter]);
+  }, [graph, effectiveScopeFilter]);
 
   const layout = useMemo(
     () => computeRadialLayout(view, { width: CANVAS_WIDTH, height }),
@@ -566,7 +574,7 @@ export default function ConceptGraphPanel({
                           <p className="cg-evidence-content">{mem.content}</p>
                           <p className="cg-evidence-cite">
                             {mem.sourceId
-                              ? `Source ${mem.sourceId.slice(0, 8)}…`
+                              ? `Source ${formatSourceId(mem.sourceId)}`
                               : "No source citation"}
                             {" · "}
                             {mem.observationType}
