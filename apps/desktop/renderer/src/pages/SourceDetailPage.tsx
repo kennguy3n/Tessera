@@ -13,7 +13,11 @@ import {
   formatSourceTypeLabel,
   sourceTypeIcon,
 } from "../utils/sourceLabels";
-import type { ExtractedItem } from "../types/ipc";
+import {
+  observationTypeLabel,
+  useSourceMemories,
+} from "../hooks/useSubstrateInsights";
+import type { ExtractedItem, SubstrateMemoryInfo } from "../types/ipc";
 
 export default function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -21,6 +25,16 @@ export default function SourceDetailPage() {
   const { detail, loading, error, refresh } = useSourceDetail(id);
   const { reindex, loading: reindexing } = useReindexSource();
   const progress = useIndexingProgress(id, reindexing);
+  // Substrate memories tied to this source. Purely additive: the hook
+  // reads the default scope's memory plane and filters by `sourceId`,
+  // degrading to an empty/error/no-bridge surface without affecting the
+  // rest of the page (see `useSourceMemories`).
+  const {
+    memories: sourceMemories,
+    loading: memoriesLoading,
+    error: memoriesError,
+    bridgeAvailable: substrateAvailable,
+  } = useSourceMemories(id);
   const [extracted, setExtracted] = useState<ExtractedItem[] | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
@@ -541,6 +555,13 @@ export default function SourceDetailPage() {
             )}
           </Card>
         )}
+        {substrateAvailable && (
+          <SourceKnowledgeCard
+            memories={sourceMemories}
+            loading={memoriesLoading}
+            error={memoriesError}
+          />
+        )}
         <Card>
           <h3 className="card-title">Source Information</h3>
           <div
@@ -674,5 +695,92 @@ export default function SourceDetailPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Knowledge from this source" card. Surfaces the substrate
+ * observations/memories the indexing + extraction pipeline has tied to
+ * this source (entities, facts, tasks, decisions, …), strongest
+ * retention first. Renders distinct loading / error / empty states; the
+ * parent only mounts it when the native bridge is available.
+ */
+function SourceKnowledgeCard({
+  memories,
+  loading,
+  error,
+}: {
+  memories: SubstrateMemoryInfo[];
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <Card data-testid="source-knowledge-card">
+      <h3 className="card-title">
+        Knowledge from this source
+        {!loading && !error && memories.length > 0 ? ` (${memories.length})` : ""}
+      </h3>
+      {loading && (
+        <p
+          className="card-description"
+          role="status"
+          aria-live="polite"
+          data-testid="source-knowledge-loading"
+        >
+          Loading memories…
+        </p>
+      )}
+      {!loading && error && (
+        <p
+          className="card-description"
+          role="alert"
+          data-testid="source-knowledge-error"
+          style={{ color: "var(--color-text-secondary)" }}
+        >
+          Knowledge for this source is unavailable right now. Indexed files are
+          unaffected.
+        </p>
+      )}
+      {!loading && !error && memories.length === 0 && (
+        <p
+          className="card-description"
+          data-testid="source-knowledge-empty"
+        >
+          No observations extracted from this source yet. Run{" "}
+          <strong>Extract Tasks &amp; Decisions</strong> or reindex to populate
+          the knowledge substrate.
+        </p>
+      )}
+      {!loading && !error && memories.length > 0 && (
+        <ul
+          data-testid="source-knowledge-list"
+          style={{
+            margin: 0,
+            paddingLeft: "var(--spacing-md)",
+            fontSize: "var(--font-size-sm)",
+          }}
+        >
+          {memories.map((mem) => (
+            <li
+              key={mem.id}
+              style={{ marginBottom: "var(--spacing-xs)" }}
+              data-testid="source-knowledge-item"
+            >
+              <strong>{observationTypeLabel(mem.observationType)}:</strong>{" "}
+              {mem.content}{" "}
+              <span
+                style={{
+                  fontSize: "var(--font-size-xs)",
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                ({mem.state}, retention{" "}
+                {(mem.retentionScore * 100).toFixed(0)}%)
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
