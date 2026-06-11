@@ -95,7 +95,7 @@ no server-side data custody to breach.
 
 ## Maintainability — 6 → 9
 
-- **10 ADRs** under `docs/adr/` for the load-bearing decisions.
+- **11 ADRs** under `docs/adr/` for the load-bearing decisions.
 - `#![warn(missing_docs)]` on public Rust crates + a `cargo doc --no-deps`
   CI step.
 - Renderer TypeScript types **auto-generated** from the zod IPC schemas,
