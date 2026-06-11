@@ -168,36 +168,49 @@ export default function ConnectorsList({
     };
   }, [descriptors]);
 
+  // Invoked fire-and-forget from the mount effect and from the
+  // authenticate/disconnect handlers, so it must never reject: an
+  // unhandled rejection would surface as a noisy console error (or a
+  // test failure) for no actionable reason. Per-provider IPC failures
+  // are already absorbed below; the outer try/catch additionally guards
+  // the trailing `setState` calls so every caller can safely ignore the
+  // returned promise.
   const pollAll = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;
-    const nextStatuses: Record<string, ConnectorStatusInfo> = {};
-    const nextScopes: Record<string, ConnectorScopeComparison> = {};
-    await Promise.all(
-      descriptors.map(async (d) => {
-        let info: ConnectorStatusInfo;
-        try {
-          info = await api.connectors.status(d.provider);
-        } catch {
-          info = {
-            provider: d.provider,
-            connected: false,
-            status: "error",
-          };
-        }
-        nextStatuses[d.provider] = info;
-        // Scope inspection is meaningful only for a connected
-        // provider (it reads the stored token). Skipping the call
-        // for disconnected providers avoids a guaranteed `null`
-        // round-trip per poll.
-        if (info.connected) {
-          const cmp = await safeInspectScopes(d.provider);
-          if (cmp) nextScopes[d.provider] = cmp;
-        }
-      }),
-    );
-    setStatuses(nextStatuses);
-    setScopeInfo(nextScopes);
+    try {
+      const nextStatuses: Record<string, ConnectorStatusInfo> = {};
+      const nextScopes: Record<string, ConnectorScopeComparison> = {};
+      await Promise.all(
+        descriptors.map(async (d) => {
+          let info: ConnectorStatusInfo;
+          try {
+            info = await api.connectors.status(d.provider);
+          } catch {
+            info = {
+              provider: d.provider,
+              connected: false,
+              status: "error",
+            };
+          }
+          nextStatuses[d.provider] = info;
+          // Scope inspection is meaningful only for a connected
+          // provider (it reads the stored token). Skipping the call
+          // for disconnected providers avoids a guaranteed `null`
+          // round-trip per poll.
+          if (info.connected) {
+            const cmp = await safeInspectScopes(d.provider);
+            if (cmp) nextScopes[d.provider] = cmp;
+          }
+        }),
+      );
+      setStatuses(nextStatuses);
+      setScopeInfo(nextScopes);
+    } catch {
+      // Unexpected failure (e.g. a React state update error). Swallow
+      // it rather than reject — there is no recovery action and the
+      // next poll/action will retry from a clean slate.
+    }
   }, [descriptors]);
 
   useEffect(() => {
