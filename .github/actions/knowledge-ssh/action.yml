@@ -11,7 +11,7 @@ inputs:
   ssh-key:
     description: >-
       Read-only SSH deploy key (the PRIVATE half) for kennguy3n/knowledge.
-      Pass `${{ secrets.KNOWLEDGE_DEPLOY_KEY }}`.
+      Pass the repo secret KNOWLEDGE_DEPLOY_KEY.
     required: true
 runs:
   using: composite
