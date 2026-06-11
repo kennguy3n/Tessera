@@ -2753,16 +2753,18 @@ describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pas
       "channel-b",
     ) as Promise<{ sourceId: string; cacheDir: string }>;
 
-    // Channel B must settle WITHOUT releasing the channel-A blocker.
-    // We yield twice to let microtasks drain (downloadFile → write →
-    // bridgeAddKchatChannel) and then assert B has resolved.
-    const bSettled = await Promise.race([
-      b.then(() => "b-settled" as const),
-      new Promise<"timeout">((resolve) =>
-        setTimeout(() => resolve("timeout"), 200),
-      ),
-    ]);
-    expect(bSettled).toBe("b-settled");
+    // Channel B must settle WITHOUT releasing the channel-A blocker. Asserted
+    // without a wall-clock race (a hardcoded 200ms `Promise.race` flaked on
+    // slow/loaded CI runners): await B directly — if B were serialized behind
+    // A it could never resolve here (A's blocker is still held), so the bug
+    // would surface deterministically as a vitest test timeout. A is provably
+    // still in-flight because `releaseA()` has not been called yet.
+    let aResolved = false;
+    void a.then(() => {
+      aResolved = true;
+    });
+    await b;
+    expect(aResolved).toBe(false);
 
     // Now finish A.
     releaseA();
