@@ -305,9 +305,10 @@ impl KchatCrypto {
     }
 
     /// Return `true` when a DEK for `source_id` is currently held in the
-    /// in-memory cache. Used by post-ingest tests to assert that
-    /// `forget_dek` evicts the cache slot in addition to dropping the
-    /// on-disk wrapped row.
+    /// in-memory cache. Used by the ingest path as a fast-path guard to skip
+    /// the DB read + KEK derivation + AEAD unwrap when the DEK is already
+    /// loaded, and by post-ingest tests to assert that `forget_dek` evicts the
+    /// cache slot in addition to dropping the on-disk wrapped row.
     pub fn has_dek(&self, source_id: &SourceId) -> bool {
         self.dek_cache
             .lock()

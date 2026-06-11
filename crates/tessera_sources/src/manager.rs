@@ -1775,6 +1775,12 @@ impl SourceManager {
     /// `Ok(())` when the cache contains an unwrapped DEK for the
     /// source after the call.
     fn ensure_dek_loaded(&self, source_id: &SourceId) -> Result<()> {
+        // Fast path: the DEK is already unwrapped in the in-memory cache, so
+        // skip the DB read + KEK derivation + AEAD unwrap. Repeated ingests
+        // for the same source (the common case) hit this branch.
+        if self.kchat_crypto.has_dek(source_id) {
+            return Ok(());
+        }
         if let Some(wrapped) = self.store.load_wrapped_dek_for_source(source_id)? {
             self.kchat_crypto.unwrap_dek(source_id, &wrapped)?;
             return Ok(());
@@ -3837,6 +3843,56 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(!manager.kchat_crypto().has_dek(&added.source.id));
+    }
+
+    /// `ensure_dek_loaded` takes a cache fast-path: once a source's DEK is
+    /// in the in-memory cache it must not re-read the DB or re-unwrap. Proven
+    /// by corrupting the on-disk wrapped row (valid length, garbage bytes)
+    /// while the cache is warm: the warm call still succeeds (fast-path,
+    /// never touches the row), but after `forget_dek` evicts the cache the
+    /// same call fails because it now has to unwrap the corrupt row.
+    #[test]
+    fn ensure_dek_loaded_uses_cache_fast_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let input = make_post_input(cache_dir, "post-fp", "ch", "u", "body fast path");
+        let _ = manager.ingest_kchat_post(&input).unwrap();
+        let source_id = added.source.id;
+        assert!(manager.kchat_crypto().has_dek(&source_id));
+
+        // Overwrite the persisted DEK with a same-shape but undecryptable
+        // blob. `from_blobs` only validates lengths, so reuse the real
+        // row's nonce/wrapped lengths and zero the bytes.
+        let real = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap()
+            .expect("DEK row persisted after ingest");
+        let corrupt = crate::kchat_crypto::WrappedDek::from_blobs(
+            &vec![0u8; real.wrap_nonce().len()],
+            &vec![0u8; real.wrapped().len()],
+        )
+        .expect("corrupt blob has valid lengths");
+        manager
+            .store
+            .upsert_wrapped_dek(&source_id, &corrupt)
+            .unwrap();
+
+        // Cache is warm -> fast path returns Ok without reading the row.
+        manager
+            .ensure_dek_loaded(&source_id)
+            .expect("warm cache must short-circuit before touching the DB");
+
+        // Evict the cache; now the same call must read + unwrap the corrupt
+        // row and fail, proving the previous success came from the cache.
+        manager.kchat_crypto().forget_dek(&source_id);
+        assert!(!manager.kchat_crypto().has_dek(&source_id));
+        assert!(
+            manager.ensure_dek_loaded(&source_id).is_err(),
+            "cold cache must unwrap the corrupt row and fail"
+        );
     }
 
     /// Block C Task 1: ingestion against a missing source returns
