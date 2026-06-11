@@ -116,6 +116,7 @@ export type HybridSearchConfigUpdateInput = {
   recencyDecayEnabled?: boolean | undefined;
   recencyHalflifeSecs?: number | undefined;
   candidatePoolSize?: number | undefined;
+  retentionWeight?: number | undefined;
 };
 
 export type GenerateRequestInput = {
