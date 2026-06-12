@@ -258,6 +258,10 @@ export function registerSettingsHandlers(): void {
     const config = loadConfig();
     return {
       theme: config.theme,
+      // accent colour key driving every primary affordance in the
+      // renderer. Heals to `"violet"` via the on-disk schema so the
+      // Settings picker always binds to a valid swatch.
+      accentColor: config.accentColor,
       defaultExportFormat: config.defaultExportFormat,
       ignorePatterns: config.ignorePatterns,
       watchPatterns: config.watchPatterns,
@@ -386,6 +390,8 @@ export function registerSettingsHandlers(): void {
     // (and the per-pattern length is bounded but the array length
     // bound — 10_000 — would produce a multi-MB log row).
     if (parsed.theme !== undefined) auditSettingsField("theme", parsed.theme);
+    if (parsed.accentColor !== undefined)
+      auditSettingsField("accentColor", parsed.accentColor);
     if (parsed.defaultExportFormat !== undefined)
       auditSettingsField("defaultExportFormat", parsed.defaultExportFormat);
     if (parsed.ignorePatterns !== undefined)

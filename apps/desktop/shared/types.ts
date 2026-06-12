@@ -1012,11 +1012,46 @@ export interface ReplaceCitationResult {
 export const THEMES = ["light", "dark", "system"] as const;
 export type Theme = (typeof THEMES)[number];
 
+/**
+ * Curated accent palette. The accent drives every primary
+ * affordance — buttons, links, focus rings, selected states — via
+ * the `--accent-*` tokens in `renderer/src/styles/tokens.css`. Each
+ * key maps to a `[data-accent="<key>"]` ramp that defines an
+ * AA-safe light base (readable with white text) and a lighter dark
+ * base (readable on the dark page surface). Exported as a runtime
+ * value so the IPC zod schemas, the on-disk config schema, and the
+ * Settings page picker all pull from a single declaration — the
+ * same single-source-of-truth pattern as `THEMES`/`EXPORT_FORMATS`.
+ * `"violet"` is the historic brand default and the `:root` fallback
+ * when no `data-accent` attribute is present.
+ */
+export const ACCENT_COLORS = [
+  "violet",
+  "blue",
+  "teal",
+  "green",
+  "amber",
+  "orange",
+  "red",
+  "pink",
+] as const;
+export type AccentColor = (typeof ACCENT_COLORS)[number];
+
 export const EXPORT_FORMATS = ["markdown", "html", "csv", "json"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 export interface SettingsData {
   theme: Theme;
+  /**
+   * accent colour key driving every primary affordance (buttons,
+   * links, focus rings, active/selected states). One of
+   * {@link ACCENT_COLORS}; defaults to `"violet"` (the historic
+   * brand colour). Applied by `useTheme` as a `data-accent`
+   * attribute on `<html>`, which selects the matching `--accent-*`
+   * ramp in `tokens.css`. Persisted via `settings:update` so the
+   * choice survives restarts, the same as `theme`.
+   */
+  accentColor: AccentColor;
   defaultExportFormat: ExportFormat;
   ignorePatterns: string[];
   watchPatterns: string[];

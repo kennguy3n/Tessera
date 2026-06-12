@@ -46,20 +46,46 @@ export default function EmptyState({
           justify-content: center;
           padding: var(--spacing-2xl);
           text-align: center;
+          animation: empty-state-in var(--duration-normal) var(--ease-out);
         }
         .empty-state-icon {
-          font-size: 3rem;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 4rem;
+          height: 4rem;
           margin-bottom: var(--spacing-md);
+          border-radius: var(--radius-full);
+          background-color: var(--color-primary-light);
+          color: var(--color-primary);
+          font-size: 1.75rem;
         }
         .empty-state-title {
           color: var(--color-text-headline);
+          font-size: var(--font-size-lg);
           margin-bottom: var(--spacing-sm);
         }
         .empty-state-message {
           color: var(--color-text-secondary);
           font-size: var(--font-size-sm);
+          line-height: var(--line-height-relaxed);
           max-width: 400px;
           margin-bottom: var(--spacing-lg);
+        }
+        @keyframes empty-state-in {
+          from {
+            opacity: 0;
+            transform: translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .empty-state {
+            animation: none;
+          }
         }
       `}</style>
     </div>

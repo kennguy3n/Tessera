@@ -68,6 +68,16 @@ export type CreateAutomationInput = {
 
 export type SettingsUpdateInput = {
   theme?: "light" | "dark" | "system" | undefined;
+  accentColor?:
+    | "violet"
+    | "blue"
+    | "teal"
+    | "green"
+    | "amber"
+    | "orange"
+    | "red"
+    | "pink"
+    | undefined;
   defaultExportFormat?: "markdown" | "html" | "csv" | "json" | undefined;
   ignorePatterns?: string[] | undefined;
   watchPatterns?: string[] | undefined;

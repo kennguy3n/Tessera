@@ -3,6 +3,7 @@ import * as path from "path";
 import { app } from "electron";
 import { z } from "zod";
 import {
+  ACCENT_COLORS,
   APP_LOCK_MODES,
   CREATE_PAGE_MODES,
   DEFAULT_BACKUP_INTERVAL_HOURS,
@@ -19,6 +20,7 @@ import {
   MIN_BACKUP_RETENTION_COUNT,
   RESOURCE_MODES,
   THEMES,
+  type AccentColor,
   type AppLockMode,
   type CreatePageMode,
   type ExportFormat,
@@ -83,6 +85,7 @@ export interface AppConfig {
   windowWidth: number;
   windowHeight: number;
   theme: Theme;
+  accentColor: AccentColor;
   defaultExportFormat: ExportFormat;
   ignorePatterns: string[];
   watchPatterns: string[];
@@ -344,6 +347,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   windowWidth: 1280,
   windowHeight: 800,
   theme: "light",
+  accentColor: "violet",
   defaultExportFormat: "markdown",
   ignorePatterns: Object.freeze([
     ".git",
@@ -477,6 +481,7 @@ const AppConfigSchema = z
     windowWidth: z.number().int().min(320).max(32_768).catch(1280),
     windowHeight: z.number().int().min(240).max(32_768).catch(800),
     theme: z.enum(THEMES).catch("light"),
+    accentColor: z.enum(ACCENT_COLORS).catch("violet"),
     defaultExportFormat: z.enum(EXPORT_FORMATS).catch("markdown"),
     ignorePatterns: z
       .array(z.string().max(1024))

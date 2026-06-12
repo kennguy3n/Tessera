@@ -193,9 +193,11 @@ export default function ContextMenu({
           min-width: 200px;
           background: var(--color-bg-elevated);
           border: 1px solid var(--color-border);
-          border-radius: var(--radius-sm);
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+          border-radius: var(--radius-md);
+          box-shadow: var(--shadow-lg);
           padding: var(--spacing-xs) 0;
+          transform-origin: top left;
+          animation: context-menu-in var(--duration-fast) var(--ease-out);
         }
         .context-menu-list {
           list-style: none;
@@ -212,22 +214,54 @@ export default function ContextMenu({
           color: var(--color-text-body);
           font-size: var(--font-size-sm);
           cursor: pointer;
+          transition: background-color var(--transition-fast),
+            color var(--transition-fast);
         }
         .context-menu-item:hover,
         .context-menu-item-active {
           background: var(--color-primary-light);
         }
+        .context-menu-item:focus-visible {
+          outline: none;
+          box-shadow: var(--focus-ring-inset);
+        }
         .context-menu-item-destructive {
           color: var(--color-danger, #d4380d);
+        }
+        .context-menu-item-destructive:hover,
+        .context-menu-item-destructive.context-menu-item-active {
+          background: var(--color-danger-subtle);
         }
         .context-menu-item-disabled {
           color: var(--color-text-tertiary, var(--color-text-secondary));
           cursor: default;
         }
+        .context-menu-item-disabled:hover,
+        .context-menu-item-disabled.context-menu-item-active {
+          background: transparent;
+        }
         .context-menu-sep {
           border: none;
           border-top: 1px solid var(--color-border);
           margin: var(--spacing-xs) 0;
+        }
+        @keyframes context-menu-in {
+          from {
+            opacity: 0;
+            transform: scale(0.96) translateY(-2px);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .context-menu {
+            animation: none;
+          }
+          .context-menu-item {
+            transition: none;
+          }
         }
       `}</style>
     </div>

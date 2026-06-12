@@ -346,6 +346,7 @@ const MODEL_NAME = "Ternary-Bonsai 4B";
 
 const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
   theme: "light",
+  accentColor: "violet",
   defaultExportFormat: "markdown",
   ignorePatterns: [".git", "node_modules"],
   watchPatterns: ["**/*.md"],

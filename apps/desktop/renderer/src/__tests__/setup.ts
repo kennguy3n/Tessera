@@ -327,6 +327,7 @@ const mockApi = {
   settings: {
     get: vi.fn().mockResolvedValue({
       theme: "light",
+      accentColor: "violet",
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
@@ -353,6 +354,7 @@ const mockApi = {
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
+      accentColor: "violet",
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
