@@ -48,6 +48,7 @@ import { ARTIFACT_TYPES } from "../constants/artifactTypes";
  */
 export const COMMAND_CATEGORIES = [
   "Navigation",
+  "Workspace",
   "Actions",
   "View",
   "Editor",
@@ -219,6 +220,93 @@ export function buildCommandRegistry(): readonly Command[] {
   const sidebar = buildSidebarCommands();
   const createArtifacts = buildCreateArtifactCommands();
   const rest: Command[] = [
+    // --- Workspace (split panes / tabs) ---
+    // Dispatch-kind: each fires a `tessera:*` event that
+    // `WorkspaceProvider` listens for and routes to the pure pane-tree
+    // reducers. Chords follow Obsidian where it has one (Cmd+\ split
+    // right, Cmd+Shift+\ split down) and otherwise pick collision-free
+    // bindings (validated by `findChordCollisions`).
+    {
+      id: "workspace:newTab",
+      title: "New tab",
+      description: "Open a new tab in the focused pane",
+      category: "Workspace",
+      chord: { mod: true, key: "t" },
+      keywords: ["tab", "open", "new"],
+      kind: "dispatch",
+      event: "tessera:new-tab",
+    },
+    {
+      id: "workspace:closeTab",
+      title: "Close tab",
+      description: "Close the focused pane's active tab",
+      category: "Workspace",
+      chord: { mod: true, key: "w" },
+      keywords: ["tab", "close"],
+      kind: "dispatch",
+      event: "tessera:close-tab",
+    },
+    {
+      id: "workspace:nextTab",
+      title: "Next tab",
+      description: "Activate the next tab in the focused pane",
+      category: "Workspace",
+      chord: { mod: true, shift: true, key: "]" },
+      keywords: ["tab", "next", "cycle", "forward"],
+      kind: "dispatch",
+      event: "tessera:next-tab",
+    },
+    {
+      id: "workspace:prevTab",
+      title: "Previous tab",
+      description: "Activate the previous tab in the focused pane",
+      category: "Workspace",
+      chord: { mod: true, shift: true, key: "[" },
+      keywords: ["tab", "previous", "cycle", "back"],
+      kind: "dispatch",
+      event: "tessera:prev-tab",
+    },
+    {
+      id: "workspace:splitRight",
+      title: "Split right",
+      description: "Split the focused pane into a side-by-side pane",
+      category: "Workspace",
+      chord: { mod: true, key: "\\" },
+      keywords: ["split", "pane", "vertical", "right", "side"],
+      kind: "dispatch",
+      event: "tessera:split-right",
+    },
+    {
+      id: "workspace:splitDown",
+      title: "Split down",
+      description: "Split the focused pane into a stacked pane",
+      category: "Workspace",
+      chord: { mod: true, shift: true, key: "\\" },
+      keywords: ["split", "pane", "horizontal", "down", "stack"],
+      kind: "dispatch",
+      event: "tessera:split-down",
+    },
+    {
+      id: "workspace:focusNextPane",
+      title: "Focus next pane",
+      description: "Move focus to the next pane",
+      category: "Workspace",
+      chord: { mod: true, key: "j" },
+      keywords: ["pane", "focus", "next", "cycle"],
+      kind: "dispatch",
+      event: "tessera:focus-next-pane",
+    },
+    {
+      id: "workspace:focusPrevPane",
+      title: "Focus previous pane",
+      description: "Move focus to the previous pane",
+      category: "Workspace",
+      chord: { mod: true, shift: true, key: "j" },
+      keywords: ["pane", "focus", "previous", "cycle"],
+      kind: "dispatch",
+      event: "tessera:focus-prev-pane",
+    },
+
     // --- Meta / palette ---
     {
       id: "palette:open",
