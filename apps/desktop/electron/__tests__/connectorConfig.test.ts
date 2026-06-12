@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   CONNECTOR_CONNECT_SPECS,
   authConfigFields,
+  connectorTokenType,
   getConnectSpec,
   validateConnectorField,
 } from "../../shared/connectorConfig";
@@ -170,5 +171,74 @@ describe("validateConnectorField", () => {
       ).valid,
     ).toBe(true);
     expect(validateConnectorField(field("teams", "team_id"), "not-a-guid").valid).toBe(false);
+  });
+
+  // ── Tranche 4: per-target / per-resource providers ─────────────────
+
+  it("validates the Discord bot token + channel snowflake", () => {
+    // Bot token: charset + conservative min length (50).
+    expect(validateConnectorField(field("discord", "bot_token"), "a".repeat(60)).valid).toBe(true);
+    expect(validateConnectorField(field("discord", "bot_token"), "a".repeat(20)).valid).toBe(false);
+    expect(
+      validateConnectorField(field("discord", "bot_token"), `has space ${"a".repeat(60)}`).valid,
+    ).toBe(false);
+    // Channel ID: 17-20 digit snowflake.
+    expect(validateConnectorField(field("discord", "channel_id"), "1107583106847408128").valid).toBe(true);
+    expect(validateConnectorField(field("discord", "channel_id"), "123").valid).toBe(false);
+    expect(validateConnectorField(field("discord", "channel_id"), "12345678901234567890123").valid).toBe(false);
+  });
+
+  it("validates the Bitbucket workspace + repo slugs", () => {
+    expect(validateConnectorField(field("bitbucket", "workspace"), "my-workspace").valid).toBe(true);
+    expect(validateConnectorField(field("bitbucket", "workspace"), "-leading").valid).toBe(false);
+    expect(validateConnectorField(field("bitbucket", "repo_slug"), "my.repo-1").valid).toBe(true);
+    expect(validateConnectorField(field("bitbucket", "repo_slug"), "bad slug").valid).toBe(false);
+  });
+
+  it("validates the Airtable base id + PAT shape", () => {
+    expect(validateConnectorField(field("airtable", "base_id"), "app1234567890ABCD").valid).toBe(true);
+    expect(validateConnectorField(field("airtable", "base_id"), "tbl1234567890ABCD").valid).toBe(false);
+    expect(
+      validateConnectorField(
+        field("airtable", "personal_access_token"),
+        `pat1234567890ABCD.${"a".repeat(50)}`,
+      ).valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("airtable", "personal_access_token"), "not-a-pat").valid,
+    ).toBe(false);
+    // A free-text table name is accepted (id or human label).
+    expect(validateConnectorField(field("airtable", "table"), "Tasks").valid).toBe(true);
+  });
+
+  it("validates the Monday numeric board id", () => {
+    expect(validateConnectorField(field("monday", "board_id"), "1234567890").valid).toBe(true);
+    expect(validateConnectorField(field("monday", "board_id"), "not-a-number").valid).toBe(false);
+  });
+
+  it("threads the Discord `Bot` auth scheme and defaults everything else to Bearer", () => {
+    // Discord bot tokens must be sent as `Authorization: Bot <token>`.
+    expect(connectorTokenType("discord")).toBe("Bot");
+    // Every other provider — OAuth2 or token — uses the Bearer default.
+    for (const provider of KNOWN_PROVIDERS) {
+      if (provider === "discord") continue;
+      expect(connectorTokenType(provider)).toBe("Bearer");
+    }
+  });
+
+  it("keeps Monday on the OAuth2 browser grant while Discord/Bitbucket/Airtable use a pasted token", () => {
+    expect(getConnectSpec("monday").connectMethod).toBe("oauth2");
+    expect(getConnectSpec("discord").connectMethod).toBe("token");
+    expect(getConnectSpec("bitbucket").connectMethod).toBe("token");
+    expect(getConnectSpec("airtable").connectMethod).toBe("token");
+    // The per-target id fields survive into the auth_config bag.
+    expect(authConfigFields("discord").map((f) => f.key)).toContain("channel_id");
+    expect(authConfigFields("bitbucket").map((f) => f.key)).toEqual(
+      expect.arrayContaining(["workspace", "repo_slug"]),
+    );
+    expect(authConfigFields("airtable").map((f) => f.key)).toEqual(
+      expect.arrayContaining(["base_id", "table"]),
+    );
+    expect(authConfigFields("monday").map((f) => f.key)).toContain("board_id");
   });
 });

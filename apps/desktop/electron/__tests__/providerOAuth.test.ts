@@ -132,6 +132,41 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     expect(PROVIDER_OAUTH_CONFIGS.teams.supportsRefresh).toBe(true);
   });
 
+  it("requests least-privilege read-only scopes for the per-target tranche 4", () => {
+    // Discord / Bitbucket / Airtable / Monday: each scope string must
+    // stay read-only. A future widening to a write/manage grant (e.g.
+    // `boards:write`, `data.records:write`) breaks this test — the
+    // security contract for 5000 SME tenants.
+    expect(PROVIDER_OAUTH_CONFIGS.discord.scope).toBe("messages.read");
+    expect(PROVIDER_OAUTH_CONFIGS.bitbucket.scope).toBe("repository pullrequest");
+    expect(PROVIDER_OAUTH_CONFIGS.airtable.scope).toBe(
+      "data.records:read schema.bases:read",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.monday.scope).toBe("boards:read me:read");
+    // No write/manage scope leaks into any of them.
+    for (const id of ["discord", "bitbucket", "airtable", "monday"] as const) {
+      expect(PROVIDER_OAUTH_CONFIGS[id].scope).not.toMatch(/write|manage|admin|delete/);
+    }
+  });
+
+  it("reserves the 9900-9903 loopback ports for tranche 4", () => {
+    expect(PROVIDER_OAUTH_CONFIGS.discord.redirectPort).toBe(9900);
+    expect(PROVIDER_OAUTH_CONFIGS.bitbucket.redirectPort).toBe(9901);
+    expect(PROVIDER_OAUTH_CONFIGS.airtable.redirectPort).toBe(9902);
+    expect(PROVIDER_OAUTH_CONFIGS.monday.redirectPort).toBe(9903);
+  });
+
+  it("flags the tranche-4 providers as non-refreshable (long-lived credentials)", () => {
+    // Discord (bot token), Bitbucket + Airtable (access / personal
+    // access tokens) carry no refresh token; Monday's OAuth grant
+    // issues a long-lived seat token with no refresh — all four are
+    // reconnect-on-expiry. None use PKCE.
+    for (const id of ["discord", "bitbucket", "airtable", "monday"] as const) {
+      expect(PROVIDER_OAUTH_CONFIGS[id].supportsRefresh).toBe(false);
+      expect(PROVIDER_OAUTH_CONFIGS[id].usePkce).toBe(false);
+    }
+  });
+
   it("asks Dropbox for offline access so its token can refresh", () => {
     expect(PROVIDER_OAUTH_CONFIGS.dropbox.supportsRefresh).toBe(true);
     expect(

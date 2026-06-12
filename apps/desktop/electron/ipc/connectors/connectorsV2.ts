@@ -48,7 +48,7 @@ import * as path from "path";
 
 import type { NativeBridge } from "../../appState";
 import type { StoredTokens } from "../../tokenVault";
-import { authConfigFields } from "../../../shared/connectorConfig";
+import { authConfigFields, connectorTokenType } from "../../../shared/connectorConfig";
 import {
   getProviderOAuthConfig,
   type ProviderId,
@@ -203,14 +203,24 @@ export function v2BridgeAvailable(bridge: V2NativeBridge): boolean {
  * Translate keychain `StoredTokens` into the Rust `TokenWire` JSON
  * contract. `expiresAt` is epoch-millis in the vault; `TokenWire`
  * wants an RFC3339 string.
+ *
+ * `tokenType` is the HTTP auth scheme the upstream connector sends the
+ * credential with — `"Bearer"` for every OAuth2/Bearer provider, but
+ * `"Bot"` for a Discord bot token (whose REST API rejects the `Bearer`
+ * scheme). It is sourced from the provider's connect spec
+ * (`connectorTokenType`) so the scheme stays single-sourced, defaulting
+ * to `"Bearer"` for the common case.
  */
-export function storedToWire(tokens: StoredTokens): TokenWire {
+export function storedToWire(
+  tokens: StoredTokens,
+  tokenType = "Bearer",
+): TokenWire {
   return {
     access_token: tokens.accessToken,
     refresh_token: tokens.refreshToken ?? null,
     expires_at: new Date(tokens.expiresAt).toISOString(),
     scope: tokens.scopes.join(" "),
-    token_type: "Bearer",
+    token_type: tokenType,
   };
 }
 
@@ -281,7 +291,18 @@ export function buildAuthConfig(
   if (config) {
     for (const field of authConfigFields(provider)) {
       const value = config[field.key];
-      if (typeof value === "string" && value.length > 0) {
+      if (typeof value !== "string" || value.length === 0) continue;
+      if (field.valueType === "integer") {
+        // The upstream connector reads this field as a JSON integer
+        // (e.g. monday.com `board_id` via `as_i64`), so inject a number
+        // rather than a string. The field's digits-only validation rule
+        // already guarantees the value parses; `Number.isSafeInteger`
+        // guards the i64 boundary so an out-of-range id is dropped and
+        // surfaces the connector's own "is required" error instead of a
+        // silently-truncated board.
+        const n = Number(value);
+        if (Number.isSafeInteger(n)) bag[field.key] = n;
+      } else {
         bag[field.key] = value;
       }
     }
@@ -502,7 +523,7 @@ export async function runV2Sync(args: {
   }
 
   const authConfig = buildAuthConfig(provider, tokens);
-  const wire = storedToWire(tokens);
+  const wire = storedToWire(tokens, connectorTokenType(provider));
 
   let outcomeJson: string;
   try {
@@ -663,7 +684,7 @@ export async function runV2Probe(args: {
     );
   }
   const authConfig = buildAuthConfig(provider, tokens);
-  const wire = storedToWire(tokens);
+  const wire = storedToWire(tokens, connectorTokenType(provider));
   let outcomeJson: string;
   try {
     outcomeJson = await bridge.bridgeConnectorsV2Probe(

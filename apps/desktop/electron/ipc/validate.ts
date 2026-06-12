@@ -75,6 +75,18 @@ export const KNOWN_PROVIDERS = [
   "google_sheets",
   "google_meet",
   "sharepoint",
+  // Tranche 4: per-target / per-resource providers (see
+  // docs/CONNECTORS.md and shared/connectorConfig.ts). Each needs a
+  // specific target id (Discord channel, Bitbucket workspace+repo,
+  // Airtable base+table, Monday board) and most use a non-OAuth2
+  // credential — a Discord bot token (sent with the `Bot` auth
+  // scheme), a Bitbucket repository access token, or an Airtable
+  // personal access token. Monday keeps the read-only OAuth2 browser
+  // grant (`boards:read`).
+  "discord",
+  "bitbucket",
+  "airtable",
+  "monday",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 

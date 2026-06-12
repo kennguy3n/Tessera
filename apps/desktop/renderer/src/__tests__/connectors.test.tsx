@@ -647,6 +647,10 @@ describe("connectorDescriptors", () => {
       "gitlab",
       "teams",
       "trello",
+      "discord",
+      "bitbucket",
+      "airtable",
+      "monday",
       "zoom",
       "google_calendar",
       "google_docs",
@@ -746,6 +750,7 @@ describe("connectorDescriptors", () => {
         "onedrive",
         "dropbox",
         "box",
+        "airtable",
         "sharepoint",
       ]);
     });

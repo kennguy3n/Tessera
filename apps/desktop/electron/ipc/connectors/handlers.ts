@@ -319,6 +319,10 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   google_sheets: "google_sheets",
   google_meet: "google_meet",
   sharepoint: "sharepoint",
+  discord: "discord",
+  bitbucket: "bitbucket",
+  airtable: "airtable",
+  monday: "monday",
 };
 
 /**
@@ -893,6 +897,10 @@ async function runSync(
     case "google_sheets":
     case "google_meet":
     case "sharepoint":
+    case "discord":
+    case "bitbucket":
+    case "airtable":
+    case "monday":
       // Substrate-only providers: reachable here only when the v2
       // path was unavailable; surfaced as a clear config error above,
       // but the explicit cases keep the exhaustiveness check honest.
@@ -1248,6 +1256,10 @@ export async function runDisconnect(
     case "google_sheets":
     case "google_meet":
     case "sharepoint":
+    case "discord":
+    case "bitbucket":
+    case "airtable":
+    case "monday":
       // Substrate-only providers: no legacy disconnect impl exists, so
       // reuse the generic v2 cleanup (unhook sources + purge sync dir
       // + delete manifest/cursor). Token revocation + vault deletion

@@ -107,6 +107,16 @@ describe("connectorsV2 token wire round-trip", () => {
     expect(wire.expires_at).toBe(new Date(Date.UTC(2030, 0, 1)).toISOString());
   });
 
+  it("threads a non-default auth scheme onto the wire token (Discord `Bot`)", () => {
+    // A Discord bot token must authenticate with `Authorization: Bot
+    // <token>`; the upstream connector derives the scheme from
+    // `token_type`, so storedToWire must carry it through verbatim.
+    const wire = storedToWire(TOKENS, "Bot");
+    expect(wire.token_type).toBe("Bot");
+    // Everything else is unchanged from the Bearer default.
+    expect(wire.access_token).toBe("access-123");
+  });
+
   it("round-trips TokenWire → StoredTokens, preserving client creds and healing missing refresh token", () => {
     const wire = storedToWire(TOKENS);
     const back = wireToStored(wire, TOKENS);
@@ -201,6 +211,50 @@ describe("connectorsV2 buildAuthConfig", () => {
       connectorConfig: { project: "" },
     });
     expect(cfg.project).toBeUndefined();
+  });
+
+  it("injects the tranche-4 per-target ids under the upstream field names", () => {
+    const discord = buildAuthConfig("discord", {
+      ...TOKENS,
+      connectorConfig: { bot_token: "secret", channel_id: "1107583106847408128" },
+    });
+    // The bot token travels as the bearer, never in the bag.
+    expect(discord.bot_token).toBeUndefined();
+    expect(discord.channel_id).toBe("1107583106847408128");
+
+    const bitbucket = buildAuthConfig("bitbucket", {
+      ...TOKENS,
+      connectorConfig: {
+        access_token: "secret",
+        workspace: "acme",
+        repo_slug: "infra",
+      },
+    });
+    expect(bitbucket.access_token).toBeUndefined();
+    expect(bitbucket.workspace).toBe("acme");
+    expect(bitbucket.repo_slug).toBe("infra");
+  });
+
+  it("coerces an integer-typed field to a JSON number (monday board_id → as_i64)", () => {
+    // The upstream monday connector reads board_id via
+    // `serde_json::Value::as_i64`; a string would fail its required
+    // check, so buildAuthConfig must emit a JSON number.
+    const cfg = buildAuthConfig("monday", {
+      ...TOKENS,
+      connectorConfig: { board_id: "1234567890" },
+    });
+    expect(cfg.board_id).toBe(1234567890);
+    expect(typeof cfg.board_id).toBe("number");
+  });
+
+  it("drops an out-of-range integer id so the connector's own error surfaces", () => {
+    // Beyond Number.MAX_SAFE_INTEGER the value can't round-trip to an
+    // exact i64, so it is dropped rather than silently truncated.
+    const cfg = buildAuthConfig("monday", {
+      ...TOKENS,
+      connectorConfig: { board_id: "99999999999999999999" },
+    });
+    expect(cfg.board_id).toBeUndefined();
   });
 
   it("sends the full requested scope (incl. offline_access) to the Rust connector", () => {
