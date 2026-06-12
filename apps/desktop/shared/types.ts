@@ -2770,6 +2770,15 @@ export interface ConnectorApi {
     provider: string,
     clientId: string,
     clientSecret: string,
+    /**
+     * Per-target / non-OAuth2 connector config collected at connect
+     * time, keyed by the `auth_config_json` field name the upstream
+     * connector reads (see `shared/connectorConfig.ts`). For token-method
+     * providers (GitLab, Trello) this carries the credential itself;
+     * `clientId`/`clientSecret` are ignored for those. Omitted for
+     * whole-account OAuth2 providers that need no extra inputs.
+     */
+    config?: Record<string, string>,
   ) => Promise<ConnectorStatusInfo>;
   disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
   status: (provider: string) => Promise<ConnectorStatusInfo>;

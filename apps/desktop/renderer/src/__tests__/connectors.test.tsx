@@ -643,6 +643,10 @@ describe("connectorDescriptors", () => {
       "box",
       "linear",
       "miro",
+      "asana",
+      "gitlab",
+      "teams",
+      "trello",
     ]);
     // Every descriptor must carry a known category plus
     // scope-transparency copy so no card renders without its

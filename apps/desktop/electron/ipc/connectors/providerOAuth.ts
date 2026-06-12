@@ -378,6 +378,86 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     supportsRefresh: true,
     usePkce: false,
   },
+  // ── Per-target / non-OAuth2 tranche ──────────────────────────────
+  // These providers need extra connect-time inputs beyond a bare OAuth
+  // client id/secret; the inputs (and whether the connect flow is a
+  // browser OAuth grant or a pasted credential) are declared in
+  // `shared/connectorConfig.ts`. The OAuth surface below is still the
+  // single source of truth for endpoints, scopes and the unique
+  // loopback port every provider reserves.
+  asana: {
+    provider: "asana",
+    authUrl: "https://app.asana.com/-/oauth_authorize",
+    tokenUrl: "https://app.asana.com/-/oauth_token",
+    // Least-privilege read-only scopes: the connector only lists and
+    // reads tasks within the configured project. Asana's granular OAuth
+    // scopes (`projects:read`, `tasks:read`) replace the legacy
+    // full-access `default` scope.
+    scope: "projects:read tasks:read",
+    redirectPort: 9890,
+    extraAuthorizeParams: {},
+    // Asana issues refresh tokens for OAuth apps.
+    supportsRefresh: true,
+    // Asana's OAuth surface supports PKCE (S256).
+    usePkce: true,
+  },
+  gitlab: {
+    provider: "gitlab",
+    // GitLab is wired via a personal access token (see
+    // `shared/connectorConfig.ts` — connectMethod "token"), which works
+    // uniformly across gitlab.com and self-managed instances without
+    // per-instance OAuth app registration. The OAuth endpoints below
+    // are retained for completeness and to satisfy the single-config
+    // invariant (every provider declares an https authorize/token URL +
+    // a unique loopback port); the connect flow does not open a browser.
+    authUrl: "https://gitlab.com/oauth/authorize",
+    tokenUrl: "https://gitlab.com/oauth/token",
+    // `read_api` is GitLab's least-privilege read-only token scope; it
+    // covers reading project issues and their notes, which is all the
+    // connector ingests. The user grants it when creating the PAT.
+    scope: "read_api",
+    redirectPort: 9891,
+    extraAuthorizeParams: {},
+    // A PAT is long-lived and carries no refresh token; surface a
+    // "reconnect" UX on expiry instead of attempting a refresh.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  teams: {
+    provider: "teams",
+    authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    // Least-privilege: read messages in the channels the user can
+    // already see (`ChannelMessage.Read.All`) plus `offline_access`
+    // for the refresh token. No write/management scopes.
+    scope: "offline_access ChannelMessage.Read.All",
+    redirectPort: 9892,
+    extraAuthorizeParams: {
+      response_mode: "query",
+      prompt: "select_account",
+    },
+    requestOfflineAccess: true,
+    supportsRefresh: true,
+    // Microsoft v2.0 desktop/public clients use PKCE (S256).
+    usePkce: true,
+  },
+  trello: {
+    provider: "trello",
+    // Trello authenticates with an API key + token pair (see
+    // `shared/connectorConfig.ts` — connectMethod "token"), not an
+    // OAuth2 browser grant. The endpoints below are Trello's OAuth1
+    // surface, retained only to satisfy the single-config invariant;
+    // the connect flow does not open a browser.
+    authUrl: "https://trello.com/1/authorize",
+    tokenUrl: "https://trello.com/1/OAuthGetAccessToken",
+    // Trello tokens are scoped at creation time. The connector only
+    // reads boards/cards, so the user authorises a read-only token.
+    scope: "read",
+    redirectPort: 9893,
+    extraAuthorizeParams: {},
+    supportsRefresh: false,
+    usePkce: false,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {

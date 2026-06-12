@@ -112,6 +112,85 @@ describe("ConnectorsList", () => {
     );
   });
 
+  it("collects per-target config for an OAuth2 provider (Asana project)", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    mockApi.connectors.authenticate.mockResolvedValue({
+      provider: "asana",
+      connected: true,
+      status: "connected",
+    });
+
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+
+    fireEvent.click(await screen.findByLabelText("Connect Asana"));
+    // OAuth2 provider still asks for client credentials …
+    fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+      target: { value: "ID" },
+    });
+    fireEvent.change(screen.getByLabelText("OAuth Client Secret"), {
+      target: { value: "SECRET" },
+    });
+    // … plus the per-target project gid.
+    fireEvent.change(screen.getByLabelText("Project ID"), {
+      target: { value: "1201234567890123" },
+    });
+    fireEvent.click(screen.getByText("Authenticate"));
+
+    await waitFor(() =>
+      expect(mockApi.connectors.authenticate).toHaveBeenCalledWith(
+        "asana",
+        "ID",
+        "SECRET",
+        { project: "1201234567890123" },
+      ),
+    );
+  });
+
+  it("connects a token-method provider without OAuth client inputs (GitLab PAT)", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    mockApi.connectors.authenticate.mockResolvedValue({
+      provider: "gitlab",
+      connected: true,
+      status: "connected",
+    });
+
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+
+    fireEvent.click(await screen.findByLabelText("Connect GitLab"));
+    // Token-method providers must NOT render the OAuth client inputs.
+    expect(screen.queryByLabelText("OAuth Client ID")).toBeNull();
+    expect(screen.queryByLabelText("OAuth Client Secret")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Personal access token"), {
+      target: { value: "glpat-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Project ID or path"), {
+      target: { value: "42" },
+    });
+    fireEvent.click(screen.getByText("Authenticate"));
+
+    await waitFor(() =>
+      expect(mockApi.connectors.authenticate).toHaveBeenCalledWith(
+        "gitlab",
+        "",
+        "",
+        { personal_access_token: "glpat-secret", project_id: "42" },
+      ),
+    );
+  });
+
   it("shows the offline badge when sync returns offline status", async () => {
     // Render with one provider already connected — pick Figma since
     // we want to assert against a non-Drive provider

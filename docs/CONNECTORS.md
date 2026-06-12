@@ -232,27 +232,49 @@ uphold the read-only, least-privilege contract:
 ## Providers that need extra config
 
 Some upstream connectors require per-instance configuration to scope a
-sync (they are *not* whole-account). Examples confirmed in the upstream
-`connectors` crate:
+sync (they are *not* whole-account), and some authenticate with a pasted
+long-lived credential rather than a browser OAuth2 grant. The 2025
+tranche (**Asana, GitLab, Microsoft Teams, Trello**) was added following
+this path and is the reference diff. The required inputs (confirmed
+against the upstream `connectors` crate's `auth_config_json` reads) are:
 
-| Provider | Required config |
-| --- | --- |
-| Asana | `project` (gid) |
-| GitLab | `project_id` |
-| Microsoft Teams | `team_id`, `channel_id` |
-| BitBucket | `workspace`, `repo_slug` |
-| Trello | `api_key` + user token (non-OAuth2) |
+| Provider | Connect method | Inputs (`auth_config_json` key) |
+| --- | --- | --- |
+| Asana | `oauth2` | `project` (gid); optional `api_base_url` |
+| Microsoft Teams | `oauth2` | `team_id`, `channel_id` |
+| GitLab | `token` | `personal_access_token` (→ bearer), `project_id`; optional `api_base_url` |
+| Trello | `token` | `key`, `token` (→ bearer), `board_id` |
 
-To add one of these, follow steps 1–7 above **and** additionally:
+The seam is the single source of truth in
+`apps/desktop/shared/connectorConfig.ts` — a dependency-free module
+imported by **both** the Electron main process and the renderer:
 
-1. Extend `buildAuthConfig`
-   (`apps/desktop/electron/ipc/connectors/connectorsV2.ts`) to inject the
-   extra fields into the `auth_config_json` bag the upstream connector
-   reads (the connector validates the bag and errors clearly if a field
-   is missing).
-2. Add UI to collect those fields during onboarding and persist them
-   alongside the provider's tokens.
-3. Document the required fields in the descriptor `help` text.
+1. **Declare the connect spec** in `CONNECTOR_CONNECT_SPECS`: the
+   `connectMethod` (`"oauth2"` for a browser grant that *also* needs
+   target ids, `"token"` for a pasted credential), the ordered
+   `configFields` (each `key` **must** equal the exact `auth_config_json`
+   field name the upstream connector reads — e.g. `.get("project")`,
+   `required_field(config, "team_id")`), and for `"token"` providers the
+   `tokenField` whose value becomes the connector's bearer token.
+2. **Injection is automatic.** `buildAuthConfig`
+   (`connectorsV2.ts`) calls `authConfigFields(provider)` to inject every
+   declared field *except* the `tokenField` (which travels as
+   `TokenWire.access_token`) into the `auth_config_json` bag. Empty
+   optional values are skipped so the connector's own "field is required"
+   error surfaces clearly.
+3. **Validation is automatic.** The `connectors:authenticate` handler
+   calls `assertConnectorConfig`, which rejects unknown keys, enforces
+   `required` fields, and length-caps every value. `"token"` providers
+   route through `authenticateWithToken` (no browser flow); the
+   credential is stored as the access token with a long, non-expiring
+   lifetime and `supportsRefresh: false`.
+4. **UI is automatic.** `ConnectorsList.tsx` renders the `configFields`
+   from the spec (password inputs for `secret` fields) and hides the
+   OAuth client id/secret inputs for `"token"` providers.
 
-These are deliberately out of the "under a day" fast path because they
-touch the onboarding UI and the auth-config seam, not just data tables.
+So the additional work beyond the fast-path steps 1–7 is: add the
+`connectorConfig.ts` spec entry, set the OAuth config's `supportsRefresh`
+/ `usePkce` honestly, and write accurate descriptor `help` + `reads` /
+`neverTouches` copy. Everything downstream (injection, validation, UI,
+tests that iterate `KNOWN_PROVIDERS` / `CONNECTOR_DESCRIPTORS`) follows
+from the single source of truth.
