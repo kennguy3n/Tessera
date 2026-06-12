@@ -594,12 +594,18 @@ export default function ConceptGraphPanel({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [viewBox, setViewBox] = useState<FitBox>(baseFit);
   const viewBoxRef = useRef<FitBox>(baseFit);
+  // Mirror baseFit into a ref so zoom math can read the current fit width
+  // without taking it as a dependency — otherwise zoomAround (and the
+  // non-passive wheel listener that closes over it) would be recreated and
+  // the listener re-attached on every layout/filter change.
+  const baseFitRef = useRef<FitBox>(baseFit);
   const applyViewBox = useCallback((box: FitBox) => {
     viewBoxRef.current = box;
     setViewBox(box);
   }, []);
   // Fit-on-load and re-fit whenever the layout changes (new data / filter).
   useEffect(() => {
+    baseFitRef.current = baseFit;
     viewBoxRef.current = baseFit;
     setViewBox(baseFit);
   }, [baseFit]);
@@ -607,7 +613,7 @@ export default function ConceptGraphPanel({
   const zoomAround = useCallback(
     (px: number, py: number, factor: number) => {
       const vb = viewBoxRef.current;
-      const base = baseFit.width;
+      const base = baseFitRef.current.width;
       const minW = base / MAX_ZOOM;
       const maxW = base / MIN_ZOOM;
       const targetW = vb.width * factor;
@@ -624,7 +630,7 @@ export default function ConceptGraphPanel({
         height: nh,
       });
     },
-    [applyViewBox, baseFit.width],
+    [applyViewBox],
   );
 
   // Non-passive wheel listener so we can preventDefault the page scroll.
