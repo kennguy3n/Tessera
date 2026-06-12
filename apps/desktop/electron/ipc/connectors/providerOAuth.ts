@@ -310,6 +310,74 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     supportsRefresh: false,
     usePkce: false,
   },
+  // ── Whole-account read-only OAuth2 providers (v2 bridge) ─────────
+  // Same provider-agnostic authorization-code grant as above; content
+  // traversal is served by the upstream `connectors` crate. Each syncs
+  // every item the granted (read-only) token can see, so no per-target
+  // sync config is required. Ports continue the 9886+ sequence.
+  dropbox: {
+    provider: "dropbox",
+    authUrl: "https://www.dropbox.com/oauth2/authorize",
+    tokenUrl: "https://api.dropboxapi.com/oauth2/token",
+    // Least-privilege read-only scopes: account identity + file
+    // metadata + file content. No write/sharing scopes are requested.
+    scope: "account_info.read files.metadata.read files.content.read",
+    redirectPort: 9886,
+    // Dropbox only issues a refresh token when the authorize request
+    // asks for offline access via `token_access_type=offline`; without
+    // it the short-lived access token cannot be refreshed.
+    extraAuthorizeParams: {
+      token_access_type: "offline",
+    },
+    supportsRefresh: true,
+    usePkce: true,
+  },
+  box: {
+    provider: "box",
+    authUrl: "https://account.box.com/api/oauth2/authorize",
+    tokenUrl: "https://api.box.com/oauth2/token",
+    // `root_readonly` downscopes the token to read-only access across
+    // the account's files and folders — the least-privilege grant for
+    // evidence ingestion. The Box app itself must also be configured
+    // with read-only application scopes (see docs/CONNECTORS.md).
+    scope: "root_readonly",
+    redirectPort: 9887,
+    extraAuthorizeParams: {},
+    // Box issues a refresh token on every authorization-code exchange.
+    // No PKCE on Box's standard web OAuth2 flow.
+    supportsRefresh: true,
+    usePkce: false,
+  },
+  linear: {
+    provider: "linear",
+    authUrl: "https://linear.app/oauth/authorize",
+    tokenUrl: "https://api.linear.app/oauth/token",
+    // Linear's single `read` scope grants read-only access to issues,
+    // projects and comments — exactly what the connector ingests.
+    scope: "read",
+    redirectPort: 9888,
+    extraAuthorizeParams: {},
+    // Linear access tokens are long-lived and the flow does not issue a
+    // refresh token, so surface a "reconnect needed" UX on expiry
+    // rather than attempting a refresh (mirrors GitHub / Slack).
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  miro: {
+    provider: "miro",
+    authUrl: "https://miro.com/oauth/authorize",
+    tokenUrl: "https://api.miro.com/v1/oauth/token",
+    // `boards:read` is Miro's least-privilege read-only scope; it
+    // covers listing boards and reading their metadata/content.
+    scope: "boards:read",
+    redirectPort: 9889,
+    extraAuthorizeParams: {},
+    // Miro issues refresh tokens when the app is configured for
+    // expiring tokens; the refresh path is a no-op when the token is
+    // still valid or when no refresh token was returned.
+    supportsRefresh: true,
+    usePkce: false,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {

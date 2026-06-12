@@ -100,7 +100,7 @@ describe("assertProvider", () => {
   });
 
   it("rejects unknown providers", () => {
-    expect(() => assertProvider("dropbox")).toThrow(/Unknown provider/);
+    expect(() => assertProvider("salesforce")).toThrow(/Unknown provider/);
     expect(() => assertProvider("google")).toThrow(/Unknown provider/);
   });
 

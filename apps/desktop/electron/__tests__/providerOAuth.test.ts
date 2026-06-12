@@ -14,18 +14,16 @@ import {
   getRedirectUri,
   refreshProviderToken,
 } from "../ipc/connectors/providerOAuth";
+import { KNOWN_PROVIDERS } from "../ipc/validate";
 
 describe("PROVIDER_OAUTH_CONFIGS", () => {
   it("exposes a config for every known provider with a unique port", () => {
     const ports = new Set<number>();
-    for (const id of [
-      "google_drive",
-      "onedrive",
-      "notion",
-      "jira",
-      "confluence",
-      "figma",
-    ] as const) {
+    // Derive the roster from `KNOWN_PROVIDERS` (the single allowlist
+    // source of truth) so a provider added there without an OAuth
+    // config — or one that reuses another's loopback port — fails here
+    // instead of silently shipping a broken connect flow.
+    for (const id of KNOWN_PROVIDERS) {
       const cfg = PROVIDER_OAUTH_CONFIGS[id];
       expect(cfg).toBeDefined();
       expect(cfg.provider).toBe(id);
@@ -34,6 +32,26 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
       expect(ports.has(cfg.redirectPort)).toBe(false);
       ports.add(cfg.redirectPort);
     }
+    expect(ports.size).toBe(KNOWN_PROVIDERS.length);
+  });
+
+  it("requests least-privilege read-only scopes for the new tranche", () => {
+    // Guards the security contract: each newly-exposed provider must
+    // request only read scopes. A future edit that widens a scope to a
+    // write/manage grant breaks this test.
+    expect(PROVIDER_OAUTH_CONFIGS.dropbox.scope).toBe(
+      "account_info.read files.metadata.read files.content.read",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.box.scope).toBe("root_readonly");
+    expect(PROVIDER_OAUTH_CONFIGS.linear.scope).toBe("read");
+    expect(PROVIDER_OAUTH_CONFIGS.miro.scope).toBe("boards:read");
+  });
+
+  it("asks Dropbox for offline access so its token can refresh", () => {
+    expect(PROVIDER_OAUTH_CONFIGS.dropbox.supportsRefresh).toBe(true);
+    expect(
+      PROVIDER_OAUTH_CONFIGS.dropbox.extraAuthorizeParams?.token_access_type,
+    ).toBe("offline");
   });
 
   it("requests PKCE for Google / Microsoft / Atlassian", () => {

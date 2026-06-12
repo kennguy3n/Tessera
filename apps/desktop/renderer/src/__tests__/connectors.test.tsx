@@ -626,7 +626,7 @@ describe("DriveFilePicker", () => {
 });
 
 describe("connectorDescriptors", () => {
-  it("ships exactly the 10 Connectors v2 providers, each fully categorized", () => {
+  it("ships exactly the Connectors v2 providers, each fully categorized", () => {
     const providers = CONNECTOR_DESCRIPTORS.map((d) => d.provider);
     expect(providers).toEqual([
       "google_drive",
@@ -639,6 +639,10 @@ describe("connectorDescriptors", () => {
       "slack",
       "email",
       "github",
+      "dropbox",
+      "box",
+      "linear",
+      "miro",
     ]);
     // Every descriptor must carry a known category plus
     // scope-transparency copy so no card renders without its
@@ -730,6 +734,8 @@ describe("connectorDescriptors", () => {
       expect(storage?.descriptors.map((d) => d.provider)).toEqual([
         "google_drive",
         "onedrive",
+        "dropbox",
+        "box",
       ]);
     });
   });

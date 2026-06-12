@@ -97,6 +97,14 @@ pub mod provider_ids {
     pub const EMAIL: &str = "email";
     /// GitHub.
     pub const GITHUB: &str = "github";
+    /// Dropbox.
+    pub const DROPBOX: &str = "dropbox";
+    /// Box.
+    pub const BOX: &str = "box";
+    /// Linear.
+    pub const LINEAR: &str = "linear";
+    /// Miro.
+    pub const MIRO: &str = "miro";
 }
 
 /// Errors surfaced by the connector v2 bridge. Kept deliberately small
@@ -179,6 +187,14 @@ pub fn provider_to_kind(provider: &str) -> Option<ConnectorKind> {
         provider_ids::EMAIL => Some(ConnectorKind::Email),
         #[cfg(feature = "connector-github")]
         provider_ids::GITHUB => Some(ConnectorKind::GitHub),
+        #[cfg(feature = "connector-dropbox")]
+        provider_ids::DROPBOX => Some(ConnectorKind::Dropbox),
+        #[cfg(feature = "connector-box")]
+        provider_ids::BOX => Some(ConnectorKind::Box),
+        #[cfg(feature = "connector-linear")]
+        provider_ids::LINEAR => Some(ConnectorKind::Linear),
+        #[cfg(feature = "connector-miro")]
+        provider_ids::MIRO => Some(ConnectorKind::Miro),
         _ => None,
     }
 }
@@ -199,6 +215,10 @@ pub fn enabled_providers() -> Vec<ConnectorKind> {
         provider_ids::SLACK,
         provider_ids::EMAIL,
         provider_ids::GITHUB,
+        provider_ids::DROPBOX,
+        provider_ids::BOX,
+        provider_ids::LINEAR,
+        provider_ids::MIRO,
     ]
     .into_iter()
     .filter_map(provider_to_kind)
@@ -418,6 +438,22 @@ pub fn build_connector(
         ConnectorKind::GitHub => Some(Box::new(connectors::GitHubConnector::new(
             instance, transport, oauth,
         ))),
+        #[cfg(feature = "connector-dropbox")]
+        ConnectorKind::Dropbox => Some(Box::new(connectors::DropboxConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-box")]
+        ConnectorKind::Box => Some(Box::new(connectors::BoxConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-linear")]
+        ConnectorKind::Linear => Some(Box::new(connectors::LinearConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-miro")]
+        ConnectorKind::Miro => Some(Box::new(connectors::MiroConnector::new(
+            instance, transport, oauth,
+        ))),
         #[allow(unreachable_patterns)]
         _ => None,
     }
@@ -522,8 +558,12 @@ fn display_name(kind: ConnectorKind) -> &'static str {
         ConnectorKind::Slack => "Slack",
         ConnectorKind::Email => "Email",
         ConnectorKind::GitHub => "GitHub",
+        ConnectorKind::Dropbox => "Dropbox",
+        ConnectorKind::Box => "Box",
+        ConnectorKind::Linear => "Linear",
+        ConnectorKind::Miro => "Miro",
         // The upstream `ConnectorKind` enum carries 130+ providers; we
-        // only ship the ten stable ones, so fall back to the canonical
+        // only ship the stable subset, so fall back to the canonical
         // id string for any provider not in the stable set.
         other => other.as_str(),
     }
@@ -1380,28 +1420,38 @@ mod tests {
         }
     }
 
+    /// Every provider id that must be compiled into the default
+    /// (`connectors-v2-stable`) build. Adding a provider to the stable
+    /// bundle means adding it here; the count assertions below derive
+    /// from this list so they never drift.
+    const STABLE_PROVIDER_IDS: &[&str] = &[
+        "google_drive",
+        "onedrive",
+        "notion",
+        "jira",
+        "confluence",
+        "figma",
+        "hubspot",
+        "slack",
+        "email",
+        "github",
+        "dropbox",
+        "box",
+        "linear",
+        "miro",
+    ];
+
     #[test]
-    fn enabled_providers_covers_ten_stable() {
+    fn enabled_providers_covers_stable_set() {
         let providers = enabled_providers();
         assert_eq!(
             providers.len(),
-            10,
-            "all ten stable providers must be enabled"
+            STABLE_PROVIDER_IDS.len(),
+            "every stable provider must be enabled"
         );
         let ids: Vec<&str> = providers.iter().map(|k| k.as_str()).collect();
-        for expected in [
-            "google_drive",
-            "onedrive",
-            "notion",
-            "jira",
-            "confluence",
-            "figma",
-            "hubspot",
-            "slack",
-            "email",
-            "github",
-        ] {
-            assert!(ids.contains(&expected), "missing provider {expected}");
+        for expected in STABLE_PROVIDER_IDS {
+            assert!(ids.contains(expected), "missing provider {expected}");
         }
     }
 
@@ -1419,19 +1469,27 @@ mod tests {
     }
 
     #[test]
-    fn list_connectors_reports_ten_oauth_providers() {
+    fn list_connectors_reports_oauth_providers() {
         let infos = list_connectors();
-        assert_eq!(infos.len(), 10);
+        assert_eq!(infos.len(), STABLE_PROVIDER_IDS.len());
         assert!(infos.iter().all(|i| i.auth_kind == "oauth2"));
         let gh = infos.iter().find(|i| i.provider == "github").unwrap();
         assert_eq!(gh.display_name, "GitHub");
+        let dropbox = infos.iter().find(|i| i.provider == "dropbox").unwrap();
+        assert_eq!(dropbox.display_name, "Dropbox");
+        let miro = infos.iter().find(|i| i.provider == "miro").unwrap();
+        assert_eq!(miro.display_name, "Miro");
     }
 
     #[test]
     fn is_supported_matches_enabled_set() {
         assert!(is_supported("github"));
         assert!(is_supported("hubspot"));
-        assert!(!is_supported("dropbox"));
+        assert!(is_supported("dropbox"));
+        assert!(is_supported("box"));
+        assert!(is_supported("linear"));
+        assert!(is_supported("miro"));
+        assert!(!is_supported("salesforce"));
     }
 
     #[test]

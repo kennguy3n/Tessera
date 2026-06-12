@@ -40,7 +40,10 @@ connectors-v2-test-support = [
     "connector_framework/test-support",
     "connectors/test-support",
 ]
-# The 10 stable providers this migration ships first.
+# The stable providers this build ships. Each `connector-*` feature is
+# an independent gate (see the comment above); the bundle simply turns
+# the shipped set on by default. Adding a provider = one `connector-*`
+# line below + one feature definition.
 connectors-v2-stable = [
     "connector-google-drive",
     "connector-onedrive",
@@ -52,6 +55,10 @@ connectors-v2-stable = [
     "connector-slack",
     "connector-email",
     "connector-github",
+    "connector-dropbox",
+    "connector-box",
+    "connector-linear",
+    "connector-miro",
 ]
 connector-google-drive = ["connectors-v2"]
 connector-onedrive = ["connectors-v2"]
@@ -63,6 +70,10 @@ connector-hubspot = ["connectors-v2"]
 connector-slack = ["connectors-v2"]
 connector-email = ["connectors-v2"]
 connector-github = ["connectors-v2"]
+connector-dropbox = ["connectors-v2"]
+connector-box = ["connectors-v2"]
+connector-linear = ["connectors-v2"]
+connector-miro = ["connectors-v2"]
 
 [dependencies]
 # Knowledge substrate connector layer, pinned by rev for reproducible

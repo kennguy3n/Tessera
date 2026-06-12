@@ -158,6 +158,23 @@ npm run lint
 npm run type-check
 ```
 
+---
+
+## Adding a connector
+
+Tessera's Connectors v2 layer wraps the 140+ SaaS connectors the
+[`knowledge`](https://github.com/kennguy3n/knowledge) substrate already
+implements, so exposing a new standard read-only OAuth provider is a
+small mapping + descriptor change — not a new module. The exact,
+step-by-step recipe (upstream `ConnectorKind` → `provider_to_kind`
+mapping → cargo feature → renderer descriptor → OAuth config → smoke
+test), with a worked example and the security checklist for
+least-privilege scopes, lives in **[docs/CONNECTORS.md](docs/CONNECTORS.md)**.
+
+A standard whole-account read-only provider should take **well under a
+day** to wire end-to-end (connect → sync → evidence) following that
+guide.
+
 ### Regression tests for security-sensitive changes
 
 When you touch a security-sensitive boundary (IPC handler registration,

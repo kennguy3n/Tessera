@@ -95,7 +95,7 @@ export interface ConnectorDescriptor {
 
 /**
  * Boilerplate scope-transparency copy shared by every connector:
- * all 10 providers request read-only OAuth scopes, so none of them
+ * every provider requests read-only OAuth scopes, so none of them
  * can write, modify, delete, or share remote content, and none
  * grant Tessera a way to act on the user's behalf. Per-provider
  * `neverTouches` entries below extend (not replace) this baseline.
@@ -263,6 +263,70 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     ],
     neverTouches: [
       "Pushing commits, opening PRs, or changing repo settings",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "dropbox",
+    label: "Dropbox",
+    category: "Storage",
+    keywords: ["files", "storage", "cloud"],
+    consoleUrl: "https://www.dropbox.com/developers/apps",
+    help: "Create a Dropbox app (scoped access) in the App Console, grant the account_info.read / files.metadata.read / files.content.read scopes, add the redirect URI below, then copy the App key and App secret.",
+    secretRequired: true,
+    reads: [
+      "File and folder names, metadata, and contents in your Dropbox (read-only)",
+    ],
+    neverTouches: [
+      "Uploading, moving, or deleting files in your Dropbox",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "box",
+    label: "Box",
+    category: "Storage",
+    keywords: ["files", "storage", "cloud", "content"],
+    consoleUrl: "https://app.box.com/developers/console",
+    help: "Create a Box 'Custom App' using Standard OAuth 2.0, configure it with read-only application scopes, add the redirect URI below, then copy the Client ID and Client Secret.",
+    secretRequired: true,
+    reads: [
+      "File and folder names, metadata, and contents in your Box account (read-only)",
+    ],
+    neverTouches: [
+      "Uploading, moving, or deleting files in your Box account",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "linear",
+    label: "Linear",
+    category: "Issues",
+    keywords: ["issues", "tickets", "projects", "tasks"],
+    consoleUrl: "https://linear.app/settings/api/applications/new",
+    help: "Create a Linear OAuth application, request the 'read' scope, add the redirect URI below, then copy the Client ID and Client Secret.",
+    secretRequired: true,
+    reads: [
+      "Issue titles, descriptions, comments, and project metadata (read-only)",
+    ],
+    neverTouches: [
+      "Creating, editing, or closing issues",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "miro",
+    label: "Miro",
+    category: "Design",
+    keywords: ["boards", "whiteboard", "diagrams"],
+    consoleUrl: "https://miro.com/app/settings/user-profile/apps",
+    help: "Create a Miro app, request the boards:read scope, add the redirect URI below, then copy the Client ID and Client Secret.",
+    secretRequired: true,
+    reads: [
+      "Board names, metadata, and contents you can access (read-only)",
+    ],
+    neverTouches: [
+      "Creating, editing, or deleting boards",
       ...READ_ONLY_GUARANTEES,
     ],
   },
