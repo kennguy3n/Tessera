@@ -331,7 +331,7 @@ export interface LayoutOptions {
  * `String.prototype.localeCompare`, the result never depends on the host's
  * locale/collation, so a sort keyed on it is reproducible across machines.
  */
-function compareCodepoint(a: string, b: string): number {
+export function compareCodepoint(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 

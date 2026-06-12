@@ -15,6 +15,7 @@ import {
   isConceptNodeState,
   findNeighborInDirection,
   highestDegreeNodeId,
+  compareCodepoint,
   computeEdgeCurves,
   quadraticControlPoint,
   quadraticEdgePath,
@@ -596,6 +597,30 @@ describe("highestDegreeNodeId", () => {
 
   it("returns null for an empty view", () => {
     expect(highestDegreeNodeId(parseConceptGraph("{}"))).toBeNull();
+  });
+});
+
+describe("compareCodepoint (shared canonical ordering)", () => {
+  it("orders by UTF-16 code unit, independent of locale collation", () => {
+    expect(Math.sign(compareCodepoint("a", "b"))).toBe(-1);
+    expect(Math.sign(compareCodepoint("b", "a"))).toBe(1);
+    expect(compareCodepoint("a", "a")).toBe(0);
+    // Uppercase precedes lowercase by codepoint (unlike many locale collations
+    // that fold case) — locking this guards the edge-curve canonical ordering.
+    expect(Math.sign(compareCodepoint("Z", "a"))).toBe(-1);
+    expect(Math.sign(compareCodepoint("10", "9"))).toBe(-1);
+  });
+
+  it("agrees in sign with the renderer's `>` idiom for endpoint ids", () => {
+    // The renderer derives `swap` as `compareCodepoint(from, to) > 0`; this
+    // must match `pairKey`'s `compareCodepoint(a, b) <= 0` partition so a
+    // parallel group shares one normal basis. Verify the two never disagree.
+    const ids = ["a", "b", "Z", "node-1", "node-2", "\u00e9", "10", "9"];
+    for (const a of ids) {
+      for (const b of ids) {
+        expect(compareCodepoint(a, b) > 0).toBe(a > b);
+      }
+    }
   });
 });
 

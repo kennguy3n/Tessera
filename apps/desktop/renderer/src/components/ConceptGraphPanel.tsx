@@ -13,6 +13,7 @@ import { useCspNonce } from "../utils/cspNonce";
 import { useConceptGraph } from "../hooks/useSubstrate";
 import { usePrefersReducedMotion } from "../hooks/usePrefersReducedMotion";
 import {
+  compareCodepoint,
   computeDegrees,
   computeEdgeCurves,
   computeFitBox,
@@ -1305,8 +1306,10 @@ export default function ConceptGraphPanel({
       // Canonical endpoint order (by id) so every edge in a parallel group
       // shares one normal basis and the signed offsets land on predictable
       // sides; the path itself is still drawn from `from` → `to` so the
-      // arrowhead points the right way.
-      const swap = edge.from > edge.to;
+      // arrowhead points the right way. Uses the same `compareCodepoint`
+      // ordering as `pairKey` in the layout util — single source of truth, so
+      // the two can't silently diverge (e.g. if the comparison ever changed).
+      const swap = compareCodepoint(edge.from, edge.to) > 0;
       const canonFrom = swap ? to : from;
       const canonTo = swap ? from : to;
       const control = quadraticControlPoint(canonFrom, canonTo, curve?.offset ?? 0);
