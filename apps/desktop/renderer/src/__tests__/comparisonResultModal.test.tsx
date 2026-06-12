@@ -161,7 +161,9 @@ describe("ComparisonResultModal", () => {
     );
     fireEvent.click(screen.getByTestId("comparison-modal-open-artifact"));
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(mockNavigate).toHaveBeenCalledWith("/artifacts/art-cmp-123");
+    // /artifacts/:id is not a registered route — "Open artifact" routes to
+    // the editor (/artifacts/:id/edit), matching HomePage and the palette.
+    expect(mockNavigate).toHaveBeenCalledWith("/artifacts/art-cmp-123/edit");
   });
 
   it("invokes onClose when Close is clicked", () => {

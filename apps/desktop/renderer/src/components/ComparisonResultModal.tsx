@@ -96,7 +96,11 @@ export default function ComparisonResultModal({
 
   const handleOpenArtifact = useCallback(() => {
     onClose();
-    navigate(`/artifacts/${artifact.id}`);
+    // /artifacts/:id is NOT a registered route (the router only registers
+    // /artifacts/:id/edit; the catch-all redirects to "/"), so navigating
+    // there silently sends the user to Home. Open the editor directly,
+    // matching HomePage's recent-artifact cards and the command palette.
+    navigate(`/artifacts/${artifact.id}/edit`);
   }, [artifact.id, navigate, onClose]);
 
   const handleDownload = useCallback(() => {

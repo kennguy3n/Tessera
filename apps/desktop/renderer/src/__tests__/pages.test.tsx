@@ -420,7 +420,7 @@ describe("CreatePage", () => {
       <MemoryRouter initialEntries={["/create?template=prd-v1"]}>
         <Routes>
           <Route path="/create" element={<CreatePage />} />
-          <Route path="/artifacts/:id" element={<CurrentPath />} />
+          <Route path="/artifacts/:id/edit" element={<CurrentPath />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -443,9 +443,12 @@ describe("CreatePage", () => {
         ["src-test"],
       );
     });
+    // /artifacts/:id is not a registered route — the app routes generated
+    // artifacts straight to the editor (/artifacts/:id/edit), matching
+    // HomePage's recent-artifact cards and the command palette.
     await waitFor(() => {
       expect(screen.getByTestId("current-path").textContent).toBe(
-        "/artifacts/art-new",
+        "/artifacts/art-new/edit",
       );
     });
 

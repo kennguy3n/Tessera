@@ -1140,8 +1140,20 @@ function TemplateRunner({
         templateId,
         Array.from(selected),
       );
+      if (!artifact?.id) {
+        setGen({
+          status: "error",
+          message: "Generation did not return an artifact. Please try again.",
+        });
+        return;
+      }
       setGen({ status: "success", message: artifact.id });
-      navigate(`/artifacts/${artifact.id}`);
+      // /artifacts/:id is NOT a registered route (the router only
+      // registers /artifacts/:id/edit; the catch-all redirects to "/"),
+      // so navigating there silently sends the user to Home instead of
+      // the artifact they just generated. Go straight to the editor,
+      // matching HomePage's recent-artifact cards and the command palette.
+      navigate(`/artifacts/${artifact.id}/edit`);
     } catch (err) {
       setGen({
         status: "error",
