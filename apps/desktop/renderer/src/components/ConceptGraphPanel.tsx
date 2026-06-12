@@ -633,23 +633,38 @@ export default function ConceptGraphPanel({
     [applyViewBox],
   );
 
-  // Non-passive wheel listener so we can preventDefault the page scroll.
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      const px = (e.clientX - rect.left) / rect.width;
-      const py = (e.clientY - rect.top) / rect.height;
-      // Scroll up (deltaY < 0) zooms in → smaller viewBox.
-      const factor = Math.exp((e.deltaY > 0 ? 1 : -1) * 0.14);
-      zoomAround(px, py, factor);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAround]);
+  // Non-passive wheel listener (so we can preventDefault the page scroll),
+  // bound via a callback ref rather than an effect. The <svg> is conditionally
+  // rendered — it does not exist during the initial loading paint — and an
+  // effect keyed on the (stable) zoomAround would run once on mount, find
+  // svgRef.current null, and never re-run, leaving wheel-zoom permanently
+  // unbound. A callback ref instead ties the listener's lifecycle to the
+  // element's: it attaches exactly when the SVG mounts and detaches on
+  // unmount, with no per-layout re-attach churn (zoomAround is stable).
+  const wheelCleanupRef = useRef<(() => void) | null>(null);
+  const attachSvg = useCallback(
+    (el: SVGSVGElement | null) => {
+      svgRef.current = el;
+      if (wheelCleanupRef.current) {
+        wheelCleanupRef.current();
+        wheelCleanupRef.current = null;
+      }
+      if (!el) return;
+      const onWheel = (e: WheelEvent) => {
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const px = (e.clientX - rect.left) / rect.width;
+        const py = (e.clientY - rect.top) / rect.height;
+        // Scroll up (deltaY < 0) zooms in → smaller viewBox.
+        const factor = Math.exp((e.deltaY > 0 ? 1 : -1) * 0.14);
+        zoomAround(px, py, factor);
+      };
+      el.addEventListener("wheel", onWheel, { passive: false });
+      wheelCleanupRef.current = () => el.removeEventListener("wheel", onWheel);
+    },
+    [zoomAround],
+  );
 
   const fitToView = useCallback(() => applyViewBox(baseFit), [applyViewBox, baseFit]);
   const zoomByButton = useCallback(
@@ -923,7 +938,9 @@ export default function ConceptGraphPanel({
         <p className="cg-status" data-testid="concept-graph-empty">
           {localMode && selectedId
             ? "This concept has no connections in the current view."
-            : "No concepts yet. As Tessera extracts entities and relationships from your sources, they will appear here."}
+            : scopedView.nodes.length > 0
+              ? "All concepts are hidden by the current filters. Re-enable a relation or kind in the legend to show them."
+              : "No concepts yet. As Tessera extracts entities and relationships from your sources, they will appear here."}
         </p>
       ) : (
         <>
@@ -1036,7 +1053,7 @@ export default function ConceptGraphPanel({
           <div className="cg-body">
             <div className="cg-canvas-wrap">
               <svg
-                ref={svgRef}
+                ref={attachSvg}
                 className={`cg-canvas${isPanning ? " cg-panning" : ""}`}
                 role="img"
                 aria-label={`Concept graph with ${view.nodes.length} concepts and ${view.edges.length} relationships`}

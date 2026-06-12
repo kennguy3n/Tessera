@@ -544,9 +544,11 @@ export function filterGraphView(
 ): ConceptGraphView {
   const { relations, states } = filter;
   if (!relations && !states) return view;
+  // No state filter ⇒ no node is dropped, so reuse the (already-frozen) node
+  // array instead of copying it (saves an allocation up to the node cap).
   const nodes = states
     ? view.nodes.filter((n) => states.has(n.state))
-    : view.nodes.slice();
+    : view.nodes;
   const ids = new Set(nodes.map((n) => n.id));
   const edges = view.edges.filter((e) => {
     if (relations && !relations.has(e.relationType)) return false;

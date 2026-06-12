@@ -217,4 +217,49 @@ describe("ConceptGraphPanel", () => {
       within(detail).getByText("No source evidence found for this concept."),
     ).toBeInTheDocument();
   });
+
+  it("binds wheel-to-zoom once the SVG mounts after the loading state", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    // The graph loads asynchronously, so the SVG is absent on the first paint
+    // and only mounts once loading resolves. The wheel listener must attach at
+    // that point (regression: a stable-deps effect would bind only on mount,
+    // find the SVG missing, and never re-run — leaving wheel-zoom dead).
+    const svg = await screen.findByTestId("concept-graph-svg");
+    // jsdom has no layout, so give the SVG a non-zero box for the zoom math.
+    svg.getBoundingClientRect = vi.fn(
+      () =>
+        ({
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          right: 200,
+          bottom: 200,
+          width: 200,
+          height: 200,
+          toJSON: () => ({}),
+        }) as DOMRect,
+    );
+    const widthOf = (vb: string | null) => Number(vb?.split(/\s+/)[2]);
+    const before = widthOf(svg.getAttribute("viewBox"));
+    // Scroll up (deltaY < 0) zooms in → the viewBox width must shrink.
+    fireEvent.wheel(svg, { deltaY: -120, clientX: 100, clientY: 100 });
+    await waitFor(() => {
+      const after = widthOf(svg.getAttribute("viewBox"));
+      expect(after).toBeLessThan(before);
+    });
+  });
+
+  it("explains an all-filtered-out graph rather than claiming there are no concepts", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    const legend = await screen.findByTestId("concept-graph-node-legend");
+    // Disable every node-kind so the view filters down to zero nodes. The
+    // empty state must say the graph is filtered, not that no concepts exist.
+    for (const button of within(legend).getAllByRole("button")) {
+      fireEvent.click(button);
+    }
+    const empty = await screen.findByTestId("concept-graph-empty");
+    expect(empty).toHaveTextContent(/hidden by the current filters/i);
+    expect(empty).not.toHaveTextContent(/No concepts yet/i);
+  });
 });
