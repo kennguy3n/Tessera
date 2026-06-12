@@ -121,20 +121,26 @@ export default function App() {
   const closeQuickSwitch = useCallback(() => setQuickSwitchOpen(false), []);
 
   useEffect(() => {
-    // The palette and the quick switcher are mutually exclusive
-    // full-screen overlays at the same z-index: opening either one
-    // closes the other so they can never stack into a broken state.
+    // The palette, quick switcher, and shortcuts help are mutually
+    // exclusive overlays: opening any one closes the other two so they
+    // can never stack into a broken state.
     const openPalette = () => {
       setQuickSwitchOpen(false);
+      setShortcutsOpen(false);
       setPalette({ open: true });
       setPaletteHasMounted(true);
     };
     const openQuickSwitch = () => {
       setPalette({ open: false });
+      setShortcutsOpen(false);
       setQuickSwitchOpen(true);
       setQuickSwitchHasMounted(true);
     };
-    const openShortcuts = () => setShortcutsOpen(true);
+    const openShortcuts = () => {
+      setPalette({ open: false });
+      setQuickSwitchOpen(false);
+      setShortcutsOpen(true);
+    };
     const toggleSidebar = () => setSidebarCollapsed((v) => !v);
     window.addEventListener("tessera:open-palette", openPalette);
     window.addEventListener("tessera:open-quick-switch", openQuickSwitch);
