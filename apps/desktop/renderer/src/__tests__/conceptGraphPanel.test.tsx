@@ -458,6 +458,25 @@ describe("ConceptGraphPanel", () => {
     expect(await screen.findByTestId("concept-detail")).toHaveTextContent("Atlas");
   });
 
+  it("flushes a pending view-state change on unmount (no debounce loss)", async () => {
+    const { unmount } = render(
+      <ConceptGraphPanel memories={EVIDENCE} scope="scope-u" />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByLabelText("Toggle all labels"));
+    // Unmount immediately — well inside the 300ms debounce window, so the
+    // debounced timer is cancelled without firing. The unmount flush must
+    // still persist the change.
+    unmount();
+    const raw = window.localStorage.getItem(
+      "tessera.conceptGraph.viewState.scope-u",
+    );
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw as string).labelsAll).toBe(true);
+  });
+
   it("does not strand the user when a persisted selection no longer exists", async () => {
     // Seed storage for scope-x with a selection + local mode for a node that
     // is absent from the graph the component will actually load.

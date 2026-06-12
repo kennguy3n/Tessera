@@ -1041,6 +1041,20 @@ export default function ConceptGraphPanel({
     viewBox,
     viewSignature,
   };
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+
+  // Flush the latest state on unmount: the debounced save effect's cleanup
+  // only cancels its timer, so a change made within the debounce window
+  // before the panel is torn down (e.g. toggling a filter then navigating
+  // away) would otherwise be lost. Reads refs so the cleanup captures the
+  // final scope + state rather than a stale closure.
+  useEffect(
+    () => () => {
+      saveViewState(scopeKeyRef.current, liveStateRef.current);
+    },
+    [],
+  );
 
   // Scope *changes* on an already-mounted panel reload that scope's saved
   // view state (the initial scope was applied via lazy state initialisers).
