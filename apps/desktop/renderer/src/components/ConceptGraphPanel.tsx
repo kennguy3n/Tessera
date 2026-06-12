@@ -954,11 +954,16 @@ export default function ConceptGraphPanel({
         </p>
       ) : view.nodes.length === 0 ? (
         <p className="cg-status" data-testid="concept-graph-empty">
-          {localMode && selectedId
-            ? "This concept has no connections in the current view."
-            : scopedView.nodes.length > 0
-              ? "All concepts are hidden by the current filters. Re-enable a relation or kind in the legend to show them."
-              : "No concepts yet. As Tessera extracts entities and relationships from your sources, they will appear here."}
+          {/* A non-empty `scopedView` collapsing to an empty `view` always
+              means the legend filters hid every node — including, in local
+              mode, the focus node itself (an in-filter focus always survives
+              `localGraphView`, so it would render rather than reach here).
+              Check the filter case first so the message is accurate in local
+              mode too, falling back to "no concepts yet" only when the scope
+              is genuinely empty. */}
+          {scopedView.nodes.length > 0
+            ? "All concepts are hidden by the current filters. Re-enable a relation or kind in the legend to show them."
+            : "No concepts yet. As Tessera extracts entities and relationships from your sources, they will appear here."}
         </p>
       ) : (
         <>
