@@ -71,8 +71,9 @@ const RELATION_TYPES = new Set([
 // Minimal structural view of the mock bridge for assertions.
 type Memory = { id: string; state: string; retentionScore: number };
 type ConceptGraph = {
-  nodes: Array<{ id: string; state: string }>;
+  nodes: Array<{ id: string; state: string; connections_count: number }>;
   edges: Array<{ from: string; to: string; relation_type: string }>;
+  truncation: string;
 };
 type Api = {
   settings: { get: () => Promise<{ onboardingCompleted: boolean }> };
@@ -205,6 +206,32 @@ describe("buildShowcaseApi", () => {
     const present = new Set(graph.edges.map((e) => e.relation_type));
     for (const t of ["is_a", "part_of", "supersedes", "contradicts"]) {
       expect(present.has(t), `healthcare graph missing relation ${t}`).toBe(true);
+    }
+    expect(graph.truncation).toBe("complete");
+  });
+
+  it("truncates the concept graph to its most-connected subgraph under a node cap", async () => {
+    const api = buildShowcaseApi("healthcare") as Api;
+    const full = JSON.parse(await api.substrate.getConceptGraph(null)) as ConceptGraph;
+    // The densely-linked spine (the `INC-4471` incident hub) by connectivity.
+    const hub = [...full.nodes].sort(
+      (a, b) => b.connections_count - a.connections_count,
+    )[0];
+
+    const cap = 4;
+    const capped = JSON.parse(
+      await api.substrate.getConceptGraph(null, cap),
+    ) as ConceptGraph;
+
+    // Honors the cap and reports it; keeps the hub rather than the
+    // enrichment-added category/claim nodes that are appended last.
+    expect(capped.nodes).toHaveLength(cap);
+    expect(capped.truncation).toBe("node_limit_reached");
+    expect(capped.nodes.some((n) => n.id === hub.id)).toBe(true);
+    // Every surviving edge still resolves to a kept node (no dangling lines).
+    const keptIds = new Set(capped.nodes.map((n) => n.id));
+    for (const e of capped.edges) {
+      expect(keptIds.has(e.from) && keptIds.has(e.to)).toBe(true);
     }
   });
 });

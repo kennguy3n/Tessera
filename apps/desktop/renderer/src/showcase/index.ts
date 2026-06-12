@@ -234,14 +234,14 @@ function buildConceptGraphJson(
 ): string {
   const scopeId =
     plane.entities[0]?.scopeId ?? plane.facts[0]?.scopeId ?? "sc-showcase-scope";
-  const concepts =
-    typeof maxNodes === "number" && maxNodes > 0
-      ? plane.concepts.slice(0, maxNodes)
-      : plane.concepts;
-  const included = new Set(concepts.map((c) => c.id));
+  const allConcepts = plane.concepts;
 
+  // Build the full typed edge set FIRST — explicit `relations` when present
+  // (the `is_a` / `part_of` / `supersedes` / `contradicts` typing), otherwise
+  // the co-occurrence fallback — so connectivity is measured against the whole
+  // graph rather than an arbitrary prefix of the concept array.
   const relations = plane.relations ?? [];
-  const allEdges: CgEdge[] =
+  const fullEdges: CgEdge[] =
     relations.length > 0
       ? relations.map((r, i) => ({
           id: `sc-cg-edge-${i}`,
@@ -250,11 +250,40 @@ function buildConceptGraphJson(
           relation_type: r.type,
           scope_id: scopeId,
         }))
-      : coOccurrenceEdges(concepts, scopeId);
+      : coOccurrenceEdges(allConcepts, scopeId);
+
+  const degree = new Map<string, number>();
+  for (const e of fullEdges) {
+    degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+    degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+  }
+
+  // Apply the node cap by keeping the MOST-CONNECTED concepts (the hub and its
+  // neighbors) instead of array order, mirroring the substrate's node-limit
+  // behavior: a truncated graph should still be a coherent subgraph, not lose
+  // its enrichment-added category/claim nodes (which happen to be appended
+  // last) before the densely-linked spine. Deterministic: degree descending,
+  // ties broken by original index; the kept set is then restored to original
+  // order so the serialized output is stable.
+  const cap =
+    typeof maxNodes === "number" && maxNodes > 0 ? maxNodes : allConcepts.length;
+  const truncated = cap < allConcepts.length;
+  const concepts = truncated
+    ? allConcepts
+        .map((c, i) => ({ c, i }))
+        .sort(
+          (a, b) =>
+            (degree.get(b.c.id) ?? 0) - (degree.get(a.c.id) ?? 0) || a.i - b.i,
+        )
+        .slice(0, cap)
+        .sort((a, b) => a.i - b.i)
+        .map((x) => x.c)
+    : allConcepts;
+  const included = new Set(concepts.map((c) => c.id));
 
   // Only edges whose endpoints both survive the node cap are kept; node sizing
   // (`connections_count`) counts exactly those visible edges.
-  const edges = allEdges.filter(
+  const edges = fullEdges.filter(
     (e) => included.has(e.from) && included.has(e.to),
   );
   const incident = new Map<string, number>();
@@ -276,7 +305,7 @@ function buildConceptGraphJson(
     edges,
     scope_filter: [],
     depth: 2,
-    truncation: "complete",
+    truncation: truncated ? "node_limit_reached" : "complete",
   });
 }
 
