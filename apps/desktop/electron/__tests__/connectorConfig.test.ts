@@ -13,6 +13,7 @@ import {
   authConfigFields,
   getConnectSpec,
 } from "../../shared/connectorConfig";
+import type { ConnectorConfigField } from "../../shared/connectorConfig";
 import { KNOWN_PROVIDERS } from "../ipc/validate";
 
 describe("connectorConfig specs", () => {
@@ -67,5 +68,23 @@ describe("connectorConfig specs", () => {
     expect(spec.connectMethod).toBe("oauth2");
     expect(spec.configFields).toHaveLength(0);
     expect(spec.tokenField).toBeUndefined();
+  });
+
+  it("returns the same frozen default spec for every whole-account provider", () => {
+    // The default spec is a shared singleton, so it must be immutable —
+    // a mutation would otherwise leak across every default provider.
+    const a = getConnectSpec("google_drive");
+    const b = getConnectSpec("dropbox");
+    expect(a).toBe(b);
+    expect(Object.isFrozen(a)).toBe(true);
+    expect(Object.isFrozen(a.configFields)).toBe(true);
+    expect(() => {
+      (a.configFields as ConnectorConfigField[]).push({
+        key: "x",
+        label: "x",
+        required: false,
+        secret: false,
+      });
+    }).toThrow();
   });
 });

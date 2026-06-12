@@ -204,11 +204,20 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
   },
 };
 
-/** Fallback spec for providers using the plain whole-account OAuth2 flow. */
+/**
+ * Fallback spec for providers using the plain whole-account OAuth2 flow.
+ *
+ * `getConnectSpec` returns this shared singleton for every provider not in
+ * `CONNECTOR_CONNECT_SPECS`, so it is frozen (object + its `configFields`
+ * array) to guarantee a caller cannot mutate the empty field list and have
+ * it leak across all default providers.
+ */
 const DEFAULT_OAUTH2_SPEC: ConnectorConnectSpec = {
   connectMethod: "oauth2",
   configFields: [],
 };
+Object.freeze(DEFAULT_OAUTH2_SPEC.configFields);
+Object.freeze(DEFAULT_OAUTH2_SPEC);
 
 /**
  * Resolve a provider's connect spec, defaulting to the whole-account
