@@ -69,6 +69,12 @@ at **candidate / 0.62**: the laptop is the spine of the whole incident and is me
 everywhere, so the system weights it accordingly. The retention score is not decoration — it
 becomes a **fourth ranking signal** in search (below).
 
+The **Memory page** browses exactly this plane: every observation with its type, memory state,
+and retention score, filterable by decay state and searchable. The pin / unpin / forget
+controls are the explicit signals from Step 2.
+
+![The Memory page — entities, facts, tasks, and decisions with their memory state and retention, browsable directly](../assets/screenshots/flow-07-memory-page.png)
+
 ## Step 3 — the concept graph: linking sources through shared entities
 
 Entities that recur across files become **concept nodes**, each linked to every source it
@@ -80,6 +86,14 @@ co-occurs in. From Maya's corpus:
 - **`Privacy Office`** → linked across `01-helpdesk-ticket` **and** `04-policy-and-context` —
   who got escalated to, tied to the policy that says they must run the four-factor assessment.
 - **`45 CFR §164.402`** → the breach-classification rule, anchored in the policy file.
+
+The **concept-graph panel** at the bottom of the Memory page draws this directly: concept nodes
+sized by how connected they are, with typed links between them. Selecting a node lists its
+relationships and the source evidence behind each one. The edges here are derived from genuine
+shared-source structure — when one concept's sources are a subset of another's it's the
+narrower term (`part of`); otherwise they merely co-occur (`related to`).
+
+![The concept-graph panel — concept nodes with typed links, here with `LT-2291` selected to show its relationships and source evidence](../assets/screenshots/flow-08-concept-graph.png)
 
 In the Create flow, this graph powers **"related source" suggestions**: as you select sources
 for a new artifact, Tessera proposes others that share concepts with your selection
@@ -147,6 +161,15 @@ line to draw.
 - **HomePage knowledge insights** — a "Knowledge insights" card on the home screen
   summarizing the memory plane and concept graph — and a substrate section on each source's
   detail page.
+
+![The enriched "Knowledge" tab in the artifact editor's citation panel — facts and concepts with retention, alongside the "Sources" evidence tab](../assets/screenshots/flow-09-knowledge-tab.png)
+
+Sources feeding the plane come from local files or a **searchable, categorized connector
+gallery** (Sources page) — OneDrive, Dropbox, Box, Notion, Confluence, Slack, Jira, Linear,
+Figma, GitHub, and more — each card stating up front what Tessera reads and what it never
+touches.
+
+![The connector gallery — remote connectors grouped by category, each with a scope-transparency disclosure](../assets/screenshots/flow-10-connector-gallery.png)
 
 **The durability and search controls shown above:**
 
