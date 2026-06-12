@@ -82,10 +82,10 @@ import {
 
 /**
  * The six providers that retain a hand-rolled in-process
- * (`tessera_connectors`-style) TS sync impl. The four substrate-only
- * providers (HubSpot, Slack, Email, GitHub) are deliberately absent:
- * they have no legacy fallback and are reachable only through the v2
- * `connector_framework` bridge.
+ * (`tessera_connectors`-style) TS sync impl. The substrate-only
+ * providers (HubSpot, Slack, Email, GitHub, Dropbox, Box, Linear,
+ * Miro) are deliberately absent: they have no legacy fallback and are
+ * reachable only through the v2 `connector_framework` bridge.
  */
 type LegacyProviderId =
   | "google_drive"
@@ -301,6 +301,10 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   slack: "slack",
   email: "email",
   github: "github",
+  dropbox: "dropbox",
+  box: "box",
+  linear: "linear",
+  miro: "miro",
 };
 
 /**
@@ -794,8 +798,8 @@ async function runSync(
 
   // A selection allowlist is only meaningful for a provider that has a
   // legacy connector able to fetch specific ids (today only Google
-  // Drive's renderer sends one). A substrate-only provider
-  // (hubspot/slack/email/github) has no per-file fetch path, so a
+  // Drive's renderer sends one). A substrate-only provider (any
+  // provider outside LEGACY_PROVIDERS) has no per-file fetch path, so a
   // selection cannot be honoured. Reject it explicitly with an accurate
   // message instead of falling through to the generic
   // `requires useV2Connectors=true` branch below, whose wording would be
@@ -815,9 +819,9 @@ async function runSync(
     if (v2BridgeAvailable(nativeBridge) && isV2Supported(nativeBridge, provider)) {
       return runProviderV2Sync(ctx, provider, userDataDir);
     }
-    // The four substrate-only providers have no legacy fallback. If
-    // the v2 bridge isn't available for them, that's a hard config
-    // error rather than a silent degrade to a non-existent TS impl.
+    // Substrate-only providers have no legacy fallback. If the v2
+    // bridge isn't available for them, that's a hard config error
+    // rather than a silent degrade to a non-existent TS impl.
     if (!LEGACY_PROVIDERS.has(provider)) {
       throw new Error(
         `${provider} is only available via the v2 connector bridge, ` +
@@ -855,6 +859,10 @@ async function runSync(
     case "slack":
     case "email":
     case "github":
+    case "dropbox":
+    case "box":
+    case "linear":
+    case "miro":
       // Substrate-only providers: reachable here only when the v2
       // path was unavailable; surfaced as a clear config error above,
       // but the explicit cases keep the exhaustiveness check honest.
@@ -1196,6 +1204,10 @@ export async function runDisconnect(
     case "slack":
     case "email":
     case "github":
+    case "dropbox":
+    case "box":
+    case "linear":
+    case "miro":
       // Substrate-only providers: no legacy disconnect impl exists, so
       // reuse the generic v2 cleanup (unhook sources + purge sync dir
       // + delete manifest/cursor). Token revocation + vault deletion

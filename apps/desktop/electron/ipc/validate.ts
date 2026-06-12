@@ -39,11 +39,20 @@ export const KNOWN_PROVIDERS = [
   "figma",
   // Substrate-only providers (served exclusively by the v2
   // `connector_framework` bridge; no legacy `tessera_connectors`
-  // fallback exists for these four).
+  // fallback exists for these).
   "hubspot",
   "slack",
   "email",
   "github",
+  // Whole-account, read-only OAuth2 providers exposed from the
+  // upstream `connectors` crate via the v2 bridge. Each syncs the
+  // entire account the granted token can see (no per-target config),
+  // so they wire end-to-end through the standard add-a-connector path
+  // (see docs/CONNECTORS.md).
+  "dropbox",
+  "box",
+  "linear",
+  "miro",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 
