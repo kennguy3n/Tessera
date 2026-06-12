@@ -18,12 +18,18 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "../App";
+import { ToastProvider } from "../components/Toast";
 
 function renderApp() {
+  // Mirror the production tree (ToastProvider > Router > App, see
+  // `main.tsx`) so `useGlobalCommandActions` -> `useToast` resolves to a
+  // real provider rather than the no-op default context.
   return render(
-    <MemoryRouter initialEntries={["/"]}>
-      <App />
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
