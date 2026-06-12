@@ -48,6 +48,7 @@ export type {
   ComputeBackend,
   ConnectorApi,
   ConnectorFileInfo,
+  ConnectorProbeResult,
   ConnectorScopeComparison,
   ConnectorStatusInfo,
   CreateAutomationRequest,

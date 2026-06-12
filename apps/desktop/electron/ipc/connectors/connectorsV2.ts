@@ -168,6 +168,7 @@ export type V2NativeBridge = Pick<
   | "bridgeConnectorsV2Authenticate"
   | "bridgeConnectorsV2Refresh"
   | "bridgeConnectorsV2Sync"
+  | "bridgeConnectorsV2Probe"
 >;
 
 /**
@@ -614,6 +615,67 @@ export async function runV2Sync(args: {
     warnings: outcome.warnings ?? [],
     pendingFetch: outcome.pending_fetch ?? [],
   };
+}
+
+/** Outcome of a read-only connection probe (`ProbeOutcome`). */
+export interface ProbeOutcome {
+  /**
+   * Number of change events the connector surfaced on its first
+   * authenticated read — a reachability/authorisation signal (the token
+   * + target resolved and the provider answered), NOT a census of the
+   * account. Document bodies are never fetched during a probe.
+   */
+  observed_events: number;
+}
+
+/**
+ * Run a read-only connection probe for `provider` using a candidate
+ * token + connect config, WITHOUT persisting anything. Backs the
+ * `connectors:test` IPC: the host builds a {@link StoredTokens}-shaped
+ * credential from the values the user just entered (never yet written
+ * to the vault), and this confirms they can reach the provider — and,
+ * for per-target connectors, the configured project/board/channel —
+ * before the user commits to connecting.
+ *
+ * The probe reuses the SAME `auth_config` + `TokenWire` translation as
+ * {@link runV2Sync} (via {@link buildAuthConfig} / {@link storedToWire})
+ * so a successful probe is a faithful predictor of a successful sync.
+ * It is a general capability of the connector layer — not a per-provider
+ * hack — because it delegates to the upstream connector's own
+ * authenticated read path on the Rust side.
+ *
+ * Transport failures are re-branded as {@link NetworkError} (mirroring
+ * {@link runV2Sync}) so the caller can distinguish "couldn't reach the
+ * network" from "the provider rejected the credentials".
+ */
+export async function runV2Probe(args: {
+  provider: ProviderId;
+  bridge: V2NativeBridge;
+  tokens: StoredTokens;
+  scopeId: string | null;
+}): Promise<ProbeOutcome> {
+  const { provider, bridge, tokens, scopeId } = args;
+  if (typeof bridge.bridgeConnectorsV2Probe !== "function") {
+    throw new Error(
+      `v2 connector bridge unavailable for ${provider}; ` +
+        "rebuild tessera_bridge with the connectors-v2 feature to use " +
+        "the connection probe.",
+    );
+  }
+  const authConfig = buildAuthConfig(provider, tokens);
+  const wire = storedToWire(tokens);
+  let outcomeJson: string;
+  try {
+    outcomeJson = await bridge.bridgeConnectorsV2Probe(
+      provider,
+      JSON.stringify(authConfig),
+      JSON.stringify(wire),
+      scopeId,
+    );
+  } catch (err) {
+    rethrowV2BridgeError(provider, err);
+  }
+  return JSON.parse(outcomeJson) as ProbeOutcome;
 }
 
 /**

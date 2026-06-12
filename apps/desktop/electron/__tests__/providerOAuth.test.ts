@@ -69,6 +69,59 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     expect(PROVIDER_OAUTH_CONFIGS.trello.redirectPort).toBe(9893);
   });
 
+  it("requests least-privilege read-only scopes for the account-wide tranche", () => {
+    // Tranche 3 (Zoom, Google Calendar/Docs/Sheets/Meet, SharePoint):
+    // each scope string must stay read-only. A future widening to a
+    // write/manage grant breaks this test — the security contract for
+    // 5000 SME tenants.
+    expect(PROVIDER_OAUTH_CONFIGS.zoom.scope).toBe(
+      "cloud_recording:read:list_user_recordings",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.google_calendar.scope).toBe(
+      "https://www.googleapis.com/auth/calendar.events.readonly",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.google_docs.scope).toBe(
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.google_sheets.scope).toBe(
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.google_meet.scope).toBe(
+      "https://www.googleapis.com/auth/meetings.space.readonly",
+    );
+    expect(PROVIDER_OAUTH_CONFIGS.sharepoint.scope).toBe("Sites.Read.All");
+    // SharePoint follows the Microsoft pattern: offline_access via the
+    // declarative flag, not the raw scope string.
+    expect(PROVIDER_OAUTH_CONFIGS.sharepoint.requestOfflineAccess).toBe(true);
+    expect(PROVIDER_OAUTH_CONFIGS.sharepoint.scope).not.toContain(
+      "offline_access",
+    );
+  });
+
+  it("reserves the 9894-9899 loopback ports for the account-wide tranche", () => {
+    expect(PROVIDER_OAUTH_CONFIGS.zoom.redirectPort).toBe(9894);
+    expect(PROVIDER_OAUTH_CONFIGS.google_calendar.redirectPort).toBe(9895);
+    expect(PROVIDER_OAUTH_CONFIGS.google_docs.redirectPort).toBe(9896);
+    expect(PROVIDER_OAUTH_CONFIGS.google_sheets.redirectPort).toBe(9897);
+    expect(PROVIDER_OAUTH_CONFIGS.google_meet.redirectPort).toBe(9898);
+    expect(PROVIDER_OAUTH_CONFIGS.sharepoint.redirectPort).toBe(9899);
+  });
+
+  it("flags the account-wide tranche as refreshable OAuth2", () => {
+    // All six are browser-OAuth2 providers that issue refresh tokens.
+    for (const id of [
+      "zoom",
+      "google_calendar",
+      "google_docs",
+      "google_sheets",
+      "google_meet",
+      "sharepoint",
+    ] as const) {
+      expect(PROVIDER_OAUTH_CONFIGS[id].supportsRefresh).toBe(true);
+      expect(PROVIDER_OAUTH_CONFIGS[id].usePkce).toBe(true);
+    }
+  });
+
   it("flags the non-OAuth2 (token) providers as non-refreshable", () => {
     // GitLab (PAT) and Trello (API key + token) carry no refresh token;
     // their stored credential is long-lived and reconnect-on-expiry.
@@ -160,7 +213,13 @@ describe("buildAuthorizeUrl", () => {
     // raw `scope` string omits `offline_access`, so the authorize request
     // must still carry it — otherwise the provider issues no refresh token
     // and every per-target OAuth provider breaks on first token expiry.
-    for (const id of ["onedrive", "jira", "confluence", "teams"] as const) {
+    for (const id of [
+      "onedrive",
+      "jira",
+      "confluence",
+      "teams",
+      "sharepoint",
+    ] as const) {
       const cfg = getProviderOAuthConfig(id);
       expect(cfg.requestOfflineAccess).toBe(true);
       expect(cfg.scope).not.toContain("offline_access");

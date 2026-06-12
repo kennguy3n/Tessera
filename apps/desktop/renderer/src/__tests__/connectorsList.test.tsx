@@ -50,6 +50,10 @@ const mockApi = {
       async (_provider: string): Promise<ConnectorScopeComparison | null> =>
         null,
     ),
+    // Read-only connection probe backing the modal's "Test connection"
+    // button. Present here so `testSupported` is true in tests;
+    // individual cases set the resolved/rejected value they need.
+    test: vi.fn(),
   },
 };
 
@@ -178,7 +182,7 @@ describe("ConnectorsList", () => {
     expect(screen.queryByLabelText("OAuth Client Secret")).toBeNull();
 
     fireEvent.change(screen.getByLabelText("Personal access token"), {
-      target: { value: "glpat-secret" },
+      target: { value: "glpat-abcdefghij0123456789" },
     });
     fireEvent.change(screen.getByLabelText("Project ID or path"), {
       target: { value: "42" },
@@ -190,8 +194,131 @@ describe("ConnectorsList", () => {
         "gitlab",
         "",
         "",
-        { personal_access_token: "glpat-secret", project_id: "42" },
+        {
+          personal_access_token: "glpat-abcdefghij0123456789",
+          project_id: "42",
+        },
       ),
+    );
+  });
+
+  it("shows an inline format error and blocks Connect until a per-target field is valid", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+
+    fireEvent.click(await screen.findByLabelText("Connect Asana"));
+    fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+      target: { value: "ID" },
+    });
+    fireEvent.change(screen.getByLabelText("OAuth Client Secret"), {
+      target: { value: "SECRET" },
+    });
+
+    // A non-numeric Asana project gid is rejected inline (the connector
+    // reads a numeric gid), so the error shows and Connect stays
+    // disabled — the malformed value never reaches the backend.
+    const projectInput = screen.getByLabelText("Project ID");
+    fireEvent.change(projectInput, { target: { value: "not-a-gid" } });
+
+    expect(
+      await screen.findByText(
+        "The Asana project gid is the numeric value from the project URL.",
+      ),
+    ).toBeInTheDocument();
+    expect(projectInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Authenticate")).toBeDisabled();
+
+    // Correcting it clears the error and re-enables Connect.
+    fireEvent.change(projectInput, { target: { value: "1201234567890123" } });
+    await waitFor(() =>
+      expect(screen.getByText("Authenticate")).not.toBeDisabled(),
+    );
+    expect(projectInput).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("runs a read-only probe from Test connection and shows success without persisting", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    mockApi.connectors.test.mockResolvedValue({
+      provider: "onedrive",
+      ok: true,
+      observedEvents: 2,
+    });
+
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+
+    fireEvent.click(await screen.findByLabelText("Connect OneDrive"));
+    fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+      target: { value: "ID" },
+    });
+    fireEvent.change(screen.getByLabelText("OAuth Client Secret"), {
+      target: { value: "SECRET" },
+    });
+    fireEvent.click(screen.getByText("Test connection"));
+
+    await waitFor(() =>
+      expect(mockApi.connectors.test).toHaveBeenCalledWith(
+        "onedrive",
+        "ID",
+        "SECRET",
+        {},
+      ),
+    );
+    expect(
+      await screen.findByTestId("connector-test-result"),
+    ).toHaveTextContent(/Connection succeeded/i);
+    // Testing must NOT connect/persist — the user still has to click
+    // Authenticate.
+    expect(mockApi.connectors.authenticate).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a failed probe's reason and clears it when the input changes", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "x",
+      connected: false,
+      status: "disconnected",
+    });
+    mockApi.connectors.test.mockResolvedValue({
+      provider: "onedrive",
+      ok: false,
+      message: "Provider rejected the credentials (401).",
+    });
+
+    await act(async () => {
+      render(<ConnectorsList />);
+    });
+
+    fireEvent.click(await screen.findByLabelText("Connect OneDrive"));
+    fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+      target: { value: "ID" },
+    });
+    fireEvent.change(screen.getByLabelText("OAuth Client Secret"), {
+      target: { value: "SECRET" },
+    });
+    fireEvent.click(screen.getByText("Test connection"));
+
+    expect(await screen.findByTestId("connector-test-result")).toHaveTextContent(
+      "Provider rejected the credentials (401).",
+    );
+
+    // Editing a credential invalidates the stale result.
+    fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
+      target: { value: "ID2" },
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("connector-test-result")).toBeNull(),
     );
   });
 

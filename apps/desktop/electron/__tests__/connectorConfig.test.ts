@@ -12,9 +12,17 @@ import {
   CONNECTOR_CONNECT_SPECS,
   authConfigFields,
   getConnectSpec,
+  validateConnectorField,
 } from "../../shared/connectorConfig";
 import type { ConnectorConfigField } from "../../shared/connectorConfig";
 import { KNOWN_PROVIDERS } from "../ipc/validate";
+
+/** Resolve a declared field by `key` for the inline-validation tests. */
+function field(provider: string, key: string): ConnectorConfigField {
+  const f = getConnectSpec(provider).configFields.find((c) => c.key === key);
+  if (!f) throw new Error(`${provider}.${key} not declared`);
+  return f;
+}
 
 describe("connectorConfig specs", () => {
   it("only references provider ids that exist in KNOWN_PROVIDERS", () => {
@@ -70,6 +78,14 @@ describe("connectorConfig specs", () => {
     expect(spec.tokenField).toBeUndefined();
   });
 
+  it("every declared validation rule has a non-empty message", () => {
+    for (const spec of Object.values(CONNECTOR_CONNECT_SPECS)) {
+      for (const f of spec.configFields) {
+        if (f.validation) expect(f.validation.message.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("returns the same frozen default spec for every whole-account provider", () => {
     // The default spec is a shared singleton, so it must be immutable —
     // a mutation would otherwise leak across every default provider.
@@ -86,5 +102,73 @@ describe("connectorConfig specs", () => {
         secret: false,
       });
     }).toThrow();
+  });
+});
+
+describe("validateConnectorField", () => {
+  it("treats an empty required field as invalid and an empty optional field as valid", () => {
+    expect(validateConnectorField(field("gitlab", "project_id"), "  ")).toEqual({
+      valid: false,
+      error: "Project ID or path is required.",
+    });
+    expect(validateConnectorField(field("gitlab", "api_base_url"), "")).toEqual({
+      valid: true,
+    });
+  });
+
+  it("trims before validating", () => {
+    // Surrounding whitespace must not defeat the format rule nor the
+    // required check — the host trims before persisting.
+    expect(
+      validateConnectorField(field("asana", "project"), "  1201234567890123  ")
+        .valid,
+    ).toBe(true);
+  });
+
+  it("enforces the GitLab PAT prefix + length", () => {
+    expect(validateConnectorField(field("gitlab", "personal_access_token"), "glpat-secret").valid).toBe(false);
+    expect(
+      validateConnectorField(
+        field("gitlab", "personal_access_token"),
+        "glpat-abcdefghij0123456789",
+      ).valid,
+    ).toBe(true);
+  });
+
+  it("accepts a numeric id or a namespace path for the GitLab project", () => {
+    expect(validateConnectorField(field("gitlab", "project_id"), "42").valid).toBe(true);
+    expect(
+      validateConnectorField(field("gitlab", "project_id"), "group/sub/project").valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("gitlab", "project_id"), "bad space").valid,
+    ).toBe(false);
+  });
+
+  it("requires a full https:// URL for an optional base URL", () => {
+    const f = field("gitlab", "api_base_url");
+    expect(validateConnectorField(f, "https://gitlab.example.com").valid).toBe(true);
+    expect(validateConnectorField(f, "http://gitlab.example.com").valid).toBe(false);
+    expect(validateConnectorField(f, "gitlab.example.com").valid).toBe(false);
+  });
+
+  it("enforces Trello key/token/board id shapes", () => {
+    expect(validateConnectorField(field("trello", "key"), "a".repeat(32)).valid).toBe(true);
+    expect(validateConnectorField(field("trello", "key"), "a".repeat(10)).valid).toBe(false);
+    expect(validateConnectorField(field("trello", "token"), "b".repeat(64)).valid).toBe(true);
+    expect(validateConnectorField(field("trello", "token"), "b".repeat(10)).valid).toBe(false);
+    // 8-char short link OR 24-char hex id.
+    expect(validateConnectorField(field("trello", "board_id"), "abcd1234").valid).toBe(true);
+    expect(validateConnectorField(field("trello", "board_id"), "0".repeat(24)).valid).toBe(true);
+  });
+
+  it("rejects a non-GUID Teams id and accepts a GUID", () => {
+    expect(
+      validateConnectorField(
+        field("teams", "team_id"),
+        "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      ).valid,
+    ).toBe(true);
+    expect(validateConnectorField(field("teams", "team_id"), "not-a-guid").valid).toBe(false);
   });
 });

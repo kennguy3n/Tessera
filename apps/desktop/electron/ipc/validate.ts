@@ -62,6 +62,19 @@ export const KNOWN_PROVIDERS = [
   "gitlab",
   "teams",
   "trello",
+  // Tranche 3: read-only, account-wide OAuth2 providers from the
+  // upstream `connectors` crate. Each reads the whole account the
+  // granted (read-only) token can see using the connector's own
+  // account-wide defaults (Zoom user "me", Google Calendar "primary",
+  // Google Docs/Sheets the Drive change feed, Google Meet conference
+  // records, SharePoint the root site document library) — no per-target
+  // config is collected, so they connect via the standard OAuth2 path.
+  "zoom",
+  "google_calendar",
+  "google_docs",
+  "google_sheets",
+  "google_meet",
+  "sharepoint",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 
