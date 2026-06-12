@@ -2729,18 +2729,23 @@ describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pas
     const blockerA = new Promise<void>((resolve) => {
       releaseA = resolve;
     });
-    // First call (channel A) stalls; second call (channel B) must
-    // proceed without waiting on it.
-    clientMock.listChannelFiles
-      .mockImplementationOnce(
-        async (_id: string, _page: number, _per: number) => {
-          await blockerA;
-          return [];
-        },
-      )
-      .mockImplementationOnce(
-        async (_id: string, _page: number, _per: number) => [],
-      );
+    // Channel A stalls; channel B must proceed without waiting on it.
+    // The implementation is keyed on `channelId`, NOT call order:
+    // `runAddKchatChannel` does `await fs.mkdir(cacheDir)` *before*
+    // calling `listChannelFiles`, so the two concurrent handlers race
+    // to reach this mock and either order is possible. A chained
+    // `mockImplementationOnce` pair assigned the blocker by arrival
+    // order, so when B's mkdir happened to resolve first (more likely
+    // under threadpool contention on loaded CI runners) B got the
+    // blocking implementation and `await b` below hung until the test
+    // timed out. Branching on the id pins the blocker to A regardless
+    // of arrival order, making the test deterministic.
+    clientMock.listChannelFiles.mockImplementation(
+      async (channelId: string, _page: number, _per: number) => {
+        if (channelId === "chidparallelaaaaaaaaaa") await blockerA;
+        return [];
+      },
+    );
 
     const a = handler("sources:addKchatChannel")(
       EVENT,
