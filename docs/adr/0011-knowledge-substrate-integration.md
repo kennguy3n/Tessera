@@ -114,15 +114,14 @@ pinned to a single rev, behind a thin Tessera-owned adapter, in a purely
   pinned to the same rev (`b49daf4`). When bumping, change all of them
   together and run a build so `Cargo.lock` is regenerated consistently
   (`cargo metadata --locked` must succeed).
-- **Known limitation — CI cannot clone the private knowledge repo.**
-  Because `kennguy3n/knowledge` is private and CI has no credential for
-  it, any workspace build in CI fails at the git-fetch step. Local builds
-  succeed (the dev environment is authenticated). This is an
-  infrastructure/secrets decision, not a code defect; the recommended
-  long-term fixes, in rough order of preference, are: (1) a read-only CI
-  **deploy key** / machine token scoped to the knowledge repo, (2) a
-  **git submodule** with a CI checkout step, (3) publishing the knowledge
-  crates to a **private registry**, or (4) **vendoring** a pinned
-  snapshot. Until one is in place, treat local `cargo +1.88 fmt/clippy/test`
-  and the desktop `lint`/`type-check`/`test` suites as the correctness
-  signal for substrate-touching changes.
+- **Private knowledge repo in CI — RESOLVED.** Originally, because
+  `kennguy3n/knowledge` is private and CI had no credential for it, any
+  workspace build in CI failed at the git-fetch step, and local builds
+  were the only correctness signal. This has since been fixed with
+  option (1) from the original plan: a read-only SSH **deploy key**
+  (the `KNOWLEDGE_DEPLOY_KEY` repo secret, wired through the
+  `.github/actions/knowledge-ssh` composite action) lets CI clone and
+  build the private dependency, so substrate-touching changes build and
+  test in CI on every push. Local `cargo +1.88 fmt/clippy/test` and the
+  desktop `lint`/`type-check`/`test` suites remain the fast first-line
+  check.

@@ -16,7 +16,7 @@ board); "After" reflects this release.
 | Dimension | Before | After | What moved it |
 |---|:---:|:---:|---|
 | Architecture | 7 | 9 | Versioned migration framework + typed errors + auto-sized read pool; **knowledge substrate as an additive native layer (encrypted sibling DBs)** |
-| Features | 7 | 9 | Comments, conditional formatting, form view, presenter mode, task deps + Gantt, multi-step automations; **observation extraction, decay-based memory, concept graph, connectors v2, local backup/restore** |
+| Features | 7 | 9 | Comments, conditional formatting, form view, presenter mode, task deps + Gantt, multi-step automations; **observation extraction, decay-based memory, concept graph, connectors v2, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) now ships in the renderer** |
 | Performance | 6 | 9 | Incremental IVF, 100K/500K benches, virtual scrolling, read-pool pre-warm, 3s cold-start CI gate |
 | Cost / install size | 7 | 8 | Symbol stripping, locale pruning, delta updates, resumable model downloads, sharper CI cache |
 | Security | 8 | 9 | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates; **XChaCha20-Poly1305 DEK wrapping, optional ML-KEM-768 KEM, ML-DSA-65 export signing** |
@@ -123,12 +123,13 @@ encryption-at-rest posture. See
   scoring; `concept_graph` builds a typed graph (is_a / part_of /
   supersedes / contradicts). These engines and their N-API/IPC data
   plane (`sources:searchEnriched`, `substrate:suggestRelatedSources`)
-  ship on `main`. The dedicated knowledge UI surfaces (a Memory page, a
-  concept-graph panel, an enriched "Knowledge" citation tab, HomePage
-  insights) are **built and unit-tested but not yet wired into the
-  shipping renderer** — they are staged in a follow-up branch, so the
-  substrate today is a backend/data-plane capability plus the
-  user-facing surfaces listed below, not a standalone knowledge browser.
+  ship on `main`. The dedicated knowledge UI surfaces now **ship in the
+  renderer** too: a **Memory page** (sidebar **Memory** / `Ctrl+9` /
+  `/memory`) with a **concept-graph panel**, an enriched **"Knowledge"
+  citation tab** (open an artifact → **Citations** → Sources/Knowledge),
+  **HomePage knowledge insights**, and a substrate section on each
+  source's detail page. The substrate is therefore a full knowledge
+  browser, not just a backend/data-plane capability.
 - **Search.** Hybrid retrieval is enriched with matching
   entities/concepts/memories and adds memory retention as a fourth RRF
   signal. The user-facing controls that ship today are the Settings →
@@ -154,12 +155,14 @@ encryption and zero-config local backup — go beyond the raw
 text-search-and-store model of Notion/Coda while keeping everything
 offline-capable.
 
-*Known limitation:* because `kennguy3n/knowledge` is a private git
-dependency, CI cannot clone it and fails at the fetch step;
-substrate-touching changes are validated locally (`cargo +1.88
-fmt`/`clippy`/`test`, desktop `lint`/`type-check`/`test`) until a CI
-credential (deploy key / submodule / private registry / vendoring) is in
-place.
+*CI note:* `kennguy3n/knowledge` is a private git dependency. CI now
+clones and builds it over a **read-only SSH deploy key** (the
+`KNOWLEDGE_DEPLOY_KEY` repo secret, wired through the
+`.github/actions/knowledge-ssh` composite action), so substrate-touching
+changes build and test in CI on every push — the earlier "CI cannot
+clone the private dependency" limitation no longer applies. Local
+validation (`cargo +1.88 fmt`/`clippy`/`test`, desktop
+`lint`/`type-check`/`test`) remains the fast first-line check.
 
 *vs. competitors:* documentation and generated-contract discipline that
 is unusually strong for a desktop app of this size.

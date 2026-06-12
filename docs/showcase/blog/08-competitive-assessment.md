@@ -94,18 +94,15 @@ and generation work.
   narrow the gap for *deliverables*, but they don't erase it for open-ended writing.
 - **No real-time collaboration.** No live co-editing or presence. Teams that need that will keep
   a cloud workspace alongside Tessera.
-- **The knowledge-browser UI isn't shipped yet.** As [post 7](07-knowledge-plane.md) states
-  plainly, the substrate (observations, memory, concept graph) ships as a backend with search,
-  source-health, backup, and signed-export surfaces — but the dedicated Memory page,
-  concept-graph panel, and enriched "Knowledge" citation tab are built and tested, *not yet
-  wired into the shipping renderer*.
 - **Ecosystem breadth.** Connectors v2 (Drive, OneDrive/SharePoint, Notion, Jira, Confluence,
   Figma) is growing but far smaller than the integration catalogs of Notion/Google/Microsoft.
 - **No first-party mobile app.** It's a desktop-first Electron + Rust application.
-- **CI can't yet build the private substrate dependency.** The `kennguy3n/knowledge` crate is a
-  private git dependency; substrate-touching changes are validated locally until a CI credential
-  is fully in place (a read-only deploy key has been wired; see the scorecard's known-limitation
-  note).
+
+The knowledge-browser UI used to be on this list — the dedicated Memory page, concept-graph
+panel, and enriched "Knowledge" citation tab were "built and tested but not yet wired into the
+renderer." They now ship (see [post 7](07-knowledge-plane.md)), and CI builds the private
+`kennguy3n/knowledge` substrate dependency over a read-only deploy key, so neither is a gap
+anymore.
 
 ## Who should (and shouldn't) choose Tessera
 

@@ -16,9 +16,10 @@ Two ground rules for this post, in keeping with the rest of the showcase:
    [`apps/desktop/renderer/src/showcase/generated/*.knowledge.ts`](../../apps/desktop/renderer/src/showcase/generated).
    Nothing here is hand-authored — including the occasional rough sentence fragment, which is
    what real extraction over real prose actually looks like.
-2. **We're explicit about what ships.** The extraction engines and their data plane ship on
-   `main`. Some of the richer *browsing* UI is built and unit-tested but not yet wired into the
-   shipping renderer. The "What ships today" section at the end draws that line precisely.
+2. **We're explicit about what ships.** The extraction engines, their data plane, *and* the
+   browsing UI on top of them all ship on `main` — the dedicated Memory page, the concept-graph
+   panel, and the enriched "Knowledge" citation tab are now wired into the shipping renderer.
+   The "What ships today" section at the end lists every surface and how to reach it.
 
 ---
 
@@ -118,32 +119,50 @@ is recoverable. Two shipping surfaces close that loop:
 
 ![Settings — Source Health and Backup & Recovery](../assets/screenshots/flow-06-settings-backup.png)
 
-## What ships today — and what's staged
+## What ships today
 
-In the spirit of the rest of this showcase, here's the honest line between shipping and staged
-as of this `main`:
+In the spirit of the rest of this showcase, here's the honest accounting of what's in the
+build you'd install today. The substrate engines, their data plane, *and* the browsing UI on
+top of them all ship on this `main` — there is no longer a "staged in a follow-up branch"
+line to draw.
 
-**Shipping in the app today:**
+**The substrate and its data plane:**
 
 - Observation extraction, decay-based memory, and the concept graph as the on-device knowledge
   substrate (the `knowledge` crate behind `crates/tessera_substrate`), with encrypted sibling
   DBs.
 - The data plane over IPC: `sources:searchEnriched` (enriched hybrid results) and
   `substrate:suggestRelatedSources` (concept-graph suggestions in Create).
-- The user-facing controls shown above: **Settings → Search** (hybrid + recency half-life),
-  embedding-model selection, **Source Health**, **Backup & Recovery**, the home-screen backup
-  indicator, and **Export Evidence Pack** with PQC signatures.
 
-**Built and unit-tested, but not yet wired into the shipping renderer:**
+**The browsing UI, wired into the renderer:**
 
-- A dedicated **Memory page** and **concept-graph panel** for browsing the substrate directly.
+- A dedicated **Memory page** for browsing the substrate directly — memories with their state
+  and retention, plus the concept graph. Reach it from the **Memory** item in the sidebar
+  ("More tools" tier, `Ctrl/Cmd+9`) or the `/memory` route.
+- The **concept-graph panel** on that page, rendering concept nodes and their typed links over
+  your own sources.
 - The enriched **"Knowledge" tab** in the citation panel (entities/facts/concepts alongside
-  source chunks). The component and its tests exist; it isn't mounted in an editor yet.
-- **HomePage knowledge insights** beyond the backup/source signals.
+  source chunks). It's mounted in the artifact editor: open any artifact and click
+  **Citations** to see the Sources/Knowledge tabbed view.
+- **HomePage knowledge insights** — a "Knowledge insights" card on the home screen
+  summarizing the memory plane and concept graph — and a substrate section on each source's
+  detail page.
 
-Those surfaces are staged in a follow-up branch. We'd rather show you the substrate as the
-real, inspectable data it produces — the tables above are generated straight from it — than
-screenshot a panel that isn't in the build you'd install today.
+**The durability and search controls shown above:**
+
+- **Settings → Search** (hybrid + recency half-life), embedding-model selection, **Source
+  Health**, **Backup & Recovery**, the home-screen backup indicator, and **Export Evidence
+  Pack** with PQC signatures.
+
+The tables earlier in this post are still generated straight from the substrate — the data is
+genuine — but you can now also open the Memory page and the Knowledge tab in the shipping build
+and see the same engine's output over your own sources.
+
+<!-- TODO(screenshots): add captures of the shipping Memory page, concept-graph panel,
+     Knowledge citation tab, and connector gallery here, named
+     flow-07-memory-page.png / flow-08-concept-graph.png / flow-09-knowledge-tab.png /
+     flow-10-connector-gallery.png under ../assets/screenshots/. -->
+
 
 ---
 

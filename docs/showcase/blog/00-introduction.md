@@ -57,8 +57,8 @@ Beyond the five journeys, three posts open the hood:
 - **[The UI/UX walkthrough](06-ui-ux-walkthrough.md)** — the Create flow, the four editors, and
   the new substrate controls (search tuning, source health, backup/restore, signed export).
 - **[The knowledge plane](07-knowledge-plane.md)** — what Tessera extracts, links, and remembers
-  on ingest, shown with genuine derived data, and an explicit line between what ships and what's
-  staged.
+  on ingest, shown with genuine derived data, and an explicit accounting of the shipping
+  surfaces (the Memory page, concept-graph panel, and enriched "Knowledge" citation tab).
 - **[An honest competitive assessment](08-competitive-assessment.md)** — where Notion, Coda,
   Claude Projects, NotebookLM, and the local-RAG tools are genuinely better, and where Tessera
   wins, with the gaps stated without spin.
