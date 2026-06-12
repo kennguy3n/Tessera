@@ -347,11 +347,15 @@ export default function CommandPalette({
             return;
           }
           case "goBack":
-            // react-router back navigation, matching the keyboard
-            // runner. `navigate(-1)` not
-            // `window.history.back()` so the router's own history
-            // stack stays in phase with the location bar.
-            navigate(-1);
+            // Back navigation targets the focused workspace tab's own
+            // in-memory history (each tab owns an independent stack),
+            // matching the keyboard runner. `WorkspaceProvider` handles
+            // this and calls the focused tab's `navigate(-1)`.
+            window.dispatchEvent(
+              new CustomEvent("tessera:navigate-delta", {
+                detail: { delta: -1 },
+              }),
+            );
             return;
           default:
             return;

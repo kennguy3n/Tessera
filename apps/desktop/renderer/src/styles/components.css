@@ -2436,3 +2436,229 @@
   color: var(--color-warning-fg);
   font-size: var(--font-size-xs);
 }
+
+/* ===========================================================================
+   Split-pane / tabbed workspace
+   ---------------------------------------------------------------------------
+   The workspace replaces the single scrolling <main> with a pane tree. The
+   default (one leaf, one tab) renders a single pane whose content area keeps
+   the same padding/scroll behavior the old `.app-main` had, so the first-run
+   experience is unchanged; splits and tabs are additive chrome.
+   =========================================================================== */
+
+.app-main-workspace {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.workspace-root {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* A split branch lays its children out along one axis; the matching
+   PaneSplitter sits between them. */
+.workspace-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-split-row {
+  flex-direction: row;
+}
+.workspace-split-column {
+  flex-direction: column;
+}
+.workspace-split-cell {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A leaf pane: tab strip on top, scrolling content below. */
+.workspace-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--color-bg-page);
+}
+
+.workspace-pane-content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: var(--spacing-xl);
+}
+
+/* --- Tab strip --- */
+.workspace-tabstrip {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-2xs) var(--spacing-xs);
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-bg-sidebar);
+  /* A focused pane is signalled by a top accent bar (Obsidian-style)
+     rather than a full border, keeping the single-pane default clean. */
+  box-shadow: inset 0 2px 0 0 transparent;
+  transition: box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+.workspace-pane.is-focused > .workspace-tabstrip {
+  box-shadow: inset 0 2px 0 0 var(--color-primary);
+  background-color: var(--color-bg-surface);
+}
+
+.workspace-tabstrip-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.workspace-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  max-width: 16rem;
+  padding: var(--spacing-2xs) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+  position: relative;
+  user-select: none;
+  transition: background-color var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast);
+}
+.workspace-tab:hover {
+  background-color: var(--color-surface-hover);
+  color: var(--color-text-body);
+}
+.workspace-tab.is-active {
+  background-color: var(--color-bg-page);
+  color: var(--color-text-headline);
+  border-color: var(--color-border);
+}
+/* Drop indicator while dragging a tab to a new position. */
+.workspace-tab.drop-before::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--spacing-2xs) * -1);
+  top: 10%;
+  bottom: 10%;
+  width: 2px;
+  border-radius: 1px;
+  background-color: var(--color-primary);
+}
+.workspace-tab-drop-end {
+  width: 2px;
+  align-self: stretch;
+  margin: 10% 0;
+  border-radius: 1px;
+  background-color: var(--color-primary);
+}
+
+.workspace-tab-button {
+  background: none;
+  border: none;
+  padding: var(--spacing-2xs) var(--spacing-2xs);
+  font-size: var(--font-size-sm);
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 13rem;
+}
+
+.workspace-tab-close,
+.workspace-tab-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border: none;
+  background: none;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.workspace-tab-close:hover,
+.workspace-tab-action:hover {
+  background-color: var(--color-surface-hover);
+  color: var(--color-text-body);
+}
+.workspace-tabstrip-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  padding-left: var(--spacing-2xs);
+}
+.workspace-tab-close:focus-visible,
+.workspace-tab-action:focus-visible,
+.workspace-tab-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* --- Splitter handle --- */
+.workspace-splitter {
+  flex: 0 0 auto;
+  position: relative;
+  background-color: var(--color-border-light);
+  transition: background-color var(--transition-fast);
+}
+.workspace-splitter:hover,
+.workspace-splitter:focus-visible {
+  background-color: var(--color-primary);
+  outline: none;
+}
+.workspace-splitter-row {
+  width: 4px;
+  cursor: col-resize;
+  align-self: stretch;
+}
+.workspace-splitter-column {
+  height: 4px;
+  cursor: row-resize;
+}
+/* Enlarge the invisible hit area without taking layout space. */
+.workspace-splitter-grip {
+  position: absolute;
+  inset: 0;
+}
+.workspace-splitter-row .workspace-splitter-grip {
+  left: -3px;
+  right: -3px;
+}
+.workspace-splitter-column .workspace-splitter-grip {
+  top: -3px;
+  bottom: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tabstrip,
+  .workspace-tab,
+  .workspace-tab-close,
+  .workspace-tab-action,
+  .workspace-splitter {
+    transition: none;
+  }
+}

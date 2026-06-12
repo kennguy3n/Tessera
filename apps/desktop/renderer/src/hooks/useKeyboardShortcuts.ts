@@ -68,6 +68,19 @@ const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
   "palette:openP",
   "palette:quickSwitcher",
   "help:shortcuts",
+  // Workspace tab/pane management is chrome-level, not editor text
+  // input, so (like Save/Export) it must work from inside an editor —
+  // e.g. Cmd+W to close the tab you're typing in, Cmd+\ to split it
+  // out beside another. These chords don't collide with TipTap's
+  // editor bindings (which use letters: B/I/K/etc.).
+  "workspace:newTab",
+  "workspace:closeTab",
+  "workspace:nextTab",
+  "workspace:prevTab",
+  "workspace:splitRight",
+  "workspace:splitDown",
+  "workspace:focusNextPane",
+  "workspace:focusPrevPane",
 ]);
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -168,12 +181,15 @@ export function useKeyboardShortcuts() {
             return;
           }
           case "goBack":
-            // follow-up: react-router back navigation.
-            // We use `navigate(-1)` (not `window.history.back()`) so the
-            // router stays in sync with its own history stack — mixing the
-            // two stacks would leave the location bar and the rendered
-            // page out of phase on fast-back chains.
-            navigate(-1);
+            // Back navigation targets the focused workspace tab's own
+            // in-memory history, not the shell router — each tab owns an
+            // independent back/forward stack. `WorkspaceProvider` listens
+            // for this and calls the focused tab's `navigate(-1)`.
+            window.dispatchEvent(
+              new CustomEvent("tessera:navigate-delta", {
+                detail: { delta: -1 },
+              }),
+            );
             return;
           default:
             return;
