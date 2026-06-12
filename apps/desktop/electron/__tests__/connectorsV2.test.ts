@@ -17,6 +17,7 @@ import * as path from "path";
 
 import {
   runV2Sync,
+  runV2Probe,
   disconnectV2Provider,
   storedToWire,
   wireToStored,
@@ -771,5 +772,96 @@ describe("runV2Sync bridge error branding", () => {
     expect(caught).toBe(raw);
     expect(caught).not.toBeInstanceOf(NetworkError);
     expect(isNetworkError(caught)).toBe(false);
+  });
+});
+
+describe("connectorsV2 runV2Probe", () => {
+  function fakeProbeBridge(
+    impl: (...args: unknown[]) => string | Promise<string>,
+    calls: { args: unknown[][] } = { args: [] },
+  ): V2NativeBridge {
+    return {
+      bridgeConnectorsV2Supported: () => true,
+      bridgeConnectorsV2Probe: (...args: unknown[]) => {
+        calls.args.push(args);
+        return Promise.resolve(impl(...args));
+      },
+    } as unknown as V2NativeBridge;
+  }
+
+  it("passes the same auth_config + token wire the sync path would and returns the observed event count", async () => {
+    const calls: { args: unknown[][] } = { args: [] };
+    const bridge = fakeProbeBridge(
+      () => JSON.stringify({ observed_events: 3 }),
+      calls,
+    );
+    const outcome = await runV2Probe({
+      provider: "github",
+      bridge,
+      tokens: TOKENS,
+      scopeId: null,
+    });
+    expect(outcome.observed_events).toBe(3);
+
+    const [provider, authConfigJson, wireJson, scopeId] = calls.args[0] as [
+      string,
+      string,
+      string,
+      string | null,
+    ];
+    expect(provider).toBe("github");
+    expect(scopeId).toBeNull();
+    // The probe must reuse buildAuthConfig + storedToWire verbatim so a
+    // green test faithfully predicts a green sync.
+    expect(JSON.parse(authConfigJson)).toEqual(buildAuthConfig("github", TOKENS));
+    expect(JSON.parse(wireJson)).toEqual(storedToWire(TOKENS));
+  });
+
+  it("re-brands a transport failure as NetworkError", async () => {
+    const bridge = fakeProbeBridge(() => {
+      throw new Error("transport: error sending request: dns error");
+    });
+    let caught: unknown;
+    try {
+      await runV2Probe({
+        provider: "github",
+        bridge,
+        tokens: TOKENS,
+        scopeId: null,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(NetworkError);
+    expect(isNetworkError(caught)).toBe(true);
+  });
+
+  it("propagates a non-transport provider error unchanged (auth/permission)", async () => {
+    const raw = new Error("auth: 401 Unauthorized");
+    const bridge = fakeProbeBridge(() => {
+      throw raw;
+    });
+    let caught: unknown;
+    try {
+      await runV2Probe({
+        provider: "github",
+        bridge,
+        tokens: TOKENS,
+        scopeId: null,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(raw);
+    expect(isNetworkError(caught)).toBe(false);
+  });
+
+  it("throws a clear error when the bridge lacks the probe capability", async () => {
+    const bridge = {
+      bridgeConnectorsV2Supported: () => true,
+    } as unknown as V2NativeBridge;
+    await expect(
+      runV2Probe({ provider: "github", bridge, tokens: TOKENS, scopeId: null }),
+    ).rejects.toThrow(/connectors-v2/);
   });
 });

@@ -537,6 +537,21 @@ export interface NativeBridge {
      */
     pendingJson?: string | null,
   ): Promise<string>;
+  /**
+   * Run a read-only connection probe. Returns a `Promise` resolving to a
+   * `ProbeOutcome` JSON string. Reuses the connector's authenticated
+   * read path to confirm the supplied token + `auth_config` reach the
+   * provider WITHOUT persisting anything or fetching document bodies.
+   * Like the sync, the blocking HTTP round-trip runs on a libuv worker
+   * thread (napi `AsyncTask`) so the event loop stays responsive — see
+   * `crates/tessera_bridge/src/connectors_v2_napi.rs`.
+   */
+  bridgeConnectorsV2Probe?(
+    provider: string,
+    authConfigJson: string,
+    tokenJson: string,
+    scopeId?: string | null,
+  ): Promise<string>;
   // --- KChat audit pass-throughs ---
   //
   // Each method is a no-throw best-effort append into the

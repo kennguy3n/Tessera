@@ -501,6 +501,25 @@ const api: TesseraApi = {
         clientSecret,
         config,
       ),
+    /**
+     * Run a read-only connection probe BEFORE connecting: confirms the
+     * entered credentials/target can reach the provider without
+     * persisting anything to the keychain. Returns
+     * `{ ok, observedEvents?, offline?, message? }`.
+     */
+    test: (
+      provider: string,
+      clientId: string,
+      clientSecret: string,
+      config?: Record<string, string>,
+    ) =>
+      ipcRenderer.invoke(
+        "connectors:test",
+        provider,
+        clientId,
+        clientSecret,
+        config,
+      ),
     disconnect: (provider: string) =>
       ipcRenderer.invoke("connectors:disconnect", provider),
     status: (provider: string) =>

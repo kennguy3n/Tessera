@@ -129,6 +129,69 @@ pub fn bridge_connectors_v2_refresh(
         .map_err(|e| NapiError::from_reason(format!("token serialize: {e}")))
 }
 
+/// Run a read-only connection probe (`connectors:test`).
+///
+/// Reuses the upstream connector's authenticated read path to confirm
+/// the supplied token + `auth_config` can reach the provider (and, for
+/// per-target connectors, the configured project/board/channel) WITHOUT
+/// persisting anything. Returns the [`crate::connectors_v2::ProbeOutcome`]
+/// as a JSON string; document bodies are never fetched.
+///
+/// # Concurrency
+///
+/// Like `bridge_connectors_v2_sync`, the probe makes a blocking HTTP
+/// round-trip, so it is offloaded to a libuv worker thread via an
+/// [`AsyncTask`] to keep the Electron event loop responsive.
+///
+/// # Errors
+///
+/// Rejects with the flattened connector error on auth/transport/config
+/// failure so the host can surface a precise, non-secret reason.
+#[napi(ts_return_type = "Promise<string>")]
+pub fn bridge_connectors_v2_probe(
+    provider: String,
+    auth_config_json: String,
+    token_json: String,
+    scope_id: Option<String>,
+) -> AsyncTask<ConnectorsV2ProbeTask> {
+    AsyncTask::new(ConnectorsV2ProbeTask {
+        provider,
+        auth_config_json,
+        token_json,
+        scope_id,
+    })
+}
+
+/// [`napi::Task`] that runs a read-only connection probe on a libuv
+/// worker thread. Owns its `String`/`Option<String>` inputs (all
+/// `Send`), so no host state is borrowed across the thread boundary.
+pub struct ConnectorsV2ProbeTask {
+    provider: String,
+    auth_config_json: String,
+    token_json: String,
+    scope_id: Option<String>,
+}
+
+impl Task for ConnectorsV2ProbeTask {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output, NapiError> {
+        let auth_config = parse_json("auth_config", &self.auth_config_json)?;
+        let token: TokenWire = serde_json::from_str(&self.token_json)
+            .map_err(|e| NapiError::from_reason(format!("invalid token JSON: {e}")))?;
+        let outcome =
+            connectors_v2::probe(&self.provider, auth_config, token, self.scope_id.as_deref())
+                .map_err(|e| to_napi(&e))?;
+        serde_json::to_string(&outcome)
+            .map_err(|e| NapiError::from_reason(format!("probe outcome serialize: {e}")))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue, NapiError> {
+        Ok(output)
+    }
+}
+
 /// Run an incremental sync (`connectors:sync`).
 ///
 /// * `token_json` — current [`TokenWire`].

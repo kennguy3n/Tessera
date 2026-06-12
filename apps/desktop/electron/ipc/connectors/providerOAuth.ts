@@ -473,6 +473,121 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     supportsRefresh: false,
     usePkce: false,
   },
+  // ── Tranche 3: read-only, account-wide OAuth2 providers ──────────
+  // Whole-account reads served by the upstream `connectors` crate with
+  // the connector's own account-wide defaults (no per-target config).
+  // Each requests least-privilege read-only scopes and reserves a
+  // unique loopback port, continuing the 9894+ sequence.
+  zoom: {
+    provider: "zoom",
+    authUrl: "https://zoom.us/oauth/authorize",
+    tokenUrl: "https://zoom.us/oauth/token",
+    // Least-privilege: list + read the signed-in user's own cloud
+    // recordings (the connector reads `/users/me/recordings`). No
+    // account-admin or write/management scopes are requested.
+    scope: "cloud_recording:read:list_user_recordings",
+    redirectPort: 9894,
+    extraAuthorizeParams: {},
+    // Zoom's token endpoint authenticates the client with HTTP Basic
+    // (`client_id:client_secret`) and issues a refresh token on the
+    // authorization-code grant.
+    basicAuth: true,
+    supportsRefresh: true,
+    // Zoom supports PKCE (S256) on the authorization-code flow.
+    usePkce: true,
+  },
+  google_calendar: {
+    provider: "google_calendar",
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    revokeUrl: "https://oauth2.googleapis.com/revoke",
+    // Read-only events on the user's primary calendar (the connector
+    // defaults `calendar_id` to "primary"). `calendar.events.readonly`
+    // is the least-privilege read scope — narrower than `calendar.readonly`.
+    scope: "https://www.googleapis.com/auth/calendar.events.readonly",
+    redirectPort: 9895,
+    redirectHost: "127.0.0.1",
+    extraAuthorizeParams: {
+      access_type: "offline",
+      prompt: "consent",
+    },
+    supportsRefresh: true,
+    usePkce: true,
+  },
+  google_docs: {
+    provider: "google_docs",
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    revokeUrl: "https://oauth2.googleapis.com/revoke",
+    // The connector walks the Drive change feed to discover Google Docs
+    // (`drive.readonly`) and reads each document via the Docs API
+    // (`documents.readonly`). Both are read-only.
+    scope:
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly",
+    redirectPort: 9896,
+    redirectHost: "127.0.0.1",
+    extraAuthorizeParams: {
+      access_type: "offline",
+      prompt: "consent",
+    },
+    supportsRefresh: true,
+    usePkce: true,
+  },
+  google_sheets: {
+    provider: "google_sheets",
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    revokeUrl: "https://oauth2.googleapis.com/revoke",
+    // Drive change feed discovery (`drive.readonly`) + Sheets API reads
+    // (`spreadsheets.readonly`). Both are read-only.
+    scope:
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly",
+    redirectPort: 9897,
+    redirectHost: "127.0.0.1",
+    extraAuthorizeParams: {
+      access_type: "offline",
+      prompt: "consent",
+    },
+    supportsRefresh: true,
+    usePkce: true,
+  },
+  google_meet: {
+    provider: "google_meet",
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    revokeUrl: "https://oauth2.googleapis.com/revoke",
+    // Read-only conference records / transcripts via the Meet REST API.
+    // `meetings.space.readonly` is the least-privilege read scope for
+    // the conferenceRecords surface the connector walks.
+    scope: "https://www.googleapis.com/auth/meetings.space.readonly",
+    redirectPort: 9898,
+    redirectHost: "127.0.0.1",
+    extraAuthorizeParams: {
+      access_type: "offline",
+      prompt: "consent",
+    },
+    supportsRefresh: true,
+    usePkce: true,
+  },
+  sharepoint: {
+    provider: "sharepoint",
+    authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    // Read-only SharePoint document libraries via Microsoft Graph drive
+    // delta. The connector defaults to the tenant root site
+    // (`/sites/root/drive`). `Sites.Read.All` is the least-privilege
+    // read scope; `offline_access` is requested via
+    // `requestOfflineAccess`. Distinct from OneDrive (`/me/drive`).
+    scope: "Sites.Read.All",
+    redirectPort: 9899,
+    extraAuthorizeParams: {
+      response_mode: "query",
+      prompt: "select_account",
+    },
+    requestOfflineAccess: true,
+    supportsRefresh: true,
+    usePkce: true,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {

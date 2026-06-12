@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  ConnectorProbeResult,
   ConnectorScopeComparison,
   ConnectorStatusInfo,
 } from "../types/ipc";
@@ -33,7 +34,10 @@ import {
   groupConnectorsByCategory,
   type ConnectorDescriptor,
 } from "./connectorDescriptors";
-import { getConnectSpec } from "../../../shared/connectorConfig";
+import {
+  getConnectSpec,
+  validateConnectorField,
+} from "../../../shared/connectorConfig";
 
 interface ConnectorsListProps {
   onChange?: () => void;
@@ -139,8 +143,22 @@ export default function ConnectorsList({
   // `shared/connectorConfig.ts`). Empty for whole-account OAuth2
   // providers that declare no extra fields.
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  // Field keys the user has interacted with (changed or blurred), so an
+  // inline format error only appears AFTER the user touches a field —
+  // never pre-flagging a pristine required field red on modal open.
+  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>(
+    {},
+  );
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  // Result of the last "Test connection" probe for the open modal, or
+  // `null` before the user runs one (or after they edit a field, which
+  // invalidates the prior result). `testBusy` gates a second probe and
+  // the Connect button while one is in flight.
+  const [testResult, setTestResult] = useState<ConnectorProbeResult | null>(
+    null,
+  );
+  const [testBusy, setTestBusy] = useState(false);
   // Authoritative redirect URI map sourced from the OAuth config in
   // the main process. Materialised in one IPC round-trip at mount
   // (and re-fetched if the descriptor set changes) instead of the
@@ -232,11 +250,47 @@ export default function ConnectorsList({
   const connectSpec = descriptor ? getConnectSpec(descriptor.provider) : null;
   const isTokenMethod = connectSpec?.connectMethod === "token";
 
+  // Per-field inline validation result for the open modal, keyed by
+  // field `key`. Recomputed only when the spec or the typed values
+  // change. A field shows its `error` once the user has touched it
+  // (`touchedFields`) so the modal doesn't flag every required field
+  // red before the user has typed anything.
+  const fieldErrors = useMemo(() => {
+    const errors: Record<string, string | undefined> = {};
+    for (const field of connectSpec?.configFields ?? []) {
+      const result = validateConnectorField(field, configValues[field.key] ?? "");
+      if (!result.valid) errors[field.key] = result.error;
+    }
+    return errors;
+  }, [connectSpec, configValues]);
+
+  // Whether every required client-credential + per-target field is
+  // present AND every declared format rule passes. Drives the Connect
+  // and Test-connection buttons' disabled state so the user cannot
+  // submit a value we already know the backend will reject.
+  const formValid = useMemo(() => {
+    if (!connectSpec) return false;
+    if (!isTokenMethod) {
+      if (!clientId.trim()) return false;
+      if (descriptor?.secretRequired && !clientSecret.trim()) return false;
+    }
+    return Object.keys(fieldErrors).length === 0;
+  }, [
+    connectSpec,
+    isTokenMethod,
+    clientId,
+    clientSecret,
+    descriptor,
+    fieldErrors,
+  ]);
+
   const openAuthModal = useCallback((provider: string) => {
     setClientId("");
     setClientSecret("");
     setConfigValues({});
+    setTouchedFields({});
     setAuthError(null);
+    setTestResult(null);
     setAuthOpenFor(provider);
   }, []);
 
@@ -325,6 +379,58 @@ export default function ConnectorsList({
       setAuthBusy(false);
     }
   };
+
+  // Run a read-only connection probe with the entered
+  // credentials/target BEFORE connecting. Nothing is persisted: the
+  // main process discards the token after the probe, so a failed (or
+  // even a successful) test never writes to the keychain — the user
+  // still has to click Connect. Surfaces a precise, non-secret reason
+  // on failure so the user fixes a wrong project/board id or revoked
+  // token here rather than discovering it on the first sync.
+  const handleTestConnection = async () => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api || !descriptor || typeof api.connectors.test !== "function") {
+      return;
+    }
+    const spec = getConnectSpec(descriptor.provider);
+    const tokenMethod = spec.connectMethod === "token";
+    const config: Record<string, string> = {};
+    for (const field of spec.configFields) {
+      const value = (configValues[field.key] ?? "").trim();
+      if (value) config[field.key] = value;
+    }
+    setTestBusy(true);
+    setTestResult(null);
+    setAuthError(null);
+    try {
+      const result = await api.connectors.test(
+        descriptor.provider,
+        tokenMethod ? "" : clientId.trim(),
+        tokenMethod ? "" : clientSecret.trim(),
+        config,
+      );
+      setTestResult(result);
+    } catch (err) {
+      // The IPC itself rejected (rate-limit, or an unexpected
+      // main-process error). Expected credential/network failures come
+      // back as `{ ok: false }`, not a rejection.
+      setTestResult({
+        provider: descriptor.provider,
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setTestBusy(false);
+    }
+  };
+
+  // Whether the bridge exposes the `connectors:test` probe. Older
+  // native addons (and the showcase/test mocks) may omit it, in which
+  // case the modal simply hides the Test-connection button rather than
+  // offering an action that would no-op.
+  const testSupported =
+    typeof window !== "undefined" &&
+    typeof window.tessera?.connectors?.test === "function";
 
   const visibleDescriptors = useMemo(
     () => descriptors.filter((d) => connectorMatchesQuery(d, query)),
@@ -459,6 +565,7 @@ export default function ConnectorsList({
         onClose={() => {
           setAuthOpenFor(null);
           setAuthError(null);
+          setTestResult(null);
         }}
         title={
           descriptor ? `Connect ${descriptor.label}` : "Connect provider"
@@ -493,7 +600,10 @@ export default function ConnectorsList({
                   className="input"
                   placeholder="Client ID"
                   value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
+                  onChange={(e) => {
+                    setClientId(e.target.value);
+                    setTestResult(null);
+                  }}
                   aria-label="OAuth Client ID"
                   style={{ marginBottom: "var(--spacing-sm)" }}
                 />
@@ -506,45 +616,80 @@ export default function ConnectorsList({
                   }
                   type="password"
                   value={clientSecret}
-                  onChange={(e) => setClientSecret(e.target.value)}
+                  onChange={(e) => {
+                    setClientSecret(e.target.value);
+                    setTestResult(null);
+                  }}
                   aria-label="OAuth Client Secret"
                 />
               </>
             )}
-            {(connectSpec?.configFields ?? []).map((field) => (
-              <div
-                key={field.key}
-                style={{ marginTop: "var(--spacing-sm)" }}
-              >
-                <input
-                  className="input"
-                  placeholder={
-                    field.placeholder ??
-                    (field.required ? field.label : `${field.label} (optional)`)
-                  }
-                  type={field.secret ? "password" : "text"}
-                  value={configValues[field.key] ?? ""}
-                  onChange={(e) =>
-                    setConfigValues((prev) => ({
-                      ...prev,
-                      [field.key]: e.target.value,
-                    }))
-                  }
-                  aria-label={field.label}
-                />
-                {field.help && (
-                  <p
-                    style={{
-                      marginTop: "calc(var(--spacing-xs, 4px))",
-                      fontSize: "var(--font-size-xs, 0.75rem)",
-                      color: "var(--color-muted, #6b7280)",
+            {(connectSpec?.configFields ?? []).map((field) => {
+              const fieldError = touchedFields[field.key]
+                ? fieldErrors[field.key]
+                : undefined;
+              const errorId = `connector-field-error-${field.key}`;
+              return (
+                <div
+                  key={field.key}
+                  style={{ marginTop: "var(--spacing-sm)" }}
+                >
+                  <input
+                    className="input"
+                    placeholder={
+                      field.placeholder ??
+                      (field.required
+                        ? field.label
+                        : `${field.label} (optional)`)
+                    }
+                    type={field.secret ? "password" : "text"}
+                    value={configValues[field.key] ?? ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setConfigValues((prev) => ({
+                        ...prev,
+                        [field.key]: value,
+                      }));
+                      setTouchedFields((prev) => ({ ...prev, [field.key]: true }));
+                      // The typed value diverged from whatever was last
+                      // probed, so the stale result no longer applies.
+                      setTestResult(null);
                     }}
-                  >
-                    {field.help}
-                  </p>
-                )}
-              </div>
-            ))}
+                    onBlur={() =>
+                      setTouchedFields((prev) => ({ ...prev, [field.key]: true }))
+                    }
+                    aria-label={field.label}
+                    aria-invalid={fieldError ? true : undefined}
+                    aria-describedby={fieldError ? errorId : undefined}
+                  />
+                  {fieldError ? (
+                    <p
+                      id={errorId}
+                      role="alert"
+                      style={{
+                        marginTop: "calc(var(--spacing-xs, 4px))",
+                        fontSize: "var(--font-size-xs, 0.75rem)",
+                        color: "var(--color-danger, #ef4444)",
+                      }}
+                    >
+                      {fieldError}
+                    </p>
+                  ) : (
+                    field.help && (
+                      <p
+                        style={{
+                          marginTop: "calc(var(--spacing-xs, 4px))",
+                          fontSize: "var(--font-size-xs, 0.75rem)",
+                          color: "var(--color-muted, #6b7280)",
+                        }}
+                      >
+                        {field.help}
+                      </p>
+                    )
+                  )}
+                </div>
+              );
+            })}
             {authError && (
               <p
                 style={{
@@ -555,6 +700,24 @@ export default function ConnectorsList({
                 role="alert"
               >
                 {authError}
+              </p>
+            )}
+            {testResult && (
+              <p
+                style={{
+                  color: testResult.ok
+                    ? "var(--color-success, #16a34a)"
+                    : "var(--color-danger, #ef4444)",
+                  fontSize: "var(--font-size-sm)",
+                  marginTop: "var(--spacing-sm)",
+                }}
+                role="status"
+                data-testid="connector-test-result"
+              >
+                {testResult.ok
+                  ? "Connection succeeded — these credentials can reach the provider."
+                  : (testResult.message ??
+                    "Connection failed. Check the credentials and target, then try again.")}
               </p>
             )}
             <div
@@ -583,23 +746,23 @@ export default function ConnectorsList({
                   onClick={() => {
                     setAuthOpenFor(null);
                     setAuthError(null);
+                    setTestResult(null);
                   }}
                 >
                   Cancel
                 </Button>
+                {testSupported && (
+                  <Button
+                    variant="secondary"
+                    onClick={handleTestConnection}
+                    disabled={authBusy || testBusy || !formValid}
+                  >
+                    {testBusy ? "Testing…" : "Test connection"}
+                  </Button>
+                )}
                 <Button
                   onClick={handleAuthenticate}
-                  disabled={
-                    authBusy ||
-                    (!isTokenMethod &&
-                      (!clientId.trim() ||
-                        (descriptor.secretRequired && !clientSecret.trim()))) ||
-                    (connectSpec?.configFields ?? []).some(
-                      (field) =>
-                        field.required &&
-                        !(configValues[field.key] ?? "").trim(),
-                    )
-                  }
+                  disabled={authBusy || testBusy || !formValid}
                 >
                   {authBusy ? "Authenticating…" : "Authenticate"}
                 </Button>

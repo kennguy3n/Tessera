@@ -73,6 +73,7 @@ import { disconnectFigma, syncFigma } from "./figma";
 import { syncGoogleDrive, disconnectGoogleDrive } from "./gdrive";
 import {
   runV2Sync,
+  runV2Probe,
   readV2State,
   readV2Pending,
   writeV2State,
@@ -80,6 +81,7 @@ import {
   disconnectV2Provider,
   type V2NativeBridge,
 } from "./connectorsV2";
+import type { StoredTokens } from "../../tokenVault";
 
 /**
  * The six providers that retain a hand-rolled in-process
@@ -310,6 +312,12 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   gitlab: "gitlab",
   teams: "teams",
   trello: "trello",
+  zoom: "zoom",
+  google_calendar: "google_calendar",
+  google_docs: "google_docs",
+  google_sheets: "google_sheets",
+  google_meet: "google_meet",
+  sharepoint: "sharepoint",
 };
 
 /**
@@ -878,6 +886,12 @@ async function runSync(
     case "gitlab":
     case "teams":
     case "trello":
+    case "zoom":
+    case "google_calendar":
+    case "google_docs":
+    case "google_sheets":
+    case "google_meet":
+    case "sharepoint":
       // Substrate-only providers: reachable here only when the v2
       // path was unavailable; surfaced as a clear config error above,
       // but the explicit cases keep the exhaustiveness check honest.
@@ -1227,6 +1241,12 @@ export async function runDisconnect(
     case "gitlab":
     case "teams":
     case "trello":
+    case "zoom":
+    case "google_calendar":
+    case "google_docs":
+    case "google_sheets":
+    case "google_meet":
+    case "sharepoint":
       // Substrate-only providers: no legacy disconnect impl exists, so
       // reuse the generic v2 cleanup (unhook sources + purge sync dir
       // + delete manifest/cursor). Token revocation + vault deletion
@@ -1365,6 +1385,163 @@ function authenticateWithToken(
   ctx.log.info("connector authenticated", { provider, method: "token" });
   safeAudit(ctx, (b) => b.bridgeLogConnectorConnected(provider));
   return { provider, connected: true, status: "connected" };
+}
+
+/**
+ * Result of a `connectors:test` connection probe. Deliberately carries
+ * NO secret values: `message` is the connector framework's flattened,
+ * machine-categorised reason (e.g. `"auth: 401 …"`), never a token or
+ * client secret.
+ */
+export interface ConnectorProbeResult {
+  provider: string;
+  /** True iff the connector completed an authenticated read. */
+  ok: boolean;
+  /**
+   * Change events the connector surfaced on its first authenticated
+   * read — a reachability/authorisation signal, present on success.
+   * Zero is a valid success (the target resolved but is currently
+   * empty), so the UI must treat `ok` — not this count — as the signal.
+   */
+  observedEvents?: number;
+  /** True when the failure was a network/transport fault (offline). */
+  offline?: boolean;
+  /** Non-secret, human-readable failure reason. Present iff `!ok`. */
+  message?: string;
+}
+
+/**
+ * Acquire a candidate {@link StoredTokens} for a connection probe
+ * WITHOUT persisting it. Mirrors the credential-acquisition half of
+ * `connectors:authenticate` (the OAuth browser flow for `oauth2`
+ * providers, the pasted credential for `token` providers) but returns
+ * the in-memory token instead of writing it to the vault — so a failed
+ * probe leaves nothing on disk.
+ */
+async function acquireProbeTokens(
+  ctx: IpcContext,
+  provider: ProviderId,
+  clientIdRaw: unknown,
+  clientSecretRaw: unknown,
+  connectorConfig: Record<string, string>,
+): Promise<StoredTokens> {
+  const spec = getConnectSpec(provider);
+  const config = getProviderOAuthConfig(provider);
+  if (spec.connectMethod === "token") {
+    const tokenField = spec.tokenField;
+    if (tokenField == null) {
+      throw new Error(
+        `token connect method for ${provider} has no tokenField configured`,
+      );
+    }
+    const accessToken = connectorConfig[tokenField];
+    if (!accessToken) throw new Error(`Missing credential for ${provider}`);
+    const bag: Record<string, string> = {};
+    for (const [key, value] of Object.entries(connectorConfig)) {
+      if (key !== tokenField) bag[key] = value;
+    }
+    return {
+      accessToken,
+      refreshToken: null,
+      expiresAt: Date.now() + NON_EXPIRING_CREDENTIAL_MS,
+      scopes: getRequestedScopes(config),
+      connectorConfig: Object.keys(bag).length > 0 ? bag : undefined,
+    };
+  }
+  const clientId = assertString(clientIdRaw, "clientId", { maxLen: 512 });
+  const clientSecret = assertString(clientSecretRaw, "clientSecret", {
+    maxLen: 512,
+    allowEmpty: false,
+  });
+  const pkce = config.usePkce ? generatePkcePair() : null;
+  const result = await runRedirectServer(config, {
+    clientId,
+    codeChallenge: pkce?.challenge,
+  });
+  const tokens = await exchangeAuthorizationCode(config, {
+    code: result.code,
+    clientId,
+    clientSecret,
+    codeVerifier: pkce?.verifier,
+  });
+  const requestedScopes = getRequestedScopes(config);
+  return {
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    expiresAt: Date.now() + tokens.expiresIn * 1000,
+    scopes: tokens.grantedScopes ?? requestedScopes,
+    clientId,
+    clientSecret,
+    connectorConfig:
+      Object.keys(connectorConfig).length > 0 ? connectorConfig : undefined,
+  };
+}
+
+/**
+ * Run a read-only connection probe for `provider` using the credentials
+ * + target the user just entered, WITHOUT persisting anything. Backs
+ * the `connectors:test` IPC. Never throws for an expected
+ * credential/target/network failure — those are returned as a
+ * `{ ok: false }` result so the modal can render a precise, non-secret
+ * message; only genuinely unexpected programmer errors propagate.
+ */
+async function probeConnection(
+  ctx: IpcContext,
+  provider: ProviderId,
+  clientIdRaw: unknown,
+  clientSecretRaw: unknown,
+  connectorConfig: Record<string, string>,
+): Promise<ConnectorProbeResult> {
+  const bridge = ctx.requireBridge();
+  if (!v2BridgeAvailable(bridge) || !isV2Supported(bridge, provider)) {
+    return {
+      provider,
+      ok: false,
+      message: `Connection testing is not available for ${provider} in this build.`,
+    };
+  }
+  let tokens: StoredTokens;
+  try {
+    tokens = await acquireProbeTokens(
+      ctx,
+      provider,
+      clientIdRaw,
+      clientSecretRaw,
+      connectorConfig,
+    );
+  } catch (err) {
+    // Credential acquisition failed (e.g. the user cancelled the OAuth
+    // consent, or a token-method field was missing). Surface the
+    // non-secret reason; nothing was persisted.
+    return { provider, ok: false, message: (err as Error).message };
+  }
+  try {
+    const outcome = await runV2Probe({ provider, bridge, tokens, scopeId: null });
+    ctx.log.info("connector probe succeeded", {
+      provider,
+      observedEvents: outcome.observed_events,
+    });
+    return { provider, ok: true, observedEvents: outcome.observed_events };
+  } catch (err) {
+    if (err instanceof NetworkError || isNetworkError(err)) {
+      ctx.log.info("connector probe offline", { provider });
+      return {
+        provider,
+        ok: false,
+        offline: true,
+        message:
+          "Couldn't reach the provider. Check your network connection and try again.",
+      };
+    }
+    // The bridge flattens framework errors to a non-secret
+    // `"{category}: {message}"` string (auth/permission/not-found/…),
+    // safe to show and log verbatim.
+    ctx.log.info("connector probe failed", {
+      provider,
+      error: (err as Error).message,
+    });
+    return { provider, ok: false, message: (err as Error).message };
+  }
 }
 
 export function registerConnectorHandlers(ctx: IpcContext): void {
@@ -1518,6 +1695,45 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // swallows the failure and logs a warning instead.
       safeAudit(ctx, (b) => b.bridgeLogConnectorConnected(provider));
       return { provider, connected: true, status: "connected" };
+    },
+  );
+
+  idempotentHandle(
+    "connectors:test",
+    async (
+      _event,
+      providerRaw: unknown,
+      clientIdRaw: unknown,
+      clientSecretRaw: unknown,
+      configRaw?: unknown,
+    ): Promise<ConnectorProbeResult> => {
+      const provider = assertProvider(providerRaw, "provider");
+      // Same server-side config validation as `connectors:authenticate`
+      // — a missing/unknown per-target field is a clear error here, not
+      // an opaque connector failure inside the probe.
+      const connectorConfig = assertConnectorConfig(provider, configRaw);
+      try {
+        ctx.rateLimiter.consume(`connectors:test:${provider}`, {
+          tokensPerInterval: 1,
+          intervalMs: 5_000,
+        });
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          throw new Error(
+            `Too many connection tests for ${provider}. Wait ${Math.ceil(
+              err.retryAfterMs / 1000,
+            )}s and try again.`,
+          );
+        }
+        throw err;
+      }
+      return probeConnection(
+        ctx,
+        provider,
+        clientIdRaw,
+        clientSecretRaw,
+        connectorConfig,
+      );
     },
   );
 

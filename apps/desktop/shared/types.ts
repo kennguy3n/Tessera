@@ -1946,6 +1946,28 @@ export interface ConnectorStatusInfo {
   status: string;
 }
 
+/**
+ * Result of a `connectors:test` connection probe (the renderer mirror
+ * of the main-process `ConnectorProbeResult`). Carries NO secret
+ * values — `message` is the connector framework's flattened,
+ * machine-categorised reason, safe to render in the modal.
+ */
+export interface ConnectorProbeResult {
+  provider: string;
+  /** True iff the connector completed an authenticated read. */
+  ok: boolean;
+  /**
+   * Change events the connector surfaced on its first authenticated
+   * read — a reachability signal, present on success. Zero is a valid
+   * success, so the UI keys off `ok`, not this count.
+   */
+  observedEvents?: number;
+  /** True when the failure was a network/transport fault (offline). */
+  offline?: boolean;
+  /** Non-secret, human-readable failure reason. Present iff `!ok`. */
+  message?: string;
+}
+
 export interface DriveFileListResult {
   nextPageToken: string | null;
   files: ConnectorFileInfo[];
@@ -2780,6 +2802,22 @@ export interface ConnectorApi {
      */
     config?: Record<string, string>,
   ) => Promise<ConnectorStatusInfo>;
+  /**
+   * Run a read-only connection probe BEFORE connecting. Acquires a
+   * token the same way `authenticate` does (OAuth browser flow, or the
+   * pasted credential for token-method providers) but does a minimal
+   * authenticated read and discards the token — nothing is written to
+   * the keychain. Lets the modal confirm the entered
+   * credentials/target actually work and surface a precise, non-secret
+   * reason when they don't, instead of leaving the user to discover a
+   * misconfiguration on the first sync.
+   */
+  test: (
+    provider: string,
+    clientId: string,
+    clientSecret: string,
+    config?: Record<string, string>,
+  ) => Promise<ConnectorProbeResult>;
   disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
   status: (provider: string) => Promise<ConnectorStatusInfo>;
   listDriveFiles: (

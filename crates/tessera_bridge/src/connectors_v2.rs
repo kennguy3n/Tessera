@@ -113,6 +113,18 @@ pub mod provider_ids {
     pub const TEAMS: &str = "teams";
     /// Trello boards / cards.
     pub const TRELLO: &str = "trello";
+    /// Zoom cloud recordings / meetings.
+    pub const ZOOM: &str = "zoom";
+    /// Google Calendar events.
+    pub const GOOGLE_CALENDAR: &str = "google_calendar";
+    /// Google Docs documents.
+    pub const GOOGLE_DOCS: &str = "google_docs";
+    /// Google Sheets spreadsheets.
+    pub const GOOGLE_SHEETS: &str = "google_sheets";
+    /// Google Meet conference records / transcripts.
+    pub const GOOGLE_MEET: &str = "google_meet";
+    /// Microsoft SharePoint document libraries.
+    pub const SHAREPOINT: &str = "sharepoint";
 }
 
 /// Errors surfaced by the connector v2 bridge. Kept deliberately small
@@ -211,6 +223,18 @@ pub fn provider_to_kind(provider: &str) -> Option<ConnectorKind> {
         provider_ids::TEAMS => Some(ConnectorKind::Teams),
         #[cfg(feature = "connector-trello")]
         provider_ids::TRELLO => Some(ConnectorKind::Trello),
+        #[cfg(feature = "connector-zoom")]
+        provider_ids::ZOOM => Some(ConnectorKind::Zoom),
+        #[cfg(feature = "connector-google-calendar")]
+        provider_ids::GOOGLE_CALENDAR => Some(ConnectorKind::GoogleCalendar),
+        #[cfg(feature = "connector-google-docs")]
+        provider_ids::GOOGLE_DOCS => Some(ConnectorKind::GoogleDocs),
+        #[cfg(feature = "connector-google-sheets")]
+        provider_ids::GOOGLE_SHEETS => Some(ConnectorKind::GoogleSheets),
+        #[cfg(feature = "connector-google-meet")]
+        provider_ids::GOOGLE_MEET => Some(ConnectorKind::GoogleMeet),
+        #[cfg(feature = "connector-sharepoint")]
+        provider_ids::SHAREPOINT => Some(ConnectorKind::SharePoint),
         _ => None,
     }
 }
@@ -239,6 +263,12 @@ pub fn enabled_providers() -> Vec<ConnectorKind> {
         provider_ids::GITLAB,
         provider_ids::TEAMS,
         provider_ids::TRELLO,
+        provider_ids::ZOOM,
+        provider_ids::GOOGLE_CALENDAR,
+        provider_ids::GOOGLE_DOCS,
+        provider_ids::GOOGLE_SHEETS,
+        provider_ids::GOOGLE_MEET,
+        provider_ids::SHAREPOINT,
     ]
     .into_iter()
     .filter_map(provider_to_kind)
@@ -490,6 +520,30 @@ pub fn build_connector(
         ConnectorKind::Trello => Some(Box::new(connectors::TrelloConnector::new(
             instance, transport, oauth,
         ))),
+        #[cfg(feature = "connector-zoom")]
+        ConnectorKind::Zoom => Some(Box::new(connectors::ZoomConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-google-calendar")]
+        ConnectorKind::GoogleCalendar => Some(Box::new(connectors::GoogleCalendarConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-google-docs")]
+        ConnectorKind::GoogleDocs => Some(Box::new(connectors::GoogleDocsConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-google-sheets")]
+        ConnectorKind::GoogleSheets => Some(Box::new(connectors::GoogleSheetsConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-google-meet")]
+        ConnectorKind::GoogleMeet => Some(Box::new(connectors::GoogleMeetConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-sharepoint")]
+        ConnectorKind::SharePoint => Some(Box::new(connectors::SharePointConnector::new(
+            instance, transport, oauth,
+        ))),
         #[allow(unreachable_patterns)]
         _ => None,
     }
@@ -611,6 +665,12 @@ fn display_name(kind: ConnectorKind) -> &'static str {
         ConnectorKind::GitLab => "GitLab",
         ConnectorKind::Teams => "Microsoft Teams",
         ConnectorKind::Trello => "Trello",
+        ConnectorKind::Zoom => "Zoom",
+        ConnectorKind::GoogleCalendar => "Google Calendar",
+        ConnectorKind::GoogleDocs => "Google Docs",
+        ConnectorKind::GoogleSheets => "Google Sheets",
+        ConnectorKind::GoogleMeet => "Google Meet",
+        ConnectorKind::SharePoint => "SharePoint",
         // The upstream `ConnectorKind` enum carries 130+ providers; we
         // only ship the stable subset, so fall back to the canonical
         // id string for any provider not in the stable set.
@@ -1277,6 +1337,57 @@ pub fn sync(
     )
 }
 
+/// Outcome of a read-only connection probe ("Test connection").
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProbeOutcome {
+    /// Number of change events the connector surfaced on its first
+    /// authenticated read. This is a reachability/authorisation signal
+    /// (proof the token + target resolve and the provider answered),
+    /// NOT a census of the account — document bodies are never fetched
+    /// during a probe.
+    pub observed_events: u32,
+}
+
+/// Perform a lightweight, read-only connection probe before the host
+/// commits a token to disk.
+///
+/// The probe reuses the upstream connector's own authenticated read
+/// path: it resolves the connector for `provider`, then runs a single
+/// `initial_sync` change-feed read with the supplied `token` and
+/// `auth_config`. For per-target providers (e.g. GitLab's project,
+/// Trello's board) that read hits the configured target, so an invalid
+/// credential, a wrong target id, or a missing scope surfaces as a
+/// connector error here — exactly the "fetch the named project/board"
+/// signal the connect UX wants — without persisting anything.
+///
+/// Document bodies are deliberately NOT materialised (no
+/// `fetch_content`, no [`EvidenceSink`]); the probe only confirms the
+/// connector could authenticate and read its change feed. Nothing is
+/// stored: the caller decides whether to persist the token based on
+/// the [`Result`].
+///
+/// # Errors
+///
+/// Propagates connector auth/transport/permission failures and config
+/// errors via [`ConnectorV2Error`], so the host can render a precise,
+/// non-secret failure reason.
+pub fn probe(
+    provider: &str,
+    auth_config: serde_json::Value,
+    token: TokenWire,
+    scope_id: Option<&str>,
+) -> Result<ProbeOutcome> {
+    let scope = parse_scope(scope_id, provider)?;
+    let (connector, config, _instance) = resolve_connector(provider, auth_config, scope)?;
+    let token = token.into_token();
+    let result = connector
+        .initial_sync(&config, &token)
+        .map_err(|e| ConnectorV2Error::from_framework(&e))?;
+    Ok(ProbeOutcome {
+        observed_events: u32::try_from(result.events.len()).unwrap_or(u32::MAX),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1492,6 +1603,12 @@ mod tests {
         "gitlab",
         "teams",
         "trello",
+        "zoom",
+        "google_calendar",
+        "google_docs",
+        "google_sheets",
+        "google_meet",
+        "sharepoint",
     ];
 
     #[test]
@@ -1570,7 +1687,33 @@ mod tests {
         assert!(is_supported("gitlab"));
         assert!(is_supported("teams"));
         assert!(is_supported("trello"));
+        // Tranche 3: read-only, account-wide OAuth2 providers.
+        assert!(is_supported("zoom"));
+        assert!(is_supported("google_calendar"));
+        assert!(is_supported("google_docs"));
+        assert!(is_supported("google_sheets"));
+        assert!(is_supported("google_meet"));
+        assert!(is_supported("sharepoint"));
         assert!(!is_supported("salesforce"));
+        // Discord is intentionally NOT surfaced: it is per-target
+        // (ingests a single channel) and bot-token based, not an
+        // account-wide read-only OAuth2 provider.
+        assert!(!is_supported("discord"));
+    }
+
+    #[test]
+    fn probe_rejects_unknown_provider() {
+        // The probe must reject a provider that is not a feature-enabled
+        // stable connector before touching the network, mirroring the
+        // `authenticate` / `sync` precondition.
+        let err = probe(
+            "not_a_provider",
+            json!({}),
+            TokenWire::from_token(&token()),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConnectorV2Error::UnknownProvider(_)));
     }
 
     #[test]

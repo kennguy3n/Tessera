@@ -30,6 +30,7 @@ export type ConnectorCategory =
   | "CRM"
   | "Issues"
   | "Mail"
+  | "Calendar & Meetings"
   | "Design"
   | "Code";
 
@@ -47,6 +48,7 @@ export const CONNECTOR_CATEGORY_ORDER: readonly ConnectorCategory[] = [
   "CRM",
   "Issues",
   "Mail",
+  "Calendar & Meetings",
   "Design",
   "Code",
 ] as const;
@@ -400,6 +402,113 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     neverTouches: [
       "Creating, moving, editing, or archiving cards",
       "Any board other than the one you configure",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "zoom",
+    label: "Zoom",
+    category: "Calendar & Meetings",
+    keywords: ["zoom", "recordings", "meetings", "transcripts"],
+    consoleUrl: "https://marketplace.zoom.us/develop/create",
+    help: "Create a User-managed OAuth app in the Zoom Marketplace, add the redirect URI below, and add the read-only cloud_recording:read:list_user_recordings scope. Tessera indexes your own cloud recordings — no account-admin access is needed.",
+    secretRequired: true,
+    reads: [
+      "Your Zoom cloud recordings: titles, timestamps, and transcripts (read-only)",
+      "Meeting metadata for recordings you own",
+    ],
+    neverTouches: [
+      "Starting, scheduling, or ending meetings",
+      "Other users' recordings or any account-admin data",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "google_calendar",
+    label: "Google Calendar",
+    category: "Calendar & Meetings",
+    keywords: ["google", "calendar", "events", "schedule", "gcal"],
+    consoleUrl: "https://console.cloud.google.com/apis/credentials",
+    help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console, enable the Google Calendar API, and add the redirect URI below. Tessera reads events from your primary calendar.",
+    secretRequired: true,
+    reads: [
+      "Event titles, descriptions, times, and attendees on your primary calendar (read-only)",
+    ],
+    neverTouches: [
+      "Creating, editing, moving, or deleting events",
+      "Sending invitations or responding on your behalf",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "google_docs",
+    label: "Google Docs",
+    category: "Docs & Wiki",
+    keywords: ["google", "docs", "documents", "drive"],
+    consoleUrl: "https://console.cloud.google.com/apis/credentials",
+    help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console, enable the Google Drive and Google Docs APIs, and add the redirect URI below. Tessera discovers and reads the Google Docs in your Drive.",
+    secretRequired: true,
+    reads: [
+      "Titles and text contents of Google Docs in your Drive (read-only)",
+      "Document metadata (owner, last-modified time)",
+    ],
+    neverTouches: [
+      "Creating, editing, or deleting documents",
+      "Non-Docs files in your Drive",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "google_sheets",
+    label: "Google Sheets",
+    category: "Docs & Wiki",
+    keywords: ["google", "sheets", "spreadsheets", "drive"],
+    consoleUrl: "https://console.cloud.google.com/apis/credentials",
+    help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console, enable the Google Drive and Google Sheets APIs, and add the redirect URI below. Tessera discovers and reads the spreadsheets in your Drive.",
+    secretRequired: true,
+    reads: [
+      "Titles and cell values of Google Sheets in your Drive (read-only)",
+      "Spreadsheet metadata (owner, last-modified time)",
+    ],
+    neverTouches: [
+      "Creating, editing, or deleting spreadsheets",
+      "Non-Sheets files in your Drive",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "google_meet",
+    label: "Google Meet",
+    category: "Calendar & Meetings",
+    keywords: ["google", "meet", "recordings", "transcripts", "conferences"],
+    consoleUrl: "https://console.cloud.google.com/apis/credentials",
+    help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console, enable the Google Meet API, and add the redirect URI below. Tessera reads your conference records and their transcripts.",
+    secretRequired: true,
+    reads: [
+      "Conference records you participated in: timestamps and metadata (read-only)",
+      "Meeting transcripts where available",
+    ],
+    neverTouches: [
+      "Starting, joining, or ending meetings",
+      "Recordings or conferences for other users",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "sharepoint",
+    label: "SharePoint",
+    category: "Storage",
+    keywords: ["microsoft", "sharepoint", "office", "m365", "sites", "documents"],
+    consoleUrl:
+      "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    help: "Register an app in Microsoft Entra ID with the redirect URI below and grant the read-only Sites.Read.All + offline_access scopes. Tessera indexes the document library of your tenant's root SharePoint site.",
+    secretRequired: true,
+    reads: [
+      "File and folder names, metadata, and contents in your SharePoint document libraries (read-only)",
+    ],
+    neverTouches: [
+      "Creating, editing, moving, or deleting files",
+      "Site settings, permissions, or lists outside document libraries",
       ...READ_ONLY_GUARANTEES,
     ],
   },

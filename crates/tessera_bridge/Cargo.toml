@@ -63,6 +63,12 @@ connectors-v2-stable = [
     "connector-gitlab",
     "connector-teams",
     "connector-trello",
+    "connector-zoom",
+    "connector-google-calendar",
+    "connector-google-docs",
+    "connector-google-sheets",
+    "connector-google-meet",
+    "connector-sharepoint",
 ]
 connector-google-drive = ["connectors-v2"]
 connector-onedrive = ["connectors-v2"]
@@ -82,6 +88,12 @@ connector-asana = ["connectors-v2"]
 connector-gitlab = ["connectors-v2"]
 connector-teams = ["connectors-v2"]
 connector-trello = ["connectors-v2"]
+connector-zoom = ["connectors-v2"]
+connector-google-calendar = ["connectors-v2"]
+connector-google-docs = ["connectors-v2"]
+connector-google-sheets = ["connectors-v2"]
+connector-google-meet = ["connectors-v2"]
+connector-sharepoint = ["connectors-v2"]
 
 [dependencies]
 # Knowledge substrate connector layer, pinned by rev for reproducible

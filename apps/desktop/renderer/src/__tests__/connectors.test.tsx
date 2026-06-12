@@ -647,6 +647,12 @@ describe("connectorDescriptors", () => {
       "gitlab",
       "teams",
       "trello",
+      "zoom",
+      "google_calendar",
+      "google_docs",
+      "google_sheets",
+      "google_meet",
+      "sharepoint",
     ]);
     // Every descriptor must carry a known category plus
     // scope-transparency copy so no card renders without its
@@ -740,6 +746,7 @@ describe("connectorDescriptors", () => {
         "onedrive",
         "dropbox",
         "box",
+        "sharepoint",
       ]);
     });
   });
