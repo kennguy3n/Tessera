@@ -3,6 +3,7 @@ import {
   parseConceptGraph,
   computeRadialLayout,
   computeForceLayout,
+  adaptiveIterations,
   computeFitBox,
   computeDegrees,
   buildAdjacency,
@@ -417,6 +418,59 @@ describe("computeForceLayout", () => {
     );
     const layout = computeForceLayout(many, { width: 700, height: 500 });
     expect(layout.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
+  });
+
+  it("stays finite and deterministic for a large graph using the adaptive default", () => {
+    const big = parseConceptGraph(
+      JSON.stringify({
+        nodes: Array.from({ length: 400 }, (_, i) => ({
+          id: `n${i}`,
+          label: `N${i}`,
+          state: "candidate",
+          scope_id: "s",
+          connections_count: 1,
+        })),
+        edges: Array.from({ length: 399 }, (_, i) => ({
+          id: `e${i}`,
+          from: `n${i}`,
+          to: `n${i + 1}`,
+          relation_type: "is_a",
+        })),
+      }),
+    );
+    const a = computeForceLayout(big, { width: 700, height: 500 });
+    const b = computeForceLayout(big, { width: 700, height: 500 });
+    expect(a.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
+    expect(a.nodes.map((n) => [n.x, n.y])).toEqual(b.nodes.map((n) => [n.x, n.y]));
+  });
+});
+
+describe("adaptiveIterations", () => {
+  it("runs the full count for small graphs and floors/decreases for large ones", () => {
+    expect(adaptiveIterations(1)).toBe(320);
+    expect(adaptiveIterations(150)).toBe(320);
+    // Beyond the full-iteration node count it scales down ∝ 1/n²…
+    expect(adaptiveIterations(300)).toBeLessThan(320);
+    expect(adaptiveIterations(300)).toBeGreaterThanOrEqual(60);
+    // …monotonically non-increasing, and never below the floor.
+    expect(adaptiveIterations(600)).toBeLessThanOrEqual(adaptiveIterations(300));
+    expect(adaptiveIterations(600)).toBe(60);
+    expect(adaptiveIterations(100000)).toBe(60);
+  });
+
+  it("holds work flat while the ∝1/n² schedule is active (before the floor)", () => {
+    const baseline = 150 * 150 * adaptiveIterations(150);
+    // 200 and 300 are still above MIN_ITERATIONS, so work tracks ~baseline.
+    expect(200 * 200 * adaptiveIterations(200)).toBeLessThanOrEqual(baseline * 1.05);
+    expect(300 * 300 * adaptiveIterations(300)).toBeLessThanOrEqual(baseline * 1.05);
+  });
+
+  it("keeps work far below a naive fixed-320 layout at large node counts", () => {
+    for (const n of [200, 300, 450, 600]) {
+      expect(n * n * adaptiveIterations(n)).toBeLessThan(n * n * 320);
+    }
+    // At the node cap the saving is large (>3x fewer repulsion ops).
+    expect(320 / adaptiveIterations(600)).toBeGreaterThan(3);
   });
 });
 

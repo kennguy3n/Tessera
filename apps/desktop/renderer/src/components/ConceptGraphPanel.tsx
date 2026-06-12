@@ -15,6 +15,7 @@ import {
   computeFitBox,
   computeForceLayout,
   filterGraphView,
+  freezeView,
   incidentTo,
   localGraphView,
   RELATION_LABELS,
@@ -467,7 +468,9 @@ export default function ConceptGraphPanel({
     const nodes = graph.nodes.filter((n) => n.scopeId === effectiveScopeFilter);
     const ids = new Set(nodes.map((n) => n.id));
     const edges = graph.edges.filter((e) => ids.has(e.from) && ids.has(e.to));
-    return { ...graph, nodes, edges };
+    // Freeze like every other derived view (filter/local-graph) so the
+    // deep-frozen invariant holds uniformly for all views in the component.
+    return freezeView({ ...graph, nodes, edges });
   }, [graph, effectiveScopeFilter]);
 
   // ----- which relation types / node kinds exist (for legend + filters) -----
@@ -530,8 +533,16 @@ export default function ConceptGraphPanel({
   }, []);
 
   const [dragPos, setDragPos] = useState<Map<string, Point>>(new Map());
+  // Mirror drag overrides into a ref so event callbacks can read the live
+  // map without taking `dragPos` as a dependency (which would otherwise
+  // recreate those callbacks — and re-prop every node — on every drag frame).
+  const dragPosRef = useRef<Map<string, Point>>(dragPos);
+  const commitDragPos = useCallback((next: Map<string, Point>) => {
+    dragPosRef.current = next;
+    setDragPos(next);
+  }, []);
   // Drag overrides are stale once the layout (data/filter/size) changes.
-  useEffect(() => setDragPos(new Map()), [layout]);
+  useEffect(() => commitDragPos(new Map()), [layout, commitDragPos]);
 
   useEffect(() => {
     const targets = layout.nodes;
@@ -646,9 +657,9 @@ export default function ConceptGraphPanel({
     setLocalMode(false);
     setDisabledRelations(new Set());
     setDisabledStates(new Set());
-    setDragPos(new Map());
+    commitDragPos(new Map());
     applyViewBox(baseFit);
-  }, [applyViewBox, baseFit]);
+  }, [applyViewBox, baseFit, commitDragPos]);
 
   // ===== pointer interactions: drag-to-pan + drag-node + click-to-select =====
   const panRef = useRef<{ x: number; y: number; box: FitBox } | null>(null);
@@ -690,11 +701,9 @@ export default function ConceptGraphPanel({
           suppressClickRef.current = true;
         }
         const nextPoint = { x: drag.origin.x + dx, y: drag.origin.y + dy };
-        setDragPos((prev) => {
-          const next = new Map(prev);
-          next.set(drag.id, nextPoint);
-          return next;
-        });
+        const next = new Map(dragPosRef.current);
+        next.set(drag.id, nextPoint);
+        commitDragPos(next);
         return;
       }
 
@@ -710,7 +719,7 @@ export default function ConceptGraphPanel({
         });
       }
     },
-    [applyViewBox],
+    [applyViewBox, commitDragPos],
   );
 
   const endPointer = useCallback((e: ReactPointerEvent<SVGSVGElement>) => {
@@ -735,7 +744,7 @@ export default function ConceptGraphPanel({
     (e: ReactPointerEvent<SVGGElement>, node: PositionedNode) => {
       e.stopPropagation();
       const current =
-        dragPos.get(node.id) ??
+        dragPosRef.current.get(node.id) ??
         displayRef.current.get(node.id) ?? { x: node.x, y: node.y };
       dragNodeRef.current = {
         id: node.id,
@@ -746,7 +755,7 @@ export default function ConceptGraphPanel({
       };
       svgRef.current?.setPointerCapture(e.pointerId);
     },
-    [dragPos],
+    [],
   );
 
   const onNodeClick = useCallback((id: string) => {

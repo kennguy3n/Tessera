@@ -177,7 +177,7 @@ function normalizeTruncation(value: unknown): GraphTruncation {
  * (filter / find / map / `[...nodes].sort`) already copy before
  * mutating, so freezing is safe. (Devin Review PR #120.)
  */
-function freezeView(view: ConceptGraphView): ConceptGraphView {
+export function freezeView(view: ConceptGraphView): ConceptGraphView {
   for (const n of view.nodes) {
     if (n.positionHint) Object.freeze(n.positionHint);
     Object.freeze(n);
@@ -555,8 +555,41 @@ export function filterGraphView(
   return freezeView({ ...view, nodes, edges });
 }
 
+/** Iteration count run by {@link computeForceLayout} for a small graph. */
+const DEFAULT_ITERATIONS = 320;
+/** Floor so even large graphs still settle into a usable shape. */
+const MIN_ITERATIONS = 60;
+/** Node count up to which the full {@link DEFAULT_ITERATIONS} is run. */
+const FULL_ITERATION_NODES = 150;
+
+/**
+ * Deterministic, node-count-adaptive iteration count for the force layout.
+ *
+ * The repulsion pass is O(n²) per iteration, so running a fixed iteration
+ * count makes total work grow as O(n²·iters). To keep the worst case near
+ * the node cap from blocking the render thread, the iteration count is held
+ * at {@link DEFAULT_ITERATIONS} up to {@link FULL_ITERATION_NODES} and then
+ * scaled ∝ 1/n² beyond it, so n²·iters stays roughly flat (floored at
+ * {@link MIN_ITERATIONS}). A pure function of `n`, so the layout stays
+ * deterministic and reproducible.
+ */
+export function adaptiveIterations(n: number): number {
+  if (n <= FULL_ITERATION_NODES) return DEFAULT_ITERATIONS;
+  const scaled = Math.round(
+    (DEFAULT_ITERATIONS * FULL_ITERATION_NODES * FULL_ITERATION_NODES) /
+      (n * n),
+  );
+  return Math.max(MIN_ITERATIONS, scaled);
+}
+
 export interface ForceLayoutOptions extends LayoutOptions {
-  /** Simulation iterations. More = better-settled, O(n²) per step. */
+  /**
+   * Simulation iterations. More = better-settled, O(n²) per step. When
+   * omitted the count adapts to the node count (see {@link adaptiveIterations}):
+   * the full {@link DEFAULT_ITERATIONS} for small graphs, scaled down for
+   * large ones so total work stays bounded. An explicit value is honored
+   * exactly (keeps callers / tests deterministic).
+   */
   iterations?: number;
   /** Ideal edge length multiplier: k = idealEdge · √(area / n). */
   idealEdge?: number;
@@ -571,15 +604,17 @@ export interface ForceLayoutOptions extends LayoutOptions {
  * `view` and options always yield identical coordinates. Determinism is
  * achieved by (1) seeding node positions on a fixed phyllotaxis spiral
  * keyed on the stable {@link compareNodesForLayout} order — never
- * `Math.random` — and (2) running a fixed `iterations` count with a
- * deterministic cooling schedule. This lets the renderer animate toward a
- * stable target while the layout itself stays unit-testable and
- * reproducible across machines.
+ * `Math.random` — and (2) running a deterministic, node-count-adaptive
+ * iteration count (a pure function of `n`) with a deterministic cooling
+ * schedule. This lets the renderer animate toward a stable target while
+ * the layout itself stays unit-testable and reproducible across machines.
  *
- * The simulation combines repulsion between every node pair (O(n²),
- * comfortably within the ~120-node cap), spring attraction along edges, a
- * gentle centering gravity, and a temperature that caps per-step
- * displacement and decays linearly to zero. Final coordinates are clamped
+ * The simulation combines repulsion between every node pair (O(n²) per
+ * step — see {@link adaptiveIterations} for how the iteration count is
+ * bounded so the worst case near the node cap stays cheap), spring
+ * attraction along edges, a gentle centering gravity, and a temperature
+ * that caps per-step displacement and decays linearly to zero. Final
+ * coordinates are clamped
  * to the canvas interior (accounting for each node's radius). Node radius
  * scales with the square root of visible degree between `minRadius` and
  * `maxRadius` so area — not diameter — tracks connectivity.
@@ -593,11 +628,16 @@ export function computeForceLayout(
   const minRadius = options.minRadius ?? 12;
   const maxRadius = options.maxRadius ?? 34;
   const padding = options.padding ?? 56;
-  const iterations = Math.max(0, Math.trunc(options.iterations ?? 320));
   const gravity = options.gravity ?? 0.06;
 
   const n = view.nodes.length;
   if (n === 0) return { width, height, nodes: [] };
+
+  // Honor an explicit iteration count exactly; otherwise adapt to `n`.
+  const iterations =
+    options.iterations !== undefined
+      ? Math.max(0, Math.trunc(options.iterations))
+      : adaptiveIterations(n);
 
   const ordered = [...view.nodes].sort(compareNodesForLayout);
   const degrees = computeDegrees(view);
