@@ -215,7 +215,18 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
 }
 
 fn find_break_point(text: &str, start: usize, target: usize) -> usize {
-    let raw_start = if target > 100 { target - 100 } else { start };
+    // Look back up to 100 bytes from `target` for a natural break, but
+    // never before this chunk's own `start`. Clamping to `start` is
+    // load-bearing: when `chunk_size < 100`, `target - 100` lands BEFORE
+    // `start`, and the `rfind`s below (which return the *last* break in
+    // the window) could then resolve to a break sitting before `start`.
+    // That makes the returned `actual_end < offset` in `chunk_text`, so
+    // the subsequent `&text[offset..actual_end]` slice panics (begin >
+    // end) — crashing the indexing worker on any input with a long
+    // unbroken token (URLs, hashes, base64, minified code). With the
+    // clamp the search window is always within `[start, target]`, so the
+    // worst case is "no break found" → cut at `target`.
+    let raw_start = start.max(target.saturating_sub(100));
     let search_start = ceil_char_boundary(text, raw_start);
     let target = floor_char_boundary(text, target);
 
@@ -351,5 +362,32 @@ mod tests {
         };
         let chunks = chunk_text("test.txt", &text, &config);
         assert!(chunks.len() >= 2);
+    }
+
+    #[test]
+    fn small_chunk_size_with_long_unbroken_token_does_not_panic() {
+        // Regression: with `chunk_size < 100`, the break-point search
+        // window used to extend before the chunk's own start (`target -
+        // 100 < offset`). On input whose only break char sits before the
+        // current offset — e.g. a single space followed by a long
+        // unbroken run (URL / hash / base64 / minified code) — `rfind`
+        // returned a position < offset, so `chunk_text` sliced
+        // `&text[offset..actual_end]` with `actual_end < offset` and
+        // panicked, crashing the indexing worker. The window is now
+        // clamped to `[start, target]`.
+        let text = format!("{} {}", "x".repeat(60), "y".repeat(200));
+        let config = ChunkerConfig {
+            chunk_size: 30,
+            chunk_overlap: 5,
+        };
+        let chunks = chunk_text("blob.txt", &text, &config);
+        assert!(!chunks.is_empty());
+        // Every chunk slice is well-formed and non-decreasing in offset.
+        let mut last_offset = 0;
+        for chunk in &chunks {
+            assert!(!chunk.content.is_empty());
+            assert!(chunk.byte_offset >= last_offset);
+            last_offset = chunk.byte_offset;
+        }
     }
 }
