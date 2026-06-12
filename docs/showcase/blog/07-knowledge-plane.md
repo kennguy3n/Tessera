@@ -158,12 +158,6 @@ The tables earlier in this post are still generated straight from the substrate 
 genuine — but you can now also open the Memory page and the Knowledge tab in the shipping build
 and see the same engine's output over your own sources.
 
-<!-- TODO(screenshots): add captures of the shipping Memory page, concept-graph panel,
-     Knowledge citation tab, and connector gallery here, named
-     flow-07-memory-page.png / flow-08-concept-graph.png / flow-09-knowledge-tab.png /
-     flow-10-connector-gallery.png under ../assets/screenshots/. -->
-
-
 ---
 
 Next: [How Tessera's approach compares to its competitors — honestly →](08-competitive-assessment.md) ·
