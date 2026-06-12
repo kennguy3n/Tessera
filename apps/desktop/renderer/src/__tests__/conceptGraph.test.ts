@@ -2,9 +2,46 @@ import { describe, it, expect } from "vitest";
 import {
   parseConceptGraph,
   computeRadialLayout,
+  computeForceLayout,
+  computeFitBox,
+  computeDegrees,
+  buildAdjacency,
+  incidentTo,
+  localGraphView,
+  filterGraphView,
   RELATION_LABELS,
   type ConceptGraphView,
 } from "../utils/conceptGraph";
+
+/**
+ * A small mixed graph reused by the interaction-utility suites below: a
+ * 4-relation chain (a→b→c→d) plus a side branch (b→e) and a contradicting
+ * edge (d⇢a). States span canonical / candidate / superseded / contradicted
+ * so node-kind filtering has something to bite on.
+ */
+function sampleGraph(): ConceptGraphView {
+  return parseConceptGraph(
+    JSON.stringify({
+      nodes: [
+        { id: "a", label: "Atlas", state: "canonical", scope_id: "s1", connections_count: 2 },
+        { id: "b", label: "Beacon", state: "candidate", scope_id: "s1", connections_count: 3 },
+        { id: "c", label: "Cosmos", state: "candidate", scope_id: "s1", connections_count: 2 },
+        { id: "d", label: "Delta", state: "superseded", scope_id: "s1", connections_count: 2 },
+        { id: "e", label: "Echo", state: "contradicted", scope_id: "s1", connections_count: 1 },
+      ],
+      edges: [
+        { id: "ab", from: "a", to: "b", relation_type: "is_a", scope_id: "s1" },
+        { id: "bc", from: "b", to: "c", relation_type: "part_of", scope_id: "s1" },
+        { id: "cd", from: "c", to: "d", relation_type: "supersedes", scope_id: "s1" },
+        { id: "be", from: "b", to: "e", relation_type: "part_of", scope_id: "s1" },
+        { id: "da", from: "d", to: "a", relation_type: "contradicts", scope_id: "s1" },
+      ],
+      scope_filter: [],
+      depth: 2,
+      truncation: "complete",
+    }),
+  );
+}
 
 /**
  * Unit + snapshot coverage for the concept-graph parse/layout utility.
@@ -182,5 +219,224 @@ describe("computeRadialLayout", () => {
     expect(layout.nodes).toEqual([]);
     expect(layout.width).toBeGreaterThan(0);
     expect(layout.height).toBeGreaterThan(0);
+  });
+});
+
+describe("computeDegrees", () => {
+  it("counts visible incident edges per node (self loop counts once)", () => {
+    const view = parseConceptGraph(
+      JSON.stringify({
+        nodes: [
+          { id: "a", label: "A", state: "candidate", scope_id: "s", connections_count: 0 },
+          { id: "b", label: "B", state: "candidate", scope_id: "s", connections_count: 0 },
+        ],
+        edges: [
+          { id: "ab", from: "a", to: "b", relation_type: "is_a", scope_id: "s" },
+          { id: "aa", from: "a", to: "a", relation_type: "part_of", scope_id: "s" },
+        ],
+      }),
+    );
+    const degrees = computeDegrees(view);
+    expect(degrees.get("a")).toBe(2); // ab + self loop (once)
+    expect(degrees.get("b")).toBe(1);
+  });
+
+  it("reports zero for isolated nodes", () => {
+    const view = parseConceptGraph(
+      JSON.stringify({
+        nodes: [{ id: "x", label: "X", state: "candidate", scope_id: "s", connections_count: 9 }],
+        edges: [],
+      }),
+    );
+    expect(computeDegrees(view).get("x")).toBe(0);
+  });
+});
+
+describe("buildAdjacency / incidentTo", () => {
+  it("maps each node to its undirected neighbors and incident edges", () => {
+    const adj = buildAdjacency(sampleGraph());
+    expect([...(adj.neighbors.get("b") ?? [])].sort()).toEqual(["a", "c", "e"]);
+    expect([...(adj.edges.get("b") ?? [])].sort()).toEqual(["ab", "bc", "be"]);
+  });
+
+  it("excludes self loops from the neighbor set", () => {
+    const view = parseConceptGraph(
+      JSON.stringify({
+        nodes: [{ id: "a", label: "A", state: "candidate", scope_id: "s", connections_count: 0 }],
+        edges: [{ id: "aa", from: "a", to: "a", relation_type: "is_a", scope_id: "s" }],
+      }),
+    );
+    const adj = buildAdjacency(view);
+    expect([...(adj.neighbors.get("a") ?? [])]).toEqual([]);
+    expect([...(adj.edges.get("a") ?? [])]).toEqual(["aa"]);
+  });
+
+  it("returns the focus + direct neighbors and incident edges for highlighting", () => {
+    const { nodeIds, edgeIds } = incidentTo(sampleGraph(), "b");
+    expect([...nodeIds].sort()).toEqual(["a", "b", "c", "e"]);
+    expect([...edgeIds].sort()).toEqual(["ab", "bc", "be"]);
+  });
+
+  it("returns empty sets for an absent focus id", () => {
+    const { nodeIds, edgeIds } = incidentTo(sampleGraph(), "ghost");
+    expect(nodeIds.size).toBe(0);
+    expect(edgeIds.size).toBe(0);
+  });
+});
+
+describe("localGraphView", () => {
+  it("keeps only the 1-hop neighborhood of the focus", () => {
+    const local = localGraphView(sampleGraph(), "b", 1);
+    expect(local.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c", "e"]);
+    // Edges among the kept nodes only — "cd"/"da" reach out of the hop set
+    // and are dropped, but "ab" (a↔b) is kept since both endpoints survive.
+    expect(local.edges.map((e) => e.id).sort()).toEqual(["ab", "bc", "be"]);
+  });
+
+  it("expands to the 2-hop neighborhood", () => {
+    const local = localGraphView(sampleGraph(), "e", 2);
+    // e → b (1 hop) → a, c (2 hops). d is 3 hops from e, excluded.
+    expect(local.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c", "e"]);
+  });
+
+  it("treats hops < 1 as a single hop", () => {
+    const local = localGraphView(sampleGraph(), "b", 0);
+    expect(local.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c", "e"]);
+  });
+
+  it("returns the original view unchanged when the focus is absent", () => {
+    const view = sampleGraph();
+    expect(localGraphView(view, "ghost", 1)).toBe(view);
+  });
+
+  it("produces a deeply-frozen sub-view", () => {
+    const local = localGraphView(sampleGraph(), "b", 1);
+    expect(Object.isFrozen(local)).toBe(true);
+    expect(Object.isFrozen(local.nodes)).toBe(true);
+    expect(() => local.nodes.push(local.nodes[0])).toThrow();
+  });
+});
+
+describe("filterGraphView", () => {
+  it("drops edges whose relation type is disabled", () => {
+    const filtered = filterGraphView(sampleGraph(), {
+      relations: new Set(["is_a", "part_of"]),
+    });
+    expect(filtered.edges.map((e) => e.id).sort()).toEqual(["ab", "bc", "be"]);
+    // All nodes survive (only edges are filtered on the relation axis).
+    expect(filtered.nodes).toHaveLength(5);
+  });
+
+  it("drops nodes whose state is disabled and any edges touching them", () => {
+    const filtered = filterGraphView(sampleGraph(), {
+      states: new Set(["canonical", "candidate"]),
+    });
+    // "d" (superseded) and "e" (contradicted) drop out.
+    expect(filtered.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c"]);
+    // Edges touching d/e ("cd", "be", "da") are removed; "ab"/"bc" remain.
+    expect(filtered.edges.map((e) => e.id).sort()).toEqual(["ab", "bc"]);
+  });
+
+  it("returns the input unchanged when no axis is constrained", () => {
+    const view = sampleGraph();
+    expect(filterGraphView(view, {})).toBe(view);
+  });
+
+  it("applies relation and state filters together", () => {
+    const filtered = filterGraphView(sampleGraph(), {
+      relations: new Set(["part_of"]),
+      states: new Set(["candidate", "contradicted"]),
+    });
+    expect(filtered.nodes.map((n) => n.id).sort()).toEqual(["b", "c", "e"]);
+    expect(filtered.edges.map((e) => e.id).sort()).toEqual(["bc", "be"]);
+  });
+});
+
+describe("computeForceLayout", () => {
+  const view = sampleGraph();
+
+  it("is fully deterministic across runs (same input → identical coords)", () => {
+    const a = computeForceLayout(view, { width: 600, height: 400 });
+    const b = computeForceLayout(view, { width: 600, height: 400 });
+    expect(a).toEqual(b);
+  });
+
+  it("places every node strictly inside the padded canvas", () => {
+    const width = 600;
+    const height = 400;
+    const padding = 56;
+    const layout = computeForceLayout(view, { width, height, padding });
+    expect(layout.nodes).toHaveLength(view.nodes.length);
+    for (const n of layout.nodes) {
+      expect(Number.isFinite(n.x)).toBe(true);
+      expect(Number.isFinite(n.y)).toBe(true);
+      expect(n.x).toBeGreaterThanOrEqual(padding + n.radius - 1e-6);
+      expect(n.x).toBeLessThanOrEqual(width - padding - n.radius + 1e-6);
+      expect(n.y).toBeGreaterThanOrEqual(padding + n.radius - 1e-6);
+      expect(n.y).toBeLessThanOrEqual(height - padding - n.radius + 1e-6);
+    }
+  });
+
+  it("sizes the most-connected node larger than a leaf", () => {
+    const layout = computeForceLayout(view);
+    const hub = layout.nodes.find((n) => n.id === "b")!; // degree 3
+    const leaf = layout.nodes.find((n) => n.id === "e")!; // degree 1
+    expect(hub.radius).toBeGreaterThan(leaf.radius);
+  });
+
+  it("centers a single node and never produces NaN", () => {
+    const single = parseConceptGraph(
+      JSON.stringify({
+        nodes: [{ id: "solo", label: "Solo", state: "candidate", scope_id: "s", connections_count: 0 }],
+        edges: [],
+      }),
+    );
+    const layout = computeForceLayout(single, { width: 500, height: 300 });
+    expect(layout.nodes[0].x).toBe(250);
+    expect(layout.nodes[0].y).toBe(150);
+  });
+
+  it("handles an empty graph without throwing", () => {
+    const layout = computeForceLayout(parseConceptGraph("{}"));
+    expect(layout.nodes).toEqual([]);
+    expect(layout.width).toBeGreaterThan(0);
+  });
+
+  it("keeps coincident-seeded / disconnected nodes finite (no repulsion blowup)", () => {
+    const many = parseConceptGraph(
+      JSON.stringify({
+        nodes: Array.from({ length: 30 }, (_, i) => ({
+          id: `n${i}`,
+          label: `N${i}`,
+          state: "candidate",
+          scope_id: "s",
+          connections_count: 0,
+        })),
+        edges: [],
+      }),
+    );
+    const layout = computeForceLayout(many, { width: 700, height: 500 });
+    expect(layout.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
+  });
+});
+
+describe("computeFitBox", () => {
+  it("returns the full canvas for an empty layout", () => {
+    const box = computeFitBox(computeForceLayout(parseConceptGraph("{}")));
+    expect(box.x).toBe(0);
+    expect(box.y).toBe(0);
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+  });
+
+  it("bounds every node (with radius) inside the box", () => {
+    const layout = computeForceLayout(sampleGraph(), { width: 600, height: 400 });
+    const box = computeFitBox(layout, { padding: 20, labelPadding: 10 });
+    for (const n of layout.nodes) {
+      expect(n.x - n.radius).toBeGreaterThanOrEqual(box.x);
+      expect(n.x + n.radius).toBeLessThanOrEqual(box.x + box.width);
+      expect(n.y - n.radius).toBeGreaterThanOrEqual(box.y);
+      expect(n.y + n.radius).toBeLessThanOrEqual(box.y + box.height);
+    }
   });
 });

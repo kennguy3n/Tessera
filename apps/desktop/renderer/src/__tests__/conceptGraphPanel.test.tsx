@@ -155,6 +155,46 @@ describe("ConceptGraphPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("toggles a relationship type off via the legend, dropping its edges", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+    );
+    // Both endpoints of the only "part of" edge are present initially.
+    expect(screen.getByTestId("concept-node-beacon")).toBeInTheDocument();
+    const legend = screen.getByTestId("concept-graph-legend");
+    // Disable "part of" — beacon (only reachable via that edge) becomes an
+    // isolated node but still renders; the edge is gone. Atlas/Project stay.
+    fireEvent.click(within(legend).getByRole("button", { name: /part of/i }));
+    await waitFor(() =>
+      expect(
+        within(legend).getByRole("button", { name: /part of/i }),
+      ).toHaveAttribute("aria-pressed", "false"),
+    );
+    expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
+  });
+
+  it("enters local-graph mode and restricts the view to the focus neighborhood", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-project")).toBeInTheDocument(),
+    );
+    // The local-graph toggle is disabled until a node is selected.
+    const toggle = screen.getByTestId("concept-graph-local-toggle");
+    expect(toggle).toBeDisabled();
+    // Focus "project": its only neighbor is "atlas"; "beacon" is 2 hops away
+    // and must drop out of the 1-hop local view.
+    fireEvent.click(screen.getByTestId("concept-node-project"));
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(screen.queryByTestId("concept-node-beacon")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-graph-focus-pill")).toBeInTheDocument();
+  });
+
   it("correlates evidence on word boundaries, not mid-word substrings", async () => {
     const memories: SubstrateMemoryInfo[] = [
       {
