@@ -43,6 +43,8 @@ const EVIDENCE: SubstrateMemoryInfo[] = [
 
 describe("ConceptGraphPanel", () => {
   beforeEach(() => {
+    // Persistence writes to localStorage; isolate every test from the next.
+    window.localStorage.clear();
     window.tessera.substrate.getConceptGraph = vi
       .fn()
       .mockResolvedValue(GRAPH_JSON);
@@ -284,5 +286,167 @@ describe("ConceptGraphPanel", () => {
     } finally {
       raf.mockRestore();
     }
+  });
+
+  it("uses a roving tabindex: exactly one node is tab-focusable", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    const nodes = screen
+      .getAllByTestId(/^concept-node-/)
+      .filter((el) => el.getAttribute("role") === "button");
+    const focusable = nodes.filter((n) => n.getAttribute("tabindex") === "0");
+    expect(focusable).toHaveLength(1);
+    // Every other node is reachable only by arrow keys (tabindex -1).
+    expect(nodes.filter((n) => n.getAttribute("tabindex") === "-1")).toHaveLength(
+      nodes.length - 1,
+    );
+  });
+
+  it("selects a node with Enter and announces it on the live region", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Enter" });
+    expect(await screen.findByTestId("concept-detail")).toBeInTheDocument();
+    // Debounced live-region announcement names the node + its degree.
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-graph-live")).toHaveTextContent(
+        /Selected Atlas, 2 connections/,
+      ),
+    );
+  });
+
+  it("moves the roving focus to the highest-degree node on End", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-project")).toBeInTheDocument(),
+    );
+    // From any node, End targets the hub (atlas, degree 2).
+    fireEvent.keyDown(screen.getByTestId("concept-node-project"), { key: "End" });
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toHaveAttribute(
+        "tabindex",
+        "0",
+      ),
+    );
+  });
+
+  it("clears the selection with Escape", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Enter" });
+    expect(await screen.findByTestId("concept-detail")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-detail-empty")).toBeInTheDocument(),
+    );
+  });
+
+  it("pans the canvas with arrow keys when the SVG is focused", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    const svg = await screen.findByTestId("concept-graph-svg");
+    const xOf = (vb: string | null) => Number(vb?.split(/\s+/)[0]);
+    const before = xOf(svg.getAttribute("viewBox"));
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    await waitFor(() =>
+      expect(xOf(svg.getAttribute("viewBox"))).toBeGreaterThan(before),
+    );
+  });
+
+  it("zooms with +/- and fits with 0 when the SVG is focused", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    const svg = await screen.findByTestId("concept-graph-svg");
+    const widthOf = (vb: string | null) => Number(vb?.split(/\s+/)[2]);
+    const fit = widthOf(svg.getAttribute("viewBox"));
+    // Zoom in (+) shrinks the viewBox width.
+    fireEvent.keyDown(svg, { key: "+" });
+    await waitFor(() =>
+      expect(widthOf(svg.getAttribute("viewBox"))).toBeLessThan(fit),
+    );
+    // `0` fits to view, restoring the original width.
+    fireEvent.keyDown(svg, { key: "0" });
+    await waitFor(() =>
+      expect(widthOf(svg.getAttribute("viewBox"))).toBeCloseTo(fit, 3),
+    );
+  });
+
+  it("ignores canvas keys that bubble up from a focused node", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    const svg = await screen.findByTestId("concept-graph-svg");
+    const widthOf = (vb: string | null) => Number(vb?.split(/\s+/)[2]);
+    const before = widthOf(svg.getAttribute("viewBox"));
+    // A '+' originating on a node must not zoom the canvas (node handles its
+    // own keys); the guard is target === currentTarget.
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "+" });
+    expect(widthOf(svg.getAttribute("viewBox"))).toBe(before);
+  });
+
+  it("persists filters + selection across a remount (same scope)", async () => {
+    const first = render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    // Make some view changes: select a node and toggle labels-all on.
+    fireEvent.click(screen.getByTestId("concept-node-atlas"));
+    await screen.findByTestId("concept-detail");
+    fireEvent.click(screen.getByLabelText("Toggle all labels"));
+    // Wait for the debounced write to land in localStorage.
+    await waitFor(() =>
+      expect(
+        window.localStorage.getItem(
+          "tessera.conceptGraph.viewState.scope-x",
+        ),
+      ).toBeTruthy(),
+    );
+    first.unmount();
+
+    // Remount the same scope: the selection is restored from storage.
+    render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />);
+    expect(await screen.findByTestId("concept-detail")).toHaveTextContent("Atlas");
+  });
+
+  it("does not strand the user when a persisted selection no longer exists", async () => {
+    // Seed storage for scope-x with a selection + local mode for a node that
+    // is absent from the graph the component will actually load.
+    window.localStorage.setItem(
+      "tessera.conceptGraph.viewState.scope-x",
+      JSON.stringify({
+        version: 1,
+        selectedId: "ghost",
+        localMode: true,
+        localHops: 1,
+      }),
+    );
+    render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    // The graph renders normally (no crash, not stuck in an empty local view).
+    expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
+    expect(screen.queryByTestId("concept-graph-focus-pill")).not.toBeInTheDocument();
+    expect(screen.getByTestId("concept-detail-empty")).toBeInTheDocument();
+  });
+
+  it("keeps view state isolated between scopes", async () => {
+    const a = render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByLabelText("Toggle all labels"));
+    await waitFor(() =>
+      expect(
+        window.localStorage.getItem("tessera.conceptGraph.viewState.scope-1"),
+      ).toBeTruthy(),
+    );
+    a.unmount();
+    // A different scope starts from defaults, untouched by scope-1's write.
+    expect(
+      window.localStorage.getItem("tessera.conceptGraph.viewState.scope-2"),
+    ).toBeNull();
   });
 });

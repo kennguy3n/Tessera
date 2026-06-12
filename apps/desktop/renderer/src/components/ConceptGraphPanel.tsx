@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCspNonce } from "../utils/cspNonce";
@@ -13,19 +14,34 @@ import { useConceptGraph } from "../hooks/useSubstrate";
 import { usePrefersReducedMotion } from "../hooks/usePrefersReducedMotion";
 import {
   computeDegrees,
+  computeEdgeCurves,
   computeFitBox,
   computeForceLayout,
   filterGraphView,
+  findNeighborInDirection,
   freezeView,
+  highestDegreeNodeId,
   incidentTo,
   localGraphView,
+  placeEdgeLabels,
+  quadraticControlPoint,
+  quadraticEdgePath,
   RELATION_LABELS,
   type ConceptGraphView,
   type ConceptNodeState,
   type ConceptRelation,
   type FitBox,
+  type LabelCandidate,
+  type Point,
   type PositionedNode,
+  type SpatialDirection,
 } from "../utils/conceptGraph";
+import {
+  computeViewSignature,
+  defaultViewState,
+  loadViewState,
+  saveViewState,
+} from "../utils/conceptGraphViewState";
 import { formatSourceId } from "../utils/memories";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
@@ -112,11 +128,26 @@ const MAX_ZOOM = 8;
 const LABEL_ALL_THRESHOLD = 36;
 /** Edge labels are only ever shown wholesale below this edge count. */
 const EDGE_LABEL_THRESHOLD = 24;
+/** Fraction of the viewBox the canvas pans per arrow-key press. */
+const KEYBOARD_PAN_STEP = 0.12;
+/** Approx. width (px) of one edge-label glyph at the 9px label size. */
+const EDGE_LABEL_CHAR_WIDTH = 5.2;
+/** Horizontal padding (px) added to an edge-label collision box. */
+const EDGE_LABEL_BOX_PADDING = 6;
+/** Edge-label collision-box height (px), ~ the 9px glyph plus halo. */
+const EDGE_LABEL_BOX_HEIGHT = 12;
+/** Debounce (ms) for screen-reader live announcements. */
+const ANNOUNCE_DEBOUNCE_MS = 250;
+/** Debounce (ms) before persisting view state to localStorage. */
+const PERSIST_DEBOUNCE_MS = 300;
 
-interface Point {
-  x: number;
-  y: number;
-}
+/** Map an ArrowKey `event.key` to a spatial-navigation direction. */
+const ARROW_DIRECTIONS: Record<string, SpatialDirection> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+};
 
 /**
  * Static panel CSS, hoisted to a module-level constant so the rules are
@@ -243,6 +274,22 @@ const CONCEPT_GRAPH_STYLES = `
     cursor: grab;
   }
   .cg-canvas.cg-panning { cursor: grabbing; }
+  .cg-canvas:focus { outline: none; }
+  .cg-canvas:focus-visible {
+    outline: 2px solid var(--color-focus-ring, var(--color-primary, #7c3aed));
+    outline-offset: 2px;
+  }
+  .cg-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
   .cg-focus-pill {
     position: absolute;
     top: var(--spacing-sm);
@@ -273,9 +320,19 @@ const CONCEPT_GRAPH_STYLES = `
     transition: fill-opacity var(--transition-fast, 150ms ease);
   }
   .cg-node:focus { outline: none; }
-  .cg-node:focus circle.cg-node-dot {
-    stroke: var(--color-primary, #7c3aed);
-    stroke-width: 3;
+  /* Roving-tabindex keyboard focus ring: a dashed halo around the node,
+     using the focus-ring token so it is visually distinct from both the
+     solid selected stroke and the hover highlight. Shown only for
+     keyboard focus (:focus-visible), not pointer selection. */
+  .cg-node-focusring {
+    fill: none;
+    stroke: none;
+    pointer-events: none;
+  }
+  .cg-node:focus-visible .cg-node-focusring {
+    stroke: var(--color-focus-ring, var(--color-primary, #7c3aed));
+    stroke-width: 2.5;
+    stroke-dasharray: 3 2.5;
   }
   .cg-node-label {
     font-size: 11px;
@@ -288,8 +345,13 @@ const CONCEPT_GRAPH_STYLES = `
   }
   .cg-edge-label {
     font-size: 9px;
-    opacity: 0.85;
+    opacity: 0.95;
     pointer-events: none;
+    /* Halo so a label stays legible where it crosses other edges. */
+    paint-order: stroke;
+    stroke: var(--color-surface-soft, #f9fafb);
+    stroke-width: 3px;
+    stroke-linejoin: round;
   }
   .cg-dim { opacity: 0.12; }
   .cg-detail {
@@ -434,18 +496,45 @@ export default function ConceptGraphPanel({
 
   const { graph, loading, error, refresh } = useConceptGraph(scope, nodeCap);
 
-  const [scopeFilter, setScopeFilter] = useState<string>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ----- persisted view state (per scope) -----
+  // The localStorage namespace for this panel's view controls. A null
+  // scope (the default scope) gets a stable sentinel key so it persists
+  // too without colliding with a real scope id.
+  const scopeKey = scope ?? "__default__";
+  // Loaded once at mount for the initial scope; scope *changes* are
+  // re-applied by an effect below. Falls back to defaults if absent or
+  // corrupt (loadViewState never throws).
+  const initialViewState = useRef(loadViewState(scopeKey) ?? defaultViewState());
+
+  const [scopeFilter, setScopeFilter] = useState<string>(
+    () => initialViewState.current.scopeFilter,
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => initialViewState.current.selectedId,
+  );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // The single keyboard-focusable node (roving tabindex). Distinct from
+  // selection and hover; arrow keys move it around the canvas.
+  const [rovingId, setRovingId] = useState<string | null>(
+    () => initialViewState.current.selectedId,
+  );
   const [disabledRelations, setDisabledRelations] = useState<
     ReadonlySet<ConceptRelation>
-  >(() => new Set());
+  >(() => new Set(initialViewState.current.disabledRelations));
   const [disabledStates, setDisabledStates] = useState<
     ReadonlySet<ConceptNodeState>
-  >(() => new Set());
-  const [localMode, setLocalMode] = useState(false);
-  const [localHops, setLocalHops] = useState(1);
-  const [labelsAll, setLabelsAll] = useState(false);
+  >(() => new Set(initialViewState.current.disabledStates));
+  const [localMode, setLocalMode] = useState(
+    () => initialViewState.current.localMode,
+  );
+  const [localHops, setLocalHops] = useState(
+    () => initialViewState.current.localHops,
+  );
+  const [labelsAll, setLabelsAll] = useState(
+    () => initialViewState.current.labelsAll,
+  );
+  // Debounced screen-reader announcement (selection + local-graph state).
+  const [announcement, setAnnouncement] = useState("");
 
   // ----- scope filtering (preserved from the prior implementation) -----
   const scopes = useMemo(() => {
@@ -512,6 +601,27 @@ export default function ConceptGraphPanel({
     }
     return filteredView;
   }, [filteredView, localMode, selectedId, localHops]);
+
+  // Order-independent fingerprint of the visible node set. Used to decide
+  // whether a persisted viewBox still applies on restore (re-fit if the
+  // node set has changed) — see the fit effect below.
+  const viewSignature = useMemo(
+    () => computeViewSignature(view.nodes.map((n) => n.id)),
+    [view.nodes],
+  );
+
+  // Restore-time invariant: a persisted `selectedId` that no longer exists
+  // in the freshly-loaded graph must not strand the user in an empty local
+  // graph (mirrors the scope-filter fix). The check runs against the *full*
+  // graph (not the filtered view) so a node merely hidden by a legend
+  // filter keeps its selection. Empty graph (initial load) is skipped so a
+  // restored selection isn't cleared before data arrives.
+  useEffect(() => {
+    if (!selectedId || graph.nodes.length === 0) return;
+    if (graph.nodes.some((n) => n.id === selectedId)) return;
+    setSelectedId(null);
+    setLocalMode(false);
+  }, [graph.nodes, selectedId]);
 
   const layout = useMemo(
     () => computeForceLayout(view, { width: CANVAS_WIDTH, height }),
@@ -621,12 +731,36 @@ export default function ConceptGraphPanel({
     viewBoxRef.current = box;
     setViewBox(box);
   }, []);
-  // Fit-on-load and re-fit whenever the layout changes (new data / filter).
+  // A persisted viewBox waiting to be re-applied once the matching node set
+  // is on screen. Consumed at most once (cleared after the first fit pass),
+  // so subsequent layout changes re-fit normally.
+  const pendingRestoreRef = useRef<{ box: FitBox; signature: number } | null>(
+    initialViewState.current.viewBox
+      ? {
+          box: initialViewState.current.viewBox,
+          signature: initialViewState.current.viewSignature,
+        }
+      : null,
+  );
+  // Fit-on-load and re-fit whenever the layout changes (new data / filter),
+  // except: if a persisted viewBox is pending and the visible node set still
+  // matches the one it was saved against, restore that pan/zoom instead of
+  // re-fitting. A pending restore whose signature no longer matches (the
+  // graph changed since last session) is dropped in favour of a fresh fit.
   useEffect(() => {
     baseFitRef.current = baseFit;
+    const pending = pendingRestoreRef.current;
+    if (pending && viewSignature !== 0) {
+      pendingRestoreRef.current = null;
+      if (pending.signature === viewSignature) {
+        viewBoxRef.current = pending.box;
+        setViewBox(pending.box);
+        return;
+      }
+    }
     viewBoxRef.current = baseFit;
     setViewBox(baseFit);
-  }, [baseFit]);
+  }, [baseFit, viewSignature]);
 
   const zoomAround = useCallback(
     (px: number, py: number, factor: number) => {
@@ -699,6 +833,250 @@ export default function ConceptGraphPanel({
     commitDragPos(new Map());
     applyViewBox(baseFit);
   }, [applyViewBox, baseFit, commitDragPos]);
+
+  // Pan the canvas by a world-space delta (used by arrow keys when the SVG
+  // itself is focused). Instant — no tween — so it honours reduced motion.
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      const vb = viewBoxRef.current;
+      applyViewBox({ x: vb.x + dx, y: vb.y + dy, width: vb.width, height: vb.height });
+    },
+    [applyViewBox],
+  );
+
+  // ===== keyboard navigation (roving tabindex + canvas controls) =====
+  const nodesGroupRef = useRef<SVGGElement | null>(null);
+  // Live snapshot of the data the node key handler needs, so the handler
+  // itself can stay referentially stable (empty deps) and not re-prop every
+  // node on each layout/selection change.
+  const navRef = useRef({ nodes: layout.nodes, view, degrees, localMode });
+  navRef.current = { nodes: layout.nodes, view, degrees, localMode };
+
+  // Move DOM focus to a node's <g> by id. Querying the group (rather than
+  // holding 600 per-node refs) keeps the node render cheap; focus() works
+  // even while the element still has tabIndex -1, before the roving state
+  // commits. The id is escaped for use inside the attribute selector.
+  const focusNodeEl = useCallback((id: string) => {
+    const group = nodesGroupRef.current;
+    if (!group) return;
+    const selector = `[data-cg-node="${id.replace(/(["\\])/g, "\\$1")}"]`;
+    const el = group.querySelector<SVGGElement>(selector);
+    el?.focus();
+  }, []);
+
+  const onNodeKeyDown = useCallback(
+    (e: ReactKeyboardEvent<SVGGElement>, nodeId: string) => {
+      const { nodes, view: navView, degrees: navDegrees, localMode: navLocal } =
+        navRef.current;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedId(nodeId);
+        setRovingId(nodeId);
+        return;
+      }
+      const direction = ARROW_DIRECTIONS[e.key];
+      if (direction) {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = findNeighborInDirection(nodes, nodeId, direction);
+        if (next) {
+          setRovingId(next);
+          focusNodeEl(next);
+        }
+        return;
+      }
+      if (e.key === "Home") {
+        e.preventDefault();
+        e.stopPropagation();
+        const first = nodes[0]?.id ?? null;
+        if (first) {
+          setRovingId(first);
+          focusNodeEl(first);
+        }
+        return;
+      }
+      if (e.key === "End") {
+        e.preventDefault();
+        e.stopPropagation();
+        const hub = highestDegreeNodeId(navView, navDegrees);
+        if (hub) {
+          setRovingId(hub);
+          focusNodeEl(hub);
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (navLocal) setLocalMode(false);
+        else setSelectedId(null);
+      }
+    },
+    [focusNodeEl],
+  );
+
+  // Canvas-level keys: only when the <svg> itself holds focus (not bubbled
+  // up from a node, which handles its own keys and stops propagation).
+  const onCanvasKeyDown = useCallback(
+    (e: ReactKeyboardEvent<SVGSVGElement>) => {
+      if (e.target !== e.currentTarget) return;
+      const vb = viewBoxRef.current;
+      switch (e.key) {
+        case "ArrowUp":
+          e.preventDefault();
+          panBy(0, -vb.height * KEYBOARD_PAN_STEP);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          panBy(0, vb.height * KEYBOARD_PAN_STEP);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          panBy(-vb.width * KEYBOARD_PAN_STEP, 0);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          panBy(vb.width * KEYBOARD_PAN_STEP, 0);
+          break;
+        case "+":
+        case "=":
+          e.preventDefault();
+          zoomByButton(0.8);
+          break;
+        case "-":
+        case "_":
+          e.preventDefault();
+          zoomByButton(1 / 0.8);
+          break;
+        case "0":
+        case "f":
+        case "F":
+          e.preventDefault();
+          fitToView();
+          break;
+      }
+    },
+    [panBy, zoomByButton, fitToView],
+  );
+
+  // ===== debounced screen-reader announcements =====
+  // A single debounced live-region message so rapid changes (e.g. holding
+  // an arrow key, or toggling local mode quickly) coalesce into one
+  // announcement instead of flooding the screen reader.
+  const announceTimerRef = useRef<number | null>(null);
+  const announce = useCallback((message: string) => {
+    if (announceTimerRef.current !== null) {
+      window.clearTimeout(announceTimerRef.current);
+    }
+    announceTimerRef.current = window.setTimeout(() => {
+      announceTimerRef.current = null;
+      setAnnouncement(message);
+    }, ANNOUNCE_DEBOUNCE_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (announceTimerRef.current !== null) {
+        window.clearTimeout(announceTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  // Announce selection changes. Seeded with the restored selection so a
+  // persisted selection isn't re-announced on mount (it wasn't a user act).
+  const prevSelectedRef = useRef<string | null>(initialViewState.current.selectedId);
+  useEffect(() => {
+    if (selectedId === prevSelectedRef.current) return;
+    prevSelectedRef.current = selectedId;
+    if (!selectedId) {
+      announce("Selection cleared");
+      return;
+    }
+    const node = graph.nodes.find((n) => n.id === selectedId);
+    if (!node) return;
+    const n = node.connectionsCount;
+    announce(`Selected ${node.label}, ${n} connection${n === 1 ? "" : "s"}`);
+  }, [selectedId, graph.nodes, announce]);
+
+  // Announce local-graph entry / hop-distance change / exit.
+  const prevLocalRef = useRef({
+    mode: initialViewState.current.localMode,
+    hops: initialViewState.current.localHops,
+  });
+  useEffect(() => {
+    const prev = prevLocalRef.current;
+    if (prev.mode === localMode && prev.hops === localHops) return;
+    prevLocalRef.current = { mode: localMode, hops: localHops };
+    if (!localMode) {
+      if (prev.mode) announce("Exited local graph");
+      return;
+    }
+    const node = selectedId
+      ? graph.nodes.find((n) => n.id === selectedId)
+      : null;
+    if (!node) return;
+    const n = view.nodes.length;
+    announce(
+      `Local graph: ${node.label}, ${localHops}-hop, showing ${n} concept${
+        n === 1 ? "" : "s"
+      }`,
+    );
+  }, [localMode, localHops, selectedId, graph.nodes, view.nodes.length, announce]);
+
+  // ===== persistence: re-apply on scope change + debounced save =====
+  // Scope *changes* on an already-mounted panel reload that scope's saved
+  // view state (the initial scope was applied via lazy state initialisers).
+  const appliedScopeRef = useRef(scopeKey);
+  useEffect(() => {
+    if (appliedScopeRef.current === scopeKey) return;
+    appliedScopeRef.current = scopeKey;
+    const next = loadViewState(scopeKey) ?? defaultViewState();
+    setScopeFilter(next.scopeFilter);
+    setSelectedId(next.selectedId);
+    setRovingId(next.selectedId);
+    setDisabledRelations(new Set(next.disabledRelations));
+    setDisabledStates(new Set(next.disabledStates));
+    setLabelsAll(next.labelsAll);
+    setLocalMode(next.localMode);
+    setLocalHops(next.localHops);
+    prevSelectedRef.current = next.selectedId;
+    prevLocalRef.current = { mode: next.localMode, hops: next.localHops };
+    pendingRestoreRef.current = next.viewBox
+      ? { box: next.viewBox, signature: next.viewSignature }
+      : null;
+  }, [scopeKey]);
+
+  // Debounced write of the (privacy-minimal) UI state. Only ids / enums /
+  // numbers already present in the renderer are persisted — never source
+  // content, evidence text, or concept labels.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      saveViewState(scopeKey, {
+        disabledRelations: [...disabledRelations],
+        disabledStates: [...disabledStates],
+        labelsAll,
+        localMode,
+        localHops,
+        selectedId,
+        scopeFilter,
+        viewBox,
+        viewSignature,
+      });
+    }, PERSIST_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [
+    scopeKey,
+    disabledRelations,
+    disabledStates,
+    labelsAll,
+    localMode,
+    localHops,
+    selectedId,
+    scopeFilter,
+    viewBox,
+    viewSignature,
+  ]);
 
   // ===== pointer interactions: drag-to-pan + drag-node + click-to-select =====
   const panRef = useRef<{ x: number; y: number; box: FitBox } | null>(null);
@@ -861,6 +1239,51 @@ export default function ConceptGraphPanel({
     return map;
   }, [layout.nodes, dragPos, displayPos]);
 
+  // Node radii by id, for self-loop sizing in the edge geometry.
+  const radiusById = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of layout.nodes) map.set(n.id, n.radius);
+    return map;
+  }, [layout.nodes]);
+
+  // Per-edge curvature so reciprocal / parallel edges fan apart (pure math).
+  const edgeCurves = useMemo(() => computeEdgeCurves(view.edges), [view.edges]);
+
+  // SVG path + label anchor for every edge, derived from the live render
+  // positions. Quadratic curves with a per-pair offset; self-loops become
+  // little arcs above the node. Heavy geometry stays in the pure util.
+  const edgeGeometry = useMemo(() => {
+    const map = new Map<string, { d: string; labelPoint: Point }>();
+    for (const edge of view.edges) {
+      const from = renderPos.get(edge.from);
+      const to = renderPos.get(edge.to);
+      if (!from || !to) continue;
+      const curve = edgeCurves.get(edge.id);
+      if (curve?.selfLoop) {
+        const r = radiusById.get(edge.from) ?? 14;
+        const loopR = r + 10 + curve.loopIndex * 7;
+        const top = from.y - r;
+        map.set(edge.id, {
+          d: `M ${from.x} ${top} C ${from.x - loopR} ${top - loopR * 1.6} ${
+            from.x + loopR
+          } ${top - loopR * 1.6} ${from.x} ${top}`,
+          labelPoint: { x: from.x, y: top - loopR * 1.15 },
+        });
+        continue;
+      }
+      // Canonical endpoint order (by id) so every edge in a parallel group
+      // shares one normal basis and the signed offsets land on predictable
+      // sides; the path itself is still drawn from `from` → `to` so the
+      // arrowhead points the right way.
+      const swap = edge.from > edge.to;
+      const canonFrom = swap ? to : from;
+      const canonTo = swap ? from : to;
+      const control = quadraticControlPoint(canonFrom, canonTo, curve?.offset ?? 0);
+      map.set(edge.id, quadraticEdgePath(from, to, control));
+    }
+    return map;
+  }, [view.edges, renderPos, edgeCurves, radiusById]);
+
   const relationsUsed = useMemo(() => {
     const set = new Set<ConceptRelation>();
     for (const e of view.edges) set.add(e.relationType);
@@ -887,6 +1310,41 @@ export default function ConceptGraphPanel({
     return (degrees.get(node.id) ?? 0) >= labelDegreeThreshold;
   };
   const showEdgeLabels = view.edges.length <= EDGE_LABEL_THRESHOLD;
+
+  // Which edge labels to actually draw, after greedy collision avoidance.
+  // Candidates: every edge when below the wholesale threshold, otherwise
+  // only the edges incident to the focused (hovered / selected / keyboard-
+  // focused) node. Focused edges get priority so they win any overlap.
+  const visibleEdgeLabelIds = useMemo(() => {
+    const candidates: LabelCandidate[] = [];
+    for (const edge of view.edges) {
+      const isFocusEdge = focus ? focus.edgeIds.has(edge.id) : false;
+      if (!showEdgeLabels && !isFocusEdge) continue;
+      const geo = edgeGeometry.get(edge.id);
+      if (!geo) continue;
+      const text = RELATION_LABELS[edge.relationType];
+      candidates.push({
+        id: edge.id,
+        x: geo.labelPoint.x,
+        y: geo.labelPoint.y,
+        width: text.length * EDGE_LABEL_CHAR_WIDTH + EDGE_LABEL_BOX_PADDING,
+        height: EDGE_LABEL_BOX_HEIGHT,
+        priority: isFocusEdge ? 0 : 1,
+      });
+    }
+    return placeEdgeLabels(candidates);
+  }, [view.edges, focus, showEdgeLabels, edgeGeometry]);
+
+  // The single tab-focusable node (roving tabindex). Prefer the explicit
+  // roving target, then the current selection, then the first (most-
+  // connected) node — always falling back to one that still exists so the
+  // tab order never points at a removed node.
+  const effectiveRovingId = useMemo(() => {
+    const ids = new Set(layout.nodes.map((n) => n.id));
+    if (rovingId && ids.has(rovingId)) return rovingId;
+    if (selectedId && ids.has(selectedId)) return selectedId;
+    return layout.nodes[0]?.id ?? null;
+  }, [layout.nodes, rovingId, selectedId]);
 
   const toggleRelation = (relation: ConceptRelation) => {
     setDisabledRelations((prev) => {
@@ -1078,8 +1536,15 @@ export default function ConceptGraphPanel({
               <svg
                 ref={attachSvg}
                 className={`cg-canvas${isPanning ? " cg-panning" : ""}`}
-                role="img"
-                aria-label={`Concept graph with ${view.nodes.length} concepts and ${view.edges.length} relationships`}
+                // `application` (rather than `img`) so a screen reader
+                // forwards arrow / +/- / 0 keys to our canvas pan-zoom
+                // handler instead of swallowing them for browse-mode
+                // navigation. The roledescription keeps the announcement
+                // meaningful, and the SVG is a tab stop for canvas control.
+                role="application"
+                aria-roledescription="Concept graph canvas"
+                aria-label={`Concept graph with ${view.nodes.length} concepts and ${view.edges.length} relationships. Arrow keys pan, plus and minus zoom, 0 or F fits to view.`}
+                tabIndex={0}
                 viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
                 style={{ aspectRatio: `${CANVAS_WIDTH} / ${height}` }}
                 data-testid="concept-graph-svg"
@@ -1087,6 +1552,7 @@ export default function ConceptGraphPanel({
                 onPointerMove={onPointerMove}
                 onPointerUp={endPointer}
                 onPointerCancel={endPointer}
+                onKeyDown={onCanvasKeyDown}
               >
                 <defs>
                   {usedMarkerColors.map((color) => (
@@ -1106,25 +1572,19 @@ export default function ConceptGraphPanel({
                 </defs>
                 <g className="cg-edges">
                   {view.edges.map((edge) => {
-                    const from = renderPos.get(edge.from);
-                    const to = renderPos.get(edge.to);
-                    if (!from || !to) return null;
+                    const geo = edgeGeometry.get(edge.id);
+                    if (!geo) return null;
                     const color = RELATION_COLORS[edge.relationType];
                     const dimmed = focus ? !focus.edgeIds.has(edge.id) : false;
-                    const mx = (from.x + to.x) / 2;
-                    const my = (from.y + to.y) / 2;
-                    const labelThisEdge =
-                      showEdgeLabels || (focus ? focus.edgeIds.has(edge.id) : false);
+                    const labelThisEdge = visibleEdgeLabelIds.has(edge.id);
                     return (
                       <g
                         key={edge.id}
                         className={`cg-edge${dimmed ? " cg-dim" : ""}`}
                       >
-                        <line
-                          x1={from.x}
-                          y1={from.y}
-                          x2={to.x}
-                          y2={to.y}
+                        <path
+                          d={geo.d}
+                          fill="none"
                           stroke={color}
                           strokeWidth={1.5}
                           strokeOpacity={0.7}
@@ -1132,11 +1592,12 @@ export default function ConceptGraphPanel({
                         />
                         {labelThisEdge && (
                           <text
-                            x={mx}
-                            y={my}
+                            x={geo.labelPoint.x}
+                            y={geo.labelPoint.y}
                             className="cg-edge-label"
                             fill={color}
                             textAnchor="middle"
+                            dominantBaseline="middle"
                           >
                             {RELATION_LABELS[edge.relationType]}
                           </text>
@@ -1145,7 +1606,7 @@ export default function ConceptGraphPanel({
                     );
                   })}
                 </g>
-                <g className="cg-nodes">
+                <g className="cg-nodes" ref={nodesGroupRef}>
                   {paintNodes.map((node) => {
                     const pos = renderPos.get(node.id) ?? { x: node.x, y: node.y };
                     const isSelected = node.id === selectedId;
@@ -1157,12 +1618,20 @@ export default function ConceptGraphPanel({
                         className={`cg-node${dimmed ? " cg-dim" : ""}`}
                         transform={`translate(${pos.x}, ${pos.y})`}
                         role="button"
-                        tabIndex={0}
+                        // Roving tabindex: exactly one node is in the tab
+                        // order at a time; arrow keys move focus between the
+                        // rest. Putting all (up to 600) nodes at tabIndex 0
+                        // would itself be an accessibility problem.
+                        tabIndex={node.id === effectiveRovingId ? 0 : -1}
                         aria-pressed={isSelected}
                         aria-label={`${node.label} (${node.state}, ${node.connectionsCount} connections)`}
                         data-testid={`concept-node-${node.id}`}
+                        data-cg-node={node.id}
                         onPointerDown={(e) => onNodePointerDown(e, node)}
-                        onClick={() => onNodeClick(node.id)}
+                        onClick={() => {
+                          setRovingId(node.id);
+                          onNodeClick(node.id);
+                        }}
                         onPointerEnter={() => setHoveredId(node.id)}
                         onPointerLeave={() =>
                           setHoveredId((cur) => (cur === node.id ? null : cur))
@@ -1171,15 +1640,14 @@ export default function ConceptGraphPanel({
                         onBlur={() =>
                           setHoveredId((cur) => (cur === node.id ? null : cur))
                         }
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            setSelectedId(node.id);
-                          }
-                        }}
+                        onKeyDown={(e) => onNodeKeyDown(e, node.id)}
                       >
                         {/* Generous transparent hit area for easier grabbing. */}
                         <circle className="cg-node-hit" r={node.radius + 8} />
+                        <circle
+                          className="cg-node-focusring"
+                          r={node.radius + 5}
+                        />
                         <circle
                           className="cg-node-dot"
                           r={node.radius}
@@ -1222,13 +1690,21 @@ export default function ConceptGraphPanel({
                   </button>
                 </div>
               )}
+              {/* Dedicated, debounced live region. Drives concise selection
+                  and local-graph announcements without re-reading the whole
+                  detail panel (which is why the aside is no longer a live
+                  region). */}
+              <div
+                className="cg-sr-only"
+                role="status"
+                aria-live="polite"
+                data-testid="concept-graph-live"
+              >
+                {announcement}
+              </div>
             </div>
 
-            <aside
-              className="cg-detail"
-              aria-live="polite"
-              style={{ maxHeight: `${height}px` }}
-            >
+            <aside className="cg-detail" style={{ maxHeight: `${height}px` }}>
               {selectedNode ? (
                 <div data-testid="concept-detail">
                   <div className="cg-detail-head">
