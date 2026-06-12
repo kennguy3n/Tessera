@@ -54,6 +54,7 @@ import * as crypto from "crypto";
 import * as http from "http";
 
 import { generateState } from "../../oauth";
+import { getRequestedScopes } from "../../oauthScope";
 import type { KnownProvider } from "../validate";
 
 /**
@@ -111,7 +112,15 @@ export interface ProviderOAuthConfig {
   extraAuthorizeParams?: Record<string, string>;
   /** Whether to send `client_id:client_secret` as HTTP Basic Auth on token exchange. */
   basicAuth?: boolean;
-  /** Whether `offline_access` should be added to the scope for refresh tokens. */
+  /**
+   * Whether the `offline_access` meta-scope should be requested so the
+   * provider issues a refresh token. This is the single declarative
+   * source for offline access — `getRequestedScopes` appends
+   * `offline_access` when this is set, so it must NOT also be listed in
+   * `scope` (which carries API/resource scopes only). Consumed by
+   * `buildAuthorizeUrl` (authorize request), `buildAuthConfig` (the Rust
+   * `auth_config`), and scope governance, all via `getRequestedScopes`.
+   */
   requestOfflineAccess?: boolean;
   /**
    * Whether the provider's OAuth flow issues a refresh token. Notion
@@ -180,12 +189,15 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     // Microsoft v2.0 token endpoint accepts client_secret in the body for
     // confidential clients; PKCE is required for public/desktop clients.
-    scope: "offline_access Files.Read.All User.Read",
+    // API scopes only — `offline_access` is requested via
+    // `requestOfflineAccess` below.
+    scope: "Files.Read.All User.Read",
     redirectPort: 9877,
     extraAuthorizeParams: {
       response_mode: "query",
       prompt: "select_account",
     },
+    requestOfflineAccess: true,
     supportsRefresh: true,
     usePkce: true,
   },
@@ -206,8 +218,9 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     provider: "jira",
     authUrl: "https://auth.atlassian.com/authorize",
     tokenUrl: "https://auth.atlassian.com/oauth/token",
-    scope:
-      "read:jira-work read:jira-user offline_access",
+    // API scopes only — `offline_access` is requested via
+    // `requestOfflineAccess` below.
+    scope: "read:jira-work read:jira-user",
     redirectPort: 9879,
     extraAuthorizeParams: {
       audience: "api.atlassian.com",
@@ -221,8 +234,10 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     provider: "confluence",
     authUrl: "https://auth.atlassian.com/authorize",
     tokenUrl: "https://auth.atlassian.com/oauth/token",
+    // API scopes only — `offline_access` is requested via
+    // `requestOfflineAccess` below.
     scope:
-      "read:confluence-content.summary read:confluence-content.all read:confluence-space.summary offline_access",
+      "read:confluence-content.summary read:confluence-content.all read:confluence-space.summary",
     redirectPort: 9880,
     extraAuthorizeParams: {
       audience: "api.atlassian.com",
@@ -428,9 +443,9 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
     tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     // Least-privilege: read messages in the channels the user can
-    // already see (`ChannelMessage.Read.All`) plus `offline_access`
-    // for the refresh token. No write/management scopes.
-    scope: "offline_access ChannelMessage.Read.All",
+    // already see (`ChannelMessage.Read.All`). No write/management
+    // scopes. `offline_access` is requested via `requestOfflineAccess`.
+    scope: "ChannelMessage.Read.All",
     redirectPort: 9892,
     extraAuthorizeParams: {
       response_mode: "query",
@@ -506,8 +521,13 @@ export function buildAuthorizeUrl(
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", params.state);
-  if (config.scope.length > 0) {
-    url.searchParams.set("scope", config.scope);
+  // Build the scope param from the canonical requested-scope list so the
+  // `offline_access` meta-scope (declared via `requestOfflineAccess`) is
+  // applied in exactly one place and the authorize request, the Rust
+  // `auth_config`, and scope governance never drift apart.
+  const requestedScopes = getRequestedScopes(config);
+  if (requestedScopes.length > 0) {
+    url.searchParams.set("scope", requestedScopes.join(" "));
   }
   if (params.codeChallenge) {
     url.searchParams.set("code_challenge", params.codeChallenge);

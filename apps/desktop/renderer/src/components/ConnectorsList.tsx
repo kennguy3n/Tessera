@@ -287,21 +287,16 @@ export default function ConnectorsList({
     setAuthBusy(true);
     setAuthError(null);
     try {
-      // Only pass the config arg when there's something to send so
-      // whole-account OAuth2 providers keep the original 3-arg call.
-      const next =
-        Object.keys(config).length > 0
-          ? await api.connectors.authenticate(
-              descriptor.provider,
-              tokenMethod ? "" : clientId.trim(),
-              tokenMethod ? "" : clientSecret.trim(),
-              config,
-            )
-          : await api.connectors.authenticate(
-              descriptor.provider,
-              tokenMethod ? "" : clientId.trim(),
-              tokenMethod ? "" : clientSecret.trim(),
-            );
+      // `config` carries the declared per-target / credential fields and
+      // is empty for whole-account OAuth2 providers. The handler's
+      // `assertConnectorConfig` treats an empty bag identically to an
+      // omitted one, so we always pass it and avoid a 3-arg/4-arg branch.
+      const next = await api.connectors.authenticate(
+        descriptor.provider,
+        tokenMethod ? "" : clientId.trim(),
+        tokenMethod ? "" : clientSecret.trim(),
+        config,
+      );
       setStatuses((prev) => ({ ...prev, [descriptor.provider]: next }));
       // Drop the pre-reconnect scope diff in the same render that marks
       // the provider connected. Otherwise this provider would briefly

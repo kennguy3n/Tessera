@@ -104,10 +104,14 @@ describe("ConnectorsList", () => {
     fireEvent.click(screen.getByText("Authenticate"));
 
     await waitFor(() =>
+      // Whole-account OAuth2 provider: no per-target fields, so the
+      // config bag is empty. The connect path always passes it (the
+      // handler treats `{}` and an omitted arg identically).
       expect(mockApi.connectors.authenticate).toHaveBeenCalledWith(
         "onedrive",
         "ID",
         "SECRET",
+        {},
       ),
     );
   });

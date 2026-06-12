@@ -201,6 +201,17 @@ describe("connectorsV2 buildAuthConfig", () => {
     });
     expect(cfg.project).toBeUndefined();
   });
+
+  it("sends the full requested scope (incl. offline_access) to the Rust connector", () => {
+    // The Rust connector runs its own refresh exchange using this
+    // `scope`, so it must include `offline_access` for providers that
+    // declare `requestOfflineAccess` — even though the raw `scope`
+    // string no longer lists it. Guards against the Rust refresh asking
+    // for a narrower scope set than the browser grant did.
+    const teams = buildAuthConfig("teams", TOKENS);
+    expect(String(teams.scope).split(" ")).toContain("offline_access");
+    expect(String(teams.scope).split(" ")).toContain("ChannelMessage.Read.All");
+  });
 });
 
 describe("v2BridgeAvailable", () => {

@@ -53,6 +53,7 @@ import {
   getProviderOAuthConfig,
   type ProviderId,
 } from "./providerOAuth";
+import { getRequestedScopes } from "../../oauthScope";
 import {
   SourcePathIndex,
   purgeSyncDir,
@@ -264,7 +265,10 @@ export function buildAuthConfig(
     provider,
     token_url: oauth.tokenUrl,
     auth_url: oauth.authUrl,
-    scope: oauth.scope,
+    // Full requested scope set (API scopes + `offline_access` when the
+    // provider declares `requestOfflineAccess`), so the Rust connector's
+    // own refresh exchange asks for the same scopes the browser grant did.
+    scope: getRequestedScopes(oauth).join(" "),
     client_id: tokens?.clientId ?? "",
     // The Rust side prefers a registered ClientSecretResolver; the
     // secret is included here only as the dev/standalone fallback and

@@ -54,9 +54,11 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     // the security contract for 5000 SME tenants.
     expect(PROVIDER_OAUTH_CONFIGS.asana.scope).toBe("projects:read tasks:read");
     expect(PROVIDER_OAUTH_CONFIGS.gitlab.scope).toBe("read_api");
-    expect(PROVIDER_OAUTH_CONFIGS.teams.scope).toBe(
-      "offline_access ChannelMessage.Read.All",
-    );
+    // `scope` holds API scopes only; `offline_access` is declared via
+    // `requestOfflineAccess` (asserted below) and added by
+    // `getRequestedScopes`, so it must NOT appear in the raw string.
+    expect(PROVIDER_OAUTH_CONFIGS.teams.scope).toBe("ChannelMessage.Read.All");
+    expect(PROVIDER_OAUTH_CONFIGS.teams.requestOfflineAccess).toBe(true);
     expect(PROVIDER_OAUTH_CONFIGS.trello.scope).toBe("read");
   });
 
@@ -150,6 +152,30 @@ describe("buildAuthorizeUrl", () => {
       }),
     );
     expect(url.searchParams.get("scope")).toBeNull();
+  });
+
+  it("appends offline_access to the scope= for requestOfflineAccess providers", () => {
+    // Regression: `requestOfflineAccess` must be the single declarative
+    // source for the `offline_access` meta-scope. The flag is set but the
+    // raw `scope` string omits `offline_access`, so the authorize request
+    // must still carry it — otherwise the provider issues no refresh token
+    // and every per-target OAuth provider breaks on first token expiry.
+    for (const id of ["onedrive", "jira", "confluence", "teams"] as const) {
+      const cfg = getProviderOAuthConfig(id);
+      expect(cfg.requestOfflineAccess).toBe(true);
+      expect(cfg.scope).not.toContain("offline_access");
+      const url = new URL(
+        buildAuthorizeUrl(cfg, {
+          clientId: "abc",
+          state: "xyz",
+          redirectUri: getRedirectUri(cfg),
+        }),
+      );
+      const scopes = (url.searchParams.get("scope") ?? "").split(" ");
+      expect(scopes).toContain("offline_access");
+      // Exactly once — no duplication if a config still lists it.
+      expect(scopes.filter((s) => s === "offline_access")).toHaveLength(1);
+    }
   });
 });
 
