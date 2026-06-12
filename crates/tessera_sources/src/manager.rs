@@ -440,8 +440,14 @@ pub enum KchatBackfillCompletionOutcome {
 ///    composes `{server}/channel/{channel_id}/post/{post_id}`
 ///    using the kchat-auth server URL — the substrate does not
 ///    know the server URL).
-/// 3. Insert a citation row with `source_type = "kchat_post"`,
-///    `chunk_hash = hash`, and the permalink as the `source_uri`.
+/// 3. Insert a citation row with `source_type = "kchat"` (the
+///    post's real backend — `SourceType` has no post-granularity
+///    variant, and the cited source genuinely is a KChat channel),
+///    `chunk_hash = hash`, and the `kchat://channel/<id>/post/<id>`
+///    URN as the `source_uri`. The URN both identifies the post and
+///    discriminates it from a file citation; the bridge maps it to
+///    the synthetic `kchat:post:<id>` `indexed_files` path for
+///    freshness hashing.
 #[derive(Debug, Clone)]
 pub struct KchatPostSearchHit {
     /// Source the matched post belongs to.

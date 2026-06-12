@@ -1,5 +1,7 @@
 //! N-API surface for citation tracking and freshness checks.
 
+use std::borrow::Cow;
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_citations::citation::Citation;
@@ -9,6 +11,34 @@ use tessera_core::{ArtifactId, CitationId, SourceId, SourceType};
 use tessera_sources::manager::SourceManager;
 
 use crate::{BridgeError, BridgeResult};
+
+/// Translate a citation's stored `source_uri` into the
+/// `indexed_files.path` key used for freshness hashing.
+///
+/// File citations store the absolute path verbatim, which already is
+/// the `indexed_files.path`. KChat-post citations instead store the
+/// server-agnostic `kchat://channel/<channel_id>/post/<post_id>` URN,
+/// while the post's `indexed_files` row is keyed by the synthetic
+/// `kchat:post:<post_id>` path minted in
+/// `Store::insert_kchat_post_bookkeeping`. Without this translation the
+/// hash lookup always misses, so a KChat-post citation captures an
+/// empty baseline hash at creation and is then mis-reported as
+/// `SourceMissing` on every freshness check.
+///
+/// Any non-kchat URI — and any malformed kchat URN (missing or empty
+/// `post_id`, or a `post_id` that still contains a path separator) — is
+/// returned unchanged, so the lookup simply misses and the citation is
+/// surfaced for attention rather than silently hashing the wrong key.
+fn freshness_lookup_key(source_uri: &str) -> Cow<'_, str> {
+    if let Some(rest) = source_uri.strip_prefix("kchat://") {
+        if let Some((_, post_id)) = rest.rsplit_once("/post/") {
+            if !post_id.is_empty() && !post_id.contains('/') {
+                return Cow::Owned(format!("kchat:post:{post_id}"));
+            }
+        }
+    }
+    Cow::Borrowed(source_uri)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
@@ -105,9 +135,12 @@ pub fn add_citation(
     let source_type: SourceType = serde_json::from_str(&format!("\"{}\"", req.source_type))
         .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
 
-    // Look up the file-level hash at citation creation time for change detection
+    // Look up the source-level hash at citation creation time for
+    // change detection. `freshness_lookup_key` maps a KChat-post URN
+    // to the synthetic `kchat:post:<id>` path its `indexed_files` row
+    // is keyed by; file URIs pass through unchanged.
     let source_file_hash = source_manager
-        .get_current_file_hash(&req.source_uri)
+        .get_current_file_hash(freshness_lookup_key(&req.source_uri).as_ref())
         .map_err(BridgeError::Core)?
         .unwrap_or_default();
 
@@ -177,7 +210,7 @@ pub fn check_source_freshness(
         uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     tracker
         .check_freshness(&CitationId(citation_uuid), |uri| {
-            source_manager.get_current_file_hash(uri)
+            source_manager.get_current_file_hash(freshness_lookup_key(uri).as_ref())
         })
         .map_err(BridgeError::Core)
 }
@@ -240,10 +273,11 @@ pub fn replace_citation(
         .ok_or_else(|| BridgeError::InvalidArgs("Citation not found".to_string()))?;
     let previous_source_uri = previous.source_uri.clone();
 
-    // Resolve the new source's current file hash so freshness checks
-    // are valid immediately after the swap.
+    // Resolve the new source's current hash so freshness checks are
+    // valid immediately after the swap. `freshness_lookup_key` maps a
+    // KChat-post URN to its synthetic `indexed_files` path.
     let source_file_hash = source_manager
-        .get_current_file_hash(&req.source_uri)
+        .get_current_file_hash(freshness_lookup_key(&req.source_uri).as_ref())
         .map_err(BridgeError::Core)?
         .unwrap_or_default();
 
@@ -511,5 +545,113 @@ mod tests {
         };
         let result = replace_citation(&mut tracker, &source_mgr, replace);
         assert!(result.is_err(), "should reject mismatched artifact");
+    }
+
+    #[test]
+    fn freshness_lookup_key_maps_kchat_urn_to_synthetic_path() {
+        // KChat-post URN → synthetic `indexed_files` path.
+        assert_eq!(
+            freshness_lookup_key("kchat://channel/eng-general/post/post-abc").as_ref(),
+            "kchat:post:post-abc",
+        );
+        // File URIs and bare paths pass through unchanged.
+        assert_eq!(
+            freshness_lookup_key("file:///docs/q3.md").as_ref(),
+            "file:///docs/q3.md",
+        );
+        assert_eq!(
+            freshness_lookup_key("/abs/path.txt").as_ref(),
+            "/abs/path.txt",
+        );
+        // Malformed kchat URNs (no `/post/` segment, empty post id, or a
+        // post id carrying a stray separator) are returned unchanged so
+        // the lookup simply misses rather than hashing a wrong key.
+        assert_eq!(
+            freshness_lookup_key("kchat://channel/eng-general").as_ref(),
+            "kchat://channel/eng-general",
+        );
+        assert_eq!(
+            freshness_lookup_key("kchat://channel/eng/post/").as_ref(),
+            "kchat://channel/eng/post/",
+        );
+        assert_eq!(
+            freshness_lookup_key("kchat://channel/eng/post/a/b").as_ref(),
+            "kchat://channel/eng/post/a/b",
+        );
+    }
+
+    /// End-to-end regression for the KChat-post citation freshness bug:
+    /// a post citation stores the `kchat://channel/<c>/post/<p>` URN,
+    /// but the post's `indexed_files` row is keyed by the synthetic
+    /// `kchat:post:<p>` path. Before the fix the URN never matched, so
+    /// every post citation captured an empty baseline hash and was then
+    /// permanently mis-reported as `SourceMissing`. The bridge now
+    /// translates the URN, so freshness correctly tracks the post
+    /// through edit (→ `Changed`) and delete (→ `SourceMissing`).
+    #[test]
+    fn bridge_kchat_post_citation_tracks_freshness_across_edit_and_delete() {
+        use tessera_sources::manager::KchatPostIngestInput;
+
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_path = db_dir.path().join("test.db");
+        let cache = tempfile::tempdir().unwrap();
+        let cache_dir = cache.path().to_str().unwrap();
+
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+        let added = source_mgr.add_kchat_channel(cache_dir).unwrap();
+
+        let post = KchatPostIngestInput {
+            cache_dir: cache_dir.to_string(),
+            post_id: "post-abc".to_string(),
+            channel_id: "channel-xyz".to_string(),
+            root_id: None,
+            sender_user_id: "user-ken".to_string(),
+            body: "team agreed: push Q3 launch to Sept 15".to_string(),
+            created_at_ms: 1_700_000_000_000,
+            edited_at_ms: 0,
+        };
+        source_mgr.ingest_kchat_post(&post).unwrap();
+
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let req = AddCitationRequest {
+            artifact_id: aid.to_string(),
+            source_id: added.source.id.to_string(),
+            source_type: "kchat".to_string(),
+            source_title: "Eng - General".to_string(),
+            source_uri: "kchat://channel/channel-xyz/post/post-abc".to_string(),
+            chunk_hash: "chathash".to_string(),
+            page: None,
+            confidence: 0.82,
+            used_for: "claim/q3".to_string(),
+        };
+        let info = add_citation(&mut tracker, &source_mgr, req).unwrap();
+
+        // The baseline captured the post's real `indexed_files` hash
+        // (not the empty string the URN-keyed lookup used to yield), so
+        // the freshly-cited, unchanged post reports `Fresh`.
+        assert_eq!(
+            check_source_freshness(&tracker, &source_mgr, &info.citation_id).unwrap(),
+            FreshnessStatus::Fresh,
+        );
+
+        // Editing the post changes its body hash → `Changed`.
+        let edited = KchatPostIngestInput {
+            body: "team agreed: push Q3 launch to Oct 1 instead".to_string(),
+            ..post.clone()
+        };
+        source_mgr.edit_kchat_post(&edited).unwrap();
+        assert_eq!(
+            check_source_freshness(&tracker, &source_mgr, &info.citation_id).unwrap(),
+            FreshnessStatus::Changed,
+        );
+
+        // Deleting the post drops its `indexed_files` row → genuinely
+        // `SourceMissing` (the only case that should now report it).
+        source_mgr.delete_kchat_post(cache_dir, "post-abc").unwrap();
+        assert_eq!(
+            check_source_freshness(&tracker, &source_mgr, &info.citation_id).unwrap(),
+            FreshnessStatus::SourceMissing,
+        );
     }
 }

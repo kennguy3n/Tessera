@@ -12,9 +12,9 @@
  *      the IPC handler composed one.
  *   3. When the user is disconnected, the IPC handler returns a
  *      `permalink: null` and the row does NOT render the anchor.
- *   4. Picking a KChat row dispatches the `kchat_post` source-type
- *      AddCitationRequest (with the kchat:// URN) rather than the
- *      `local_file` shape.
+ *   4. Picking a KChat row dispatches a KChat-post AddCitationRequest
+ *      with the post's real backend `sourceType` (`kchat`) and the
+ *      `kchat://` URN, rather than the `local_file` shape.
  *   5. A failure in `kchat.searchPosts` does NOT hide the file
  *      results (defense-in-depth: `Promise.allSettled` on both
  *      branches).
@@ -224,7 +224,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("dispatches a kchat_post AddCitationRequest with kchat:// URN when a KChat row is picked", async () => {
+  it("dispatches a kchat AddCitationRequest with kchat:// URN when a KChat row is picked", async () => {
     (
       window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
     ).mockResolvedValue([kchatHit()]);
@@ -254,14 +254,14 @@ describe("CitationPanel + KChat post retrieval", () => {
     expect(arg).toMatchObject({
       artifactId: "artifact-1",
       sourceId: "src-kchat-1",
-      sourceType: "kchat_post",
+      sourceType: "kchat",
       sourceTitle: "Eng - General",
       sourceUri: "kchat://channel/channel-xyz/post/post-abc",
       chunkHash: "chathash",
     });
   });
 
-  it("dispatches a kchat_post AddCitationRequest with channelId as title when channelDisplayName is null (offline fallback)", async () => {
+  it("dispatches a kchat AddCitationRequest with channelId as title when channelDisplayName is null (offline fallback)", async () => {
     (
       window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
     ).mockResolvedValue([
@@ -334,7 +334,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     const kchatCitation: CitationInfo = {
       citationId: "cit-kchat-1",
       sourceId: "src-kchat-1",
-      sourceType: "kchat_post",
+      sourceType: "kchat",
       sourceTitle: "Eng - General",
       sourceUri: "kchat://channel/channel-xyz/post/post-abc",
       chunkHash: "chathash",
@@ -366,12 +366,13 @@ describe("CitationPanel + KChat post retrieval", () => {
     // Wait for the citation list to render.
     const kchatItem = await screen.findByText("#Eng - General");
     const li = kchatItem.closest("li")!;
-    // The kchat_post item gets the modifier class and the
-    // discriminator attribute the renderer wires from
-    // `citation.sourceType`. Both are part of the stable API for
-    // styling and for downstream test selectors.
+    // The post item gets the modifier class (the renderer derives
+    // KChat-post-ness from the `kchat://` URN scheme) and surfaces
+    // its real backend `sourceType` (`kchat`) via the data
+    // attribute. Both are part of the stable API for styling and
+    // for downstream test selectors.
     expect(li.className).toContain("citation-item-kchat");
-    expect(li).toHaveAttribute("data-source-type", "kchat_post");
+    expect(li).toHaveAttribute("data-source-type", "kchat");
     // The badge renders once per kchat_post row (NOT per file row).
     expect(within(li).getByText("KChat")).toBeInTheDocument();
     // File item does NOT get the badge or the `#` sigil prefix.
