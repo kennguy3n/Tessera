@@ -327,14 +327,16 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
             const status = freshness[citation.citationId] ?? "fresh";
             // post-sourced citations
             // render with the KChat badge + channel display title
-            // instead of a file path. The discriminator is
-            // `sourceType === "kchat_post"` (set by
+            // instead of a file path. The discriminator is the
+            // `kchat://` URN scheme on `sourceUri` (set by
             // `buildCitationFields` when the row was first
-            // picked). We branch on this here so the stored
+            // picked) — the stored `sourceType` is the post's real
+            // backend (`kchat`), and post-vs-channel granularity
+            // lives in the URN. We branch on this here so the stored
             // citation list communicates "this evidence lives in
             // KChat" at a glance, matching the search-hit row
             // rendering above.
-            const isKchatPost = citation.sourceType === "kchat_post";
+            const isKchatPost = citation.sourceUri.startsWith("kchat://");
             return (
               <li
                 key={citation.citationId}
@@ -530,12 +532,16 @@ function EvidenceRowButton({
  *
  *   - file hits: `sourceType="local_file"`, `sourceUri` is the
  *     absolute path (same as before).
- *   - KChat post: `sourceType="kchat_post"`, `sourceUri` is the
- *     `kchat://channel/<id>/post/<id>` URN (note: NOT the
+ *   - KChat post: `sourceType="kchat"` (the post's real backend
+ *     source type — the substrate `SourceType` enum has no
+ *     post-granularity variant, and a citation's source genuinely
+ *     *is* a KChat channel), `sourceUri` is the
+ *     `kchat://channel/<id>/post/<id>` URN that both identifies the
+ *     post and discriminates it from a file citation. (Note: NOT the
  *     server-specific permalink — the URN is server-agnostic
  *     and round-trips across re-connects to the same workspace,
  *     where the permalink would break if the user re-connects
- *     to a renamed server URL). Title is the channel display
+ *     to a renamed server URL.) Title is the channel display
  *     name when the IPC handler resolved it, falling back to the
  *     raw channel id when offline
  *     so the stored citation remains retrievable end-to-end.
@@ -571,7 +577,7 @@ function buildCitationFields(row: EvidenceRow): {
   const channelTitle = hit.channelDisplayName ?? hit.channelId;
   return {
     sourceId: hit.sourceId,
-    sourceType: "kchat_post",
+    sourceType: "kchat",
     sourceTitle: channelTitle,
     sourceUri: `kchat://channel/${hit.channelId}/post/${hit.postId}`,
     chunkHash: hit.chunkHash,
