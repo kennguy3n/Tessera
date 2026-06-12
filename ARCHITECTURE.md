@@ -284,6 +284,31 @@ Users experience the substrate as:
 - Inline citations with provenance
 - Better artifact generation grounded in real data
 
+#### Knowledge browser UI (shipping in the renderer)
+
+The substrate is also directly browsable in the shipping app — not just a
+backend. The renderer surfaces it through:
+
+- **Memory page** (`/memory`, `apps/desktop/renderer/src/pages/MemoryPage.tsx`)
+  — reachable from the **Memory** item in the sidebar ("More tools" tier,
+  `Ctrl/Cmd+9`, see `navigation.ts`) and mounted as a route in `App.tsx`. It
+  lists memories with their decay state and retention and embeds the
+  concept-graph panel.
+- **Concept-graph panel** (`components/ConceptGraphPanel.tsx`, helpers in
+  `utils/conceptGraph.ts`) — renders concept nodes and their typed links over
+  the user's own sources.
+- **"Knowledge" citation tab** (`components/CitationPanel.tsx`) — the additive
+  Sources/Knowledge tabbed view (entities/facts/concepts alongside source
+  chunks), opened from the **Citations** button in the artifact editor
+  (`pages/ArtifactEditorPage.tsx`). The Knowledge plane degrades to an empty
+  tab rather than breaking the panel if the substrate is unavailable.
+- **HomePage knowledge insights** (`hooks/useSubstrateInsights.ts`, rendered in
+  `pages/HomePage.tsx`) — a "Knowledge insights" card summarizing the memory
+  plane and concept graph, plus a substrate section on each source's detail
+  page (`pages/SourceDetailPage.tsx`).
+- **Connector gallery** (`components/ConnectorsList.tsx`) — a searchable,
+  categorized remote-connector gallery with health and scope transparency.
+
 ---
 
 ## Electron boundary

@@ -349,6 +349,15 @@ The knowledge substrate provides:
 
 The substrate is a modular 20-crate Rust architecture (`evidence_store`, `observation_engine`, `memory_manager`, `concept_graph`, `synthesis_pipeline`, `inference_router`, `crypto`, `ffi`, `napi`, `export_plane`, and more).
 
+### Browsing the knowledge plane
+
+The substrate isn't just a backend — the knowledge browser ships in the app:
+
+- **Memory page** — browse memories (with decay state and retention) and the concept graph. Reach it from the **Memory** item in the sidebar (under "More tools", shortcut `Ctrl/Cmd+9`) or the `/memory` route.
+- **Concept-graph panel** — concept nodes and their typed links, rendered on the Memory page.
+- **"Knowledge" citation tab** — open any artifact and click **Citations** to get the Sources/Knowledge tabbed view (entities, facts, and concepts alongside source chunks).
+- **Knowledge insights** — a summary card on the Home screen, plus a substrate section on each source's detail page.
+
 ---
 
 ## Local model support

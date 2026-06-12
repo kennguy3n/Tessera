@@ -77,7 +77,7 @@ docs/showcase/
 │   ├── 04-nonprofit-development-director.md
 │   ├── 05-retail-sales-ops-lead.md
 │   ├── 06-ui-ux-walkthrough.md    the Create flow, editors, substrate controls, provenance
-│   ├── 07-knowledge-plane.md      what the substrate extracts/links/remembers (ships vs staged)
+│   ├── 07-knowledge-plane.md      what the substrate extracts/links/remembers + shipping browse UI
 │   └── 08-competitive-assessment.md  honest comparison vs Notion/Coda/Claude/local RAG
 ├── stakeholder/               ← production-readiness docs for buyers/teams
 │   ├── executive-one-pager.md

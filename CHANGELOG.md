@@ -78,6 +78,45 @@ Workspace while staying a local-first desktop app. See
   (Tessera tasks can post to KChat, and task-like KChat messages can
   auto-create Tessera tasks).
 
+#### Knowledge browser UI
+
+The knowledge substrate's browsing surfaces are now wired into the
+shipping renderer (previously the engines and data plane shipped while
+this UI was built-and-tested but unmounted).
+
+- **Memory page.** A dedicated `/memory` route
+  (`pages/MemoryPage.tsx`, mounted in `App.tsx`) reachable from the new
+  **Memory** sidebar item ("More tools" tier, `Ctrl/Cmd+9`, added to
+  `navigation.ts`). Lists memories with decay state and retention and
+  embeds the concept-graph panel.
+- **Concept-graph panel.** `components/ConceptGraphPanel.tsx`
+  (helpers in `utils/conceptGraph.ts`) renders concept nodes and their
+  typed links over the user's own sources.
+- **"Knowledge" citation tab.** The additive Sources/Knowledge tabbed
+  view in `components/CitationPanel.tsx` (entities/facts/concepts
+  alongside source chunks) is now mounted in the artifact editor behind
+  the **Citations** button (`pages/ArtifactEditorPage.tsx`). The
+  Knowledge plane degrades to an empty tab rather than breaking the
+  panel when the substrate is unavailable.
+- **HomePage knowledge insights.** A "Knowledge insights" card on the
+  home screen (`hooks/useSubstrateInsights.ts`, rendered in
+  `pages/HomePage.tsx`) summarizing the memory plane and concept graph,
+  plus a substrate section on each source's detail page
+  (`pages/SourceDetailPage.tsx`).
+- **Searchable connector gallery.** `components/ConnectorsList.tsx`
+  gains a searchable, categorized remote-connector gallery with health
+  and scope-transparency surfacing.
+
+#### Continuous integration
+
+- **Private substrate dependency builds in CI.** A read-only SSH deploy
+  key (`KNOWLEDGE_DEPLOY_KEY` repo secret, wired through the
+  `.github/actions/knowledge-ssh` composite action) lets CI clone and
+  build the private `kennguy3n/knowledge` git dependency, so
+  substrate-touching changes now build and test on every push. This
+  removes the earlier "CI cannot clone the private dependency"
+  limitation noted in the competitive scorecard.
+
 #### Security & privacy
 
 - **Auto-updater signature verification.** Update artifacts are

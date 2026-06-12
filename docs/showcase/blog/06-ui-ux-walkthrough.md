@@ -107,8 +107,8 @@ line and live source-status counts — so a returning user knows their work is p
 without opening Settings.
 
 A full walk through the knowledge plane — what gets extracted, how memory retention and the
-concept graph behave, and what ships today versus what's staged — is the
-[next post](07-knowledge-plane.md).
+concept graph behave, and the shipping surfaces that browse it (the Memory page, concept-graph
+panel, and enriched "Knowledge" citation tab) — is the [next post](07-knowledge-plane.md).
 
 ## The thing that ties it together: provenance
 
