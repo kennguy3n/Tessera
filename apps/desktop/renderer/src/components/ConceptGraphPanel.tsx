@@ -524,6 +524,15 @@ export default function ConceptGraphPanel({
     [degrees],
   );
 
+  // Paint order: SVG draws in document order (later = on top). `layout.nodes`
+  // is most-connected-first, which would paint high-degree hubs *underneath*
+  // smaller leaves where they overlap. Render smallest-radius first so the
+  // larger hub nodes sit on top — the visual hierarchy users expect.
+  const paintNodes = useMemo(
+    () => [...layout.nodes].sort((a, b) => a.radius - b.radius),
+    [layout.nodes],
+  );
+
   // ===== settle animation: tween display positions toward the layout =====
   const displayRef = useRef<Map<string, Point>>(new Map());
   const [displayPos, setDisplayPos] = useState<Map<string, Point>>(new Map());
@@ -1123,7 +1132,7 @@ export default function ConceptGraphPanel({
                   })}
                 </g>
                 <g className="cg-nodes">
-                  {layout.nodes.map((node) => {
+                  {paintNodes.map((node) => {
                     const pos = renderPos.get(node.id) ?? { x: node.x, y: node.y };
                     const isSelected = node.id === selectedId;
                     const dimmed = focus ? !focus.nodeIds.has(node.id) : false;
