@@ -268,21 +268,11 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
   const activeOptionId =
     ranked.length > 0 ? `${optionIdPrefix}-${activeIndex}` : undefined;
 
+  // No-bridge and partial-load errors are surfaced as a banner above
+  // the list (see `qs-notice` below) rather than here: the page rows
+  // derived from SIDEBAR_ITEMS are always present, so the list is never
+  // empty in those states and an in-list message would never show.
   const renderStatus = (): React.ReactNode => {
-    if (!hasBridge) {
-      return (
-        <li className="qs-empty" role="option" aria-disabled="true">
-          Quick switch is unavailable outside the desktop app.
-        </li>
-      );
-    }
-    if (error) {
-      return (
-        <li className="qs-empty qs-error" role="option" aria-disabled="true">
-          Couldn&rsquo;t load your library: {error}
-        </li>
-      );
-    }
     if (loading && items.length === 0) {
       return (
         <li className="qs-empty" role="option" aria-disabled="true">
@@ -343,6 +333,24 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           spellCheck={false}
           data-testid="quick-switcher-input"
         />
+        {!hasBridge ? (
+          <div
+            className="qs-notice"
+            role="status"
+            data-testid="quick-switcher-notice"
+          >
+            Quick switch is running outside the desktop app — only pages are
+            available.
+          </div>
+        ) : error ? (
+          <div
+            className="qs-notice qs-notice-error"
+            role="status"
+            data-testid="quick-switcher-notice"
+          >
+            Couldn&rsquo;t load part of your library: {error}
+          </div>
+        ) : null}
         <div
           ref={listRef}
           className="qs-list-scroll"
@@ -454,6 +462,15 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           list-style: none;
         }
         .qs-error {
+          color: var(--color-danger, var(--color-text-secondary));
+        }
+        .qs-notice {
+          padding: var(--spacing-sm) var(--spacing-lg);
+          color: var(--color-text-secondary);
+          font-size: var(--font-size-sm);
+          border-bottom: 1px solid var(--color-border);
+        }
+        .qs-notice-error {
           color: var(--color-danger, var(--color-text-secondary));
         }
         .qs-spacer {

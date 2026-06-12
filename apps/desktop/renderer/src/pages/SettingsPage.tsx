@@ -68,8 +68,9 @@ export default function SettingsPage() {
   const { settings, loading, refresh } = useSettings();
   const { update } = useUpdateSetting();
   // Lets command-palette deep links (e.g. `/settings#performance`)
-  // scroll the matching section into view.
-  useScrollToHash();
+  // scroll the matching section into view — gated on `!loading` so the
+  // scroll waits until the section has actually rendered.
+  useScrollToHash(!loading);
   // Stable per-instance ids so the sibling-pattern labels in this page
   // can be wired to their inputs via htmlFor for screen-reader
   // accessibility. Without these the four labels (Theme, Watch

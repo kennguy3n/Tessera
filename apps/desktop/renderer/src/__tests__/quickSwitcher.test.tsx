@@ -189,19 +189,25 @@ describe("QuickSwitcher", () => {
       .toBeGreaterThan(0);
   });
 
-  it("shows the no-bridge state when the bridge is absent", () => {
-    setItems([], { hasBridge: false });
+  it("surfaces the no-bridge notice even when navigable rows exist", () => {
+    // Pages (from SIDEBAR_ITEMS) are always present, so the switcher is
+    // never empty when the bridge is absent — the notice must show
+    // alongside the page rows rather than only on an empty list.
+    setItems([item("home", "Home", "/")], { hasBridge: false });
     renderSwitcher();
     expect(
-      screen.getByText(/unavailable outside the desktop app/i),
+      screen.getByText(/outside the desktop app/i),
     ).toBeInTheDocument();
+    expect(screen.getByText("Home")).toBeInTheDocument();
   });
 
-  it("shows an error state when the library failed to load", () => {
-    setItems([], { error: "kaboom" });
+  it("surfaces a partial-load error notice even when rows exist", () => {
+    setItems([item("home", "Home", "/")], { error: "kaboom" });
     renderSwitcher();
-    expect(screen.getByText(/couldn.t load your library/i)).toBeInTheDocument();
+    expect(screen.getByText(/couldn.t load part of your library/i))
+      .toBeInTheDocument();
     expect(screen.getByText(/kaboom/)).toBeInTheDocument();
+    expect(screen.getByText("Home")).toBeInTheDocument();
   });
 
   it("shows an empty state when there is nothing to switch to", () => {

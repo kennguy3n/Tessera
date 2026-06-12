@@ -33,10 +33,11 @@ const EXCLUDED_FROM_LIST: ReadonlyArray<string> = ["google_drive"];
 
 export default function SourcesPage() {
   const navigate = useNavigate();
-  // Lets `/sources#connectors` (the "Manage connectors" command) jump
-  // straight to the connectors grid.
-  useScrollToHash();
   const { sources, loading, refresh } = useSourceList();
+  // Lets `/sources#connectors` (the "Manage connectors" command) jump
+  // straight to the connectors grid — gated on `!loading` so the scroll
+  // waits until the connectors section has actually rendered.
+  useScrollToHash(!loading);
   const { addFolder, addFile } = useAddSource();
   const { remove } = useRemoveSource();
   const [modalOpen, setModalOpen] = useState(false);
