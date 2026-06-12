@@ -213,7 +213,13 @@ describe("buildAuthorizeUrl", () => {
     // raw `scope` string omits `offline_access`, so the authorize request
     // must still carry it — otherwise the provider issues no refresh token
     // and every per-target OAuth provider breaks on first token expiry.
-    for (const id of ["onedrive", "jira", "confluence", "teams"] as const) {
+    for (const id of [
+      "onedrive",
+      "jira",
+      "confluence",
+      "teams",
+      "sharepoint",
+    ] as const) {
       const cfg = getProviderOAuthConfig(id);
       expect(cfg.requestOfflineAccess).toBe(true);
       expect(cfg.scope).not.toContain("offline_access");
