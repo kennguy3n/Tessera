@@ -138,11 +138,7 @@ export function useKeyboardShortcuts() {
       if (matched.kind === "callback") {
         switch (matched.callbackId) {
           case "openCommandPalette":
-            window.dispatchEvent(
-              new CustomEvent("tessera:open-palette", {
-                detail: { mode: "full" },
-              }),
-            );
+            window.dispatchEvent(new CustomEvent("tessera:open-palette"));
             return;
           case "openQuickSwitcher":
             // The dedicated, cross-entity quick switcher (Cmd+O) —

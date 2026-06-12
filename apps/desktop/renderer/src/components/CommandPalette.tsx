@@ -58,12 +58,6 @@ const MAX_RESULTS = 50;
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  /**
-   * Optional initial mode. "quickSwitcher" hides command rows and
-   * only shows recents/pinned/artifacts — used by Cmd+P. "full"
-   * (default) shows both commands and artifacts.
-   */
-  mode?: "full" | "quickSwitcher";
 }
 
 type PaletteRow =
@@ -78,7 +72,6 @@ interface PaletteGroup {
 export default function CommandPalette({
   isOpen,
   onClose,
-  mode = "full",
 }: CommandPaletteProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
@@ -147,10 +140,10 @@ export default function CommandPalette({
     return undefined;
   }, [isOpen]);
 
-  const visibleCommands = useMemo(() => {
-    if (mode === "quickSwitcher") return [];
-    return COMMAND_REGISTRY.filter((c) => !c.hiddenFromPalette);
-  }, [mode]);
+  const visibleCommands = useMemo(
+    () => COMMAND_REGISTRY.filter((c) => !c.hiddenFromPalette),
+    [],
+  );
 
   const pinnedArtifacts = useMemo(() => {
     return pinnedIds
@@ -194,32 +187,13 @@ export default function CommandPalette({
           });
         }
       }
-      if (mode !== "quickSwitcher") {
-        groups.push({
-          label: "Commands",
-          rows: visibleCommands.map((c) => ({
-            kind: "command" as const,
-            command: c,
-          })),
-        });
-      }
-      if (mode === "quickSwitcher" && artifacts.length > 0) {
-        const pinnedSet = new Set(pinnedIds);
-        const recentSet = new Set(recentIds);
-        const others = artifacts.filter(
-          (a) => !pinnedSet.has(a.id) && !recentSet.has(a.id),
-        );
-        if (others.length > 0) {
-          groups.push({
-            label: "Artifacts",
-            rows: others.slice(0, MAX_RESULTS).map((a) => ({
-              kind: "artifact" as const,
-              artifact: a,
-              tag: "all" as const,
-            })),
-          });
-        }
-      }
+      groups.push({
+        label: "Commands",
+        rows: visibleCommands.map((c) => ({
+          kind: "command" as const,
+          command: c,
+        })),
+      });
       return groups;
     }
 
@@ -270,7 +244,6 @@ export default function CommandPalette({
     recentArtifacts,
     pinnedIds,
     recentIds,
-    mode,
   ]);
 
   // Flatten for keyboard navigation. Each entry knows the row plus
@@ -450,7 +423,7 @@ export default function CommandPalette({
       <div
         className="cmdk-panel"
         role="dialog"
-        aria-label={mode === "quickSwitcher" ? "Quick switcher" : "Command palette"}
+        aria-label="Command palette"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
       >
@@ -464,11 +437,7 @@ export default function CommandPalette({
             setActiveIndex(0);
           }}
           onKeyDown={handleKeyDown}
-          placeholder={
-            mode === "quickSwitcher"
-              ? "Jump to an artifact…"
-              : "Type a command, search artifacts…"
-          }
+          placeholder="Type a command, search artifacts…"
           aria-label="Command palette query"
           autoComplete="off"
           spellCheck={false}

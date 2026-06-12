@@ -13,9 +13,15 @@
  * testable and `App` stays a thin shell. Mounted once at the app
  * root. Every bridge call is wrapped so a rejected IPC surfaces a
  * privacy-safe toast instead of an unhandled rejection.
+ *
+ * The listeners are registered once for the app's lifetime: react-
+ * router's `navigate` changes identity on every navigation, so we
+ * read it (and `addToast`) through refs kept current by a commit-
+ * phase effect rather than re-binding all three listeners each time
+ * the route changes.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "../components/toastContext";
 import { notifyArtifactsChanged } from "./useArtifacts";
@@ -24,6 +30,13 @@ import { ARTIFACT_TYPES } from "../constants/artifactTypes";
 export function useGlobalCommandActions(): void {
   const navigate = useNavigate();
   const { addToast } = useToast();
+
+  const navigateRef = useRef(navigate);
+  const addToastRef = useRef(addToast);
+  useEffect(() => {
+    navigateRef.current = navigate;
+    addToastRef.current = addToast;
+  });
 
   useEffect(() => {
     const bridge = () =>
@@ -38,7 +51,10 @@ export function useGlobalCommandActions(): void {
       if (!spec) return;
       const api = bridge();
       if (!api) {
-        addToast("Can’t create — the desktop bridge is unavailable.", "error");
+        addToastRef.current(
+          "Can’t create — the desktop bridge is unavailable.",
+          "error",
+        );
         return;
       }
       void (async () => {
@@ -48,9 +64,9 @@ export function useGlobalCommandActions(): void {
             spec.id,
           );
           notifyArtifactsChanged();
-          navigate(`/artifacts/${artifact.id}/edit`);
+          navigateRef.current(`/artifacts/${artifact.id}/edit`);
         } catch {
-          addToast(
+          addToastRef.current(
             `Couldn’t create the ${spec.label.toLowerCase()}. Please try again.`,
             "error",
           );
@@ -61,7 +77,7 @@ export function useGlobalCommandActions(): void {
     const onRunDecaySweep = () => {
       const api = bridge();
       if (!api) {
-        addToast("Memory tools need the desktop bridge.", "error");
+        addToastRef.current("Memory tools need the desktop bridge.", "error");
         return;
       }
       void (async () => {
@@ -69,12 +85,12 @@ export function useGlobalCommandActions(): void {
           const report = await api.substrate.runDecaySweep();
           const archived =
             report.candidatesArchived + report.supersededArchived;
-          addToast(
+          addToastRef.current(
             `Decay sweep done — ${report.scored} scored, ${archived} archived.`,
             "success",
           );
         } catch {
-          addToast("Decay sweep failed. Please try again.", "error");
+          addToastRef.current("Decay sweep failed. Please try again.", "error");
         }
       })();
     };
@@ -82,20 +98,20 @@ export function useGlobalCommandActions(): void {
     const onTriggerSynthesis = () => {
       const api = bridge();
       if (!api) {
-        addToast("Memory tools need the desktop bridge.", "error");
+        addToastRef.current("Memory tools need the desktop bridge.", "error");
         return;
       }
       void (async () => {
         try {
           const summary = await api.substrate.triggerSynthesis();
-          addToast(
+          addToastRef.current(
             summary.recap
               ? `Synthesis complete: ${summary.recap}`
               : `Synthesis complete (v${summary.version}).`,
             "success",
           );
         } catch {
-          addToast("Synthesis failed. Please try again.", "error");
+          addToastRef.current("Synthesis failed. Please try again.", "error");
         }
       })();
     };
@@ -111,5 +127,8 @@ export function useGlobalCommandActions(): void {
         onTriggerSynthesis,
       );
     };
-  }, [navigate, addToast]);
+    // Registered once for the app's lifetime; latest `navigate` /
+    // `addToast` are read from refs above, so the route changing
+    // doesn't churn these listeners.
+  }, []);
 }

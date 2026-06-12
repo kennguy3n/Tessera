@@ -42,7 +42,7 @@ describe("palette / quick-switcher mutual exclusion", () => {
       expect(screen.getByTestId("quick-switcher-overlay")).toBeInTheDocument(),
     );
 
-    dispatch("tessera:open-palette", { mode: "full" });
+    dispatch("tessera:open-palette");
     await waitFor(() =>
       expect(screen.getByTestId("command-palette-overlay")).toBeInTheDocument(),
     );
@@ -52,7 +52,7 @@ describe("palette / quick-switcher mutual exclusion", () => {
   it("opening the quick switcher closes an open palette", async () => {
     renderApp();
 
-    dispatch("tessera:open-palette", { mode: "full" });
+    dispatch("tessera:open-palette");
     await waitFor(() =>
       expect(screen.getByTestId("command-palette-overlay")).toBeInTheDocument(),
     );

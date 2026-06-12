@@ -39,7 +39,7 @@ const AutomationsPage = lazy(() => import("./pages/AutomationsPage"));
 const VisionPage = lazy(() => import("./pages/VisionPage"));
 const MemoryPage = lazy(() => import("./pages/MemoryPage"));
 
-type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
+type PaletteState = { open: boolean };
 
 /**
  * Wrap a routed page element in a named {@link ErrorBoundary} so a
@@ -101,10 +101,7 @@ export default function App() {
   useKeyboardShortcuts();
   useTheme();
   useGlobalCommandActions();
-  const [palette, setPalette] = useState<PaletteState>({
-    open: false,
-    mode: "full",
-  });
+  const [palette, setPalette] = useState<PaletteState>({ open: false });
   // The dedicated quick switcher (Cmd+O), lazy-mounted like the palette.
   const [quickSwitchOpen, setQuickSwitchOpen] = useState(false);
   const [quickSwitchHasMounted, setQuickSwitchHasMounted] = useState(false);
@@ -120,27 +117,20 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const closePalette = useCallback(
-    () => setPalette({ open: false, mode: "full" }),
-    [],
-  );
+  const closePalette = useCallback(() => setPalette({ open: false }), []);
   const closeQuickSwitch = useCallback(() => setQuickSwitchOpen(false), []);
 
   useEffect(() => {
     // The palette and the quick switcher are mutually exclusive
     // full-screen overlays at the same z-index: opening either one
     // closes the other so they can never stack into a broken state.
-    const openPalette = (e: Event) => {
-      const detail =
-        e instanceof CustomEvent && e.detail && typeof e.detail === "object"
-          ? (e.detail as { mode?: "full" | "quickSwitcher" })
-          : undefined;
+    const openPalette = () => {
       setQuickSwitchOpen(false);
-      setPalette({ open: true, mode: detail?.mode ?? "full" });
+      setPalette({ open: true });
       setPaletteHasMounted(true);
     };
     const openQuickSwitch = () => {
-      setPalette({ open: false, mode: "full" });
+      setPalette({ open: false });
       setQuickSwitchOpen(true);
       setQuickSwitchHasMounted(true);
     };
@@ -212,11 +202,7 @@ export default function App() {
         </Suspense>
       </main>
       {paletteHasMounted && (
-        <CommandPalette
-          isOpen={palette.open}
-          mode={palette.mode}
-          onClose={closePalette}
-        />
+        <CommandPalette isOpen={palette.open} onClose={closePalette} />
       )}
       {quickSwitchHasMounted && (
         <Suspense fallback={null}>
