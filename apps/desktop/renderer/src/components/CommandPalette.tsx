@@ -84,6 +84,7 @@ export default function CommandPalette({
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
+  const previousActiveRef = useRef<HTMLElement | null>(null);
   const isMac =
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform);
@@ -129,15 +130,22 @@ export default function CommandPalette({
 
   // Reset state on every open so the user always starts at row 0
   // with an empty query, regardless of where they left off last
-  // time.
+  // time. Capture the previously-focused element and restore it on
+  // close (WAI-ARIA dialog pattern) so keyboard users land back where
+  // they were — and so a palette→quick-switcher handoff carries the
+  // original focus target through, rather than dumping focus on
+  // `<body>` once the palette input unmounts.
   useEffect(() => {
-    if (isOpen) {
-      setQuery("");
-      setActiveIndex(0);
-      const t = setTimeout(() => inputRef.current?.focus(), 0);
-      return () => clearTimeout(t);
-    }
-    return undefined;
+    if (!isOpen) return undefined;
+    previousActiveRef.current = document.activeElement as HTMLElement | null;
+    setQuery("");
+    setActiveIndex(0);
+    const t = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => {
+      clearTimeout(t);
+      const prev = previousActiveRef.current;
+      if (prev && typeof prev.focus === "function") prev.focus();
+    };
   }, [isOpen]);
 
   const visibleCommands = useMemo(
