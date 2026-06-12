@@ -138,6 +138,12 @@ function collectDeclaredTokenValues(
 const REQUIRED_DARK_OVERRIDES: readonly string[] = [
   "--color-primary",
   "--color-primary-hover",
+  // --color-primary-active darkens the accent toward black in light
+  // mode but must lighten it toward white on dark surfaces (the button
+  // :active state). Both dark scopes override it; pin it so a future
+  // patch can't drop the override and leave the press state using the
+  // light-mode darkened accent on a dark surface.
+  "--color-primary-active",
   "--color-primary-light",
   "--color-bg-page",
   "--color-bg-surface",
@@ -192,6 +198,11 @@ const REQUIRED_DARK_OVERRIDES: readonly string[] = [
   // accurate (token IS overridden in dark, so it MUST stay
   // overridden).
   "--color-text-link",
+  // Modal/dialog scrim. The light value is a near-black tint with
+  // alpha; the dark scopes deepen it (#000000 66%) so the overlay
+  // reads against dark surfaces. Pin it so the override can't be
+  // dropped, which would leave a too-light scrim in dark mode.
+  "--color-overlay",
 ];
 
 // Theme-agnostic accent tokens whose light values remain

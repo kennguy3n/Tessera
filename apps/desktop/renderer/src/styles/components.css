@@ -10,8 +10,24 @@
   border-radius: var(--radius-button);
   border: none;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  /* Animate only the properties that actually change on
+   * hover/active so a button press can't trigger a layout-affecting
+   * `all` transition. `transform` carries the tactile press. */
+  transition: background-color var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--duration-instant) var(--ease-standard),
+    opacity var(--transition-fast);
   line-height: 1.5;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -28,6 +44,10 @@
   background-color: var(--color-primary-hover);
 }
 
+.btn-primary:active:not(:disabled) {
+  background-color: var(--color-primary-active);
+}
+
 .btn-secondary {
   background-color: transparent;
   color: var(--color-primary);
@@ -38,13 +58,25 @@
   background-color: var(--color-primary-light);
 }
 
+.btn-secondary:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
 .btn-danger {
   background-color: var(--color-error);
   color: var(--color-text-on-primary);
 }
 
 .btn-danger:hover:not(:disabled) {
-  opacity: 0.9;
+  background-color: color-mix(in srgb, var(--color-error) 88%, #000000);
+}
+
+.btn-danger:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-error) 76%, #000000);
+}
+
+.btn-danger:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 35%, transparent);
 }
 
 .card {
@@ -87,7 +119,65 @@
 
 .input:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+  box-shadow: var(--focus-ring);
+}
+
+/* Curated accent picker (Settings → General). Each swatch carries a
+ * `data-accent` attribute so the matching `[data-accent]` ramp in
+ * tokens.css resolves `--accent` to that colour for the current
+ * theme — the swatch therefore previews the exact colour the user
+ * will get. The selected swatch gets a ring built from the page
+ * surface + the live primary so it reads in both themes. */
+.accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.accent-swatch {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-text-headline) 18%, transparent);
+  /* Each swatch carries its own `data-accent`, so `--accent-light` /
+   * `--accent-dark` resolve to THAT ramp on this element. We can't use
+   * the shared `--accent` here because it's substituted once on
+   * `:root` and inherited as a fixed value — it would paint every
+   * swatch the active accent. Pick the base that matches the live
+   * theme so the swatch previews the exact colour the user will get. */
+  background-color: var(--accent-light);
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--transition-fast);
+}
+
+[data-theme="dark"] .accent-swatch {
+  background-color: var(--accent-dark);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .accent-swatch {
+    background-color: var(--accent-dark);
+  }
+}
+
+.accent-swatch:hover {
+  transform: scale(1.1);
+}
+
+.accent-swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.accent-swatch--selected {
+  box-shadow: 0 0 0 2px var(--color-bg-page), 0 0 0 4px var(--accent);
+}
+
+.accent-swatch--selected:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-bg-page), 0 0 0 4px var(--accent),
+    0 0 0 7px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .search-input-wrapper {
@@ -150,11 +240,12 @@
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--color-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
+  animation: overlay-fade-in var(--duration-fast) var(--ease-out);
 }
 
 .modal-content {
@@ -166,6 +257,7 @@
   width: 90%;
   max-height: 85vh;
   overflow-y: auto;
+  animation: modal-pop-in var(--duration-normal) var(--ease-out);
 }
 
 .modal-title {
@@ -479,6 +571,58 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Subtle enter for list rows / cards. Components opt in by setting
+ * `animation: list-item-in …` (often with a per-item delay) so a
+ * freshly-rendered list cascades in instead of snapping. Gated by
+ * the global reduced-motion guard below. */
+@keyframes list-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Global reduced-motion guard. Honors the OS "reduce motion"
+ * setting by collapsing every animation/transition to an
+ * effectively-instant change while still letting state changes
+ * apply. Scoped broadly on purpose: any future component that adds
+ * a transition inherits the accessibility behaviour for free
+ * instead of having to remember its own media query. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

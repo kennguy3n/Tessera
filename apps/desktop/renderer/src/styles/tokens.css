@@ -1,7 +1,23 @@
 :root {
-  --color-primary: #7c3aed;
-  --color-primary-hover: #6d28d9;
-  --color-primary-light: #ede9fe;
+  /* ---- Accent system -------------------------------------------------
+   * A single configurable accent drives every primary affordance —
+   * buttons, links, focus rings, selected/active states. Each accent
+   * declares a LIGHT base (calibrated to pass WCAG AA with white text)
+   * and a DARK base (a lighter tint that reads on the dark page
+   * surface). `--accent` resolves to one of them depending on the
+   * active theme (light by default; the dark scopes below flip it), so
+   * `--color-primary*` and the link/focus tokens all re-derive from a
+   * single source. The ramp itself is selected by the `[data-accent]`
+   * attribute (set by `useTheme`); the values here are the violet
+   * default used when no attribute is present. */
+  --accent-light: #7c3aed;
+  --accent-dark: #a78bfa;
+  --accent: var(--accent-light);
+
+  --color-primary: var(--accent);
+  --color-primary-hover: color-mix(in srgb, var(--accent) 86%, #000000);
+  --color-primary-active: color-mix(in srgb, var(--accent) 74%, #000000);
+  --color-primary-light: color-mix(in srgb, var(--accent) 12%, #ffffff);
   --color-bg-page: #ffffff;
   --color-bg-surface: #f5f3ff;
   --color-bg-sidebar: #faf9ff;
@@ -12,36 +28,104 @@
   --color-text-on-primary: #ffffff;
   --color-border: #e5e7eb;
   --color-border-light: #f3f4f6;
+  --color-border-strong: #d1d5db;
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
+
+  /* Keyboard-visible focus ring. Derived from the accent so the ring
+   * recolours with the rest of the primary affordances. `--focus-ring`
+   * is the canonical box-shadow used by `:focus-visible` across the
+   * primitives; `--focus-ring-color` is exposed for outline-based
+   * rings where a box-shadow would be clipped. Both re-resolve per
+   * theme because `--color-primary` does. */
+  --color-focus-ring: var(--color-primary);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  --focus-ring-inset: inset 0 0 0 2px var(--color-primary);
+
+  /* Scrim behind modals / dialogs. A near-black tint with alpha so the
+   * page shows through; the dark scopes deepen it. */
+  --color-overlay: color-mix(in srgb, #111827 55%, transparent);
+
   --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
+  --font-family-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, "Liberation Mono", monospace;
+  /* Typographic scale (1.125 "major second"-ish steps tuned for a dense
+   * desktop tool). `3xl`/`4xl` round out the top end for page heroes. */
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.25rem;
   --font-size-2xl: 1.5rem;
+  --font-size-3xl: 1.875rem;
+  --font-size-4xl: 2.25rem;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
+  /* Line-height + letter-spacing tokens give vertical rhythm a shared
+   * vocabulary instead of magic numbers scattered across components.
+   * Headlines tighten tracking slightly (Obsidian-like density);
+   * body copy stays at a comfortable 1.5. */
+  --line-height-tight: 1.2;
+  --line-height-snug: 1.35;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.65;
+  --letter-spacing-tight: -0.01em;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.02em;
+
+  --radius-xs: 4px;
   --radius-sm: 6px;
+  --radius-md: 10px;
   --radius-card: 12px;
+  --radius-lg: 16px;
   --radius-button: 9999px;
   --radius-input: 8px;
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.15);
+  --radius-full: 9999px;
+
+  /* Elevation scale. The legacy `--shadow-card*` / `--shadow-modal`
+   * names are kept (and now alias the scale) so existing call sites
+   * don't churn; new surfaces should reach for `--shadow-xs … -xl`. */
+  --shadow-xs: 0 1px 2px rgba(17, 24, 39, 0.06);
+  --shadow-sm: 0 1px 3px rgba(17, 24, 39, 0.1), 0 1px 2px rgba(17, 24, 39, 0.06);
+  --shadow-md: 0 4px 8px -2px rgba(17, 24, 39, 0.1),
+    0 2px 4px -2px rgba(17, 24, 39, 0.06);
+  --shadow-lg: 0 12px 24px -6px rgba(17, 24, 39, 0.14),
+    0 4px 8px -4px rgba(17, 24, 39, 0.08);
+  --shadow-xl: 0 24px 48px -12px rgba(17, 24, 39, 0.22);
+  --shadow-card: var(--shadow-sm);
+  --shadow-card-hover: var(--shadow-md);
+  --shadow-modal: var(--shadow-xl);
+
+  --spacing-2xs: 0.125rem;
   --spacing-xs: 0.25rem;
   --spacing-sm: 0.5rem;
   --spacing-md: 1rem;
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
   --spacing-2xl: 3rem;
-  --transition-fast: 150ms ease;
-  --transition-normal: 250ms ease;
+  --spacing-3xl: 4rem;
+
+  /* Motion. A small set of easings + durations so transitions feel
+   * consistent and intentional. `--ease-standard` is the workhorse;
+   * `--ease-out` decelerates for enters; `--ease-spring` adds a subtle
+   * overshoot for playful affordances (used sparingly). The
+   * `--transition-*` aliases keep their historic names but now carry a
+   * tuned easing instead of the generic `ease`. Components gate motion
+   * behind `prefers-reduced-motion` in components.css. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --duration-instant: 80ms;
+  --duration-fast: 140ms;
+  --duration-normal: 220ms;
+  --duration-slow: 320ms;
+  --transition-fast: var(--duration-fast) var(--ease-standard);
+  --transition-normal: var(--duration-normal) var(--ease-standard);
+
   --color-bg-secondary: #f3f4f6;
   --color-danger: #ef4444;
 
@@ -102,12 +186,50 @@
   --color-relevance-low-fg: #b91c1c;
   --color-relevance-low-bg: rgba(239, 68, 68, 0.14);
   --color-priority-high: #c2410c;
-  /* Link colour. Used by the KChat Settings card's PAT-form
-   * disclosure toggle and other inline-link affordances. Light
-   * mode follows the brand violet; the dark override below picks
-   * a violet that still reads as a link against `--color-bg-page`
-   * (#111827) without blending into `--color-primary`. */
-  --color-text-link: #4f46e5;
+  /* Link colour. Derived from the accent so inline links recolour
+   * with the rest of the primary affordances. The dark scopes
+   * re-derive it for free because `--color-primary` flips there. */
+  --color-text-link: var(--color-primary);
+}
+
+/* ---- Accent ramps --------------------------------------------------
+ * Theme-agnostic: each `[data-accent]` ramp only sets the light/dark
+ * accent bases; `--accent` (resolved per theme above and in the dark
+ * scopes) picks which one is live. Light bases are chosen to pass WCAG
+ * AA (>= 4.5:1) against white text for use as a button background;
+ * dark bases are lighter tints that pass AA as text/links on the dark
+ * page surface (#111827). `violet` is also the `:root` default. */
+[data-accent="violet"] {
+  --accent-light: #7c3aed;
+  --accent-dark: #a78bfa;
+}
+[data-accent="blue"] {
+  --accent-light: #1d4ed8;
+  --accent-dark: #60a5fa;
+}
+[data-accent="teal"] {
+  --accent-light: #0f766e;
+  --accent-dark: #2dd4bf;
+}
+[data-accent="green"] {
+  --accent-light: #15803d;
+  --accent-dark: #4ade80;
+}
+[data-accent="amber"] {
+  --accent-light: #b45309;
+  --accent-dark: #fbbf24;
+}
+[data-accent="orange"] {
+  --accent-light: #c2410c;
+  --accent-dark: #fb923c;
+}
+[data-accent="red"] {
+  --accent-light: #b91c1c;
+  --accent-dark: #f87171;
+}
+[data-accent="pink"] {
+  --accent-light: #be185d;
+  --accent-dark: #f472b6;
 }
 
 /* Dark theme overrides.
@@ -120,11 +242,17 @@
  *     scope is gated to `:root:not([data-theme="light"])` so that
  *     an explicit "Light" preference always wins over the system
  *     hint without us needing to override every individual token.
+ *
+ * The two scopes MUST declare the same `--color-*` tokens with the
+ * same values — `darkModeTokens.test.ts` pins this so System-Dark and
+ * explicit-Dark users never diverge.
  */
 [data-theme="dark"] {
-  --color-primary: #a78bfa;
-  --color-primary-hover: #c4b5fd;
-  --color-primary-light: #312e81;
+  --accent: var(--accent-dark);
+  --color-primary: var(--accent);
+  --color-primary-hover: color-mix(in srgb, var(--accent) 80%, #ffffff);
+  --color-primary-active: color-mix(in srgb, var(--accent) 64%, #ffffff);
+  --color-primary-light: color-mix(in srgb, var(--accent) 22%, var(--color-bg-page));
   --color-bg-page: #111827;
   --color-bg-surface: #1f2937;
   --color-bg-sidebar: #0f172a;
@@ -136,10 +264,14 @@
   --color-text-on-primary: #111827;
   --color-border: #374151;
   --color-border-light: #1f2937;
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
-  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
-  --color-text-link: #a5b4fc;
+  --color-border-strong: #4b5563;
+  --color-overlay: color-mix(in srgb, #000000 66%, transparent);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 24px -6px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
+  --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.8);
+  --color-text-link: var(--color-primary);
 
   /* Dark overrides for alias tokens whose
    * fallback colors would otherwise stay light. The plain
@@ -169,9 +301,11 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not([data-theme="dark"]) {
-    --color-primary: #a78bfa;
-    --color-primary-hover: #c4b5fd;
-    --color-primary-light: #312e81;
+    --accent: var(--accent-dark);
+    --color-primary: var(--accent);
+    --color-primary-hover: color-mix(in srgb, var(--accent) 80%, #ffffff);
+    --color-primary-active: color-mix(in srgb, var(--accent) 64%, #ffffff);
+    --color-primary-light: color-mix(in srgb, var(--accent) 22%, var(--color-bg-page));
     --color-bg-page: #111827;
     --color-bg-surface: #1f2937;
     --color-bg-sidebar: #0f172a;
@@ -183,9 +317,13 @@
     --color-text-on-primary: #111827;
     --color-border: #374151;
     --color-border-light: #1f2937;
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
-    --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
-    --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
+    --color-border-strong: #4b5563;
+    --color-overlay: color-mix(in srgb, #000000 66%, transparent);
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 24px -6px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
+    --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.8);
 
     --color-danger-bg: #7f1d1d;
     --color-danger-light: #991b1b;
@@ -203,6 +341,6 @@
     --color-relevance-low-fg: #fca5a5;
     --color-relevance-low-bg: rgba(239, 68, 68, 0.22);
     --color-priority-high: #fb923c;
-    --color-text-link: #a5b4fc;
+    --color-text-link: var(--color-primary);
   }
 }

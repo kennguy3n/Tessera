@@ -12,6 +12,11 @@ import {
 
 const DEFAULT_SETTINGS: SettingsData = {
   theme: "light",
+  // accent placeholder mirrors the main-process `DEFAULT_CONFIG`
+  // (`"violet"`, the historic brand colour) so the first paint and
+  // the Settings picker bind to the brand swatch during the brief
+  // window before `refresh()` resolves the persisted choice.
+  accentColor: "violet",
   defaultExportFormat: "markdown",
   ignorePatterns: [".git", "node_modules", ".DS_Store"],
   watchPatterns: ["**/*.md", "**/*.txt", "**/*.csv", "**/*.json"],

@@ -15,9 +15,11 @@ import ResourceUsageCard from "../components/ResourceUsageCard";
 import { RESOURCE_MODE_LABELS } from "../constants/resourceMode";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import {
+  ACCENT_COLORS,
   EXPORT_FORMATS,
   RESOURCE_MODES,
   THEMES,
+  type AccentColor,
   type ExportFormat,
   type ResourceMode,
   type Theme,
@@ -56,6 +58,17 @@ const THEME_LABELS: Record<Theme, string> = {
   system: "System",
 };
 
+const ACCENT_LABELS: Record<AccentColor, string> = {
+  violet: "Violet",
+  blue: "Blue",
+  teal: "Teal",
+  green: "Green",
+  amber: "Amber",
+  orange: "Orange",
+  red: "Red",
+  pink: "Pink",
+};
+
 const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
   markdown: "Markdown",
   html: "HTML",
@@ -79,6 +92,9 @@ export default function SettingsPage() {
   const modelIdleTimeoutId = useId();
   const resourceModeId = useId();
   const [theme, setTheme] = useState(settings.theme);
+  const [accentColor, setAccentColor] = useState<AccentColor>(
+    settings.accentColor,
+  );
   const [defaultExportFormat, setDefaultExportFormat] = useState(
     settings.defaultExportFormat,
   );
@@ -102,6 +118,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setTheme(settings.theme);
+    setAccentColor(settings.accentColor);
     setDefaultExportFormat(settings.defaultExportFormat);
     setIgnorePatterns(settings.ignorePatterns.join(", "));
     setWatchPatterns(settings.watchPatterns.join(", "));
@@ -124,6 +141,7 @@ export default function SettingsPage() {
     );
     await update({
       theme,
+      accentColor,
       defaultExportFormat,
       ignorePatterns: ignorePatterns
         .split(",")
@@ -186,6 +204,42 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <span
+              id={`${themeId}-accent-label`}
+              style={{
+                display: "block",
+                fontSize: "var(--font-size-sm)",
+                fontWeight: "var(--font-weight-medium)" as unknown as number,
+                marginBottom: "var(--spacing-xs)",
+                color: "var(--color-text-headline)",
+              }}
+            >
+              Accent color
+            </span>
+            <div
+              role="radiogroup"
+              aria-labelledby={`${themeId}-accent-label`}
+              className="accent-swatches"
+            >
+              {ACCENT_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  role="radio"
+                  aria-checked={accentColor === c}
+                  aria-label={ACCENT_LABELS[c]}
+                  title={ACCENT_LABELS[c]}
+                  data-accent={c}
+                  data-testid={`settings-accent-${c}`}
+                  className={`accent-swatch${
+                    accentColor === c ? " accent-swatch--selected" : ""
+                  }`}
+                  onClick={() => setAccentColor(c)}
+                />
+              ))}
+            </div>
           </div>
         </Card>
 

@@ -19,6 +19,7 @@
  */
 import { z } from "zod";
 import {
+  ACCENT_COLORS,
   APP_LOCK_MODES,
   CREATE_PAGE_MODES,
   EXPORT_FORMATS,
@@ -243,10 +244,17 @@ export type CreateAutomationInput = z.infer<typeof CreateAutomationSchema>;
 // to the documented union, which matches the renderer's actual
 // behaviour (the dropdowns only ever emit values from these tuples).
 const Theme = z.enum(THEMES);
+const AccentColor = z.enum(ACCENT_COLORS);
 const ExportFormat = z.enum(EXPORT_FORMATS);
 
 export const SettingsUpdateSchema = z.object({
   theme: Theme.optional(),
+  // accent colour key. Pure enum drawn from the curated
+  // `ACCENT_COLORS` set; the renderer's Settings picker is the only
+  // writer. No `.catch()` (matches `theme`): a value outside the
+  // set means the renderer shipped a bug worth surfacing rather
+  // than silently coercing.
+  accentColor: AccentColor.optional(),
   defaultExportFormat: ExportFormat.optional(),
   ignorePatterns: z.array(z.string().max(1024)).max(10_000).optional(),
   watchPatterns: z.array(z.string().max(1024)).max(10_000).optional(),
