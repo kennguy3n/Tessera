@@ -68,6 +68,21 @@ export interface ShowcaseConcept {
 }
 
 /**
+ * A typed, directed edge between two concept nodes. Mirrors the substrate's
+ * `concept_graph::Relation` wire shape: `from`/`to` are {@link ShowcaseConcept}
+ * ids and `type` is a `concept_graph::RelationType` snake_case tag (`is_a`,
+ * `part_of`, `supersedes`, `contradicts`, …). Emitted by the deterministic
+ * derivation only where the persona's GENUINE source structure supports the
+ * relation (a code is an instance of its class → `is_a`; an authoritative
+ * later finding overrides an earlier claim → `supersedes` / `contradicts`).
+ */
+export interface ShowcaseRelation {
+  from: string;
+  to: string;
+  type: string;
+}
+
+/**
  * The additive knowledge plane (entities / facts / concepts) the substrate
  * exposes for a persona, derived deterministically from that persona's genuine
  * artifacts. Loaded into the mock bridge so the live renderer's enriched
@@ -78,4 +93,11 @@ export interface ShowcaseKnowledgePlane {
   entities: ShowcaseMemoryItem[];
   facts: ShowcaseMemoryItem[];
   concepts: ShowcaseConcept[];
+  /**
+   * Optional typed concept-graph edges. When present, the mock bridge emits
+   * these as the graph's edges verbatim (the shipped UI's `is_a` / `part_of` /
+   * `supersedes` / `contradicts` rendering); when absent, edges fall back to
+   * the co-occurrence derivation in {@link buildConceptGraphJson}.
+   */
+  relations?: ShowcaseRelation[];
 }
