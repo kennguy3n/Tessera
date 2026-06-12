@@ -137,6 +137,19 @@ describe("useGlobalCommandActions", () => {
     );
   });
 
+  it("opens the system print dialog on tessera:print", () => {
+    const printSpy = vi
+      .spyOn(window, "print")
+      .mockImplementation(() => undefined);
+    try {
+      mount();
+      fire("tessera:print");
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      printSpy.mockRestore();
+    }
+  });
+
   it("toasts an error instead of throwing when the bridge is absent", () => {
     setTessera(undefined);
     mount();

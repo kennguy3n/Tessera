@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMMAND_REGISTRY,
   KNOWN_CALLBACK_IDS,
+  chordMatchesEvent,
   findChordCollisions,
   type Command,
 } from "../utils/commandRegistry";
@@ -138,6 +139,17 @@ describe("commandRegistry", () => {
     }
   });
 
+  it("Print is bound to Ctrl/Cmd+Alt+P and dispatches tessera:print", () => {
+    // Cmd/Ctrl+P is the palette, so Print takes the secondary
+    // Alt-modified chord rather than the native print accelerator.
+    const print = COMMAND_REGISTRY.find((c) => c.id === "action:print");
+    expect(print?.chord).toEqual({ mod: true, alt: true, key: "p" });
+    expect(print?.kind).toBe("dispatch");
+    if (print?.kind === "dispatch") {
+      expect(print.event).toBe("tessera:print");
+    }
+  });
+
   it("exposes deep-link commands for settings sections + connectors", () => {
     const targets = [
       "/settings#appearance",
@@ -152,5 +164,51 @@ describe("commandRegistry", () => {
       );
       expect(cmd, `missing navigate to ${to}`).toBeDefined();
     }
+  });
+});
+
+describe("chordMatchesEvent — Alt letter chords (macOS Option composition)", () => {
+  const printChord = { mod: true, alt: true, key: "p" } as const;
+
+  it("matches ⌥P even when Option composes event.key into 'π'", () => {
+    // On macOS, Cmd+Option+P emits `key: "π"` but `code: "KeyP"`.
+    const event = new KeyboardEvent("keydown", {
+      metaKey: true,
+      altKey: true,
+      key: "π",
+      code: "KeyP",
+    });
+    expect(chordMatchesEvent(printChord, event)).toBe(true);
+  });
+
+  it("matches ⌥P on layouts where Option keeps event.key === 'p'", () => {
+    const event = new KeyboardEvent("keydown", {
+      ctrlKey: true,
+      altKey: true,
+      key: "p",
+      code: "KeyP",
+    });
+    expect(chordMatchesEvent(printChord, event)).toBe(true);
+  });
+
+  it("does not fire without Alt held (Cmd+P stays the palette)", () => {
+    const event = new KeyboardEvent("keydown", {
+      metaKey: true,
+      key: "p",
+      code: "KeyP",
+    });
+    expect(chordMatchesEvent(printChord, event)).toBe(false);
+  });
+
+  it("non-alt chords keep layout-aware key matching (no code fallback)", () => {
+    // A physical KeyS press that produced a different glyph must NOT
+    // match Cmd+S via the code path — code fallback is alt-only.
+    const save = { mod: true, key: "s" } as const;
+    const event = new KeyboardEvent("keydown", {
+      metaKey: true,
+      key: "ß",
+      code: "KeyS",
+    });
+    expect(chordMatchesEvent(save, event)).toBe(false);
   });
 });

@@ -62,6 +62,7 @@ import { useSettings, useUpdateSetting } from "./useSettings";
 const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
   "action:save",
   "action:export",
+  "action:print",
   "palette:open",
   "palette:openShiftP",
   "palette:openP",

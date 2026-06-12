@@ -377,6 +377,20 @@ export function buildCommandRegistry(): readonly Command[] {
       event: "tessera:export",
     },
     {
+      id: "action:print",
+      title: "Print",
+      description: "Open the system print dialog for the current view",
+      category: "Editor",
+      // Cmd/Ctrl+P is the command palette in this app (Obsidian
+      // convention), so Print takes the secondary Cmd/Ctrl+Alt+P chord.
+      // `chordMatchesEvent` matches it by physical key code so macOS
+      // Option-key composition (⌥P → "π") doesn't break it.
+      chord: { mod: true, alt: true, key: "p" },
+      keywords: ["print", "pdf", "paper", "hard copy"],
+      kind: "dispatch",
+      event: "tessera:print",
+    },
+    {
       id: "action:openSettings",
       title: "Open settings",
       description: "Go to the settings page",
@@ -598,7 +612,16 @@ export function chordMatchesEvent(
   if ((chord.shift ?? false) !== event.shiftKey) return false;
   if ((chord.alt ?? false) !== event.altKey) return false;
   if (chord.key.length === 1) {
-    return event.key.toLowerCase() === chord.key.toLowerCase();
+    if (event.key.toLowerCase() === chord.key.toLowerCase()) return true;
+    // macOS composes Option/Alt + letter into a different glyph
+    // (e.g. ⌥P emits `event.key === "π"`), so an alt chord's letter
+    // never matches `event.key`. Fall back to the layout-independent
+    // physical key code for alt letter chords so they stay reachable.
+    // Scoped to alt chords; non-alt chords keep layout-aware matching.
+    if (chord.alt && /^[a-z]$/i.test(chord.key)) {
+      return event.code === `Key${chord.key.toUpperCase()}`;
+    }
+    return false;
   }
   return event.key === chord.key;
 }

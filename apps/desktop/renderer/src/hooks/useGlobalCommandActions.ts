@@ -8,6 +8,9 @@
  *     palette's "New document / slide deck / …" commands.
  *   - `tessera:run-decay-sweep` — run the substrate decay sweep.
  *   - `tessera:trigger-synthesis` — run substrate synthesis.
+ *   - `tessera:print` — open the system print dialog for the current
+ *     view (the native Cmd/Ctrl+P print, rebound here to Cmd/Ctrl+Alt+P
+ *     since Cmd/Ctrl+P now opens the command palette).
  *
  * Centralised here (not inline in `App`) so the wiring is unit-
  * testable and `App` stays a thin shell. Mounted once at the app
@@ -116,9 +119,16 @@ export function useGlobalCommandActions(): void {
       })();
     };
 
+    const onPrint = () => {
+      if (typeof window !== "undefined" && typeof window.print === "function") {
+        window.print();
+      }
+    };
+
     window.addEventListener("tessera:create-artifact", onCreateArtifact);
     window.addEventListener("tessera:run-decay-sweep", onRunDecaySweep);
     window.addEventListener("tessera:trigger-synthesis", onTriggerSynthesis);
+    window.addEventListener("tessera:print", onPrint);
     return () => {
       window.removeEventListener("tessera:create-artifact", onCreateArtifact);
       window.removeEventListener("tessera:run-decay-sweep", onRunDecaySweep);
@@ -126,6 +136,7 @@ export function useGlobalCommandActions(): void {
         "tessera:trigger-synthesis",
         onTriggerSynthesis,
       );
+      window.removeEventListener("tessera:print", onPrint);
     };
     // Registered once for the app's lifetime; latest `navigate` /
     // `addToast` are read from refs above, so the route changing

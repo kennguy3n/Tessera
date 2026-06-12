@@ -449,6 +449,12 @@ this UI was built-and-tested but unmounted).
   command palette, `Ctrl/Cmd+O` quick switcher, `Ctrl/Cmd+/` (and `?`)
   keyboard-shortcuts help. The three overlays are mutually exclusive,
   and every chord is listed in the cheatsheet.
+- **Print (`Ctrl/Cmd+Alt+P`).** Opens the system print dialog for the
+  current view, restoring the print shortcut that moved off
+  `Ctrl/Cmd+P` when that chord became the command palette. Matched by
+  physical key code so macOS Option-key composition (`⌥P` → `π`)
+  doesn't break it; available from within editors and listed in the
+  cheatsheet + palette.
 
 ### Changed
 
