@@ -155,6 +155,46 @@ describe("ConceptGraphPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("toggles a relationship type off via the legend, dropping its edges", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+    );
+    // Both endpoints of the only "part of" edge are present initially.
+    expect(screen.getByTestId("concept-node-beacon")).toBeInTheDocument();
+    const legend = screen.getByTestId("concept-graph-legend");
+    // Disable "part of" — beacon (only reachable via that edge) becomes an
+    // isolated node but still renders; the edge is gone. Atlas/Project stay.
+    fireEvent.click(within(legend).getByRole("button", { name: /part of/i }));
+    await waitFor(() =>
+      expect(
+        within(legend).getByRole("button", { name: /part of/i }),
+      ).toHaveAttribute("aria-pressed", "false"),
+    );
+    expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
+  });
+
+  it("enters local-graph mode and restricts the view to the focus neighborhood", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-project")).toBeInTheDocument(),
+    );
+    // The local-graph toggle is disabled until a node is selected.
+    const toggle = screen.getByTestId("concept-graph-local-toggle");
+    expect(toggle).toBeDisabled();
+    // Focus "project": its only neighbor is "atlas"; "beacon" is 2 hops away
+    // and must drop out of the 1-hop local view.
+    fireEvent.click(screen.getByTestId("concept-node-project"));
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(screen.queryByTestId("concept-node-beacon")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-graph-focus-pill")).toBeInTheDocument();
+  });
+
   it("correlates evidence on word boundaries, not mid-word substrings", async () => {
     const memories: SubstrateMemoryInfo[] = [
       {
@@ -176,5 +216,73 @@ describe("ConceptGraphPanel", () => {
     expect(
       within(detail).getByText("No source evidence found for this concept."),
     ).toBeInTheDocument();
+  });
+
+  it("binds wheel-to-zoom once the SVG mounts after the loading state", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    // The graph loads asynchronously, so the SVG is absent on the first paint
+    // and only mounts once loading resolves. The wheel listener must attach at
+    // that point (regression: a stable-deps effect would bind only on mount,
+    // find the SVG missing, and never re-run — leaving wheel-zoom dead).
+    const svg = await screen.findByTestId("concept-graph-svg");
+    // jsdom has no layout, so give the SVG a non-zero box for the zoom math.
+    svg.getBoundingClientRect = vi.fn(
+      () =>
+        ({
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          right: 200,
+          bottom: 200,
+          width: 200,
+          height: 200,
+          toJSON: () => ({}),
+        }) as DOMRect,
+    );
+    const widthOf = (vb: string | null) => Number(vb?.split(/\s+/)[2]);
+    const before = widthOf(svg.getAttribute("viewBox"));
+    // Scroll up (deltaY < 0) zooms in → the viewBox width must shrink.
+    fireEvent.wheel(svg, { deltaY: -120, clientX: 100, clientY: 100 });
+    await waitFor(() => {
+      const after = widthOf(svg.getAttribute("viewBox"));
+      expect(after).toBeLessThan(before);
+    });
+  });
+
+  it("explains an all-filtered-out graph rather than claiming there are no concepts", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    const legend = await screen.findByTestId("concept-graph-node-legend");
+    // Disable every node-kind so the view filters down to zero nodes. The
+    // empty state must say the graph is filtered, not that no concepts exist.
+    for (const button of within(legend).getAllByRole("button")) {
+      fireEvent.click(button);
+    }
+    const empty = await screen.findByTestId("concept-graph-empty");
+    expect(empty).toHaveTextContent(/hidden by the current filters/i);
+    expect(empty).not.toHaveTextContent(/No concepts yet/i);
+  });
+
+  it("starts the settle animation from the canvas center, not the final layout", async () => {
+    // Hold every rAF callback so the animation can't advance past its first
+    // committed frame; we only assert on what the browser would paint first.
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockReturnValue(1 as unknown as number);
+    try {
+      render(<ConceptGraphPanel memories={EVIDENCE} />);
+      const svg = await screen.findByTestId("concept-graph-svg");
+      const transforms = within(svg)
+        .getAllByTestId(/^concept-node-/)
+        .map((g) => g.getAttribute("transform"));
+      // Regression: a passive effect painted one frame at the final layout
+      // positions (a flash) before rAF moved nodes to center. With the
+      // pre-paint layout-effect commit, the first painted frame collapses
+      // every node onto the same canvas-center origin, so they grow outward.
+      expect(transforms.length).toBeGreaterThan(1);
+      expect(new Set(transforms).size).toBe(1);
+    } finally {
+      raf.mockRestore();
+    }
   });
 });
