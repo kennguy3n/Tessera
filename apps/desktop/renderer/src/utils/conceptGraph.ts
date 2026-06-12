@@ -115,6 +115,28 @@ const KNOWN_TRUNCATIONS: ReadonlySet<string> = new Set([
   "depth_limit_reached",
 ]);
 
+/**
+ * Narrow an arbitrary string to a {@link ConceptRelation}. `unknown` is
+ * accepted as well as the known tags so a *present-but-unrecognized*
+ * relation (forward-compat) round-trips through persistence rather than
+ * being silently dropped. Used by the defensive view-state parser so a
+ * corrupt/old persisted blob can never inject a bogus relation type.
+ */
+export function isConceptRelation(value: unknown): value is ConceptRelation {
+  return (
+    typeof value === "string" &&
+    (KNOWN_RELATIONS.has(value) || value === "unknown")
+  );
+}
+
+/** Narrow an arbitrary string to a {@link ConceptNodeState}; see {@link isConceptRelation}. */
+export function isConceptNodeState(value: unknown): value is ConceptNodeState {
+  return (
+    typeof value === "string" &&
+    (KNOWN_STATES.has(value) || value === "unknown")
+  );
+}
+
 /** Human-readable label for a relation type, for legends/tooltips. */
 export const RELATION_LABELS: Record<ConceptRelation, string> = {
   is_a: "is a",
@@ -309,7 +331,7 @@ export interface LayoutOptions {
  * `String.prototype.localeCompare`, the result never depends on the host's
  * locale/collation, so a sort keyed on it is reproducible across machines.
  */
-function compareCodepoint(a: string, b: string): number {
+export function compareCodepoint(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
@@ -814,4 +836,299 @@ export function computeFitBox(
     width: Math.max(1, maxX - minX + padding * 2),
     height: Math.max(1, maxY - minY + padding * 2),
   };
+}
+
+/** A 2D point in layout (world) coordinates. */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** Four-way compass direction used by keyboard spatial navigation. */
+export type SpatialDirection = "up" | "down" | "left" | "right";
+
+/** Anything carrying an id and a 2D position — the input to spatial nav. */
+export interface SpatialNode extends Point {
+  id: string;
+}
+
+/**
+ * Weight applied to the *perpendicular* offset when ranking candidate
+ * nodes for arrow-key navigation. A value > 1 biases selection toward
+ * nodes that line up with the travel axis (so pressing → from a node
+ * prefers the node most directly to its right over one that is closer
+ * but well off-axis), which matches the spatial-navigation behaviour
+ * users expect from a 2D canvas.
+ */
+const PERPENDICULAR_NAV_BIAS = 2.5;
+
+/**
+ * Spatial (directional) keyboard-navigation model for the graph: given
+ * the laid-out nodes and the currently-focused node, return the id of
+ * the node a single Arrow press should move focus to, or `null` when no
+ * node lies in that direction.
+ *
+ * A candidate must lie strictly in the half-plane of travel (e.g. to the
+ * right for `"right"`). Among those it minimises
+ * `primary + PERPENDICULAR_NAV_BIAS · perpendicular`, where `primary` is
+ * the distance along the travel axis and `perpendicular` the off-axis
+ * distance — so the nearest *and best-aligned* node wins. Ties break on a
+ * locale-independent codepoint compare of the id so the result is fully
+ * deterministic (important for unit tests and for reproducible focus
+ * order across machines).
+ *
+ * This is the spatial model rather than a graph-adjacency one: it works
+ * even for disconnected nodes, never gets "stuck" on a low-degree node
+ * with few neighbours, and maps 1:1 onto what the user sees on the
+ * canvas. O(n) per keypress — cheap at the 600-node ceiling.
+ */
+export function findNeighborInDirection(
+  nodes: ReadonlyArray<SpatialNode>,
+  currentId: string,
+  direction: SpatialDirection,
+): string | null {
+  const current = nodes.find((n) => n.id === currentId);
+  if (!current) return null;
+  let best: string | null = null;
+  let bestScore = Infinity;
+  for (const node of nodes) {
+    if (node.id === currentId) continue;
+    const dx = node.x - current.x;
+    const dy = node.y - current.y;
+    let primary: number;
+    let perpendicular: number;
+    switch (direction) {
+      case "right":
+        primary = dx;
+        perpendicular = Math.abs(dy);
+        break;
+      case "left":
+        primary = -dx;
+        perpendicular = Math.abs(dy);
+        break;
+      case "down":
+        primary = dy;
+        perpendicular = Math.abs(dx);
+        break;
+      case "up":
+        primary = -dy;
+        perpendicular = Math.abs(dx);
+        break;
+    }
+    // Must make positive progress along the travel axis.
+    if (primary <= 0) continue;
+    const score = primary + perpendicular * PERPENDICULAR_NAV_BIAS;
+    if (
+      score < bestScore ||
+      (score === bestScore && best !== null && compareCodepoint(node.id, best) < 0)
+    ) {
+      bestScore = score;
+      best = node.id;
+    }
+  }
+  return best;
+}
+
+/**
+ * Id of the highest visible-degree node (the most-connected hub in the
+ * current view), used by the `End` key. Ties break by the same stable
+ * {@link compareNodesForLayout} order the layouts use, so `End` lands on
+ * a deterministic node. Returns `null` for an empty view.
+ */
+export function highestDegreeNodeId(
+  view: ConceptGraphView,
+  degrees: Map<string, number> = computeDegrees(view),
+): string | null {
+  let best: ConceptGraphNode | null = null;
+  let bestDegree = -1;
+  for (const node of view.nodes) {
+    const degree = degrees.get(node.id) ?? 0;
+    if (
+      degree > bestDegree ||
+      (degree === bestDegree && best !== null && compareNodesForLayout(node, best) < 0)
+    ) {
+      bestDegree = degree;
+      best = node;
+    }
+  }
+  return best ? best.id : null;
+}
+
+/**
+ * Curvature assigned to one edge so that parallel / reciprocal edges
+ * between the same node pair don't draw on top of each other.
+ */
+export interface EdgeCurve {
+  /**
+   * Signed perpendicular offset (world units) of the quadratic control
+   * point, measured along the *canonical* normal of the endpoint pair
+   * (see {@link quadraticControlPoint}). `0` draws a straight line.
+   */
+  offset: number;
+  /** True when the edge is a self-loop (`from === to`). */
+  selfLoop: boolean;
+  /** 0-based index of this edge among self-loops on the same node. */
+  loopIndex: number;
+}
+
+/** Spacing between adjacent parallel edges / self-loops, in world units. */
+const PARALLEL_EDGE_STEP = 18;
+
+/** Canonical, order-independent key for an unordered endpoint pair. */
+function pairKey(a: string, b: string): string {
+  return compareCodepoint(a, b) <= 0 ? `${a}\u0000${b}` : `${b}\u0000${a}`;
+}
+
+/**
+ * Assign each edge a curvature so reciprocal/parallel edges fan apart.
+ *
+ * Edges are grouped by their unordered endpoint pair (so `a→b` and `b→a`
+ * share a group and are separated), then spread symmetrically around the
+ * straight midline: a lone edge gets a *gentle* constant bow (so labels
+ * have room and crossing lines are easier to follow), two edges split to
+ * opposite sides, three put one straight and two bowed, and so on.
+ * Self-loops are flagged and fanned by index for the renderer to draw as
+ * little loops. Deterministic: within a group edges are ordered by a
+ * codepoint compare of their id, so the offsets are stable across runs.
+ *
+ * Pure and O(E): all heavy edge geometry stays here, unit-tested, leaving
+ * the renderer to map an offset onto an SVG path. `step` is exposed for
+ * tests.
+ */
+export function computeEdgeCurves(
+  edges: ReadonlyArray<ConceptGraphEdge>,
+  step: number = PARALLEL_EDGE_STEP,
+): Map<string, EdgeCurve> {
+  const groups = new Map<string, ConceptGraphEdge[]>();
+  for (const edge of edges) {
+    const key =
+      edge.from === edge.to ? `self\u0000${edge.from}` : pairKey(edge.from, edge.to);
+    const arr = groups.get(key);
+    if (arr) arr.push(edge);
+    else groups.set(key, [edge]);
+  }
+
+  const result = new Map<string, EdgeCurve>();
+  for (const [key, group] of groups) {
+    const selfLoop = key.startsWith("self\u0000");
+    const ordered = [...group].sort((a, b) => compareCodepoint(a.id, b.id));
+    const count = ordered.length;
+    ordered.forEach((edge, index) => {
+      if (selfLoop) {
+        result.set(edge.id, { offset: 0, selfLoop: true, loopIndex: index });
+        return;
+      }
+      // Symmetric spread around the midline; a single edge still bows
+      // gently so its label has clearance and it's easier to trace.
+      const centered = index - (count - 1) / 2;
+      const offset = count === 1 ? step * 0.5 : centered * step;
+      result.set(edge.id, { offset, selfLoop: false, loopIndex: 0 });
+    });
+  }
+  return result;
+}
+
+/**
+ * Control point for a quadratic edge curve: the midpoint of `from`/`to`
+ * pushed `offset` world-units along the segment's unit normal. Callers
+ * pass the endpoints in a *canonical* order (e.g. sorted by id) so every
+ * edge in a parallel group shares one normal basis and their signed
+ * offsets land on predictable, non-overlapping sides regardless of each
+ * edge's own direction. Degenerate (coincident) endpoints fall back to a
+ * vertical normal so the result is always finite.
+ */
+export function quadraticControlPoint(from: Point, to: Point, offset: number): Point {
+  const mx = (from.x + to.x) / 2;
+  const my = (from.y + to.y) / 2;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) {
+    // Coincident endpoints: push straight up so we never divide by ~0.
+    return { x: mx, y: my - offset };
+  }
+  const nx = -dy / len;
+  const ny = dx / len;
+  return { x: mx + nx * offset, y: my + ny * offset };
+}
+
+/** An SVG path for an edge plus the on-curve anchor for its label. */
+export interface EdgePath {
+  /** The `d` attribute for the `<path>`. */
+  d: string;
+  /** Point on the curve at t = 0.5, where a label should be anchored. */
+  labelPoint: Point;
+}
+
+/**
+ * Build the quadratic-bezier path for an edge from `from` to `to` with
+ * the given `control` point, and the on-curve label anchor at t = 0.5.
+ *
+ * The path is drawn in the edge's true direction (`from` → `to`) so an
+ * `orient="auto"` arrowhead marker points the right way even though the
+ * `control` point is computed from the canonical endpoint order. The
+ * label anchor uses the quadratic midpoint identity
+ * `B(½) = ¼·from + ½·control + ¼·to`, which is symmetric in `from`/`to`
+ * and therefore identical no matter which direction the edge is drawn.
+ */
+export function quadraticEdgePath(from: Point, to: Point, control: Point): EdgePath {
+  return {
+    d: `M ${from.x} ${from.y} Q ${control.x} ${control.y} ${to.x} ${to.y}`,
+    labelPoint: {
+      x: 0.25 * from.x + 0.5 * control.x + 0.25 * to.x,
+      y: 0.25 * from.y + 0.5 * control.y + 0.25 * to.y,
+    },
+  };
+}
+
+/**
+ * A candidate edge-label placement: a center point, an estimated box,
+ * and a priority (lower = placed first / more important).
+ */
+export interface LabelCandidate {
+  /** Edge id the label belongs to. */
+  id: string;
+  /** Label box center. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Lower wins ties: e.g. focused edges get a smaller number. */
+  priority: number;
+}
+
+/**
+ * Greedy, collision-free label placement. Candidates are placed in
+ * priority order (ties broken by a codepoint compare of the id for
+ * determinism); a candidate is accepted only if its axis-aligned box
+ * doesn't overlap any already-accepted box. Returns the set of edge ids
+ * whose labels should render.
+ *
+ * O(k²) in the number of *candidates*, which the renderer keeps small
+ * (all edges only below the wholesale threshold, otherwise just the
+ * edges incident to the focused node), so this stays cheap even at the
+ * node/edge ceiling. Pure and unit-testable in isolation.
+ */
+export function placeEdgeLabels(
+  candidates: ReadonlyArray<LabelCandidate>,
+): Set<string> {
+  const ordered = [...candidates].sort(
+    (a, b) => a.priority - b.priority || compareCodepoint(a.id, b.id),
+  );
+  const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
+  const accepted = new Set<string>();
+  for (const c of ordered) {
+    const halfW = c.width / 2;
+    const halfH = c.height / 2;
+    const overlaps = placed.some(
+      (p) =>
+        Math.abs(c.x - p.x) < halfW + p.w / 2 &&
+        Math.abs(c.y - p.y) < halfH + p.h / 2,
+    );
+    if (!overlaps) {
+      placed.push({ x: c.x, y: c.y, w: c.width, h: c.height });
+      accepted.add(c.id);
+    }
+  }
+  return accepted;
 }

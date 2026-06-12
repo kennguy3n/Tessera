@@ -11,7 +11,19 @@ import {
   localGraphView,
   filterGraphView,
   RELATION_LABELS,
+  isConceptRelation,
+  isConceptNodeState,
+  findNeighborInDirection,
+  highestDegreeNodeId,
+  compareCodepoint,
+  computeEdgeCurves,
+  quadraticControlPoint,
+  quadraticEdgePath,
+  placeEdgeLabels,
   type ConceptGraphView,
+  type ConceptGraphEdge,
+  type LabelCandidate,
+  type SpatialNode,
 } from "../utils/conceptGraph";
 
 /**
@@ -492,5 +504,249 @@ describe("computeFitBox", () => {
       expect(n.y - n.radius).toBeGreaterThanOrEqual(box.y);
       expect(n.y + n.radius).toBeLessThanOrEqual(box.y + box.height);
     }
+  });
+});
+
+describe("isConceptRelation / isConceptNodeState", () => {
+  it("accepts the known tags plus 'unknown'", () => {
+    for (const r of [
+      "is_a",
+      "part_of",
+      "decided_by",
+      "supersedes",
+      "contradicts",
+      "derived_from",
+      "assigned_to",
+      "unknown",
+    ]) {
+      expect(isConceptRelation(r)).toBe(true);
+    }
+    for (const s of [
+      "candidate",
+      "canonical",
+      "superseded",
+      "contradicted",
+      "deleted",
+      "unknown",
+    ]) {
+      expect(isConceptNodeState(s)).toBe(true);
+    }
+  });
+
+  it("rejects bogus / non-string values (defensive parse boundary)", () => {
+    for (const bad of ["", "isa", "PART_OF", 1, null, undefined, {}, []]) {
+      expect(isConceptRelation(bad)).toBe(false);
+      expect(isConceptNodeState(bad)).toBe(false);
+    }
+  });
+});
+
+describe("findNeighborInDirection (keyboard spatial nav)", () => {
+  // A plus-shaped layout around a center node so each direction has an
+  // unambiguous nearest neighbour.
+  const plus: SpatialNode[] = [
+    { id: "center", x: 0, y: 0 },
+    { id: "right", x: 100, y: 0 },
+    { id: "left", x: -100, y: 0 },
+    { id: "up", x: 0, y: -100 },
+    { id: "down", x: 0, y: 100 },
+  ];
+
+  it("moves to the aligned neighbour in each direction", () => {
+    expect(findNeighborInDirection(plus, "center", "right")).toBe("right");
+    expect(findNeighborInDirection(plus, "center", "left")).toBe("left");
+    expect(findNeighborInDirection(plus, "center", "up")).toBe("up");
+    expect(findNeighborInDirection(plus, "center", "down")).toBe("down");
+  });
+
+  it("returns null when no node lies in the travel direction", () => {
+    // From the rightmost node there is nothing further right.
+    expect(findNeighborInDirection(plus, "right", "right")).toBeNull();
+  });
+
+  it("returns null for an unknown current id", () => {
+    expect(findNeighborInDirection(plus, "missing", "up")).toBeNull();
+  });
+
+  it("prefers an axis-aligned node over a closer but off-axis one", () => {
+    const nodes: SpatialNode[] = [
+      { id: "c", x: 0, y: 0 },
+      // Slightly closer in raw distance but well off the travel axis…
+      { id: "diagonal", x: 40, y: 70 },
+      // …vs. a perfectly-aligned node a bit further along the axis.
+      { id: "aligned", x: 60, y: 0 },
+    ];
+    expect(findNeighborInDirection(nodes, "c", "right")).toBe("aligned");
+  });
+
+  it("is deterministic: ties break on a codepoint id compare", () => {
+    const nodes: SpatialNode[] = [
+      { id: "c", x: 0, y: 0 },
+      { id: "zeta", x: 50, y: 0 },
+      { id: "alpha", x: 50, y: 0 },
+    ];
+    expect(findNeighborInDirection(nodes, "c", "right")).toBe("alpha");
+  });
+});
+
+describe("highestDegreeNodeId", () => {
+  it("returns the most-connected node in the view", () => {
+    // In sampleGraph, b has degree 3 (a→b, b→c, b→e), the maximum.
+    expect(highestDegreeNodeId(sampleGraph())).toBe("b");
+  });
+
+  it("returns null for an empty view", () => {
+    expect(highestDegreeNodeId(parseConceptGraph("{}"))).toBeNull();
+  });
+});
+
+describe("compareCodepoint (shared canonical ordering)", () => {
+  it("orders by UTF-16 code unit, independent of locale collation", () => {
+    expect(Math.sign(compareCodepoint("a", "b"))).toBe(-1);
+    expect(Math.sign(compareCodepoint("b", "a"))).toBe(1);
+    expect(compareCodepoint("a", "a")).toBe(0);
+    // Uppercase precedes lowercase by codepoint (unlike many locale collations
+    // that fold case) — locking this guards the edge-curve canonical ordering.
+    expect(Math.sign(compareCodepoint("Z", "a"))).toBe(-1);
+    expect(Math.sign(compareCodepoint("10", "9"))).toBe(-1);
+  });
+
+  it("agrees in sign with the renderer's `>` idiom for endpoint ids", () => {
+    // The renderer derives `swap` as `compareCodepoint(from, to) > 0`; this
+    // must match `pairKey`'s `compareCodepoint(a, b) <= 0` partition so a
+    // parallel group shares one normal basis. Verify the two never disagree.
+    const ids = ["a", "b", "Z", "node-1", "node-2", "\u00e9", "10", "9"];
+    for (const a of ids) {
+      for (const b of ids) {
+        expect(compareCodepoint(a, b) > 0).toBe(a > b);
+      }
+    }
+  });
+});
+
+describe("computeEdgeCurves (parallel / reciprocal separation)", () => {
+  function edge(id: string, from: string, to: string): ConceptGraphEdge {
+    return { id, from, to, relationType: "is_a", scopeId: "s1" };
+  }
+
+  it("gives a lone edge a single gentle bow", () => {
+    const curves = computeEdgeCurves([edge("e1", "a", "b")], 20);
+    expect(curves.get("e1")).toEqual({ offset: 10, selfLoop: false, loopIndex: 0 });
+  });
+
+  it("splits two edges of the same pair to opposite sides (sum to zero)", () => {
+    // a→b and b→a share the unordered pair → spread symmetrically.
+    const curves = computeEdgeCurves([edge("e1", "a", "b"), edge("e2", "b", "a")], 20);
+    const o1 = curves.get("e1")!.offset;
+    const o2 = curves.get("e2")!.offset;
+    expect(o1 + o2).toBeCloseTo(0);
+    expect(Math.abs(o1)).toBeCloseTo(10);
+    expect(o1).not.toBe(o2);
+  });
+
+  it("puts the middle of three parallel edges straight", () => {
+    const offsets = [...computeEdgeCurves(
+      [edge("e1", "a", "b"), edge("e2", "a", "b"), edge("e3", "a", "b")],
+      20,
+    ).values()]
+      .map((c) => c.offset)
+      .sort((x, y) => x - y);
+    expect(offsets).toEqual([-20, 0, 20]);
+  });
+
+  it("flags self-loops and fans them by index", () => {
+    const curves = computeEdgeCurves([edge("e1", "a", "a"), edge("e2", "a", "a")]);
+    expect(curves.get("e1")!.selfLoop).toBe(true);
+    expect(curves.get("e2")!.selfLoop).toBe(true);
+    expect(curves.get("e1")!.loopIndex).toBe(0);
+    expect(curves.get("e2")!.loopIndex).toBe(1);
+  });
+
+  it("is deterministic regardless of input edge order", () => {
+    const a = computeEdgeCurves([edge("e2", "a", "b"), edge("e1", "a", "b")], 20);
+    const b = computeEdgeCurves([edge("e1", "a", "b"), edge("e2", "a", "b")], 20);
+    expect(a.get("e1")!.offset).toBe(b.get("e1")!.offset);
+    expect(a.get("e2")!.offset).toBe(b.get("e2")!.offset);
+  });
+});
+
+describe("quadraticControlPoint / quadraticEdgePath", () => {
+  it("offsets the control point along the segment normal", () => {
+    // Horizontal segment → unit normal is (0, 1); a positive offset moves
+    // the control point along +y (downward in screen coords).
+    const c = quadraticControlPoint({ x: 0, y: 0 }, { x: 100, y: 0 }, 20);
+    expect(c.x).toBeCloseTo(50);
+    expect(c.y).toBeCloseTo(20);
+    // A negative offset mirrors to the other side.
+    expect(quadraticControlPoint({ x: 0, y: 0 }, { x: 100, y: 0 }, -20).y).toBeCloseTo(
+      -20,
+    );
+  });
+
+  it("never produces NaN for coincident endpoints", () => {
+    const c = quadraticControlPoint({ x: 5, y: 5 }, { x: 5, y: 5 }, 12);
+    expect(Number.isFinite(c.x)).toBe(true);
+    expect(Number.isFinite(c.y)).toBe(true);
+  });
+
+  it("builds the path in from→to order with a midpoint label anchor", () => {
+    const control = { x: 50, y: -20 };
+    const { d, labelPoint } = quadraticEdgePath(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      control,
+    );
+    expect(d).toBe("M 0 0 Q 50 -20 100 0");
+    // B(0.5) = 0.25*from + 0.5*control + 0.25*to.
+    expect(labelPoint.x).toBeCloseTo(50);
+    expect(labelPoint.y).toBeCloseTo(-10);
+  });
+
+  it("label anchor is identical whichever direction the edge is drawn", () => {
+    const control = { x: 50, y: -20 };
+    const forward = quadraticEdgePath({ x: 0, y: 0 }, { x: 100, y: 0 }, control);
+    const reverse = quadraticEdgePath({ x: 100, y: 0 }, { x: 0, y: 0 }, control);
+    expect(reverse.labelPoint).toEqual(forward.labelPoint);
+  });
+});
+
+describe("placeEdgeLabels (greedy collision avoidance)", () => {
+  function box(
+    id: string,
+    x: number,
+    y: number,
+    priority = 0,
+    width = 20,
+    height = 12,
+  ): LabelCandidate {
+    return { id, x, y, width, height, priority };
+  }
+
+  it("accepts well-separated labels", () => {
+    const placed = placeEdgeLabels([box("a", 0, 0), box("b", 100, 100)]);
+    expect(placed).toEqual(new Set(["a", "b"]));
+  });
+
+  it("drops a label that overlaps an already-placed one", () => {
+    const placed = placeEdgeLabels([box("a", 0, 0), box("b", 5, 0)]);
+    expect(placed.has("a")).toBe(true);
+    expect(placed.has("b")).toBe(false);
+  });
+
+  it("places higher-priority (lower number) labels first", () => {
+    // Same position; the focused (priority 0) label must win over the
+    // unfocused (priority 1) one regardless of input order.
+    const placed = placeEdgeLabels([
+      box("unfocused", 0, 0, 1),
+      box("focused", 2, 0, 0),
+    ]);
+    expect(placed.has("focused")).toBe(true);
+    expect(placed.has("unfocused")).toBe(false);
+  });
+
+  it("is deterministic for equal-priority ties (codepoint id order)", () => {
+    const placed = placeEdgeLabels([box("z", 0, 0), box("a", 2, 0)]);
+    expect(placed.has("a")).toBe(true);
+    expect(placed.has("z")).toBe(false);
   });
 });
