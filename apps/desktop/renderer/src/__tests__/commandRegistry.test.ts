@@ -73,4 +73,84 @@ describe("commandRegistry", () => {
     // refactor accidentally drops half the registry.
     expect(COMMAND_REGISTRY.length).toBeGreaterThanOrEqual(25);
   });
+
+  it("quick switcher is bound to Ctrl/Cmd+O (Obsidian chord), not Cmd+P", () => {
+    const qs = COMMAND_REGISTRY.find((c) => c.id === "palette:quickSwitcher");
+    expect(qs?.kind).toBe("callback");
+    expect(qs?.chord).toEqual({ mod: true, key: "o" });
+    if (qs?.kind === "callback") {
+      expect(qs.callbackId).toBe("openQuickSwitcher");
+    }
+  });
+
+  it("Ctrl/Cmd+P opens the command palette (the requested scheme)", () => {
+    const p = COMMAND_REGISTRY.find(
+      (c) => c.chord?.mod === true && c.chord?.key === "p" && !c.chord?.shift,
+    );
+    expect(p?.kind).toBe("callback");
+    if (p?.kind === "callback") {
+      expect(p.callbackId).toBe("openCommandPalette");
+    }
+  });
+
+  it("bare '?' opens the shortcuts help (key '?', shift held)", () => {
+    const help = COMMAND_REGISTRY.find(
+      (c) => c.id === "help:shortcutsQuestion",
+    );
+    // Shift+/ emits event.key === "?", so the chord must key on "?".
+    expect(help?.chord).toEqual({ mod: false, shift: true, key: "?" });
+    if (help?.kind === "callback") {
+      expect(help.callbackId).toBe("openShortcutsHelp");
+    }
+  });
+
+  it("exposes a create command for every artifact type", () => {
+    for (const id of [
+      "create:document",
+      "create:slides",
+      "create:sheet",
+      "create:base",
+      "create:infographic",
+      "create:landing_page",
+    ]) {
+      const cmd = COMMAND_REGISTRY.find((c) => c.id === id);
+      expect(cmd, `missing ${id}`).toBeDefined();
+      expect(cmd?.kind).toBe("dispatch");
+      if (cmd?.kind === "dispatch") {
+        expect(cmd.event).toBe("tessera:create-artifact");
+        expect(cmd.detail).toEqual({ type: id.slice("create:".length) });
+      }
+    }
+  });
+
+  it("exposes substrate decay + synthesis commands", () => {
+    const decay = COMMAND_REGISTRY.find((c) => c.id === "substrate:runDecaySweep");
+    const synth = COMMAND_REGISTRY.find(
+      (c) => c.id === "substrate:triggerSynthesis",
+    );
+    expect(decay?.kind).toBe("dispatch");
+    expect(synth?.kind).toBe("dispatch");
+    if (decay?.kind === "dispatch") {
+      expect(decay.event).toBe("tessera:run-decay-sweep");
+    }
+    if (synth?.kind === "dispatch") {
+      expect(synth.event).toBe("tessera:trigger-synthesis");
+    }
+  });
+
+  it("exposes deep-link commands for settings sections + connectors", () => {
+    const targets = [
+      "/settings#appearance",
+      "/settings#performance",
+      "/settings#provider",
+      "/settings#backup",
+      "/sources#connectors",
+    ];
+    for (const to of targets) {
+      const cmd = COMMAND_REGISTRY.find(
+        (c) => c.kind === "navigate" && c.to === to,
+      );
+      expect(cmd, `missing navigate to ${to}`).toBeDefined();
+    }
+  });
 });

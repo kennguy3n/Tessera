@@ -322,7 +322,12 @@ export default function CommandPalette({
         return;
       }
       if (cmd.kind === "dispatch") {
-        window.dispatchEvent(new CustomEvent(cmd.event));
+        window.dispatchEvent(
+          new CustomEvent(
+            cmd.event,
+            cmd.detail ? { detail: cmd.detail } : undefined,
+          ),
+        );
         return;
       }
       if (cmd.kind === "callback") {
@@ -335,7 +340,10 @@ export default function CommandPalette({
             // Already open — no-op.
             return;
           case "openQuickSwitcher":
-            // Already open — no-op (we don't re-mount).
+            // Hand off to the dedicated cross-entity quick switcher.
+            // The palette is already closing (onClose above); fire the
+            // open event so they don't stack on screen.
+            window.dispatchEvent(new CustomEvent("tessera:open-quick-switch"));
             return;
           case "openShortcutsHelp":
             window.dispatchEvent(new CustomEvent("tessera:open-shortcuts"));

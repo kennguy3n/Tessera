@@ -13,6 +13,7 @@ import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
+import { useScrollToHash } from "../hooks/useScrollToHash";
 // (Task 11 review-pass fix, on
 // f7c8dd1): import from the shared utility module instead of from
 // `./SourceDetailPage`. The two pages are siblings; routing list
@@ -32,6 +33,9 @@ const EXCLUDED_FROM_LIST: ReadonlyArray<string> = ["google_drive"];
 
 export default function SourcesPage() {
   const navigate = useNavigate();
+  // Lets `/sources#connectors` (the "Manage connectors" command) jump
+  // straight to the connectors grid.
+  useScrollToHash();
   const { sources, loading, refresh } = useSourceList();
   const { addFolder, addFile } = useAddSource();
   const { remove } = useRemoveSource();
@@ -312,10 +316,12 @@ export default function SourcesPage() {
       />
 
       <div
+        id="connectors"
         style={{
           marginBottom: "var(--spacing-md)",
           display: "grid",
           gap: "var(--spacing-md)",
+          scrollMarginTop: "var(--spacing-lg)",
         }}
       >
         {/* Google Drive keeps its own ConnectorStatus card here because

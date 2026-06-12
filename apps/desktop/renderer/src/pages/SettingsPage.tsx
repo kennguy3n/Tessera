@@ -1,5 +1,6 @@
 import { useState, useEffect, useId } from "react";
 import PageHeader from "../components/PageHeader";
+import { useScrollToHash } from "../hooks/useScrollToHash";
 import Card from "../components/Card";
 import Button from "../components/Button";
 import ModelRuntimeCard from "../components/ModelRuntimeCard";
@@ -66,6 +67,9 @@ const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
 export default function SettingsPage() {
   const { settings, loading, refresh } = useSettings();
   const { update } = useUpdateSetting();
+  // Lets command-palette deep links (e.g. `/settings#performance`)
+  // scroll the matching section into view.
+  useScrollToHash();
   // Stable per-instance ids so the sibling-pattern labels in this page
   // can be wired to their inputs via htmlFor for screen-reader
   // accessibility. Without these the four labels (Theme, Watch
@@ -159,6 +163,7 @@ export default function SettingsPage() {
       />
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-lg)" }}>
+        <div id="appearance" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>General</h3>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
@@ -359,6 +364,7 @@ export default function SettingsPage() {
           </div>
         </Card>
 
+        <div id="performance" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Performance</h3>
           <div style={{ marginBottom: "var(--spacing-lg)" }}>
@@ -507,6 +513,7 @@ export default function SettingsPage() {
           testIdPrefix="imagegen-slot"
         />
 
+        <div id="provider" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <ExternalProviderCard />
 
         <HybridSearchCard />
@@ -519,6 +526,7 @@ export default function SettingsPage() {
 
         <SourceHealthDashboard />
 
+        <div id="backup" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <BackupSettingsCard />
 
         <Card>

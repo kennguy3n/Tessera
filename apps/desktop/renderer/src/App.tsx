@@ -14,6 +14,12 @@ import CommandPalette from "./components/CommandPalette";
 import KeyboardShortcutsHelp from "./components/KeyboardShortcutsHelp";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTheme } from "./hooks/useTheme";
+import { useGlobalCommandActions } from "./hooks/useGlobalCommandActions";
+
+// Lazy-mounted alongside the command palette: the quick switcher runs
+// five IPC-backed list fetches the moment it mounts, so we defer that
+// cost until the user first opens it (Cmd+O).
+const QuickSwitcher = lazy(() => import("./components/QuickSwitcher"));
 
 // LW-4: route-level code splitting. Each page (and the heavy editor
 // module graph it pulls in — TipTap/ProseMirror, the sheet formula
@@ -94,10 +100,14 @@ function RouteFallback(): ReactNode {
 export default function App() {
   useKeyboardShortcuts();
   useTheme();
+  useGlobalCommandActions();
   const [palette, setPalette] = useState<PaletteState>({
     open: false,
     mode: "full",
   });
+  // The dedicated quick switcher (Cmd+O), lazy-mounted like the palette.
+  const [quickSwitchOpen, setQuickSwitchOpen] = useState(false);
+  const [quickSwitchHasMounted, setQuickSwitchHasMounted] = useState(false);
   // Lazy-mount the palette: the `CommandPalette` component runs
   // several IPC-backed hooks (`useArtifactList`, `usePinnedArtifacts`,
   // `useRecentlyViewedArtifacts`) whose fetches we don't want to pay
@@ -114,6 +124,7 @@ export default function App() {
     () => setPalette({ open: false, mode: "full" }),
     [],
   );
+  const closeQuickSwitch = useCallback(() => setQuickSwitchOpen(false), []);
 
   useEffect(() => {
     const openPalette = (e: Event) => {
@@ -124,13 +135,21 @@ export default function App() {
       setPalette({ open: true, mode: detail?.mode ?? "full" });
       setPaletteHasMounted(true);
     };
+    const openQuickSwitch = () => {
+      // Opening one overlay closes the other so they never stack.
+      setPalette({ open: false, mode: "full" });
+      setQuickSwitchOpen(true);
+      setQuickSwitchHasMounted(true);
+    };
     const openShortcuts = () => setShortcutsOpen(true);
     const toggleSidebar = () => setSidebarCollapsed((v) => !v);
     window.addEventListener("tessera:open-palette", openPalette);
+    window.addEventListener("tessera:open-quick-switch", openQuickSwitch);
     window.addEventListener("tessera:open-shortcuts", openShortcuts);
     window.addEventListener("tessera:toggle-sidebar", toggleSidebar);
     return () => {
       window.removeEventListener("tessera:open-palette", openPalette);
+      window.removeEventListener("tessera:open-quick-switch", openQuickSwitch);
       window.removeEventListener("tessera:open-shortcuts", openShortcuts);
       window.removeEventListener("tessera:toggle-sidebar", toggleSidebar);
     };
@@ -195,6 +214,11 @@ export default function App() {
           mode={palette.mode}
           onClose={closePalette}
         />
+      )}
+      {quickSwitchHasMounted && (
+        <Suspense fallback={null}>
+          <QuickSwitcher isOpen={quickSwitchOpen} onClose={closeQuickSwitch} />
+        </Suspense>
       )}
       <KeyboardShortcutsHelp
         isOpen={shortcutsOpen}

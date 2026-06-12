@@ -64,6 +64,7 @@ const TYPING_OVERRIDE_COMMAND_IDS = new Set<string>([
   "action:export",
   "palette:open",
   "palette:openShiftP",
+  "palette:openP",
   "palette:quickSwitcher",
   "help:shortcuts",
 ]);
@@ -126,7 +127,12 @@ export function useKeyboardShortcuts() {
         return;
       }
       if (matched.kind === "dispatch") {
-        window.dispatchEvent(new CustomEvent(matched.event));
+        window.dispatchEvent(
+          new CustomEvent(
+            matched.event,
+            matched.detail ? { detail: matched.detail } : undefined,
+          ),
+        );
         return;
       }
       if (matched.kind === "callback") {
@@ -139,11 +145,9 @@ export function useKeyboardShortcuts() {
             );
             return;
           case "openQuickSwitcher":
-            window.dispatchEvent(
-              new CustomEvent("tessera:open-palette", {
-                detail: { mode: "quickSwitcher" },
-              }),
-            );
+            // The dedicated, cross-entity quick switcher (Cmd+O) —
+            // distinct from the Cmd+K/Cmd+P command palette.
+            window.dispatchEvent(new CustomEvent("tessera:open-quick-switch"));
             return;
           case "openShortcutsHelp":
             window.dispatchEvent(new CustomEvent("tessera:open-shortcuts"));
