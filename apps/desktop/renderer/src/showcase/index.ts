@@ -586,6 +586,21 @@ export function buildShowcaseApi(personaId: string): unknown {
         return a ?? artifacts[0];
       },
       listVersions: async () => [],
+      // "Generate" on the Create page calls this. The native bridge
+      // returns a freshly-generated artifact; the showcase has no
+      // model, so we resolve the persona's pre-built artifact for the
+      // chosen template (same id resolution as `templates.get`) and
+      // return it. Without this the Proxy fallthrough resolves to
+      // `undefined`, and CreatePage's `artifact.id` throws
+      // "Cannot read properties of undefined (reading 'id')".
+      generateFromTemplate: async (templateId: string, _sourceIds: string[]) => {
+        const match =
+          ds.artifacts.find((a) => (a.templateId ?? a.slug) === templateId) ??
+          ds.artifacts[0];
+        return (
+          (match && byId.get(artifactId(ds.id, match.slug))) ?? artifacts[0]
+        );
+      },
     },
     templates: {
       list: async () =>
