@@ -2,14 +2,22 @@
  * `useScrollToHash` must reliably scroll cross-page deep links into
  * view even when the target anchor renders only after an async load.
  * The `ready` gate (callers pass `!loading`) lets the effect retry once
- * the content — and thus the anchor — is present, and each hash is
- * honoured at most once so a later refresh doesn't yank the user back.
+ * the content — and thus the anchor — is present. De-duplication is
+ * keyed on the navigation (`location.key`): a background refresh
+ * (ready toggle, same navigation) doesn't yank the user back, but an
+ * intentional re-navigation to the same deep link scrolls again.
  * Devin Review PR #146.
  */
 
 import { act } from "react";
-import { renderHook, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import {
+  renderHook,
+  render,
+  screen,
+  fireEvent,
+  cleanup,
+} from "@testing-library/react";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import {
   afterEach,
   beforeEach,
@@ -29,6 +37,16 @@ function wrapper(hash: string) {
       </MemoryRouter>
     );
   };
+}
+
+function Harness() {
+  useScrollToHash(true);
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate("/sources#connectors")}>
+      re-navigate
+    </button>
+  );
 }
 
 function addAnchor(id: string): HTMLDivElement {
@@ -86,7 +104,7 @@ describe("useScrollToHash", () => {
     expect(scrollSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("scrolls a given hash at most once across later ready toggles", () => {
+  it("scrolls once per navigation across later ready toggles (no yank-back on refresh)", () => {
     addAnchor("connectors");
     const { rerender } = renderHook(
       ({ ready }: { ready: boolean }) => useScrollToHash(ready),
@@ -97,13 +115,37 @@ describe("useScrollToHash", () => {
     });
     expect(scrollSpy).toHaveBeenCalledTimes(1);
 
-    // A background refresh toggles loading off and on again.
+    // A background refresh toggles loading off and on again — same
+    // navigation (`location.key` unchanged), so no second scroll.
     rerender({ ready: false });
     rerender({ ready: true });
     act(() => {
       vi.runAllTimers();
     });
     expect(scrollSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrolls again when the same deep link is intentionally re-invoked", () => {
+    addAnchor("connectors");
+    render(
+      <MemoryRouter initialEntries={["/sources#connectors"]}>
+        <Harness />
+      </MemoryRouter>,
+    );
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+
+    // Re-selecting the same deep link is a fresh navigation (new
+    // `location.key`), so the user is taken back to the section.
+    act(() => {
+      fireEvent.click(screen.getByText("re-navigate"));
+    });
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(scrollSpy).toHaveBeenCalledTimes(2);
   });
 
   it("is a no-op when there is no hash", () => {

@@ -17,25 +17,32 @@
  * exist during the page's loading skeleton, so a one-shot lookup on
  * mount would silently miss. Callers pass their loading-complete
  * signal (`!loading`) so the effect re-fires once the content — and
- * thus the anchor — is present. Each hash is scrolled to at most once
- * (tracked by ref) so a later background refresh doesn't yank the user
- * back to the anchor. Defaults to `true` for callers whose anchors are
- * always present.
+ * thus the anchor — is present. Defaults to `true` for callers whose
+ * anchors are always present.
+ *
+ * De-duplication is keyed on the navigation (`location.key`), not the
+ * hash string, so it tracks *intent* rather than the URL fragment: a
+ * background data refresh (which toggles `ready` but keeps the same
+ * `key`) won't yank the user back after they've scrolled away, while
+ * intentionally re-invoking the same deep link (e.g. the palette's
+ * "Performance settings" while already on `/settings#performance`)
+ * produces a new `key` and scrolls again, as the user expects.
  */
 
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 
 export function useScrollToHash(ready: boolean = true): void {
-  const { hash } = useLocation();
-  // The hash we've already scrolled to; advances only on a successful
-  // scroll so a not-yet-rendered anchor keeps retrying on the next
-  // `ready`/`hash` change, while a settled anchor is honoured once.
-  const handledHashRef = useRef<string | null>(null);
+  const { hash, key } = useLocation();
+  // The navigation we've already scrolled for; advances only on a
+  // successful scroll so a not-yet-rendered anchor keeps retrying on the
+  // next `ready` change, while a settled anchor is honoured once per
+  // navigation.
+  const handledKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!hash || !ready) return;
-    if (handledHashRef.current === hash) return;
+    if (handledKeyRef.current === key) return;
     const id = decodeURIComponent(hash.slice(1));
     if (!id) return;
     // Defer one frame so a freshly-navigated page has rendered its
@@ -43,11 +50,11 @@ export function useScrollToHash(ready: boolean = true): void {
     const t = setTimeout(() => {
       const el = document.getElementById(id);
       if (!el) return;
-      handledHashRef.current = hash;
+      handledKeyRef.current = key;
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       if (el.tabIndex < 0) el.tabIndex = -1;
       el.focus({ preventScroll: true });
     }, 0);
     return () => clearTimeout(t);
-  }, [hash, ready]);
+  }, [hash, key, ready]);
 }
