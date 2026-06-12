@@ -1947,8 +1947,9 @@ export interface ConnectorStatusInfo {
 }
 
 /**
- * Result of a `connectors:test` connection probe (the renderer mirror
- * of the main-process `ConnectorProbeResult`). Carries NO secret
+ * Result of a `connectors:test` connection probe — the single source of
+ * truth for the IPC contract, imported by both the main-process handler
+ * (`ipc/connectors/handlers.ts`) and the renderer. Carries NO secret
  * values — `message` is the connector framework's flattened,
  * machine-categorised reason, safe to render in the modal.
  */

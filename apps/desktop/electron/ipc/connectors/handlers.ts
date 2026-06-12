@@ -35,6 +35,7 @@ import { idempotentHandle } from "../register";
 import type { IpcContext } from "../context";
 import { assertProvider, assertString } from "../validate";
 import { getConnectSpec } from "../../../shared/connectorConfig";
+import type { ConnectorProbeResult } from "../../../shared/types";
 import { RateLimitError } from "../rateLimiter";
 import {
   applyFailureToState,
@@ -1385,29 +1386,6 @@ function authenticateWithToken(
   ctx.log.info("connector authenticated", { provider, method: "token" });
   safeAudit(ctx, (b) => b.bridgeLogConnectorConnected(provider));
   return { provider, connected: true, status: "connected" };
-}
-
-/**
- * Result of a `connectors:test` connection probe. Deliberately carries
- * NO secret values: `message` is the connector framework's flattened,
- * machine-categorised reason (e.g. `"auth: 401 …"`), never a token or
- * client secret.
- */
-export interface ConnectorProbeResult {
-  provider: string;
-  /** True iff the connector completed an authenticated read. */
-  ok: boolean;
-  /**
-   * Change events the connector surfaced on its first authenticated
-   * read — a reachability/authorisation signal, present on success.
-   * Zero is a valid success (the target resolved but is currently
-   * empty), so the UI must treat `ok` — not this count — as the signal.
-   */
-  observedEvents?: number;
-  /** True when the failure was a network/transport fault (offline). */
-  offline?: boolean;
-  /** Non-secret, human-readable failure reason. Present iff `!ok`. */
-  message?: string;
 }
 
 /**
