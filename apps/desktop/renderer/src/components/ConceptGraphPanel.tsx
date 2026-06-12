@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -553,7 +554,12 @@ export default function ConceptGraphPanel({
   // Drag overrides are stale once the layout (data/filter/size) changes.
   useEffect(() => commitDragPos(new Map()), [layout, commitDragPos]);
 
-  useEffect(() => {
+  // A layout effect (not a passive effect) so the starting frame is committed
+  // *before* the browser paints. With a passive effect the browser would paint
+  // one frame using `renderPos`'s `{ x: n.x, y: n.y }` fallback — i.e. the final
+  // layout positions — before the first rAF tick moved nodes to the center,
+  // producing a visible flash that contradicts the "grow from center" intent.
+  useLayoutEffect(() => {
     const targets = layout.nodes;
     const animate =
       !prefersReducedMotion &&
@@ -577,6 +583,9 @@ export default function ConceptGraphPanel({
         from.get(n.id) ?? { x: layout.width / 2, y: layout.height / 2 },
       );
     }
+    // Commit the start frame synchronously, before paint, so the first painted
+    // frame shows nodes at their easing origin rather than their destination.
+    commitDisplay(start);
 
     const DURATION = 650;
     const begin = performance.now();

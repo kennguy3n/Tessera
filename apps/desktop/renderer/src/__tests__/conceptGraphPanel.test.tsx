@@ -262,4 +262,27 @@ describe("ConceptGraphPanel", () => {
     expect(empty).toHaveTextContent(/hidden by the current filters/i);
     expect(empty).not.toHaveTextContent(/No concepts yet/i);
   });
+
+  it("starts the settle animation from the canvas center, not the final layout", async () => {
+    // Hold every rAF callback so the animation can't advance past its first
+    // committed frame; we only assert on what the browser would paint first.
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockReturnValue(1 as unknown as number);
+    try {
+      render(<ConceptGraphPanel memories={EVIDENCE} />);
+      const svg = await screen.findByTestId("concept-graph-svg");
+      const transforms = within(svg)
+        .getAllByTestId(/^concept-node-/)
+        .map((g) => g.getAttribute("transform"));
+      // Regression: a passive effect painted one frame at the final layout
+      // positions (a flash) before rAF moved nodes to center. With the
+      // pre-paint layout-effect commit, the first painted frame collapses
+      // every node onto the same canvas-center origin, so they grow outward.
+      expect(transforms.length).toBeGreaterThan(1);
+      expect(new Set(transforms).size).toBe(1);
+    } finally {
+      raf.mockRestore();
+    }
+  });
 });
