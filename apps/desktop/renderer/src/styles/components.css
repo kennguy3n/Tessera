@@ -140,10 +140,26 @@
   padding: 0;
   border-radius: var(--radius-full);
   border: 1px solid color-mix(in srgb, var(--color-text-headline) 18%, transparent);
-  background-color: var(--accent);
+  /* Each swatch carries its own `data-accent`, so `--accent-light` /
+   * `--accent-dark` resolve to THAT ramp on this element. We can't use
+   * the shared `--accent` here because it's substituted once on
+   * `:root` and inherited as a fixed value — it would paint every
+   * swatch the active accent. Pick the base that matches the live
+   * theme so the swatch previews the exact colour the user will get. */
+  background-color: var(--accent-light);
   cursor: pointer;
   transition: transform var(--duration-fast) var(--ease-spring),
     box-shadow var(--transition-fast);
+}
+
+[data-theme="dark"] .accent-swatch {
+  background-color: var(--accent-dark);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .accent-swatch {
+    background-color: var(--accent-dark);
+  }
 }
 
 .accent-swatch:hover {
