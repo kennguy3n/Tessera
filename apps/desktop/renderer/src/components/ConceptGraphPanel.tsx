@@ -41,6 +41,7 @@ import {
   defaultViewState,
   loadViewState,
   saveViewState,
+  type ConceptGraphViewState,
 } from "../utils/conceptGraphViewState";
 import { formatSourceId } from "../utils/memories";
 import type { SubstrateMemoryInfo } from "../types/ipc";
@@ -1025,11 +1026,34 @@ export default function ConceptGraphPanel({
   }, [localMode, localHops, selectedId, graph.nodes, view.nodes.length, announce]);
 
   // ===== persistence: re-apply on scope change + debounced save =====
+  // A render-synchronous mirror of the serializable view state, so both the
+  // debounced save and the synchronous scope-change flush write the same,
+  // always-current snapshot without duplicating the field list.
+  const liveStateRef = useRef<ConceptGraphViewState>(initialViewState.current);
+  liveStateRef.current = {
+    disabledRelations: [...disabledRelations],
+    disabledStates: [...disabledStates],
+    labelsAll,
+    localMode,
+    localHops,
+    selectedId,
+    scopeFilter,
+    viewBox,
+    viewSignature,
+  };
+
   // Scope *changes* on an already-mounted panel reload that scope's saved
   // view state (the initial scope was applied via lazy state initialisers).
   const appliedScopeRef = useRef(scopeKey);
   useEffect(() => {
-    if (appliedScopeRef.current === scopeKey) return;
+    const prevScope = appliedScopeRef.current;
+    if (prevScope === scopeKey) return;
+    // Flush the outgoing scope's latest state synchronously. The debounced
+    // save effect's cleanup cancels its pending timer on this same render, so
+    // a change made within the debounce window would otherwise be dropped
+    // when the scope switches. liveStateRef still holds the old scope's values
+    // here (the state resets below haven't committed yet).
+    saveViewState(prevScope, liveStateRef.current);
     appliedScopeRef.current = scopeKey;
     const next = loadViewState(scopeKey) ?? defaultViewState();
     setScopeFilter(next.scopeFilter);
@@ -1052,17 +1076,7 @@ export default function ConceptGraphPanel({
   // content, evidence text, or concept labels.
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      saveViewState(scopeKey, {
-        disabledRelations: [...disabledRelations],
-        disabledStates: [...disabledStates],
-        labelsAll,
-        localMode,
-        localHops,
-        selectedId,
-        scopeFilter,
-        viewBox,
-        viewSignature,
-      });
+      saveViewState(scopeKey, liveStateRef.current);
     }, PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [
@@ -1151,9 +1165,12 @@ export default function ConceptGraphPanel({
     // `onNodePointerDown` captures the pointer on the <svg>, which redirects
     // the compatibility click to the SVG (not the node <g>), so a node's
     // `onClick` never fires in a real browser. A tap that didn't drift past
-    // the drag threshold is treated as a selection.
+    // the drag threshold is treated as a selection. Move the roving tabindex
+    // onto the tapped node too, so keyboard focus follows pointer selection
+    // (otherwise `effectiveRovingId` would keep tabIndex=0 on a stale node).
     if (drag && !drag.moved) {
       setSelectedId(drag.id);
+      setRovingId(drag.id);
     }
   }, []);
 

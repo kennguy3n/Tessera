@@ -386,6 +386,54 @@ describe("ConceptGraphPanel", () => {
     expect(widthOf(svg.getAttribute("viewBox"))).toBe(before);
   });
 
+  it("moves the roving tabindex to a node selected by a real pointer tap", async () => {
+    render(<ConceptGraphPanel memories={EVIDENCE} />);
+    const svg = await screen.findByTestId("concept-graph-svg");
+    // jsdom has no pointer-capture; stub it so the production
+    // pointerdown(node) → pointerup(svg) selection path runs. In a real
+    // browser the synthetic click is redirected to the captured <svg>, so
+    // the node's onClick never fires — selection (and the roving tabindex
+    // update) must come from the pointer-up handler.
+    const captured = new Set<number>();
+    svg.setPointerCapture = ((id: number) => {
+      captured.add(id);
+    }) as typeof svg.setPointerCapture;
+    svg.hasPointerCapture = ((id: number) =>
+      captured.has(id)) as typeof svg.hasPointerCapture;
+    svg.releasePointerCapture = ((id: number) => {
+      captured.delete(id);
+    }) as typeof svg.releasePointerCapture;
+
+    // Seed the roving focus on a *different* node first; `effectiveRovingId`
+    // prefers a valid rovingId over the selection, so without endPointer
+    // updating rovingId the tabindex would stay stranded on atlas.
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Enter" });
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-atlas")).toHaveAttribute(
+        "tabindex",
+        "0",
+      ),
+    );
+
+    const node = screen.getByTestId("concept-node-project");
+    fireEvent.pointerDown(node, { pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(svg, { pointerId: 1, clientX: 10, clientY: 10 });
+
+    // Keyboard focus (roving tabindex) follows the pointer selection.
+    await waitFor(() =>
+      expect(screen.getByTestId("concept-node-project")).toHaveAttribute(
+        "tabindex",
+        "0",
+      ),
+    );
+    expect(
+      screen.getByTestId("concept-node-atlas").getAttribute("tabindex"),
+    ).toBe("-1");
+    expect(await screen.findByTestId("concept-detail")).toHaveTextContent(
+      "Project",
+    );
+  });
+
   it("persists filters + selection across a remount (same scope)", async () => {
     const first = render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />);
     await waitFor(() =>
