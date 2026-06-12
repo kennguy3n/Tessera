@@ -429,8 +429,41 @@ this UI was built-and-tested but unmounted).
   `var(--color-…)` reference so dark-mode overrides apply
   automatically.
 
+#### Keyboard-first navigation — fuzzy quick switcher & expanded palette
+
+- **Global fuzzy quick switcher (`Ctrl/Cmd+O`).** An Obsidian-style
+  overlay, distinct from the command palette, that fuzzy-finds and jumps
+  to any source, artifact, template, automation, task, or app page —
+  reading live data via `window.tessera.*`, ranking by fuzzy score with
+  a recency boost, and floating recently-viewed artifacts to the top.
+  Keyboard-only operable (ARIA combobox + listbox, focus trap, focus
+  restoration), debounced via `useDeferredValue`, results capped and
+  virtualised past 30 rows for large libraries. Degrades gracefully with
+  a banner when the bridge is unavailable or a partial load fails.
+- **Broader command palette.** Commands to navigate to every page,
+  create each artifact type, open settings sections via deep links
+  (e.g. `/settings#performance`), run connector actions, trigger
+  substrate decay/synthesis, and open the keyboard-shortcuts help — all
+  sourced from the single `COMMAND_REGISTRY`.
+- **Consistent global shortcuts.** `Ctrl/Cmd+K` (and `Ctrl/Cmd+P`)
+  command palette, `Ctrl/Cmd+O` quick switcher, `Ctrl/Cmd+/` (and `?`)
+  keyboard-shortcuts help. The three overlays are mutually exclusive,
+  and every chord is listed in the cheatsheet.
+- **Print (`Ctrl/Cmd+Alt+P`).** Opens the system print dialog for the
+  current view, restoring the print shortcut that moved off
+  `Ctrl/Cmd+P` when that chord became the command palette. Matched by
+  physical key code so macOS Option-key composition (`⌥P` → `π`)
+  doesn't break it; available from within editors and listed in the
+  cheatsheet + palette.
+
 ### Changed
 
+- **Quick switch rebinds to `Ctrl/Cmd+O`; `Ctrl/Cmd+P` now opens the
+  command palette.** Previously `Ctrl/Cmd+P` opened a recent-artifact
+  quick switch. It now opens the full command palette (aliasing
+  `Ctrl/Cmd+K`), and the new cross-entity quick switcher takes
+  `Ctrl/Cmd+O` (Obsidian convention). Users relying on `Ctrl/Cmd+P`
+  muscle memory for artifact switching should use `Ctrl/Cmd+O`.
 - **OAuth refresh races are coalesced.** Concurrent expired-token
   detections now produce exactly one upstream refresh call via a
   per-provider mutex in `ipc/connectors/handlers.ts`.

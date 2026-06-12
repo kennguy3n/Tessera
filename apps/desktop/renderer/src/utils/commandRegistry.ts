@@ -38,6 +38,7 @@
  */
 
 import { SIDEBAR_ITEMS } from "../navigation";
+import { ARTIFACT_TYPES } from "../constants/artifactTypes";
 
 /**
  * Categories used by both the Cmd+K palette grouping and the
@@ -120,6 +121,15 @@ export type CommandNavigate = CommandBase & {
 export type CommandDispatch = CommandBase & {
   kind: "dispatch";
   event: string;
+  /**
+   * Optional payload delivered as the `CustomEvent.detail` when the
+   * runner fires `event`. Lets one event channel carry a parameter —
+   * e.g. the "New document" / "New slide deck" commands all dispatch
+   * `tessera:create-artifact` with `{ type }` so the single App-level
+   * handler can branch on the artifact kind without a separate event
+   * (and separate listener) per type.
+   */
+  detail?: Record<string, unknown>;
 };
 
 export type CommandCallback = CommandBase & {
@@ -176,6 +186,30 @@ function buildSidebarCommands(): Command[] {
 }
 
 /**
+ * "Create <kind>" commands, one per {@link ARTIFACT_TYPES} entry.
+ * Each dispatches the single `tessera:create-artifact` channel with a
+ * `{ type }` detail; the App-level handler creates a blank artifact
+ * via `window.tessera.artifacts.create` and opens its editor. Kept
+ * data-driven so adding an artifact type to the substrate surfaces a
+ * palette command for free.
+ */
+function buildCreateArtifactCommands(): Command[] {
+  return ARTIFACT_TYPES.map(
+    (spec): Command => ({
+      id: `create:${spec.id}`,
+      title: `New ${spec.label.toLowerCase()}`,
+      description: `Create a blank ${spec.label.toLowerCase()} and open the editor`,
+      category: "Artifact",
+      chord: null,
+      keywords: ["create", "new", spec.label.toLowerCase(), ...spec.keywords],
+      kind: "dispatch",
+      event: "tessera:create-artifact",
+      detail: { type: spec.id },
+    }),
+  );
+}
+
+/**
  * The full command registry. Ordered roughly by frequency-of-use
  * within each category so that an empty Cmd+K input (which shows
  * commands in registry order) surfaces the most-useful items
@@ -183,6 +217,7 @@ function buildSidebarCommands(): Command[] {
  */
 export function buildCommandRegistry(): readonly Command[] {
   const sidebar = buildSidebarCommands();
+  const createArtifacts = buildCreateArtifactCommands();
   const rest: Command[] = [
     // --- Meta / palette ---
     {
@@ -208,12 +243,26 @@ export function buildCommandRegistry(): readonly Command[] {
       callbackId: "openCommandPalette",
     },
     {
-      id: "palette:quickSwitcher",
-      title: "Quick switch artifact",
-      description: "Jump to a recently viewed artifact",
-      category: "Navigation",
+      id: "palette:openP",
+      title: "Open command palette (Ctrl/Cmd+P)",
+      description: "Alias chord — open the command palette",
+      category: "Help",
       chord: { mod: true, key: "p" },
-      keywords: ["recent", "switch", "open"],
+      keywords: ["cmd", "ctrl", "palette", "menu"],
+      hiddenFromPalette: true,
+      kind: "callback",
+      callbackId: "openCommandPalette",
+    },
+    {
+      id: "palette:quickSwitcher",
+      title: "Quick switch",
+      description:
+        "Fuzzy-find and open any source, artifact, template, automation, task, or page",
+      category: "Navigation",
+      // Obsidian's quick-switcher chord. Distinct from the Cmd+P / Cmd+K
+      // command palette so muscle memory carries across apps.
+      chord: { mod: true, key: "o" },
+      keywords: ["go to", "jump", "switch", "fuzzy", "find", "recent", "open"],
       kind: "callback",
       callbackId: "openQuickSwitcher",
     },
@@ -224,6 +273,22 @@ export function buildCommandRegistry(): readonly Command[] {
       category: "Help",
       chord: { mod: true, key: "/" },
       keywords: ["help", "cheatsheet", "hotkeys", "keys"],
+      kind: "callback",
+      callbackId: "openShortcutsHelp",
+    },
+    {
+      id: "help:shortcutsQuestion",
+      title: "Show keyboard shortcuts (?)",
+      description: "Alias — press ? to open the keyboard cheatsheet",
+      category: "Help",
+      // Bare "?" with no platform modifier, the GitHub / Obsidian
+      // discoverability convention. The key is "?" (not "/") because
+      // Shift+/ emits `event.key === "?"`; `shift: true` matches the
+      // US-layout chord that produces it. Suppressed while typing
+      // (it's not in the runner's typing-override set).
+      chord: { mod: false, shift: true, key: "?" },
+      keywords: ["help", "cheatsheet", "hotkeys", "keys"],
+      hiddenFromPalette: true,
       kind: "callback",
       callbackId: "openShortcutsHelp",
     },
@@ -312,6 +377,20 @@ export function buildCommandRegistry(): readonly Command[] {
       event: "tessera:export",
     },
     {
+      id: "action:print",
+      title: "Print",
+      description: "Open the system print dialog for the current view",
+      category: "Editor",
+      // Cmd/Ctrl+P is the command palette in this app (Obsidian
+      // convention), so Print takes the secondary Cmd/Ctrl+Alt+P chord.
+      // `chordMatchesEvent` matches it by physical key code so macOS
+      // Option-key composition (⌥P → "π") doesn't break it.
+      chord: { mod: true, alt: true, key: "p" },
+      keywords: ["print", "pdf", "paper", "hard copy"],
+      kind: "dispatch",
+      event: "tessera:print",
+    },
+    {
       id: "action:openSettings",
       title: "Open settings",
       description: "Go to the settings page",
@@ -320,6 +399,92 @@ export function buildCommandRegistry(): readonly Command[] {
       keywords: ["preferences", "config"],
       kind: "navigate",
       to: "/settings",
+    },
+    {
+      id: "nav:settings#appearance",
+      title: "Appearance & theme settings",
+      description: "Jump to the theme / general section of settings",
+      category: "Navigation",
+      chord: null,
+      keywords: ["theme", "dark", "light", "appearance", "general"],
+      kind: "navigate",
+      to: "/settings#appearance",
+    },
+    {
+      id: "nav:settings#performance",
+      title: "Performance settings",
+      description: "Jump to the performance / resource section of settings",
+      category: "Navigation",
+      chord: null,
+      keywords: ["performance", "ram", "gpu", "model", "resource", "memory"],
+      kind: "navigate",
+      to: "/settings#performance",
+    },
+    {
+      id: "nav:settings#provider",
+      title: "External AI provider settings",
+      description: "Jump to the external-provider (BYOK) section of settings",
+      category: "Navigation",
+      chord: null,
+      keywords: ["openai", "anthropic", "api key", "byok", "provider", "cloud"],
+      kind: "navigate",
+      to: "/settings#provider",
+    },
+    {
+      id: "nav:settings#backup",
+      title: "Backup & restore settings",
+      description: "Jump to the backup / workspace-export section of settings",
+      category: "Navigation",
+      chord: null,
+      keywords: ["backup", "restore", "export workspace", "bundle", "recovery"],
+      kind: "navigate",
+      to: "/settings#backup",
+    },
+    {
+      id: "nav:connectors",
+      title: "Manage connectors",
+      description: "Open the connectors on the Sources page",
+      category: "Navigation",
+      chord: null,
+      keywords: [
+        "connectors",
+        "google drive",
+        "onedrive",
+        "notion",
+        "jira",
+        "confluence",
+        "figma",
+        "trello",
+        "gitlab",
+        "oauth",
+        "integrations",
+        "sync",
+      ],
+      kind: "navigate",
+      to: "/sources#connectors",
+    },
+
+    // --- Substrate / memory (bridge surfaces these; the App-level
+    // handlers call window.tessera.substrate and toast the result). ---
+    {
+      id: "substrate:runDecaySweep",
+      title: "Run memory decay sweep",
+      description: "Recompute retention and apply decay transitions now",
+      category: "Actions",
+      chord: null,
+      keywords: ["decay", "memory", "retention", "sweep", "substrate", "forget"],
+      kind: "dispatch",
+      event: "tessera:run-decay-sweep",
+    },
+    {
+      id: "substrate:triggerSynthesis",
+      title: "Synthesize memory",
+      description: "Produce and persist a deterministic synthesis for the workspace",
+      category: "Actions",
+      chord: null,
+      keywords: ["synthesis", "synthesize", "summary", "memory", "substrate"],
+      kind: "dispatch",
+      event: "tessera:trigger-synthesis",
     },
 
     // --- Artifact-context (work even outside editor; the editor
@@ -379,7 +544,7 @@ export function buildCommandRegistry(): readonly Command[] {
       callbackId: "goBack",
     },
   ];
-  return [...sidebar, ...rest];
+  return [...sidebar, ...createArtifacts, ...rest];
 }
 
 /**
@@ -447,7 +612,16 @@ export function chordMatchesEvent(
   if ((chord.shift ?? false) !== event.shiftKey) return false;
   if ((chord.alt ?? false) !== event.altKey) return false;
   if (chord.key.length === 1) {
-    return event.key.toLowerCase() === chord.key.toLowerCase();
+    if (event.key.toLowerCase() === chord.key.toLowerCase()) return true;
+    // macOS composes Option/Alt + letter into a different glyph
+    // (e.g. ⌥P emits `event.key === "π"`), so an alt chord's letter
+    // never matches `event.key`. Fall back to the layout-independent
+    // physical key code for alt letter chords so they stay reachable.
+    // Scoped to alt chords; non-alt chords keep layout-aware matching.
+    if (chord.alt && /^[a-z]$/i.test(chord.key)) {
+      return event.code === `Key${chord.key.toUpperCase()}`;
+    }
+    return false;
   }
   return event.key === chord.key;
 }

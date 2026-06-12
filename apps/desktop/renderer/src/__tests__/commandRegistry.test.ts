@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMMAND_REGISTRY,
   KNOWN_CALLBACK_IDS,
+  chordMatchesEvent,
   findChordCollisions,
   type Command,
 } from "../utils/commandRegistry";
@@ -72,5 +73,142 @@ describe("commandRegistry", () => {
     // failures on routine edits, while still failing loudly if a
     // refactor accidentally drops half the registry.
     expect(COMMAND_REGISTRY.length).toBeGreaterThanOrEqual(25);
+  });
+
+  it("quick switcher is bound to Ctrl/Cmd+O (Obsidian chord), not Cmd+P", () => {
+    const qs = COMMAND_REGISTRY.find((c) => c.id === "palette:quickSwitcher");
+    expect(qs?.kind).toBe("callback");
+    expect(qs?.chord).toEqual({ mod: true, key: "o" });
+    if (qs?.kind === "callback") {
+      expect(qs.callbackId).toBe("openQuickSwitcher");
+    }
+  });
+
+  it("Ctrl/Cmd+P opens the command palette (the requested scheme)", () => {
+    const p = COMMAND_REGISTRY.find(
+      (c) => c.chord?.mod === true && c.chord?.key === "p" && !c.chord?.shift,
+    );
+    expect(p?.kind).toBe("callback");
+    if (p?.kind === "callback") {
+      expect(p.callbackId).toBe("openCommandPalette");
+    }
+  });
+
+  it("bare '?' opens the shortcuts help (key '?', shift held)", () => {
+    const help = COMMAND_REGISTRY.find(
+      (c) => c.id === "help:shortcutsQuestion",
+    );
+    // Shift+/ emits event.key === "?", so the chord must key on "?".
+    expect(help?.chord).toEqual({ mod: false, shift: true, key: "?" });
+    if (help?.kind === "callback") {
+      expect(help.callbackId).toBe("openShortcutsHelp");
+    }
+  });
+
+  it("exposes a create command for every artifact type", () => {
+    for (const id of [
+      "create:document",
+      "create:slides",
+      "create:sheet",
+      "create:base",
+      "create:infographic",
+      "create:landing_page",
+    ]) {
+      const cmd = COMMAND_REGISTRY.find((c) => c.id === id);
+      expect(cmd, `missing ${id}`).toBeDefined();
+      expect(cmd?.kind).toBe("dispatch");
+      if (cmd?.kind === "dispatch") {
+        expect(cmd.event).toBe("tessera:create-artifact");
+        expect(cmd.detail).toEqual({ type: id.slice("create:".length) });
+      }
+    }
+  });
+
+  it("exposes substrate decay + synthesis commands", () => {
+    const decay = COMMAND_REGISTRY.find((c) => c.id === "substrate:runDecaySweep");
+    const synth = COMMAND_REGISTRY.find(
+      (c) => c.id === "substrate:triggerSynthesis",
+    );
+    expect(decay?.kind).toBe("dispatch");
+    expect(synth?.kind).toBe("dispatch");
+    if (decay?.kind === "dispatch") {
+      expect(decay.event).toBe("tessera:run-decay-sweep");
+    }
+    if (synth?.kind === "dispatch") {
+      expect(synth.event).toBe("tessera:trigger-synthesis");
+    }
+  });
+
+  it("Print is bound to Ctrl/Cmd+Alt+P and dispatches tessera:print", () => {
+    // Cmd/Ctrl+P is the palette, so Print takes the secondary
+    // Alt-modified chord rather than the native print accelerator.
+    const print = COMMAND_REGISTRY.find((c) => c.id === "action:print");
+    expect(print?.chord).toEqual({ mod: true, alt: true, key: "p" });
+    expect(print?.kind).toBe("dispatch");
+    if (print?.kind === "dispatch") {
+      expect(print.event).toBe("tessera:print");
+    }
+  });
+
+  it("exposes deep-link commands for settings sections + connectors", () => {
+    const targets = [
+      "/settings#appearance",
+      "/settings#performance",
+      "/settings#provider",
+      "/settings#backup",
+      "/sources#connectors",
+    ];
+    for (const to of targets) {
+      const cmd = COMMAND_REGISTRY.find(
+        (c) => c.kind === "navigate" && c.to === to,
+      );
+      expect(cmd, `missing navigate to ${to}`).toBeDefined();
+    }
+  });
+});
+
+describe("chordMatchesEvent — Alt letter chords (macOS Option composition)", () => {
+  const printChord = { mod: true, alt: true, key: "p" } as const;
+
+  it("matches ⌥P even when Option composes event.key into 'π'", () => {
+    // On macOS, Cmd+Option+P emits `key: "π"` but `code: "KeyP"`.
+    const event = new KeyboardEvent("keydown", {
+      metaKey: true,
+      altKey: true,
+      key: "π",
+      code: "KeyP",
+    });
+    expect(chordMatchesEvent(printChord, event)).toBe(true);
+  });
+
+  it("matches ⌥P on layouts where Option keeps event.key === 'p'", () => {
+    const event = new KeyboardEvent("keydown", {
+      ctrlKey: true,
+      altKey: true,
+      key: "p",
+      code: "KeyP",
+    });
+    expect(chordMatchesEvent(printChord, event)).toBe(true);
+  });
+
+  it("does not fire without Alt held (Cmd+P stays the palette)", () => {
+    const event = new KeyboardEvent("keydown", {
+      metaKey: true,
+      key: "p",
+      code: "KeyP",
+    });
+    expect(chordMatchesEvent(printChord, event)).toBe(false);
+  });
+
+  it("non-alt chords keep layout-aware key matching (no code fallback)", () => {
+    // A physical KeyS press that produced a different glyph must NOT
+    // match Cmd+S via the code path — code fallback is alt-only.
+    const save = { mod: true, key: "s" } as const;
+    const event = new KeyboardEvent("keydown", {
+      metaKey: true,
+      key: "ß",
+      code: "KeyS",
+    });
+    expect(chordMatchesEvent(save, event)).toBe(false);
   });
 });

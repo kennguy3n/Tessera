@@ -46,6 +46,22 @@ if (typeof Document !== "undefined") {
   }
 }
 
+// jsdom does not implement `Element.scrollIntoView` (a layout-dependent
+// scroll API). Components that keep an active row visible call it
+// unconditionally — notably the command palette
+// (`CommandPalette.tsx`), whose keyboard navigation scrolls the active
+// option into view. Without it that throws "scrollIntoView is not a
+// function" from a passive effect. Provide a no-op so tests that mount
+// these components don't fail on the missing API.
+if (typeof Element !== "undefined") {
+  const elProto = Element.prototype as unknown as {
+    scrollIntoView?: () => void;
+  };
+  if (!elProto.scrollIntoView) {
+    elProto.scrollIntoView = () => {};
+  }
+}
+
 // A representative `SubstrateMemoryInfo` for the default pin/unpin mocks,
 // which resolve with the mutated memory (not void). Tests that assert on a
 // specific memory override `pinMemory`/`unpinMemory` per-case.

@@ -14,6 +14,12 @@ import CommandPalette from "./components/CommandPalette";
 import KeyboardShortcutsHelp from "./components/KeyboardShortcutsHelp";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTheme } from "./hooks/useTheme";
+import { useGlobalCommandActions } from "./hooks/useGlobalCommandActions";
+
+// Lazy-mounted alongside the command palette: the quick switcher runs
+// five IPC-backed list fetches the moment it mounts, so we defer that
+// cost until the user first opens it (Cmd+O).
+const QuickSwitcher = lazy(() => import("./components/QuickSwitcher"));
 
 // LW-4: route-level code splitting. Each page (and the heavy editor
 // module graph it pulls in — TipTap/ProseMirror, the sheet formula
@@ -33,7 +39,7 @@ const AutomationsPage = lazy(() => import("./pages/AutomationsPage"));
 const VisionPage = lazy(() => import("./pages/VisionPage"));
 const MemoryPage = lazy(() => import("./pages/MemoryPage"));
 
-type PaletteState = { open: boolean; mode: "full" | "quickSwitcher" };
+type PaletteState = { open: boolean };
 
 /**
  * Wrap a routed page element in a named {@link ErrorBoundary} so a
@@ -94,10 +100,11 @@ function RouteFallback(): ReactNode {
 export default function App() {
   useKeyboardShortcuts();
   useTheme();
-  const [palette, setPalette] = useState<PaletteState>({
-    open: false,
-    mode: "full",
-  });
+  useGlobalCommandActions();
+  const [palette, setPalette] = useState<PaletteState>({ open: false });
+  // The dedicated quick switcher (Cmd+O), lazy-mounted like the palette.
+  const [quickSwitchOpen, setQuickSwitchOpen] = useState(false);
+  const [quickSwitchHasMounted, setQuickSwitchHasMounted] = useState(false);
   // Lazy-mount the palette: the `CommandPalette` component runs
   // several IPC-backed hooks (`useArtifactList`, `usePinnedArtifacts`,
   // `useRecentlyViewedArtifacts`) whose fetches we don't want to pay
@@ -110,27 +117,38 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const closePalette = useCallback(
-    () => setPalette({ open: false, mode: "full" }),
-    [],
-  );
+  const closePalette = useCallback(() => setPalette({ open: false }), []);
+  const closeQuickSwitch = useCallback(() => setQuickSwitchOpen(false), []);
 
   useEffect(() => {
-    const openPalette = (e: Event) => {
-      const detail =
-        e instanceof CustomEvent && e.detail && typeof e.detail === "object"
-          ? (e.detail as { mode?: "full" | "quickSwitcher" })
-          : undefined;
-      setPalette({ open: true, mode: detail?.mode ?? "full" });
+    // The palette, quick switcher, and shortcuts help are mutually
+    // exclusive overlays: opening any one closes the other two so they
+    // can never stack into a broken state.
+    const openPalette = () => {
+      setQuickSwitchOpen(false);
+      setShortcutsOpen(false);
+      setPalette({ open: true });
       setPaletteHasMounted(true);
     };
-    const openShortcuts = () => setShortcutsOpen(true);
+    const openQuickSwitch = () => {
+      setPalette({ open: false });
+      setShortcutsOpen(false);
+      setQuickSwitchOpen(true);
+      setQuickSwitchHasMounted(true);
+    };
+    const openShortcuts = () => {
+      setPalette({ open: false });
+      setQuickSwitchOpen(false);
+      setShortcutsOpen(true);
+    };
     const toggleSidebar = () => setSidebarCollapsed((v) => !v);
     window.addEventListener("tessera:open-palette", openPalette);
+    window.addEventListener("tessera:open-quick-switch", openQuickSwitch);
     window.addEventListener("tessera:open-shortcuts", openShortcuts);
     window.addEventListener("tessera:toggle-sidebar", toggleSidebar);
     return () => {
       window.removeEventListener("tessera:open-palette", openPalette);
+      window.removeEventListener("tessera:open-quick-switch", openQuickSwitch);
       window.removeEventListener("tessera:open-shortcuts", openShortcuts);
       window.removeEventListener("tessera:toggle-sidebar", toggleSidebar);
     };
@@ -190,11 +208,12 @@ export default function App() {
         </Suspense>
       </main>
       {paletteHasMounted && (
-        <CommandPalette
-          isOpen={palette.open}
-          mode={palette.mode}
-          onClose={closePalette}
-        />
+        <CommandPalette isOpen={palette.open} onClose={closePalette} />
+      )}
+      {quickSwitchHasMounted && (
+        <Suspense fallback={null}>
+          <QuickSwitcher isOpen={quickSwitchOpen} onClose={closeQuickSwitch} />
+        </Suspense>
       )}
       <KeyboardShortcutsHelp
         isOpen={shortcutsOpen}

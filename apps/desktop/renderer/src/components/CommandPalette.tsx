@@ -58,12 +58,6 @@ const MAX_RESULTS = 50;
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  /**
-   * Optional initial mode. "quickSwitcher" hides command rows and
-   * only shows recents/pinned/artifacts — used by Cmd+P. "full"
-   * (default) shows both commands and artifacts.
-   */
-  mode?: "full" | "quickSwitcher";
 }
 
 type PaletteRow =
@@ -78,7 +72,6 @@ interface PaletteGroup {
 export default function CommandPalette({
   isOpen,
   onClose,
-  mode = "full",
 }: CommandPaletteProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
@@ -91,6 +84,7 @@ export default function CommandPalette({
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
+  const previousActiveRef = useRef<HTMLElement | null>(null);
   const isMac =
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform);
@@ -136,21 +130,28 @@ export default function CommandPalette({
 
   // Reset state on every open so the user always starts at row 0
   // with an empty query, regardless of where they left off last
-  // time.
+  // time. Capture the previously-focused element and restore it on
+  // close (WAI-ARIA dialog pattern) so keyboard users land back where
+  // they were — and so a palette→quick-switcher handoff carries the
+  // original focus target through, rather than dumping focus on
+  // `<body>` once the palette input unmounts.
   useEffect(() => {
-    if (isOpen) {
-      setQuery("");
-      setActiveIndex(0);
-      const t = setTimeout(() => inputRef.current?.focus(), 0);
-      return () => clearTimeout(t);
-    }
-    return undefined;
+    if (!isOpen) return undefined;
+    previousActiveRef.current = document.activeElement as HTMLElement | null;
+    setQuery("");
+    setActiveIndex(0);
+    const t = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => {
+      clearTimeout(t);
+      const prev = previousActiveRef.current;
+      if (prev && typeof prev.focus === "function") prev.focus();
+    };
   }, [isOpen]);
 
-  const visibleCommands = useMemo(() => {
-    if (mode === "quickSwitcher") return [];
-    return COMMAND_REGISTRY.filter((c) => !c.hiddenFromPalette);
-  }, [mode]);
+  const visibleCommands = useMemo(
+    () => COMMAND_REGISTRY.filter((c) => !c.hiddenFromPalette),
+    [],
+  );
 
   const pinnedArtifacts = useMemo(() => {
     return pinnedIds
@@ -194,32 +195,13 @@ export default function CommandPalette({
           });
         }
       }
-      if (mode !== "quickSwitcher") {
-        groups.push({
-          label: "Commands",
-          rows: visibleCommands.map((c) => ({
-            kind: "command" as const,
-            command: c,
-          })),
-        });
-      }
-      if (mode === "quickSwitcher" && artifacts.length > 0) {
-        const pinnedSet = new Set(pinnedIds);
-        const recentSet = new Set(recentIds);
-        const others = artifacts.filter(
-          (a) => !pinnedSet.has(a.id) && !recentSet.has(a.id),
-        );
-        if (others.length > 0) {
-          groups.push({
-            label: "Artifacts",
-            rows: others.slice(0, MAX_RESULTS).map((a) => ({
-              kind: "artifact" as const,
-              artifact: a,
-              tag: "all" as const,
-            })),
-          });
-        }
-      }
+      groups.push({
+        label: "Commands",
+        rows: visibleCommands.map((c) => ({
+          kind: "command" as const,
+          command: c,
+        })),
+      });
       return groups;
     }
 
@@ -270,7 +252,6 @@ export default function CommandPalette({
     recentArtifacts,
     pinnedIds,
     recentIds,
-    mode,
   ]);
 
   // Flatten for keyboard navigation. Each entry knows the row plus
@@ -322,7 +303,12 @@ export default function CommandPalette({
         return;
       }
       if (cmd.kind === "dispatch") {
-        window.dispatchEvent(new CustomEvent(cmd.event));
+        window.dispatchEvent(
+          new CustomEvent(
+            cmd.event,
+            cmd.detail ? { detail: cmd.detail } : undefined,
+          ),
+        );
         return;
       }
       if (cmd.kind === "callback") {
@@ -335,7 +321,10 @@ export default function CommandPalette({
             // Already open — no-op.
             return;
           case "openQuickSwitcher":
-            // Already open — no-op (we don't re-mount).
+            // Hand off to the dedicated cross-entity quick switcher.
+            // The palette is already closing (onClose above); fire the
+            // open event so they don't stack on screen.
+            window.dispatchEvent(new CustomEvent("tessera:open-quick-switch"));
             return;
           case "openShortcutsHelp":
             window.dispatchEvent(new CustomEvent("tessera:open-shortcuts"));
@@ -442,7 +431,7 @@ export default function CommandPalette({
       <div
         className="cmdk-panel"
         role="dialog"
-        aria-label={mode === "quickSwitcher" ? "Quick switcher" : "Command palette"}
+        aria-label="Command palette"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
       >
@@ -456,11 +445,7 @@ export default function CommandPalette({
             setActiveIndex(0);
           }}
           onKeyDown={handleKeyDown}
-          placeholder={
-            mode === "quickSwitcher"
-              ? "Jump to an artifact…"
-              : "Type a command, search artifacts…"
-          }
+          placeholder="Type a command, search artifacts…"
           aria-label="Command palette query"
           autoComplete="off"
           spellCheck={false}
