@@ -134,13 +134,13 @@ describe("getRedirectUri", () => {
   );
 
   it("defaults every other provider to 127.0.0.1 per RFC 8252", () => {
-    for (const provider of [
-      "onedrive",
-      "notion",
-      "jira",
-      "confluence",
-      "figma",
-    ] as const) {
+    // Enumerate the full roster from `KNOWN_PROVIDERS` (minus the
+    // Google Drive special case above) so every provider — including
+    // substrate-only ones with no other redirect-URI assertion — is
+    // covered, and a future provider is checked automatically.
+    const others = KNOWN_PROVIDERS.filter((p) => p !== "google_drive");
+    expect(others.length).toBe(KNOWN_PROVIDERS.length - 1);
+    for (const provider of others) {
       const cfg = getProviderOAuthConfig(provider);
       expect(getRedirectUri(cfg)).toBe(
         `http://127.0.0.1:${cfg.redirectPort}/callback`,
