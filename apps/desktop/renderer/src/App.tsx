@@ -127,16 +127,19 @@ export default function App() {
   const closeQuickSwitch = useCallback(() => setQuickSwitchOpen(false), []);
 
   useEffect(() => {
+    // The palette and the quick switcher are mutually exclusive
+    // full-screen overlays at the same z-index: opening either one
+    // closes the other so they can never stack into a broken state.
     const openPalette = (e: Event) => {
       const detail =
         e instanceof CustomEvent && e.detail && typeof e.detail === "object"
           ? (e.detail as { mode?: "full" | "quickSwitcher" })
           : undefined;
+      setQuickSwitchOpen(false);
       setPalette({ open: true, mode: detail?.mode ?? "full" });
       setPaletteHasMounted(true);
     };
     const openQuickSwitch = () => {
-      // Opening one overlay closes the other so they never stack.
       setPalette({ open: false, mode: "full" });
       setQuickSwitchOpen(true);
       setQuickSwitchHasMounted(true);
