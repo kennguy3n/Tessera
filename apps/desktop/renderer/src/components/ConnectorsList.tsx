@@ -33,6 +33,7 @@ import {
   groupConnectorsByCategory,
   type ConnectorDescriptor,
 } from "./connectorDescriptors";
+import { getConnectSpec } from "../../../shared/connectorConfig";
 
 interface ConnectorsListProps {
   onChange?: () => void;
@@ -133,6 +134,11 @@ export default function ConnectorsList({
   const [authOpenFor, setAuthOpenFor] = useState<string | null>(null);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  // Per-target / non-OAuth2 connector config the user types in the
+  // connect modal, keyed by the `auth_config_json` field name (see
+  // `shared/connectorConfig.ts`). Empty for whole-account OAuth2
+  // providers that declare no extra fields.
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   // Authoritative redirect URI map sourced from the OAuth config in
@@ -220,10 +226,16 @@ export default function ConnectorsList({
   const descriptor = authOpenFor
     ? descriptors.find((d) => d.provider === authOpenFor)
     : null;
+  // Connect spec for the open modal: drives whether we render the OAuth
+  // client-credential inputs (oauth2) or only the pasted-credential +
+  // per-target fields (token), and which extra inputs to collect.
+  const connectSpec = descriptor ? getConnectSpec(descriptor.provider) : null;
+  const isTokenMethod = connectSpec?.connectMethod === "token";
 
   const openAuthModal = useCallback((provider: string) => {
     setClientId("");
     setClientSecret("");
+    setConfigValues({});
     setAuthError(null);
     setAuthOpenFor(provider);
   }, []);
@@ -244,21 +256,46 @@ export default function ConnectorsList({
   const handleAuthenticate = async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api || !descriptor) return;
-    if (!clientId.trim()) {
-      setAuthError("Client ID is required");
-      return;
+    const spec = getConnectSpec(descriptor.provider);
+    const tokenMethod = spec.connectMethod === "token";
+    // OAuth2 providers need the client credentials; token-method
+    // providers (GitLab, Trello) supply their credential as a config
+    // field instead, so the OAuth inputs aren't shown or required.
+    if (!tokenMethod) {
+      if (!clientId.trim()) {
+        setAuthError("Client ID is required");
+        return;
+      }
+      if (descriptor.secretRequired && !clientSecret.trim()) {
+        setAuthError("Client Secret is required");
+        return;
+      }
     }
-    if (descriptor.secretRequired && !clientSecret.trim()) {
-      setAuthError("Client Secret is required");
-      return;
+    // Validate + collect the declared per-target / credential fields.
+    const config: Record<string, string> = {};
+    for (const field of spec.configFields) {
+      const value = (configValues[field.key] ?? "").trim();
+      if (!value) {
+        if (field.required) {
+          setAuthError(`${field.label} is required`);
+          return;
+        }
+        continue;
+      }
+      config[field.key] = value;
     }
     setAuthBusy(true);
     setAuthError(null);
     try {
+      // `config` carries the declared per-target / credential fields and
+      // is empty for whole-account OAuth2 providers. The handler's
+      // `assertConnectorConfig` treats an empty bag identically to an
+      // omitted one, so we always pass it and avoid a 3-arg/4-arg branch.
       const next = await api.connectors.authenticate(
         descriptor.provider,
-        clientId.trim(),
-        clientSecret.trim(),
+        tokenMethod ? "" : clientId.trim(),
+        tokenMethod ? "" : clientSecret.trim(),
+        config,
       );
       setStatuses((prev) => ({ ...prev, [descriptor.provider]: next }));
       // Drop the pre-reconnect scope diff in the same render that marks
@@ -276,6 +313,7 @@ export default function ConnectorsList({
       setAuthOpenFor(null);
       setClientId("");
       setClientSecret("");
+      setConfigValues({});
       // Re-poll so the freshly-connected provider's scope diff (and
       // any newly-cleared "scopes narrowed" banner) reflects the new
       // token rather than the pre-reconnect state.
@@ -436,39 +474,77 @@ export default function ConnectorsList({
             >
               {descriptor.help}
             </p>
-            <p
-              style={{
-                marginBottom: "var(--spacing-md)",
-                fontSize: "var(--font-size-sm)",
-                fontFamily: "var(--font-mono, monospace)",
-                wordBreak: "break-all",
-              }}
-            >
-              Redirect URI:{" "}
-              <code>
-                {redirectUris?.[descriptor.provider] ?? "Loading…"}
-              </code>
-            </p>
-            <input
-              className="input"
-              placeholder="Client ID"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              aria-label="OAuth Client ID"
-              style={{ marginBottom: "var(--spacing-sm)" }}
-            />
-            <input
-              className="input"
-              placeholder={
-                descriptor.secretRequired
-                  ? "Client Secret"
-                  : "Client Secret (optional)"
-              }
-              type="password"
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-              aria-label="OAuth Client Secret"
-            />
+            {!isTokenMethod && (
+              <>
+                <p
+                  style={{
+                    marginBottom: "var(--spacing-md)",
+                    fontSize: "var(--font-size-sm)",
+                    fontFamily: "var(--font-mono, monospace)",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  Redirect URI:{" "}
+                  <code>
+                    {redirectUris?.[descriptor.provider] ?? "Loading…"}
+                  </code>
+                </p>
+                <input
+                  className="input"
+                  placeholder="Client ID"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  aria-label="OAuth Client ID"
+                  style={{ marginBottom: "var(--spacing-sm)" }}
+                />
+                <input
+                  className="input"
+                  placeholder={
+                    descriptor.secretRequired
+                      ? "Client Secret"
+                      : "Client Secret (optional)"
+                  }
+                  type="password"
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                  aria-label="OAuth Client Secret"
+                />
+              </>
+            )}
+            {(connectSpec?.configFields ?? []).map((field) => (
+              <div
+                key={field.key}
+                style={{ marginTop: "var(--spacing-sm)" }}
+              >
+                <input
+                  className="input"
+                  placeholder={
+                    field.placeholder ??
+                    (field.required ? field.label : `${field.label} (optional)`)
+                  }
+                  type={field.secret ? "password" : "text"}
+                  value={configValues[field.key] ?? ""}
+                  onChange={(e) =>
+                    setConfigValues((prev) => ({
+                      ...prev,
+                      [field.key]: e.target.value,
+                    }))
+                  }
+                  aria-label={field.label}
+                />
+                {field.help && (
+                  <p
+                    style={{
+                      marginTop: "calc(var(--spacing-xs, 4px))",
+                      fontSize: "var(--font-size-xs, 0.75rem)",
+                      color: "var(--color-muted, #6b7280)",
+                    }}
+                  >
+                    {field.help}
+                  </p>
+                )}
+              </div>
+            ))}
             {authError && (
               <p
                 style={{
@@ -515,8 +591,14 @@ export default function ConnectorsList({
                   onClick={handleAuthenticate}
                   disabled={
                     authBusy ||
-                    !clientId.trim() ||
-                    (descriptor.secretRequired && !clientSecret.trim())
+                    (!isTokenMethod &&
+                      (!clientId.trim() ||
+                        (descriptor.secretRequired && !clientSecret.trim()))) ||
+                    (connectSpec?.configFields ?? []).some(
+                      (field) =>
+                        field.required &&
+                        !(configValues[field.key] ?? "").trim(),
+                    )
                   }
                 >
                   {authBusy ? "Authenticating…" : "Authenticate"}

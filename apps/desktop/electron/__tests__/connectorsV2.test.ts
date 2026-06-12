@@ -142,6 +142,76 @@ describe("connectorsV2 buildAuthConfig", () => {
     expect(cfg.client_secret).toBe("");
     expect(cfg.token_url).toBe("https://slack.com/api/oauth.v2.access");
   });
+
+  it("injects per-target config under the upstream auth_config field names", () => {
+    // Asana: the project gid the connector reads via
+    // `auth_config_json.get("project")`.
+    const cfg = buildAuthConfig("asana", {
+      ...TOKENS,
+      connectorConfig: { project: "1201234567890123" },
+    });
+    expect(cfg.project).toBe("1201234567890123");
+
+    // Teams: both target ids the connector reads via
+    // `required_field(config, "team_id" / "channel_id")`.
+    const teams = buildAuthConfig("teams", {
+      ...TOKENS,
+      connectorConfig: {
+        team_id: "team-1",
+        channel_id: "chan-1",
+      },
+    });
+    expect(teams.team_id).toBe("team-1");
+    expect(teams.channel_id).toBe("chan-1");
+  });
+
+  it("never injects the credential field that travels as the access token", () => {
+    // GitLab's PAT and Trello's user token are sent as the bearer
+    // (`TokenWire.access_token`), so they must NOT also appear in the
+    // auth_config bag — only the non-credential target fields do.
+    const gitlab = buildAuthConfig("gitlab", {
+      ...TOKENS,
+      connectorConfig: {
+        personal_access_token: "glpat-secret",
+        project_id: "42",
+      },
+    });
+    expect(gitlab.personal_access_token).toBeUndefined();
+    expect(gitlab.project_id).toBe("42");
+
+    // Trello reads `key` + `board_id` from the bag but takes the user
+    // `token` from the bearer, so `token` is filtered out here.
+    const trello = buildAuthConfig("trello", {
+      ...TOKENS,
+      connectorConfig: {
+        key: "api-key",
+        token: "user-token",
+        board_id: "board-9",
+      },
+    });
+    expect(trello.key).toBe("api-key");
+    expect(trello.board_id).toBe("board-9");
+    expect(trello.token).toBeUndefined();
+  });
+
+  it("skips empty per-target values so the connector's own validation errors clearly", () => {
+    const cfg = buildAuthConfig("asana", {
+      ...TOKENS,
+      connectorConfig: { project: "" },
+    });
+    expect(cfg.project).toBeUndefined();
+  });
+
+  it("sends the full requested scope (incl. offline_access) to the Rust connector", () => {
+    // The Rust connector runs its own refresh exchange using this
+    // `scope`, so it must include `offline_access` for providers that
+    // declare `requestOfflineAccess` — even though the raw `scope`
+    // string no longer lists it. Guards against the Rust refresh asking
+    // for a narrower scope set than the browser grant did.
+    const teams = buildAuthConfig("teams", TOKENS);
+    expect(String(teams.scope).split(" ")).toContain("offline_access");
+    expect(String(teams.scope).split(" ")).toContain("ChannelMessage.Read.All");
+  });
 });
 
 describe("v2BridgeAvailable", () => {

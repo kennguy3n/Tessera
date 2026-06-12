@@ -53,6 +53,15 @@ export const KNOWN_PROVIDERS = [
   "box",
   "linear",
   "miro",
+  // Per-target / non-OAuth2 providers (see docs/CONNECTORS.md and
+  // shared/connectorConfig.ts). These need extra connect-time inputs —
+  // a target id (Asana project, Teams team/channel, GitLab project)
+  // and/or a non-OAuth2 credential (Trello API key+token, GitLab
+  // personal access token) — collected via the `buildAuthConfig` seam.
+  "asana",
+  "gitlab",
+  "teams",
+  "trello",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 

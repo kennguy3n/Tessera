@@ -488,12 +488,18 @@ const api: TesseraApi = {
       ipcRenderer.invoke("imagegen:cancel"),
   },
   connectors: {
-    authenticate: (provider: string, clientId: string, clientSecret: string) =>
+    authenticate: (
+      provider: string,
+      clientId: string,
+      clientSecret: string,
+      config?: Record<string, string>,
+    ) =>
       ipcRenderer.invoke(
         "connectors:authenticate",
         provider,
         clientId,
         clientSecret,
+        config,
       ),
     disconnect: (provider: string) =>
       ipcRenderer.invoke("connectors:disconnect", provider),

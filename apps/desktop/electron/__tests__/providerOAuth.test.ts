@@ -47,6 +47,38 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     expect(PROVIDER_OAUTH_CONFIGS.miro.scope).toBe("boards:read");
   });
 
+  it("requests least-privilege read-only scopes for the per-target tranche", () => {
+    // Asana / GitLab / Teams / Trello: each scope string must stay
+    // read-only. A future widening to a write/manage grant (e.g.
+    // `tasks:write`, `api`, `ChannelMessage.Send`) breaks this test —
+    // the security contract for 5000 SME tenants.
+    expect(PROVIDER_OAUTH_CONFIGS.asana.scope).toBe("projects:read tasks:read");
+    expect(PROVIDER_OAUTH_CONFIGS.gitlab.scope).toBe("read_api");
+    // `scope` holds API scopes only; `offline_access` is declared via
+    // `requestOfflineAccess` (asserted below) and added by
+    // `getRequestedScopes`, so it must NOT appear in the raw string.
+    expect(PROVIDER_OAUTH_CONFIGS.teams.scope).toBe("ChannelMessage.Read.All");
+    expect(PROVIDER_OAUTH_CONFIGS.teams.requestOfflineAccess).toBe(true);
+    expect(PROVIDER_OAUTH_CONFIGS.trello.scope).toBe("read");
+  });
+
+  it("reserves the 9890-9893 loopback ports for the per-target tranche", () => {
+    expect(PROVIDER_OAUTH_CONFIGS.asana.redirectPort).toBe(9890);
+    expect(PROVIDER_OAUTH_CONFIGS.gitlab.redirectPort).toBe(9891);
+    expect(PROVIDER_OAUTH_CONFIGS.teams.redirectPort).toBe(9892);
+    expect(PROVIDER_OAUTH_CONFIGS.trello.redirectPort).toBe(9893);
+  });
+
+  it("flags the non-OAuth2 (token) providers as non-refreshable", () => {
+    // GitLab (PAT) and Trello (API key + token) carry no refresh token;
+    // their stored credential is long-lived and reconnect-on-expiry.
+    expect(PROVIDER_OAUTH_CONFIGS.gitlab.supportsRefresh).toBe(false);
+    expect(PROVIDER_OAUTH_CONFIGS.trello.supportsRefresh).toBe(false);
+    // The browser-OAuth2 members of the tranche do refresh.
+    expect(PROVIDER_OAUTH_CONFIGS.asana.supportsRefresh).toBe(true);
+    expect(PROVIDER_OAUTH_CONFIGS.teams.supportsRefresh).toBe(true);
+  });
+
   it("asks Dropbox for offline access so its token can refresh", () => {
     expect(PROVIDER_OAUTH_CONFIGS.dropbox.supportsRefresh).toBe(true);
     expect(
@@ -120,6 +152,30 @@ describe("buildAuthorizeUrl", () => {
       }),
     );
     expect(url.searchParams.get("scope")).toBeNull();
+  });
+
+  it("appends offline_access to the scope= for requestOfflineAccess providers", () => {
+    // Regression: `requestOfflineAccess` must be the single declarative
+    // source for the `offline_access` meta-scope. The flag is set but the
+    // raw `scope` string omits `offline_access`, so the authorize request
+    // must still carry it — otherwise the provider issues no refresh token
+    // and every per-target OAuth provider breaks on first token expiry.
+    for (const id of ["onedrive", "jira", "confluence", "teams"] as const) {
+      const cfg = getProviderOAuthConfig(id);
+      expect(cfg.requestOfflineAccess).toBe(true);
+      expect(cfg.scope).not.toContain("offline_access");
+      const url = new URL(
+        buildAuthorizeUrl(cfg, {
+          clientId: "abc",
+          state: "xyz",
+          redirectUri: getRedirectUri(cfg),
+        }),
+      );
+      const scopes = (url.searchParams.get("scope") ?? "").split(" ");
+      expect(scopes).toContain("offline_access");
+      // Exactly once — no duplication if a config still lists it.
+      expect(scopes.filter((s) => s === "offline_access")).toHaveLength(1);
+    }
   });
 });
 

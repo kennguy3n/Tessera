@@ -330,6 +330,79 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
       ...READ_ONLY_GUARANTEES,
     ],
   },
+  {
+    provider: "asana",
+    label: "Asana",
+    category: "Issues",
+    keywords: ["tasks", "projects", "work management"],
+    consoleUrl: "https://app.asana.com/0/my-apps",
+    help: "Create an Asana OAuth app, request the read-only projects:read and tasks:read scopes, add the redirect URI below, then copy the Client ID and Client Secret. Enter the Project ID of the project to index.",
+    secretRequired: true,
+    reads: [
+      "Task names, notes, assignees, and completion state in the configured project (read-only)",
+      "The project's section and metadata",
+    ],
+    neverTouches: [
+      "Creating, editing, completing, or deleting tasks",
+      "Any project other than the one you configure",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "gitlab",
+    label: "GitLab",
+    category: "Code",
+    keywords: ["git", "repos", "issues", "merge requests", "self-hosted"],
+    consoleUrl: "https://gitlab.com/-/user_settings/personal_access_tokens",
+    help: "Create a personal access token with the read-only read_api scope (works for gitlab.com and self-managed instances). Paste the token and the Project ID (or path); set the base URL only for self-managed GitLab.",
+    secretRequired: false,
+    reads: [
+      "Issue titles, descriptions, and notes in the configured project (read-only)",
+      "Project metadata",
+    ],
+    neverTouches: [
+      "Creating, editing, or closing issues or merge requests",
+      "Pushing code or changing repository settings",
+      "Any project other than the one you configure",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "teams",
+    label: "Microsoft Teams",
+    category: "Chat",
+    keywords: ["microsoft", "teams", "channels", "messages"],
+    consoleUrl: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    help: "Register an Entra (Azure AD) app, grant the read-only ChannelMessage.Read.All scope, add the redirect URI below, then copy the Application (client) ID and a client secret. Enter the Team ID and Channel ID to index.",
+    secretRequired: true,
+    reads: [
+      "Messages and replies in the configured Teams channel (read-only)",
+      "Author display names and timestamps",
+    ],
+    neverTouches: [
+      "Posting, editing, or deleting messages",
+      "Any team or channel other than the one you configure",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "trello",
+    label: "Trello",
+    category: "Issues",
+    keywords: ["boards", "cards", "kanban", "atlassian"],
+    consoleUrl: "https://trello.com/app-key",
+    help: "Copy your API key, then generate a read-only token from the same page. Paste both along with the Board ID of the board to index.",
+    secretRequired: false,
+    reads: [
+      "Card names, descriptions, and list placement on the configured board (read-only)",
+      "Board and list metadata",
+    ],
+    neverTouches: [
+      "Creating, moving, editing, or archiving cards",
+      "Any board other than the one you configure",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
 ];
 
 /**

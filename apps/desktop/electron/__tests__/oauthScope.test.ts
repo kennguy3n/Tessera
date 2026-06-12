@@ -12,8 +12,23 @@ import {
   assertScopesGranted,
   compareScopes,
   computeMissingScopes,
+  getRequestedScopes,
   parseScopeString,
 } from "../oauthScope";
+import type { ProviderOAuthConfig } from "../ipc/connectors/providerOAuth";
+
+function cfg(overrides: Partial<ProviderOAuthConfig>): ProviderOAuthConfig {
+  return {
+    provider: "jira",
+    authUrl: "https://example.test/authorize",
+    tokenUrl: "https://example.test/token",
+    scope: "",
+    redirectPort: 9999,
+    supportsRefresh: true,
+    usePkce: true,
+    ...overrides,
+  };
+}
 
 describe("parseScopeString", () => {
   it("returns [] for null / undefined / empty", () => {
@@ -252,5 +267,39 @@ describe("OAuth meta-scopes (offline_access et al.)", () => {
     );
     expect(r.missing).toEqual([]);
     expect(r.fullyGranted).toBe(true);
+  });
+});
+
+describe("getRequestedScopes", () => {
+  it("returns the parsed API scopes when offline access is not requested", () => {
+    expect(getRequestedScopes(cfg({ scope: "read write" }))).toEqual([
+      "read",
+      "write",
+    ]);
+  });
+
+  it("appends offline_access when requestOfflineAccess is set", () => {
+    // `offline_access` is declared once via the flag, not hand-written
+    // into the scope string — the helper adds it so every consumer sees
+    // the same full set.
+    expect(
+      getRequestedScopes(
+        cfg({ scope: "read write", requestOfflineAccess: true }),
+      ),
+    ).toEqual(["read", "write", "offline_access"]);
+  });
+
+  it("does not duplicate offline_access if the scope string still lists it", () => {
+    // Idempotent: protects against a future config that sets the flag AND
+    // leaves the meta-scope in the string.
+    expect(
+      getRequestedScopes(
+        cfg({ scope: "read offline_access", requestOfflineAccess: true }),
+      ),
+    ).toEqual(["read", "offline_access"]);
+  });
+
+  it("does not add offline_access to a scope-less (Notion) config", () => {
+    expect(getRequestedScopes(cfg({ scope: "" }))).toEqual([]);
   });
 });

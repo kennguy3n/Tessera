@@ -105,6 +105,14 @@ pub mod provider_ids {
     pub const LINEAR: &str = "linear";
     /// Miro.
     pub const MIRO: &str = "miro";
+    /// Asana work management.
+    pub const ASANA: &str = "asana";
+    /// GitLab projects / issues.
+    pub const GITLAB: &str = "gitlab";
+    /// Microsoft Teams channel messages.
+    pub const TEAMS: &str = "teams";
+    /// Trello boards / cards.
+    pub const TRELLO: &str = "trello";
 }
 
 /// Errors surfaced by the connector v2 bridge. Kept deliberately small
@@ -195,6 +203,14 @@ pub fn provider_to_kind(provider: &str) -> Option<ConnectorKind> {
         provider_ids::LINEAR => Some(ConnectorKind::Linear),
         #[cfg(feature = "connector-miro")]
         provider_ids::MIRO => Some(ConnectorKind::Miro),
+        #[cfg(feature = "connector-asana")]
+        provider_ids::ASANA => Some(ConnectorKind::Asana),
+        #[cfg(feature = "connector-gitlab")]
+        provider_ids::GITLAB => Some(ConnectorKind::GitLab),
+        #[cfg(feature = "connector-teams")]
+        provider_ids::TEAMS => Some(ConnectorKind::Teams),
+        #[cfg(feature = "connector-trello")]
+        provider_ids::TRELLO => Some(ConnectorKind::Trello),
         _ => None,
     }
 }
@@ -219,6 +235,10 @@ pub fn enabled_providers() -> Vec<ConnectorKind> {
         provider_ids::BOX,
         provider_ids::LINEAR,
         provider_ids::MIRO,
+        provider_ids::ASANA,
+        provider_ids::GITLAB,
+        provider_ids::TEAMS,
+        provider_ids::TRELLO,
     ]
     .into_iter()
     .filter_map(provider_to_kind)
@@ -454,6 +474,22 @@ pub fn build_connector(
         ConnectorKind::Miro => Some(Box::new(connectors::MiroConnector::new(
             instance, transport, oauth,
         ))),
+        #[cfg(feature = "connector-asana")]
+        ConnectorKind::Asana => Some(Box::new(connectors::AsanaConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-gitlab")]
+        ConnectorKind::GitLab => Some(Box::new(connectors::GitLabConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-teams")]
+        ConnectorKind::Teams => Some(Box::new(connectors::TeamsConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-trello")]
+        ConnectorKind::Trello => Some(Box::new(connectors::TrelloConnector::new(
+            instance, transport, oauth,
+        ))),
         #[allow(unreachable_patterns)]
         _ => None,
     }
@@ -535,13 +571,22 @@ fn instance_id_for(kind: ConnectorKind, scope: ScopeId) -> ConnectorInstanceId {
 }
 
 /// The default [`connector_framework::AuthKind`] for a provider kind.
-/// All ten stable providers authenticate via OAuth2 in Tessera's flow
+///
+/// Most stable providers authenticate via OAuth2 in Tessera's flow
 /// (HubSpot private-app tokens are modelled as OAuth2 bearer tokens by
-/// the host), so this is currently uniform but kept as a function so a
-/// future API-key provider can diverge without touching call sites.
+/// the host). GitLab and Trello are the exceptions: they connect with a
+/// user-supplied long-lived credential (a GitLab personal access token
+/// used as a Bearer token, and a Trello API key + token pair) rather
+/// than a browser authorization-code grant, so they are reported as
+/// [`AuthKind::ApiKey`](connector_framework::AuthKind::ApiKey). This is
+/// surfaced to the host via [`list_connectors`] so the connect UI can
+/// render the right credential inputs.
 #[must_use]
-fn default_auth_kind(_kind: ConnectorKind) -> connector_framework::AuthKind {
-    connector_framework::AuthKind::OAuth2
+fn default_auth_kind(kind: ConnectorKind) -> connector_framework::AuthKind {
+    match kind {
+        ConnectorKind::GitLab | ConnectorKind::Trello => connector_framework::AuthKind::ApiKey,
+        _ => connector_framework::AuthKind::OAuth2,
+    }
 }
 
 /// Human-facing display label for a provider kind.
@@ -562,6 +607,10 @@ fn display_name(kind: ConnectorKind) -> &'static str {
         ConnectorKind::Box => "Box",
         ConnectorKind::Linear => "Linear",
         ConnectorKind::Miro => "Miro",
+        ConnectorKind::Asana => "Asana",
+        ConnectorKind::GitLab => "GitLab",
+        ConnectorKind::Teams => "Microsoft Teams",
+        ConnectorKind::Trello => "Trello",
         // The upstream `ConnectorKind` enum carries 130+ providers; we
         // only ship the stable subset, so fall back to the canonical
         // id string for any provider not in the stable set.
@@ -1439,6 +1488,10 @@ mod tests {
         "box",
         "linear",
         "miro",
+        "asana",
+        "gitlab",
+        "teams",
+        "trello",
     ];
 
     #[test]
@@ -1469,16 +1522,40 @@ mod tests {
     }
 
     #[test]
-    fn list_connectors_reports_oauth_providers() {
+    fn list_connectors_reports_auth_kinds() {
         let infos = list_connectors();
         assert_eq!(infos.len(), STABLE_PROVIDER_IDS.len());
-        assert!(infos.iter().all(|i| i.auth_kind == "oauth2"));
+        // Every provider is OAuth2 except the two credential-based ones
+        // (GitLab personal access token, Trello API key + token), which
+        // are reported as `api_key` so the connect UI renders the right
+        // inputs instead of an OAuth client-id/secret pair.
+        let api_key_providers = ["gitlab", "trello"];
+        for info in &infos {
+            let expected = if api_key_providers.contains(&info.provider.as_str()) {
+                "api_key"
+            } else {
+                "oauth2"
+            };
+            assert_eq!(
+                info.auth_kind, expected,
+                "unexpected auth_kind for {}",
+                info.provider
+            );
+        }
         let gh = infos.iter().find(|i| i.provider == "github").unwrap();
         assert_eq!(gh.display_name, "GitHub");
         let dropbox = infos.iter().find(|i| i.provider == "dropbox").unwrap();
         assert_eq!(dropbox.display_name, "Dropbox");
         let miro = infos.iter().find(|i| i.provider == "miro").unwrap();
         assert_eq!(miro.display_name, "Miro");
+        let asana = infos.iter().find(|i| i.provider == "asana").unwrap();
+        assert_eq!(asana.display_name, "Asana");
+        let gitlab = infos.iter().find(|i| i.provider == "gitlab").unwrap();
+        assert_eq!(gitlab.display_name, "GitLab");
+        let teams = infos.iter().find(|i| i.provider == "teams").unwrap();
+        assert_eq!(teams.display_name, "Microsoft Teams");
+        let trello = infos.iter().find(|i| i.provider == "trello").unwrap();
+        assert_eq!(trello.display_name, "Trello");
     }
 
     #[test]
@@ -1489,6 +1566,10 @@ mod tests {
         assert!(is_supported("box"));
         assert!(is_supported("linear"));
         assert!(is_supported("miro"));
+        assert!(is_supported("asana"));
+        assert!(is_supported("gitlab"));
+        assert!(is_supported("teams"));
+        assert!(is_supported("trello"));
         assert!(!is_supported("salesforce"));
     }
 

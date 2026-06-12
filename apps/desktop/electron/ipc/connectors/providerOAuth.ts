@@ -54,6 +54,7 @@ import * as crypto from "crypto";
 import * as http from "http";
 
 import { generateState } from "../../oauth";
+import { getRequestedScopes } from "../../oauthScope";
 import type { KnownProvider } from "../validate";
 
 /**
@@ -111,7 +112,15 @@ export interface ProviderOAuthConfig {
   extraAuthorizeParams?: Record<string, string>;
   /** Whether to send `client_id:client_secret` as HTTP Basic Auth on token exchange. */
   basicAuth?: boolean;
-  /** Whether `offline_access` should be added to the scope for refresh tokens. */
+  /**
+   * Whether the `offline_access` meta-scope should be requested so the
+   * provider issues a refresh token. This is the single declarative
+   * source for offline access — `getRequestedScopes` appends
+   * `offline_access` when this is set, so it must NOT also be listed in
+   * `scope` (which carries API/resource scopes only). Consumed by
+   * `buildAuthorizeUrl` (authorize request), `buildAuthConfig` (the Rust
+   * `auth_config`), and scope governance, all via `getRequestedScopes`.
+   */
   requestOfflineAccess?: boolean;
   /**
    * Whether the provider's OAuth flow issues a refresh token. Notion
@@ -180,12 +189,15 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     // Microsoft v2.0 token endpoint accepts client_secret in the body for
     // confidential clients; PKCE is required for public/desktop clients.
-    scope: "offline_access Files.Read.All User.Read",
+    // API scopes only — `offline_access` is requested via
+    // `requestOfflineAccess` below.
+    scope: "Files.Read.All User.Read",
     redirectPort: 9877,
     extraAuthorizeParams: {
       response_mode: "query",
       prompt: "select_account",
     },
+    requestOfflineAccess: true,
     supportsRefresh: true,
     usePkce: true,
   },
@@ -206,8 +218,9 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     provider: "jira",
     authUrl: "https://auth.atlassian.com/authorize",
     tokenUrl: "https://auth.atlassian.com/oauth/token",
-    scope:
-      "read:jira-work read:jira-user offline_access",
+    // API scopes only — `offline_access` is requested via
+    // `requestOfflineAccess` below.
+    scope: "read:jira-work read:jira-user",
     redirectPort: 9879,
     extraAuthorizeParams: {
       audience: "api.atlassian.com",
@@ -221,8 +234,10 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     provider: "confluence",
     authUrl: "https://auth.atlassian.com/authorize",
     tokenUrl: "https://auth.atlassian.com/oauth/token",
+    // API scopes only — `offline_access` is requested via
+    // `requestOfflineAccess` below.
     scope:
-      "read:confluence-content.summary read:confluence-content.all read:confluence-space.summary offline_access",
+      "read:confluence-content.summary read:confluence-content.all read:confluence-space.summary",
     redirectPort: 9880,
     extraAuthorizeParams: {
       audience: "api.atlassian.com",
@@ -378,6 +393,86 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     supportsRefresh: true,
     usePkce: false,
   },
+  // ── Per-target / non-OAuth2 tranche ──────────────────────────────
+  // These providers need extra connect-time inputs beyond a bare OAuth
+  // client id/secret; the inputs (and whether the connect flow is a
+  // browser OAuth grant or a pasted credential) are declared in
+  // `shared/connectorConfig.ts`. The OAuth surface below is still the
+  // single source of truth for endpoints, scopes and the unique
+  // loopback port every provider reserves.
+  asana: {
+    provider: "asana",
+    authUrl: "https://app.asana.com/-/oauth_authorize",
+    tokenUrl: "https://app.asana.com/-/oauth_token",
+    // Least-privilege read-only scopes: the connector only lists and
+    // reads tasks within the configured project. Asana's granular OAuth
+    // scopes (`projects:read`, `tasks:read`) replace the legacy
+    // full-access `default` scope.
+    scope: "projects:read tasks:read",
+    redirectPort: 9890,
+    extraAuthorizeParams: {},
+    // Asana issues refresh tokens for OAuth apps.
+    supportsRefresh: true,
+    // Asana's OAuth surface supports PKCE (S256).
+    usePkce: true,
+  },
+  gitlab: {
+    provider: "gitlab",
+    // GitLab is wired via a personal access token (see
+    // `shared/connectorConfig.ts` — connectMethod "token"), which works
+    // uniformly across gitlab.com and self-managed instances without
+    // per-instance OAuth app registration. The OAuth endpoints below
+    // are retained for completeness and to satisfy the single-config
+    // invariant (every provider declares an https authorize/token URL +
+    // a unique loopback port); the connect flow does not open a browser.
+    authUrl: "https://gitlab.com/oauth/authorize",
+    tokenUrl: "https://gitlab.com/oauth/token",
+    // `read_api` is GitLab's least-privilege read-only token scope; it
+    // covers reading project issues and their notes, which is all the
+    // connector ingests. The user grants it when creating the PAT.
+    scope: "read_api",
+    redirectPort: 9891,
+    extraAuthorizeParams: {},
+    // A PAT is long-lived and carries no refresh token; surface a
+    // "reconnect" UX on expiry instead of attempting a refresh.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  teams: {
+    provider: "teams",
+    authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    // Least-privilege: read messages in the channels the user can
+    // already see (`ChannelMessage.Read.All`). No write/management
+    // scopes. `offline_access` is requested via `requestOfflineAccess`.
+    scope: "ChannelMessage.Read.All",
+    redirectPort: 9892,
+    extraAuthorizeParams: {
+      response_mode: "query",
+      prompt: "select_account",
+    },
+    requestOfflineAccess: true,
+    supportsRefresh: true,
+    // Microsoft v2.0 desktop/public clients use PKCE (S256).
+    usePkce: true,
+  },
+  trello: {
+    provider: "trello",
+    // Trello authenticates with an API key + token pair (see
+    // `shared/connectorConfig.ts` — connectMethod "token"), not an
+    // OAuth2 browser grant. The endpoints below are Trello's OAuth1
+    // surface, retained only to satisfy the single-config invariant;
+    // the connect flow does not open a browser.
+    authUrl: "https://trello.com/1/authorize",
+    tokenUrl: "https://trello.com/1/OAuthGetAccessToken",
+    // Trello tokens are scoped at creation time. The connector only
+    // reads boards/cards, so the user authorises a read-only token.
+    scope: "read",
+    redirectPort: 9893,
+    extraAuthorizeParams: {},
+    supportsRefresh: false,
+    usePkce: false,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {
@@ -426,8 +521,13 @@ export function buildAuthorizeUrl(
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", params.state);
-  if (config.scope.length > 0) {
-    url.searchParams.set("scope", config.scope);
+  // Build the scope param from the canonical requested-scope list so the
+  // `offline_access` meta-scope (declared via `requestOfflineAccess`) is
+  // applied in exactly one place and the authorize request, the Rust
+  // `auth_config`, and scope governance never drift apart.
+  const requestedScopes = getRequestedScopes(config);
+  if (requestedScopes.length > 0) {
+    url.searchParams.set("scope", requestedScopes.join(" "));
   }
   if (params.codeChallenge) {
     url.searchParams.set("code_challenge", params.codeChallenge);

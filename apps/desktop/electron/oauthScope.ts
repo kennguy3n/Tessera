@@ -176,10 +176,23 @@ export function assertScopesGranted(
 /**
  * Return the canonical requested-scope list for an OAuth provider
  * config. Centralised so callers do not re-implement the
- * `config.scope.split(/\s+/)` parse at every call site.
+ * `config.scope.split(/\s+/)` parse at every call site, AND so the
+ * `offline_access` meta-scope is expressed in exactly one place.
+ *
+ * `config.scope` lists only the API (resource) scopes. Providers that
+ * need a refresh token declare it once via `requestOfflineAccess: true`
+ * rather than hand-appending `offline_access` to the scope string — the
+ * meta-scope is added here so every consumer (the authorize URL, the
+ * Rust `auth_config`, and scope governance) sees the same full set
+ * without the string and the flag drifting apart. Idempotent: a config
+ * that still lists `offline_access` in `scope` is not duplicated.
  */
 export function getRequestedScopes(config: ProviderOAuthConfig): string[] {
-  return parseScopeString(config.scope);
+  const scopes = parseScopeString(config.scope);
+  if (config.requestOfflineAccess && !scopes.includes("offline_access")) {
+    scopes.push("offline_access");
+  }
+  return scopes;
 }
 
 /**

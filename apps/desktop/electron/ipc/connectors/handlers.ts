@@ -34,6 +34,7 @@ import { idempotentHandle } from "../register";
 
 import type { IpcContext } from "../context";
 import { assertProvider, assertString } from "../validate";
+import { getConnectSpec } from "../../../shared/connectorConfig";
 import { RateLimitError } from "../rateLimiter";
 import {
   applyFailureToState,
@@ -305,6 +306,10 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   box: "box",
   linear: "linear",
   miro: "miro",
+  asana: "asana",
+  gitlab: "gitlab",
+  teams: "teams",
+  trello: "trello",
 };
 
 /**
@@ -707,6 +712,12 @@ async function getValidAccessToken(
       scopes: refreshed.grantedScopes ?? stored.scopes,
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
+      // A refresh re-issues only the access token; it never re-collects
+      // the per-target config (Asana project, Teams team/channel). Carry
+      // the previously-stored bag forward so a refreshable per-target
+      // provider doesn't lose its required `auth_config` fields on the
+      // first token refresh and fail every subsequent sync.
+      connectorConfig: stored.connectorConfig,
     });
     return refreshed.accessToken;
   })();
@@ -863,6 +874,10 @@ async function runSync(
     case "box":
     case "linear":
     case "miro":
+    case "asana":
+    case "gitlab":
+    case "teams":
+    case "trello":
       // Substrate-only providers: reachable here only when the v2
       // path was unavailable; surfaced as a clear config error above,
       // but the explicit cases keep the exhaustiveness check honest.
@@ -1208,6 +1223,10 @@ export async function runDisconnect(
     case "box":
     case "linear":
     case "miro":
+    case "asana":
+    case "gitlab":
+    case "teams":
+    case "trello":
       // Substrate-only providers: no legacy disconnect impl exists, so
       // reuse the generic v2 cleanup (unhook sources + purge sync dir
       // + delete manifest/cursor). Token revocation + vault deletion
@@ -1235,6 +1254,119 @@ export async function runDisconnect(
   }
 }
 
+/** Max length accepted for any single connector-config field value. */
+const MAX_CONFIG_FIELD_LEN = 4096;
+
+/**
+ * Effectively-non-expiring lifetime (~10y) for a pasted, non-OAuth2
+ * credential. Mirrors the sentinel `exchangeAuthorizationCode` stores
+ * for refresh-less providers (`providerOAuth.ts`); the real expiry
+ * check is short-circuited for non-refreshable tokens, so this only
+ * keeps `expiresAt` sensible for inspection.
+ */
+const NON_EXPIRING_CREDENTIAL_MS = 10 * 365 * 24 * 3600 * 1000;
+
+/**
+ * Validate and normalise the per-target / credential config a connector
+ * collected at connect time against its declared
+ * {@link getConnectSpec | connect spec}. Returns a `{ key: value }` map
+ * of exactly the declared fields the caller supplied.
+ *
+ * Security posture (5000 SME tenants):
+ *   - Only declared field keys are accepted; unknown keys are rejected
+ *     so a malicious/buggy renderer cannot smuggle arbitrary keys into
+ *     the `auth_config_json` bag the Rust connector trusts.
+ *   - Every required field must be a non-empty string within the length
+ *     cap; optional fields may be omitted/empty (empty is dropped).
+ *   - Values are length-capped so a runaway renderer cannot persist an
+ *     unbounded blob into the encrypted vault.
+ */
+function assertConnectorConfig(
+  provider: ProviderId,
+  configRaw: unknown,
+): Record<string, string> {
+  const spec = getConnectSpec(provider);
+  const result: Record<string, string> = {};
+  const requireAllPresent = (record: Record<string, unknown>): void => {
+    for (const field of spec.configFields) {
+      const raw = record[field.key];
+      if (raw === undefined || raw === null || raw === "") {
+        if (field.required) {
+          throw new Error(
+            `Missing required ${provider} connector config: ${field.label} (${field.key})`,
+          );
+        }
+        continue;
+      }
+      result[field.key] = assertString(raw, field.key, {
+        maxLen: MAX_CONFIG_FIELD_LEN,
+      });
+    }
+  };
+  if (configRaw === undefined || configRaw === null) {
+    requireAllPresent({});
+    return result;
+  }
+  if (typeof configRaw !== "object" || Array.isArray(configRaw)) {
+    throw new Error(`${provider} connector config must be an object`);
+  }
+  const record = configRaw as Record<string, unknown>;
+  const known = new Set(spec.configFields.map((f) => f.key));
+  for (const key of Object.keys(record)) {
+    if (!known.has(key)) {
+      throw new Error(`Unknown ${provider} connector config field: ${key}`);
+    }
+  }
+  requireAllPresent(record);
+  return result;
+}
+
+/**
+ * Connect a `connectMethod: "token"` provider (GitLab personal access
+ * token, Trello API key + token) without a browser OAuth flow. The
+ * user-supplied credential named by the spec's `tokenField` becomes the
+ * connector's access token; every other validated field is persisted as
+ * the per-target config bag injected into `auth_config_json` at sync
+ * time. The credential carries no refresh token and no real expiry, so
+ * it is stored as effectively non-expiring and the only signal of an
+ * invalid token is a real 401 from the provider (see
+ * `getValidAccessTokenForProvider`'s non-refreshable short-circuit).
+ */
+function authenticateWithToken(
+  ctx: IpcContext,
+  provider: ProviderId,
+  connectorConfig: Record<string, string>,
+): ConnectorStatusInfo {
+  const spec = getConnectSpec(provider);
+  const tokenField = spec.tokenField;
+  if (tokenField == null) {
+    throw new Error(
+      `token connect method for ${provider} has no tokenField configured`,
+    );
+  }
+  const accessToken = connectorConfig[tokenField];
+  if (!accessToken) {
+    // Defensive: `assertConnectorConfig` already enforces required
+    // fields, and the credential field is always required.
+    throw new Error(`Missing credential for ${provider}`);
+  }
+  const bag: Record<string, string> = {};
+  for (const [key, value] of Object.entries(connectorConfig)) {
+    if (key !== tokenField) bag[key] = value;
+  }
+  const config = getProviderOAuthConfig(provider);
+  ctx.tokenVault.storeTokens(provider, {
+    accessToken,
+    refreshToken: null,
+    expiresAt: Date.now() + NON_EXPIRING_CREDENTIAL_MS,
+    scopes: getRequestedScopes(config),
+    connectorConfig: Object.keys(bag).length > 0 ? bag : undefined,
+  });
+  ctx.log.info("connector authenticated", { provider, method: "token" });
+  safeAudit(ctx, (b) => b.bridgeLogConnectorConnected(provider));
+  return { provider, connected: true, status: "connected" };
+}
+
 export function registerConnectorHandlers(ctx: IpcContext): void {
   // Every `idempotentHandle(...)` below does its own
   // `ipcMain.removeHandler` first, so re-importing this module (test
@@ -1252,19 +1384,16 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       providerRaw: unknown,
       clientIdRaw: unknown,
       clientSecretRaw: unknown,
+      configRaw?: unknown,
     ): Promise<ConnectorStatusInfo> => {
       const provider = assertProvider(providerRaw, "provider");
-      const clientId = assertString(clientIdRaw, "clientId", { maxLen: 512 });
-      const clientSecret = assertString(clientSecretRaw, "clientSecret", {
-        maxLen: 512,
-        // Every provider supported today (Google Drive, OneDrive,
-        // Notion, Jira, Confluence, Figma, HubSpot, Slack, Email,
-        // GitHub) is registered as a confidential OAuth client and
-        // therefore requires a non-empty `client_secret`. If a future
-        // connector is added with a public / PKCE-only OAuth client,
-        // special-case it here.
-        allowEmpty: false,
-      });
+      // Validate the per-target / credential config (Asana project,
+      // Teams team/channel, GitLab PAT + project, Trello key/token/
+      // board) against the provider's declared connect spec before
+      // doing any work. Providers with no extra fields yield an empty
+      // map.
+      const connectorConfig = assertConnectorConfig(provider, configRaw);
+
       try {
         ctx.rateLimiter.consume(`connectors:authenticate:${provider}`, {
           tokensPerInterval: 1,
@@ -1280,6 +1409,26 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         }
         throw err;
       }
+
+      // Non-OAuth2 providers (GitLab personal access token, Trello API
+      // key + token) connect with a pasted credential — no browser
+      // authorization-code flow. The supplied credential becomes the
+      // connector's access token.
+      if (getConnectSpec(provider).connectMethod === "token") {
+        return authenticateWithToken(ctx, provider, connectorConfig);
+      }
+
+      const clientId = assertString(clientIdRaw, "clientId", { maxLen: 512 });
+      const clientSecret = assertString(clientSecretRaw, "clientSecret", {
+        maxLen: 512,
+        // Every OAuth2 provider supported today is registered as a
+        // confidential client and therefore requires a non-empty
+        // `client_secret`. Token-method providers (GitLab, Trello)
+        // never reach here — they returned above. If a future OAuth2
+        // connector is added with a public / PKCE-only client,
+        // special-case it here.
+        allowEmpty: false,
+      });
 
       const config = getProviderOAuthConfig(provider);
       const pkce = config.usePkce ? generatePkcePair() : null;
@@ -1319,6 +1468,13 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         scopes: persistedScopes,
         clientId,
         clientSecret,
+        // Per-target config (Asana project, Teams team/channel)
+        // collected alongside the OAuth client credentials, persisted in
+        // the same encrypted vault blob and injected into the connector
+        // `auth_config_json` bag at sync time. Empty for whole-account
+        // OAuth2 providers.
+        connectorConfig:
+          Object.keys(connectorConfig).length > 0 ? connectorConfig : undefined,
       });
       // Warn (in the structured log) when the user narrowed
       // consent. The connector card surfaces the same diff in the

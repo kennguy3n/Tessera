@@ -19,6 +19,17 @@ export interface StoredTokens {
   scopes: string[];
   clientId?: string;
   clientSecret?: string;
+  /**
+   * Per-target / non-OAuth2 connector configuration captured at connect
+   * time (e.g. Asana `project`, Teams `team_id`/`channel_id`, GitLab
+   * `project_id`, Trello `key`/`board_id`). The exact `auth_config_json`
+   * field names the upstream Rust connector reads — see
+   * `shared/connectorConfig.ts` and `buildAuthConfig`. Persisted inside
+   * the encrypted vault blob alongside the token (so any secret fields,
+   * like Trello's API key, are encrypted at rest just like
+   * `clientSecret`). Absent for whole-account OAuth2 providers.
+   */
+  connectorConfig?: Record<string, string>;
 }
 
 const VAULT_DIR = (): string => path.join(app.getPath("userData"), "token-vault");

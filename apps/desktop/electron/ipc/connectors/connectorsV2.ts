@@ -48,10 +48,12 @@ import * as path from "path";
 
 import type { NativeBridge } from "../../appState";
 import type { StoredTokens } from "../../tokenVault";
+import { authConfigFields } from "../../../shared/connectorConfig";
 import {
   getProviderOAuthConfig,
   type ProviderId,
 } from "./providerOAuth";
+import { getRequestedScopes } from "../../oauthScope";
 import {
   SourcePathIndex,
   purgeSyncDir,
@@ -228,6 +230,10 @@ export function wireToStored(
     scopes: wire.scope.length > 0 ? wire.scope.split(/\s+/) : (previous?.scopes ?? []),
     clientId: previous?.clientId,
     clientSecret: previous?.clientSecret,
+    // A refresh/exchange never re-collects per-target config, so carry
+    // the previously-stored bag (Asana project, Teams team/channel, …)
+    // forward unchanged.
+    connectorConfig: previous?.connectorConfig,
   };
 }
 
@@ -237,17 +243,32 @@ export function wireToStored(
  * `PROVIDER_OAUTH_CONFIGS` and the client credentials from the
  * keychain-stored token record. Never includes the access/refresh
  * token — those travel separately as `TokenWire`.
+ *
+ * Per-target / non-OAuth2 providers (Asana, GitLab, Teams, Trello)
+ * additionally inject their connect-time config (`connectorConfig`) into
+ * the bag under the exact `auth_config_json` field names the upstream
+ * connector reads (e.g. Trello `key`/`board_id`, GitLab `project_id`,
+ * Asana `project`, Teams `team_id`/`channel_id`). The field that carries
+ * the credential for a `connectMethod: "token"` provider (GitLab's PAT,
+ * Trello's user token) is deliberately NOT injected here — it travels as
+ * the access token in `TokenWire` instead — so `authConfigFields`
+ * filters it out. Empty/absent values are skipped so the connector's
+ * own "field is required" validation produces the clear error rather
+ * than receiving an empty string.
  */
 export function buildAuthConfig(
   provider: ProviderId,
   tokens: StoredTokens | null,
 ): Record<string, unknown> {
   const oauth = getProviderOAuthConfig(provider);
-  return {
+  const bag: Record<string, unknown> = {
     provider,
     token_url: oauth.tokenUrl,
     auth_url: oauth.authUrl,
-    scope: oauth.scope,
+    // Full requested scope set (API scopes + `offline_access` when the
+    // provider declares `requestOfflineAccess`), so the Rust connector's
+    // own refresh exchange asks for the same scopes the browser grant did.
+    scope: getRequestedScopes(oauth).join(" "),
     client_id: tokens?.clientId ?? "",
     // The Rust side prefers a registered ClientSecretResolver; the
     // secret is included here only as the dev/standalone fallback and
@@ -255,6 +276,16 @@ export function buildAuthConfig(
     client_secret: tokens?.clientSecret ?? "",
     redirect_uri: `http://${oauth.redirectHost ?? "127.0.0.1"}:${oauth.redirectPort}/callback`,
   };
+  const config = tokens?.connectorConfig;
+  if (config) {
+    for (const field of authConfigFields(provider)) {
+      const value = config[field.key];
+      if (typeof value === "string" && value.length > 0) {
+        bag[field.key] = value;
+      }
+    }
+  }
+  return bag;
 }
 
 /**
