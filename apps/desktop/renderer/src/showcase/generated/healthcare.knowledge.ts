@@ -54,8 +54,8 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "scopeId": "sc-healthcare-scope",
       "observationType": "entity",
       "content": "CHG-2208",
-      "state": "candidate",
-      "retentionScore": 0.62,
+      "state": "superseded",
+      "retentionScore": 0.34,
       "pinCount": 0,
       "retrievalCount": 5,
       "corroborationCount": 1,
@@ -168,8 +168,8 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "scopeId": "sc-healthcare-scope",
       "observationType": "fact",
       "content": "Filtered to user dwhitfield, last 30 days.",
-      "state": "candidate",
-      "retentionScore": 0.62,
+      "state": "archived",
+      "retentionScore": 0.12,
       "pinCount": 0,
       "retrievalCount": 3,
       "corroborationCount": 1,
@@ -210,8 +210,8 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "scopeId": "sc-healthcare-scope",
       "observationType": "decision",
       "content": "Caller believes full-disk encryption \"should be on\" but is not certain.",
-      "state": "candidate",
-      "retentionScore": 0.62,
+      "state": "archived",
+      "retentionScore": 0.22,
       "pinCount": 0,
       "retrievalCount": 0,
       "corroborationCount": 1,
@@ -252,8 +252,8 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "scopeId": "sc-healthcare-scope",
       "observationType": "fact",
       "content": "permitted under the Privacy Rule, the Privacy Office shall conduct the.",
-      "state": "candidate",
-      "retentionScore": 0.62,
+      "state": "archived",
+      "retentionScore": 0.15,
       "pinCount": 0,
       "retrievalCount": 0,
       "corroborationCount": 1,
@@ -267,7 +267,7 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "id": "1c3185a1-c2df-3c6b-9e93-fb823efa2b7f",
       "label": "LT-2291",
       "definition": "Asset: Laptop, Dell Latitude 5440, asset tag MRH-LT-2291.",
-      "state": "candidate",
+      "state": "canonical",
       "relatedSourceIds": [
         "sc-healthcare-src-01",
         "sc-healthcare-src-02"
@@ -296,7 +296,7 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "id": "f348b82f-a620-8bd6-604e-ed911e467afc",
       "label": "CHG-2208",
       "definition": "(CHG-2208) was closed without confirming re-encryption. Because the disk is.",
-      "state": "candidate",
+      "state": "superseded",
       "relatedSourceIds": [
         "sc-healthcare-src-02"
       ]
@@ -314,10 +314,91 @@ export const healthcareKnowledge: ShowcaseKnowledgePlane = {
       "id": "f1eb3502-c259-3f9f-5888-8180eee75b2f",
       "label": "INC-4471",
       "definition": "IT Service Desk Ticket — INC-4471.",
-      "state": "candidate",
+      "state": "canonical",
       "relatedSourceIds": [
         "sc-healthcare-src-01"
       ]
+    },
+    {
+      "id": "99869b64-36e1-6f22-971c-2c73d05203e6",
+      "label": "Incident",
+      "definition": "Category of incident observations.",
+      "state": "canonical",
+      "relatedSourceIds": []
+    },
+    {
+      "id": "fb4451a1-57d9-aa50-4dbf-95a616352137",
+      "label": "Asset",
+      "definition": "Category of asset observations.",
+      "state": "canonical",
+      "relatedSourceIds": []
+    },
+    {
+      "id": "252bd1c0-f4a1-77cc-950e-16728f4fd1c5",
+      "label": "Clinical code",
+      "definition": "Category of clinical code observations.",
+      "state": "canonical",
+      "relatedSourceIds": []
+    },
+    {
+      "id": "15a20321-4072-25f7-db8a-36612a1ad2d3",
+      "label": "Disk not encrypted",
+      "definition": "Endpoint/MDM audit: BitLocker status Not encrypted — policy exception granted 2025-09, never remediated.",
+      "state": "canonical",
+      "relatedSourceIds": [
+        "sc-healthcare-src-02"
+      ]
+    },
+    {
+      "id": "bef2dac9-b701-66c8-21fa-9f9dcaa45f5c",
+      "label": "Encryption assumed enabled",
+      "definition": "Caller believes full-disk encryption \"should be on\" but is not certain.",
+      "state": "contradicted",
+      "relatedSourceIds": [
+        "sc-healthcare-src-01"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "from": "f1eb3502-c259-3f9f-5888-8180eee75b2f",
+      "to": "99869b64-36e1-6f22-971c-2c73d05203e6",
+      "type": "is_a"
+    },
+    {
+      "from": "1c3185a1-c2df-3c6b-9e93-fb823efa2b7f",
+      "to": "fb4451a1-57d9-aa50-4dbf-95a616352137",
+      "type": "is_a"
+    },
+    {
+      "from": "d707e2fa-73eb-b723-f236-58a3fc0ae3ef",
+      "to": "252bd1c0-f4a1-77cc-950e-16728f4fd1c5",
+      "type": "is_a"
+    },
+    {
+      "from": "1c3185a1-c2df-3c6b-9e93-fb823efa2b7f",
+      "to": "f1eb3502-c259-3f9f-5888-8180eee75b2f",
+      "type": "part_of"
+    },
+    {
+      "from": "babc08f5-6c78-4af1-3222-e10a99daf065",
+      "to": "f1eb3502-c259-3f9f-5888-8180eee75b2f",
+      "type": "part_of"
+    },
+    {
+      "from": "69d9e243-a4a6-589c-d6fd-c194330c9243",
+      "to": "f1eb3502-c259-3f9f-5888-8180eee75b2f",
+      "type": "part_of"
+    },
+    {
+      "from": "15a20321-4072-25f7-db8a-36612a1ad2d3",
+      "to": "bef2dac9-b701-66c8-21fa-9f9dcaa45f5c",
+      "type": "contradicts"
+    },
+    {
+      "from": "15a20321-4072-25f7-db8a-36612a1ad2d3",
+      "to": "f348b82f-a620-8bd6-604e-ed911e467afc",
+      "type": "supersedes"
     }
   ]
 };

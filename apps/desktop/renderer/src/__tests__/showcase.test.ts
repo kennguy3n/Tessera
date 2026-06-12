@@ -36,12 +36,53 @@ const DESIGN_TEXT_MODEL_IDS = new Set<string>(
 
 const PERSONAS = ["healthcare", "legal", "finance", "nonprofit", "retail"] as const;
 
+// Valid lifecycle vocabularies, mirrored from the Rust enums (substrate
+// `MemoryState` for observations, concept_graph `NodeState` for concept nodes)
+// and from scripts/showcase/derive_knowledge.py. The mock must never serve a
+// state the shipped UI can't model — `archived` is observation-only,
+// `contradicted` concept-only.
+const OBSERVATION_STATES = new Set([
+  "candidate",
+  "reinforced",
+  "consolidated",
+  "canonical",
+  "superseded",
+  "archived",
+  "deleted",
+]);
+const CONCEPT_STATES = new Set([
+  "candidate",
+  "canonical",
+  "superseded",
+  "contradicted",
+  "deleted",
+]);
+const RELATION_TYPES = new Set([
+  "is_a",
+  "part_of",
+  "decided_by",
+  "supersedes",
+  "contradicts",
+  "derived_from",
+  "assigned_to",
+  "unknown",
+]);
+
 // Minimal structural view of the mock bridge for assertions.
+type Memory = { id: string; state: string; retentionScore: number };
+type ConceptGraph = {
+  nodes: Array<{ id: string; state: string }>;
+  edges: Array<{ from: string; to: string; relation_type: string }>;
+};
 type Api = {
   settings: { get: () => Promise<{ onboardingCompleted: boolean }> };
   artifacts: { list: () => Promise<Array<{ id: string; version: number; artifactType: string }>> };
   sources: { listSources: () => Promise<Array<{ id: string }>> };
   citations: { list: (artifactId: string) => Promise<Array<{ citationId: string }>> };
+  substrate: {
+    getMemories: () => Promise<Memory[]>;
+    getConceptGraph: (scope?: string | null, maxNodes?: number | null) => Promise<string>;
+  };
   runtime: {
     onDownloadProgress: () => () => void;
     getCurrentModel: () => Promise<{ modelId: string }>;
@@ -113,6 +154,58 @@ describe("buildShowcaseApi", () => {
     // never empty in a capture.
     const citations = await api.citations.list(artifacts[0].id);
     expect(citations.length).toBeGreaterThan(0);
+  });
+
+  it.each(PERSONAS)(
+    "serves only valid observation decay states for %s",
+    async (persona) => {
+      const api = buildShowcaseApi(persona) as Api;
+      const memories = await api.substrate.getMemories();
+      expect(memories.length).toBeGreaterThan(0);
+      for (const m of memories) {
+        expect(
+          OBSERVATION_STATES.has(m.state),
+          `${persona}: observation ${m.id} has unmodelled state ${m.state}`,
+        ).toBe(true);
+        expect(m.retentionScore).toBeGreaterThanOrEqual(0);
+        expect(m.retentionScore).toBeLessThanOrEqual(1);
+      }
+    },
+  );
+
+  it.each(PERSONAS)(
+    "serves a concept graph with valid node states and typed edges for %s",
+    async (persona) => {
+      const api = buildShowcaseApi(persona) as Api;
+      const graph = JSON.parse(await api.substrate.getConceptGraph()) as ConceptGraph;
+      const ids = new Set(graph.nodes.map((n) => n.id));
+      for (const n of graph.nodes) {
+        expect(
+          CONCEPT_STATES.has(n.state),
+          `${persona}: concept ${n.id} has unmodelled state ${n.state}`,
+        ).toBe(true);
+      }
+      // Every edge is a modelled relation type whose endpoints are real nodes.
+      for (const e of graph.edges) {
+        expect(
+          RELATION_TYPES.has(e.relation_type),
+          `${persona}: edge has unmodelled relation ${e.relation_type}`,
+        ).toBe(true);
+        expect(ids.has(e.from)).toBe(true);
+        expect(ids.has(e.to)).toBe(true);
+      }
+    },
+  );
+
+  it("emits the explicit typed concept-graph relations for healthcare", async () => {
+    const api = buildShowcaseApi("healthcare") as Api;
+    const graph = JSON.parse(await api.substrate.getConceptGraph()) as ConceptGraph;
+    // The enriched healthcare plane ships all four headline relation types so
+    // the captured graph demonstrates the shipped typed-edge rendering.
+    const present = new Set(graph.edges.map((e) => e.relation_type));
+    for (const t of ["is_a", "part_of", "supersedes", "contradicts"]) {
+      expect(present.has(t), `healthcare graph missing relation ${t}`).toBe(true);
+    }
   });
 });
 

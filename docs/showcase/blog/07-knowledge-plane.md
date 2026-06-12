@@ -73,7 +73,15 @@ The **Memory page** browses exactly this plane: every observation with its type,
 and retention score, filterable by decay state and searchable. The pin / unpin / forget
 controls are the explicit signals from Step 2.
 
-![The Memory page — entities, facts, tasks, and decisions with their memory state and retention, browsable directly](../assets/screenshots/flow-07-memory-page.png)
+![The Memory page — entities, facts, tasks, and decisions with their memory state and retention, filterable by decay bucket (All / Active / Fading / Archived) and searchable](../assets/screenshots/flow-07-memory-page.png)
+
+Raw substrate states collapse into three user-facing buckets: **active** (candidate →
+reinforced → consolidated → canonical), **fading** (`superseded`), and **archived** (everything
+aged out of the working set). Scrolling down the same list walks the full gradient — here the
+`RPD-2026-01188` request stays *active* at 62%, the prematurely-closed change `CHG-2208` is
+*fading* at 34%, and the caller's disproven encryption assumption has *archived* at 22%:
+
+![The decay gradient on the Memory page — an active observation (62%), a fading one (CHG-2208, 34%), and three archived ones (22% / 15% / 12%), each with a colored state badge](../assets/screenshots/flow-07b-memory-decay.png)
 
 ## Step 3 — the concept graph: linking sources through shared entities
 
@@ -88,12 +96,22 @@ co-occurs in. From Maya's corpus:
 - **`45 CFR §164.402`** → the breach-classification rule, anchored in the policy file.
 
 The **concept-graph panel** at the bottom of the Memory page draws this directly: concept nodes
-sized by how connected they are, with typed links between them. Selecting a node lists its
-relationships and the source evidence behind each one. The edges here are derived from genuine
-shared-source structure — when one concept's sources are a subset of another's it's the
-narrower term (`part of`); otherwise they merely co-occur (`related to`).
+sized by how connected they are, with **typed** edges between them. Around the `INC-4471` hub
+the four relation types the substrate models all appear, each grounded in the source semantics:
 
-![The concept-graph panel — concept nodes with typed links, here with `LT-2291` selected to show its relationships and source evidence](../assets/screenshots/flow-08-concept-graph.png)
+- **`is_a`** — each identifier is typed by its scheme: `INC-4471` *is a* Incident, `LT-2291`
+  *is an* Asset, `ICD-10` *is a* Clinical code.
+- **`part_of`** — the asset, the escalation target, and the breach-classification rule are all
+  *part of* the incident: `LT-2291`, `Privacy Office`, and `45 CFR §164.402` → `INC-4471`.
+- **`supersedes`** — the MDM finding that the disk was never encrypted *supersedes* the change
+  ticket `CHG-2208` that had been closed without confirming re-encryption.
+- **`contradicts`** — that same finding *contradicts* the caller's assumption that full-disk
+  encryption "should be on", which is why the assumption decayed to `contradicted`.
+
+Selecting a node lists its relationships and the source evidence behind each one. Node color
+tracks the concept's lifecycle state (canonical, candidate, `superseded`, `contradicted`).
+
+![The concept-graph panel — typed concept edges (is_a / part_of / supersedes / contradicts) around the `INC-4471` incident hub, with the node selected to show its relationships and source evidence](../assets/screenshots/flow-08-concept-graph.png)
 
 In the Create flow, this graph powers **"related source" suggestions**: as you select sources
 for a new artifact, Tessera proposes others that share concepts with your selection
@@ -162,7 +180,7 @@ line to draw.
   summarizing the memory plane and concept graph — and a substrate section on each source's
   detail page.
 
-![The enriched "Knowledge" tab in the artifact editor's citation panel — facts and concepts with retention, alongside the "Sources" evidence tab](../assets/screenshots/flow-09-knowledge-tab.png)
+![The enriched "Knowledge" tab in the artifact editor's citation panel — searching "encryption" surfaces the matching fact (archived, 22%) and concepts (`CHG-2208` superseded, "Encryption assumed enabled" contradicted) with their lifecycle state, alongside the "Sources" evidence tab](../assets/screenshots/flow-09-knowledge-tab.png)
 
 Sources feeding the plane come from local files or a **searchable, categorized connector
 gallery** (Sources page) — OneDrive, Dropbox, Box, Notion, Confluence, Slack, Jira, Linear,

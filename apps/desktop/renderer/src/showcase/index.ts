@@ -164,38 +164,26 @@ function buildEnriched(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query
   };
 }
 
-// Serialize the persona's concept graph into the same JSON wire shape the
-// native bridge emits (`concept_graph::GraphView`, parsed by
-// `utils/conceptGraph.ts`): `{ nodes, edges, scope_filter, depth, truncation }`.
-// Nodes are the genuine extracted concepts; edges are derived deterministically
-// from real co-occurrence — two concepts that cite at least one source in
-// common are linked. When one concept's sources are a strict subset of the
-// other's it is the narrower term, so the edge is typed `part_of` (pointing
-// narrow → broad); otherwise the concepts merely co-occur and the edge is left
-// untyped (`unknown`, rendered as "related to"). No semantic relation is
+interface CgEdge {
+  id: string;
+  from: string;
+  to: string;
+  relation_type: string;
+  scope_id: string;
+}
+
+// Edges derived purely from real co-occurrence — two concepts that cite at
+// least one source in common are linked. When one concept's sources are a
+// strict subset of the other's it is the narrower term, so the edge is typed
+// `part_of` (pointing narrow → broad); otherwise the concepts merely co-occur
+// and the edge is left untyped (`unknown`, rendered as "related to"). Used when
+// a persona's plane carries no explicit `relations` — no semantic relation is
 // invented beyond what the shared-source structure supports.
-function buildConceptGraphJson(
-  plane: ShowcaseKnowledgePlane,
-  maxNodes: number | null = null,
-): string {
-  const scopeId =
-    plane.entities[0]?.scopeId ?? plane.facts[0]?.scopeId ?? "sc-showcase-scope";
-  const concepts =
-    typeof maxNodes === "number" && maxNodes > 0
-      ? plane.concepts.slice(0, maxNodes)
-      : plane.concepts;
-  const included = new Set(concepts.map((c) => c.id));
-
-  const edges: Array<{
-    id: string;
-    from: string;
-    to: string;
-    relation_type: string;
-    scope_id: string;
-  }> = [];
-  const incident = new Map<string, number>();
-  const bump = (id: string) => incident.set(id, (incident.get(id) ?? 0) + 1);
-
+function coOccurrenceEdges(
+  concepts: ShowcaseKnowledgePlane["concepts"],
+  scopeId: string,
+): CgEdge[] {
+  const edges: CgEdge[] = [];
   for (let i = 0; i < concepts.length; i++) {
     for (let j = i + 1; j < concepts.length; j++) {
       const a = concepts[i];
@@ -214,8 +202,6 @@ function buildConceptGraphJson(
       let to = b.id;
       let relation = "unknown";
       if (aSubsetB && !bSubsetA) {
-        from = a.id;
-        to = b.id;
         relation = "part_of";
       } else if (bSubsetA && !aSubsetB) {
         from = b.id;
@@ -229,9 +215,52 @@ function buildConceptGraphJson(
         relation_type: relation,
         scope_id: scopeId,
       });
-      bump(from);
-      bump(to);
     }
+  }
+  return edges;
+}
+
+// Serialize the persona's concept graph into the same JSON wire shape the
+// native bridge emits (`concept_graph::GraphView`, parsed by
+// `utils/conceptGraph.ts`): `{ nodes, edges, scope_filter, depth, truncation }`.
+// Nodes are the genuine extracted concepts. Edges come from the plane's
+// `relations` when present — the deterministically-derived `is_a` / `part_of` /
+// `supersedes` / `contradicts` typing the substrate exposes (see
+// `scripts/showcase/derive_knowledge.py`) — and otherwise fall back to the
+// co-occurrence derivation above.
+function buildConceptGraphJson(
+  plane: ShowcaseKnowledgePlane,
+  maxNodes: number | null = null,
+): string {
+  const scopeId =
+    plane.entities[0]?.scopeId ?? plane.facts[0]?.scopeId ?? "sc-showcase-scope";
+  const concepts =
+    typeof maxNodes === "number" && maxNodes > 0
+      ? plane.concepts.slice(0, maxNodes)
+      : plane.concepts;
+  const included = new Set(concepts.map((c) => c.id));
+
+  const relations = plane.relations ?? [];
+  const allEdges: CgEdge[] =
+    relations.length > 0
+      ? relations.map((r, i) => ({
+          id: `sc-cg-edge-${i}`,
+          from: r.from,
+          to: r.to,
+          relation_type: r.type,
+          scope_id: scopeId,
+        }))
+      : coOccurrenceEdges(concepts, scopeId);
+
+  // Only edges whose endpoints both survive the node cap are kept; node sizing
+  // (`connections_count`) counts exactly those visible edges.
+  const edges = allEdges.filter(
+    (e) => included.has(e.from) && included.has(e.to),
+  );
+  const incident = new Map<string, number>();
+  for (const e of edges) {
+    incident.set(e.from, (incident.get(e.from) ?? 0) + 1);
+    incident.set(e.to, (incident.get(e.to) ?? 0) + 1);
   }
 
   const nodes = concepts.map((c) => ({
@@ -244,7 +273,7 @@ function buildConceptGraphJson(
 
   return JSON.stringify({
     nodes,
-    edges: edges.filter((e) => included.has(e.from) && included.has(e.to)),
+    edges,
     scope_filter: [],
     depth: 2,
     truncation: "complete",
