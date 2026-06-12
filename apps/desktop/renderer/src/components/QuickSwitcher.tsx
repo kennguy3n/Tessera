@@ -128,6 +128,7 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const previousActiveRef = useRef<HTMLElement | null>(null);
+  const hasFetchedOnOpenRef = useRef(false);
 
   const listboxId = useId();
   const optionIdPrefix = useId();
@@ -151,7 +152,16 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
     previousActiveRef.current = document.activeElement as HTMLElement | null;
     setQuery("");
     setActiveIndex(0);
-    refreshAll();
+    // The underlying list hooks fetch once on mount, which — since this
+    // component mounts lazily on the first open — already covers that
+    // first open. Skip the redundant refreshAll() that first time to
+    // avoid a double IPC round-trip per list; refresh on every
+    // subsequent open so reopening still shows a fresh library.
+    if (hasFetchedOnOpenRef.current) {
+      refreshAll();
+    } else {
+      hasFetchedOnOpenRef.current = true;
+    }
     const t = setTimeout(() => inputRef.current?.focus(), 0);
     return () => {
       clearTimeout(t);

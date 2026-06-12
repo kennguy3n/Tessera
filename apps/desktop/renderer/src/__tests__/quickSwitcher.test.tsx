@@ -227,4 +227,29 @@ describe("QuickSwitcher", () => {
     const options = screen.getAllByRole("option");
     expect(options[0].textContent).toContain("Charlie");
   });
+
+  it("skips the redundant refreshAll on first open, refreshes on reopen", () => {
+    // The list hooks fetch on mount (first open), so the explicit
+    // refreshAll() is skipped that first time to avoid a double IPC per
+    // list; it runs on every subsequent open so reopening shows fresh data.
+    const refreshAll = itemsState.refreshAll as ReturnType<typeof vi.fn>;
+    refreshAll.mockClear();
+    setItems([item("a", "Alpha", "/a")]);
+    const onClose = vi.fn();
+
+    const open = (isOpen: boolean) => (
+      <MemoryRouter>
+        <QuickSwitcher isOpen={isOpen} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const { rerender } = render(open(false));
+
+    rerender(open(true));
+    expect(refreshAll).not.toHaveBeenCalled();
+
+    rerender(open(false));
+    rerender(open(true));
+    expect(refreshAll).toHaveBeenCalledTimes(1);
+  });
 });
