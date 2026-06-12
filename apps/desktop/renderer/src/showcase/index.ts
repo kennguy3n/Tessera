@@ -164,6 +164,93 @@ function buildEnriched(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query
   };
 }
 
+// Serialize the persona's concept graph into the same JSON wire shape the
+// native bridge emits (`concept_graph::GraphView`, parsed by
+// `utils/conceptGraph.ts`): `{ nodes, edges, scope_filter, depth, truncation }`.
+// Nodes are the genuine extracted concepts; edges are derived deterministically
+// from real co-occurrence — two concepts that cite at least one source in
+// common are linked. When one concept's sources are a strict subset of the
+// other's it is the narrower term, so the edge is typed `part_of` (pointing
+// narrow → broad); otherwise the concepts merely co-occur and the edge is left
+// untyped (`unknown`, rendered as "related to"). No semantic relation is
+// invented beyond what the shared-source structure supports.
+function buildConceptGraphJson(
+  plane: ShowcaseKnowledgePlane,
+  maxNodes: number | null = null,
+): string {
+  const scopeId =
+    plane.entities[0]?.scopeId ?? plane.facts[0]?.scopeId ?? "sc-showcase-scope";
+  const concepts =
+    typeof maxNodes === "number" && maxNodes > 0
+      ? plane.concepts.slice(0, maxNodes)
+      : plane.concepts;
+  const included = new Set(concepts.map((c) => c.id));
+
+  const edges: Array<{
+    id: string;
+    from: string;
+    to: string;
+    relation_type: string;
+    scope_id: string;
+  }> = [];
+  const incident = new Map<string, number>();
+  const bump = (id: string) => incident.set(id, (incident.get(id) ?? 0) + 1);
+
+  for (let i = 0; i < concepts.length; i++) {
+    for (let j = i + 1; j < concepts.length; j++) {
+      const a = concepts[i];
+      const b = concepts[j];
+      const aSet = new Set(a.relatedSourceIds);
+      const bSet = new Set(b.relatedSourceIds);
+      const shares = b.relatedSourceIds.some((s) => aSet.has(s));
+      if (!shares) continue;
+      const aSubsetB =
+        a.relatedSourceIds.length > 0 &&
+        a.relatedSourceIds.every((s) => bSet.has(s));
+      const bSubsetA =
+        b.relatedSourceIds.length > 0 &&
+        b.relatedSourceIds.every((s) => aSet.has(s));
+      let from = a.id;
+      let to = b.id;
+      let relation = "unknown";
+      if (aSubsetB && !bSubsetA) {
+        from = a.id;
+        to = b.id;
+        relation = "part_of";
+      } else if (bSubsetA && !aSubsetB) {
+        from = b.id;
+        to = a.id;
+        relation = "part_of";
+      }
+      edges.push({
+        id: `sc-cg-edge-${edges.length}`,
+        from,
+        to,
+        relation_type: relation,
+        scope_id: scopeId,
+      });
+      bump(from);
+      bump(to);
+    }
+  }
+
+  const nodes = concepts.map((c) => ({
+    id: c.id,
+    label: c.label,
+    state: c.state,
+    scope_id: scopeId,
+    connections_count: incident.get(c.id) ?? 0,
+  }));
+
+  return JSON.stringify({
+    nodes,
+    edges: edges.filter((e) => included.has(e.from) && included.has(e.to)),
+    scope_filter: [],
+    depth: 2,
+    truncation: "complete",
+  });
+}
+
 function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number) {
   // Deliberate fallback: when an artifact reports `count` of 0 (e.g. a sheet or
   // base where citations aren't surfaced per-cell), show citations for every
@@ -251,6 +338,12 @@ export function buildShowcaseApi(personaId: string): unknown {
   }));
 
   const byId = new Map(artifacts.map((a) => [a.id, a]));
+
+  // Mutable memory plane so the Memory page's pin / unpin / forget controls are
+  // interactive in the demo (the row updates/disappears and a refresh reads the
+  // mutated list back). Entities + facts are already `SubstrateMemoryInfo`-shaped.
+  const memories = [...plane.entities, ...plane.facts].map((m) => ({ ...m }));
+  const findMemory = (id: string) => memories.find((m) => m.id === id);
 
   const real: Record<string, Record<string, unknown>> = {
     // Bridge-readiness surface. The real app gates `<App/>` behind
@@ -341,6 +434,28 @@ export function buildShowcaseApi(personaId: string): unknown {
     // for the artifact-creation flow, plus decay/synthesis no-ops. Built from
     // the persona's genuine concept graph.
     substrate: {
+      // Memory plane read for the Memory page (`useMemories`) and HomePage
+      // knowledge insights (`useKnowledgeInsights`). Genuine entity/fact
+      // observations with their decay state + retention.
+      getMemories: async () => memories.map((m) => ({ ...m })),
+      pinMemory: async (id: string) => {
+        const m = findMemory(id);
+        if (m) m.pinCount += 1;
+        return { ...(m ?? memories[0]) };
+      },
+      unpinMemory: async (id: string) => {
+        const m = findMemory(id);
+        if (m) m.pinCount = Math.max(0, m.pinCount - 1);
+        return { ...(m ?? memories[0]) };
+      },
+      forgetMemory: async (id: string) => {
+        const idx = memories.findIndex((m) => m.id === id);
+        if (idx >= 0) memories.splice(idx, 1);
+      },
+      // Concept graph for the Memory page panel (`useConceptGraph`) + HomePage
+      // top-concepts. JSON-serialized `GraphView`, bounded by `maxNodes`.
+      getConceptGraph: async (_scope: string | null = null, maxNodes: number | null = null) =>
+        buildConceptGraphJson(plane, maxNodes),
       suggestRelatedSources: async (selectedSourceIds: string[] = [], maxSuggestions = 10) => {
         const selected = new Set(selectedSourceIds);
         return plane.concepts
