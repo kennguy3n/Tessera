@@ -73,6 +73,7 @@ import { syncGoogleDrive, disconnectGoogleDrive } from "./gdrive";
 import {
   runV2Sync,
   readV2State,
+  readV2Pending,
   writeV2State,
   v2BridgeAvailable,
   disconnectV2Provider,
@@ -158,23 +159,35 @@ async function runProviderV2Sync(
     );
   }
   const nativeBridge = ctx.requireBridge();
-  const { result, nextCursor, warnings } = await runV2Sync({
+  const { result, nextCursor, warnings, pendingFetch } = await runV2Sync({
     provider,
     bridge: nativeBridge,
     hooks: bridgeHooks(ctx),
     tokens,
     userDataDir,
     stateJson: await readV2State(userDataDir, provider),
+    // Deferred-fetch backlog from the previous run: documents whose
+    // bodies the `max_fetch` budget could not materialise yet. The Rust
+    // side drains these first, so a source larger than one budget is
+    // indexed in full across successive syncs instead of losing the
+    // overflow as the cursor advances past it.
+    pending: await readV2Pending(userDataDir, provider),
     // Single-tenant desktop host: let the Rust side derive a stable
     // deterministic per-provider scope (see `parse_scope`).
     scopeId: null,
   });
-  await writeV2State(userDataDir, provider, nextCursor);
+  await writeV2State(userDataDir, provider, nextCursor, pendingFetch);
   if (warnings.length > 0) {
     ctx.log.warn("v2 connector sync produced non-fatal warnings", {
       provider,
       count: warnings.length,
       sample: warnings.slice(0, 5),
+    });
+  }
+  if (pendingFetch.length > 0) {
+    ctx.log.info("v2 connector sync deferred document bodies for retry", {
+      provider,
+      pending: pendingFetch.length,
     });
   }
   return result;

@@ -131,6 +131,14 @@ export interface SyncOutcome {
   next_cursor?: string | null;
   documents: FetchedDocV2[];
   warnings?: string[];
+  /**
+   * Source-side document ids whose body was not materialised this run
+   * (the per-run `max_fetch` budget was exhausted, or a transient fetch
+   * error occurred) and must be re-fetched on a future run. The host
+   * persists this list and feeds it back as the next run's `pending`
+   * backlog so the cursor advancing past them never loses their content.
+   */
+  pending_fetch?: string[];
 }
 
 /**
@@ -159,6 +167,21 @@ export type V2NativeBridge = Pick<
   | "bridgeConnectorsV2Refresh"
   | "bridgeConnectorsV2Sync"
 >;
+
+/**
+ * Tessera-owned v2 sync-state file shape. The connector's opaque
+ * `SyncState` fields (`connector`/`mode`/`cursor`/`last_synced_at`/
+ * `status`/`last_error`) are the contract the Rust side reads; the
+ * `tessera_`-prefixed fields are host-private and ignored by the Rust
+ * deserialiser (`SyncState` does not deny unknown fields), so the two
+ * concerns share one file without a second on-disk format.
+ */
+interface V2StateFile {
+  cursor: string | null;
+  /** Deferred-fetch backlog (document ids) carried across runs. */
+  tessera_pending_fetch?: string[];
+  [key: string]: unknown;
+}
 
 /**
  * Whether the native addon in this build exposes the v2 connector
@@ -322,6 +345,30 @@ export async function readV2State(
 }
 
 /**
+ * Read the deferred-fetch backlog (document ids) persisted alongside the
+ * cursor in the v2-state file. Returns an empty array when there is no
+ * state yet, the file is unreadable, or it carries no backlog. The Rust
+ * side drains these first on the next run (see
+ * {@link SyncOutcome.pending_fetch}).
+ */
+export async function readV2Pending(
+  userDataDir: string,
+  provider: ProviderId,
+): Promise<string[]> {
+  try {
+    const raw = await fsp.readFile(v2StatePath(userDataDir, provider), "utf8");
+    if (raw.trim().length === 0) return [];
+    const parsed = JSON.parse(raw) as V2StateFile;
+    const pending = parsed.tessera_pending_fetch;
+    return Array.isArray(pending)
+      ? pending.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Persist the connector sync-state for the next incremental run.
  *
  * Initial-vs-incremental contract with the Rust side: the Rust
@@ -345,15 +392,24 @@ export async function readV2State(
  * entry point pins it to the deterministically-resolved instance id on
  * every call, so only `cursor` / `mode` / `last_synced_at` carry
  * forward meaningfully.
+ *
+ * `pendingFetch` is the deferred-fetch backlog returned by the run
+ * (document ids whose bodies were not materialised yet). It is stored
+ * under the host-private `tessera_pending_fetch` key — the Rust
+ * `SyncState` deserialiser ignores unknown fields, so it round-trips
+ * harmlessly through the state the Rust side reads back as `state_json`,
+ * while the host passes it explicitly as the next run's `pending`
+ * backlog. An empty backlog omits the key entirely.
  */
 export async function writeV2State(
   userDataDir: string,
   provider: ProviderId,
   nextCursor: string | null,
+  pendingFetch: string[] = [],
 ): Promise<void> {
   const dir = syncDirFor(userDataDir, provider);
   await fsp.mkdir(dir, { recursive: true });
-  const state = {
+  const state: V2StateFile & Record<string, unknown> = {
     connector: "00000000-0000-0000-0000-000000000000",
     mode: "incremental" as const,
     cursor: nextCursor,
@@ -361,6 +417,9 @@ export async function writeV2State(
     status: "succeeded" as const,
     last_error: null,
   };
+  if (pendingFetch.length > 0) {
+    state.tessera_pending_fetch = pendingFetch;
+  }
   await fsp.writeFile(
     v2StatePath(userDataDir, provider),
     JSON.stringify(state),
@@ -388,10 +447,18 @@ export async function runV2Sync(args: {
   scopeId: string | null;
   fetchContent?: boolean;
   maxFetch?: number;
+  /**
+   * Deferred-fetch backlog (document ids) from the previous run. The
+   * Rust side drains these first within the `maxFetch` budget; defaults
+   * to empty.
+   */
+  pending?: string[];
 }): Promise<{
   result: ConnectorSyncResult;
   nextCursor: string | null;
   warnings: string[];
+  /** Updated deferred-fetch backlog for the host to persist. */
+  pendingFetch: string[];
 }> {
   const { provider, bridge, hooks, tokens, userDataDir } = args;
   if (typeof bridge.bridgeConnectorsV2Sync !== "function") {
@@ -420,6 +487,7 @@ export async function runV2Sync(args: {
       args.scopeId,
       args.fetchContent ?? true,
       args.maxFetch ?? null,
+      JSON.stringify(args.pending ?? []),
     );
   } catch (err) {
     // Map an authoritative `transport:` framework error to the branded
@@ -513,6 +581,7 @@ export async function runV2Sync(args: {
     result: { added, modified, removed, status: "synced" },
     nextCursor: outcome.next_cursor ?? null,
     warnings: outcome.warnings ?? [],
+    pendingFetch: outcome.pending_fetch ?? [],
   };
 }
 

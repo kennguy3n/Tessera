@@ -528,6 +528,14 @@ export interface NativeBridge {
     scopeId?: string | null,
     fetchContent?: boolean | null,
     maxFetch?: number | null,
+    /**
+     * JSON array of source-side document ids deferred by a previous run
+     * (the {@link SyncOutcome.pending_fetch} backlog). The Rust side
+     * drains these first, within the `maxFetch` budget, so a sync that
+     * surfaces more changed documents than `maxFetch` never loses the
+     * overflow's content.
+     */
+    pendingJson?: string | null,
   ): Promise<string>;
   // --- KChat audit pass-throughs ---
   //

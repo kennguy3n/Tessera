@@ -23,6 +23,7 @@ import {
   buildAuthConfig,
   v2BridgeAvailable,
   readV2State,
+  readV2Pending,
   writeV2State,
   type SyncOutcome,
   type V2NativeBridge,
@@ -221,6 +222,72 @@ describe("runV2Sync ingest", () => {
     expect(calls.args[0][0]).toBe("github");
     const wire = JSON.parse(calls.args[0][2] as string);
     expect(wire.access_token).toBe("access-123");
+    // With no prior backlog, an empty `pending` array is forwarded.
+    expect(JSON.parse(calls.args[0][7] as string)).toEqual([]);
+  });
+
+  it("forwards the prior deferred-fetch backlog and surfaces the updated one", async () => {
+    // The Rust side returns a fresh backlog (e.g. budget overflow): one
+    // prior id was re-fetched and drained, two new overflow ids deferred.
+    const outcome: SyncOutcome = {
+      created: 1,
+      updated: 0,
+      deleted: 0,
+      permission_changed: 0,
+      next_cursor: "cursor-1",
+      documents: [
+        {
+          document_id: "doc-1",
+          event_kind: "created",
+          mime_type: "text/markdown",
+          body_base64: b64("body"),
+        },
+      ],
+      pending_fetch: ["overflow-a", "overflow-b"],
+    };
+    const hooks = new FakeBridge();
+    const calls = { args: [] as unknown[][] };
+    const { pendingFetch } = await runV2Sync({
+      provider: "github",
+      bridge: fakeNativeBridge(outcome, calls),
+      hooks,
+      tokens: TOKENS,
+      userDataDir: dir,
+      stateJson: null,
+      scopeId: null,
+      pending: ["prior-1", "prior-2"],
+    });
+
+    // The prior backlog was forwarded verbatim as the bridge's `pending`
+    // (8th) argument so the Rust side drains it first.
+    expect(JSON.parse(calls.args[0][7] as string)).toEqual([
+      "prior-1",
+      "prior-2",
+    ]);
+    // The run's updated backlog is surfaced for the host to persist.
+    expect(pendingFetch).toEqual(["overflow-a", "overflow-b"]);
+  });
+
+  it("defaults pendingFetch to empty when the outcome omits it", async () => {
+    const outcome: SyncOutcome = {
+      created: 0,
+      updated: 0,
+      deleted: 0,
+      permission_changed: 0,
+      next_cursor: "c1",
+      documents: [],
+    };
+    const hooks = new FakeBridge();
+    const { pendingFetch } = await runV2Sync({
+      provider: "github",
+      bridge: fakeNativeBridge(outcome),
+      hooks,
+      tokens: TOKENS,
+      userDataDir: dir,
+      stateJson: null,
+      scopeId: null,
+    });
+    expect(pendingFetch).toEqual([]);
   });
 
   it("treats a re-synced doc as modified and re-indexes the existing source", async () => {
@@ -476,6 +543,42 @@ describe("v2 sync-state persistence", () => {
     expect(parsed.cursor).toBe("cursor-42");
     expect(parsed.mode).toBe("incremental");
     expect(parsed.connector).toBe("00000000-0000-0000-0000-000000000000");
+  });
+
+  it("round-trips the deferred-fetch backlog alongside the cursor", async () => {
+    // No state file yet → empty backlog.
+    expect(await readV2Pending(dir, "github")).toEqual([]);
+
+    await writeV2State(dir, "github", "cursor-1", ["d1", "d2", "d3"]);
+    expect(await readV2Pending(dir, "github")).toEqual(["d1", "d2", "d3"]);
+
+    // The backlog must not corrupt the cursor state the Rust side reads.
+    const raw = await readV2State(dir, "github");
+    const parsed = JSON.parse(raw!) as { cursor: string };
+    expect(parsed.cursor).toBe("cursor-1");
+  });
+
+  it("omits the backlog key and reads back empty when the backlog drains", async () => {
+    await writeV2State(dir, "github", "c1", ["d1"]);
+    expect(await readV2Pending(dir, "github")).toEqual(["d1"]);
+
+    // A later run that materialises everything writes an empty backlog;
+    // the persisted key is dropped entirely (not written as []).
+    await writeV2State(dir, "github", "c2", []);
+    const raw = await readV2State(dir, "github");
+    expect(raw).not.toContain("tessera_pending_fetch");
+    expect(await readV2Pending(dir, "github")).toEqual([]);
+  });
+
+  it("ignores a malformed backlog field without throwing", async () => {
+    const statePath = path.join(dir, "github-sync", "v2-state.json");
+    await fsp.mkdir(path.dirname(statePath), { recursive: true });
+    await fsp.writeFile(
+      statePath,
+      JSON.stringify({ cursor: "c1", tessera_pending_fetch: "not-an-array" }),
+      "utf8",
+    );
+    expect(await readV2Pending(dir, "github")).toEqual([]);
   });
 });
 
