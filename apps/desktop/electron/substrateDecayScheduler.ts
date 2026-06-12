@@ -61,6 +61,16 @@ export function runSubstrateDecaySweepOnce(): void {
  * is already running is a no-op (mirrors `startScheduler`), so a
  * hot-reload / test relaunch can't stack intervals. The interval is
  * `unref`'d so it never by itself keeps the process alive.
+ *
+ * A catch-up sweep runs immediately on start (mirroring
+ * `startScheduler`'s kick-once-immediately). With a 6-hour cadence and
+ * no boot-time sweep the timer would only ever fire after 6 *continuous*
+ * hours of uptime — which a desktop app, opened and closed across the
+ * day, almost never accumulates. The recurring decay that bounds the
+ * memory plane (`Candidate -> Archived` / `Superseded -> Archived`)
+ * would then effectively never run. Sweeping once per launch makes decay
+ * track real usage instead of uninterrupted-uptime windows. The sweep is
+ * a no-op when the bridge isn't ready yet, so this is safe at startup.
  */
 export function startSubstrateDecayScheduler(): void {
   if (tickHandle !== null) return;
@@ -68,6 +78,9 @@ export function startSubstrateDecayScheduler(): void {
   // Don't let the decay timer hold the event loop open on its own; the
   // app stays alive for real work (windows / tray), not for this timer.
   tickHandle.unref?.();
+  // Catch-up sweep for this launch — see the doc comment above for why a
+  // pure-interval schedule would otherwise rarely (if ever) fire.
+  runSubstrateDecaySweepOnce();
 }
 
 /**
