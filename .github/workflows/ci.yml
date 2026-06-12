@@ -6,12 +6,16 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel in-flight runs on the same ref when a new commit lands so we
-# don't waste minutes (and the scarce macOS-13 runner slot) on stale
-# commits.
+# Cancel superseded in-flight PR runs when a new commit lands on the same
+# PR, so we don't waste minutes (and the scarce macOS-13 runner slot) on
+# stale commits. Push runs on a branch (e.g. main) instead get a per-run
+# concurrency group keyed on the run id, so they NEVER cancel one another:
+# a burst of merges no longer leaves the branch's CI history littered with
+# "cancelled" runs that never produced a result. PRs still collapse to the
+# latest commit via the PR number key + cancel-in-progress.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
