@@ -108,6 +108,18 @@ export interface ConnectorConfigField {
   /** Optional one-line help shown under the input. */
   help?: string;
   /**
+   * JSON type the value must take in the `auth_config_json` bag. The
+   * connect modal always collects a string, but some upstream
+   * connectors read a field as a typed JSON value rather than a string
+   * — e.g. monday.com reads `board_id` via `serde_json::Value::as_i64`,
+   * so a string `"123"` would fail its `is required` check. Declaring
+   * `valueType: "integer"` makes `buildAuthConfig` emit a JSON number
+   * for that field. Defaults to `"string"` (the common case). A field
+   * marked `"integer"` should also carry a digits-only `validation`
+   * pattern so a non-numeric entry is rejected inline before injection.
+   */
+  valueType?: "string" | "integer";
+  /**
    * Optional declarative format rule driving inline validation in the
    * connect modal. Absent ⇒ only the required/non-empty check applies.
    */
@@ -127,6 +139,17 @@ export interface ConnectorConnectSpec {
    * the token instead); every other field is.
    */
   tokenField?: string;
+  /**
+   * HTTP authentication scheme the upstream connector sends the stored
+   * credential with — the `token_type` on the wire token the Rust
+   * connector reads. Defaults to `"Bearer"` (the OAuth2 norm, and what
+   * every Bearer-token connector expects). Discord is the sole
+   * exception: a Discord bot token must be sent as
+   * `Authorization: Bot <token>`, so its spec sets `tokenType: "Bot"`.
+   * This is the single source of truth for the scheme; it is threaded
+   * into the wire token in `connectorsV2.ts > storedToWire`.
+   */
+  tokenType?: string;
   /** Ordered inputs to collect in the connect modal. */
   configFields: ConnectorConfigField[];
 }
@@ -296,6 +319,197 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
       },
     ],
   },
+  // ── Tranche 4: per-target / per-resource providers ─────────────────
+  discord: {
+    connectMethod: "token",
+    tokenField: "bot_token",
+    // A Discord bot token authenticates with the `Bot` scheme, not the
+    // OAuth2 `Bearer` default: the REST API rejects `Authorization:
+    // Bearer <bot token>`. See ConnectorConnectSpec.tokenType.
+    tokenType: "Bot",
+    configFields: [
+      {
+        key: "bot_token",
+        label: "Bot token",
+        required: true,
+        secret: true,
+        placeholder: "bot token",
+        help:
+          "In the Discord Developer Portal open your application → Bot → Reset Token. Invite the bot to your server with only the read-only View Channels + Read Message History permissions.",
+        validation: {
+          // Discord bot tokens are three dot-separated base64url
+          // segments (~59-72 chars). Validate the charset + a
+          // conservative minimum length without over-constraining the
+          // exact segment sizes (which Discord has changed over time).
+          pattern: "[A-Za-z0-9_.-]{50,}",
+          message: "Paste the full Discord bot token from the Developer Portal.",
+        },
+      },
+      {
+        key: "channel_id",
+        label: "Channel ID",
+        required: true,
+        secret: false,
+        placeholder: "1107583106847408128",
+        help:
+          "Enable Developer Mode (User Settings → Advanced), then right-click the channel → Copy Channel ID.",
+        validation: {
+          // Discord IDs are snowflakes: 17-20 digit integers.
+          pattern: "\\d{17,20}",
+          message: "The Channel ID is the 17-20 digit number from Copy Channel ID.",
+        },
+      },
+      {
+        key: "api_base_url",
+        label: "API base URL (optional)",
+        required: false,
+        secret: false,
+        placeholder: "https://discord.com/api/v10",
+        help: "Leave blank unless you proxy the Discord REST API through a different host.",
+        validation: {
+          httpsUrl: true,
+          message: "Enter a full https:// URL, e.g. https://discord.com/api/v10.",
+        },
+      },
+    ],
+  },
+  bitbucket: {
+    connectMethod: "token",
+    tokenField: "access_token",
+    configFields: [
+      {
+        key: "access_token",
+        label: "Access token",
+        required: true,
+        secret: true,
+        placeholder: "repository access token",
+        help:
+          "Create a Repository (or Workspace) Access Token with the read-only repository + pullrequest scopes (Repository settings → Access tokens). Paste it here.",
+        validation: {
+          // Bitbucket access tokens / app passwords are opaque; only a
+          // conservative charset + length is enforced.
+          pattern: "[A-Za-z0-9_.=+/-]{20,}",
+          message: "Paste the Bitbucket access token (20+ characters).",
+        },
+      },
+      {
+        key: "workspace",
+        label: "Workspace ID",
+        required: true,
+        secret: false,
+        placeholder: "my-workspace",
+        help: "The workspace slug from the repository URL: bitbucket.org/<workspace>/<repo>.",
+        validation: {
+          // Bitbucket workspace slugs: alphanumeric plus -_ separators.
+          pattern: "[A-Za-z0-9][A-Za-z0-9_-]*",
+          message: "Enter the workspace slug, e.g. my-workspace.",
+        },
+      },
+      {
+        key: "repo_slug",
+        label: "Repository slug",
+        required: true,
+        secret: false,
+        placeholder: "my-repo",
+        help: "The repository slug from the URL: bitbucket.org/<workspace>/<repo>.",
+        validation: {
+          // Repo slugs allow a dot in addition to the workspace charset.
+          pattern: "[A-Za-z0-9][A-Za-z0-9_.-]*",
+          message: "Enter the repository slug, e.g. my-repo.",
+        },
+      },
+      {
+        key: "api_base_url",
+        label: "Server base URL (optional)",
+        required: false,
+        secret: false,
+        placeholder: "https://api.bitbucket.org/2.0",
+        help: "Leave blank for Bitbucket Cloud. Set the API origin for Bitbucket Server/Data Center.",
+        validation: {
+          httpsUrl: true,
+          message: "Enter a full https:// URL, e.g. https://api.bitbucket.org/2.0.",
+        },
+      },
+    ],
+  },
+  airtable: {
+    connectMethod: "token",
+    tokenField: "personal_access_token",
+    configFields: [
+      {
+        key: "personal_access_token",
+        label: "Personal access token",
+        required: true,
+        secret: true,
+        placeholder: "pat…",
+        help:
+          "Create a personal access token at airtable.com/create/tokens with the read-only data.records:read + schema.bases:read scopes, granted to the base you want to index.",
+        validation: {
+          // Airtable PATs are `pat` + 14 alphanumerics + "." + a 64+
+          // char secret body.
+          pattern: "pat[A-Za-z0-9]{14}\\.[A-Za-z0-9]{40,}",
+          message: "An Airtable token looks like patXXXXXXXXXXXXXX.<secret>.",
+        },
+      },
+      {
+        key: "base_id",
+        label: "Base ID",
+        required: true,
+        secret: false,
+        placeholder: "appXXXXXXXXXXXXXX",
+        help:
+          "Open the base in the Airtable API docs (airtable.com/api) — the base ID is the appXXXXXXXXXXXXXX value.",
+        validation: {
+          // Airtable base IDs are `app` followed by 14 alphanumerics.
+          pattern: "app[A-Za-z0-9]{14}",
+          message: "A base ID looks like appXXXXXXXXXXXXXX.",
+        },
+      },
+      {
+        key: "table",
+        label: "Table name or ID",
+        required: true,
+        secret: false,
+        placeholder: "Tasks  (or  tblXXXXXXXXXXXXXX)",
+        help: "The exact table name as shown in Airtable, or its tblXXXXXXXXXXXXXX id.",
+      },
+      {
+        key: "api_base_url",
+        label: "API base URL (optional)",
+        required: false,
+        secret: false,
+        placeholder: "https://api.airtable.com",
+        help: "Leave blank unless Airtable directs you to a different API host.",
+        validation: {
+          httpsUrl: true,
+          message: "Enter a full https:// URL, e.g. https://api.airtable.com.",
+        },
+      },
+    ],
+  },
+  monday: {
+    connectMethod: "oauth2",
+    configFields: [
+      {
+        key: "board_id",
+        label: "Board ID",
+        required: true,
+        secret: false,
+        // The upstream monday connector reads board_id as a JSON
+        // integer (`serde_json::Value::as_i64`), so it must be injected
+        // into auth_config_json as a number, not a string.
+        valueType: "integer",
+        placeholder: "1234567890",
+        help:
+          "Open the board in monday.com — the board ID is the numeric value at the end of the URL (…/boards/<board id>).",
+        validation: {
+          // monday.com board IDs are integers.
+          pattern: "\\d+",
+          message: "The board ID is the numeric value from the board URL.",
+        },
+      },
+    ],
+  },
 };
 
 /**
@@ -330,6 +544,17 @@ export function getConnectSpec(provider: string): ConnectorConnectSpec {
 export function authConfigFields(provider: string): ConnectorConfigField[] {
   const spec = getConnectSpec(provider);
   return spec.configFields.filter((f) => f.key !== spec.tokenField);
+}
+
+/**
+ * The HTTP auth scheme (`token_type`) the upstream connector sends the
+ * stored credential with. Defaults to `"Bearer"` — the OAuth2 norm and
+ * what every Bearer-token connector expects — unless the provider's
+ * spec overrides it (Discord bot tokens use `"Bot"`). Single source of
+ * truth consumed by `connectorsV2.ts > storedToWire`.
+ */
+export function connectorTokenType(provider: string): string {
+  return getConnectSpec(provider).tokenType ?? "Bearer";
 }
 
 /**

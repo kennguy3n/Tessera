@@ -588,6 +588,93 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     supportsRefresh: true,
     usePkce: true,
   },
+  // ── Tranche 4: per-target / per-resource providers ───────────────
+  // Each ingests a single target (Discord channel, Bitbucket
+  // workspace+repo, Airtable base+table, Monday board). Discord,
+  // Bitbucket and Airtable connect with a pasted credential
+  // (`connectMethod: "token"` in shared/connectorConfig.ts), so their
+  // OAuth endpoints below are retained only to satisfy the
+  // single-config invariant (every provider declares an https
+  // authorize/token URL + a unique loopback port) — the connect flow
+  // does not open a browser. Monday is a real read-only OAuth2 browser
+  // grant. Ports continue the unique sequence from 9900.
+  discord: {
+    provider: "discord",
+    // Discord's OAuth2 surface. Tessera connects Discord with a bot
+    // token (see shared/connectorConfig.ts — connectMethod "token"),
+    // sent on the REST API with the `Bot` auth scheme; these endpoints
+    // are retained only for the single-config invariant and are not
+    // used to open a browser.
+    authUrl: "https://discord.com/oauth2/authorize",
+    tokenUrl: "https://discord.com/api/oauth2/token",
+    // The bot token's reach is governed by the read-only guild
+    // permissions the bot is invited with (View Channels + Read
+    // Message History), not by an OAuth scope string. `messages.read`
+    // documents the least-privilege read intent; it is not sent on any
+    // request for the bot-token path.
+    scope: "messages.read",
+    redirectPort: 9900,
+    extraAuthorizeParams: {},
+    // A bot token is long-lived and carries no refresh token; surface
+    // a "reconnect" UX on revocation instead of attempting a refresh.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  bitbucket: {
+    provider: "bitbucket",
+    // Bitbucket is wired with a repository/workspace access token (see
+    // shared/connectorConfig.ts — connectMethod "token") created with
+    // the read-only `repository` + `pullrequest` scopes, used as a
+    // Bearer token. The OAuth endpoints below satisfy the single-config
+    // invariant; the connect flow does not open a browser.
+    authUrl: "https://bitbucket.org/site/oauth2/authorize",
+    tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
+    // `repository` + `pullrequest` are Bitbucket's read scopes for the
+    // repository content and pull requests the connector ingests. The
+    // user grants them when creating the access token.
+    scope: "repository pullrequest",
+    redirectPort: 9901,
+    extraAuthorizeParams: {},
+    // Access tokens are long-lived and carry no refresh token.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  airtable: {
+    provider: "airtable",
+    // Airtable is wired with a personal access token (see
+    // shared/connectorConfig.ts — connectMethod "token") created with
+    // the read-only `data.records:read` + `schema.bases:read` scopes,
+    // used as a Bearer token. The OAuth endpoints below satisfy the
+    // single-config invariant; the connect flow does not open a browser.
+    authUrl: "https://airtable.com/oauth2/v1/authorize",
+    tokenUrl: "https://airtable.com/oauth2/v1/token",
+    // Least-privilege read scopes: read records from the configured
+    // base/table and read the base schema. The user grants them when
+    // creating the personal access token.
+    scope: "data.records:read schema.bases:read",
+    redirectPort: 9902,
+    extraAuthorizeParams: {},
+    // Personal access tokens are long-lived and carry no refresh token.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  monday: {
+    provider: "monday",
+    authUrl: "https://auth.monday.com/oauth2/authorize",
+    tokenUrl: "https://auth.monday.com/oauth2/token",
+    // Least-privilege read-only scopes: read the configured board's
+    // items (`boards:read`) and the signed-in user (`me:read`). No
+    // write/manage scopes (`boards:write`, `…:write`) are requested.
+    scope: "boards:read me:read",
+    redirectPort: 9903,
+    extraAuthorizeParams: {},
+    // Monday's OAuth tokens are long-lived seat tokens; the
+    // authorization-code grant issues no refresh token, so surface a
+    // "reconnect" UX on expiry rather than attempting a refresh.
+    supportsRefresh: false,
+    // Monday's OAuth surface does not support PKCE.
+    usePkce: false,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {

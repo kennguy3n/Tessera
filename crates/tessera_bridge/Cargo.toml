@@ -69,6 +69,10 @@ connectors-v2-stable = [
     "connector-google-sheets",
     "connector-google-meet",
     "connector-sharepoint",
+    "connector-discord",
+    "connector-bitbucket",
+    "connector-airtable",
+    "connector-monday",
 ]
 connector-google-drive = ["connectors-v2"]
 connector-onedrive = ["connectors-v2"]
@@ -94,6 +98,10 @@ connector-google-docs = ["connectors-v2"]
 connector-google-sheets = ["connectors-v2"]
 connector-google-meet = ["connectors-v2"]
 connector-sharepoint = ["connectors-v2"]
+connector-discord = ["connectors-v2"]
+connector-bitbucket = ["connectors-v2"]
+connector-airtable = ["connectors-v2"]
+connector-monday = ["connectors-v2"]
 
 [dependencies]
 # Knowledge substrate connector layer, pinned by rev for reproducible

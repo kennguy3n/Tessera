@@ -245,6 +245,23 @@ against the upstream `connectors` crate's `auth_config_json` reads) are:
 | GitLab | `token` | `personal_access_token` (→ bearer), `project_id`; optional `api_base_url` |
 | Trello | `token` | `key`, `token` (→ bearer), `board_id` |
 
+The 2026 tranche (**Discord, Bitbucket, Airtable, Monday.com**) extends
+the same seam with the next batch of per-target / per-resource
+connectors:
+
+| Provider | Connect method | Inputs (`auth_config_json` key) |
+| --- | --- | --- |
+| Discord | `token` | `bot_token` (→ bearer, `Bot` scheme), `channel_id`; optional `api_base_url` |
+| Bitbucket | `token` | `access_token` (→ bearer), `workspace`, `repo_slug`; optional `api_base_url` |
+| Airtable | `token` | `personal_access_token` (→ bearer), `base_id`, `table`; optional `api_base_url` |
+| Monday.com | `oauth2` | `board_id` |
+
+Discord is the one provider whose stored credential is **not** sent with
+the default `Bearer` scheme: a bot token must travel as `Authorization:
+Bot <token>`. The scheme is single-sourced on the connect spec
+(`ConnectorConnectSpec.tokenType`, defaulting to `"Bearer"`) and threaded
+onto the wire token in `connectorsV2.ts > storedToWire`.
+
 The seam is the single source of truth in
 `apps/desktop/shared/connectorConfig.ts` — a dependency-free module
 imported by **both** the Electron main process and the renderer:

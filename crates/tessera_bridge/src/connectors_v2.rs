@@ -125,6 +125,14 @@ pub mod provider_ids {
     pub const GOOGLE_MEET: &str = "google_meet";
     /// Microsoft SharePoint document libraries.
     pub const SHAREPOINT: &str = "sharepoint";
+    /// Discord channel messages (bot-token, per-channel).
+    pub const DISCORD: &str = "discord";
+    /// Bitbucket repository pull requests (per workspace + repo).
+    pub const BITBUCKET: &str = "bitbucket";
+    /// Airtable records (per base + table).
+    pub const AIRTABLE: &str = "airtable";
+    /// Monday.com board items (per board).
+    pub const MONDAY: &str = "monday";
 }
 
 /// Errors surfaced by the connector v2 bridge. Kept deliberately small
@@ -235,6 +243,14 @@ pub fn provider_to_kind(provider: &str) -> Option<ConnectorKind> {
         provider_ids::GOOGLE_MEET => Some(ConnectorKind::GoogleMeet),
         #[cfg(feature = "connector-sharepoint")]
         provider_ids::SHAREPOINT => Some(ConnectorKind::SharePoint),
+        #[cfg(feature = "connector-discord")]
+        provider_ids::DISCORD => Some(ConnectorKind::Discord),
+        #[cfg(feature = "connector-bitbucket")]
+        provider_ids::BITBUCKET => Some(ConnectorKind::Bitbucket),
+        #[cfg(feature = "connector-airtable")]
+        provider_ids::AIRTABLE => Some(ConnectorKind::Airtable),
+        #[cfg(feature = "connector-monday")]
+        provider_ids::MONDAY => Some(ConnectorKind::Monday),
         _ => None,
     }
 }
@@ -269,6 +285,10 @@ pub fn enabled_providers() -> Vec<ConnectorKind> {
         provider_ids::GOOGLE_SHEETS,
         provider_ids::GOOGLE_MEET,
         provider_ids::SHAREPOINT,
+        provider_ids::DISCORD,
+        provider_ids::BITBUCKET,
+        provider_ids::AIRTABLE,
+        provider_ids::MONDAY,
     ]
     .into_iter()
     .filter_map(provider_to_kind)
@@ -544,6 +564,22 @@ pub fn build_connector(
         ConnectorKind::SharePoint => Some(Box::new(connectors::SharePointConnector::new(
             instance, transport, oauth,
         ))),
+        #[cfg(feature = "connector-discord")]
+        ConnectorKind::Discord => Some(Box::new(connectors::DiscordConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-bitbucket")]
+        ConnectorKind::Bitbucket => Some(Box::new(connectors::BitbucketConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-airtable")]
+        ConnectorKind::Airtable => Some(Box::new(connectors::AirtableConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-monday")]
+        ConnectorKind::Monday => Some(Box::new(connectors::MondayConnector::new(
+            instance, transport, oauth,
+        ))),
         #[allow(unreachable_patterns)]
         _ => None,
     }
@@ -628,17 +664,25 @@ fn instance_id_for(kind: ConnectorKind, scope: ScopeId) -> ConnectorInstanceId {
 ///
 /// Most stable providers authenticate via OAuth2 in Tessera's flow
 /// (HubSpot private-app tokens are modelled as OAuth2 bearer tokens by
-/// the host). GitLab and Trello are the exceptions: they connect with a
-/// user-supplied long-lived credential (a GitLab personal access token
-/// used as a Bearer token, and a Trello API key + token pair) rather
-/// than a browser authorization-code grant, so they are reported as
-/// [`AuthKind::ApiKey`](connector_framework::AuthKind::ApiKey). This is
-/// surfaced to the host via [`list_connectors`] so the connect UI can
-/// render the right credential inputs.
+/// the host). GitLab, Trello, Discord, Bitbucket and Airtable are the
+/// exceptions: they connect with a user-supplied long-lived credential
+/// (a GitLab personal access token / Bitbucket repository access token /
+/// Airtable personal access token used as a Bearer token, a Trello API
+/// key + token pair, and a Discord bot token used with the `Bot` auth
+/// scheme) rather than a browser authorization-code grant, so they are
+/// reported as [`AuthKind::ApiKey`](connector_framework::AuthKind::ApiKey).
+/// Monday keeps OAuth2 (browser authorization-code with the read-only
+/// `boards:read` scope). This is surfaced to the host via
+/// [`list_connectors`] so the connect UI can render the right credential
+/// inputs.
 #[must_use]
 fn default_auth_kind(kind: ConnectorKind) -> connector_framework::AuthKind {
     match kind {
-        ConnectorKind::GitLab | ConnectorKind::Trello => connector_framework::AuthKind::ApiKey,
+        ConnectorKind::GitLab
+        | ConnectorKind::Trello
+        | ConnectorKind::Discord
+        | ConnectorKind::Bitbucket
+        | ConnectorKind::Airtable => connector_framework::AuthKind::ApiKey,
         _ => connector_framework::AuthKind::OAuth2,
     }
 }
@@ -671,6 +715,10 @@ fn display_name(kind: ConnectorKind) -> &'static str {
         ConnectorKind::GoogleSheets => "Google Sheets",
         ConnectorKind::GoogleMeet => "Google Meet",
         ConnectorKind::SharePoint => "SharePoint",
+        ConnectorKind::Discord => "Discord",
+        ConnectorKind::Bitbucket => "Bitbucket",
+        ConnectorKind::Airtable => "Airtable",
+        ConnectorKind::Monday => "Monday.com",
         // The upstream `ConnectorKind` enum carries 130+ providers; we
         // only ship the stable subset, so fall back to the canonical
         // id string for any provider not in the stable set.
@@ -1609,6 +1657,10 @@ mod tests {
         "google_sheets",
         "google_meet",
         "sharepoint",
+        "discord",
+        "bitbucket",
+        "airtable",
+        "monday",
     ];
 
     #[test]
@@ -1646,7 +1698,7 @@ mod tests {
         // (GitLab personal access token, Trello API key + token), which
         // are reported as `api_key` so the connect UI renders the right
         // inputs instead of an OAuth client-id/secret pair.
-        let api_key_providers = ["gitlab", "trello"];
+        let api_key_providers = ["gitlab", "trello", "discord", "bitbucket", "airtable"];
         for info in &infos {
             let expected = if api_key_providers.contains(&info.provider.as_str()) {
                 "api_key"
@@ -1673,6 +1725,18 @@ mod tests {
         assert_eq!(teams.display_name, "Microsoft Teams");
         let trello = infos.iter().find(|i| i.provider == "trello").unwrap();
         assert_eq!(trello.display_name, "Trello");
+        // Tranche 4: per-target / per-resource providers. Discord,
+        // Bitbucket and Airtable connect with a pasted credential
+        // (`api_key`); Monday keeps the OAuth2 browser grant.
+        let discord = infos.iter().find(|i| i.provider == "discord").unwrap();
+        assert_eq!(discord.display_name, "Discord");
+        let bitbucket = infos.iter().find(|i| i.provider == "bitbucket").unwrap();
+        assert_eq!(bitbucket.display_name, "Bitbucket");
+        let airtable = infos.iter().find(|i| i.provider == "airtable").unwrap();
+        assert_eq!(airtable.display_name, "Airtable");
+        let monday = infos.iter().find(|i| i.provider == "monday").unwrap();
+        assert_eq!(monday.display_name, "Monday.com");
+        assert_eq!(monday.auth_kind, "oauth2");
     }
 
     #[test]
@@ -1695,10 +1759,14 @@ mod tests {
         assert!(is_supported("google_meet"));
         assert!(is_supported("sharepoint"));
         assert!(!is_supported("salesforce"));
-        // Discord is intentionally NOT surfaced: it is per-target
-        // (ingests a single channel) and bot-token based, not an
-        // account-wide read-only OAuth2 provider.
-        assert!(!is_supported("discord"));
+        // Tranche 4: per-target / per-resource providers are now
+        // surfaced. Discord ingests a single channel (bot token),
+        // Bitbucket a single workspace+repo's pull requests, Airtable a
+        // single base+table, and Monday a single board.
+        assert!(is_supported("discord"));
+        assert!(is_supported("bitbucket"));
+        assert!(is_supported("airtable"));
+        assert!(is_supported("monday"));
     }
 
     #[test]
