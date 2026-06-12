@@ -712,6 +712,12 @@ async function getValidAccessToken(
       scopes: refreshed.grantedScopes ?? stored.scopes,
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
+      // A refresh re-issues only the access token; it never re-collects
+      // the per-target config (Asana project, Teams team/channel). Carry
+      // the previously-stored bag forward so a refreshable per-target
+      // provider doesn't lose its required `auth_config` fields on the
+      // first token refresh and fail every subsequent sync.
+      connectorConfig: stored.connectorConfig,
     });
     return refreshed.accessToken;
   })();

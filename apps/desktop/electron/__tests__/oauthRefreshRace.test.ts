@@ -63,6 +63,7 @@ interface StoredTokens {
   scopes: string[];
   clientId?: string;
   clientSecret?: string;
+  connectorConfig?: Record<string, string>;
 }
 
 interface MockCtx {
@@ -181,6 +182,41 @@ describe("OAuth refresh race-condition guard", () => {
     // load-bearing race-guard properties enforces.
     expect(refreshMock).toHaveBeenCalledTimes(1);
     expect(m.storeWrites).toBe(1);
+  });
+
+  it("preserves per-target connectorConfig across an access-token refresh", async () => {
+    // Regression: a refreshable per-target provider (Asana, Teams)
+    // stores its target ids in `connectorConfig`. The refresh path
+    // re-issues only the access token, so it must carry the existing
+    // bag forward — otherwise the first refresh erases the project /
+    // team / channel ids and every subsequent sync fails connector
+    // validation until the user reconnects.
+    refreshMock.mockResolvedValue({
+      accessToken: "asana-fresh",
+      refreshToken: "asana-rotated",
+      expiresIn: 3600,
+      tokenType: "Bearer",
+    });
+
+    const expired = Date.now() - 60 * 1000;
+    const m = makeCtx({
+      asana: {
+        accessToken: "asana-stale",
+        refreshToken: "asana-orig",
+        expiresAt: expired,
+        scopes: ["projects:read", "tasks:read"],
+        clientId: "cid",
+        clientSecret: "csec",
+        connectorConfig: { project: "1201234567890123" },
+      },
+    });
+
+    const token = await getValidAccessTokenForProvider(m.ctx, "asana");
+    expect(token).toBe("asana-fresh");
+
+    const after = m.store.get("asana");
+    expect(after?.accessToken).toBe("asana-fresh");
+    expect(after?.connectorConfig).toEqual({ project: "1201234567890123" });
   });
 
   it("collapses N>2 concurrent refreshes onto a single network exchange", async () => {
