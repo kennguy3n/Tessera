@@ -76,6 +76,28 @@ describe("parseBaseDocument — multi-table shape", () => {
     const doc = parseBaseDocument(JSON.stringify(docIn));
     expect(doc.activeTableId).toBe("t1");
   });
+
+  it("trims a padded persisted table name (matching renameTable)", () => {
+    const docIn = {
+      tables: [
+        { id: "t1", name: "  Tasks  ", fields: [{ name: "Title", type: "text" }], records: [] },
+      ],
+      activeTableId: "t1",
+    };
+    const doc = parseBaseDocument(JSON.stringify(docIn));
+    expect(doc.tables[0].name).toBe("Tasks");
+  });
+
+  it("falls back to the positional name when the persisted name is blank", () => {
+    const docIn = {
+      tables: [
+        { id: "t1", name: "   ", fields: [{ name: "Title", type: "text" }], records: [] },
+      ],
+      activeTableId: "t1",
+    };
+    const doc = parseBaseDocument(JSON.stringify(docIn));
+    expect(doc.tables[0].name).toBe("Table 1");
+  });
 });
 
 describe("serializeBaseDocument — backward compatibility", () => {
@@ -137,6 +159,18 @@ describe("addTable / uniqueTableName", () => {
     doc = addTable(doc);
     const names = doc.tables.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("prefers the smallest available index rather than skipping ahead", () => {
+    // A doc whose only table is "Table 2" should still offer the free
+    // "Table 1" instead of jumping to "Table 3".
+    const doc = singleTableDocument(legacy, "Table 2");
+    expect(uniqueTableName(doc)).toBe("Table 1");
+  });
+
+  it("fills the first gap when lower indices are taken", () => {
+    const doc = addTable(singleTableDocument(legacy, "Table 1"), "Table 3");
+    expect(uniqueTableName(doc)).toBe("Table 2");
   });
 });
 

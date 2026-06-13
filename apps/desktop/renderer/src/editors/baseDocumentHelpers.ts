@@ -71,10 +71,12 @@ function coerceTable(raw: unknown, fallbackName: string): BaseTable | null {
   }
   const rawRecords = Array.isArray(obj.records) ? obj.records : [];
   const id = typeof obj.id === "string" && obj.id ? obj.id : makeTableId();
-  const name =
-    typeof obj.name === "string" && obj.name.trim()
-      ? obj.name
-      : fallbackName;
+  // Trim the persisted name so a stored "  Tasks  " loads as "Tasks",
+  // matching what `renameTable` writes — table names are always trimmed
+  // on the way in, so the in-memory model never carries stray padding.
+  const trimmedName =
+    typeof obj.name === "string" ? obj.name.trim() : "";
+  const name = trimmedName || fallbackName;
   return { id, name, fields, records: ensureRecordIds(rawRecords) };
 }
 
@@ -183,10 +185,17 @@ export function updateActiveTable(
   };
 }
 
-/** Generate a table name that doesn't collide with an existing one. */
+/**
+ * Generate a table name that doesn't collide with an existing one,
+ * preferring the SMALLEST available index so a doc holding only
+ * "Table 2" still offers "Table 1" rather than skipping to "Table 3".
+ * The scan is bounded by `tables.length + 1` iterations (one index per
+ * table is guaranteed to be free), so the minimal-name guarantee costs
+ * nothing asymptotically.
+ */
 export function uniqueTableName(doc: BaseDocument, base = "Table"): string {
   const existing = new Set(doc.tables.map((t) => t.name));
-  for (let i = doc.tables.length + 1; ; i++) {
+  for (let i = 1; ; i++) {
     const candidate = `${base} ${i}`;
     if (!existing.has(candidate)) return candidate;
   }

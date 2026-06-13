@@ -519,3 +519,53 @@ describe("BaseEditor grid filtering — computed timestamp columns", () => {
     expect(screen.queryByDisplayValue("June Row")).toBeNull();
   });
 });
+
+describe("BaseEditor grid sorting — computed timestamp columns", () => {
+  // Regression: sorting a `created_time` / `modified_time` column must
+  // order CHRONOLOGICALLY. These columns render a locale date string
+  // ("Jan 15, 2024"), and the filter path deliberately compares that
+  // display text — but the SORT path must use the raw ISO timestamp,
+  // otherwise `localeCompare` orders the month NAMES alphabetically
+  // ("Apr" < "Jan") instead of by date (Jan < Apr).
+  const JAN_ISO = "2024-01-15T10:00:00.000Z";
+  const APR_ISO = "2024-04-10T10:00:00.000Z";
+  const DEC_ISO = "2024-12-01T10:00:00.000Z";
+
+  function headerButton(columnName: string): HTMLElement {
+    return screen.getByRole("button", {
+      name: new RegExp(`^${columnName}`),
+    });
+  }
+
+  it("sorts created_time chronologically, not alphabetically by month name", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Created", type: "created_time" },
+      ],
+      // Insert out of order; months chosen so chronological order
+      // (Jan, Apr, Dec) differs from alphabetical (Apr, Dec, Jan).
+      records: [
+        { Title: "Dec Row", __created: DEC_ISO, __modified: DEC_ISO },
+        { Title: "Jan Row", __created: JAN_ISO, __modified: JAN_ISO },
+        { Title: "Apr Row", __created: APR_ISO, __modified: APR_ISO },
+      ],
+    });
+
+    // Click the column header to sort ascending.
+    fireEvent.click(headerButton("Created"));
+
+    const jan = screen.getByDisplayValue("Jan Row");
+    const apr = screen.getByDisplayValue("Apr Row");
+    const dec = screen.getByDisplayValue("Dec Row");
+
+    // Chronological ascending: Jan precedes Apr precedes Dec. An
+    // alphabetical (buggy) sort would order Apr, Dec, Jan instead.
+    expect(
+      jan.compareDocumentPosition(apr) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      apr.compareDocumentPosition(dec) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});

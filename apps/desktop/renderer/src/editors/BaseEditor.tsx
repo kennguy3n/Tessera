@@ -987,11 +987,32 @@ export default function BaseEditor({
     // locale-compare keeps "10" after "2" for plain numeric
     // columns and also makes "1", "2", …, "10" sort correctly on
     // computed columns whose display happens to be numeric.
+    //
+    // EXCEPTION: `created_time` / `modified_time` must sort
+    // CHRONOLOGICALLY, but their display string is a locale date
+    // ("Jan 15, 2024") that `localeCompare` would order
+    // alphabetically ("Apr" < "Jan"). Sort those on the raw ISO
+    // timestamp instead, which is lexicographically chronological by
+    // construction. The filter path above still uses the locale
+    // display so typing "Jan" matches the cell text.
     if (sortField) {
       const sortFieldDef = data.fields.find((f) => f.name === sortField);
       const sortIsComputed =
         sortFieldDef !== undefined && isComputedFieldType(sortFieldDef.type);
+      const sortIsTimestamp =
+        sortFieldDef !== undefined &&
+        (sortFieldDef.type === "created_time" ||
+          sortFieldDef.type === "modified_time");
       const displayFor = (r: BaseRecord): string => {
+        if (sortIsTimestamp && sortFieldDef) {
+          const iso =
+            r[
+              sortFieldDef.type === "created_time"
+                ? RECORD_CREATED_KEY
+                : RECORD_MODIFIED_KEY
+            ];
+          return typeof iso === "string" ? iso : "";
+        }
         if (sortIsComputed && sortFieldDef) {
           return getDisplay(sortFieldDef, r);
         }
