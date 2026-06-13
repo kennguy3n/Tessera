@@ -198,10 +198,19 @@ def _col_letter(idx: int) -> str:
     return out
 
 
+def _norm_name(value: object) -> str:
+    """Canonical key form for a person/owner name. The single source of truth
+    for how a name is normalised, used for BOTH building the linked-record
+    id-maps and the later lookups against them — so the two paths provably
+    can't drift (a divergence is the only way a stray-whitespace name could
+    raise KeyError at the lookup site)."""
+    return str(value).strip()
+
+
 def _distinct(values: list[str]) -> list[str]:
     seen: list[str] = []
     for v in values:
-        v = v.strip()
+        v = _norm_name(v)
         if v and v not in seen:
             seen.append(v)
     return seen
@@ -386,7 +395,7 @@ def _enrich_incident_tracker(data: dict) -> dict:
         oid = f"rec-own-{i}"
         owner_id_by_name[name] = oid
         slug_email = re.sub(r"[^a-z]+", ".", name.lower()).strip(".")
-        owned = [r["id"] for r in records if str(r.get("Owner", "")).strip() == name]
+        owned = [r["id"] for r in records if _norm_name(r.get("Owner", "")) == name]
         owners.append({
             "id": oid,
             "Name": name,
@@ -414,7 +423,7 @@ def _enrich_incident_tracker(data: dict) -> dict:
     new_fields.append({"name": "Risk Score", "type": "rating"})
 
     for i, r in enumerate(records):
-        owner = str(r.get("Owner", "")).strip()
+        owner = _norm_name(r.get("Owner", ""))
         r["Owner"] = [owner_id_by_name[owner]] if owner else []
         enc = str(r.get("Encrypted", "")).strip().lower()
         r["Encrypted"] = enc in ("yes", "true", "y")
@@ -470,7 +479,7 @@ def _enrich_crm(data: dict) -> dict:
     rep_names = _distinct([str(r.get("Owner", "")) for r in records])
     region_of: dict[str, str] = {}
     for r in records:
-        owner = str(r.get("Owner", "")).strip()
+        owner = _norm_name(r.get("Owner", ""))
         if owner and owner not in region_of:
             region_of[owner] = str(r.get("Region", ""))
     reps: list[dict] = []
@@ -482,7 +491,7 @@ def _enrich_crm(data: dict) -> dict:
         rid = f"rec-rep-{i}"
         rep_id_by_name[name] = rid
         slug_email = re.sub(r"[^a-z]+", ".", name.lower()).strip(".")
-        owned = [r["id"] for r in records if str(r.get("Owner", "")).strip() == name]
+        owned = [r["id"] for r in records if _norm_name(r.get("Owner", "")) == name]
         reps.append({
             "id": rid, "Name": name, "Region": region_of.get(name, ""),
             "Email": f"{slug_email}@northwind.example", "Accounts": owned})
@@ -503,7 +512,7 @@ def _enrich_crm(data: dict) -> dict:
     new_fields.append({"name": "Health Score", "type": "rating"})
 
     for r in records:
-        owner = str(r.get("Owner", "")).strip()
+        owner = _norm_name(r.get("Owner", ""))
         r["Owner"] = [rep_id_by_name[owner]] if owner else []
         health = str(r.get("Health", "")).strip().lower()
         r["Health Score"] = {"green": 5, "yellow": 3, "red": 1}.get(health, 3)
