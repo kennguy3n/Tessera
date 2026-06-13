@@ -69,7 +69,8 @@ export function parseA1Range(range: string): RangeRect | null {
   const trimmed = range.trim();
   if (trimmed === "") return null;
   // Strip `$` absolute markers before delegating to the bare-ref parser.
-  const cellOf = (token: string) => parseCellRef(token.replace(/\$/g, "").toUpperCase());
+  const cellOf = (token: string) =>
+    parseCellRef(token.replace(/\$/g, "").toUpperCase());
   const parts = trimmed.split(":");
   if (parts.length === 1) {
     const cell = cellOf(parts[0]);
@@ -167,9 +168,7 @@ export function extractChartData(
   const firstDataRow = header ? rect.r1 + 1 : rect.r1;
   if (firstDataRow > rect.r2) return { labels: [], series: [] };
 
-  const labelRect = spec.labelRange
-    ? parseA1Range(spec.labelRange)
-    : null;
+  const labelRect = spec.labelRange ? parseA1Range(spec.labelRange) : null;
 
   const rowCount = rect.r2 - firstDataRow + 1;
   const labels: string[] = [];
@@ -185,7 +184,9 @@ export function extractChartData(
 
   const series: ChartSeries[] = [];
   for (let c = rect.c1; c <= rect.c2; c++) {
-    const name = header ? textAt(rect.r1, c).trim() || columnLetter(c) : columnLetter(c);
+    const name = header
+      ? textAt(rect.r1, c).trim() || columnLetter(c)
+      : columnLetter(c);
     const values: (number | null)[] = [];
     for (let r = firstDataRow; r <= rect.r2; r++) {
       values.push(valueAt(r, c));
@@ -410,3 +411,26 @@ export function pieLayout(
 }
 
 export const CHART_PAD = DEFAULT_PAD;
+
+/**
+ * Series / slice palette shared by every chart renderer. `--color-primary`
+ * tracks the active accent; the rest are fixed, WCAG-legible hues that
+ * read on both light and dark surfaces. Lives here (the pure charting
+ * module) so the React chart components can share one colour source
+ * without tripping React Fast Refresh's "components-only export" rule.
+ */
+export const CHART_SERIES_COLORS: readonly string[] = [
+  "var(--color-primary)",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#0ea5e9",
+  "#ec4899",
+  "#14b8a6",
+];
+
+/** Stable colour for the i-th series / slice (cycles through the palette). */
+export function chartColorAt(i: number): string {
+  return CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length];
+}

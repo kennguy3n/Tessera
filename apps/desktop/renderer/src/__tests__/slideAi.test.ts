@@ -229,6 +229,25 @@ describe("slideToContext", () => {
       ].join("\n"),
     );
   });
+
+  it("placeholders table and chart blocks instead of dumping raw DSL", () => {
+    const slide = makeSlide({
+      title: "Metrics",
+      blocks: [
+        buildBlock({ type: "table", content: "| Metric | Q1 |\n| Rev | 10 |" }),
+        buildBlock({
+          type: "chart",
+          content: "type: bar\ntitle: Revenue\nlabels: Q1, Q2\nRev: 10, 14",
+        }),
+        buildBlock({ type: "chart", content: "type: pie\nShare: 1, 2" }),
+      ],
+    });
+    // The raw GFM pipes / chart DSL must not leak into the model prompt;
+    // they collapse to the same placeholders presenter mode uses.
+    expect(slideToContext(slide)).toBe(
+      ["Title: Metrics", "[table]", "[chart: Revenue]", "[chart]"].join("\n"),
+    );
+  });
 });
 
 describe("prompt builders", () => {
@@ -598,6 +617,33 @@ describe("serializeDeckForRestyle", () => {
     ]);
     expect(text).toContain("## Untitled slide");
   });
+
+  it("never serialises table/chart DSL into the prompt", () => {
+    const withData = [
+      makeSlide({
+        id: "s0",
+        title: "Metrics",
+        blocks: [
+          buildBlock({ type: "text", content: "Body", slot: "body" }),
+          buildBlock({
+            type: "table",
+            content: "| Metric | Q1 |\n| Rev | 10 |",
+          }),
+          buildBlock({
+            type: "chart",
+            content: "type: bar\ntitle: Revenue\nlabels: Q1\nRev: 10",
+          }),
+        ],
+      }),
+    ];
+    const text = serializeDeckForRestyle(withData);
+    expect(text).toContain("- Body");
+    // Raw GFM pipes / chart DSL must not leak in as restylable bullets;
+    // the data blocks are re-attached structurally by mergeRestyledDeck.
+    expect(text).not.toContain("| Metric | Q1 |");
+    expect(text).not.toContain("type: bar");
+    expect(text).not.toContain("Rev: 10");
+  });
 });
 
 describe("buildDeckRestylePrompt", () => {
@@ -681,6 +727,37 @@ describe("mergeRestyledDeck", () => {
       makeSlide({ id: "new-0", title: "A2", layout: "twoColumn" }),
     ];
     expect(mergeRestyledDeck(originals, restyled)[0].layout).toBe("twoColumn");
+  });
+
+  it("re-attaches original table/chart blocks so a restyle never drops data", () => {
+    const originals = [
+      makeSlide({
+        id: "orig-0",
+        title: "Metrics",
+        layout: "titleContent",
+        blocks: [
+          buildBlock({ type: "text", content: "old", slot: "body" }),
+          buildBlock({ type: "table", content: "| A | B |\n| 1 | 2 |" }),
+          buildBlock({ type: "chart", content: "type: bar\nRev: 10, 14" }),
+        ],
+      }),
+    ];
+    const restyled = [
+      makeSlide({
+        id: "new-0",
+        title: "Metrics",
+        layout: "titleContent",
+        blocks: [buildBlock({ type: "bullets", content: "fresh" })],
+      }),
+    ];
+    const [merged] = mergeRestyledDeck(originals, restyled);
+    const table = merged.blocks.find((b) => b.type === "table");
+    const chart = merged.blocks.find((b) => b.type === "chart");
+    expect(table?.content).toBe("| A | B |\n| 1 | 2 |");
+    expect(chart?.content).toBe("type: bar\nRev: 10, 14");
+    // Table/chart don't anchor an image region, so the restyled
+    // (text-only) layout is kept as-is.
+    expect(merged.layout).toBe("titleContent");
   });
 
   it("falls back to original notes when the model omitted them", () => {
