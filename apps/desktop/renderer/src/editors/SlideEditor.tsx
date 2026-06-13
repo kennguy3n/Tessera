@@ -295,6 +295,20 @@ export default function SlideEditor({
     };
   }, [insertPresetOpen]);
 
+  // Close the template picker modal on Escape via a document-level
+  // listener (the overlay <div> is not focusable by default, so an
+  // inline onKeyDown would only fire after the user clicks inside).
+  useEffect(() => {
+    if (!templatePickerOpen) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTemplatePickerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [templatePickerOpen]);
+
   // Global Ctrl+PageUp / Ctrl+PageDown — navigate to the previous /
   // next slide regardless of which control inside the editor has
   // focus. Matches Google Slides / LibreOffice Impress / Keynote and
@@ -564,6 +578,12 @@ export default function SlideEditor({
       setActiveIndex(0);
       setMarpMode(false);
       setTemplatePickerOpen(false);
+      // Clear stale drag/upload state — the entire deck is being
+      // replaced, so ids from the previous deck are invalid (mirrors
+      // the version-restore sync effect at line 391-408).
+      setDraggedSlideId(null);
+      setDraggedBlockId(null);
+      uploadTokensRef.current.clear();
       if (template.suggestedTheme) {
         setThemeId(template.suggestedTheme);
         themeIdRef.current = template.suggestedTheme;
@@ -578,17 +598,20 @@ export default function SlideEditor({
   );
 
   // Insert a single slide from an insert-card preset after the
-  // current active slide.
+  // current active slide. Both the splice position and the active
+  // index update happen inside the `setSlides` updater to guarantee
+  // they derive from the committed `prev` array — matching the
+  // pattern used by `addSlide` and `duplicateSlide`.
   const insertPreset = useCallback(
     (preset: (typeof INSERT_CARD_PRESETS)[number]) => {
       const newSlide = buildSlideFromPreset(preset);
       setSlides((prev) => {
-        const idx = activeIndex + 1;
+        const idx = Math.min(activeIndex + 1, prev.length);
         const next = [...prev.slice(0, idx), newSlide, ...prev.slice(idx)];
+        setActiveIndex(idx);
         debouncedSave(next);
         return next;
       });
-      setActiveIndex(activeIndex + 1);
       setInsertPresetOpen(false);
     },
     [activeIndex, debouncedSave],
@@ -1732,9 +1755,6 @@ export default function SlideEditor({
           className="slide-template-picker-overlay"
           onClick={(e) => {
             if (e.target === e.currentTarget) setTemplatePickerOpen(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setTemplatePickerOpen(false);
           }}
           role="dialog"
           aria-modal="true"

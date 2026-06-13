@@ -623,7 +623,7 @@ export function buildDeckFromTemplate(
       layout: SlideLayout;
       title: string;
       blocks: ReadonlyArray<{
-        type: string;
+        type: SlideBlock["type"];
         content: string;
         slot?: string;
       }>;
@@ -636,7 +636,7 @@ export function buildDeckFromTemplate(
     title: ts.title,
     blocks: ts.blocks.map((b) =>
       buildBlock({
-        type: b.type as SlideBlock["type"],
+        type: b.type,
         content: b.content,
         slot: b.slot,
       }),
@@ -656,7 +656,7 @@ export function buildSlideFromPreset(
     layout: SlideLayout;
     title: string;
     blocks: ReadonlyArray<{
-      type: string;
+      type: SlideBlock["type"];
       content: string;
       slot?: string;
     }>;
@@ -667,7 +667,7 @@ export function buildSlideFromPreset(
     title: preset.title,
     blocks: preset.blocks.map((b) =>
       buildBlock({
-        type: b.type as SlideBlock["type"],
+        type: b.type,
         content: b.content,
         slot: b.slot,
       }),

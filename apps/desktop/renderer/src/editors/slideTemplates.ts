@@ -16,7 +16,7 @@
  * Mirrors `slideThemes.ts` / `slideLayouts.ts` pattern: pure metadata
  * module with no side effects.
  */
-import type { SlideLayout } from "./slideEditorTypes";
+import type { SlideBlockType, SlideLayout } from "./slideEditorTypes";
 
 /** A slide blueprint within a template. */
 export interface TemplateSlide {
@@ -26,7 +26,7 @@ export interface TemplateSlide {
   title: string;
   /** Pre-filled blocks (type + content + slot). */
   blocks: ReadonlyArray<{
-    type: "text" | "bullets" | "image";
+    type: SlideBlockType;
     content: string;
     slot?: string;
   }>;
@@ -62,7 +62,7 @@ export interface InsertCardPreset {
   layout: SlideLayout;
   title: string;
   blocks: ReadonlyArray<{
-    type: "text" | "bullets" | "image";
+    type: SlideBlockType;
     content: string;
     slot?: string;
   }>;
