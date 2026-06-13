@@ -565,7 +565,10 @@ mod tests {
     fn strip_tags_and_decode_entities() {
         assert_eq!(strip_tags("Plan <strong>B</strong>"), "Plan B");
         assert_eq!(decode_entities("a &amp;lt; b"), "a &lt; b");
-        assert_eq!(decode_entities("&lt;tag&gt; &quot;x&quot; &#39;y&#39;"), "<tag> \"x\" 'y'");
+        assert_eq!(
+            decode_entities("&lt;tag&gt; &quot;x&quot; &#39;y&#39;"),
+            "<tag> \"x\" 'y'"
+        );
     }
 
     #[test]
@@ -581,7 +584,9 @@ mod tests {
 
         let html = export_html(&artifact, &[]);
         // Verbatim block markup (not HTML-escaped).
-        assert!(html.contains("<div data-variant=\"warning\" data-icon=\"⚠️\" data-type=\"callout\">"));
+        assert!(
+            html.contains("<div data-variant=\"warning\" data-icon=\"⚠️\" data-type=\"callout\">")
+        );
         assert!(html.contains("<p>Heads up</p>"));
         assert!(!html.contains("&lt;div data-variant"));
         // Stylesheet carries the callout rules + icon pseudo.
