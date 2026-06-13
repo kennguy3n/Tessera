@@ -586,6 +586,57 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
       ...READ_ONLY_GUARANTEES,
     ],
   },
+  {
+    provider: "clickup",
+    label: "ClickUp",
+    category: "Issues",
+    keywords: ["clickup", "tasks", "workspace", "team", "work management", "project management"],
+    consoleUrl: "https://app.clickup.com/settings/team/clickup-api",
+    help: "Create a ClickUp OAuth app, add the redirect URI below, then copy the Client ID and Client Secret. Enter the Workspace (Team) ID of the workspace to index.",
+    secretRequired: true,
+    reads: [
+      "Task names, descriptions, status, and metadata in the configured workspace (read-only)",
+    ],
+    neverTouches: [
+      "Creating, editing, completing, or deleting tasks",
+      "Any workspace other than the one you configure",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "intercom",
+    label: "Intercom",
+    category: "CRM",
+    keywords: ["intercom", "conversations", "support", "messaging", "inbox", "helpdesk"],
+    consoleUrl: "https://app.intercom.com/a/developer-signup",
+    help: "Create an Intercom app in the Developer Hub, enable OAuth with the redirect URI below, then copy the Client ID and Client Secret. EU/AU-hosted workspaces can set a region-specific API base URL.",
+    secretRequired: true,
+    reads: [
+      "Conversation subjects, message bodies, and metadata across your workspace (read-only)",
+    ],
+    neverTouches: [
+      "Replying to, assigning, or closing conversations",
+      "Contacts, articles, or workspace settings",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "salesforce",
+    label: "Salesforce",
+    category: "CRM",
+    keywords: ["salesforce", "crm", "cases", "support", "sfdc", "service cloud"],
+    consoleUrl: "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm",
+    help: "Create a Connected App in Salesforce with OAuth enabled, the read-only api + refresh_token scopes, and the redirect URI below. Copy the Consumer Key and Consumer Secret, then enter your org's My Domain instance URL.",
+    secretRequired: true,
+    reads: [
+      "Support Case subjects, descriptions, status, and timestamps from your org (read-only)",
+    ],
+    neverTouches: [
+      "Creating, editing, or deleting Cases or any other records",
+      "Leads, opportunities, accounts, or org configuration",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
 ];
 
 /**

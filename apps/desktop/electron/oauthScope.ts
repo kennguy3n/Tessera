@@ -116,6 +116,12 @@ export function parseScopeString(value: string | null | undefined): string[] {
  */
 export const OAUTH_META_SCOPES: ReadonlySet<string> = new Set([
   "offline_access",
+  // Salesforce's protocol scope controlling refresh-token issuance —
+  // the same role `offline_access` plays for Microsoft/Atlassian, not a
+  // resource-API permission. Salesforce normally echoes it back, but we
+  // never treat it as a required API scope; a genuinely missing refresh
+  // token surfaces at refresh time, not at scope-assertion time.
+  "refresh_token",
 ]);
 
 function withoutMetaScopes(scopes: readonly string[]): string[] {

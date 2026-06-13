@@ -131,6 +131,16 @@ export interface ProviderOAuthConfig {
   supportsRefresh: boolean;
   /** Whether to send PKCE code_challenge / code_verifier on the flow. */
   usePkce: boolean;
+  /**
+   * Name of the JSON field carrying the access token in the token
+   * exchange / refresh response. Defaults to the RFC 6749 standard
+   * `access_token`. Intercom is the sole exception: its
+   * `/auth/eagle/token` endpoint returns the token in a non-standard
+   * `token` field. When set, the exchange reads that field first and
+   * falls back to `access_token`, so the override is safe even if the
+   * provider later returns the standard field.
+   */
+  accessTokenField?: string;
 }
 
 export interface TokenResponse {
@@ -675,6 +685,69 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     // Monday's OAuth surface does not support PKCE.
     usePkce: false,
   },
+  // Tranche 5: read-only support / CRM providers. Ports continue the
+  // unique sequence from 9904.
+  clickup: {
+    provider: "clickup",
+    // ClickUp's OAuth2 surface. The authorize endpoint lives on the
+    // app host; the token exchange on the API host.
+    authUrl: "https://app.clickup.com/api",
+    tokenUrl: "https://api.clickup.com/api/v2/oauth/token",
+    // ClickUp's OAuth flow takes no `scope` parameter — the personal
+    // OAuth app's access is governed by the authorizing user's own
+    // Workspace permissions, and the connector only ever issues
+    // read-only GETs against `/api/v2/team/{team_id}/task`. Empty scope
+    // is intentional (see SCOPELESS_PROVIDERS in handlers.ts).
+    scope: "",
+    redirectPort: 9904,
+    extraAuthorizeParams: {},
+    // ClickUp access tokens are long-lived and the authorization-code
+    // grant issues no refresh token, so surface a "reconnect" UX on
+    // revocation rather than attempting a refresh.
+    supportsRefresh: false,
+    // ClickUp's OAuth surface does not support PKCE.
+    usePkce: false,
+  },
+  intercom: {
+    provider: "intercom",
+    authUrl: "https://app.intercom.com/oauth",
+    tokenUrl: "https://api.intercom.io/auth/eagle/token",
+    // Intercom does not take a `scope` parameter on the authorize URL —
+    // an app's data access is configured on the app itself in the
+    // Intercom developer hub, and Tessera only reads conversations.
+    // Empty scope is intentional (see SCOPELESS_PROVIDERS).
+    scope: "",
+    redirectPort: 9905,
+    extraAuthorizeParams: {},
+    // Intercom's `/auth/eagle/token` endpoint returns the access token
+    // in a non-standard `token` field rather than `access_token`.
+    accessTokenField: "token",
+    // Intercom access tokens are long-lived and carry no refresh token.
+    supportsRefresh: false,
+    usePkce: false,
+  },
+  salesforce: {
+    provider: "salesforce",
+    // The production login host issues authorization-code grants for
+    // both production and My Domain orgs. (Sandboxes use
+    // test.salesforce.com; that is out of scope for this read-only
+    // support-record connector.)
+    authUrl: "https://login.salesforce.com/services/oauth2/authorize",
+    tokenUrl: "https://login.salesforce.com/services/oauth2/token",
+    revokeUrl: "https://login.salesforce.com/services/oauth2/revoke",
+    // Least-privilege: `api` grants REST access (the connector only
+    // issues SOQL `SELECT`/`GET` reads against Cases) and `refresh_token`
+    // is Salesforce's protocol scope that makes the grant issue a
+    // refresh token. `refresh_token` is treated as a meta-scope (see
+    // OAUTH_META_SCOPES) so it is requested but not validated as an API
+    // permission. No write/manage scopes are requested.
+    scope: "api refresh_token",
+    redirectPort: 9906,
+    extraAuthorizeParams: {},
+    supportsRefresh: true,
+    // Salesforce's OAuth2 web-server flow supports PKCE.
+    usePkce: true,
+  },
 };
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {
@@ -996,7 +1069,7 @@ export async function exchangeAuthorizationCode(
   }
 
   const raw = (await resp.json()) as {
-    access_token: string;
+    access_token?: string;
     refresh_token?: string;
     expires_in?: number;
     token_type?: string;
@@ -1004,15 +1077,29 @@ export async function exchangeAuthorizationCode(
     [k: string]: unknown;
   };
 
-  if (!raw.access_token) {
+  // RFC 6749 returns the token in `access_token`; a provider may use a
+  // non-standard field (Intercom → `token`). Read the configured field
+  // first, then fall back to the standard one so the override is safe
+  // even if the provider later returns the standard field.
+  const accessTokenField = config.accessTokenField ?? "access_token";
+  const fieldValue = raw[accessTokenField];
+  const accessToken =
+    (typeof fieldValue === "string" ? fieldValue : undefined) ?? raw.access_token;
+
+  if (!accessToken) {
     throw new Error(
-      `Token exchange for ${config.provider} returned no access_token`,
+      `Token exchange for ${config.provider} returned no access token`,
     );
   }
 
-  const { access_token, refresh_token, expires_in, token_type, scope, ...extra } = raw;
+  const { refresh_token, expires_in, token_type, scope, ...rest } = raw;
+  // Keep the raw access-token secret out of the passthrough `extra`
+  // payload — strip both the standard and the provider-specific field.
+  delete rest.access_token;
+  delete rest[accessTokenField];
+  const extra = rest;
   return {
-    accessToken: access_token,
+    accessToken,
     refreshToken: refresh_token ?? null,
     grantedScopes: parseGrantedScopes(scope),
     // Providers that document their access tokens as non-expiring (e.g.

@@ -100,7 +100,10 @@ describe("assertProvider", () => {
   });
 
   it("rejects unknown providers", () => {
-    expect(() => assertProvider("salesforce")).toThrow(/Unknown provider/);
+    // Zendesk is audited but intentionally NOT wired (its OAuth
+    // endpoints are per-subdomain), so it stays a useful "unknown"
+    // example. Salesforce, by contrast, ships in tranche 5.
+    expect(() => assertProvider("zendesk")).toThrow(/Unknown provider/);
     expect(() => assertProvider("google")).toThrow(/Unknown provider/);
   });
 

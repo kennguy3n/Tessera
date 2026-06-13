@@ -657,6 +657,9 @@ describe("connectorDescriptors", () => {
       "google_sheets",
       "google_meet",
       "sharepoint",
+      "clickup",
+      "intercom",
+      "salesforce",
     ]);
     // Every descriptor must carry a known category plus
     // scope-transparency copy so no card renders without its

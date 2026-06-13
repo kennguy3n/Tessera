@@ -133,6 +133,12 @@ pub mod provider_ids {
     pub const AIRTABLE: &str = "airtable";
     /// Monday.com board items (per board).
     pub const MONDAY: &str = "monday";
+    /// ClickUp tasks (per team / workspace).
+    pub const CLICKUP: &str = "clickup";
+    /// Intercom conversations (whole workspace).
+    pub const INTERCOM: &str = "intercom";
+    /// Salesforce support records / Cases (per org instance, read-only).
+    pub const SALESFORCE: &str = "salesforce";
 }
 
 /// Errors surfaced by the connector v2 bridge. Kept deliberately small
@@ -251,6 +257,12 @@ pub fn provider_to_kind(provider: &str) -> Option<ConnectorKind> {
         provider_ids::AIRTABLE => Some(ConnectorKind::Airtable),
         #[cfg(feature = "connector-monday")]
         provider_ids::MONDAY => Some(ConnectorKind::Monday),
+        #[cfg(feature = "connector-clickup")]
+        provider_ids::CLICKUP => Some(ConnectorKind::ClickUp),
+        #[cfg(feature = "connector-intercom")]
+        provider_ids::INTERCOM => Some(ConnectorKind::Intercom),
+        #[cfg(feature = "connector-salesforce")]
+        provider_ids::SALESFORCE => Some(ConnectorKind::Salesforce),
         _ => None,
     }
 }
@@ -289,6 +301,9 @@ pub fn enabled_providers() -> Vec<ConnectorKind> {
         provider_ids::BITBUCKET,
         provider_ids::AIRTABLE,
         provider_ids::MONDAY,
+        provider_ids::CLICKUP,
+        provider_ids::INTERCOM,
+        provider_ids::SALESFORCE,
     ]
     .into_iter()
     .filter_map(provider_to_kind)
@@ -580,6 +595,18 @@ pub fn build_connector(
         ConnectorKind::Monday => Some(Box::new(connectors::MondayConnector::new(
             instance, transport, oauth,
         ))),
+        #[cfg(feature = "connector-clickup")]
+        ConnectorKind::ClickUp => Some(Box::new(connectors::ClickUpConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-intercom")]
+        ConnectorKind::Intercom => Some(Box::new(connectors::IntercomConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-salesforce")]
+        ConnectorKind::Salesforce => Some(Box::new(connectors::SalesforceConnector::new(
+            instance, transport, oauth,
+        ))),
         #[allow(unreachable_patterns)]
         _ => None,
     }
@@ -719,6 +746,9 @@ fn display_name(kind: ConnectorKind) -> &'static str {
         ConnectorKind::Bitbucket => "Bitbucket",
         ConnectorKind::Airtable => "Airtable",
         ConnectorKind::Monday => "Monday.com",
+        ConnectorKind::ClickUp => "ClickUp",
+        ConnectorKind::Intercom => "Intercom",
+        ConnectorKind::Salesforce => "Salesforce",
         // The upstream `ConnectorKind` enum carries 130+ providers; we
         // only ship the stable subset, so fall back to the canonical
         // id string for any provider not in the stable set.
@@ -1661,6 +1691,12 @@ mod tests {
         "bitbucket",
         "airtable",
         "monday",
+        // Tranche 5: read-only OAuth2 support / CRM providers.
+        // ClickUp (per-team tasks), Intercom (whole-workspace
+        // conversations), Salesforce (per-org Cases, read-only).
+        "clickup",
+        "intercom",
+        "salesforce",
     ];
 
     #[test]
@@ -1737,6 +1773,16 @@ mod tests {
         let monday = infos.iter().find(|i| i.provider == "monday").unwrap();
         assert_eq!(monday.display_name, "Monday.com");
         assert_eq!(monday.auth_kind, "oauth2");
+        // Tranche 5: read-only OAuth2 support / CRM providers.
+        let clickup = infos.iter().find(|i| i.provider == "clickup").unwrap();
+        assert_eq!(clickup.display_name, "ClickUp");
+        assert_eq!(clickup.auth_kind, "oauth2");
+        let intercom = infos.iter().find(|i| i.provider == "intercom").unwrap();
+        assert_eq!(intercom.display_name, "Intercom");
+        assert_eq!(intercom.auth_kind, "oauth2");
+        let salesforce = infos.iter().find(|i| i.provider == "salesforce").unwrap();
+        assert_eq!(salesforce.display_name, "Salesforce");
+        assert_eq!(salesforce.auth_kind, "oauth2");
     }
 
     #[test]
@@ -1758,7 +1804,16 @@ mod tests {
         assert!(is_supported("google_sheets"));
         assert!(is_supported("google_meet"));
         assert!(is_supported("sharepoint"));
-        assert!(!is_supported("salesforce"));
+        // Tranche 5: read-only OAuth2 support / CRM providers.
+        assert!(is_supported("clickup"));
+        assert!(is_supported("intercom"));
+        assert!(is_supported("salesforce"));
+        // Zendesk is audited but intentionally NOT wired: its OAuth
+        // authorize/token endpoints are per-subdomain
+        // (https://<subdomain>.zendesk.com/oauth/...), which the
+        // fixed-endpoint OAuth config model does not express. See
+        // docs/CONNECTORS.md (tranche 5 "audited but skipped").
+        assert!(!is_supported("zendesk"));
         // Tranche 4: per-target / per-resource providers are now
         // surfaced. Discord ingests a single channel (bot token),
         // Bitbucket a single workspace+repo's pull requests, Airtable a

@@ -510,6 +510,77 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
       },
     ],
   },
+  clickup: {
+    connectMethod: "oauth2",
+    configFields: [
+      {
+        key: "team_id",
+        label: "Workspace (Team) ID",
+        required: true,
+        secret: false,
+        // The upstream ClickUp connector reads team_id as a string and
+        // percent-encodes it into `/api/v2/team/{team_id}/task`, so it
+        // is injected as a JSON string (not a number).
+        placeholder: "9001234567",
+        help:
+          "Open ClickUp in the browser — the Workspace (Team) ID is the numeric value in the URL (app.clickup.com/<team id>/…).",
+        validation: {
+          // ClickUp Workspace/Team IDs are numeric.
+          pattern: "\\d+",
+          message: "The Workspace ID is the numeric value from the ClickUp URL.",
+        },
+      },
+      {
+        key: "api_base_url",
+        label: "API base URL (optional)",
+        required: false,
+        secret: false,
+        placeholder: "https://api.clickup.com",
+        help: "Leave blank unless ClickUp directs you to a different API host.",
+        validation: {
+          httpsUrl: true,
+          message: "Enter a full https:// URL, e.g. https://api.clickup.com.",
+        },
+      },
+    ],
+  },
+  intercom: {
+    connectMethod: "oauth2",
+    configFields: [
+      {
+        key: "api_base_url",
+        label: "API base URL (optional)",
+        required: false,
+        secret: false,
+        placeholder: "https://api.intercom.io",
+        help:
+          "Leave blank for US-hosted workspaces. EU/AU-hosted workspaces use https://api.eu.intercom.io or https://api.au.intercom.io.",
+        validation: {
+          httpsUrl: true,
+          message: "Enter a full https:// URL, e.g. https://api.eu.intercom.io.",
+        },
+      },
+    ],
+  },
+  salesforce: {
+    connectMethod: "oauth2",
+    configFields: [
+      {
+        key: "api_base_url",
+        label: "My Domain instance URL",
+        required: true,
+        secret: false,
+        placeholder: "https://your-domain.my.salesforce.com",
+        help:
+          "Your Salesforce org's My Domain URL (Setup → My Domain). The connector reads Cases from this instance — it is per-org, so it must be provided.",
+        validation: {
+          httpsUrl: true,
+          message:
+            "Enter your full Salesforce My Domain URL, e.g. https://your-domain.my.salesforce.com.",
+        },
+      },
+    ],
+  },
 };
 
 /**
