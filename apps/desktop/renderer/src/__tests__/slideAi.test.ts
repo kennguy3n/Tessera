@@ -223,6 +223,25 @@ describe("slideToContext", () => {
       ].join("\n"),
     );
   });
+
+  it("placeholders table and chart blocks instead of dumping raw DSL", () => {
+    const slide = makeSlide({
+      title: "Metrics",
+      blocks: [
+        buildBlock({ type: "table", content: "| Metric | Q1 |\n| Rev | 10 |" }),
+        buildBlock({
+          type: "chart",
+          content: "type: bar\ntitle: Revenue\nlabels: Q1, Q2\nRev: 10, 14",
+        }),
+        buildBlock({ type: "chart", content: "type: pie\nShare: 1, 2" }),
+      ],
+    });
+    // The raw GFM pipes / chart DSL must not leak into the model prompt;
+    // they collapse to the same placeholders presenter mode uses.
+    expect(slideToContext(slide)).toBe(
+      ["Title: Metrics", "[table]", "[chart: Revenue]", "[chart]"].join("\n"),
+    );
+  });
 });
 
 describe("prompt builders", () => {

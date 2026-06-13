@@ -27,7 +27,7 @@
  * user's own deck content and are only ever sent to the LOCAL model
  * surface by the calling hook — see `hooks/useModelGeneration.ts`.
  */
-import { buildBlock, newSlideId } from "./slideEditorHelpers";
+import { buildBlock, newSlideId, parseSlideChart } from "./slideEditorHelpers";
 import { SLIDE_LAYOUTS, isKnownSlideLayout } from "./slideLayouts";
 import type { Slide, SlideBlock, SlideLayout } from "./slideEditorTypes";
 
@@ -502,9 +502,11 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
 /**
  * Flatten a slide into the compact plain-text context fed to the model
  * for a per-slide operation. Title first, then each text/bullets
- * block's lines; image/diagram blocks contribute a short placeholder
- * so the model knows they exist without being handed a multi-MB data
- * URL or raw Mermaid DSL.
+ * block's lines; image/diagram/table/chart blocks contribute a short
+ * placeholder so the model knows they exist without being handed a
+ * multi-MB data URL or raw Mermaid/table/chart DSL. This mirrors the
+ * presenter-mode `slideBodyLines` placeholders so all serialisation
+ * paths describe non-text blocks the same way.
  */
 export function slideToContext(slide: Slide): string {
   const parts: string[] = [];
@@ -515,6 +517,11 @@ export function slideToContext(slide: Slide): string {
       parts.push(alt ? `[image: ${alt}]` : "[image]");
     } else if (block.type === "diagram") {
       parts.push("[diagram]");
+    } else if (block.type === "table") {
+      parts.push("[table]");
+    } else if (block.type === "chart") {
+      const title = parseSlideChart(block.content)?.title?.trim();
+      parts.push(title ? `[chart: ${title}]` : "[chart]");
     } else {
       const body = block.content
         .split(/\r?\n/)
