@@ -745,6 +745,40 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     expect(result.records[0].Name).toBe("Alice");
   });
 
+  it("drops reserved-named columns from the canonical shape but keeps record metadata", () => {
+    // A hand-crafted / third-party canonical JSON could declare a column
+    // whose name collides with a reserved record key. Those must NOT be
+    // imported as user fields (they'd render/export as a column AND
+    // shadow the intrinsic metadata that created_time / modified_time
+    // read), matching the bare-array path and the addField UI guard.
+    const json = JSON.stringify({
+      fields: [
+        { name: "Name", type: "text" },
+        { name: "__created", type: "text" },
+        { name: "__modified", type: "text" },
+        { name: "__comments", type: "text" },
+        { name: "id", type: "text" },
+      ],
+      records: [
+        {
+          id: "r1",
+          Name: "Alice",
+          __created: "2024-01-15T10:00:00.000Z",
+          __modified: "2024-02-20T10:00:00.000Z",
+        },
+      ],
+    });
+    const result = parseJsonToBase(json);
+    // Only the genuine user column survives in the field list.
+    expect(result.fields).toEqual([{ name: "Name", type: "text" }]);
+    // The record's reserved *values* are preserved untouched so a real
+    // Tessera round-trip keeps its metadata; only the column defs were
+    // stripped.
+    expect(result.records[0].id).toBe("r1");
+    expect(result.records[0].__created).toBe("2024-01-15T10:00:00.000Z");
+    expect(result.records[0].__modified).toBe("2024-02-20T10:00:00.000Z");
+  });
+
   it("accepts a bare array of objects and infers text fields from the keys", () => {
     const json = JSON.stringify([
       { Name: "Alice", Score: 10 },

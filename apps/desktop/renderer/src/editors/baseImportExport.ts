@@ -890,7 +890,21 @@ export function parseJsonToBase(jsonText: string): BaseContent {
   // trustworthy for every downstream consumer (cell renderers, the CSV
   // exporter, the formula engine), so they can assume the invariants
   // hold instead of each re-clamping defensively.
-  const fields = (obj.fields as BaseField[]).map(sanitizeBaseField);
+  //
+  // Also drop any field whose name collides with a reserved record key
+  // (`id`, `__created`, `__modified`, `__comments`). A hand-crafted or
+  // third-party canonical JSON could otherwise declare e.g. a
+  // `"__created"` column, which would render/export as a user field AND
+  // shadow the intrinsic metadata that `created_time` reads. The
+  // bare-array path above already skips `RESERVED_FIELD_NAMES`; filtering
+  // here makes both import paths agree and matches the `addField` UI
+  // guard. Reserved *values* on records are untouched — `ensureRecordIds`
+  // preserves a record's `__created` / `__modified` / `__comments`, so a
+  // genuine Tessera round-trip keeps its metadata; only the spurious
+  // column definition is removed.
+  const fields = (obj.fields as BaseField[])
+    .map(sanitizeBaseField)
+    .filter((f) => !isReservedFieldName(f.name));
   // Route records through `ensureRecordIds` — the same defensive
   // pass `parseBaseContent` runs. Plain-`.map` over the array would
   // throw `TypeError: Cannot read properties of null (reading 'id')`
