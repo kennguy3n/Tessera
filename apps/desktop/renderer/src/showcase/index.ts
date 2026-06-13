@@ -363,7 +363,11 @@ export function showcaseGraphScaleFromQuery(): number | null {
     const raw = new URLSearchParams(window.location.search).get("graphScale");
     if (!raw) return null;
     const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return null;
+    // Reject anything that wouldn't yield at least one node. `< 1` (not
+    // `<= 0`) also rules out fractional values like `0.5`, which would
+    // otherwise `Math.floor` to 0 and breach the `number >= 1 | null`
+    // contract this function promises its callers.
+    if (!Number.isFinite(n) || n < 1) return null;
     return Math.min(Math.floor(n), MAX_GRAPH_SCALE);
   } catch {
     return null;

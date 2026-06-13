@@ -149,6 +149,10 @@ async function waitForServer(timeoutMs = 60_000) {
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(BASE);
+      // Drain/close the body so the underlying socket is released now rather
+      // than lingering until GC (Node keeps an unconsumed response's
+      // connection open). We only need the status, never the payload.
+      await res.body?.cancel();
       if (res.ok) return;
     } catch {
       /* not up yet */
@@ -203,6 +207,20 @@ function stopServer() {
   serverStopped = true;
   const pid = serverProc.pid;
   if (!pid) return;
+  if (process.platform === "win32") {
+    // Windows has no POSIX process groups, so negative-pid signalling (the
+    // path below) is unavailable and `detached` opens a new console group
+    // rather than a signalable process group. `taskkill /T` walks and tears
+    // down the whole child tree (npm -> node -> vite) by PID, `/F` forces it —
+    // the documented way to reap a detached tree on Windows so a local
+    // `npm run perf:budgets` doesn't leave vite orphaned on the port.
+    try {
+      spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore" });
+    } catch {
+      /* best effort: nothing else we can portably do */
+    }
+    return;
+  }
   // `npm run preview:qa` spawns a tree: npm -> sh -> vite, and the npm
   // launcher exits as soon as it has handed off, so `vite` is reparented to
   // init while still holding PORT. We must therefore signal the *process
