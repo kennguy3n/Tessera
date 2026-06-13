@@ -79,13 +79,18 @@ export function useModelStream(): UseModelStream {
     (outcome: { ok: true; text: string } | { ok: false; message: string }) => {
       teardown();
       const settle = settleRef.current;
+      // Ignore duplicate calls. A run can terminate exactly once: e.g. a
+      // successful `done: true` chunk settles and clears `settleRef`,
+      // then a late `generate()` resolve/reject must NOT overwrite the
+      // resolved state with a spurious error.
+      if (!settle) return;
       settleRef.current = null;
       setIsStreaming(false);
       if (outcome.ok) {
-        settle?.resolve(outcome.text);
+        settle.resolve(outcome.text);
       } else {
         setError(outcome.message);
-        settle?.reject(new Error(outcome.message));
+        settle.reject(new Error(outcome.message));
       }
     },
     [teardown],
@@ -175,8 +180,16 @@ export function useModelStream(): UseModelStream {
     setError(null);
   }, []);
 
-  // Tear down a dangling subscription if the consumer unmounts mid-run.
-  useEffect(() => () => teardown(), [teardown]);
+  // Cancel a still-running generation when the consumer unmounts. A
+  // bare `teardown()` would only unsubscribe from `onToken`, leaving the
+  // on-device model churning out tokens nobody reads — wasted CPU and
+  // battery on a laptop. `cancel()` issues `cancelJob()` and settles the
+  // pending promise (a no-op when idle). Held in a ref so this stays an
+  // unmount-only effect rather than re-running whenever `cancel`'s
+  // identity changes mid-run.
+  const cancelRef = useRef(cancel);
+  cancelRef.current = cancel;
+  useEffect(() => () => cancelRef.current(), []);
 
   return { output, isStreaming, error, available, run, cancel, reset };
 }
