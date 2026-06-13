@@ -44,6 +44,13 @@ export {
 } from "./depGraph";
 export { FUNCTION_REGISTRY } from "./functions";
 export {
+  buildNamesMap,
+  parseRangeReference,
+  validateName,
+  validateNamedRange,
+  type NamedRangeInput,
+} from "./namedRanges";
+export {
   applyCellFormat,
   cellFormatStyle,
   valueToDateSerial,
@@ -74,6 +81,7 @@ export function defaultContext(
     functions: overrides.functions ?? FUNCTION_REGISTRY,
     random: overrides.random,
     now: overrides.now,
+    names: overrides.names,
   };
 }
 

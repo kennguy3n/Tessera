@@ -79,6 +79,27 @@ export interface EvaluationContext {
    * stable.
    */
   readonly now?: () => Date;
+  /**
+   * Workbook-level named ranges, keyed by UPPER-CASE name. Each value
+   * is a pre-parsed `cell` or `range` AST node (parsed once from the
+   * stored A1 string when the context is built). A bare identifier in
+   * a formula (`=SUM(Revenue)`) resolves through this map; an
+   * aggregation function receiving a name expands it the same way it
+   * would a literal range. Absent ⇒ no named ranges defined.
+   */
+  readonly names?: ReadonlyMap<string, AstNode>;
+}
+
+/**
+ * Resolve a bare identifier to its named-range AST node, or `undefined`
+ * when no such name is defined. Names are matched case-insensitively,
+ * matching Excel / Google Sheets.
+ */
+export function resolveName(
+  name: string,
+  ctx: EvaluationContext,
+): AstNode | undefined {
+  return ctx.names?.get(name.toUpperCase());
 }
 
 export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
@@ -89,10 +110,16 @@ export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
       return node.value;
     case "boolean":
       return node.value;
-    case "identifier":
-      // Bare identifiers are reserved for future named-range support. For now, surface as `#NAME?` so the user
-      // sees a precise error instead of a silent `0`.
-      return makeError("#NAME?", `unknown name "${node.name}"`);
+    case "identifier": {
+      // Bare identifiers resolve to a workbook-level named range when
+      // one is defined; otherwise surface `#NAME?` so the user sees a
+      // precise error instead of a silent `0`. A named range in scalar
+      // context collapses to its first cell (Excel implicit
+      // intersection), exactly like a literal range node.
+      const named = resolveName(node.name, ctx);
+      if (!named) return makeError("#NAME?", `unknown name "${node.name}"`);
+      return evaluate(named, ctx);
+    }
     case "cell": {
       // Cycle key matches `cellKey()` from depGraph so the resolver
       // and the evaluator agree on visiting-set entries. Sheet is
@@ -343,6 +370,17 @@ export function* collectValues(
   node: AstNode,
   ctx: EvaluationContext,
 ): Generator<FormulaValue> {
+  if (node.type === "identifier") {
+    // Expand a named range the same way as the literal range/cell it
+    // points at, so `SUM(Revenue)` walks every cell of the range.
+    const named = resolveName(node.name, ctx);
+    if (!named) {
+      yield makeError("#NAME?", `unknown name "${node.name}"`);
+      return;
+    }
+    yield* collectValues(named, ctx);
+    return;
+  }
   if (node.type === "range") {
     for (let r = node.start.row; r <= node.end.row; r++) {
       for (let c = node.start.col; c <= node.end.col; c++) {

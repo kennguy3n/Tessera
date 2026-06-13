@@ -17,6 +17,7 @@
  */
 import {
   DependencyGraph,
+  buildNamesMap,
   cellKey,
   defaultContext,
   evaluate,
@@ -31,6 +32,7 @@ import {
 import type {
   CellFormat,
   SheetContent,
+  SheetNamedRange,
   SheetTab,
 } from "./sheetEditorTypes";
 
@@ -140,6 +142,12 @@ export interface Workbook {
   sheets: SheetTab[];
   /** Zero-based index into `sheets` for the currently-active tab. */
   activeSheetIndex: number;
+  /**
+   * Workbook-level named ranges. Optional; when present, formulas may
+   * reference a name (`=SUM(Revenue)`) and the resolver expands it via
+   * the engine's `names` map. Mirrors `SheetContent.namedRanges`.
+   */
+  namedRanges?: SheetNamedRange[];
 }
 
 /**
@@ -180,6 +188,9 @@ export function toWorkbook(content: SheetContent): Workbook {
         formats: s.formats ? { ...s.formats } : undefined,
       })),
       activeSheetIndex: active,
+      namedRanges: content.namedRanges
+        ? content.namedRanges.map((n) => ({ ...n }))
+        : undefined,
     };
   }
   return {
@@ -192,6 +203,9 @@ export function toWorkbook(content: SheetContent): Workbook {
       },
     ],
     activeSheetIndex: 0,
+    namedRanges: content.namedRanges
+      ? content.namedRanges.map((n) => ({ ...n }))
+      : undefined,
   };
 }
 
@@ -213,6 +227,9 @@ export function fromWorkbook(
     })),
     activeSheetIndex: workbook.activeSheetIndex,
     formats: active.formats ? { ...active.formats } : undefined,
+    namedRanges: workbook.namedRanges
+      ? workbook.namedRanges.map((n) => ({ ...n }))
+      : baseContent?.namedRanges,
   };
   // Legacy single-sheet artifacts keep their compact JSON shape: if
   // the workbook has exactly one default-named sheet, drop the
@@ -286,6 +303,7 @@ export function literalFromCellText(raw: string | undefined): FormulaValue {
 function makeResolver(sheet: SheetContent): {
   resolver: CellResolver;
   visiting: Set<string>;
+  names: ReadonlyMap<string, AstNode>;
 } {
   return makeWorkbookResolver(toWorkbook(sheet));
 }
@@ -316,8 +334,12 @@ export function makeWorkbookResolver(
   resolver: CellResolver;
   visiting: Set<string>;
   cache: Map<string, FormulaValue>;
+  names: ReadonlyMap<string, AstNode>;
 } {
   const visiting = new Set<string>();
+  // Compile the workbook's named ranges once so every recursive
+  // formula evaluation shares the same parsed lookup map.
+  const names = buildNamesMap(workbook.namedRanges);
   // Sheet names are matched case-insensitively to mirror Excel /
   // Google Sheets behaviour, but the canonical (case-preserving)
   // name is what we use everywhere downstream (cache keys, dep
@@ -402,7 +424,7 @@ export function makeWorkbookResolver(
         const previousActive = activeName;
         activeName = tab.name;
         try {
-          const ctx = defaultContext(resolver, { visiting });
+          const ctx = defaultContext(resolver, { visiting, names });
           const v = evaluate(parsed.ast, ctx);
           cache.set(key, v);
           return v;
@@ -417,7 +439,7 @@ export function makeWorkbookResolver(
     },
   };
 
-  return { resolver, visiting, cache };
+  return { resolver, visiting, cache, names };
 }
 
 /**
@@ -457,12 +479,12 @@ export function evaluateSheetFormula(
   formula: string,
   sheet: SheetContent,
 ): FormulaValue {
-  const { resolver, visiting } = makeResolver(sheet);
+  const { resolver, visiting, names } = makeResolver(sheet);
   const parsed = parseFormula(formula);
   if (!parsed.ok) {
     return { kind: "error", code: parsed.code, message: parsed.message };
   }
-  const ctx = defaultContext(resolver, { visiting });
+  const ctx = defaultContext(resolver, { visiting, names });
   return evaluate(parsed.ast, ctx);
 }
 
@@ -475,12 +497,12 @@ export function evaluateWorkbookFormula(
   formula: string,
   workbook: Workbook,
 ): FormulaValue {
-  const { resolver, visiting } = makeWorkbookResolver(workbook);
+  const { resolver, visiting, names } = makeWorkbookResolver(workbook);
   const parsed = parseFormula(formula);
   if (!parsed.ok) {
     return { kind: "error", code: parsed.code, message: parsed.message };
   }
-  const ctx = defaultContext(resolver, { visiting });
+  const ctx = defaultContext(resolver, { visiting, names });
   return evaluate(parsed.ast, ctx);
 }
 
@@ -554,6 +576,7 @@ export function evaluateAllWorkbookFormulas(
  */
 export function buildSheetDependencyGraph(sheet: SheetContent): DependencyGraph {
   const graph = new DependencyGraph();
+  const names = buildNamesMap(sheet.namedRanges);
   for (let r = 0; r < sheet.rows.length; r++) {
     const row = sheet.rows[r];
     if (!row) continue;
@@ -562,7 +585,10 @@ export function buildSheetDependencyGraph(sheet: SheetContent): DependencyGraph 
       if (!raw || !raw.startsWith("=")) continue;
       const parsed = parseFormula(raw);
       if (!parsed.ok) continue;
-      graph.setDependencies(cellKey(r, c), extractReferences(parsed.ast));
+      graph.setDependencies(
+        cellKey(r, c),
+        extractReferences(parsed.ast, undefined, names),
+      );
     }
   }
   return graph;
@@ -758,6 +784,9 @@ export function incrementalRecalc(
   // so the persistent cache (qualified) and the resolver's
   // internal lookups (qualified) speak the same key shape.
   const activeName = activeSheetName(sheet);
+  // Compile named ranges so dependency extraction expands a name to
+  // the cells it covers (editing one invalidates dependent formulas).
+  const names = buildNamesMap(sheet.namedRanges);
 
   // Identify dirty cells — those whose raw text changed.
   // First render: every formula / literal cell is dirty (treated as
@@ -850,7 +879,7 @@ export function incrementalRecalc(
       graph.setDependencies(
         key,
         parsed.ok
-          ? extractReferences(parsed.ast, activeName)
+          ? extractReferences(parsed.ast, activeName, names)
           : new Set<string>(),
       );
       liveDirtyKeys.push(key);
@@ -968,6 +997,7 @@ export function buildWorkbookDependencyGraph(
   workbook: Workbook,
 ): DependencyGraph {
   const graph = new DependencyGraph();
+  const names = buildNamesMap(workbook.namedRanges);
   for (const tab of workbook.sheets) {
     for (let r = 0; r < tab.rows.length; r++) {
       const row = tab.rows[r];
@@ -979,7 +1009,7 @@ export function buildWorkbookDependencyGraph(
         if (!parsed.ok) continue;
         graph.setDependencies(
           cellKey(r, c, tab.name),
-          extractReferences(parsed.ast, tab.name),
+          extractReferences(parsed.ast, tab.name, names),
         );
       }
     }
@@ -996,11 +1026,12 @@ export function buildWorkbookDependencyGraph(
 export function dependenciesOfCell(
   rawText: string | undefined,
   activeSheet?: string,
+  names?: ReadonlyMap<string, AstNode>,
 ): Set<string> {
   if (!rawText || !rawText.startsWith("=")) return new Set<string>();
   const parsed = parseFormula(rawText);
   if (!parsed.ok) return new Set<string>();
-  return extractReferences(parsed.ast, activeSheet);
+  return extractReferences(parsed.ast, activeSheet, names);
 }
 
 /** Walk `ast` (testing aid). Re-exported from the engine for callers. */
