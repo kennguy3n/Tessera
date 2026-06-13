@@ -65,9 +65,11 @@ export interface SlideTheme {
   marpTheme: MarpBuiltinTheme;
   /**
    * Font family for body/content blocks. When absent, inherits the
-   * global `--font-family`. Declared here (not CSS) so the picker
-   * preview can display accurate typography without loading a
-   * separate stylesheet.
+   * global `--font-family`. The canvas reads this through the
+   * `--slide-font-body` CSS variable (set per-theme in `tokens.css`);
+   * this TS field is the source-of-truth metadata kept alongside the
+   * other theme properties and is available for future picker preview
+   * enhancements.
    */
   bodyFont?: string;
   /**

@@ -612,6 +612,25 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
 }
 
 /**
+ * Materialise a single block blueprint (from a template or insert-card
+ * preset) into a real `SlideBlock` with a fresh id. Image blocks get
+ * an explicit empty `alt` so they match the shape produced by
+ * `buildSlideFromLayout` (where every image block carries `alt`).
+ */
+function materialiseBlueprintBlock(blueprint: {
+  type: SlideBlock["type"];
+  content: string;
+  slot?: string;
+}): SlideBlock {
+  return buildBlock({
+    type: blueprint.type,
+    content: blueprint.content,
+    slot: blueprint.slot,
+    ...(blueprint.type === "image" ? { alt: "" } : {}),
+  });
+}
+
+/**
  * Materialise a full deck from a template definition. Each template
  * slide blueprint becomes a real `Slide` with fresh ids and the
  * template's placeholder content. Returns the slides array ready
@@ -634,13 +653,7 @@ export function buildDeckFromTemplate(
   return template.slides.map((ts) => ({
     id: newSlideId("slide"),
     title: ts.title,
-    blocks: ts.blocks.map((b) =>
-      buildBlock({
-        type: b.type,
-        content: b.content,
-        slot: b.slot,
-      }),
-    ),
+    blocks: ts.blocks.map(materialiseBlueprintBlock),
     notes: ts.notes ?? "",
     layout: ts.layout,
   }));
@@ -665,13 +678,7 @@ export function buildSlideFromPreset(
   return {
     id: newSlideId("slide"),
     title: preset.title,
-    blocks: preset.blocks.map((b) =>
-      buildBlock({
-        type: b.type,
-        content: b.content,
-        slot: b.slot,
-      }),
-    ),
+    blocks: preset.blocks.map(materialiseBlueprintBlock),
     notes: "",
     layout: preset.layout,
   };

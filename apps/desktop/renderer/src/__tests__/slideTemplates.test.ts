@@ -189,4 +189,31 @@ describe("buildSlideFromPreset", () => {
       expect(slide.blocks.length).toBe(preset.blocks.length);
     }
   });
+
+  it("gives image blocks an explicit empty alt and omits it elsewhere", () => {
+    for (const preset of INSERT_CARD_PRESETS) {
+      const slide = buildSlideFromPreset(preset);
+      for (const block of slide.blocks) {
+        if (block.type === "image") {
+          expect(block.alt).toBe("");
+        } else {
+          expect(block.alt).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it("template image blocks also carry an explicit empty alt", () => {
+    for (const template of SLIDE_TEMPLATES) {
+      for (const slide of buildDeckFromTemplate(template)) {
+        for (const block of slide.blocks) {
+          if (block.type === "image") {
+            expect(block.alt).toBe("");
+          } else {
+            expect(block.alt).toBeUndefined();
+          }
+        }
+      }
+    }
+  });
 });
