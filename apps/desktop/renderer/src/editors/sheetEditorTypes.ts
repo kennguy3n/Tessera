@@ -70,6 +70,33 @@ export type DataValidation =
  */
 export type ValidationMap = Record<string, DataValidation>;
 
+/** Supported chart marks. */
+export type ChartType = "bar" | "line" | "pie";
+
+/**
+ * A chart bound to a range on the active sheet, re-derived from live
+ * cell values on every render. Persisted on the artifact JSON so it
+ * round-trips through `parseSheetContent`/`JSON.stringify`; the XLSX
+ * exporter currently ignores it (charts are a renderer-only feature).
+ */
+export interface ChartSpec {
+  /** Stable id for React keys / removal. */
+  id: string;
+  type: ChartType;
+  /** Optional title shown above the plot and used as the a11y label. */
+  title?: string;
+  /**
+   * A1 value range on the active sheet, e.g. `"B2:B10"` (one series) or
+   * `"B2:D10"` (one series per column). Sheet-qualified refs are not
+   * accepted.
+   */
+  range: string;
+  /** Optional A1 range whose first column supplies category labels. */
+  labelRange?: string;
+  /** When true, the value range's first row provides series names. */
+  useFirstRowAsHeader?: boolean;
+}
+
 /**
  * Comparison operators a conditional-formatting rule can test a cell's
  * value against. Numeric operators (`gt`/`gte`/`lt`/`lte`) coerce both
@@ -227,6 +254,12 @@ export interface SheetContent {
    * `JSON.stringify`/`parseSheetContent`; absent ⇒ none.
    */
   validations?: ValidationMap;
+  /**
+   * Charts bound to ranges on the active sheet (bar / line / pie),
+   * re-derived from live values. Persisted on the artifact JSON; absent
+   * ⇒ no charts.
+   */
+  charts?: ChartSpec[];
   /**
    * optional workbook-level named ranges. Persisted on
    * the artifact JSON so the XLSX exporter can emit `<definedName>`

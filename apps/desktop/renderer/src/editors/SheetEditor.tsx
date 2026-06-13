@@ -19,6 +19,7 @@ import {
 } from "./formulaEngine";
 import type {
   CellFormat,
+  ChartSpec,
   ConditionalFormatRule,
   SheetContent,
   SheetNamedRange,
@@ -40,10 +41,19 @@ import {
   getColumnValidation,
   isValueAllowed,
 } from "./sheetDataValidation";
+import {
+  insertColumnAt,
+  insertRowAt,
+  removeColumnAt,
+  removeRowAt,
+} from "./sheetStructureOps";
+import { extractChartData } from "./sheetCharts";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import { DataValidationPanel } from "./components/DataValidationPanel";
 import { NamedRangePanel } from "./components/NamedRangePanel";
 import { SheetAiPanel } from "./components/SheetAiPanel";
+import { ChartsPanel } from "./components/ChartsPanel";
+import { SheetChart } from "./components/SheetChart";
 import {
   type CellCoord,
   type Selection,
@@ -142,6 +152,8 @@ export default function SheetEditor({
   const [aiOpen, setAiOpen] = useState(false);
   // Data-validation manager visibility.
   const [dvOpen, setDvOpen] = useState(false);
+  // Charts manager visibility.
+  const [chartsOpen, setChartsOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -235,11 +247,15 @@ export default function SheetEditor({
 
   const addColumn = useCallback(() => {
     setSheet((prev) => {
-      const colName = columnLabel(prev.columns.length);
-      const updated: SheetContent = {
-        columns: [...prev.columns, colName],
-        rows: prev.rows.map((r) => [...r, ""]),
-      };
+      // Append a fresh column via the structural helper so every
+      // column-indexed field (formats / validations / conditional rules
+      // / widths / freeze) is carried over — a bare rebuild used to wipe
+      // all sheet metadata on every "+ Column".
+      const updated = insertColumnAt(
+        prev,
+        prev.columns.length,
+        columnLabel(prev.columns.length),
+      );
       debouncedSave(updated);
       return updated;
     });
@@ -248,11 +264,10 @@ export default function SheetEditor({
   const removeColumn = useCallback(
     (colIdx: number) => {
       setSheet((prev) => {
-        if (prev.columns.length <= 1) return prev;
-        const updated: SheetContent = {
-          columns: prev.columns.filter((_, i) => i !== colIdx),
-          rows: prev.rows.map((r) => r.filter((_, i) => i !== colIdx)),
-        };
+        // Preserves all metadata and shifts every column-indexed key
+        // past `colIdx` down by one (no silent data loss, no stale keys).
+        const updated = removeColumnAt(prev, colIdx);
+        if (updated === prev) return prev;
         debouncedSave(updated);
         return updated;
       });
@@ -262,10 +277,7 @@ export default function SheetEditor({
 
   const addRow = useCallback(() => {
     setSheet((prev) => {
-      const updated: SheetContent = {
-        ...prev,
-        rows: [...prev.rows, new Array(prev.columns.length).fill("")],
-      };
+      const updated = insertRowAt(prev, prev.rows.length);
       debouncedSave(updated);
       return updated;
     });
@@ -274,10 +286,8 @@ export default function SheetEditor({
   const removeRow = useCallback(
     (rowIdx: number) => {
       setSheet((prev) => {
-        const updated: SheetContent = {
-          ...prev,
-          rows: prev.rows.filter((_, i) => i !== rowIdx),
-        };
+        const updated = removeRowAt(prev, rowIdx);
+        if (updated === prev) return prev;
         debouncedSave(updated);
         return updated;
       });
@@ -424,6 +434,17 @@ export default function SheetEditor({
     ) {
       e.preventDefault();
       const { row, col } = selection.anchor;
+      // Checkbox-validated cells are never free-text editable; typing a
+      // character must not bypass the same guard `startEdit` applies on
+      // Enter/F2 (it would otherwise overwrite TRUE/FALSE with junk).
+      // Space toggles the box, matching the checkbox's own affordance.
+      if (getColumnValidation(sheet.validations, col)?.kind === "checkbox") {
+        if (e.key === " ") {
+          const cur = sheet.rows[row]?.[col] ?? "";
+          updateCell(row, col, cur === CHECKBOX_TRUE ? CHECKBOX_FALSE : CHECKBOX_TRUE);
+        }
+        return;
+      }
       setEditingCell({ row, col });
       setEditValue(e.key);
       return;
@@ -601,6 +622,67 @@ export default function SheetEditor({
       });
     },
     [debouncedSave],
+  );
+
+  // Replace the sheet's charts and persist. An empty array drops the
+  // field so a sheet with no charts stays byte-identical to its
+  // pre-feature JSON.
+  const setCharts = useCallback(
+    (charts: ChartSpec[]) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (charts.length === 0) delete next.charts;
+        else next.charts = charts;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Numeric value of a cell for charting: a formula's computed result
+  // (via the recalc cache) or a literal parsed as a number; `null` for
+  // blanks, text, booleans, and errors so they're skipped in plots.
+  const chartValueAt = useCallback(
+    (row: number, col: number): number | null => {
+      const raw = sheet.rows[row]?.[col] ?? "";
+      if (raw === "") return null;
+      if (raw.startsWith("=")) {
+        let cached = cellCache.get(cellKey(row, col, activeName));
+        if (cached === undefined) cached = evaluateFormula(raw, sheet);
+        return typeof cached === "number" && Number.isFinite(cached)
+          ? cached
+          : null;
+      }
+      const n = Number(raw.trim());
+      return raw.trim() !== "" && Number.isFinite(n) ? n : null;
+    },
+    [sheet, cellCache, activeName],
+  );
+
+  // Displayed text of a cell for chart labels / headers.
+  const chartTextAt = useCallback(
+    (row: number, col: number): string =>
+      getCellDisplay(sheet.rows[row]?.[col] ?? "", row, col),
+    // getCellDisplay closes over `sheet`/`cellCache`; depend on `sheet`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sheet],
+  );
+
+  // Each chart's live data, re-derived whenever the sheet changes. The
+  // pure extractor never throws on a bad range — it yields empty data,
+  // which `SheetChart` renders as a friendly "no data" state.
+  const renderedCharts = useMemo(
+    () =>
+      (sheet.charts ?? []).map((spec) => ({
+        spec,
+        data:
+          extractChartData(spec, chartValueAt, chartTextAt) ?? {
+            labels: [],
+            series: [],
+          },
+      })),
+    [sheet.charts, chartValueAt, chartTextAt],
   );
 
   // Apply a manual-format patch to every cell in the current selection
@@ -1273,6 +1355,18 @@ export default function SheetEditor({
             ? ` (${Object.keys(sheet.validations).length})`
             : ""}
         </button>
+        <button
+          type="button"
+          className={chartsOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={chartsOpen}
+          data-testid="sheet-charts-toggle"
+          onClick={() => setChartsOpen((open) => !open)}
+        >
+          Charts
+          {sheet.charts && sheet.charts.length > 0
+            ? ` (${sheet.charts.length})`
+            : ""}
+        </button>
       </div>
 
       <div
@@ -1389,6 +1483,15 @@ export default function SheetEditor({
           validations={sheet.validations ?? {}}
           onChange={setValidations}
           onClose={() => setDvOpen(false)}
+        />
+      )}
+
+      {chartsOpen && (
+        <ChartsPanel
+          charts={sheet.charts ?? []}
+          selectionRef={selectionRef}
+          onChange={setCharts}
+          onClose={() => setChartsOpen(false)}
         />
       )}
 
@@ -1823,6 +1926,25 @@ export default function SheetEditor({
           </tbody>
         </table>
       </div>
+
+      {renderedCharts.length > 0 && (
+        <div
+          className="sheet-charts-strip"
+          data-testid="sheet-charts-strip"
+          aria-label="Charts"
+        >
+          {renderedCharts.map(({ spec, data }) => (
+            <SheetChart
+              key={spec.id}
+              spec={spec}
+              data={data}
+              onRemove={() =>
+                setCharts((sheet.charts ?? []).filter((c) => c.id !== spec.id))
+              }
+            />
+          ))}
+        </div>
+      )}
 
       {contextMenu && (
         <ul
