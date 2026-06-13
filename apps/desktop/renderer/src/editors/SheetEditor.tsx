@@ -21,6 +21,7 @@ import type {
   CellFormat,
   ChartSpec,
   ConditionalFormatRule,
+  PivotSpec,
   SheetContent,
   SheetNamedRange,
   ValidationMap,
@@ -48,13 +49,16 @@ import {
   removeColumnAt,
   removeRowAt,
 } from "./sheetStructureOps";
-import { extractChartData } from "./sheetCharts";
+import { columnLetter, extractChartData } from "./sheetCharts";
+import { computePivot } from "./sheetPivot";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import { DataValidationPanel } from "./components/DataValidationPanel";
 import { NamedRangePanel } from "./components/NamedRangePanel";
 import { SheetAiPanel } from "./components/SheetAiPanel";
 import { ChartsPanel } from "./components/ChartsPanel";
 import { SheetChart } from "./components/SheetChart";
+import { PivotPanel } from "./components/PivotPanel";
+import { SheetPivot } from "./components/SheetPivot";
 import {
   type CellCoord,
   type Selection,
@@ -81,6 +85,7 @@ import {
   Sparkles,
   ShieldCheck,
   BarChart3,
+  Table2,
   Bold as BoldIcon,
   Italic as ItalicIcon,
   Underline as UnderlineIcon,
@@ -170,6 +175,8 @@ export default function SheetEditor({
   const [dvOpen, setDvOpen] = useState(false);
   // Charts manager visibility.
   const [chartsOpen, setChartsOpen] = useState(false);
+  // Pivot-table manager visibility.
+  const [pivotsOpen, setPivotsOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -704,6 +711,47 @@ export default function SheetEditor({
           },
       })),
     [sheet.charts, chartValueAt, chartTextAt],
+  );
+
+  // Replace the sheet's pivots and persist. Mirrors `setCharts`: an empty
+  // list drops the field so a pivot-free sheet stays byte-identical to its
+  // pre-feature JSON, and an updater form avoids stale-closure lost updates.
+  const setPivots = useCallback(
+    (pivots: PivotSpec[] | ((prev: PivotSpec[]) => PivotSpec[])) => {
+      setSheet((prev) => {
+        const nextPivots =
+          typeof pivots === "function" ? pivots(prev.pivots ?? []) : pivots;
+        const next: SheetContent = { ...prev };
+        if (nextPivots.length === 0) delete next.pivots;
+        else next.pivots = nextPivots;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Label a grid column for the pivot field pickers, e.g. `"A · Region"`:
+  // the column letter plus its header text (row 0) when present.
+  const columnLabelAt = useCallback(
+    (col: number): string => {
+      const header = chartTextAt(0, col).trim();
+      const letter = columnLetter(col);
+      return header !== "" ? `${letter} · ${header}` : letter;
+    },
+    [chartTextAt],
+  );
+
+  // Each pivot's computed cross-tab, re-derived whenever the sheet changes.
+  // `computePivot` never throws on a bad range/field — it yields null or an
+  // empty result, which `SheetPivot` renders as a friendly "no data" state.
+  const renderedPivots = useMemo(
+    () =>
+      (sheet.pivots ?? []).map((spec) => ({
+        spec,
+        result: computePivot(spec, chartValueAt, chartTextAt),
+      })),
+    [sheet.pivots, chartValueAt, chartTextAt],
   );
 
   // Apply a manual-format patch to every cell in the current selection
@@ -1406,6 +1454,18 @@ export default function SheetEditor({
             ? ` (${sheet.charts.length})`
             : ""}
         </button>
+        <button
+          type="button"
+          className={pivotsOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={pivotsOpen}
+          data-testid="sheet-pivots-toggle"
+          onClick={() => setPivotsOpen((open) => !open)}
+        >
+          <Table2 size={15} aria-hidden="true" /> Pivot
+          {sheet.pivots && sheet.pivots.length > 0
+            ? ` (${sheet.pivots.length})`
+            : ""}
+        </button>
       </div>
 
       <div
@@ -1569,6 +1629,16 @@ export default function SheetEditor({
           selectionRef={selectionRef}
           onChange={setCharts}
           onClose={() => setChartsOpen(false)}
+        />
+      )}
+
+      {pivotsOpen && (
+        <PivotPanel
+          pivots={sheet.pivots ?? []}
+          selectionRef={selectionRef}
+          columnLabelAt={columnLabelAt}
+          onChange={setPivots}
+          onClose={() => setPivotsOpen(false)}
         />
       )}
 
@@ -2017,6 +2087,25 @@ export default function SheetEditor({
               data={data}
               onRemove={() =>
                 setCharts((prev) => prev.filter((c) => c.id !== spec.id))
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {renderedPivots.length > 0 && (
+        <div
+          className="sheet-pivots-strip"
+          data-testid="sheet-pivots-strip"
+          aria-label="Pivot tables"
+        >
+          {renderedPivots.map(({ spec, result }) => (
+            <SheetPivot
+              key={spec.id}
+              spec={spec}
+              result={result}
+              onRemove={() =>
+                setPivots((prev) => prev.filter((p) => p.id !== spec.id))
               }
             />
           ))}

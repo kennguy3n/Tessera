@@ -16,10 +16,11 @@
  * return a fresh `SheetContent`, preserving any unrelated fields
  * (`sheets`, `activeSheetIndex`, `namedRanges`, …) via spread.
  *
- * Chart A1 ranges (`charts[].range` / `charts[].labelRange`) ARE shifted
- * the way Excel adjusts references — an insert moves/widens the range, a
- * removal shrinks it, and deleting the range's only line collapses it to
- * `#REF!` (the chart then shows its empty state).
+ * Chart A1 ranges (`charts[].range` / `charts[].labelRange`) and pivot
+ * source ranges + field columns (`pivots[]`) ARE shifted the way Excel
+ * adjusts references — an insert moves/widens the range, a removal
+ * shrinks it, and deleting the range's only line (or a pivot's field
+ * column) collapses it so the chart / pivot shows its empty state.
  *
  * Out of scope (documented limitation): A1 strings inside `namedRanges`
  * are NOT rewritten. Those references can be sheet-qualified
@@ -29,11 +30,13 @@
  * leaving the authored text intact.
  */
 import { shiftRangeForStructuralEdit } from "./sheetCharts";
+import { shiftPivotForStructuralEdit } from "./sheetPivot";
 import type {
   CellFormat,
   ChartSpec,
   ConditionalFormatRule,
   DataValidation,
+  PivotSpec,
   SheetContent,
   ValidationMap,
 } from "./sheetEditorTypes";
@@ -169,6 +172,25 @@ function remapCharts(
   return next.length === 0 ? undefined : next;
 }
 
+/**
+ * Shift pivot source ranges and field column indices under a column/row
+ * edit, the same way {@link remapCharts} does for charts. A pivot whose
+ * field column is removed is left with the invalid sentinel its helper
+ * assigns, so it falls back to the empty state rather than mis-binding.
+ */
+function remapPivots(
+  pivots: PivotSpec[] | undefined,
+  axis: "row" | "col",
+  at: number,
+  delta: 1 | -1,
+): PivotSpec[] | undefined {
+  if (!pivots) return undefined;
+  const next = pivots.map((pivot) =>
+    shiftPivotForStructuralEdit(pivot, axis, at, delta),
+  );
+  return next.length === 0 ? undefined : next;
+}
+
 /** Strip a field from an object when the value is `undefined`. */
 function withField<K extends keyof SheetContent>(
   target: SheetContent,
@@ -203,6 +225,7 @@ export function removeColumnAt(
   withField(next, "columnWidths", spliceSizes(content.columnWidths, colIdx, -1));
   withField(next, "frozenCols", adjustFreeze(content.frozenCols, colIdx, -1));
   withField(next, "charts", remapCharts(content.charts, "col", colIdx, -1));
+  withField(next, "pivots", remapPivots(content.pivots, "col", colIdx, -1));
   return next;
 }
 
@@ -238,6 +261,7 @@ export function insertColumnAt(
   withField(next, "columnWidths", spliceSizes(content.columnWidths, clamped, 1));
   withField(next, "frozenCols", adjustFreeze(content.frozenCols, clamped, 1));
   withField(next, "charts", remapCharts(content.charts, "col", clamped, 1));
+  withField(next, "pivots", remapPivots(content.pivots, "col", clamped, 1));
   return next;
 }
 
@@ -258,6 +282,7 @@ export function removeRowAt(
   withField(next, "rowHeights", spliceSizes(content.rowHeights, rowIdx, -1));
   withField(next, "frozenRows", adjustFreeze(content.frozenRows, rowIdx, -1));
   withField(next, "charts", remapCharts(content.charts, "row", rowIdx, -1));
+  withField(next, "pivots", remapPivots(content.pivots, "row", rowIdx, -1));
   return next;
 }
 
@@ -278,5 +303,6 @@ export function insertRowAt(
   withField(next, "rowHeights", spliceSizes(content.rowHeights, clamped, 1));
   withField(next, "frozenRows", adjustFreeze(content.frozenRows, clamped, 1));
   withField(next, "charts", remapCharts(content.charts, "row", clamped, 1));
+  withField(next, "pivots", remapPivots(content.pivots, "row", clamped, 1));
   return next;
 }

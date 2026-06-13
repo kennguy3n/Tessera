@@ -108,6 +108,45 @@ export interface ChartSpec {
 }
 
 /**
+ * Aggregation a pivot applies to its value field. `count` is a
+ * COUNTA-style record count (non-empty value cells); the rest operate on
+ * the finite numeric values only and yield a blank cell when a bucket
+ * has none.
+ */
+export type PivotAggregation = "sum" | "count" | "average" | "min" | "max";
+
+/**
+ * A pivot table bound to a source range on the active sheet, re-derived
+ * from live cell values on every render. The range's first row is the
+ * header; `rowField` / `colField` / `valueField` are **absolute**
+ * zero-based grid column indices (not offsets within the range) so they
+ * survive column inserts/removals via `shiftPivotForStructuralEdit`.
+ *
+ * Persisted on the artifact JSON so it round-trips through
+ * `parseSheetContent`/`JSON.stringify`; the XLSX exporter ignores it
+ * (pivots are a renderer-only feature).
+ */
+export interface PivotSpec {
+  /** Stable id for React keys / removal. */
+  id: string;
+  /** Optional title shown above the table and used as the a11y label. */
+  title?: string;
+  /**
+   * A1 source range whose first row is a header, e.g. `"A1:D100"`.
+   * Sheet-qualified refs are not accepted (binds to the active sheet).
+   */
+  range: string;
+  /** Absolute grid column index whose distinct values become rows. */
+  rowField: number;
+  /** Optional absolute grid column index whose values become columns. */
+  colField?: number;
+  /** Absolute grid column index whose values are aggregated. */
+  valueField: number;
+  /** Aggregation applied to the value field. */
+  agg: PivotAggregation;
+}
+
+/**
  * Comparison operators a conditional-formatting rule can test a cell's
  * value against. Numeric operators (`gt`/`gte`/`lt`/`lte`) coerce both
  * sides to numbers and never match non-numeric cells; the text
@@ -270,6 +309,12 @@ export interface SheetContent {
    * ⇒ no charts.
    */
   charts?: ChartSpec[];
+  /**
+   * Pivot tables bound to source ranges on the active sheet, re-derived
+   * from live values. Persisted on the artifact JSON; absent ⇒ no
+   * pivots. Like charts, the XLSX exporter ignores them.
+   */
+  pivots?: PivotSpec[];
   /**
    * optional workbook-level named ranges. Persisted on
    * the artifact JSON so the XLSX exporter can emit `<definedName>`
