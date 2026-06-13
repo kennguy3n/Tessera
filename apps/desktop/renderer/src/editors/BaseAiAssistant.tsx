@@ -315,6 +315,7 @@ export default function BaseAiAssistant({
     setBusy(true);
     cancelRef.current = false;
     const out = new Map<string, unknown>();
+    let processed = 0;
     try {
       for (let i = 0; i < scope.length; i++) {
         if (cancelRef.current) break;
@@ -328,8 +329,13 @@ export default function BaseAiAssistant({
         if (res.ok) out.set(record.id, res.value);
         // A per-row parse failure is non-fatal — skip that row rather
         // than abort the whole batch.
+        processed = i + 1;
       }
-      setFillProgress({ done: scope.length, total: scope.length });
+      // Report the number of rows actually processed: on a full pass this
+      // equals `scope.length` (100%), but on a between-rows cancel it
+      // reflects how far we got, so the indicator never claims "10/10"
+      // for a batch that was stopped after 3 rows.
+      setFillProgress({ done: processed, total: scope.length });
       if (out.size === 0) {
         throw new Error("No values could be generated for the chosen field.");
       }
@@ -339,7 +345,9 @@ export default function BaseAiAssistant({
       // `run()` after some rows already produced values. Don't throw those
       // away — surface whatever was generated as a preview so the user can
       // still apply the partial result; only show the error when nothing
-      // was produced.
+      // was produced. Pin the indicator to the processed count so it
+      // matches the partial preview rather than the in-flight row.
+      setFillProgress({ done: processed, total: scope.length });
       if (out.size > 0) {
         setFillPreview(out);
       } else {

@@ -195,6 +195,38 @@ describe("BaseAiAssistant", () => {
     expect(map.has("r2")).toBe(false);
   });
 
+  it("shows partial progress (not 100%) after a between-rows cancel", async () => {
+    setup({
+      records: [
+        { id: "r1", Name: "Acme", Notes: "" },
+        { id: "r2", Name: "Beta", Notes: "" },
+        { id: "r3", Name: "Gamma", Notes: "" },
+      ],
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Fill column" }));
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "Notes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    // Row 1's generation is dispatched and in flight.
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(1));
+    // Cancel BEFORE row 1 resolves: sets the cancel flag so the loop
+    // breaks at the top of iteration 2 (a between-rows cancel).
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    // Row 1 still completes normally (its request was already in flight).
+    streamResponse("note one");
+    // Only one row was processed, so the indicator must read "1/3" — not
+    // the misleading "3/3" the post-loop line used to force.
+    await waitFor(() =>
+      expect(screen.getByText("1/3")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("3/3")).toBeNull();
+    // The processed row is still offered as a preview.
+    expect(screen.getByText(/Preview \(1 value\)/)).toBeInTheDocument();
+    // No second generation was ever dispatched.
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
   it("summarizes records into prose", async () => {
     setup();
     fireEvent.click(screen.getByRole("tab", { name: "Summarize" }));
