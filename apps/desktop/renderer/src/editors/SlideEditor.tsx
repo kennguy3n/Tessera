@@ -56,6 +56,7 @@ import {
   applyRegeneratedSlide,
   type RegeneratedSlide,
 } from "./slideAiHelpers";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 import {
   SlideAiActions,
   SlideDeckGenerator,
@@ -231,6 +232,15 @@ export default function SlideEditor({
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
 
+  // Mirror the template-modal open flag into a ref so the always-on
+  // global navigation listener (attached once, below) can suppress
+  // Ctrl+PageUp/Dn while the modal is up without being re-attached on
+  // every toggle.
+  const templatePickerOpenRef = useRef(false);
+  useEffect(() => {
+    templatePickerOpenRef.current = templatePickerOpen;
+  }, [templatePickerOpen]);
+
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
   // "click inside the menu / on the toggle button" (which it must
@@ -242,6 +252,27 @@ export default function SlideEditor({
   const themePickerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const insertPresetRef = useRef<HTMLDivElement | null>(null);
   const insertPresetTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const templatePickerRef = useRef<HTMLDivElement | null>(null);
+
+  // The toolbar popovers (Add-Slide layout menu, AI Deck, theme picker,
+  // insert-preset menu) are mutually exclusive: opening one closes the
+  // others so they can never visually stack or strand keyboard focus in
+  // a popover hidden behind another. Passing `null` closes them all.
+  const openExclusiveMenu = useCallback(
+    (menu: "layout" | "deck" | "restyle" | "theme" | "insert" | null) => {
+      setLayoutMenuOpen(menu === "layout");
+      setDeckGenOpen(menu === "deck");
+      setDeckRestyleOpen(menu === "restyle");
+      setThemePickerOpen(menu === "theme");
+      setInsertPresetOpen(menu === "insert");
+    },
+    [],
+  );
+
+  const closeTemplatePicker = useCallback(
+    () => setTemplatePickerOpen(false),
+    [],
+  );
 
   // Close the layout picker when the user clicks anywhere outside it.
   // We listen on `mousedown` (not `click`) so the dismiss happens
@@ -313,19 +344,11 @@ export default function SlideEditor({
     };
   }, [insertPresetOpen]);
 
-  // Close the template picker modal on Escape via a document-level
-  // listener (the overlay <div> is not focusable by default, so an
-  // inline onKeyDown would only fire after the user clicks inside).
-  useEffect(() => {
-    if (!templatePickerOpen) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setTemplatePickerOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [templatePickerOpen]);
+  // The template picker is a true modal: trap keyboard focus inside it,
+  // close it on Escape, and restore focus to the trigger on close. The
+  // shared hook also handles the deferred initial focus so the first
+  // template card is reachable by keyboard the moment the modal opens.
+  useFocusTrap(templatePickerOpen, templatePickerRef, closeTemplatePicker);
 
   // Global Ctrl+PageUp / Ctrl+PageDown — navigate to the previous /
   // next slide regardless of which control inside the editor has
@@ -353,6 +376,9 @@ export default function SlideEditor({
   useEffect(() => {
     const onNavKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
+      // The template picker is a true modal — don't let slide navigation
+      // mutate the deck behind its backdrop while it's open.
+      if (templatePickerOpenRef.current) return;
       if (event.key === "PageUp") {
         event.preventDefault();
         navigateByRef.current(-1);
@@ -420,6 +446,12 @@ export default function SlideEditor({
   //     `currentToken !== ownToken` mismatch (good, it bails) but the
   //     entry itself would persist forever — same leak the round 7 fix
   //     closed for block deletion, just at the deck level.
+  //   * Every transient overlay (the toolbar popovers, the template
+  //     picker modal, the find panel) is dismissed. They all reference
+  //     the old deck — the find panel's match list indexes into slides
+  //     that no longer exist, and an open popover/modal floating over a
+  //     freshly swapped deck is disorienting — so a hard swap resets the
+  //     editor chrome to a clean state.
   useEffect(() => {
     if (content !== lastSavedRef.current) {
       const parsed = parseSlideContent(content);
@@ -435,9 +467,17 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      openExclusiveMenu(null);
+      setTemplatePickerOpen(false);
+      // Close the find panel *and* clear its query (mirroring the panel's
+      // own close button). A non-empty query would otherwise survive the
+      // swap, re-run `findMatches` against the new deck, and silently jump
+      // `activeIndex` to the first match even though the panel is hidden.
+      setFindPanelOpen(false);
+      setFindQuery("");
       lastSavedRef.current = content;
     }
-  }, [content]);
+  }, [content, openExclusiveMenu]);
 
   const updateSlide = useCallback(
     (index: number, patch: Partial<Slide>) => {
@@ -602,6 +642,11 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      // Clear the find query too — otherwise a stale query re-runs
+      // against the new deck and the jump effect overrides the
+      // setActiveIndex(0) above (same hazard as the restore path).
+      setFindPanelOpen(false);
+      setFindQuery("");
       if (template.suggestedTheme) {
         setThemeId(template.suggestedTheme);
         themeIdRef.current = template.suggestedTheme;
@@ -653,6 +698,10 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      // See applyTemplate: a surviving find query would re-jump the
+      // active slide away from the freshly-anchored slide 0.
+      setFindPanelOpen(false);
+      setFindQuery("");
       debouncedSave(generated, {
         enabled: false,
         source: marpSource,
@@ -1265,7 +1314,7 @@ export default function SlideEditor({
             ref={layoutButtonRef}
             type="button"
             className="btn-sm"
-            onClick={() => setLayoutMenuOpen((open) => !open)}
+            onClick={() => openExclusiveMenu(layoutMenuOpen ? null : "layout")}
             aria-haspopup="menu"
             aria-expanded={layoutMenuOpen}
           >
@@ -1415,10 +1464,7 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckGenOpen ? "active" : ""}`}
-            onClick={() => {
-              setDeckGenOpen((open) => !open);
-              setDeckRestyleOpen(false);
-            }}
+            onClick={() => openExclusiveMenu(deckGenOpen ? null : "deck")}
             aria-label="Generate a deck with AI"
             aria-expanded={deckGenOpen}
             title="Generate a deck from a prompt using the on-device model"
@@ -1428,10 +1474,7 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckRestyleOpen ? "active" : ""}`}
-            onClick={() => {
-              setDeckRestyleOpen((open) => !open);
-              setDeckGenOpen(false);
-            }}
+            onClick={() => openExclusiveMenu(deckRestyleOpen ? null : "restyle")}
             aria-label="Restyle the deck with AI"
             aria-expanded={deckRestyleOpen}
             title="Restyle the current deck with the on-device model"
@@ -1464,7 +1507,9 @@ export default function SlideEditor({
                 ref={themePickerTriggerRef}
                 type="button"
                 className="slide-theme-picker-trigger"
-                onClick={() => setThemePickerOpen((open) => !open)}
+                onClick={() =>
+                  openExclusiveMenu(themePickerOpen ? null : "theme")
+                }
                 aria-haspopup="listbox"
                 aria-expanded={themePickerOpen}
                 aria-label="Deck theme"
@@ -1525,7 +1570,9 @@ export default function SlideEditor({
                 ref={insertPresetTriggerRef}
                 type="button"
                 className="btn-sm"
-                onClick={() => setInsertPresetOpen((open) => !open)}
+                onClick={() =>
+                  openExclusiveMenu(insertPresetOpen ? null : "insert")
+                }
                 aria-haspopup="menu"
                 aria-expanded={insertPresetOpen}
                 title="Quick-insert a pre-built slide card"
@@ -1568,7 +1615,10 @@ export default function SlideEditor({
             <button
               type="button"
               className="btn-sm"
-              onClick={() => setTemplatePickerOpen(true)}
+              onClick={() => {
+                openExclusiveMenu(null);
+                setTemplatePickerOpen(true);
+              }}
               title="Start from a pre-built deck template"
             >
               Templates
@@ -1855,11 +1905,15 @@ export default function SlideEditor({
           onClick={(e) => {
             if (e.target === e.currentTarget) setTemplatePickerOpen(false);
           }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Choose a deck template"
         >
-          <div className="slide-template-picker">
+          <div
+            ref={templatePickerRef}
+            className="slide-template-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose a deck template"
+            tabIndex={-1}
+          >
             <h2>Start from a Template</h2>
             <div className="slide-template-picker-grid">
               {SLIDE_TEMPLATES.map((template) => (
