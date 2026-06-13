@@ -288,6 +288,11 @@ export default function DocumentEditor({
         // configure the standalone one separately so the slash menu
         // can call `setHorizontalRule()` without ambiguity.
         horizontalRule: false,
+        // StarterKit v3 bundles Link (with openOnClick: true). We register
+        // our own Link.configure({ openOnClick: false, autolink: true })
+        // below, so disable StarterKit's copy to avoid a duplicate
+        // registration whose defaults would otherwise shadow ours.
+        link: false,
       }),
       CodeBlockLowlight.configure({
         lowlight,
