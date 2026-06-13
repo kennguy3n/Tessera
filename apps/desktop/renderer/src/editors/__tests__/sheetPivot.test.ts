@@ -184,6 +184,18 @@ describe("shiftPivotForStructuralEdit", () => {
     expect(next.colField).toBeUndefined();
   });
 
+  it("preserves object identity when a col edit changes neither range nor fields", () => {
+    // Inserting far to the right of the range (col 10) touches nothing, so the
+    // exact same spec reference comes back — mirrors remapCharts, enabling
+    // React shallow-equality bail-outs on SheetPivot.
+    const input = spec({ colField: 1 });
+    expect(shiftPivotForStructuralEdit(input, "col", 10, 1)).toBe(input);
+    // A row edit below the range likewise leaves the spec untouched.
+    expect(shiftPivotForStructuralEdit(input, "row", 99, 1)).toBe(input);
+    // But an edit that actually shifts a field returns a fresh object.
+    expect(shiftPivotForStructuralEdit(input, "col", 0, 1)).not.toBe(input);
+  });
+
   it("only shifts the range (not column fields) on a row edit", () => {
     const next = shiftPivotForStructuralEdit(spec({ colField: 1 }), "row", 0, 1);
     expect(next.range).toBe("A2:C6");

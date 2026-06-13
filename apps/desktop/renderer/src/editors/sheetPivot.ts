@@ -137,12 +137,27 @@ export function computePivot(
   if (!rect) return null;
 
   const headerRow = rect.r1;
-  const rowFieldName = headerLabel(textAt, headerRow, spec.rowField);
-  const valueFieldName = headerLabel(textAt, headerRow, spec.valueField);
   const hasColField =
     spec.colField !== undefined &&
     spec.colField >= rect.c1 &&
     spec.colField <= rect.c2;
+
+  // Whether the required fields actually live inside the range. A removed
+  // column leaves the `-1` sentinel here, so checking this up front lets us
+  // skip the header lookups entirely (no `headerLabel(textAt, row, -1)` call)
+  // and makes the "broken pivot → empty result" path explicit.
+  const fieldsInRange =
+    spec.rowField >= rect.c1 &&
+    spec.rowField <= rect.c2 &&
+    spec.valueField >= rect.c1 &&
+    spec.valueField <= rect.c2;
+
+  const rowFieldName = fieldsInRange
+    ? headerLabel(textAt, headerRow, spec.rowField)
+    : "";
+  const valueFieldName = fieldsInRange
+    ? headerLabel(textAt, headerRow, spec.valueField)
+    : "";
   const colFieldName = hasColField
     ? headerLabel(textAt, headerRow, spec.colField as number)
     : undefined;
@@ -160,12 +175,7 @@ export function computePivot(
   };
   if (colFieldName !== undefined) base.colFieldName = colFieldName;
 
-  // A field index outside the range, or no data rows, → empty result.
-  const fieldsInRange =
-    spec.rowField >= rect.c1 &&
-    spec.rowField <= rect.c2 &&
-    spec.valueField >= rect.c1 &&
-    spec.valueField <= rect.c2;
+  // No usable fields, or no data rows below the header → empty-but-valid result.
   if (!fieldsInRange || headerRow + 1 > rect.r2) return base;
 
   const rowIndex = new Map<string, number>();
@@ -279,16 +289,29 @@ export function shiftPivotForStructuralEdit(
     if (col === at) return -1; // this column was removed
     return col > at ? col - 1 : col;
   };
-  const next: PivotSpec = {
-    ...spec,
-    range,
-    rowField: shiftCol(spec.rowField),
-    valueField: shiftCol(spec.valueField),
-  };
-  if (spec.colField !== undefined) {
-    const c = shiftCol(spec.colField);
-    if (c < 0) delete next.colField;
-    else next.colField = c;
+  const rowField = shiftCol(spec.rowField);
+  const valueField = shiftCol(spec.valueField);
+  const colField =
+    spec.colField === undefined ? undefined : shiftCol(spec.colField);
+  // Preserve reference identity when the edit touched neither the range nor any
+  // field — mirrors `remapCharts`, so `remapPivots` can return the original
+  // array/objects and React's shallow-equality bail-outs on `SheetPivot` hold.
+  const colUnchanged =
+    spec.colField === undefined
+      ? true
+      : colField !== undefined && colField >= 0 && colField === spec.colField;
+  if (
+    range === spec.range &&
+    rowField === spec.rowField &&
+    valueField === spec.valueField &&
+    colUnchanged
+  ) {
+    return spec;
+  }
+  const next: PivotSpec = { ...spec, range, rowField, valueField };
+  if (colField !== undefined) {
+    if (colField < 0) delete next.colField;
+    else next.colField = colField;
   }
   return next;
 }

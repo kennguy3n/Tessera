@@ -97,20 +97,11 @@ import {
 export type { SheetContent } from "./sheetEditorTypes";
 
 /**
- * Convert a zero-based column index to the A1-style column label
- * shown in the header (and in the formula bar's cell-address
- * box). Pure function with no React deps — exported solely for the
- * formula-bar code path; not used outside this file.
+ * A1-style column label for the header, formula bar, and selection
+ * reference. Aliases the canonical {@link columnLetter} (imported from
+ * `./sheetCharts`) so the A→Z→AA algorithm lives in exactly one place.
  */
-function columnLabel(index: number): string {
-  let label = "";
-  let n = index;
-  while (n >= 0) {
-    label = String.fromCharCode(65 + (n % 26)) + label;
-    n = Math.floor(n / 26) - 1;
-  }
-  return label;
-}
+const columnLabel = columnLetter;
 
 interface SheetEditorProps {
   content: string;
