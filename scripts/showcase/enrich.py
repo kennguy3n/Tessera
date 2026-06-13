@@ -138,9 +138,27 @@ def enrich_document(html: str, slug: str) -> str:
     if toggle_idx == -1 and len(sections) >= 3:
         toggle_idx = len(sections) - 1
 
-    out.extend(preamble)
-
     callout_done = False
+
+    def _emit(blocks: list[str]) -> None:
+        """Emit blocks, promoting the first paragraph encountered (in document
+        order) to the callout. Scanning preamble + every non-toggle section
+        means the callout lands on whichever paragraph comes first, so the
+        guarantee holds for any document that contains at least one paragraph
+        — not only ones whose first <h2> section opens with a <p>."""
+        nonlocal callout_done
+        for b in blocks:
+            if not callout_done and _block_tag(b) == "p":
+                out.append(
+                    f'<div data-type="callout" data-variant="{variant}" '
+                    f'data-icon="{icon}">{b}</div>'
+                )
+                callout_done = True
+            else:
+                out.append(b)
+
+    _emit(preamble)
+
     for idx, sec in enumerate(sections):
         if idx == toggle_idx:
             summary = _heading_text(sec["heading"])
@@ -153,15 +171,7 @@ def enrich_document(html: str, slug: str) -> str:
             )
             continue
         out.append(sec["heading"])
-        for b in sec["body"]:
-            if not callout_done and _block_tag(b) == "p":
-                out.append(
-                    f'<div data-type="callout" data-variant="{variant}" '
-                    f'data-icon="{icon}">{b}</div>'
-                )
-                callout_done = True
-            else:
-                out.append(b)
+        _emit(sec["body"])
 
     return "\n".join(out)
 
@@ -364,6 +374,12 @@ def _enrich_incident_tracker(data: dict) -> dict:
     # Role/email are derived structural metadata for the linked table; roles
     # follow the privacy-office org (the report itself names Maya as Privacy
     # Officer and assignees as the incident owners).
+    #
+    # Ordering note: the back-link from owner→incidents (`owned`, below) is
+    # built here while `r["Owner"]` is still the original string name, BEFORE
+    # the field is rewritten to a linked-record id array further down. Keep
+    # this loop ahead of that rewrite — comparing against the id array would
+    # never match the name and the link would come back empty.
     owners: list[dict] = []
     owner_id_by_name: dict[str, str] = {}
     for i, name in enumerate(owner_names):
@@ -459,6 +475,9 @@ def _enrich_crm(data: dict) -> dict:
             region_of[owner] = str(r.get("Region", ""))
     reps: list[dict] = []
     rep_id_by_name: dict[str, str] = {}
+    # Ordering note (same as the incident tracker): build the rep→accounts
+    # back-link while `r["Owner"]` is still the rep's name, BEFORE the rewrite
+    # to a linked-record id array below.
     for i, name in enumerate(rep_names):
         rid = f"rec-rep-{i}"
         rep_id_by_name[name] = rid
@@ -488,6 +507,11 @@ def _enrich_crm(data: dict) -> dict:
         r["Owner"] = [rep_id_by_name[owner]] if owner else []
         health = str(r.get("Health", "")).strip().lower()
         r["Health Score"] = {"green": 5, "yellow": 3, "red": 1}.get(health, 3)
+        # A new-logo prospect with no installed base carries a "no current ARR"
+        # sentinel; normalise it to a blank cell so neither the grid nor the
+        # Pipeline ARR rollup renders the literal string "None".
+        if str(r.get("ARR($)", "")).strip().lower() in ("none", "n/a"):
+            r["ARR($)"] = ""
 
     # Idempotency guard: only seed the comments/activity timeline on the lead
     # account when no record already carries one (mirrors the incident tracker
