@@ -327,9 +327,18 @@ function scrubLinksToTable(
 }
 
 function stripLinkedTableId(field: BaseField): BaseField {
-  if (field.linkedTableId === undefined) return field;
+  if (field.linkedTableId === undefined && field.linkedDisplayField === undefined)
+    return field;
   const next = { ...field };
   delete next.linkedTableId;
+  // `linkedDisplayField` named a column that lived in the now-deleted
+  // target table, so it must go too. Otherwise the link silently
+  // degrades to a same-table link still carrying a pointer at a
+  // nonexistent (or coincidentally same-named) column — which would
+  // render the wrong value the moment the user re-links records.
+  // Clearing it returns the chip to its safe id-slice default until the
+  // link is reconfigured.
+  delete next.linkedDisplayField;
   return next;
 }
 

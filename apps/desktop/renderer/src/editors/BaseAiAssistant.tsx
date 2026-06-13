@@ -12,6 +12,7 @@ import {
   type AiSchemaSuggestion,
 } from "./baseAiHelpers";
 import { evaluateBaseFormula } from "./baseFormulaEngine";
+import { isComputedFieldType } from "./baseEditorHelpers";
 import {
   useActiveGeneration,
   notifyGenerationStarted,
@@ -298,7 +299,16 @@ export default function BaseAiAssistant({
       return;
     }
     const sources = fields.filter(
-      (f) => f.name !== target.name && f.type !== "attachment",
+      (f) =>
+        f.name !== target.name &&
+        f.type !== "attachment" &&
+        // Computed types (formula / rollup / lookup / auto_number /
+        // created_time / modified_time) never store a cell value — their
+        // `record[name]` is always null, so `recordContext` would skip
+        // them anyway. Excluding them up front keeps the per-row prompt
+        // free of dead field names and avoids iterating them for every
+        // record in the batch.
+        !isComputedFieldType(f.type),
     );
     const scopeAll =
       selectedIds.size > 0

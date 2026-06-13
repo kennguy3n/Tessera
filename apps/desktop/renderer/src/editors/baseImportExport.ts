@@ -663,7 +663,12 @@ export function parseCsvToBase(
 
   const slots: HeaderSlot[] = headers.map((header, idx) => {
     const trimmed = header.trim();
-    if (trimmed === "id") return { kind: "skip" };
+    // Blank headers get an auto-name (see above); everything else that
+    // collides with a reserved record key (`id`, `__created`,
+    // `__modified`, `__comments`) is skipped as a column — `id`'s VALUE
+    // is still routed to `record.id` via `idColumnIndex` below. A
+    // dedicated `trimmed === "id"` guard used to live here, but it's
+    // redundant now that `RESERVED_FIELD_NAMES` covers `id`.
     if (trimmed === "") {
       return { kind: "blank", placeholderName: `Column ${idx + 1}` };
     }

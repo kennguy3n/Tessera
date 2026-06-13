@@ -218,6 +218,8 @@ describe("removeTable — table-aware link cleanup", () => {
       name: "Tasks",
       type: "linked_record",
       linkedTableId: "t2",
+      // Display the target table's "Title" column on each chip.
+      linkedDisplayField: "Title",
     };
     const doc: BaseDocument = {
       tables: [
@@ -243,6 +245,11 @@ describe("removeTable — table-aware link cleanup", () => {
     // linkedTableId pointer cleared, link arrays emptied
     expect(link?.linkedTableId).toBeUndefined();
     expect(people.records[0].Tasks).toEqual([]);
+    // The display-field pointer named a column in the now-deleted target
+    // table, so it must be cleared too — otherwise the degraded
+    // same-table link would carry a stale pointer that renders the wrong
+    // column (or a nonexistent one) the moment records are re-linked.
+    expect(link?.linkedDisplayField).toBeUndefined();
   });
 
   it("resets rollup/lookup targets that followed a scrubbed cross-table link", () => {
