@@ -14,6 +14,7 @@ import {
   parseDocumentContent,
   escapeHtml,
   countDocText,
+  customTypographyValue,
   SLASH_COMMANDS,
   filterSlashCommands,
   findAllMatches,
@@ -352,6 +353,35 @@ describe("fileToDataUrl — inline image embed", () => {
   });
 });
 
+describe("customTypographyValue — typography <select> custom-value fallback", () => {
+  const SIZES = ["", "12px", "14px", "16px"];
+
+  it("returns null for an empty value (the Default option is selected)", () => {
+    expect(customTypographyValue(SIZES, "")).toBeNull();
+  });
+
+  it("returns null when the value matches a preset (its option is selected)", () => {
+    expect(customTypographyValue(SIZES, "14px")).toBeNull();
+  });
+
+  it("returns the raw value when it is off-preset (e.g. pasted 15px)", () => {
+    // Without this the controlled <select> would render blank and hide the
+    // fact that the selection actually carries a 15px font size.
+    expect(customTypographyValue(SIZES, "15px")).toBe("15px");
+  });
+
+  it("treats a pasted font-family stack with no preset as custom", () => {
+    const families = ["", "Arial, Helvetica, sans-serif"];
+    expect(
+      customTypographyValue(families, "'Helvetica Neue', sans-serif"),
+    ).toBe("'Helvetica Neue', sans-serif");
+  });
+
+  it("is exact-match (no whitespace/case normalisation) so it never masks a near-miss preset", () => {
+    expect(customTypographyValue(SIZES, " 16px")).toBe(" 16px");
+  });
+});
+
 describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered extensions", () => {
   // Devin Review PR #82 round 7 ANALYSIS_…_0007 flagged that this
   // whitelist (used by `parseDocumentContent` to distinguish
@@ -418,7 +448,8 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
       ["i", "@tiptap/extension-italic (parse fallback)"],
       ["s", "@tiptap/extension-strike (canonical render)"],
       ["del", "@tiptap/extension-strike (parse fallback)"],
-      ["u", "@tiptap/extension-underline (reserved for future use)"],
+      ["u", "@tiptap/extension-underline (StarterKit v3 default + toolbar)"],
+      ["mark", "@tiptap/extension-highlight (serialises to <mark>)"],
       ["a", "@tiptap/extension-link"],
       ["img", "@tiptap/extension-image"],
       // Generic wrappers used by attribute-bearing nodes (e.g. data-

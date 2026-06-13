@@ -94,6 +94,7 @@ import {
 import {
   parseDocumentContent,
   countDocText,
+  customTypographyValue,
   fileToDataUrl,
   type SlashCommand,
 } from "./documentEditorHelpers";
@@ -739,6 +740,25 @@ export default function DocumentEditor({
   );
 }
 
+// A live mark value (font family / size / line height read off the selection)
+// can be something the user pasted from another app — e.g. `15px` or
+// `'Helvetica Neue', sans-serif` — that isn't one of our presets. A controlled
+// <select> with no matching <option> renders blank, misrepresenting the current
+// formatting, so we append a display-only "custom" option that mirrors the live
+// value. Picking a preset afterwards still applies cleanly.
+function customTypographyOption(
+  options: ReadonlyArray<{ value: string }>,
+  current: string,
+  label?: (value: string) => string,
+) {
+  const custom = customTypographyValue(
+    options.map((o) => o.value),
+    current,
+  );
+  if (custom === null) return null;
+  return <option value={custom}>{label ? label(custom) : custom}</option>;
+}
+
 // Typography cluster: font family / size, text + highlight colour, horizontal
 // alignment, and line height. Reads live marks off the current selection so the
 // controls reflect the caret position; all writes go through editor commands so
@@ -774,6 +794,7 @@ function TypographyControls({ editor }: { editor: Editor }) {
             {o.label}
           </option>
         ))}
+        {customTypographyOption(FONT_FAMILY_OPTIONS, currentFont, () => "Custom")}
       </select>
       <select
         className="toolbar-select toolbar-select-narrow"
@@ -792,6 +813,7 @@ function TypographyControls({ editor }: { editor: Editor }) {
             {o.label}
           </option>
         ))}
+        {customTypographyOption(FONT_SIZE_OPTIONS, currentSize)}
       </select>
       <label
         className={currentColor ? "toolbar-color active" : "toolbar-color"}
@@ -862,6 +884,11 @@ function TypographyControls({ editor }: { editor: Editor }) {
             {o.label === "Default" ? "↕ Default" : `↕ ${o.label}`}
           </option>
         ))}
+        {customTypographyOption(
+          LINE_HEIGHT_OPTIONS,
+          currentLineHeight,
+          (v) => `↕ ${v}`,
+        )}
       </select>
     </div>
   );
@@ -921,6 +948,9 @@ function Toolbar({
       >
         <ItalicIcon size={16} aria-hidden="true" />
       </button>
+      {/* Underline isn't imported explicitly: TipTap v3's StarterKit bundles
+          and registers @tiptap/extension-underline by default (unlike v2), so
+          toggleUnderline()/isActive("underline") are available without it. */}
       <button
         type="button"
         className={editor.isActive("underline") ? "toolbar-btn active" : "toolbar-btn"}
