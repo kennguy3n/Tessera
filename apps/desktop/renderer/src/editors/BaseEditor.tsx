@@ -164,8 +164,13 @@ export default function BaseEditor({
   // future "delete" action can call back into `removeField`.
   const [showManageFields, setShowManageFields] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
-  // Collapsed grid groups, tracked by group key so collapse state
-  // survives re-grouping. Only consulted when `gridGroupField` is set.
+  // Collapsed grid groups, tracked by group key. Only consulted when
+  // `gridGroupField` is set. Keys are group values from the CURRENT
+  // group-by field, so this is cleared whenever the group-by field
+  // changes or the active table switches (see `resetViewStateForTable`
+  // and the group-by `<select>` handler) — otherwise a key like "Lead"
+  // from the old field could leave an unrelated same-named group in the
+  // new field unexpectedly collapsed.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -284,6 +289,7 @@ export default function BaseEditor({
     setFilters({});
     setSelectedIds(new Set());
     setExpandedCell(null);
+    setCollapsedGroups(new Set());
     setViewConfig(defaultViewConfig(table.fields));
   }, []);
 
@@ -1532,12 +1538,20 @@ export default function BaseEditor({
             className="input"
             aria-label="Group by"
             value={viewConfig.gridGroupField ?? ""}
-            onChange={(e) =>
+            onChange={(e) => {
+              const next = e.target.value === "" ? null : e.target.value;
+              // Group keys are scoped to the previous field's values, so
+              // discard the old collapse set when the field changes (and
+              // when grouping is turned off) to avoid stale, surprising
+              // collapse state on a different field.
+              if (next !== viewConfig.gridGroupField) {
+                setCollapsedGroups(new Set());
+              }
               setViewConfig((prev) => ({
                 ...prev,
-                gridGroupField: e.target.value === "" ? null : e.target.value,
-              }))
-            }
+                gridGroupField: next,
+              }));
+            }}
           >
             <option value="">None</option>
             {data.fields.map((f) => (

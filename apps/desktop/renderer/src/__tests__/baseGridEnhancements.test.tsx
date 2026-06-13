@@ -62,6 +62,26 @@ describe("grid grouping", () => {
     // Other groups still show their rows.
     expect(screen.getByDisplayValue("Globex")).toBeInTheDocument();
   });
+
+  it("clears collapsed-group state when the group-by field changes", () => {
+    renderEditor(STAGED_BASE);
+    const groupBy = screen.getByLabelText("Group by");
+    fireEvent.change(groupBy, { target: { value: "Stage" } });
+
+    // Collapse the Lead group so its rows are hidden.
+    fireEvent.click(
+      within(screen.getByTestId("base-group-Lead")).getByRole("button"),
+    );
+    expect(screen.queryByDisplayValue("Acme")).not.toBeInTheDocument();
+
+    // Turn grouping off, then re-group by the same field. The stale
+    // "Lead" collapse key must NOT carry over — its rows are visible.
+    fireEvent.change(groupBy, { target: { value: "" } });
+    fireEvent.change(groupBy, { target: { value: "Stage" } });
+    expect(screen.getByTestId("base-group-Lead")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Acme")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Initech")).toBeInTheDocument();
+  });
 });
 
 describe("grid row height", () => {

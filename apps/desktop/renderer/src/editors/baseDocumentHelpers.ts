@@ -258,10 +258,14 @@ export function removeTable(doc: BaseDocument, tableId: string): BaseDocument {
     doc.activeTableId === tableId
       ? (doc.tables[idx - 1] ?? remaining[0]).id
       : doc.activeTableId;
-  // `doc.tables[idx - 1]` is `undefined` when idx===0, so the fallback
-  // resolves to `remaining[0]` (which excludes the removed table by
-  // construction). This guard is purely defensive against an
-  // activeTableId that somehow points at a scrubbed table.
+  // When the removed table was first (idx===0), `doc.tables[idx - 1]` is
+  // `doc.tables[-1]` === `undefined`, so the `?? remaining[0]` fallback
+  // selects the new first table; `remaining` already excludes the removed
+  // table, so the chosen id is always a surviving one. `scrubLinksToTable`
+  // preserves table ids, so a non-removed `activeTableId` still resolves.
+  // The `safeActive` check is therefore purely defensive and never trips
+  // in practice — it only guards against a malformed input doc whose
+  // `activeTableId` already pointed at a non-existent table.
   const safeActive = scrubbed.some((t) => t.id === activeTableId)
     ? activeTableId
     : scrubbed[0].id;

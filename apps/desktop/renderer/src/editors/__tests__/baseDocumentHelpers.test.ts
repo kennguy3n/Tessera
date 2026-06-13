@@ -361,6 +361,22 @@ describe("removeTable — table-aware link cleanup", () => {
     expect(next.tables.some((t) => t.id === tasksId)).toBe(false);
     expect(next.tables.some((t) => t.id === next.activeTableId)).toBe(true);
   });
+
+  it("falls back to a surviving table when the active FIRST table (idx===0) is removed", () => {
+    // Build a two-table doc and make the first table active, exercising
+    // the `doc.tables[idx - 1] ?? remaining[0]` branch where idx===0 and
+    // `doc.tables[-1]` is undefined.
+    const base = addTable(singleTableDocument(legacy, "People"), "Tasks");
+    const firstId = base.tables[0].id;
+    const doc = setActiveTable(base, firstId);
+    expect(doc.activeTableId).toBe(firstId);
+    const next = removeTable(doc, firstId);
+    expect(next.tables.some((t) => t.id === firstId)).toBe(false);
+    // The surviving table is chosen (never the removed one), and it is
+    // always a real, present table.
+    expect(next.activeTableId).toBe(next.tables[0].id);
+    expect(next.tables.some((t) => t.id === next.activeTableId)).toBe(true);
+  });
 });
 
 describe("linkTargetRecords / linkTargetFields", () => {
