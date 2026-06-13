@@ -107,6 +107,17 @@ describe("shiftRangeForStructuralEdit", () => {
     expect(shiftRangeForStructuralEdit("B1:B3", "col", 1, -1)).toBe("#REF!");
   });
 
+  it("shrinks from the start when the range's first column is removed", () => {
+    // lo === at with hi > at: the next column slides into slot `at`, so
+    // the range keeps its left edge and loses one column.
+    expect(shiftRangeForStructuralEdit("A1:C3", "col", 0, -1)).toBe("A1:B3");
+  });
+
+  it("shrinks from the end when the range's last column is removed", () => {
+    // hi === at with lo < at: the right edge drops to the previous column.
+    expect(shiftRangeForStructuralEdit("A1:C3", "col", 2, -1)).toBe("A1:B3");
+  });
+
   it("applies the same rules on the row axis", () => {
     expect(shiftRangeForStructuralEdit("A2:C2", "row", 0, 1)).toBe("A3:C3");
     expect(shiftRangeForStructuralEdit("A1:C5", "row", 2, -1)).toBe("A1:C4");

@@ -120,11 +120,21 @@ export function shiftRangeForStructuralEdit(
   let lo = axis === "col" ? rect.c1 : rect.r1;
   let hi = axis === "col" ? rect.c2 : rect.r2;
   if (delta === -1) {
-    if (lo === at && hi === at) return "#REF!";
-    if (lo === at) lo = at + 1; // first surviving line
-    if (hi === at) hi = at - 1; // last surviving line
-    if (lo > at) lo -= 1;
-    if (hi > at) hi -= 1;
+    // Remove line `at`: every line after it shifts down by one and the
+    // removed line itself disappears. Each endpoint is recomputed
+    // independently from the originals (no in-place mutation), so the
+    // result never depends on statement order:
+    //   - a line strictly after `at` moves down one (`x - 1`),
+    //   - a line before `at` is untouched,
+    //   - `lo === at` keeps `lo` (the next line slides into slot `at`),
+    //   - `hi === at` drops `hi` to `at - 1` (the previous line).
+    // When the surviving start passes the surviving end the range's only
+    // line on this axis is gone, so it collapses to `#REF!`.
+    const newLo = lo > at ? lo - 1 : lo;
+    const newHi = hi >= at ? hi - 1 : hi;
+    if (newLo > newHi) return "#REF!";
+    lo = newLo;
+    hi = newHi;
   } else {
     if (lo >= at) lo += 1;
     if (hi >= at) hi += 1;
