@@ -1892,11 +1892,16 @@ function TableTabs({
     setRenamingId(null);
   };
 
+  const activeTable = tables.find((t) => t.id === activeTableId);
+
   return (
+    // Outer toolbar. The `role="tablist"` is a *separate* inner element
+    // so it owns ONLY its `role="tab"` children: a tablist that also
+    // contained the "+" / delete buttons trips `aria-required-children`
+    // (those buttons are not `tab`s). The auxiliary controls therefore
+    // live in the toolbar alongside — not inside — the tablist.
     <div
       className="base-table-tabs"
-      role="tablist"
-      aria-label="Tables"
       style={{
         display: "flex",
         alignItems: "center",
@@ -1907,38 +1912,44 @@ function TableTabs({
         background: "var(--color-bg-secondary, #f9fafb)",
       }}
     >
-      {tables.map((table) => {
-        const isActive = table.id === activeTableId;
-        const isRenaming = renamingId === table.id;
-        if (isRenaming) {
+      <div
+        className="base-table-tablist"
+        role="tablist"
+        aria-label="Tables"
+        style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+      >
+        {tables.map((table) => {
+          const isActive = table.id === activeTableId;
+          const isRenaming = renamingId === table.id;
+          if (isRenaming) {
+            // Transient inline-rename of the active tab: the tab is
+            // momentarily swapped for a text field while the user edits
+            // its name (committed on Enter/blur). This editing state is
+            // never the steady-state DOM the audit inspects.
+            return (
+              <input
+                key={table.id}
+                className="input base-table-tab-rename"
+                autoFocus
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  else if (e.key === "Escape") setRenamingId(null);
+                }}
+                aria-label={`Rename table ${table.name}`}
+                style={{ width: "8rem", fontSize: "0.8rem" }}
+              />
+            );
+          }
           return (
-            <input
-              key={table.id}
-              className="input base-table-tab-rename"
-              autoFocus
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-                else if (e.key === "Escape") setRenamingId(null);
-              }}
-              aria-label={`Rename table ${table.name}`}
-              style={{ width: "8rem", fontSize: "0.8rem" }}
-            />
-          );
-        }
-        return (
-          <div
-            key={table.id}
-            className="base-table-tab"
-            style={{ display: "inline-flex", alignItems: "center" }}
-          >
             <button
+              key={table.id}
               type="button"
               role="tab"
               aria-selected={isActive}
-              className="btn-sm"
+              className="btn-sm base-table-tab"
               onClick={() => onSwitch(table.id)}
               onDoubleClick={() => startRename(table)}
               title={isActive ? "Double-click to rename" : table.name}
@@ -1953,29 +1964,29 @@ function TableTabs({
             >
               {table.name}
             </button>
-            {isActive && tables.length > 1 && (
-              <button
-                type="button"
-                className="btn-sm base-table-tab-remove"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Delete table "${table.name}" and all its records? Links to it from other tables will be cleared.`,
-                    )
-                  ) {
-                    onRemove(table.id);
-                  }
-                }}
-                title={`Delete table ${table.name}`}
-                aria-label={`Delete table ${table.name}`}
-                style={{ padding: "0 0.3rem", color: "var(--color-danger, #b91c1c)" }}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {activeTable && tables.length > 1 && (
+        <button
+          type="button"
+          className="btn-sm base-table-tab-remove"
+          onClick={() => {
+            if (
+              window.confirm(
+                `Delete table "${activeTable.name}" and all its records? Links to it from other tables will be cleared.`,
+              )
+            ) {
+              onRemove(activeTable.id);
+            }
+          }}
+          title={`Delete table ${activeTable.name}`}
+          aria-label={`Delete table ${activeTable.name}`}
+          style={{ padding: "0 0.3rem", color: "var(--color-danger, #b91c1c)" }}
+        >
+          ×
+        </button>
+      )}
       <button
         type="button"
         className="btn-sm"

@@ -222,6 +222,17 @@ export default function DocumentEditor({
         onStateChange: (state) => setMentionTrigger(state),
       }),
     ],
+    // TipTap renders the editable surface as a `role="textbox"` region;
+    // without a name it trips `aria-input-field-name`. Give the body a
+    // stable accessible name so screen readers announce what the
+    // contenteditable is for. (The visible page/editor header is a
+    // separate element, so an explicit `aria-label` is the reliable
+    // name source here.)
+    editorProps: {
+      attributes: {
+        "aria-label": "Document body",
+      },
+    },
     content: parseDocumentContent(content),
     onCreate: ({ editor }) => {
       // Sync lastSavedRef to the editor's parsed HTML so the first real
