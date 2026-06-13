@@ -318,6 +318,35 @@ describe("SlideEditor accessibility", () => {
     expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
   });
 
+  it("clears the find query when a template replaces the deck", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+
+      // Open Find with a query that matches nothing in the current deck.
+      fireEvent.click(screen.getByRole("button", { name: "Find in slides" }));
+      fireEvent.change(screen.getByLabelText("Find query"), {
+        target: { value: "needle" },
+      });
+
+      // Apply the first template (replaces the whole deck, anchors to
+      // slide 0). The find query must be cleared so it can't re-run
+      // against the new deck and jump the active slide.
+      fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+      const dialog = screen.getByRole("dialog", {
+        name: "Choose a deck template",
+      });
+      act(() => {
+        vi.runAllTimers();
+      });
+      fireEvent.click(within(dialog).getAllByRole("button")[0]);
+
+      expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("suppresses Ctrl+PageUp/Down slide navigation while the template modal is open", () => {
     render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
     expect(

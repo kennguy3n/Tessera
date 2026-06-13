@@ -632,6 +632,11 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      // Clear the find query too — otherwise a stale query re-runs
+      // against the new deck and the jump effect overrides the
+      // setActiveIndex(0) above (same hazard as the restore path).
+      setFindPanelOpen(false);
+      setFindQuery("");
       if (template.suggestedTheme) {
         setThemeId(template.suggestedTheme);
         themeIdRef.current = template.suggestedTheme;
@@ -682,6 +687,10 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      // See applyTemplate: a surviving find query would re-jump the
+      // active slide away from the freshly-anchored slide 0.
+      setFindPanelOpen(false);
+      setFindQuery("");
       debouncedSave(generated, {
         enabled: false,
         source: marpSource,
@@ -1818,13 +1827,13 @@ export default function SlideEditor({
           onClick={(e) => {
             if (e.target === e.currentTarget) setTemplatePickerOpen(false);
           }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Choose a deck template"
         >
           <div
             ref={templatePickerRef}
             className="slide-template-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose a deck template"
             tabIndex={-1}
           >
             <h2>Start from a Template</h2>
