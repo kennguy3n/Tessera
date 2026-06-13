@@ -346,6 +346,17 @@ describe("depreciation — SLN / SYD / DB / DDB", () => {
     );
   });
 
+  it("DB rejects period = life + 1 with a full first year (month = 12) as #NUM!", () => {
+    // With month defaulting to 12 the schedule ends at `life` — there is no
+    // stub period. Asking for period `life + 1` is out of range, and the stub
+    // formula would evaluate `(12 - 12) / 12 === 0` and silently return 0.
+    // Excel returns #NUM!, so the full-year case must surface the error.
+    expect(code(evalFormula("=DB(1000000, 100000, 6, 7)"))).toBe("#NUM!");
+    expect(code(evalFormula("=DB(1000000, 100000, 6, 7, 12)"))).toBe("#NUM!");
+    // The stub stays reachable when the first year is partial (month < 12).
+    expect(numberValue("=DB(1000000, 100000, 6, 7, 7)")).toBeGreaterThan(0);
+  });
+
   it("DDB matches the Excel double-declining example", () => {
     expect(numberValue("=DDB(2400, 300, 10, 1)")).toBe(480);
     expect(numberValue("=DDB(2400, 300, 10, 2)")).toBe(384);

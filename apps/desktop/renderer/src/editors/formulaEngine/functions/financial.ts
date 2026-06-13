@@ -646,8 +646,14 @@ const DB: FunctionImpl = (args, ctx) => {
     accumulated += dep;
   }
   if (period <= lastFull) return dep;
-  // Final stub period (only present when month < 12).
-  if (period === life + 1) {
+  // Final stub period — only exists when the asset was placed in service
+  // partway through year one (`month < 12`), which pushes the last fraction of
+  // depreciation into period `life + 1`. With a full first year (`month === 12`)
+  // the schedule ends at `life`, so `period === life + 1` is out of range. The
+  // stub formula would otherwise evaluate `(12 - 12) / 12 === 0` and silently
+  // return 0 for that out-of-range period; Excel returns `#NUM!`, so gate the
+  // stub on `month < 12` and let the full-year case fall through to the error.
+  if (period === life + 1 && month < 12) {
     return ((cost - accumulated) * rate * (12 - month)) / 12;
   }
   return makeError("#NUM!", "DB: period exceeds the depreciation schedule");
