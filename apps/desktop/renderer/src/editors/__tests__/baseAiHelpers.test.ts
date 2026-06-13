@@ -71,6 +71,21 @@ describe("extractJson", () => {
     expect(extractJson("no json here")).toBeNull();
     expect(extractJson("{ unbalanced")).toBeNull();
   });
+
+  it("skips a non-JSON balanced candidate and parses a later one", () => {
+    // The model emitted prose with braces ("{ like this }") before the
+    // real payload. The first balanced slice fails JSON.parse, so the
+    // scanner must resume and find the actual object.
+    const out = extractJson(
+      'Here is the schema { like this } now the JSON: {"tableName":"Tasks"}',
+    );
+    expect(out).toEqual({ tableName: "Tasks" });
+  });
+
+  it("skips a malformed leading object and parses a trailing array", () => {
+    const out = extractJson("{nope not json} then [1,2,3]");
+    expect(out).toEqual([1, 2, 3]);
+  });
 });
 
 describe("buildSchemaPrompt", () => {

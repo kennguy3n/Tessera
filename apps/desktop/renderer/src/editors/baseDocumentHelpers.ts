@@ -272,6 +272,15 @@ export function setActiveTable(
 /**
  * Clear `linked_record` fields in `table` that point at `deletedTableId`:
  * unset their `linkedTableId` and empty their per-record link arrays.
+ *
+ * Also resets any `rollup` / `lookup` field that *follows* one of those
+ * scrubbed links: its `targetField` named a column that lived in the
+ * now-deleted table, so we clear `targetField` to return the field to
+ * its unconfigured "—" state. (The `linkedField` reference survives —
+ * the link itself still exists, silently degrading to a same-table
+ * link — so only the dangling target column is stripped, prompting the
+ * user to repoint it rather than aggregating a phantom column.)
+ *
  * Returns the same reference when nothing referenced the table.
  */
 function scrubLinksToTable(
@@ -283,9 +292,18 @@ function scrubLinksToTable(
   );
   if (affected.length === 0) return table;
   const affectedNames = new Set(affected.map((f) => f.name));
-  const fields = table.fields.map((f) =>
-    affectedNames.has(f.name) ? stripLinkedTableId(f) : f,
-  );
+  const fields = table.fields.map((f) => {
+    if (affectedNames.has(f.name)) return stripLinkedTableId(f);
+    if (
+      (f.type === "rollup" || f.type === "lookup") &&
+      f.linkedField !== undefined &&
+      affectedNames.has(f.linkedField) &&
+      f.targetField !== undefined
+    ) {
+      return stripTargetField(f);
+    }
+    return f;
+  });
   const records: BaseRecord[] = table.records.map((r) => {
     let next: BaseRecord | null = null;
     for (const name of affectedNames) {
@@ -303,6 +321,13 @@ function stripLinkedTableId(field: BaseField): BaseField {
   if (field.linkedTableId === undefined) return field;
   const next = { ...field };
   delete next.linkedTableId;
+  return next;
+}
+
+function stripTargetField(field: BaseField): BaseField {
+  if (field.targetField === undefined) return field;
+  const next = { ...field };
+  delete next.targetField;
   return next;
 }
 

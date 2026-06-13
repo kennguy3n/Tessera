@@ -91,7 +91,21 @@ function useModelRunner() {
         run.resolve({ text });
       }
     });
-    return unsub;
+    return () => {
+      unsub();
+      // If the assistant unmounts mid-generation the token listener is
+      // gone, so the in-flight promise would otherwise never settle —
+      // its `await` (and the `finally` that clears busy state / would
+      // release any future resource) would hang forever. Reject it so
+      // the awaiting handler unwinds cleanly. React drops the resulting
+      // state updates on the unmounted tree, so this is side-effect-free
+      // beyond settling the promise.
+      const run = runRef.current;
+      if (run) {
+        runRef.current = null;
+        run.reject(new Error("Generation aborted — the assistant was closed."));
+      }
+    };
   }, []);
 
   return useCallback((prompt: string, maxTokens?: number): Promise<RunHandle> => {

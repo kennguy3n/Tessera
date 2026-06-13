@@ -211,6 +211,107 @@ describe("removeTable — table-aware link cleanup", () => {
     expect(people.records[0].Tasks).toEqual([]);
   });
 
+  it("resets rollup/lookup targets that followed a scrubbed cross-table link", () => {
+    // People links to Tasks, and has a rollup (sum of Tasks.Hours) plus
+    // a lookup (Tasks.Title) that BOTH traverse the link. Deleting Tasks
+    // must strip the dangling `targetField` so neither field aggregates
+    // a phantom column once the link degrades to same-table.
+    const peopleLink: BaseField = {
+      name: "Tasks",
+      type: "linked_record",
+      linkedTableId: "t2",
+    };
+    const rollup: BaseField = {
+      name: "Total Hours",
+      type: "rollup",
+      linkedField: "Tasks",
+      targetField: "Hours",
+      aggregation: "SUM",
+    };
+    const lookup: BaseField = {
+      name: "Task Titles",
+      type: "lookup",
+      linkedField: "Tasks",
+      targetField: "Title",
+    };
+    const doc: BaseDocument = {
+      tables: [
+        {
+          id: "t1",
+          name: "People",
+          fields: [{ name: "Name", type: "text" }, peopleLink, rollup, lookup],
+          records: [{ id: "p1", Name: "Alice", Tasks: ["k1"] }],
+        },
+        {
+          id: "t2",
+          name: "Tasks",
+          fields: [
+            { name: "Title", type: "text" },
+            { name: "Hours", type: "number" },
+          ],
+          records: [{ id: "k1", Title: "Do", Hours: 3 }],
+        },
+      ],
+      activeTableId: "t1",
+    };
+    const next = removeTable(doc, "t2");
+    const people = next.tables[0];
+    const link = people.fields.find((f) => f.name === "Tasks");
+    expect(link?.linkedTableId).toBeUndefined();
+    // Both dependent computed fields lose their dangling target but keep
+    // the (still-valid) linkedField reference.
+    const r = people.fields.find((f) => f.name === "Total Hours");
+    const l = people.fields.find((f) => f.name === "Task Titles");
+    expect(r?.targetField).toBeUndefined();
+    expect(r?.linkedField).toBe("Tasks");
+    expect(r?.aggregation).toBe("SUM");
+    expect(l?.targetField).toBeUndefined();
+    expect(l?.linkedField).toBe("Tasks");
+  });
+
+  it("leaves rollup/lookup that follow an unaffected link untouched", () => {
+    // Two link fields: one to the deleted table, one to a surviving
+    // table. Only the rollup following the deleted link is reset.
+    const doc: BaseDocument = {
+      tables: [
+        {
+          id: "t1",
+          name: "People",
+          fields: [
+            { name: "Name", type: "text" },
+            { name: "Tasks", type: "linked_record", linkedTableId: "t2" },
+            { name: "Orgs", type: "linked_record", linkedTableId: "t3" },
+            {
+              name: "Org Names",
+              type: "lookup",
+              linkedField: "Orgs",
+              targetField: "OrgName",
+            },
+          ],
+          records: [{ id: "p1", Name: "A", Tasks: ["k1"], Orgs: ["o1"] }],
+        },
+        {
+          id: "t2",
+          name: "Tasks",
+          fields: [{ name: "Title", type: "text" }],
+          records: [{ id: "k1", Title: "Do" }],
+        },
+        {
+          id: "t3",
+          name: "Orgs",
+          fields: [{ name: "OrgName", type: "text" }],
+          records: [{ id: "o1", OrgName: "Acme" }],
+        },
+      ],
+      activeTableId: "t1",
+    };
+    const next = removeTable(doc, "t2");
+    const people = next.tables.find((t) => t.id === "t1")!;
+    const orgLookup = people.fields.find((f) => f.name === "Org Names");
+    // The Orgs link survived, so its lookup keeps its target.
+    expect(orgLookup?.targetField).toBe("OrgName");
+  });
+
   it("moves the active pointer when the active table is removed", () => {
     const doc = addTable(singleTableDocument(legacy, "People"), "Tasks");
     // active is Tasks (t added last); remove it

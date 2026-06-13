@@ -207,6 +207,36 @@ describe("BaseAiAssistant", () => {
     );
   });
 
+  it("settles the in-flight run on unmount instead of hanging", async () => {
+    const { unmount } = render(
+      <BaseAiAssistant
+        fields={fields}
+        records={records}
+        selectedIds={new Set<string>()}
+        onCreateTable={vi.fn()}
+        onAddFields={vi.fn()}
+        onApplyCellValues={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText(/Describe the table/i), {
+      target: { value: "a CRM" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    // A generation is in flight (no `done` chunk emitted yet).
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(1));
+    // Unmounting must reject the pending run via the effect cleanup so
+    // the awaiting handler unwinds. A regression (hung promise) would
+    // not throw here, but the handler's catch swallowing a rejection
+    // that never comes is exactly what this guards. An unhandled
+    // rejection would fail the test run.
+    expect(() => unmount()).not.toThrow();
+    // Let the rejection microtask flush so it is observed as handled.
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
+
   it("invokes cancelJob when Stop is clicked mid-generation", async () => {
     setup();
     fireEvent.change(screen.getByPlaceholderText(/Describe the table/i), {

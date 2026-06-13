@@ -48,6 +48,7 @@ import {
 import {
   withCreatedMeta,
   touchModified,
+  stampImportedMeta,
   formatTimestamp,
   addComment,
   removeComment,
@@ -838,7 +839,11 @@ export default function BaseEditor({
       // Reuse the *current* fields as a schema so column types are
       // recovered for a re-import of an exported CSV.
       const next = parseCsvToBase(text, data.fields);
-      updateData(next);
+      // Stamp `__created` / `__modified` at import time so the
+      // created_time / modified_time field types show the import
+      // moment (like Airtable) rather than "—" until the first edit.
+      // CSV never carries intrinsic metadata, so every row is stamped.
+      updateData({ ...next, records: stampImportedMeta(next.records) });
       setImportDialog(null);
       setSelectedIds(new Set());
       dropStaleViewState(next.fields);
@@ -849,7 +854,11 @@ export default function BaseEditor({
   const handleImportJson = useCallback(
     (text: string) => {
       const next = parseJsonToBase(text);
-      updateData(next);
+      // Same import-time stamping as CSV. `stampImportedMeta` preserves
+      // any `__created` a canonical-shape Tessera JSON round-trip
+      // carries, and only stamps rows that lack one (bare arrays / 3rd
+      // party files), so a re-import keeps the original creation time.
+      updateData({ ...next, records: stampImportedMeta(next.records) });
       setImportDialog(null);
       setSelectedIds(new Set());
       dropStaleViewState(next.fields);

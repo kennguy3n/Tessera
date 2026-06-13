@@ -44,6 +44,29 @@ export function withCreatedMeta(
 }
 
 /**
+ * Stamp creation/modification metadata onto freshly *imported* records.
+ *
+ * Records that already carry a `__created` (e.g. a canonical-shape JSON
+ * round-trip of a Tessera base) are returned untouched so their original
+ * `__created` / `__modified` survive. Records without one — a plain CSV,
+ * a bare JSON array, or any third-party file — are stamped with the
+ * import time so `created_time` / `modified_time` fields show the import
+ * moment (like Airtable) instead of "—" until the row is first edited.
+ *
+ * Pure: returns a new array and never mutates its input. A single `iso`
+ * is shared across the batch so an imported set has one coherent
+ * creation time.
+ */
+export function stampImportedMeta(
+  records: BaseRecord[],
+  iso: string = nowIso(),
+): BaseRecord[] {
+  return records.map((r) =>
+    r[RECORD_CREATED_KEY] == null ? withCreatedMeta(r, iso) : r,
+  );
+}
+
+/**
  * Bump a record's `__modified` timestamp (and backfill `__created` if
  * a legacy record never had one). Returns a new object; never mutates.
  */
@@ -100,22 +123,40 @@ export function addComment(
   };
 }
 
-/** Remove a comment by id. Returns the same reference when nothing
- *  matched so React can skip re-rendering. */
+/**
+ * Remove a comment by id. Returns the same reference when nothing
+ * matched so React can skip re-rendering. When a comment IS removed we
+ * bump `__modified` (and backfill a missing `__created`) — symmetric
+ * with {@link addComment}: removing a comment is record activity, so
+ * the `modified_time` field must reflect it.
+ */
 export function removeComment(
   record: BaseRecord,
   commentId: string,
+  iso: string = nowIso(),
 ): BaseRecord {
   const comments = getComments(record);
   const next = comments.filter((c) => c.id !== commentId);
   if (next.length === comments.length) return record;
-  return { ...record, [RECORD_COMMENTS_KEY]: next };
+  return {
+    ...record,
+    [RECORD_COMMENTS_KEY]: next,
+    [RECORD_CREATED_KEY]: record[RECORD_CREATED_KEY] ?? iso,
+    [RECORD_MODIFIED_KEY]: iso,
+  };
 }
 
 /**
  * Format an ISO timestamp for display. `includeTime` controls whether
- * the clock time is shown (used by `date` fields with
- * `dateIncludeTime`, and always-on for created/modified).
+ * the clock time is shown.
+ *
+ * The `created_time` / `modified_time` grid cells and their filter
+ * cache pass `field.dateIncludeTime === true`, so those columns show a
+ * date-only form ("Jan 15, 2024") by default and add the clock only
+ * when the field's "Include time" option is enabled. The expand-record
+ * activity sidebar always passes `true` (timestamps there are
+ * intrinsically time-of-day). `date` fields likewise pass their own
+ * `dateIncludeTime`.
  *
  * Invalid / empty input renders as the empty string rather than
  * "Invalid Date" so a half-typed or legacy value degrades gracefully.

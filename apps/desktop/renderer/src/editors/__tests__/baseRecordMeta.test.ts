@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   withCreatedMeta,
   touchModified,
+  stampImportedMeta,
   getComments,
   addComment,
   removeComment,
@@ -37,6 +38,49 @@ describe("withCreatedMeta", () => {
   it("does not mutate the input", () => {
     const input: BaseRecord = { id: "r1" };
     withCreatedMeta(input, ISO_A);
+    expect(input[RECORD_CREATED_KEY]).toBeUndefined();
+  });
+});
+
+describe("stampImportedMeta", () => {
+  it("stamps created + modified on rows that lack a creation time", () => {
+    const out = stampImportedMeta(
+      [{ id: "r1" }, { id: "r2", Name: "x" }],
+      ISO_A,
+    );
+    expect(out[0][RECORD_CREATED_KEY]).toBe(ISO_A);
+    expect(out[0][RECORD_MODIFIED_KEY]).toBe(ISO_A);
+    expect(out[1][RECORD_CREATED_KEY]).toBe(ISO_A);
+    expect(out[1][RECORD_MODIFIED_KEY]).toBe(ISO_A);
+  });
+
+  it("preserves both timestamps on rows that already carry __created", () => {
+    const out = stampImportedMeta(
+      [
+        {
+          id: "r1",
+          [RECORD_CREATED_KEY]: ISO_A,
+          [RECORD_MODIFIED_KEY]: ISO_A,
+        },
+      ],
+      ISO_B,
+    );
+    // A canonical-JSON round-trip must keep its original created AND
+    // modified, not get re-stamped to the import time.
+    expect(out[0][RECORD_CREATED_KEY]).toBe(ISO_A);
+    expect(out[0][RECORD_MODIFIED_KEY]).toBe(ISO_A);
+  });
+
+  it("shares one timestamp across the whole imported batch", () => {
+    const out = stampImportedMeta([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    const created = out.map((r) => r[RECORD_CREATED_KEY]);
+    expect(new Set(created).size).toBe(1);
+    expect(typeof created[0]).toBe("string");
+  });
+
+  it("does not mutate the input rows", () => {
+    const input: BaseRecord = { id: "r1" };
+    stampImportedMeta([input], ISO_A);
     expect(input[RECORD_CREATED_KEY]).toBeUndefined();
   });
 });
@@ -136,9 +180,22 @@ describe("removeComment", () => {
     expect(remaining[0].body).toBe("two");
   });
 
-  it("returns the same reference when nothing matched", () => {
+  it("bumps __modified when a comment is removed (symmetry with addComment)", () => {
+    // Record last modified at ISO_A; removing a comment at ISO_B must
+    // advance modified_time, mirroring addComment.
+    const withOne = addComment({ id: "r1" }, "A", "one", ISO_A);
+    const [c1] = getComments(withOne);
+    const out = removeComment(withOne, c1.id, ISO_B);
+    expect(out[RECORD_MODIFIED_KEY]).toBe(ISO_B);
+    expect(out[RECORD_CREATED_KEY]).toBe(ISO_A);
+  });
+
+  it("returns the same reference when nothing matched (no modified bump)", () => {
     const rec = addComment({ id: "r1" }, "A", "one", ISO_A);
-    expect(removeComment(rec, "no-such-id")).toBe(rec);
+    const out = removeComment(rec, "no-such-id", ISO_B);
+    expect(out).toBe(rec);
+    // A no-op must NOT touch modified_time.
+    expect(out[RECORD_MODIFIED_KEY]).toBe(ISO_A);
   });
 });
 

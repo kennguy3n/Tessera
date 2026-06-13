@@ -137,48 +137,69 @@ export function normalizeAiFieldType(raw: unknown): FieldType | null {
 // ──────────────────────────────────────────────────────────────────────
 
 /**
- * Pull the first balanced JSON value (object or array) out of a
- * free-text completion, tolerating ```json fences and surrounding
- * prose. Returns the parsed value or `null` when no valid JSON is
- * present. Uses brace/bracket balancing (respecting string literals
- * and escapes) rather than a greedy regex so trailing prose after the
- * JSON doesn't break the parse.
+ * Pull the first *parseable* balanced JSON value (object or array) out
+ * of a free-text completion, tolerating ```json fences and surrounding
+ * prose. Returns the parsed value or `null` when none is present. Uses
+ * brace/bracket balancing (respecting string literals and escapes)
+ * rather than a greedy regex so trailing prose after the JSON doesn't
+ * break the parse.
+ *
+ * If the first balanced candidate isn't valid JSON (e.g. the model
+ * wrote prose containing `{ ... }` before the real payload), the scan
+ * resumes at the next bracket rather than giving up — models don't
+ * always honour the "emit ONLY JSON" instruction, and the cost of a
+ * second attempt is negligible.
  */
 export function extractJson(text: string): unknown {
   if (typeof text !== "string") return null;
-  // Strip a leading ```json / ``` fence if present — the body is still
+  // Strip ```json / ``` fences if present — the body is still
   // balanced-scanned below, so a missing closing fence is fine.
   const unfenced = text.replace(/```(?:json)?/gi, "");
-  const start = unfenced.search(/[[{]/);
-  if (start === -1) return null;
-  const open = unfenced[start];
-  const close = open === "{" ? "}" : "]";
-  let depth = 0;
-  let inStr = false;
-  let escaped = false;
-  for (let i = start; i < unfenced.length; i++) {
-    const ch = unfenced[i];
-    if (inStr) {
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') {
-      inStr = true;
-    } else if (ch === open) {
-      depth++;
-    } else if (ch === close) {
-      depth--;
-      if (depth === 0) {
-        const slice = unfenced.slice(start, i + 1);
-        try {
-          return JSON.parse(slice);
-        } catch {
-          return null;
+  // Scan for successive bracket-opened candidates. `searchFrom` only
+  // ever advances (past each opening bracket we try), so this is linear
+  // in the number of candidates and always terminates.
+  for (let searchFrom = 0; searchFrom < unfenced.length; ) {
+    const rel = unfenced.slice(searchFrom).search(/[[{]/);
+    if (rel === -1) return null;
+    const start = searchFrom + rel;
+    const open = unfenced[start];
+    const close = open === "{" ? "}" : "]";
+    let depth = 0;
+    let inStr = false;
+    let escaped = false;
+    let parsed: unknown = undefined;
+    let resolved = false;
+    for (let i = start; i < unfenced.length; i++) {
+      const ch = unfenced[i];
+      if (inStr) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = true;
+      } else if (ch === open) {
+        depth++;
+      } else if (ch === close) {
+        depth--;
+        if (depth === 0) {
+          const slice = unfenced.slice(start, i + 1);
+          try {
+            parsed = JSON.parse(slice);
+            resolved = true;
+          } catch {
+            // This balanced candidate wasn't valid JSON; fall through
+            // to resume scanning after this opening bracket.
+          }
+          break;
         }
       }
     }
+    if (resolved) return parsed;
+    // Either the candidate failed to parse, or it never balanced to EOF;
+    // either way, look for the next bracket after this opening one.
+    searchFrom = start + 1;
   }
   return null;
 }
