@@ -509,7 +509,7 @@ def _enrich_crm(data: dict) -> dict:
         r["Health Score"] = {"green": 5, "yellow": 3, "red": 1}.get(health, 3)
         # A new-logo prospect with no installed base carries a "no current ARR"
         # sentinel; normalise it to a blank cell so neither the grid nor the
-        # Pipeline ARR rollup renders the literal string "None".
+        # Account ARRs rollup renders the literal string "None".
         if str(r.get("ARR($)", "")).strip().lower() in ("none", "n/a"):
             r["ARR($)"] = ""
 
@@ -537,7 +537,11 @@ def _enrich_crm(data: dict) -> dict:
          "linkedTableId": acct_id, "linkedDisplayField": "Account"},
         {"name": "Account Count", "type": "rollup", "linkedField": "Accounts",
          "targetField": "Account", "aggregation": "COUNT"},
-        {"name": "Pipeline ARR", "type": "rollup", "linkedField": "Accounts",
+        # The account ARRs are human-formatted strings ("1.2M", "410K"), not
+        # raw numbers, so a SUM would coerce every value to NaN and render "0".
+        # CONCAT is the correct aggregation here; the field is named for what it
+        # produces — the rep's per-account ARR list — rather than a total.
+        {"name": "Account ARRs", "type": "rollup", "linkedField": "Accounts",
          "targetField": "ARR($)", "aggregation": "CONCAT"},
     ]
 
