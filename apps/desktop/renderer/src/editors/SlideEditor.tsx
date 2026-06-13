@@ -46,13 +46,18 @@ import {
 } from "./slideEditorHelpers";
 import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
-import {
-  SLIDE_TEMPLATES,
-  INSERT_CARD_PRESETS,
-} from "./slideTemplates";
+import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
 
-import { applyBulletsToSlide } from "./slideAiHelpers";
-import { SlideAiActions, SlideDeckGenerator } from "./SlideAiPanel";
+import {
+  applyBulletsToSlide,
+  applyRegeneratedSlide,
+  type RegeneratedSlide,
+} from "./slideAiHelpers";
+import {
+  SlideAiActions,
+  SlideDeckGenerator,
+  SlideDeckRestyler,
+} from "./SlideAiPanel";
 import type {
   MarpModeState,
   Slide,
@@ -166,6 +171,7 @@ export default function SlideEditor({
   );
   const [themeId, setThemeId] = useState<string>(() => initial.themeId);
   const [deckGenOpen, setDeckGenOpen] = useState(false);
+  const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [themePickerOpen, setThemePickerOpen] = useState(false);
@@ -637,6 +643,7 @@ export default function SlideEditor({
       setActiveIndex(0);
       setMarpMode(false);
       setDeckGenOpen(false);
+      setDeckRestyleOpen(false);
       // Clear stale drag/upload state — the entire deck is being
       // replaced, matching applyTemplate and the version-restore
       // sync effect.
@@ -909,6 +916,26 @@ export default function SlideEditor({
         const slide = prev[slideIndex];
         if (!slide) return prev;
         const updatedSlide = applyBulletsToSlide(slide, bullets);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Replace the active slide's title + primary bullets with an AI-
+  // regenerated version, preserving the slide's layout, notes, images
+  // and diagrams (see `applyRegeneratedSlide`). Same `setSlides` +
+  // `debouncedSave` path as a manual edit.
+  const regenerateSlide = useCallback(
+    (slideIndex: number, regen: RegeneratedSlide) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = applyRegeneratedSlide(slide, regen);
         if (updatedSlide === slide) return prev;
         const next = [...prev];
         next[slideIndex] = updatedSlide;
@@ -1385,19 +1412,37 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckGenOpen ? "active" : ""}`}
-            onClick={() => setDeckGenOpen((open) => !open)}
+            onClick={() => {
+              setDeckGenOpen((open) => !open);
+              setDeckRestyleOpen(false);
+            }}
             aria-label="Generate a deck with AI"
             aria-expanded={deckGenOpen}
             title="Generate a deck from a prompt using the on-device model"
           >
             ✨ AI Deck
           </button>
+          <button
+            type="button"
+            className={`btn-sm ${deckRestyleOpen ? "active" : ""}`}
+            onClick={() => {
+              setDeckRestyleOpen((open) => !open);
+              setDeckGenOpen(false);
+            }}
+            aria-label="Restyle the deck with AI"
+            aria-expanded={deckRestyleOpen}
+            title="Restyle the current deck with the on-device model"
+          >
+            Restyle
+          </button>
           {!marpMode && (
             <label className="slide-layout-picker">
               Layout
               <select
                 className="slide-layout-select"
-                value={activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"}
+                value={
+                  activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"
+                }
                 onChange={(e) => changeLayout(e.target.value as SlideLayout)}
                 aria-label="Slide layout"
                 title="Layout region arrangement for this slide"
@@ -1424,12 +1469,20 @@ export default function SlideEditor({
               >
                 <span
                   className="slide-theme-swatch"
-                  style={{ background: getSlideTheme(themeId).swatch ?? "var(--color-primary)" }}
+                  style={{
+                    background:
+                      getSlideTheme(themeId).swatch ?? "var(--color-primary)",
+                  }}
                 />
                 {getSlideTheme(themeId).label}
               </button>
               {themePickerOpen && (
-                <div ref={themePickerRef} className="slide-theme-picker-dropdown" role="listbox" aria-label="Choose theme">
+                <div
+                  ref={themePickerRef}
+                  className="slide-theme-picker-dropdown"
+                  role="listbox"
+                  aria-label="Choose theme"
+                >
                   {SLIDE_THEMES.map((theme) => (
                     <button
                       key={theme.id}
@@ -1444,12 +1497,18 @@ export default function SlideEditor({
                     >
                       <span
                         className="slide-theme-card-swatch"
-                        style={{ background: theme.swatch ?? "var(--color-primary)" }}
+                        style={{
+                          background: theme.swatch ?? "var(--color-primary)",
+                        }}
                       />
                       <span>
-                        <span className="slide-theme-card-label">{theme.label}</span>
+                        <span className="slide-theme-card-label">
+                          {theme.label}
+                        </span>
                         <br />
-                        <span className="slide-theme-card-desc">{theme.description}</span>
+                        <span className="slide-theme-card-desc">
+                          {theme.description}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -1471,7 +1530,11 @@ export default function SlideEditor({
                 + Insert
               </button>
               {insertPresetOpen && (
-                <div ref={insertPresetRef} className="slide-insert-presets" role="menu">
+                <div
+                  ref={insertPresetRef}
+                  className="slide-insert-presets"
+                  role="menu"
+                >
                   {INSERT_CARD_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
@@ -1480,11 +1543,17 @@ export default function SlideEditor({
                       className="slide-insert-preset-item"
                       onClick={() => insertPreset(preset)}
                     >
-                      <span className="slide-insert-preset-icon">{preset.icon}</span>
+                      <span className="slide-insert-preset-icon">
+                        {preset.icon}
+                      </span>
                       <span>
-                        <span className="slide-insert-preset-label">{preset.label}</span>
+                        <span className="slide-insert-preset-label">
+                          {preset.label}
+                        </span>
                         <br />
-                        <span className="slide-insert-preset-desc">{preset.description}</span>
+                        <span className="slide-insert-preset-desc">
+                          {preset.description}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -1573,6 +1642,13 @@ export default function SlideEditor({
         <SlideDeckGenerator
           open={deckGenOpen}
           onClose={() => setDeckGenOpen(false)}
+          onApply={applyGeneratedDeck}
+        />
+
+        <SlideDeckRestyler
+          open={deckRestyleOpen}
+          onClose={() => setDeckRestyleOpen(false)}
+          slides={slides}
           onApply={applyGeneratedDeck}
         />
 
@@ -1748,6 +1824,10 @@ export default function SlideEditor({
                 updateSlide(activeIndex, { notes });
                 setShowNotes(true);
               }}
+              onApplyRegenerated={(regen) =>
+                regenerateSlide(activeIndex, regen)
+              }
+              deckTitle={slides[0]?.title}
               onApplyLayout={(layout) => changeLayout(layout)}
               onInsertImage={(assetUrl, alt) =>
                 onBlockAppend(
@@ -1786,9 +1866,15 @@ export default function SlideEditor({
                   className="slide-template-card"
                   onClick={() => applyTemplate(template)}
                 >
-                  <span className="slide-template-card-icon">{template.icon}</span>
-                  <span className="slide-template-card-title">{template.label}</span>
-                  <span className="slide-template-card-desc">{template.description}</span>
+                  <span className="slide-template-card-icon">
+                    {template.icon}
+                  </span>
+                  <span className="slide-template-card-title">
+                    {template.label}
+                  </span>
+                  <span className="slide-template-card-desc">
+                    {template.description}
+                  </span>
                 </button>
               ))}
             </div>
