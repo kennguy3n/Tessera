@@ -387,6 +387,15 @@ describe("resolveGeneratedSlideLayout", () => {
         5,
       ),
     ).toBe("sectionHeader");
+    // quote needs the quotation text; 0 bullets → sectionHeader heuristic
+    // (avoids a quote slide that just echoes its own title).
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: [], layoutHint: "quote" },
+        1,
+        5,
+      ),
+    ).toBe("sectionHeader");
   });
 
   it("ignores an unknown or unsupported hint and falls back to the heuristic", () => {

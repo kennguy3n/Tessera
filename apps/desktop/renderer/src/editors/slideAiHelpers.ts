@@ -199,12 +199,13 @@ export function splitLayoutHint(heading: string): {
 
 /**
  * Whether a hinted layout can actually be materialised from the parsed
- * slide's content. `twoColumn` needs two columns to fill and
- * `bigNumber` needs a headline value, so honouring those hints for a
- * slide that lacks the bullets would leave an empty region (and could
- * feed `undefined` into a block). Every other deck-gen layout
- * materialises safely for any bullet count (`quote` falls back to the
- * heading, `sectionHeader`/`titleContent` handle 0 bullets).
+ * slide's content. `twoColumn` needs two columns to fill, while
+ * `bigNumber` and `quote` need at least one bullet for the headline /
+ * quotation respectively — honouring those hints for a slide that
+ * lacks the bullets would leave an empty region (or duplicate the
+ * title into the quote slot). Every other deck-gen layout materialises
+ * safely for any bullet count (`sectionHeader`/`titleContent` handle 0
+ * bullets), so an under-filled hint falls back to the heuristic.
  */
 function hintFitsContent(
   hint: SlideLayout,
@@ -214,6 +215,7 @@ function hintFitsContent(
     case "twoColumn":
       return parsed.bullets.length >= 2;
     case "bigNumber":
+    case "quote":
       return parsed.bullets.length >= 1;
     default:
       return true;
@@ -539,10 +541,12 @@ const TONE_GUIDANCE: Record<DeckTone, string> = {
 export function buildDeckPrompt(input: DeckPromptInput): string {
   const count = clampDeckSlideCount(input.slideCount);
   const tone = TONE_GUIDANCE[input.tone ?? "professional"];
-  const audienceLine = input.audience?.trim()
-    ? `Audience: ${input.audience.trim()}\n`
-    : "";
-  return [
+  // Build the prompt line-by-line, keeping the blank `""` entries as
+  // real blank lines so the format spec, layout vocabulary, rules and
+  // topic stay visually separated (paragraph breaks help the model).
+  // The optional audience line is appended conditionally rather than
+  // filtered out, so no blank-line separators get swallowed.
+  const lines = [
     "You are a presentation outline generator.",
     `Produce a slide deck outline of exactly ${count} slides for the topic below.`,
     "",
@@ -565,11 +569,12 @@ export function buildDeckPrompt(input: DeckPromptInput): string {
     "- No preamble, no closing remarks, no code fences, no bold/italic.",
     `- ${tone}`,
     "",
-    audienceLine,
-    `Topic: ${input.topic.trim()}`,
-  ]
-    .filter((l) => l !== "")
-    .join("\n");
+  ];
+  if (input.audience?.trim()) {
+    lines.push(`Audience: ${input.audience.trim()}`);
+  }
+  lines.push(`Topic: ${input.topic.trim()}`);
+  return lines.join("\n");
 }
 
 /**
