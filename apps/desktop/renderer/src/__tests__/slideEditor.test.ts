@@ -25,8 +25,18 @@ import {
   slideBodyLines,
   buildPresentationSlides,
   DEFAULT_DIAGRAM_DSL,
+  DEFAULT_TABLE_MD,
+  DEFAULT_CHART_DSL,
+  parseSlideTable,
+  tableToMarkdown,
+  parseSlideChart,
+  chartToMarkdownTable,
 } from "../editors/slideEditorHelpers";
-import type { Slide, SlideBlock, SlideContent } from "../editors/slideEditorTypes";
+import type {
+  Slide,
+  SlideBlock,
+  SlideContent,
+} from "../editors/slideEditorTypes";
 
 describe("parseSlideContent", () => {
   it("returns the empty-default shape for empty input", () => {
@@ -49,7 +59,12 @@ describe("parseSlideContent", () => {
   it("restores marp.theme alongside marp.enabled and marp.source", () => {
     const payload: SlideContent = {
       slides: [
-        { id: "test-s-1", title: "Hello", blocks: [{ id: "test-b-1", type: "text", content: "body" }], notes: "" },
+        {
+          id: "test-s-1",
+          title: "Hello",
+          blocks: [{ id: "test-b-1", type: "text", content: "body" }],
+          notes: "",
+        },
       ],
       marp: {
         enabled: true,
@@ -68,7 +83,12 @@ describe("parseSlideContent", () => {
   it("leaves marpTheme undefined when the saved JSON has no marp block", () => {
     const payload: SlideContent = {
       slides: [
-        { id: "test-s-2", title: "Hello", blocks: [{ id: "test-b-2", type: "text", content: "body" }], notes: "" },
+        {
+          id: "test-s-2",
+          title: "Hello",
+          blocks: [{ id: "test-b-2", type: "text", content: "body" }],
+          notes: "",
+        },
       ],
     };
     const parsed = parseSlideContent(JSON.stringify(payload));
@@ -80,15 +100,29 @@ describe("parseSlideContent", () => {
 describe("slidesToMarpMarkdown", () => {
   it("emits a valid Marp front-matter header", () => {
     const out = slidesToMarpMarkdown([
-      { id: "test-s-3", title: "T", blocks: [{ id: "test-b-3", type: "text", content: "x" }], notes: "" },
+      {
+        id: "test-s-3",
+        title: "T",
+        blocks: [{ id: "test-b-3", type: "text", content: "x" }],
+        notes: "",
+      },
     ]);
     expect(out.startsWith("---\nmarp: true\n")).toBe(true);
-    expect(out).toMatch(/^---\nmarp: true\ntheme: 'default'\npaginate: true\n---/);
+    expect(out).toMatch(
+      /^---\nmarp: true\ntheme: 'default'\npaginate: true\n---/,
+    );
   });
 
   it("respects a non-default theme override", () => {
     const out = slidesToMarpMarkdown(
-      [{ id: "test-s-4", title: "T", blocks: [{ id: "test-b-4", type: "text", content: "x" }], notes: "" }],
+      [
+        {
+          id: "test-s-4",
+          title: "T",
+          blocks: [{ id: "test-b-4", type: "text", content: "x" }],
+          notes: "",
+        },
+      ],
       { theme: "uncover" },
     );
     expect(out).toContain("theme: 'uncover'");
@@ -101,7 +135,11 @@ describe("slidesToMarpMarkdown", () => {
         title: "Roadmap",
         blocks: [
           { id: "test-b-5", type: "text", content: "Intro paragraph" },
-          { id: "test-b-6", type: "bullets", content: "alpha\n- beta\n* gamma" },
+          {
+            id: "test-b-6",
+            type: "bullets",
+            content: "alpha\n- beta\n* gamma",
+          },
           { id: "test-b-7", type: "diagram", content: "graph TD; A-->B" },
         ],
         notes: "Slide presenter notes",
@@ -142,7 +180,11 @@ describe("slidesToMarpMarkdown", () => {
             content: "data:image/png;base64,iVBORw0KGgo=",
             alt: "Company logo [v2]",
           },
-          { id: "test-b-8", type: "image", content: "https://example.com/x.png" },
+          {
+            id: "test-b-8",
+            type: "image",
+            content: "https://example.com/x.png",
+          },
         ],
         notes: "",
       },
@@ -187,14 +229,17 @@ describe("slidesToMarpMarkdown", () => {
       },
     ]);
     expect(out).toContain("![C](<https://example.com/C_(lang).png>)");
-    expect(out).toContain(
-      "![](<https://example.com/path with spaces.png>)",
-    );
+    expect(out).toContain("![](<https://example.com/path with spaces.png>)");
   });
 
   it("skips empty blocks and slides without titles cleanly", () => {
     const out = slidesToMarpMarkdown([
-      { id: "test-s-5", title: "", blocks: [{ id: "test-b-9", type: "text", content: "" }], notes: "" },
+      {
+        id: "test-s-5",
+        title: "",
+        blocks: [{ id: "test-b-9", type: "text", content: "" }],
+        notes: "",
+      },
       {
         id: "test-ms-4",
         title: "Second",
@@ -278,7 +323,8 @@ describe("slidesToMarpMarkdown", () => {
     // The layout comment emits one `-->` per slide (from `<!-- _class: ... -->`).
     // The ONLY additional `-->` should be the notes comment terminator.
     // Count layout-class `-->` and the notes terminator separately.
-    const layoutCommentCount = (out.match(/<!-- _class: layout-\w+ -->/g) ?? []).length;
+    const layoutCommentCount = (out.match(/<!-- _class: layout-\w+ -->/g) ?? [])
+      .length;
     const totalArrows = (out.match(/-->/g) ?? []).length;
     // Exactly one notes `-->` beyond the per-slide layout comments.
     expect(totalArrows - layoutCommentCount).toBe(1);
@@ -326,12 +372,12 @@ describe("extractFrontmatterTheme", () => {
   });
 
   it("strips a single layer of surrounding single or double quotes", () => {
-    expect(
-      extractFrontmatterTheme("---\ntheme: 'uncover'\n---"),
-    ).toBe("uncover");
-    expect(
-      extractFrontmatterTheme('---\ntheme: "default"\n---'),
-    ).toBe("default");
+    expect(extractFrontmatterTheme("---\ntheme: 'uncover'\n---")).toBe(
+      "uncover",
+    );
+    expect(extractFrontmatterTheme('---\ntheme: "default"\n---')).toBe(
+      "default",
+    );
   });
 
   it("does not include the `---` slide separators that follow the frontmatter", () => {
@@ -345,7 +391,8 @@ describe("extractFrontmatterTheme", () => {
 
 describe("setFrontmatterTheme", () => {
   it("rewrites an existing theme directive in place", () => {
-    const src = "---\nmarp: true\ntheme: default\npaginate: true\n---\n\n# Slide";
+    const src =
+      "---\nmarp: true\ntheme: default\npaginate: true\n---\n\n# Slide";
     const out = setFrontmatterTheme(src, "gaia");
     expect(out).toBe(
       "---\nmarp: true\ntheme: gaia\npaginate: true\n---\n\n# Slide",
@@ -364,9 +411,7 @@ describe("setFrontmatterTheme", () => {
   it("prepends a minimal frontmatter when none exists", () => {
     const src = "# Slide 1\n\nbody";
     const out = setFrontmatterTheme(src, "gaia");
-    expect(out.startsWith("---\nmarp: true\ntheme: gaia\n---\n\n")).toBe(
-      true,
-    );
+    expect(out.startsWith("---\nmarp: true\ntheme: gaia\n---\n\n")).toBe(true);
     expect(out).toContain("# Slide 1");
   });
 
@@ -443,9 +488,7 @@ function slideOf(title: string, content: string, notes = ""): Slide {
   return {
     id: `slideOf-s-${__slideOfCounter}`,
     title,
-    blocks: [
-      { id: `slideOf-b-${__slideOfCounter}`, type: "text", content },
-    ],
+    blocks: [{ id: `slideOf-b-${__slideOfCounter}`, type: "text", content }],
     notes,
   };
 }
@@ -887,15 +930,11 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
     // The race-guard Map only gets an entry when an upload starts, so a
     // text-only slide can hit the cleanup path with zero matching keys.
     // Cleanup must be a silent no-op in that case (no throw).
-    const tokens = new Map<string, number>([
-      [uploadTokenKey("other", "x"), 7],
-    ]);
+    const tokens = new Map<string, number>([[uploadTokenKey("other", "x"), 7]]);
     const slide: Slide = {
       id: "s-empty",
       title: "T",
-      blocks: [
-        { id: "b-text", type: "text", content: "no upload here" },
-      ],
+      blocks: [{ id: "b-text", type: "text", content: "no upload here" }],
       notes: "",
     };
     expect(() =>
@@ -909,9 +948,7 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
     // `removeBlock` is allowed to leave a slide with `blocks: []`
     // (title-only layout). When that empty slide is later deleted,
     // cleanup must not throw on the empty iterable.
-    const tokens = new Map<string, number>([
-      [uploadTokenKey("other", "x"), 1],
-    ]);
+    const tokens = new Map<string, number>([[uploadTokenKey("other", "x"), 1]]);
     discardUploadTokensForSlide(tokens, "s-empty", []);
     expect(tokens.size).toBe(1);
   });
@@ -945,9 +982,7 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
     // the helper itself must tolerate a stale index without throwing
     // (e.g. a future caller that calls the helper before the helper
     // runs the bounds check).
-    const tokens = new Map<string, number>([
-      [uploadTokenKey("s-1", "b-1"), 1],
-    ]);
+    const tokens = new Map<string, number>([[uploadTokenKey("s-1", "b-1"), 1]]);
     const slide: Slide = {
       id: "s-1",
       title: "T",
@@ -960,9 +995,7 @@ describe("uploadTokenKey / discardUploadTokensForSlide / discardUploadTokensForB
   });
 
   it("discardUploadTokensForBlock on a block that never had a token is a no-op", () => {
-    const tokens = new Map<string, number>([
-      [uploadTokenKey("other", "x"), 5],
-    ]);
+    const tokens = new Map<string, number>([[uploadTokenKey("other", "x"), 5]]);
     const slide: Slide = {
       id: "s-1",
       title: "T",
@@ -1071,8 +1104,12 @@ describe("replaceBlock", () => {
       blocks: [{ id: "test-b-47", type: "text", content: "a" }],
       notes: "",
     };
-    expect(replaceBlock(slide, 5, { id: "test-b-48", type: "text", content: "x" })).toBe(slide);
-    expect(replaceBlock(slide, -1, { id: "test-b-49", type: "text", content: "x" })).toBe(slide);
+    expect(
+      replaceBlock(slide, 5, { id: "test-b-48", type: "text", content: "x" }),
+    ).toBe(slide);
+    expect(
+      replaceBlock(slide, -1, { id: "test-b-49", type: "text", content: "x" }),
+    ).toBe(slide);
   });
 
   it("returns the same reference when the replacement is === the existing block", () => {
@@ -1121,7 +1158,10 @@ describe("replaceBlock", () => {
     // Cast through `unknown` because the public `SlideBlock` type
     // requires `id`; this test is exercising the runtime contract
     // for callers that construct a partial block without TS.
-    const replacement = { type: "bullets", content: "new" } as unknown as SlideBlock;
+    const replacement = {
+      type: "bullets",
+      content: "new",
+    } as unknown as SlideBlock;
     const next = replaceBlock(slide, 1, replacement);
     expect(next).not.toBe(slide);
     expect(next.blocks[1]).toEqual({
@@ -1221,7 +1261,11 @@ describe("nextBlockForTypeChange", () => {
   });
 
   it("seeds the diagram starter DSL only when content is empty", () => {
-    const emptyText: SlideBlock = { id: "test-b-51", type: "text", content: "" };
+    const emptyText: SlideBlock = {
+      id: "test-b-51",
+      type: "text",
+      content: "",
+    };
     expect(nextBlockForTypeChange(emptyText, "diagram").content).toBe(
       DEFAULT_DIAGRAM_DSL,
     );
@@ -1236,6 +1280,28 @@ describe("nextBlockForTypeChange", () => {
     };
     expect(nextBlockForTypeChange(existingText, "diagram").content).toBe(
       "graph TD; A-->B",
+    );
+  });
+
+  it("seeds the table / chart starters only when content is empty", () => {
+    const emptyText: SlideBlock = { id: "seed-t", type: "text", content: "" };
+    expect(nextBlockForTypeChange(emptyText, "table").content).toBe(
+      DEFAULT_TABLE_MD,
+    );
+    expect(nextBlockForTypeChange(emptyText, "chart").content).toBe(
+      DEFAULT_CHART_DSL,
+    );
+    // Existing prose survives the switch — never clobber the user's work.
+    const existing: SlideBlock = {
+      id: "seed-t2",
+      type: "text",
+      content: "Q1 10 Q2 14",
+    };
+    expect(nextBlockForTypeChange(existing, "table").content).toBe(
+      "Q1 10 Q2 14",
+    );
+    expect(nextBlockForTypeChange(existing, "chart").content).toBe(
+      "Q1 10 Q2 14",
     );
   });
 
@@ -1272,7 +1338,11 @@ describe("nextBlockForTypeChange", () => {
       alt: "logo",
     };
     expect(nextBlockForTypeChange(imageBlock, "bullets").alt).toBe(undefined);
-    const textWithoutAlt: SlideBlock = { id: "test-b-54", type: "text", content: "x" };
+    const textWithoutAlt: SlideBlock = {
+      id: "test-b-54",
+      type: "text",
+      content: "x",
+    };
     expect(nextBlockForTypeChange(textWithoutAlt, "image").alt).toBe("");
   });
 
@@ -1317,12 +1387,7 @@ describe("nextBlockForTypeChange", () => {
     // spread in `nextBlockForTypeChange` and silently break React's
     // key stability across type changes (the `<textarea>` would lose
     // cursor / selection state on every type select).
-    const types: SlideBlock["type"][] = [
-      "text",
-      "bullets",
-      "image",
-      "diagram",
-    ];
+    const types: SlideBlock["type"][] = ["text", "bullets", "image", "diagram"];
     for (const from of types) {
       for (const to of types) {
         if (from === to) continue; // same-type is the ref-stable no-op branch
@@ -1661,21 +1726,197 @@ describe("slideBodyLines / buildPresentationSlides", () => {
     const s = slide({
       blocks: [
         { id: "b1", type: "diagram", content: "flowchart LR\nA-->B" },
-        { id: "b2", type: "image", content: "data:image/png;base64,xxx", alt: "Chart" },
+        {
+          id: "b2",
+          type: "image",
+          content: "data:image/png;base64,xxx",
+          alt: "Chart",
+        },
         { id: "b3", type: "image", content: "data:image/png;base64,yyy" },
       ],
     });
-    expect(slideBodyLines(s)).toEqual(["[Diagram]", "[Image: Chart]", "[Image]"]);
+    expect(slideBodyLines(s)).toEqual([
+      "[Diagram]",
+      "[Image: Chart]",
+      "[Image]",
+    ]);
   });
 
   it("builds the IPC payload preserving title, lines, and notes", () => {
     const deck = [
-      slide({ title: "Intro", notes: "hi", blocks: [{ id: "b", type: "text", content: "x" }] }),
+      slide({
+        title: "Intro",
+        notes: "hi",
+        blocks: [{ id: "b", type: "text", content: "x" }],
+      }),
       slide({ id: "s2", title: "End", notes: "" }),
     ];
     expect(buildPresentationSlides(deck)).toEqual([
       { title: "Intro", lines: ["x"], notes: "hi" },
       { title: "End", lines: [], notes: "" },
     ]);
+  });
+});
+
+describe("parseSlideTable", () => {
+  it("parses a GFM pipe table and drops the alignment separator", () => {
+    const table = parseSlideTable(
+      "| Metric | Q1 | Q2 |\n| --- | :--: | --: |\n| Revenue | 10 | 14 |",
+    );
+    expect(table).toEqual({
+      header: ["Metric", "Q1", "Q2"],
+      rows: [["Revenue", "10", "14"]],
+    });
+  });
+
+  it("tolerates missing outer pipes and a missing separator row", () => {
+    const table = parseSlideTable("a | b\n1 | 2");
+    expect(table).toEqual({ header: ["a", "b"], rows: [["1", "2"]] });
+  });
+
+  it("pads ragged rows to the widest row width", () => {
+    const table = parseSlideTable("| a | b | c |\n| 1 | 2 |");
+    expect(table?.header).toEqual(["a", "b", "c"]);
+    expect(table?.rows).toEqual([["1", "2", ""]]);
+  });
+
+  it("unescapes a backslash-escaped pipe inside a cell", () => {
+    const table = parseSlideTable("| a \\| b | c |");
+    expect(table?.header).toEqual(["a | b", "c"]);
+  });
+
+  it("returns null for content with no usable row", () => {
+    expect(parseSlideTable("")).toBeNull();
+    expect(parseSlideTable("   \n  ")).toBeNull();
+    // A lone separator row carries no data.
+    expect(parseSlideTable("| --- | --- |")).toBeNull();
+  });
+
+  it("round-trips through tableToMarkdown back to the same table", () => {
+    const table = parseSlideTable("| a | b |\n| --- | --- |\n| 1 | 2 |");
+    expect(table).not.toBeNull();
+    const md = tableToMarkdown(table!);
+    expect(parseSlideTable(md)).toEqual(table);
+  });
+
+  it("re-escapes a literal pipe when serialising", () => {
+    const md = tableToMarkdown({ header: ["a | b"], rows: [] });
+    expect(md.split("\n")[0]).toBe("| a \\| b |");
+  });
+
+  it("parses the DEFAULT_TABLE_MD starter", () => {
+    const table = parseSlideTable(DEFAULT_TABLE_MD);
+    expect(table?.header).toEqual(["Metric", "Q1", "Q2"]);
+    expect(table?.rows).toEqual([["Revenue", "10", "14"]]);
+  });
+});
+
+describe("parseSlideChart", () => {
+  it("parses type, title, labels and numeric series", () => {
+    const spec = parseSlideChart(
+      "type: line\ntitle: Growth\nlabels: Q1, Q2, Q3\nRevenue: 10, 20, 30\nCost: 5, 8, 12",
+    );
+    expect(spec).toEqual({
+      type: "line",
+      title: "Growth",
+      data: {
+        labels: ["Q1", "Q2", "Q3"],
+        series: [
+          { name: "Revenue", values: [10, 20, 30] },
+          { name: "Cost", values: [5, 8, 12] },
+        ],
+      },
+    });
+  });
+
+  it("defaults to a bar chart when type is absent or unknown", () => {
+    expect(parseSlideChart("labels: A\nX: 1")?.type).toBe("bar");
+    expect(parseSlideChart("type: donut\nlabels: A\nX: 1")?.type).toBe("bar");
+  });
+
+  it("coerces blanks and tolerates a currency/percent suffix", () => {
+    const spec = parseSlideChart("labels: A, B, C\nSales: $1200, , 3.5%");
+    expect(spec?.data.series[0].values).toEqual([1200, null, 3.5]);
+  });
+
+  it("pads labels to the widest series so every value has a slot", () => {
+    const spec = parseSlideChart("labels: A\nX: 1, 2, 3");
+    expect(spec?.data.labels).toEqual(["A", "", ""]);
+  });
+
+  it("returns null when there is no series line", () => {
+    expect(parseSlideChart("type: bar\nlabels: A, B")).toBeNull();
+    expect(parseSlideChart("")).toBeNull();
+  });
+
+  it("parses the DEFAULT_CHART_DSL starter", () => {
+    const spec = parseSlideChart(DEFAULT_CHART_DSL);
+    expect(spec?.type).toBe("bar");
+    expect(spec?.title).toBe("Quarterly revenue");
+    expect(spec?.data.series[0]).toEqual({
+      name: "Revenue",
+      values: [10, 14, 12, 18],
+    });
+  });
+});
+
+describe("chartToMarkdownTable", () => {
+  it("serialises a chart's data to a labelled GFM table", () => {
+    const spec = parseSlideChart(
+      "type: bar\ntitle: Sales\nlabels: Q1, Q2\nRevenue: 10, 14",
+    );
+    expect(spec).not.toBeNull();
+    const md = chartToMarkdownTable(spec!);
+    expect(md).toBe(
+      [
+        "**Sales**",
+        "",
+        "|  | Q1 | Q2 |",
+        "| --- | --- | --- |",
+        "| Revenue | 10 | 14 |",
+      ].join("\n"),
+    );
+  });
+
+  it("emits an empty cell for null values and omits the title row when absent", () => {
+    const spec = parseSlideChart("labels: A, B\nX: 1, ");
+    const md = chartToMarkdownTable(spec!);
+    expect(md.startsWith("|")).toBe(true);
+    expect(md).toContain("| X | 1 |  |");
+  });
+});
+
+describe("slidesToMarpMarkdown — table and chart blocks", () => {
+  it("emits a table block as a normalised GFM table", () => {
+    const out = slidesToMarpMarkdown([
+      {
+        id: "s1",
+        title: "Data",
+        notes: "",
+        blocks: [{ id: "b1", type: "table", content: "a | b\n1 | 2" }],
+      },
+    ]);
+    expect(out).toContain("| a | b |");
+    expect(out).toContain("| --- | --- |");
+    expect(out).toContain("| 1 | 2 |");
+  });
+
+  it("exports a chart block as its underlying data table", () => {
+    const out = slidesToMarpMarkdown([
+      {
+        id: "s1",
+        title: "Trend",
+        notes: "",
+        blocks: [
+          {
+            id: "b1",
+            type: "chart",
+            content: "type: bar\ntitle: Rev\nlabels: Q1, Q2\nR: 3, 7",
+          },
+        ],
+      },
+    ]);
+    expect(out).toContain("**Rev**");
+    expect(out).toContain("| R | 3 | 7 |");
   });
 });

@@ -41,15 +41,15 @@ import {
   nextBlockForTypeChange,
   buildDeckFromTemplate,
   buildSlideFromPreset,
+  parseSlideTable,
+  parseSlideChart,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
+import { SlideChart } from "./components/SlideChart";
 import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
-import {
-  SLIDE_TEMPLATES,
-  INSERT_CARD_PRESETS,
-} from "./slideTemplates";
+import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
 
 import { applyBulletsToSlide } from "./slideAiHelpers";
 import { SlideAiActions, SlideDeckGenerator } from "./SlideAiPanel";
@@ -1397,7 +1397,9 @@ export default function SlideEditor({
               Layout
               <select
                 className="slide-layout-select"
-                value={activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"}
+                value={
+                  activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"
+                }
                 onChange={(e) => changeLayout(e.target.value as SlideLayout)}
                 aria-label="Slide layout"
                 title="Layout region arrangement for this slide"
@@ -1424,12 +1426,20 @@ export default function SlideEditor({
               >
                 <span
                   className="slide-theme-swatch"
-                  style={{ background: getSlideTheme(themeId).swatch ?? "var(--color-primary)" }}
+                  style={{
+                    background:
+                      getSlideTheme(themeId).swatch ?? "var(--color-primary)",
+                  }}
                 />
                 {getSlideTheme(themeId).label}
               </button>
               {themePickerOpen && (
-                <div ref={themePickerRef} className="slide-theme-picker-dropdown" role="listbox" aria-label="Choose theme">
+                <div
+                  ref={themePickerRef}
+                  className="slide-theme-picker-dropdown"
+                  role="listbox"
+                  aria-label="Choose theme"
+                >
                   {SLIDE_THEMES.map((theme) => (
                     <button
                       key={theme.id}
@@ -1444,12 +1454,18 @@ export default function SlideEditor({
                     >
                       <span
                         className="slide-theme-card-swatch"
-                        style={{ background: theme.swatch ?? "var(--color-primary)" }}
+                        style={{
+                          background: theme.swatch ?? "var(--color-primary)",
+                        }}
                       />
                       <span>
-                        <span className="slide-theme-card-label">{theme.label}</span>
+                        <span className="slide-theme-card-label">
+                          {theme.label}
+                        </span>
                         <br />
-                        <span className="slide-theme-card-desc">{theme.description}</span>
+                        <span className="slide-theme-card-desc">
+                          {theme.description}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -1471,7 +1487,11 @@ export default function SlideEditor({
                 + Insert
               </button>
               {insertPresetOpen && (
-                <div ref={insertPresetRef} className="slide-insert-presets" role="menu">
+                <div
+                  ref={insertPresetRef}
+                  className="slide-insert-presets"
+                  role="menu"
+                >
                   {INSERT_CARD_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
@@ -1480,11 +1500,17 @@ export default function SlideEditor({
                       className="slide-insert-preset-item"
                       onClick={() => insertPreset(preset)}
                     >
-                      <span className="slide-insert-preset-icon">{preset.icon}</span>
+                      <span className="slide-insert-preset-icon">
+                        {preset.icon}
+                      </span>
                       <span>
-                        <span className="slide-insert-preset-label">{preset.label}</span>
+                        <span className="slide-insert-preset-label">
+                          {preset.label}
+                        </span>
                         <br />
-                        <span className="slide-insert-preset-desc">{preset.description}</span>
+                        <span className="slide-insert-preset-desc">
+                          {preset.description}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -1786,9 +1812,15 @@ export default function SlideEditor({
                   className="slide-template-card"
                   onClick={() => applyTemplate(template)}
                 >
-                  <span className="slide-template-card-icon">{template.icon}</span>
-                  <span className="slide-template-card-title">{template.label}</span>
-                  <span className="slide-template-card-desc">{template.description}</span>
+                  <span className="slide-template-card-icon">
+                    {template.icon}
+                  </span>
+                  <span className="slide-template-card-title">
+                    {template.label}
+                  </span>
+                  <span className="slide-template-card-desc">
+                    {template.description}
+                  </span>
                 </button>
               ))}
             </div>
@@ -1912,6 +1944,8 @@ function SlideBlockRow({
           <option value="text">Text</option>
           <option value="bullets">Bullets</option>
           <option value="diagram">Diagram</option>
+          <option value="table">Table</option>
+          <option value="chart">Chart</option>
           <option value="image">Image</option>
         </select>
         <button
@@ -2002,18 +2036,102 @@ function SlideBlockRow({
             // gutter on a wrap-wrapped line).
             draggable={false}
             placeholder={
-              block.type === "bullets"
-                ? "One bullet point per line..."
-                : block.type === "diagram"
-                  ? "Mermaid diagram DSL..."
-                  : "Enter text content..."
+              BLOCK_PLACEHOLDERS[block.type] ?? "Enter text content..."
             }
-            rows={block.type === "diagram" ? 8 : 4}
-            spellCheck={block.type !== "diagram"}
+            rows={MONOSPACE_BLOCK_TYPES.has(block.type) ? 8 : 4}
+            spellCheck={!MONOSPACE_BLOCK_TYPES.has(block.type)}
           />
           {block.type === "diagram" && <MermaidPreview dsl={block.content} />}
+          {block.type === "table" && (
+            <SlideTablePreview source={block.content} />
+          )}
+          {block.type === "chart" && (
+            <SlideChartPreview source={block.content} />
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Per-block textarea placeholder copy, keyed by block type. Falls back
+ * to the generic prompt for `text` (and any future plain-text type).
+ */
+const BLOCK_PLACEHOLDERS: Partial<Record<SlideBlockType, string>> = {
+  bullets: "One bullet point per line...",
+  diagram: "Mermaid diagram DSL...",
+  table: "| Header | Header |\n| --- | --- |\n| Cell | Cell |",
+  chart: "type: bar\nlabels: A, B, C\nSeries: 1, 2, 3",
+};
+
+/**
+ * Block types whose content is structured source rather than prose:
+ * they get a taller textarea and spell-check disabled so the editor
+ * doesn't flag DSL tokens / cell values.
+ */
+const MONOSPACE_BLOCK_TYPES: ReadonlySet<SlideBlockType> =
+  new Set<SlideBlockType>(["diagram", "table", "chart"]);
+
+/**
+ * Live preview of a `table` block. Parses the GitHub-flavoured Markdown
+ * source into a header + rows and renders a real `<table>`; every cell
+ * goes through React's text interpolation (never `innerHTML`), so the
+ * preview is injection-safe. Falls back to a placeholder while the
+ * source is empty / unparseable.
+ */
+function SlideTablePreview({ source }: { source: string }) {
+  const table = useMemo(() => parseSlideTable(source), [source]);
+  if (!table) {
+    return (
+      <div className="slide-table-placeholder">
+        Add a row like <code>| A | B |</code> to preview a table.
+      </div>
+    );
+  }
+  return (
+    <div className="slide-table-preview">
+      <table className="slide-table">
+        <thead>
+          <tr>
+            {table.header.map((cell, i) => (
+              <th key={i} scope="col">
+                {cell}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td key={ci}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Live preview of a `chart` block. Parses the data DSL and renders it
+ * through {@link SlideChart} (shared SVG geometry); shows a placeholder
+ * while the source has no plottable series.
+ */
+function SlideChartPreview({ source }: { source: string }) {
+  const spec = useMemo(() => parseSlideChart(source), [source]);
+  if (!spec) {
+    return (
+      <div className="slide-chart-placeholder">
+        Add a <code>labels:</code> line and a data series to preview a chart.
+      </div>
+    );
+  }
+  return (
+    <div className="slide-chart-preview">
+      <SlideChart type={spec.type} data={spec.data} title={spec.title} />
     </div>
   );
 }
