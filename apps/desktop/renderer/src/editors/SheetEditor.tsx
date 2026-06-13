@@ -15,9 +15,12 @@ import { cellFormatStyle, cellKey, isFormulaError } from "./formulaEngine";
 import type {
   ConditionalFormatRule,
   SheetContent,
+  SheetNamedRange,
 } from "./sheetEditorTypes";
 import { conditionalStyleForCell } from "./sheetConditionalFormatting";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
+import { NamedRangePanel } from "./components/NamedRangePanel";
+import { SheetAiPanel } from "./components/SheetAiPanel";
 import {
   type CellCoord,
   type Selection,
@@ -110,6 +113,10 @@ export default function SheetEditor({
   } | null>(null);
   // Conditional-formatting rules editor visibility.
   const [cfOpen, setCfOpen] = useState(false);
+  // Named-range manager visibility.
+  const [nrOpen, setNrOpen] = useState(false);
+  // AI assistant panel visibility.
+  const [aiOpen, setAiOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -526,6 +533,45 @@ export default function SheetEditor({
     },
     [debouncedSave],
   );
+
+  // Replace the workbook's named ranges and persist. An empty array
+  // drops the field so a workbook with no names stays byte-identical
+  // to its pre-feature JSON.
+  const setNamedRanges = useCallback(
+    (ranges: SheetNamedRange[]) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (ranges.length === 0) delete next.namedRanges;
+        else next.namedRanges = ranges;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Insert an (already-validated) formula into the active cell. Used by
+  // the AI assistant — the formula has passed `validateGeneratedFormula`
+  // before reaching here, so this never blind-writes unparseable text.
+  const insertFormulaIntoActiveCell = useCallback(
+    (formula: string) => {
+      const target = activeCell;
+      if (!target) return;
+      updateCell(target.row, target.col, formula);
+    },
+    [activeCell, updateCell],
+  );
+
+  // A1-style reference of the current selection's primary range
+  // (e.g. `A1:C10`, or just `B2` for a single cell). Fed to the AI
+  // assistant as grounding context.
+  const selectionRef = useMemo(() => {
+    if (!selection) return undefined;
+    const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+    const a = `${columnLabel(c1)}${r1 + 1}`;
+    const b = `${columnLabel(c2)}${r2 + 1}`;
+    return a === b ? a : `${a}:${b}`;
+  }, [selection]);
 
   // ----------------------------------------------------------------
   // copy / paste via the system clipboard.
@@ -1037,6 +1083,27 @@ export default function SheetEditor({
             ? ` (${sheet.conditionalRules.length})`
             : ""}
         </button>
+        <button
+          type="button"
+          className={nrOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={nrOpen}
+          data-testid="sheet-named-ranges-toggle"
+          onClick={() => setNrOpen((open) => !open)}
+        >
+          Named ranges
+          {sheet.namedRanges && sheet.namedRanges.length > 0
+            ? ` (${sheet.namedRanges.length})`
+            : ""}
+        </button>
+        <button
+          type="button"
+          className={aiOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={aiOpen}
+          data-testid="sheet-ai-toggle"
+          onClick={() => setAiOpen((open) => !open)}
+        >
+          AI assistant
+        </button>
       </div>
 
       {cfOpen && (
@@ -1045,6 +1112,27 @@ export default function SheetEditor({
           columns={sheet.columns}
           onChange={setConditionalRules}
           onClose={() => setCfOpen(false)}
+        />
+      )}
+
+      {nrOpen && (
+        <NamedRangePanel
+          ranges={sheet.namedRanges ?? []}
+          selectionRef={selectionRef}
+          onChange={setNamedRanges}
+          onClose={() => setNrOpen(false)}
+        />
+      )}
+
+      {aiOpen && (
+        <SheetAiPanel
+          columns={sheet.columns}
+          rows={sheet.rows}
+          activeCellRef={activeAddress || undefined}
+          activeFormula={formulaBarValue}
+          selectionRef={selectionRef}
+          onInsertFormula={insertFormulaIntoActiveCell}
+          onClose={() => setAiOpen(false)}
         />
       )}
 

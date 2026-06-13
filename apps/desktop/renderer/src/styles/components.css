@@ -1592,6 +1592,103 @@
   margin-left: auto;
 }
 
+/* ── Sheet named-range manager ────────────────────────────────── */
+
+.sheet-nr-row {
+  align-items: flex-end;
+}
+
+.sheet-nr-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-xs);
+  border-top: 1px solid var(--color-border);
+}
+
+.sheet-nr-error {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger-fg);
+}
+
+/* ── Sheet AI assistant panel ─────────────────────────────────── */
+
+.sheet-ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.sheet-ai-input {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+}
+
+.sheet-ai-input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.sheet-ai-target code,
+.sheet-ai-formula {
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-sm);
+}
+
+.sheet-ai-target {
+  margin: 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+.sheet-ai-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.sheet-ai-output {
+  padding: var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.sheet-ai-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
+.sheet-ai-formula {
+  flex: 1 1 auto;
+  color: var(--color-text-headline);
+  word-break: break-all;
+}
+
 /* ============================================================
  * Editor controls — compact buttons
  *
