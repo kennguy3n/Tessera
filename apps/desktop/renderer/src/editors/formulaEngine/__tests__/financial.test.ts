@@ -231,6 +231,15 @@ describe("NPV / IRR / MIRR — cash-flow analysis", () => {
     const grid = columnGrid([-120000, 39000, 30000, 21000, 37000, 46000]);
     expect(numberValue("=MIRR(A1:A6, 0.1, 0.12)", grid)).toBeCloseTo(0.1261, 4);
   });
+
+  it("MIRR rejects a rate at or below -100% instead of a silently-wrong -1", () => {
+    // financeRate = -1 would make pvNeg = -Infinity → (-fvPos / -Infinity) = +0
+    // → 0^(1/(n-1)) - 1 = -1 (finite, so guardFinite misses it). Excel: #DIV/0!.
+    const grid = columnGrid([-120000, 39000, 30000, 21000, 37000, 46000]);
+    expect(code(evalFormula("=MIRR(A1:A6, -1, 0.12)", grid))).toBe("#DIV/0!");
+    expect(code(evalFormula("=MIRR(A1:A6, -1.5, 0.12)", grid))).toBe("#DIV/0!");
+    expect(code(evalFormula("=MIRR(A1:A6, 0.1, -1)", grid))).toBe("#DIV/0!");
+  });
 });
 
 describe("XNPV / XIRR — dated cash flows", () => {

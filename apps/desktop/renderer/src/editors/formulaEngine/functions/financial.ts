@@ -481,6 +481,20 @@ const MIRR: FunctionImpl = (args, ctx) => {
   if (isFormulaError(reinvestRate)) return reinvestRate;
   const n = flows.length;
   if (n < 2) return makeError("#NUM!", "MIRR needs at least two cash flows");
+  // Both rates discount/compound through `(1 + rate)^k`, so a rate ≤ -100%
+  // makes the base ≤ 0. At exactly -100% a negative flow at period > 0 divides
+  // by zero → `pvNeg = -Infinity`, and `(-fvPos / -Infinity)` collapses to `+0`
+  // whose `(n-1)`-th root minus one is a finite `-1` that slips past
+  // `guardFinite` as a silently-wrong answer; below -100% the base is negative
+  // and `Math.pow(negativeBase, integerExponent)` alternates sign, corrupting
+  // the PV/FV sums. Reject the whole `rate ≤ -100%` domain up front (Excel
+  // returns `#DIV/0!`), matching the -1 guards in NPV/XNPV.
+  if (1 + financeRate <= 0) {
+    return makeError("#DIV/0!", "MIRR: finance rate must exceed -100%");
+  }
+  if (1 + reinvestRate <= 0) {
+    return makeError("#DIV/0!", "MIRR: reinvest rate must exceed -100%");
+  }
   let pvNeg = 0;
   let fvPos = 0;
   for (let i = 0; i < n; i++) {
