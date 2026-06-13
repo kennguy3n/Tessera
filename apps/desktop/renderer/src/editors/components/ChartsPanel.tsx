@@ -33,7 +33,11 @@ function newChartId(): string {
 const TYPE_LABELS: Record<ChartType, string> = {
   bar: "Bar",
   line: "Line",
+  area: "Area",
+  scatter: "Scatter",
+  combo: "Combo (bar + line)",
   pie: "Pie",
+  donut: "Donut",
 };
 
 export function ChartsPanel({
@@ -146,7 +150,11 @@ export function ChartsPanel({
           >
             <option value="bar">Bar</option>
             <option value="line">Line</option>
+            <option value="area">Area</option>
+            <option value="scatter">Scatter</option>
+            <option value="combo">Combo (bar + line)</option>
             <option value="pie">Pie</option>
+            <option value="donut">Donut</option>
           </select>
         </label>
         <label className="sheet-cf-field">

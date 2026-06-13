@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   CHART_PAD,
+  areaLayout,
   barLayout,
+  categoryX,
   extractChartData,
   formatA1Range,
   hasPlottableData,
@@ -12,6 +14,7 @@ import {
   pieLayout,
   shiftRangeForStructuralEdit,
   valueExtent,
+  yAxisTicks,
   type ChartData,
   type ChartLayout,
 } from "../sheetCharts";
@@ -332,5 +335,119 @@ describe("pieLayout", () => {
     expect(slices).toHaveLength(1);
     expect(slices[0].fraction).toBe(1);
     expect(slices[0].path).toContain("A 40 40");
+  });
+
+  it("carves an inner hole when innerRadius > 0 (donut)", () => {
+    const data: ChartData = {
+      labels: ["a", "b"],
+      series: [{ name: "A", values: [3, 1] }],
+    };
+    const solid = pieLayout(data, 50, 50, 40);
+    const donut = pieLayout(data, 50, 50, 40, 20);
+    expect(donut).toHaveLength(2);
+    // A solid wedge moves to the centre (cx,cy) then lines out to the
+    // arc; a donut wedge starts on the outer arc and closes back along
+    // the inner radius, so it never moves to the bare centre.
+    expect(solid[0].path).toContain("M 50 50 L");
+    expect(donut[0].path).toContain("A 20 20");
+    expect(donut[0].path).not.toContain("M 50 50 L");
+  });
+
+  it("emits two concentric circles for a full-circle donut slice", () => {
+    const data: ChartData = {
+      labels: ["a"],
+      series: [{ name: "A", values: [5] }],
+    };
+    const [slice] = pieLayout(data, 50, 50, 40, 20);
+    expect(slice.fraction).toBe(1);
+    expect(slice.path).toContain("A 40 40"); // outer ring
+    expect(slice.path).toContain("A 20 20"); // inner ring (hole)
+  });
+});
+
+describe("categoryX", () => {
+  it("spreads edge-aligned points from the left axis to the right edge", () => {
+    expect(categoryX(0, 3, 10, 90, "edge")).toBeCloseTo(10);
+    expect(categoryX(2, 3, 10, 90, "edge")).toBeCloseTo(100);
+    expect(categoryX(1, 3, 10, 90, "edge")).toBeCloseTo(55);
+  });
+
+  it("centres band-aligned points within each category slot", () => {
+    // 3 categories over a width-90 plot → bands of 30; centres at 15/45/75.
+    expect(categoryX(0, 3, 10, 90, "band")).toBeCloseTo(25);
+    expect(categoryX(1, 3, 10, 90, "band")).toBeCloseTo(55);
+    expect(categoryX(2, 3, 10, 90, "band")).toBeCloseTo(85);
+  });
+
+  it("centres a lone edge-aligned point and guards empty input", () => {
+    expect(categoryX(0, 1, 10, 90, "edge")).toBeCloseTo(55);
+    expect(categoryX(0, 0, 10, 90, "edge")).toBe(10);
+  });
+});
+
+describe("areaLayout", () => {
+  it("closes each run down to the baseline so it can be filled", () => {
+    const data: ChartData = {
+      labels: ["1", "2"],
+      series: [{ name: "A", values: [10, 20] }],
+    };
+    const { areas, max } = areaLayout(data, LAYOUT);
+    expect(areas).toHaveLength(1);
+    expect(max).toBe(20);
+    expect(areas[0].fills).toHaveLength(1);
+    const baselineY = LAYOUT.height - CHART_PAD.bottom;
+    // A closed fill path ends with `Z` and touches the baseline.
+    expect(areas[0].fills[0].trim().endsWith("Z")).toBe(true);
+    expect(areas[0].fills[0]).toContain(`${baselineY}`);
+    expect(areas[0].points).toHaveLength(2);
+  });
+
+  it("breaks the fill around blanks (no bridge over missing data)", () => {
+    const data: ChartData = {
+      labels: ["1", "2", "3", "4"],
+      series: [{ name: "A", values: [1, null, 3, 4] }],
+    };
+    const { areas } = areaLayout(data, LAYOUT);
+    // One run before the gap, one after → two fills + two line segments.
+    expect(areas[0].fills).toHaveLength(2);
+    expect(areas[0].segments).toHaveLength(2);
+  });
+});
+
+describe("lineLayout — combo options", () => {
+  it("honours maxOverride so combo marks share one axis", () => {
+    const data: ChartData = {
+      labels: ["1", "2"],
+      series: [{ name: "A", values: [10, 20] }],
+    };
+    const forced = lineLayout(data, LAYOUT, { maxOverride: 100 });
+    expect(forced.max).toBe(100);
+    const auto = lineLayout(data, LAYOUT);
+    // A larger axis max pushes points lower (further from the top).
+    expect(forced.lines[0].points[1].y).toBeGreaterThan(
+      auto.lines[0].points[1].y,
+    );
+  });
+
+  it("band-aligns points so a combo line lines up with bar centres", () => {
+    const data: ChartData = {
+      labels: ["1", "2"],
+      series: [{ name: "A", values: [5, 10] }],
+    };
+    const plotW = LAYOUT.width - CHART_PAD.left - CHART_PAD.right;
+    const { lines } = lineLayout(data, LAYOUT, { align: "band" });
+    // First of two band centres = left + 0.25 * plotW.
+    expect(lines[0].points[0].x).toBeCloseTo(CHART_PAD.left + 0.25 * plotW);
+  });
+});
+
+describe("yAxisTicks", () => {
+  it("returns count+1 evenly spaced ticks from 0 to max", () => {
+    expect(yAxisTicks(100, 4)).toEqual([0, 25, 50, 75, 100]);
+  });
+
+  it("falls back to a single zero tick for a non-positive axis", () => {
+    expect(yAxisTicks(0)).toEqual([0]);
+    expect(yAxisTicks(-5)).toEqual([0]);
   });
 });

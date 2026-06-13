@@ -71,9 +71,11 @@ export function SheetChart({ spec, data, onRemove }: SheetChartProps) {
         </svg>
       )}
 
-      {data.series.length > 1 || spec.type === "pie" ? (
+      {data.series.length > 1 ||
+      spec.type === "pie" ||
+      spec.type === "donut" ? (
         <ul className="sheet-chart-legend" aria-hidden="true">
-          {spec.type === "pie"
+          {spec.type === "pie" || spec.type === "donut"
             ? data.labels.map((label, i) => (
                 <li key={i}>
                   <span
