@@ -2340,56 +2340,60 @@ interface CellInputProps {
 
 function CellInput(props: CellInputProps) {
   const { field } = props;
+  // Each editable cell needs its own accessible name (the column header
+  // doesn't name the native control). Compute it once here and thread a
+  // derived props object down — we intentionally do NOT mutate the
+  // `props` parameter so the input shape stays read-only.
   const ariaLabel = `${field.name}, row ${props.recordIndex + 1}`;
-  props = { ...props, ariaLabel };
+  const cellProps = { ...props, ariaLabel };
   switch (field.type) {
     case "checkbox":
-      return <CheckboxCell {...props} />;
+      return <CheckboxCell {...cellProps} />;
     case "number":
-      return <NumberCell {...props} />;
+      return <NumberCell {...cellProps} />;
     case "date":
-      return <DateCell {...props} />;
+      return <DateCell {...cellProps} />;
     case "select":
-      return <SelectCell {...props} />;
+      return <SelectCell {...cellProps} />;
     case "url":
-      return <UrlCell {...props} />;
+      return <UrlCell {...cellProps} />;
     case "multi_select":
-      return <MultiSelectCell {...props} />;
+      return <MultiSelectCell {...cellProps} />;
     case "formula":
-      return <FormulaCell {...props} />;
+      return <FormulaCell {...cellProps} />;
     case "linked_record":
-      return <LinkedRecordCell {...props} />;
+      return <LinkedRecordCell {...cellProps} />;
     case "rollup":
-      return <RollupCell {...props} />;
+      return <RollupCell {...cellProps} />;
     case "lookup":
-      return <LookupCell {...props} />;
+      return <LookupCell {...cellProps} />;
     case "attachment":
-      return <AttachmentCell {...props} />;
+      return <AttachmentCell {...cellProps} />;
     case "long_text":
-      return <LongTextCell {...props} />;
+      return <LongTextCell {...cellProps} />;
     case "email":
-      return <EmailCell {...props} />;
+      return <EmailCell {...cellProps} />;
     case "phone":
-      return <PhoneCell {...props} />;
+      return <PhoneCell {...cellProps} />;
     case "currency":
-      return <CurrencyCell {...props} />;
+      return <CurrencyCell {...cellProps} />;
     case "percent":
-      return <PercentCell {...props} />;
+      return <PercentCell {...cellProps} />;
     case "rating":
-      return <RatingCell {...props} />;
+      return <RatingCell {...cellProps} />;
     case "duration":
-      return <DurationCell {...props} />;
+      return <DurationCell {...cellProps} />;
     case "auto_number":
-      return <AutoNumberCell {...props} />;
+      return <AutoNumberCell {...cellProps} />;
     case "user":
-      return <UserCell {...props} />;
+      return <UserCell {...cellProps} />;
     case "created_time":
-      return <TimestampCell {...props} which="created" />;
+      return <TimestampCell {...cellProps} which="created" />;
     case "modified_time":
-      return <TimestampCell {...props} which="modified" />;
+      return <TimestampCell {...cellProps} which="modified" />;
     case "text":
     default:
-      return <TextCell {...props} />;
+      return <TextCell {...cellProps} />;
   }
 }
 
@@ -2858,6 +2862,7 @@ function LinkedRecordCell({
   allRecords,
   resolver,
   onChange,
+  ariaLabel,
 }: CellInputProps) {
   const links: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
@@ -2888,6 +2893,11 @@ function LinkedRecordCell({
       ref={rootRef}
       className="base-cell-linkedrecord"
       style={{ position: "relative" }}
+      // Group the chips + add control under the cell's accessible name so a
+      // screen reader announces e.g. "Owner, row 3, group" instead of an
+      // unnamed cluster of chip/remove buttons. Threaded from CellInput.
+      role="group"
+      aria-label={ariaLabel}
     >
       <div style={{ display: "inline-flex", gap: "0.25rem", flexWrap: "wrap" }}>
         {linkedRecords.map((r) => (
@@ -2928,6 +2938,11 @@ function LinkedRecordCell({
           onClick={() => setOpen((o) => !o)}
           className="btn-sm"
           style={{ fontSize: "0.75rem", padding: "0 0.4rem" }}
+          // The visible "+" glyph is not a meaningful name; the group's
+          // aria-label already scopes us to the field, so name the action.
+          aria-label="Add link"
+          aria-haspopup="listbox"
+          aria-expanded={open}
         >
           +
         </button>

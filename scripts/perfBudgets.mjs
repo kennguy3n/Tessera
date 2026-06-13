@@ -50,7 +50,12 @@ import { chromium } from "@playwright/test";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP_DIR = path.join(REPO_ROOT, "apps", "desktop");
 const CONFIG_PATH = path.join(DESKTOP_DIR, "qa", "perf-budgets.json");
-const PORT = Number(process.env.TESSERA_PERF_PORT || 5180);
+// Keep in sync with the `preview:qa` script in apps/desktop/package.json,
+// which bakes in `--port 5180 --strictPort`. We only append our own
+// `--port` override when the caller asked for a different port, so the
+// common case spawns vite with a single, unambiguous port flag.
+const DEFAULT_PREVIEW_PORT = 5180;
+const PORT = Number(process.env.TESSERA_PERF_PORT || DEFAULT_PREVIEW_PORT);
 // 127.0.0.1, not "localhost": vite preview binds IPv4 by default, but
 // Node's fetch resolves "localhost" to IPv6 (::1) first on many systems
 // (notably the CI container), so a "localhost" probe would hang until the
@@ -162,9 +167,16 @@ async function startServer() {
   // `-- --host 127.0.0.1`: pin vite preview to IPv4 so the `HOST` probe
   // below reaches it. By default vite binds "localhost", which in the CI
   // container resolves to IPv6 (::1) only, leaving an IPv4 probe refused.
+  // preview:qa already pins `--port 5180 --strictPort`; only pass a `--port`
+  // override when the caller chose a non-default port, so we don't hand vite
+  // a duplicate flag in the common case.
+  const previewArgs = ["run", "preview:qa", "--", "--host", HOST];
+  if (PORT !== DEFAULT_PREVIEW_PORT) {
+    previewArgs.push("--port", String(PORT));
+  }
   serverProc = spawn(
     "npm",
-    ["run", "preview:qa", "--", "--host", HOST, "--port", String(PORT)],
+    previewArgs,
     {
       cwd: DESKTOP_DIR,
       env: { ...process.env, TESSERA_QA_PORT: String(PORT) },

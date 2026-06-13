@@ -106,7 +106,7 @@ describe("BaseEditor — linked_record field", () => {
       ],
     });
     // Click the first row's + button (one per cell).
-    const plusButtons = screen.getAllByRole("button", { name: "+" });
+    const plusButtons = screen.getAllByRole("button", { name: "Add link" });
     fireEvent.click(plusButtons[0]);
     // Now pick "Bob" from the dropdown.
     fireEvent.click(screen.getByText("Bob"));
@@ -639,7 +639,7 @@ describe("BaseEditor — record-identity guards", () => {
     });
     // Find the picker '+' button on the first record's Refs cell.
     // There's one per row, so we open the first.
-    const plusButtons = screen.getAllByRole("button", { name: "+" });
+    const plusButtons = screen.getAllByRole("button", { name: "Add link" });
     fireEvent.click(plusButtons[0]);
     // The picker should offer Beta and Gamma — but NOT Alpha
     // (the current record itself).
@@ -791,7 +791,7 @@ describe("BaseEditor — dropdown click-outside behavior", () => {
         { id: "r2", Title: "Beta", Refs: [] },
       ],
     });
-    const plusButtons = screen.getAllByRole("button", { name: "+" });
+    const plusButtons = screen.getAllByRole("button", { name: "Add link" });
     fireEvent.click(plusButtons[0]);
     expect(screen.getByRole("listbox")).toBeInTheDocument();
     fireEvent.mouseDown(document.body);
