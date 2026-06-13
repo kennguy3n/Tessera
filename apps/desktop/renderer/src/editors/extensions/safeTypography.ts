@@ -34,16 +34,51 @@ const HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 // the numeric grammar (digits, separators, units) so no `url(`, identifier or
 // `;` can be smuggled inside the parentheses.
 const COLOR_FN = /^(?:rgb|rgba|hsl|hsla)\(\s*[0-9.,%/\sdeg]+\)$/i;
-// Bare CSS keyword colours (`red`, `transparent`, `currentcolor`, …). Letters
-// only, so it cannot contain a separator or `url`.
-const COLOR_KEYWORD = /^[a-z]+$/i;
+// Bare CSS keyword colours. Rather than accept any letters-only token, we match
+// against the explicit CSS Color Module Level 4 named-colour set plus the
+// CSS-wide keywords. A letters-only regex can never form an injection payload,
+// but an exact allow-list rejects garbage (`color: abcxyz`) up front — the
+// stricter posture we want for documents that cross tenant boundaries.
+const COLOR_KEYWORDS: ReadonlySet<string> = new Set([
+  // CSS-wide keywords + functional keywords.
+  "transparent", "currentcolor", "inherit", "initial", "unset", "revert",
+  // CSS Color Module Level 4 named colours.
+  "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige",
+  "bisque", "black", "blanchedalmond", "blue", "blueviolet", "brown",
+  "burlywood", "cadetblue", "chartreuse", "chocolate", "coral",
+  "cornflowerblue", "cornsilk", "crimson", "cyan", "darkblue", "darkcyan",
+  "darkgoldenrod", "darkgray", "darkgreen", "darkgrey", "darkkhaki",
+  "darkmagenta", "darkolivegreen", "darkorange", "darkorchid", "darkred",
+  "darksalmon", "darkseagreen", "darkslateblue", "darkslategray",
+  "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue",
+  "dimgray", "dimgrey", "dodgerblue", "firebrick", "floralwhite",
+  "forestgreen", "fuchsia", "gainsboro", "ghostwhite", "gold", "goldenrod",
+  "gray", "green", "greenyellow", "grey", "honeydew", "hotpink", "indianred",
+  "indigo", "ivory", "khaki", "lavender", "lavenderblush", "lawngreen",
+  "lemonchiffon", "lightblue", "lightcoral", "lightcyan",
+  "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey", "lightpink",
+  "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray",
+  "lightslategrey", "lightsteelblue", "lightyellow", "lime", "limegreen",
+  "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue",
+  "mediumorchid", "mediumpurple", "mediumseagreen", "mediumslateblue",
+  "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue",
+  "mintcream", "mistyrose", "moccasin", "navajowhite", "navy", "oldlace",
+  "olive", "olivedrab", "orange", "orangered", "orchid", "palegoldenrod",
+  "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff",
+  "peru", "pink", "plum", "powderblue", "purple", "rebeccapurple", "red",
+  "rosybrown", "royalblue", "saddlebrown", "salmon", "sandybrown", "seagreen",
+  "seashell", "sienna", "silver", "skyblue", "slateblue", "slategray",
+  "slategrey", "snow", "springgreen", "steelblue", "tan", "teal", "thistle",
+  "tomato", "turquoise", "violet", "wheat", "white", "whitesmoke", "yellow",
+  "yellowgreen",
+]);
 
-/** A safe CSS colour: hex, an `rgb/hsl(...)` function, or a bare keyword. */
+/** A safe CSS colour: hex, an `rgb/hsl(...)` function, or a named keyword. */
 export function isSafeCssColor(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const s = value.trim();
   if (s === "" || s.length > MAX_LEN) return false;
-  return HEX.test(s) || COLOR_FN.test(s) || COLOR_KEYWORD.test(s);
+  return HEX.test(s) || COLOR_FN.test(s) || COLOR_KEYWORDS.has(s.toLowerCase());
 }
 
 // A number with an allow-listed unit, e.g. `16px`, `1.5em`, `120%`.

@@ -35,8 +35,18 @@ describe("isSafeCssColor", () => {
       "red",
       "transparent",
       "currentcolor",
+      "RebeccaPurple", // named colours are case-insensitive
+      "YELLOW",
     ]) {
       expect(isSafeCssColor(v)).toBe(true);
+    }
+  });
+
+  it("rejects letters-only tokens that are not real named colours", () => {
+    // Harmless (no injection possible) but invalid CSS — the explicit
+    // allow-list rejects them rather than passing garbage through.
+    for (const v of ["abcxyz", "notacolor", "reddd", "bluee"]) {
+      expect(isSafeCssColor(v)).toBe(false);
     }
   });
 
