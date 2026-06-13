@@ -21,6 +21,7 @@ import {
   within,
 } from "@testing-library/react";
 import BaseEditor from "../editors/BaseEditor";
+import { formatTimestamp } from "../editors/baseRecordMeta";
 
 function renderEditor(content: object, onSave = vi.fn()) {
   const json = JSON.stringify(content);
@@ -465,5 +466,56 @@ describe("BaseEditor.removeField — drops stale view state", () => {
     // old column headers.
     expect(screen.queryByText(/Todo \(1\)/)).toBeNull();
     expect(screen.queryByText(/Doing \(1\)/)).toBeNull();
+  });
+});
+
+describe("BaseEditor grid filtering — computed timestamp columns", () => {
+  // Regression: a `created_time` column's grid filter must compare
+  // against the SAME locale-formatted string the cell renders
+  // ("Jan 15, 2024"), not the raw ISO ("2024-01-15T…") that the CSV
+  // exporter emits. Typing the locale month name into the filter used
+  // to match nothing because the ISO contains "01", not "Jan".
+  const JAN_ISO = "2024-01-15T10:00:00.000Z";
+  const JUN_ISO = "2024-06-20T10:00:00.000Z";
+
+  function filterInputFor(columnName: string): HTMLElement {
+    const header = screen
+      .getByRole("button", { name: new RegExp(`^${columnName}`) })
+      .closest("th");
+    if (!header) throw new Error(`No header th for column ${columnName}`);
+    return within(header as HTMLElement).getByPlaceholderText("Filter…");
+  }
+
+  it("filters created_time by the locale display string, not the ISO", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Created", type: "created_time" },
+      ],
+      records: [
+        { Title: "January Row", __created: JAN_ISO, __modified: JAN_ISO },
+        { Title: "June Row", __created: JUN_ISO, __modified: JUN_ISO },
+      ],
+    });
+
+    // Both rows visible before filtering (text cells are <input>s, so
+    // assert via their display value).
+    expect(screen.getByDisplayValue("January Row")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("June Row")).toBeInTheDocument();
+
+    // Derive the alphabetic month token from the SAME formatter the
+    // cell uses, so the test is locale-independent. It must not appear
+    // in the raw ISO (which only has digits for the month).
+    const janMonth = (formatTimestamp(JAN_ISO, false).match(/[A-Za-z]{3,}/) ?? [
+      "Jan",
+    ])[0];
+    expect(JAN_ISO.toLowerCase()).not.toContain(janMonth.toLowerCase());
+
+    fireEvent.change(filterInputFor("Created"), {
+      target: { value: janMonth },
+    });
+
+    expect(screen.getByDisplayValue("January Row")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("June Row")).toBeNull();
   });
 });

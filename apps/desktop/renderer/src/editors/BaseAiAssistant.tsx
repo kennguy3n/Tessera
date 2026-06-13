@@ -206,6 +206,10 @@ export default function BaseAiAssistant({
   };
 
   const handleGenerate = useCallback(async () => {
+    // `fill` has its own bounded row-by-row driver (`handleFill`); the
+    // UI routes it there, so guard against ever being invoked here (e.g.
+    // after a future refactor) rather than silently no-opping busy state.
+    if (mode === "fill") return;
     clearPreviews();
     setBusy(true);
     cancelRef.current = false;
@@ -317,7 +321,16 @@ export default function BaseAiAssistant({
       }
       setFillPreview(out);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // Cancelling (or a mid-flight model error) can reject the in-flight
+      // `run()` after some rows already produced values. Don't throw those
+      // away — surface whatever was generated as a preview so the user can
+      // still apply the partial result; only show the error when nothing
+      // was produced.
+      if (out.size > 0) {
+        setFillPreview(out);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }

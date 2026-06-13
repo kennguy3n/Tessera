@@ -164,6 +164,37 @@ describe("BaseAiAssistant", () => {
     expect(map.has("r1")).toBe(false);
   });
 
+  it("preserves already-generated rows as a preview when a later row errors", async () => {
+    const props = setup({
+      records: [
+        { id: "r1", Name: "Acme", Notes: "" },
+        { id: "r2", Name: "Beta", Notes: "" },
+      ],
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Fill column" }));
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "Notes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    // Row 1 succeeds.
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(1));
+    streamResponse("note one");
+    // Row 2: the model emits an error chunk (e.g. on cancel) so run()
+    // rejects. The one successful row must still be offered, not discarded.
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(2));
+    emit({ token: "", done: false, error: "generation cancelled" });
+    await waitFor(() =>
+      expect(screen.getByText(/Preview \(1 value\)/)).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Apply to 1 record/i }));
+    const [, map] = vi.mocked(props.onApplyCellValues).mock.calls[0] as [
+      string,
+      Map<string, unknown>,
+    ];
+    expect(map.get("r1")).toBe("note one");
+    expect(map.has("r2")).toBe(false);
+  });
+
   it("summarizes records into prose", async () => {
     setup();
     fireEvent.click(screen.getByRole("tab", { name: "Summarize" }));

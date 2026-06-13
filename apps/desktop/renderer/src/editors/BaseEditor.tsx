@@ -923,13 +923,29 @@ export default function BaseEditor({
       }
       const cached = perRecord.get(field.name);
       if (cached !== undefined) return cached;
-      const value = formatValueForCsv(
-        field,
-        record,
-        data.records,
-        data.fields,
-        tableResolver,
-      );
+      // `created_time` / `modified_time` must filter + sort against the
+      // SAME locale-formatted string the cell shows (e.g. "Jan 1, 2024"),
+      // not the raw ISO that `formatValueForCsv` emits for export — else
+      // typing "Jan" in the column filter matches nothing. Mirror
+      // `TimestampCell` exactly.
+      let value: string;
+      if (field.type === "created_time" || field.type === "modified_time") {
+        const iso =
+          record[
+            field.type === "created_time"
+              ? RECORD_CREATED_KEY
+              : RECORD_MODIFIED_KEY
+          ];
+        value = formatTimestamp(iso, field.dateIncludeTime === true);
+      } else {
+        value = formatValueForCsv(
+          field,
+          record,
+          data.records,
+          data.fields,
+          tableResolver,
+        );
+      }
       perRecord.set(field.name, value);
       return value;
     };

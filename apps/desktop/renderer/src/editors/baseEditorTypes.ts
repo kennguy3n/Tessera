@@ -3,8 +3,13 @@
  *
  * Lives in a third file (neither the component file nor the helpers
  * file) so the component and helpers can each import these types
- * directly without creating a runtime cycle. Compile-time-erased
- * declarations only — no value-level code lives here, by design.
+ * directly without creating a runtime cycle. This is almost entirely
+ * compile-time-erased declarations; the one deliberate exception is the
+ * handful of reserved record-key `const`s below (`RECORD_*_KEY`), which
+ * the {@link BaseRecord} interface uses as computed property keys and so
+ * must live in the same module as the type that depends on them. They
+ * are zero-import `as const` string literals (trivially tree-shakeable),
+ * so they introduce no runtime cycle.
  *
  * expansion: 15 new field types covering Airtable
  * parity (multi_select, formula, linked_record, rollup, lookup,
