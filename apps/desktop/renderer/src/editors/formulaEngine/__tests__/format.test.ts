@@ -57,6 +57,12 @@ describe("applyCellFormat — number formats", () => {
   it("coerces numeric strings when the pattern wants a number", () => {
     expect(applyCellFormat("123.4", { numberFormat: "0.00" })).toBe("123.40");
   });
+
+  it("surfaces a non-finite value as an error, not 'NaN'/'Infinity'", () => {
+    expect(applyCellFormat(NaN, { numberFormat: "#,##0.00" })).toBe("#NUM!");
+    expect(applyCellFormat(Infinity, { numberFormat: "0.0" })).toBe("#NUM!");
+    expect(applyCellFormat(-Infinity, { numberFormat: "0" })).toBe("#NUM!");
+  });
 });
 
 describe("applyCellFormat — multi-section custom formats", () => {

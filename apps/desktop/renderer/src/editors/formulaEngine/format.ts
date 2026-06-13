@@ -234,7 +234,15 @@ function coerceToNumberForPattern(
   value: Exclude<FormulaValue, FormulaError>,
 ): number | FormulaError {
   if (value === null) return 0;
-  if (typeof value === "number") return value;
+  if (typeof value === "number") {
+    // A non-finite number (NaN / ±Infinity, e.g. from a result that slipped
+    // past error handling) must not render as the literal "NaN"/"Infinity";
+    // surface it as an error instead — matching the string path below.
+    if (!Number.isFinite(value)) {
+      return makeError("#NUM!", "cannot format a non-finite number");
+    }
+    return value;
+  }
   if (typeof value === "boolean") return value ? 1 : 0;
   // String
   const trimmed = value.trim();
