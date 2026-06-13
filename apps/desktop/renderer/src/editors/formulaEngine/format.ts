@@ -316,28 +316,56 @@ function formatNumberPattern(value: number, pattern: string): string {
 }
 
 /**
- * Split trailing "scale" commas off a digit template. Commas that sit
- * after the last digit placeholder divide the value by 1000 apiece;
- * commas between placeholders (`#,##0`) are thousands separators and
- * are left in place.
+ * Split "scale" commas off a digit template. A comma divides the value by
+ * 1000 apiece when it sits in one of the two positions Excel treats as
+ * scaling rather than grouping:
+ *   1. after the last digit placeholder of the whole template (trailing:
+ *      `#,##0,` → thousands, `0.0,,` → millions), or
+ *   2. immediately to the left of the decimal point, with no digit
+ *      placeholder between the comma run and the dot (`#,##0,.00` → the
+ *      integer is shown in thousands with two decimals).
+ * Commas anywhere else (`#,##0`) are thousands grouping separators and are
+ * left in place. Indices are collected in a set so a degenerate pattern like
+ * `#,##0,.` (a comma that is simultaneously pre-dot and trailing) counts the
+ * comma once, not twice.
  */
 function extractScaleCommas(body: string): { template: string; scale: number } {
-  const lastDigit = Math.max(
-    body.lastIndexOf("0"),
-    body.lastIndexOf("#"),
-    body.lastIndexOf("?"),
-  );
+  /** Last index of any digit placeholder strictly before `end`. */
+  const lastDigitBefore = (end: number): number =>
+    Math.max(
+      body.lastIndexOf("0", end - 1),
+      body.lastIndexOf("#", end - 1),
+      body.lastIndexOf("?", end - 1),
+    );
+
+  const scaling = new Set<number>();
+
+  // (1) Trailing commas after the overall last digit placeholder.
+  const lastDigit = lastDigitBefore(body.length);
   if (lastDigit === -1) return { template: body, scale: 1 };
-  const tail = body.slice(lastDigit + 1);
-  const commas = (tail.match(/,/g) ?? []).length;
-  if (commas === 0) return { template: body, scale: 1 };
-  return {
-    template: body.slice(0, lastDigit + 1) + tail.replace(/,/g, ""),
-    scale: 1000 ** commas,
-  };
+  for (let i = lastDigit + 1; i < body.length; i++) {
+    if (body[i] === ",") scaling.add(i);
+  }
+
+  // (2) The run of commas sitting immediately left of the decimal point.
+  const dot = indexOfUnquoted(body, ".");
+  if (dot !== -1) {
+    const lastIntDigit = lastDigitBefore(dot);
+    for (let i = dot - 1; i > lastIntDigit; i--) {
+      if (body[i] === ",") scaling.add(i);
+      else break;
+    }
+  }
+
+  if (scaling.size === 0) return { template: body, scale: 1 };
+  const template = Array.from(body)
+    .filter((_, i) => !scaling.has(i))
+    .join("");
+  return { template, scale: 1000 ** scaling.size };
 }
 
-function containsUnquoted(pattern: string, ch: string): boolean {
+/** First index of `ch` in `pattern` that is not inside a `"…"` literal. */
+function indexOfUnquoted(pattern: string, ch: string): number {
   let inQuote = false;
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
@@ -345,9 +373,13 @@ function containsUnquoted(pattern: string, ch: string): boolean {
       inQuote = !inQuote;
       continue;
     }
-    if (!inQuote && c === ch) return true;
+    if (!inQuote && c === ch) return i;
   }
-  return false;
+  return -1;
+}
+
+function containsUnquoted(pattern: string, ch: string): boolean {
+  return indexOfUnquoted(pattern, ch) !== -1;
 }
 
 /**

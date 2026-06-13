@@ -103,6 +103,24 @@ describe("applyCellFormat — scaling and bracket directives", () => {
     );
   });
 
+  it("treats a comma immediately left of the decimal point as scaling", () => {
+    // `#,##0,.00`: the integer is shown in thousands, then two decimals.
+    // 1234567 / 1000 = 1234.567 → "1,234.57".
+    expect(applyCellFormat(1234567, { numberFormat: "#,##0,.00" })).toBe(
+      "1,234.57",
+    );
+    // Two pre-decimal commas scale by a million.
+    expect(applyCellFormat(1234567890, { numberFormat: "#,##0,,.0" })).toBe(
+      "1,234.6",
+    );
+  });
+
+  it("counts a pre-decimal comma once even when it is also trailing", () => {
+    // `#,##0,.` has no fractional digit, so the lone comma is simultaneously
+    // pre-dot and trailing — it must scale by 1000, not 1,000,000.
+    expect(applyCellFormat(1234567, { numberFormat: "#,##0,." })).toBe("1,235");
+  });
+
   it("keeps interior commas as thousands separators (not scaling)", () => {
     expect(applyCellFormat(1234567, { numberFormat: "#,##0" })).toBe(
       "1,234,567",
