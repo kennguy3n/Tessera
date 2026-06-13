@@ -582,6 +582,40 @@ def enrich_base(json_str: str, slug: str) -> str:
 _DECK_THEME = {"board-update": "editorial", "qbr": "aurora"}
 _BULLET_LINE_RE = re.compile(r"^\s*[-*•]\s+")
 
+# A *candidate* sentence terminator: a '.', '!' or '?' that is followed by
+# whitespace and the start of a capitalised next sentence (optionally opening
+# with a quote/paren). The capital-letter lookahead is what keeps the dot inside
+# a figure ($14.2M), a ratio (1.6x) or an abbreviation that precedes lowercase /
+# punctuation ("e.g., RidgeLine", "vs. plan") from ever looking like a boundary.
+_SENT_CAND_RE = re.compile(r"[.!?](?=\s+[\"“(]?[A-Z])")
+_PREV_WORD_RE = re.compile(r"([A-Za-z]+)$")
+# Lower-cased abbreviations whose trailing dot is never a sentence end. Single
+# letters (initials like "A.", and the "g" of "e.g.") are handled separately.
+_ABBREVIATIONS = frozenset({
+    "vs", "etc", "inc", "corp", "co", "ltd", "dr", "mr", "ms", "mrs", "st",
+    "no", "approx", "fy", "jan", "feb", "mar", "apr", "jun", "jul", "aug",
+    "sep", "sept", "oct", "nov", "dec",
+})
+
+
+def _first_sentence(text: str) -> str:
+    """Return the first genuine sentence of ``text``. A terminator only counts as
+    a boundary when it is followed by a capitalised next sentence AND is not a
+    decimal point, a single-letter initial, or a known abbreviation — so dollar
+    amounts (``$14.2M``), ratios (``1.6x``) and ``vs.``/``Co.``/``e.g.`` stay
+    intact. Falls back to the whole string when there is no such boundary, which
+    is the common case here (these bullets are single sentences)."""
+    for m in _SENT_CAND_RE.finditer(text):
+        i = m.start()
+        if i > 0 and text[i - 1].isdigit():
+            continue  # decimal / FY25. / version number
+        word = _PREV_WORD_RE.search(text[:i])
+        token = word.group(1) if word else ""
+        if len(token) == 1 or token.lower() in _ABBREVIATIONS:
+            continue  # initial ("A.") or abbreviation ("vs.", the "g" of "e.g.")
+        return text[:i].strip()
+    return text.strip()
+
 
 def _to_bullet_lines(content: str) -> list[str]:
     lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
@@ -595,8 +629,9 @@ def _presenter_note(bullet_lines: list[str], title: str) -> str:
         return f"Open the “{title}” section and frame why it matters."
     leads = []
     for ln in bullet_lines[:3]:
-        # First clause / sentence of the bullet, citations stripped.
-        clause = re.split(r"[.;]", re.sub(r"\[[^\]]+\]", "", ln))[0].strip()
+        # First sentence of the bullet, citations stripped. Sentence detection is
+        # figure/abbreviation-aware so amounts like "$14.2M" are never truncated.
+        clause = _first_sentence(re.sub(r"\[[^\]]+\]", "", ln)).rstrip(" .;")
         if clause:
             leads.append(clause)
     return "Talking points: " + "; ".join(leads) + "."

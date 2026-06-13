@@ -936,13 +936,23 @@ def preview_markdown(art_type: str, title: str, content: str) -> str:
         return "\n".join(out)
     if art_type == "base":
         d = json.loads(content)
-        fields = [f["name"] for f in d["fields"]]
-        out = [f"# {title}\n",
-               "| " + " | ".join(f"{f['name']} ({f['type']})" for f in d["fields"]) + " |",
-               "|" + "|".join(["---"] * len(fields)) + "|"]
-        for rec in d["records"]:
-            out.append("| " + " | ".join(str(rec.get(fn, "")) for fn in fields) + " |")
-        return "\n".join(out)
+        # Render both base shapes: the model's single-table `{fields, records}`
+        # and the enriched multi-table `{tables: [...]}`. Keeping the preview
+        # aware of both means routing enriched content through here can never
+        # KeyError — it just emits one markdown table per base table.
+        tables = d["tables"] if "tables" in d else [{"name": title, **d}]
+        out = [f"# {title}\n"]
+        for t in tables:
+            if len(tables) > 1:
+                out.append(f"## {t.get('name', '')}\n")
+            fields = t["fields"]
+            names = [f["name"] for f in fields]
+            out.append("| " + " | ".join(f"{f['name']} ({f['type']})" for f in fields) + " |")
+            out.append("|" + "|".join(["---"] * len(names)) + "|")
+            for rec in t["records"]:
+                out.append("| " + " | ".join(str(rec.get(fn, "")) for fn in names) + " |")
+            out.append("")
+        return "\n".join(out).rstrip() + "\n"
     if art_type == "slides":
         d = json.loads(content)
         out = [f"# {title}\n"]
