@@ -39,6 +39,7 @@
  */
 import type { AstNode } from "../parser";
 import {
+  collectValues,
   evaluate,
   toNumber,
   toString as coerceToString,
@@ -321,6 +322,212 @@ function singleNumber(
   return toNumber(v);
 }
 
+const TIME: FunctionImpl = (args, ctx) => {
+  if (args.length !== 3) return makeError("#ERR!", "TIME expects 3 arguments");
+  const h = singleNumber(args[0], ctx);
+  if (isFormulaError(h)) return h;
+  const m = singleNumber(args[1], ctx);
+  if (isFormulaError(m)) return m;
+  const s = singleNumber(args[2], ctx);
+  if (isFormulaError(s)) return s;
+  const totalSeconds = Math.trunc(h) * 3600 + Math.trunc(m) * 60 + Math.trunc(s);
+  // TIME wraps modulo 24h and is always a positive fraction of a day,
+  // matching Excel (TIME(25,0,0) == TIME(1,0,0)).
+  const dayFraction = ((totalSeconds % 86400) + 86400) % 86400;
+  return dayFraction / 86400;
+};
+
+/** Extract the time-of-day fraction (0 ≤ f < 1) from a date serial. */
+function timeFraction(serial: number): number {
+  const frac = serial - Math.floor(serial);
+  // Guard against binary-rounding drift pushing us a hair below 0.
+  return frac < 0 ? frac + 1 : frac;
+}
+
+const HOUR: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "HOUR expects 1 argument");
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  return Math.floor(timeFraction(s) * 24);
+};
+
+const MINUTE: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "MINUTE expects 1 argument");
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const totalSeconds = Math.round(timeFraction(s) * 86400);
+  return Math.floor(totalSeconds / 60) % 60;
+};
+
+const SECOND: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "SECOND expects 1 argument");
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const totalSeconds = Math.round(timeFraction(s) * 86400);
+  return totalSeconds % 60;
+};
+
+const WEEKDAY: FunctionImpl = (args, ctx) => {
+  if (args.length < 1 || args.length > 2) {
+    return makeError("#ERR!", "WEEKDAY expects 1 or 2 arguments");
+  }
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  let type = 1;
+  if (args.length === 2) {
+    const t = singleNumber(args[1], ctx);
+    if (isFormulaError(t)) return t;
+    type = Math.trunc(t);
+  }
+  // JS getUTCDay: Sun=0 … Sat=6.
+  const dow = serialToDate(Math.floor(s)).getUTCDay();
+  switch (type) {
+    case 1:
+      return dow + 1; // Sun=1 … Sat=7
+    case 2:
+      return ((dow + 6) % 7) + 1; // Mon=1 … Sun=7
+    case 3:
+      return (dow + 6) % 7; // Mon=0 … Sun=6
+    default:
+      return makeError("#NUM!", `WEEKDAY type ${type} not supported`);
+  }
+};
+
+const WEEKNUM: FunctionImpl = (args, ctx) => {
+  if (args.length < 1 || args.length > 2) {
+    return makeError("#ERR!", "WEEKNUM expects 1 or 2 arguments");
+  }
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  let type = 1;
+  if (args.length === 2) {
+    const t = singleNumber(args[1], ctx);
+    if (isFormulaError(t)) return t;
+    type = Math.trunc(t);
+  }
+  // type 1 → weeks start Sunday; type 2 → weeks start Monday.
+  let weekStart: number;
+  if (type === 1) weekStart = 0;
+  else if (type === 2) weekStart = 1;
+  else return makeError("#NUM!", `WEEKNUM type ${type} not supported`);
+  const date = serialToDate(Math.floor(s));
+  const year = date.getUTCFullYear();
+  const jan1 = new Date(Date.UTC(year, 0, 1));
+  const jan1Dow = jan1.getUTCDay();
+  const dayOfYear =
+    Math.floor((date.getTime() - jan1.getTime()) / DAY_MS) + 1;
+  const offset = (jan1Dow - weekStart + 7) % 7;
+  return Math.floor((dayOfYear + offset - 1) / 7) + 1;
+};
+
+const EDATE: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "EDATE expects 2 arguments");
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const months = singleNumber(args[1], ctx);
+  if (isFormulaError(months)) return months;
+  return Math.trunc(dateToSerial(addMonths(serialToDate(Math.floor(s)), Math.trunc(months))));
+};
+
+const EOMONTH: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "EOMONTH expects 2 arguments");
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const months = singleNumber(args[1], ctx);
+  if (isFormulaError(months)) return months;
+  const base = serialToDate(Math.floor(s));
+  // Day 0 of (month + months + 1) is the last day of (month + months).
+  const eom = new Date(
+    Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + Math.trunc(months) + 1, 0),
+  );
+  return Math.trunc(dateToSerial(eom));
+};
+
+/** Add `months` to a date, clamping the day to the target month's length. */
+function addMonths(date: Date, months: number): Date {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + months;
+  const day = date.getUTCDate();
+  const targetLastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(day, targetLastDay)));
+}
+
+const DAYS: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "DAYS expects 2 arguments");
+  const end = singleNumber(args[0], ctx);
+  if (isFormulaError(end)) return end;
+  const start = singleNumber(args[1], ctx);
+  if (isFormulaError(start)) return start;
+  return Math.trunc(end) - Math.trunc(start);
+};
+
+/** Collect a set of holiday serials from an optional range/scalar arg. */
+function collectHolidays(
+  arg: AstNode | undefined,
+  ctx: EvaluationContext,
+): Set<number> | FormulaError {
+  const set = new Set<number>();
+  if (!arg) return set;
+  for (const v of collectValues(arg, ctx)) {
+    if (isFormulaError(v)) return v;
+    if (v === null) continue;
+    const n = toNumber(v);
+    if (isFormulaError(n)) return n;
+    set.add(Math.floor(n));
+  }
+  return set;
+}
+
+function isWeekend(serial: number): boolean {
+  const dow = serialToDate(serial).getUTCDay();
+  return dow === 0 || dow === 6; // Sun / Sat
+}
+
+const NETWORKDAYS: FunctionImpl = (args, ctx) => {
+  if (args.length < 2 || args.length > 3) {
+    return makeError("#ERR!", "NETWORKDAYS expects 2 or 3 arguments");
+  }
+  const a = singleNumber(args[0], ctx);
+  if (isFormulaError(a)) return a;
+  const b = singleNumber(args[1], ctx);
+  if (isFormulaError(b)) return b;
+  const holidays = collectHolidays(args[2], ctx);
+  if (isFormulaError(holidays)) return holidays;
+  let start = Math.floor(a);
+  let end = Math.floor(b);
+  let sign = 1;
+  if (start > end) {
+    [start, end] = [end, start];
+    sign = -1;
+  }
+  let count = 0;
+  for (let d = start; d <= end; d++) {
+    if (!isWeekend(d) && !holidays.has(d)) count++;
+  }
+  return sign * count;
+};
+
+const WORKDAY: FunctionImpl = (args, ctx) => {
+  if (args.length < 2 || args.length > 3) {
+    return makeError("#ERR!", "WORKDAY expects 2 or 3 arguments");
+  }
+  const s = singleNumber(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const daysArg = singleNumber(args[1], ctx);
+  if (isFormulaError(daysArg)) return daysArg;
+  const holidays = collectHolidays(args[2], ctx);
+  if (isFormulaError(holidays)) return holidays;
+  let remaining = Math.trunc(daysArg);
+  let cursor = Math.floor(s);
+  const step = remaining >= 0 ? 1 : -1;
+  remaining = Math.abs(remaining);
+  while (remaining > 0) {
+    cursor += step;
+    if (!isWeekend(cursor) && !holidays.has(cursor)) remaining--;
+  }
+  return cursor;
+};
+
 export const DATE_FUNCTIONS: Record<string, FunctionImpl> = {
   TODAY,
   NOW,
@@ -330,4 +537,15 @@ export const DATE_FUNCTIONS: Record<string, FunctionImpl> = {
   DAY,
   DATEDIF,
   DATEVALUE,
+  TIME,
+  HOUR,
+  MINUTE,
+  SECOND,
+  WEEKDAY,
+  WEEKNUM,
+  EDATE,
+  EOMONTH,
+  DAYS,
+  NETWORKDAYS,
+  WORKDAY,
 };

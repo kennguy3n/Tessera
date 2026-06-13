@@ -355,6 +355,201 @@ const VALUE: FunctionImpl = (args, ctx) => {
   return percent ? signed / 100 : signed;
 };
 
+const PROPER: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "PROPER expects 1 argument");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  // Capitalise the first letter of every run of letters; everything
+  // after a non-letter restarts a word, matching Excel.
+  return s.replace(/[A-Za-z\u00C0-\u024F]+/g, (word) =>
+    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+  );
+};
+
+const REPT: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "REPT expects 2 arguments");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const nV = singleNumber(args[1], ctx);
+  if (isFormulaError(nV)) return nV;
+  const n = Math.trunc(nV);
+  if (n < 0) return makeError("#VALUE!", "REPT count must be non-negative");
+  // Cap the output to Excel's 32767-character cell limit so a runaway
+  // count can't blow up memory.
+  if (s.length * n > 32767) {
+    return makeError("#VALUE!", "REPT result exceeds 32767 characters");
+  }
+  return s.repeat(n);
+};
+
+const REPLACE: FunctionImpl = (args, ctx) => {
+  if (args.length !== 4) return makeError("#ERR!", "REPLACE expects 4 arguments");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const startN = singleNumber(args[1], ctx);
+  if (isFormulaError(startN)) return startN;
+  const lenN = singleNumber(args[2], ctx);
+  if (isFormulaError(lenN)) return lenN;
+  const repl = singleString(args[3], ctx);
+  if (isFormulaError(repl)) return repl;
+  const start = Math.trunc(startN);
+  const len = Math.trunc(lenN);
+  if (start < 1) return makeError("#VALUE!", "REPLACE start must be >= 1");
+  if (len < 0) return makeError("#VALUE!", "REPLACE length must be non-negative");
+  const i = start - 1;
+  return s.slice(0, i) + repl + s.slice(i + len);
+};
+
+const EXACT: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "EXACT expects 2 arguments");
+  const a = singleString(args[0], ctx);
+  if (isFormulaError(a)) return a;
+  const b = singleString(args[1], ctx);
+  if (isFormulaError(b)) return b;
+  return a === b;
+};
+
+const CHAR: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "CHAR expects 1 argument");
+  const nV = singleNumber(args[0], ctx);
+  if (isFormulaError(nV)) return nV;
+  const code = Math.trunc(nV);
+  if (code < 1 || code > 0x10ffff) {
+    return makeError("#VALUE!", "CHAR code out of range");
+  }
+  return String.fromCodePoint(code);
+};
+
+const CODE: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "CODE expects 1 argument");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  if (s.length === 0) return makeError("#VALUE!", "CODE: empty string");
+  return s.codePointAt(0) ?? makeError("#VALUE!", "CODE: empty string");
+};
+
+const CLEAN: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "CLEAN expects 1 argument");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  // Strip the non-printable ASCII control characters (0x00–0x1F), as
+  // Excel's CLEAN does.
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\x00-\x1f]/g, "");
+};
+
+const T: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "T expects 1 argument");
+  const v = evaluate(args[0], ctx);
+  if (isFormulaError(v)) return v;
+  // T returns its argument if it is text, otherwise an empty string.
+  return typeof v === "string" ? v : "";
+};
+
+const TEXTJOIN: FunctionImpl = (args, ctx) => {
+  if (args.length < 3) {
+    return makeError("#ERR!", "TEXTJOIN expects a delimiter, an ignore-empty flag, and at least one value");
+  }
+  const delim = singleString(args[0], ctx);
+  if (isFormulaError(delim)) return delim;
+  const ignoreV = evaluate(args[1], ctx);
+  if (isFormulaError(ignoreV)) return ignoreV;
+  const ignoreEmpty = toBooleanLoose(ignoreV);
+  const parts: string[] = [];
+  for (let i = 2; i < args.length; i++) {
+    for (const v of collectValues(args[i], ctx)) {
+      if (isFormulaError(v)) return v;
+      if (v === null || v === "") {
+        if (!ignoreEmpty) parts.push("");
+        continue;
+      }
+      parts.push(typeof v === "string" ? v : coerceToString(v));
+    }
+  }
+  return parts.join(delim);
+};
+
+const JOIN: FunctionImpl = (args, ctx) => {
+  // Google Sheets JOIN(delimiter, value_or_array, ...) — like TEXTJOIN
+  // but never skips empties.
+  if (args.length < 2) {
+    return makeError("#ERR!", "JOIN expects a delimiter and at least one value");
+  }
+  const delim = singleString(args[0], ctx);
+  if (isFormulaError(delim)) return delim;
+  const parts: string[] = [];
+  for (let i = 1; i < args.length; i++) {
+    for (const v of collectValues(args[i], ctx)) {
+      if (isFormulaError(v)) return v;
+      if (v === null) {
+        parts.push("");
+        continue;
+      }
+      parts.push(typeof v === "string" ? v : coerceToString(v));
+    }
+  }
+  return parts.join(delim);
+};
+
+/** Compile a user regex, returning a `#VALUE!` error on a malformed pattern. */
+function compileUserRegex(
+  pattern: string,
+  flags: string,
+): RegExp | FormulaError {
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return makeError("#VALUE!", `invalid regular expression: ${pattern}`);
+  }
+}
+
+const REGEXMATCH: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "REGEXMATCH expects 2 arguments");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const pat = singleString(args[1], ctx);
+  if (isFormulaError(pat)) return pat;
+  const re = compileUserRegex(pat, "");
+  if (isFormulaError(re)) return re;
+  return re.test(s);
+};
+
+const REGEXEXTRACT: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "REGEXEXTRACT expects 2 arguments");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const pat = singleString(args[1], ctx);
+  if (isFormulaError(pat)) return pat;
+  const re = compileUserRegex(pat, "");
+  if (isFormulaError(re)) return re;
+  const m = re.exec(s);
+  if (!m) return makeError("#N/A", "REGEXEXTRACT: no match");
+  // Return the first capture group if present, else the whole match —
+  // mirroring Google Sheets.
+  return m[1] !== undefined ? m[1] : m[0];
+};
+
+const REGEXREPLACE: FunctionImpl = (args, ctx) => {
+  if (args.length !== 3) return makeError("#ERR!", "REGEXREPLACE expects 3 arguments");
+  const s = singleString(args[0], ctx);
+  if (isFormulaError(s)) return s;
+  const pat = singleString(args[1], ctx);
+  if (isFormulaError(pat)) return pat;
+  const repl = singleString(args[2], ctx);
+  if (isFormulaError(repl)) return repl;
+  const re = compileUserRegex(pat, "g");
+  if (isFormulaError(re)) return re;
+  return s.replace(re, repl);
+};
+
+/** Loose boolean coercion for the TEXTJOIN ignore-empty flag. */
+function toBooleanLoose(v: ReturnType<typeof evaluate>): boolean {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string") return v.toUpperCase() === "TRUE";
+  return false;
+}
+
 export const TEXT_FUNCTIONS: Record<string, FunctionImpl> = {
   CONCATENATE,
   CONCAT,
@@ -365,6 +560,19 @@ export const TEXT_FUNCTIONS: Record<string, FunctionImpl> = {
   UPPER,
   LOWER,
   TRIM,
+  PROPER,
+  REPT,
+  REPLACE,
+  EXACT,
+  CHAR,
+  CODE,
+  CLEAN,
+  T,
+  TEXTJOIN,
+  JOIN,
+  REGEXMATCH,
+  REGEXEXTRACT,
+  REGEXREPLACE,
   SUBSTITUTE,
   FIND,
   SEARCH,

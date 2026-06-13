@@ -290,7 +290,12 @@ export function tokenize(input: string): Token[] {
         nextNonWs++;
       }
       const followedByBang = nextNonWs < src.length && src[nextNonWs] === "!";
-      if (cellMatch && !followedByBang) {
+      // A cell-ref-shaped name (`[A-Z]+\d+`) immediately followed by
+      // `(` is a function call, not a reference — e.g. `LOG10(...)`,
+      // `ATAN2(...)`. `A1(` is never valid grammar, so preferring the
+      // function-name token here is unambiguous.
+      const followedByParen = nextNonWs < src.length && src[nextNonWs] === "(";
+      if (cellMatch && !followedByBang && !followedByParen) {
         const absoluteCol = cellMatch[1] === "$";
         const colLetters = cellMatch[2];
         const absoluteRow = cellMatch[3] === "$";
@@ -315,8 +320,10 @@ export function tokenize(input: string): Token[] {
         });
         continue;
       }
-      // Boolean literal
-      if (upper === "TRUE" || upper === "FALSE") {
+      // Boolean literal — unless immediately followed by `(`, in which
+      // case it is the zero-arg `TRUE()` / `FALSE()` function call and
+      // must fall through to the FUNCTION_NAME branch below.
+      if ((upper === "TRUE" || upper === "FALSE") && !followedByParen) {
         tokens.push({
           type: "BOOLEAN",
           text: raw,

@@ -162,3 +162,49 @@ describe("XLOOKUP", () => {
     ).toBe(99);
   });
 });
+
+describe("CHOOSE", () => {
+  it("selects the value at the 1-based index", () => {
+    expect(evalFormula('=CHOOSE(2, "a", "b", "c")', [])).toBe("b");
+  });
+  it("returns #VALUE! when the index is out of range", () => {
+    const v = evalFormula("=CHOOSE(5, 1, 2)", []);
+    expect(isFormulaError(v) && v.code).toBe("#VALUE!");
+  });
+});
+
+describe("ROWS / COLUMNS", () => {
+  it("count the dimensions of a range", () => {
+    expect(evalFormula("=ROWS(A1:C3)", PRICE_TABLE)).toBe(3);
+    expect(evalFormula("=COLUMNS(A1:C3)", PRICE_TABLE)).toBe(3);
+  });
+  it("treat a single cell as 1×1", () => {
+    expect(evalFormula("=ROWS(A1)", PRICE_TABLE)).toBe(1);
+    expect(evalFormula("=COLUMNS(B2)", PRICE_TABLE)).toBe(1);
+  });
+});
+
+describe("ROW / COLUMN", () => {
+  it("return the 1-based coordinate of a reference", () => {
+    expect(evalFormula("=ROW(B5)", [])).toBe(5);
+    expect(evalFormula("=COLUMN(C1)", [])).toBe(3);
+    expect(evalFormula("=ROW(A10:A20)", [])).toBe(10);
+  });
+});
+
+describe("LOOKUP (vector form)", () => {
+  it("finds the largest value <= key and returns the paired result", () => {
+    const grid = [
+      ["10", "ten"],
+      ["20", "twenty"],
+      ["30", "thirty"],
+    ];
+    expect(evalFormula("=LOOKUP(25, A1:A3, B1:B3)", grid)).toBe("twenty");
+    expect(evalFormula("=LOOKUP(30, A1:A3, B1:B3)", grid)).toBe("thirty");
+  });
+  it("returns #N/A when the key precedes the first value", () => {
+    const grid = [["10"], ["20"]];
+    const v = evalFormula("=LOOKUP(5, A1:A2)", grid);
+    expect(isFormulaError(v) && v.code).toBe("#N/A");
+  });
+});

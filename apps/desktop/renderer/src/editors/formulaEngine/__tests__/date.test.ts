@@ -113,6 +113,72 @@ describe("DATEVALUE", () => {
   });
 });
 
+describe("TIME / HOUR / MINUTE / SECOND", () => {
+  it("TIME builds a day fraction and wraps past 24h", () => {
+    expect(evalAt("=TIME(6, 0, 0)")).toBeCloseTo(0.25, 12);
+    expect(evalAt("=TIME(12, 0, 0)")).toBeCloseTo(0.5, 12);
+    expect(evalAt("=TIME(25, 0, 0)")).toBeCloseTo(1 / 24, 12);
+  });
+  it("HOUR / MINUTE / SECOND decompose a serial's time part", () => {
+    // DATE(2024,1,1) + TIME(13,45,30)
+    const expr = "=DATE(2024,1,1)+TIME(13,45,30)";
+    expect(evalAt(`=HOUR(${expr.slice(1)})`)).toBe(13);
+    expect(evalAt(`=MINUTE(${expr.slice(1)})`)).toBe(45);
+    expect(evalAt(`=SECOND(${expr.slice(1)})`)).toBe(30);
+  });
+});
+
+describe("WEEKDAY / WEEKNUM", () => {
+  // 2024-01-01 is a Monday.
+  it("WEEKDAY honours the return-type convention", () => {
+    expect(evalAt("=WEEKDAY(DATE(2024,1,1))")).toBe(2); // type 1: Mon=2
+    expect(evalAt("=WEEKDAY(DATE(2024,1,1), 2)")).toBe(1); // type 2: Mon=1
+    expect(evalAt("=WEEKDAY(DATE(2024,1,1), 3)")).toBe(0); // type 3: Mon=0
+  });
+  it("WEEKNUM counts from week 1", () => {
+    expect(evalAt("=WEEKNUM(DATE(2024,1,1))")).toBe(1);
+    expect(evalAt("=WEEKNUM(DATE(2024,1,8))")).toBe(2);
+  });
+});
+
+describe("EDATE / EOMONTH / DAYS", () => {
+  it("EDATE shifts whole months, clamping the day", () => {
+    // 2024-01-31 + 1 month → 2024-02-29 (leap year clamp).
+    const v = evalAt("=EDATE(DATE(2024,1,31), 1)");
+    expect(serialToDate(v as number).toISOString()).toBe(
+      "2024-02-29T00:00:00.000Z",
+    );
+  });
+  it("EOMONTH returns the last day of the target month", () => {
+    const v = evalAt("=EOMONTH(DATE(2024,1,15), 0)");
+    expect(serialToDate(v as number).toISOString()).toBe(
+      "2024-01-31T00:00:00.000Z",
+    );
+  });
+  it("DAYS returns the signed day span", () => {
+    expect(evalAt("=DAYS(DATE(2024,1,31), DATE(2024,1,1))")).toBe(30);
+  });
+});
+
+describe("NETWORKDAYS / WORKDAY", () => {
+  it("NETWORKDAYS excludes weekends", () => {
+    // 2024-01-01 (Mon) .. 2024-01-07 (Sun) → 5 weekdays.
+    expect(evalAt("=NETWORKDAYS(DATE(2024,1,1), DATE(2024,1,7))")).toBe(5);
+  });
+  it("NETWORKDAYS subtracts holidays", () => {
+    expect(
+      evalAt("=NETWORKDAYS(DATE(2024,1,1), DATE(2024,1,7), DATE(2024,1,3))"),
+    ).toBe(4);
+  });
+  it("WORKDAY advances by working days", () => {
+    // Mon 2024-01-01 + 5 working days → Mon 2024-01-08.
+    const v = evalAt("=WORKDAY(DATE(2024,1,1), 5)");
+    expect(serialToDate(v as number).toISOString()).toBe(
+      "2024-01-08T00:00:00.000Z",
+    );
+  });
+});
+
 describe("Date arithmetic via serial", () => {
   it("=DATE(2024,1,1)+30 advances 30 days", () => {
     const v = evalAt("=DATE(2024,1,1)+30");
