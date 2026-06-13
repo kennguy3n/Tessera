@@ -61,10 +61,9 @@ import {
   activePresetId,
   findPreset,
   loadPresetStore,
-  makePreset,
   removePreset,
   savePresetStore,
-  upsertPreset,
+  upsertPresetByName,
   type ConceptGraphPreset,
   type ConceptGraphPresetStore,
   type PresetFilter,
@@ -786,6 +785,10 @@ export default function ConceptGraphPanel({
     loadPresetStore(scope ?? "__default__"),
   );
   const [presetName, setPresetName] = useState("");
+  // The scope the currently-held `presetStore` was loaded for. The store is
+  // replaced via async `setState` on scope change, so persistence keys off
+  // this ref (the store's true owner) rather than the live `scopeKey`.
+  const presetStoreScopeRef = useRef(scopeKey);
 
   // ----- scope filtering (preserved from the prior implementation) -----
   const scopes = useMemo(() => {
@@ -1363,6 +1366,20 @@ export default function ConceptGraphPanel({
     [],
   );
 
+  // Apply a preset's captured filter to the live controls. Selection is
+  // preserved (a now-hidden selection is handled by existing invariants);
+  // the viewBox re-fits via the layout-change effect. Declared before the
+  // scope-change effect so that effect can apply a new scope's default inline.
+  const applyPreset = useCallback((preset: ConceptGraphPreset) => {
+    setDisabledRelations(new Set(preset.disabledRelations));
+    setDisabledStates(new Set(preset.disabledStates));
+    setScopeFilter(preset.scopeFilter);
+    setLocalMode(preset.localMode);
+    setLocalHops(preset.localHops);
+    setLabelsAll(preset.labelsAll);
+    setDecayMode(preset.decayMode);
+  }, []);
+
   // Scope *changes* on an already-mounted panel reload that scope's saved
   // view state (the initial scope was applied via lazy state initialisers).
   const appliedScopeRef = useRef(scopeKey);
@@ -1390,10 +1407,23 @@ export default function ConceptGraphPanel({
     pendingRestoreRef.current = next.viewBox
       ? { box: next.viewBox, signature: next.viewSignature }
       : null;
-    // Load the new scope's presets; the default-apply effect picks it up.
-    setPresetStore(loadPresetStore(scopeKey));
+    // Reset the time-decay controls: the scrubber's "as of" instant is keyed
+    // to the previous scope's time bounds so it must not carry over, and the
+    // overlay returns to its off baseline (the new scope's default preset, if
+    // any, turns it back on just below).
+    setDecayMode(false);
+    setAsOf(null);
+    // Load the new scope's presets *synchronously* so its default can be
+    // applied from the fresh store here. Keying the default-apply on the async
+    // `presetStore` state instead would read the previous scope's store (the
+    // `setPresetStore` below has not committed yet on this render).
+    const nextStore = loadPresetStore(scopeKey);
+    presetStoreScopeRef.current = scopeKey;
+    setPresetStore(nextStore);
     setPresetName("");
-  }, [scopeKey]);
+    const def = findPreset(nextStore.presets, nextStore.defaultPresetId);
+    if (def) applyPreset(def);
+  }, [scopeKey, applyPreset]);
 
   // Debounced write of the (privacy-minimal) UI state. Only ids / enums /
   // numbers already present in the renderer are persisted — never source
@@ -1446,41 +1476,36 @@ export default function ConceptGraphPanel({
     [presetStore.presets, liveFilter],
   );
 
-  // Apply a preset's captured filter to the live controls. Selection is
-  // preserved (a now-hidden selection is handled by existing invariants);
-  // the viewBox re-fits via the layout-change effect.
-  const applyPreset = useCallback((preset: ConceptGraphPreset) => {
-    setDisabledRelations(new Set(preset.disabledRelations));
-    setDisabledStates(new Set(preset.disabledStates));
-    setScopeFilter(preset.scopeFilter);
-    setLocalMode(preset.localMode);
-    setLocalHops(preset.localHops);
-    setLabelsAll(preset.labelsAll);
-    setDecayMode(preset.decayMode);
-  }, []);
-
-  // Persist the preset store (separate key from the view state).
+  // Persist the preset store (separate key from the view state). Written to
+  // the scope the store was *loaded* for (`presetStoreScopeRef`), not the live
+  // `scopeKey`, and keyed on the store value alone: during a scope switch the
+  // `setPresetStore` in the scope-change effect is async, so keying on
+  // `scopeKey` would briefly write the previous scope's presets under the new
+  // scope's key (a crash in that window would corrupt it).
   useEffect(() => {
-    savePresetStore(scopeKey, presetStore);
-  }, [scopeKey, presetStore]);
+    savePresetStore(presetStoreScopeRef.current, presetStore);
+  }, [presetStore]);
 
-  // Apply the default preset once per scope, after its store loads. A ref
-  // guards against re-applying on every render / unrelated state change.
-  const appliedDefaultRef = useRef<string | null>(null);
+  // Apply the default preset on initial mount only; scope *changes* apply the
+  // new scope's default inline in the scope-change effect (from the
+  // synchronously loaded store). A ref guards against re-running on unrelated
+  // re-renders.
+  const appliedInitialDefaultRef = useRef(false);
   useEffect(() => {
-    if (appliedDefaultRef.current === scopeKey) return;
-    appliedDefaultRef.current = scopeKey;
+    if (appliedInitialDefaultRef.current) return;
+    appliedInitialDefaultRef.current = true;
     const def = findPreset(presetStore.presets, presetStore.defaultPresetId);
     if (def) applyPreset(def);
-  }, [scopeKey, presetStore, applyPreset]);
+  }, [presetStore, applyPreset]);
 
-  // Save the current filter as a new preset (or update the active one if it
-  // already matches by name). Empty names fall back to a placeholder.
+  // Save the current filter under the entered name, updating the existing
+  // preset with that name in place rather than appending a duplicate. Empty
+  // names fall back to a placeholder.
   const saveCurrentPreset = useCallback(() => {
-    setPresetStore((store) => {
-      const preset = makePreset(presetName, liveFilter);
-      return { ...store, presets: upsertPreset(store.presets, preset) };
-    });
+    setPresetStore((store) => ({
+      ...store,
+      presets: upsertPresetByName(store.presets, presetName, liveFilter),
+    }));
     setPresetName("");
   }, [presetName, liveFilter]);
 

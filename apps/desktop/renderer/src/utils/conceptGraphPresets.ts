@@ -164,6 +164,28 @@ export function upsertPreset(
   return next.length > MAX_PRESETS ? next.slice(next.length - MAX_PRESETS) : next;
 }
 
+/**
+ * Save `filter` under the user-entered `rawName`, *updating in place* when a
+ * preset with the same sanitized name already exists (preserving its id and
+ * slot) rather than appending a duplicate. This makes "Save view" idempotent
+ * for a given name — re-saving "Hubs only" overwrites the existing "Hubs only"
+ * instead of stacking copies. A brand-new name appends (subject to
+ * {@link MAX_PRESETS}). `idGen` is injectable for deterministic tests.
+ */
+export function upsertPresetByName(
+  presets: ReadonlyArray<ConceptGraphPreset>,
+  rawName: string,
+  filter: PresetFilter,
+  idGen: () => string = newPresetId,
+): ConceptGraphPreset[] {
+  const name = sanitizePresetName(rawName);
+  const existing = presets.find((p) => p.name === name);
+  const preset: ConceptGraphPreset = existing
+    ? { ...existing, name, ...normalizeFilter(filter) }
+    : makePreset(rawName, filter, idGen);
+  return upsertPreset(presets, preset);
+}
+
 /** Remove a preset by id (no-op when absent). */
 export function removePreset(
   presets: ReadonlyArray<ConceptGraphPreset>,
@@ -351,10 +373,15 @@ function dedupe<T>(values: ReadonlyArray<T>): T[] {
   return Array.from(new Set(values));
 }
 
-/** Order-independent set equality for small enum arrays. */
+/**
+ * Order-independent set equality for small enum arrays. Builds a set from each
+ * side so the result is correct regardless of duplicate elements (it does not
+ * assume the inputs are pre-deduped, even though in practice they always are).
+ */
 function sameSet<T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  for (const v of b) if (!set.has(v)) return false;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  if (setA.size !== setB.size) return false;
+  for (const v of setA) if (!setB.has(v)) return false;
   return true;
 }

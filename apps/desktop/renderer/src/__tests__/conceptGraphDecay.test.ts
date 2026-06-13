@@ -12,6 +12,7 @@ import {
   TIMELESS_DECAY,
   type ConceptDecay,
 } from "../utils/conceptGraphDecay";
+import { conceptMentionMatcher } from "../utils/memories";
 import type { ConceptGraphNode } from "../utils/conceptGraph";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
@@ -94,6 +95,26 @@ describe("buildConceptDecayMap", () => {
       ],
     );
     expect((map.get("a") as ConceptDecay).bucket).toBe("fading");
+  });
+});
+
+describe("conceptMentionMatcher", () => {
+  it("compiles once and is reusable across many contents", () => {
+    const mentionsAtlas = conceptMentionMatcher("Atlas");
+    expect(mentionsAtlas("Atlas shipped")).toBe(true);
+    expect(mentionsAtlas("we love ATLAS")).toBe(true); // case-insensitive
+    expect(mentionsAtlas("Atlassian makes Jira")).toBe(false); // word boundary
+    expect(mentionsAtlas("no mention here")).toBe(false);
+  });
+
+  it("falls back to substring for word-character-less labels (e.g. CJK)", () => {
+    const matcher = conceptMentionMatcher("地图");
+    expect(matcher("这是地图服务")).toBe(true);
+    expect(matcher("unrelated")).toBe(false);
+  });
+
+  it("never matches for an empty/blank label", () => {
+    expect(conceptMentionMatcher("   ")("anything")).toBe(false);
   });
 });
 

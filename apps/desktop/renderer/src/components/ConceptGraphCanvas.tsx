@@ -337,7 +337,14 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
 
   useEffect(
     () => () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      // Reset the ref after cancelling: otherwise a StrictMode (or any)
+      // unmount that fires while a frame is queued leaves `rafRef.current`
+      // non-null, so the next mount's `scheduleDraw` early-returns forever
+      // and the canvas never paints.
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     },
     [],
   );

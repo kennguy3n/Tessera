@@ -1,6 +1,12 @@
+import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import ConceptGraphPanel from "../components/ConceptGraphPanel";
+import {
+  makePreset,
+  presetStorageKey,
+  serializePresetStore,
+} from "../utils/conceptGraphPresets";
 import { CANVAS_RENDER_THRESHOLD } from "../utils/conceptGraphRenderer";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
@@ -228,8 +234,72 @@ describe("ConceptGraphPanel — scale features", () => {
     });
   });
 
+  describe("scope changes", () => {
+    it("applies the new scope's default preset when the scope prop changes", async () => {
+      // Seed scope-b with a default preset that turns all labels on. The
+      // scope-change effect must apply it from the freshly-loaded store, not
+      // the previous scope's (the regression this guards against).
+      const preset = makePreset("Labelled", {
+        disabledRelations: [],
+        disabledStates: [],
+        scopeFilter: "all",
+        localMode: false,
+        localHops: 1,
+        labelsAll: true,
+        decayMode: false,
+      });
+      window.localStorage.setItem(
+        presetStorageKey("scope-b"),
+        serializePresetStore({ presets: [preset], defaultPresetId: preset.id }),
+      );
+
+      const { rerender } = render(
+        <ConceptGraphPanel memories={MEMORIES} scope="scope-a" />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+      );
+      // scope-a has no default → labels stay at the off baseline.
+      expect(screen.getByLabelText("Toggle all labels")).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+
+      rerender(<ConceptGraphPanel memories={MEMORIES} scope="scope-b" />);
+      await waitFor(() =>
+        expect(screen.getByLabelText("Toggle all labels")).toHaveAttribute(
+          "aria-pressed",
+          "true",
+        ),
+      );
+    });
+
+    it("resets the decay overlay when the scope changes", async () => {
+      const { rerender } = render(
+        <ConceptGraphPanel memories={MEMORIES} scope="scope-a" />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByTestId("concept-graph-decay-toggle"));
+      expect(
+        screen.getByTestId("concept-graph-decay-controls"),
+      ).toBeInTheDocument();
+
+      rerender(<ConceptGraphPanel memories={MEMORIES} scope="scope-c" />);
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId("concept-graph-decay-controls"),
+        ).not.toBeInTheDocument(),
+      );
+    });
+  });
+
   describe("Canvas renderer switch", () => {
-    let getContextSpy: ReturnType<typeof vi.spyOn>;
+    // Only `mockRestore` is used; typing the handle structurally avoids the
+    // generic-erased `ReturnType<typeof vi.spyOn>` mismatch with the specific
+    // overloaded `getContext` spy.
+    let getContextSpy: { mockRestore: () => void };
 
     beforeEach(() => {
       // jsdom has no 2D canvas; hand back a no-op context so the renderer's
@@ -277,6 +347,32 @@ describe("ConceptGraphPanel — scale features", () => {
       expect(
         screen.queryByTestId("concept-graph-svg"),
       ).not.toBeInTheDocument();
+    });
+
+    it("re-draws after a StrictMode mount/unmount/remount cycle", async () => {
+      // Regression: the rAF cleanup cancelled the queued frame but left
+      // `rafRef.current` non-null, so after StrictMode's dev-only
+      // mount→unmount→remount the remount's `scheduleDraw` early-returned
+      // forever and the canvas never painted (it stayed at jsdom's 300×150
+      // default backing store). `main.tsx` wraps the app in StrictMode, so
+      // this regressed the real renderer. A successful draw sizes the
+      // backing store to the CSS width (720).
+      window.tessera.substrate.getConceptGraph = vi
+        .fn()
+        .mockResolvedValue(largeGraph(CANVAS_RENDER_THRESHOLD + 10));
+      render(
+        <React.StrictMode>
+          <ConceptGraphPanel
+            memories={MEMORIES}
+            scope="scope-strict"
+            maxNodes={CANVAS_RENDER_THRESHOLD + 50}
+          />
+        </React.StrictMode>,
+      );
+      const canvas = (await screen.findByTestId(
+        "concept-graph-canvas",
+      )) as HTMLCanvasElement;
+      await waitFor(() => expect(canvas.width).not.toBe(300));
     });
   });
 });

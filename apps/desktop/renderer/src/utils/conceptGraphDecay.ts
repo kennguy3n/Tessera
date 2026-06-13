@@ -22,8 +22,8 @@
 
 import type { SubstrateMemoryInfo } from "../types/ipc";
 import {
+  conceptMentionMatcher,
   decayBucket,
-  memoryMentionsConcept,
   type DecayBucket,
 } from "./memories";
 import type { ConceptGraphNode } from "./conceptGraph";
@@ -75,8 +75,10 @@ const BUCKET_RANK: Record<DecayBucket, number> = {
  * Complexity is O(nodes × memories) in the worst case, so callers should
  * compute it lazily — only when the decay overlay is actually enabled —
  * and memoize on `[nodes, memories]`. To keep the constant factor low we
- * lowercase each memory's content once up front and reuse it across all
- * nodes. Concepts with no matching memory map to {@link TIMELESS_DECAY}.
+ * compile each concept's word-boundary matcher *once* (via
+ * {@link conceptMentionMatcher}) and reuse it across every memory, instead of
+ * recompiling a regex per node×memory pair. Concepts with no matching memory
+ * map to {@link TIMELESS_DECAY}.
  */
 export function buildConceptDecayMap(
   nodes: ReadonlyArray<ConceptGraphNode>,
@@ -91,9 +93,9 @@ export function buildConceptDecayMap(
     let pinCount = 0;
     let memoryCount = 0;
 
-    const label = node.label;
+    const mentions = conceptMentionMatcher(node.label);
     for (const mem of memories) {
-      if (!memoryMentionsConcept(label, mem.content)) continue;
+      if (!mentions(mem.content)) continue;
       memoryCount++;
       pinCount += mem.pinCount;
       if (Number.isFinite(mem.createdAt)) {

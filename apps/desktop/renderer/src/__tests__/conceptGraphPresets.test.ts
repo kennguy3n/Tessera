@@ -4,6 +4,7 @@ import {
   normalizeFilter,
   makePreset,
   upsertPreset,
+  upsertPresetByName,
   removePreset,
   findPreset,
   filterMatchesPreset,
@@ -111,6 +112,42 @@ describe("upsertPreset / removePreset / findPreset", () => {
     expect(findPreset(list, a.id)?.name).toBe("A");
     expect(removePreset(list, a.id)).toEqual([]);
     expect(findPreset(list, null)).toBeNull();
+  });
+});
+
+describe("upsertPresetByName", () => {
+  it("updates the preset with the same name in place (no duplicate)", () => {
+    const a = makePreset("Hubs only", FILTER, idGen);
+    const list = upsertPreset([], a);
+    // Re-save under the same name with a diverged filter.
+    const next = upsertPresetByName(
+      list,
+      "  Hubs only  ", // sanitizes to the same name
+      { ...FILTER, decayMode: true },
+      idGen,
+    );
+    expect(next).toHaveLength(1);
+    expect(next[0].id).toBe(a.id); // id + slot preserved
+    expect(next[0].name).toBe("Hubs only");
+    expect(next[0].decayMode).toBe(true); // filter updated
+  });
+
+  it("appends when the name is new", () => {
+    const a = makePreset("A", FILTER, idGen);
+    const list = upsertPreset([], a);
+    const next = upsertPresetByName(list, "B", FILTER, idGen);
+    expect(next.map((p) => p.name)).toEqual(["A", "B"]);
+  });
+
+  it("normalizes the saved filter (dedupe/clamp) like makePreset", () => {
+    const next = upsertPresetByName(
+      [],
+      "Messy",
+      { ...FILTER, disabledRelations: ["is_a", "is_a"], localHops: 99 },
+      idGen,
+    );
+    expect(next[0].disabledRelations).toEqual(["is_a"]);
+    expect(next[0].localHops).toBe(3);
   });
 });
 
