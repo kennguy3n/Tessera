@@ -62,6 +62,14 @@
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
+  /* `md` is an alias for the base body size. A handful of components
+     (command palette / quick-switcher inputs, automation row titles,
+     concept-graph titles) reference `--font-size-md`; it was previously
+     undeclared, so those `var(--font-size-md)` reads fell back to the UA
+     default instead of the intended body size. Declared here (== base) so
+     the token resolves everywhere — matches the explicit `, 1rem` fallback
+     ConceptGraphPanel already used. */
+  --font-size-md: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.25rem;
   --font-size-2xl: 1.5rem;

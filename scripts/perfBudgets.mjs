@@ -190,6 +190,11 @@ async function startServer() {
   serverProc.on("error", (err) =>
     die(2, `failed to spawn preview server: ${err.message}`),
   );
+  // Don't let the live child keep our event loop alive: we manage its
+  // lifecycle explicitly via stopServer() (and the signal handlers above),
+  // so an unref'd handle means a future early-return path can't accidentally
+  // hang the process waiting on the still-running preview server.
+  serverProc.unref();
   await waitForServer();
 }
 let serverStopped = false;
