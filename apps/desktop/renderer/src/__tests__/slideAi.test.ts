@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AI_DECK_LAYOUTS,
   MAX_BULLETS_PER_SLIDE,
   MAX_DECK_SLIDES,
   MAX_LINE_LENGTH,
@@ -7,6 +8,7 @@ import {
   applyBulletsToSlide,
   buildDeckPrompt,
   buildImagePromptSuggestion,
+  buildLayoutSuggestionPrompt,
   buildNotesPrompt,
   buildRewritePrompt,
   clampDeckSlideCount,
@@ -16,10 +18,14 @@ import {
   parseDeckOutline,
   parseHeadingLine,
   parseImagePromptResponse,
+  parseLayoutSuggestion,
   parseNotesResponse,
+  resolveGeneratedSlideLayout,
   slideToContext,
+  splitLayoutHint,
 } from "../editors/slideAiHelpers";
 import { buildBlock } from "../editors/slideEditorHelpers";
+import { SLIDE_LAYOUTS } from "../editors/slideLayouts";
 import type { Slide } from "../editors/slideEditorTypes";
 
 function makeSlide(partial: Partial<Slide>): Slide {
@@ -309,5 +315,218 @@ describe("applyBulletsToSlide", () => {
     expect(next.blocks[0].type).toBe("bullets");
     expect(next.blocks[0].content).toBe("a");
     expect(next.blocks[1].type).toBe("image");
+  });
+});
+
+describe("splitLayoutHint", () => {
+  it("extracts a leading [layout] tag and the bare title", () => {
+    expect(splitLayoutHint("[twoColumn] Market vs Cost")).toEqual({
+      layoutHint: "twoColumn",
+      title: "Market vs Cost",
+    });
+    expect(splitLayoutHint("[ bigNumber ]  42% growth")).toEqual({
+      layoutHint: "bigNumber",
+      title: "42% growth",
+    });
+  });
+
+  it("returns the heading unchanged when there is no tag", () => {
+    expect(splitLayoutHint("Plain Heading")).toEqual({
+      title: "Plain Heading",
+    });
+    // A bracketed phrase that isn't a single alpha token is left intact.
+    expect(splitLayoutHint("[Q3 2025] Results")).toEqual({
+      title: "[Q3 2025] Results",
+    });
+  });
+});
+
+describe("resolveGeneratedSlideLayout", () => {
+  it("always makes the first slide the cover (title)", () => {
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "Cover", bullets: [], layoutHint: "twoColumn" },
+        0,
+        5,
+      ),
+    ).toBe("title");
+  });
+
+  it("honours a supported model hint on non-first slides", () => {
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: ["a", "b", "c"], layoutHint: "twoColumn" },
+        1,
+        5,
+      ),
+    ).toBe("twoColumn");
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: ["x"], layoutHint: "quote" },
+        2,
+        5,
+      ),
+    ).toBe("quote");
+  });
+
+  it("rejects a supported hint that the content cannot fill", () => {
+    // twoColumn needs two columns; one bullet can't fill both, so the
+    // hint is dropped in favour of the heuristic (1 bullet → titleContent).
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: ["only one"], layoutHint: "twoColumn" },
+        1,
+        5,
+      ),
+    ).toBe("titleContent");
+    // bigNumber needs a headline value; 0 bullets → sectionHeader heuristic.
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: [], layoutHint: "bigNumber" },
+        1,
+        5,
+      ),
+    ).toBe("sectionHeader");
+    // quote needs the quotation text; 0 bullets → sectionHeader heuristic
+    // (avoids a quote slide that just echoes its own title).
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: [], layoutHint: "quote" },
+        1,
+        5,
+      ),
+    ).toBe("sectionHeader");
+  });
+
+  it("ignores an unknown or unsupported hint and falls back to the heuristic", () => {
+    // "imageLeft" is a real layout but NOT in the deck-generation set,
+    // so it must be rejected in favour of the content heuristic.
+    expect(AI_DECK_LAYOUTS.has("imageLeft")).toBe(false);
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: ["a", "b"], layoutHint: "imageLeft" },
+        1,
+        5,
+      ),
+    ).toBe("twoColumn");
+    // A garbage hint also falls back.
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: ["one"], layoutHint: "nonsense" },
+        1,
+        5,
+      ),
+    ).toBe("titleContent");
+  });
+});
+
+describe("parseDeckOutline with layout hints", () => {
+  it("captures the layout hint from a tagged heading", () => {
+    const raw = [
+      "TITLE: Q3 Review",
+      "## Overview",
+      "- intro",
+      "## [twoColumn] Compare",
+      "- left",
+      "- right",
+    ].join("\n");
+    const outline = parseDeckOutline(raw);
+    expect(outline.slides[0].layoutHint).toBeUndefined();
+    expect(outline.slides[1].layoutHint).toBe("twoColumn");
+    expect(outline.slides[1].title).toBe("Compare");
+  });
+});
+
+describe("outlineToSlides honours model layout hints", () => {
+  it("uses a quote hint and splits quote / attribution", () => {
+    const slides = outlineToSlides({
+      title: "Deck",
+      slides: [
+        { title: "Cover", bullets: [] },
+        {
+          title: "Voice",
+          bullets: ["Stay hungry, stay foolish", "Steve Jobs"],
+          layoutHint: "quote",
+        },
+      ],
+    });
+    expect(slides[1].layout).toBe("quote");
+    expect(slides[1].blocks[0].slot).toBe("quote");
+    expect(slides[1].blocks[0].content).toBe("Stay hungry, stay foolish");
+    expect(slides[1].blocks[1].slot).toBe("attribution");
+    expect(slides[1].blocks[1].content).toBe("Steve Jobs");
+  });
+
+  it("falls back to the heuristic when the hint is unsupported", () => {
+    const slides = outlineToSlides({
+      slides: [
+        { title: "Cover", bullets: [] },
+        { title: "Body", bullets: ["a", "b"], layoutHint: "imageRight" },
+      ],
+    });
+    // imageRight is not a deck-gen layout → 2 bullets → twoColumn.
+    expect(slides[1].layout).toBe("twoColumn");
+  });
+});
+
+describe("buildLayoutSuggestionPrompt", () => {
+  it("lists every catalogue layout id and the slide context", () => {
+    const slide = makeSlide({
+      title: "Pricing",
+      blocks: [buildBlock({ type: "bullets", content: "Basic\nPro" })],
+    });
+    const prompt = buildLayoutSuggestionPrompt(slide);
+    for (const layout of SLIDE_LAYOUTS) {
+      expect(prompt).toContain(layout.id);
+    }
+    expect(prompt).toContain("Title: Pricing");
+    expect(prompt).toContain("Output ONLY the layout id");
+  });
+});
+
+describe("parseLayoutSuggestion", () => {
+  it("recognises a bare layout id", () => {
+    expect(parseLayoutSuggestion("twoColumn")).toBe("twoColumn");
+  });
+
+  it("recognises an unambiguous id inside prose or code fences", () => {
+    expect(parseLayoutSuggestion("```\nbigNumber\n```")).toBe("bigNumber");
+    expect(
+      parseLayoutSuggestion("The recommended layout is bigNumber."),
+    ).toBe("bigNumber");
+  });
+
+  it("recognises the human label and hyphenated forms", () => {
+    expect(parseLayoutSuggestion("Two Columns")).toBe("twoColumn");
+    expect(parseLayoutSuggestion("two-column")).toBe("twoColumn");
+  });
+
+  it("accepts an ambiguous common-word id as a bare reply or first token", () => {
+    expect(parseLayoutSuggestion("quote")).toBe("quote");
+    expect(parseLayoutSuggestion("Quote.")).toBe("quote");
+    expect(parseLayoutSuggestion("quote layout")).toBe("quote");
+    expect(parseLayoutSuggestion("title")).toBe("title");
+  });
+
+  it("does NOT match an ambiguous common word buried in prose", () => {
+    // "title"/"quote"/"blank" double as English words, so they only
+    // count as the first token — never deep inside a sentence.
+    expect(parseLayoutSuggestion("I think the title works best here")).toBeNull();
+    expect(parseLayoutSuggestion("Use a memorable quote from the CEO")).toBeNull();
+  });
+
+  it("returns null when no known layout is named", () => {
+    expect(parseLayoutSuggestion("I am not sure")).toBeNull();
+    expect(parseLayoutSuggestion("")).toBeNull();
+  });
+});
+
+describe("buildDeckPrompt layout contract", () => {
+  it("documents the [layout] heading convention and the layout vocabulary", () => {
+    const prompt = buildDeckPrompt({ topic: "X", slideCount: 5 });
+    expect(prompt).toContain("## [layout] <slide title>");
+    expect(prompt).toContain("twoColumn");
+    expect(prompt).toContain("bigNumber");
+    expect(prompt).toContain("quote");
   });
 });
