@@ -146,27 +146,44 @@ describe("outlineToSlides", () => {
     expect(outlineToSlides({ slides: [] })).toEqual([]);
   });
 
-  it("uses the deck title for the first slide and a bullets block", () => {
+  it("uses the deck title for the first slide and selects layouts per content", () => {
     const slides = outlineToSlides({
       title: "Deck Title",
       slides: [
         { title: "Cover", bullets: ["subtitle"] },
         { title: "Body", bullets: ["a", "b"] },
         { title: "Lonely", bullets: ["just one"] },
+        { title: "Middle", bullets: ["x", "y", "z"] },
         { title: "Empty", bullets: [] },
       ],
     });
+    // slide[0]: first slide → title layout, deck title overrides
     expect(slides[0].title).toBe("Deck Title");
-    // single bullet on title slide -> a text block
+    expect(slides[0].layout).toBe("title");
+    // single bullet on title slide → text block in subtitle slot
     expect(slides[0].blocks[0].type).toBe("text");
-    // multi-bullet body -> bullets block
-    expect(slides[1].blocks[0].type).toBe("bullets");
-    expect(slides[1].blocks[0].content).toBe("a\nb");
-    // single-bullet non-title -> text block
+    expect(slides[0].blocks[0].slot).toBe("subtitle");
+
+    // slide[1]: 2 bullets → twoColumn layout
+    expect(slides[1].layout).toBe("twoColumn");
+    expect(slides[1].blocks).toHaveLength(2);
+    expect(slides[1].blocks[0].slot).toBe("left");
+    expect(slides[1].blocks[0].content).toBe("a");
+    expect(slides[1].blocks[1].slot).toBe("right");
+    expect(slides[1].blocks[1].content).toBe("b");
+
+    // slide[2]: single bullet → titleContent layout
+    expect(slides[2].layout).toBe("titleContent");
     expect(slides[2].blocks[0].type).toBe("text");
-    // empty non-title -> empty text block so the canvas is editable
-    expect(slides[3].blocks[0].type).toBe("text");
-    expect(slides[3].blocks[0].content).toBe("");
+    expect(slides[2].blocks[0].slot).toBe("body");
+
+    // slide[3]: 3+ bullets → titleContent layout with bullets block
+    expect(slides[3].layout).toBe("titleContent");
+    expect(slides[3].blocks[0].type).toBe("bullets");
+    expect(slides[3].blocks[0].content).toBe("x\ny\nz");
+
+    // slide[4]: closing slide, no bullets → sectionHeader layout
+    expect(slides[4].layout).toBe("sectionHeader");
   });
 
   it("gives every slide a unique id", () => {

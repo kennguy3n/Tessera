@@ -40,22 +40,41 @@ export interface SlideBlock {
    * tangled with display metadata. Ignored for non-image blocks.
    */
   alt?: string;
+  /**
+   * Layout region this block occupies. Blocks with no `slot` flow
+   * into the layout's default body region. The slot name corresponds
+   * to a CSS grid-area defined in `slideLayouts.ts`. Persisted so
+   * round-tripping through disk preserves the spatial arrangement.
+   * Legacy decks omit this; `parseSlideContent` leaves it undefined
+   * and the rendering path treats undefined as "body".
+   */
+  slot?: string;
 }
 
 /**
  * Pre-defined block compositions for new slides. The layout determines
- * the initial `blocks` array shape; the user is free to mutate every
- * block afterwards, add more, or delete them down to zero. The layout
- * itself is NOT persisted on the Slide — it only governs the initial
- * state of a freshly-inserted slide. Persisting it would constrain
- * future edits and force a "this slide is a two-column slide, you
- * can't add a third block" rule we explicitly DO NOT want.
+ * the initial `blocks` array shape AND the visual region arrangement on
+ * the canvas. The user is free to mutate every block afterwards, add
+ * more, or delete them — blocks flow into the layout's regions by
+ * `slot` and overflow into the default body region.
+ *
+ * The layout IS now persisted on the Slide (`Slide.layout`) so the
+ * canvas can render the correct CSS-grid regions on re-open and the
+ * layout picker can show which layout is active. This does NOT
+ * constrain editing — blocks can always be added, removed, or retyped
+ * regardless of the active layout. Changing layout just re-flows the
+ * same blocks into different regions.
  */
 export type SlideLayout =
   | "blank"
   | "title"
   | "titleContent"
   | "twoColumn"
+  | "imageLeft"
+  | "imageRight"
+  | "sectionHeader"
+  | "bigNumber"
+  | "quote"
   | "imageCaption";
 
 export interface Slide {
@@ -76,6 +95,13 @@ export interface Slide {
   title: string;
   blocks: SlideBlock[];
   notes: string;
+  /**
+   * Persisted layout id. Controls the CSS-grid region arrangement on
+   * the canvas (see `slideLayouts.ts`). Optional and additive: legacy
+   * decks omit it and `parseSlideContent` infers a layout from the
+   * block shape. Unknown ids degrade to the default layout.
+   */
+  layout?: SlideLayout;
 }
 
 export interface MarpModeState {

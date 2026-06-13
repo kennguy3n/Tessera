@@ -15,6 +15,7 @@ import type { MarpRenderOptions } from "../services/marpRenderer";
 import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
 import { DEFAULT_SLIDE_THEME_ID, isKnownSlideThemeId } from "./slideThemes";
+import { getSlideLayout } from "./slideLayouts";
 import type {
   Slide,
   SlideBlock,
@@ -252,6 +253,11 @@ export function slidesToMarpMarkdown(
 
 function renderSlideAsMarp(slide: Slide): string {
   const parts: string[] = [];
+  // Emit a per-slide Marp class directive for the layout so exported
+  // PPTX/PDF/HTML mirrors the in-app grid arrangement. Marp supports
+  // per-slide directives as HTML comments before any content.
+  const layoutDef = getSlideLayout(slide.layout);
+  parts.push(`<!-- _class: ${layoutDef.marpClass} -->`);
   if (slide.title) {
     parts.push(`# ${slide.title}`);
   }
@@ -506,8 +512,9 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
       return {
         id: baseId,
         title: "",
-        blocks: [buildBlock({ type: "text", content: "" })],
+        blocks: [buildBlock({ type: "text", content: "", slot: "body" })],
         notes: "",
+        layout,
       };
     case "title":
       return {
@@ -515,33 +522,91 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
         title: "New Slide",
         blocks: [],
         notes: "",
+        layout,
+      };
+    case "sectionHeader":
+      return {
+        id: baseId,
+        title: "Section Title",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "subtitle" }),
+        ],
+        notes: "",
+        layout,
       };
     case "titleContent":
       return {
         id: baseId,
         title: "New Slide",
-        blocks: [buildBlock({ type: "text", content: "" })],
+        blocks: [buildBlock({ type: "text", content: "", slot: "body" })],
         notes: "",
+        layout,
       };
     case "twoColumn":
       return {
         id: baseId,
         title: "New Slide",
         blocks: [
-          buildBlock({ type: "text", content: "" }),
-          buildBlock({ type: "text", content: "" }),
+          buildBlock({ type: "text", content: "", slot: "left" }),
+          buildBlock({ type: "text", content: "", slot: "right" }),
         ],
         notes: "",
+        layout,
+      };
+    case "imageLeft":
+      return {
+        id: baseId,
+        title: "New Slide",
+        blocks: [
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+          buildBlock({ type: "text", content: "", slot: "body" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "imageRight":
+      return {
+        id: baseId,
+        title: "New Slide",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "body" }),
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "bigNumber":
+      return {
+        id: baseId,
+        title: "",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "number" }),
+          buildBlock({ type: "text", content: "", slot: "caption" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "quote":
+      return {
+        id: baseId,
+        title: "",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "quote" }),
+          buildBlock({ type: "text", content: "", slot: "attribution" }),
+        ],
+        notes: "",
+        layout,
       };
     case "imageCaption":
       return {
         id: baseId,
         title: "New Slide",
         blocks: [
-          buildBlock({ type: "image", content: "", alt: "" }),
-          buildBlock({ type: "text", content: "" }),
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+          buildBlock({ type: "text", content: "", slot: "caption" }),
         ],
         notes: "",
+        layout,
       };
   }
 }
@@ -574,6 +639,7 @@ export function duplicateSlideAt(
     title: original.title,
     notes: original.notes,
     blocks: original.blocks.map((b) => ({ ...b, id: newSlideId("block") })),
+    layout: original.layout,
   };
   const next = [
     ...slides.slice(0, index + 1),
