@@ -96,7 +96,6 @@ def enrich_document(html: str, slug: str) -> str:
     fold one detail-heavy section into a toggle. Operates on the editor's
     persisted HTML (TipTap `getHTML()` shape) so the blocks round-trip
     through the Callout/Toggle/TableOfContents extensions' `parseHTML`."""
-    blocks = _BLOCK_RE.findall  # noqa: F841 — readability only
     matches = list(_BLOCK_RE.finditer(html))
     if not matches:
         return html
@@ -233,7 +232,9 @@ def _enrich_finance_projection(data: dict) -> dict:
 
     # Average summary row (AVERAGE over the data rows only).
     summary = ["Average"] + [""] * (len(cols) - 1)
-    for idx in money_idx + ([ebitda_idx] if ebitda_idx else []):
+    # `money_idx` already contains the EBITDA column (EBITDA ∈ `money_orig`),
+    # so a single pass covers every numeric series including EBITDA.
+    for idx in money_idx:
         letter = _col_letter(idx)
         summary[idx] = f"=AVERAGE({letter}1:{letter}{n})"
     new_rows.append(summary)
@@ -369,7 +370,7 @@ def _enrich_incident_tracker(data: dict) -> dict:
         oid = f"rec-own-{i}"
         owner_id_by_name[name] = oid
         slug_email = re.sub(r"[^a-z]+", ".", name.lower()).strip(".")
-        owned = [r["id"] for r in records if str(r.get("Owner", "")) == name]
+        owned = [r["id"] for r in records if str(r.get("Owner", "")).strip() == name]
         owners.append({
             "id": oid,
             "Name": name,
@@ -397,7 +398,8 @@ def _enrich_incident_tracker(data: dict) -> dict:
     new_fields.append({"name": "Risk Score", "type": "rating"})
 
     for i, r in enumerate(records):
-        r["Owner"] = [owner_id_by_name[str(r.get("Owner", ""))]] if r.get("Owner") else []
+        owner = str(r.get("Owner", "")).strip()
+        r["Owner"] = [owner_id_by_name[owner]] if owner else []
         enc = str(r.get("Encrypted", "")).strip().lower()
         r["Encrypted"] = enc in ("yes", "true", "y")
         sev = str(r.get("Severity", "")).strip().lower()
@@ -452,7 +454,7 @@ def _enrich_crm(data: dict) -> dict:
     rep_names = _distinct([str(r.get("Owner", "")) for r in records])
     region_of: dict[str, str] = {}
     for r in records:
-        owner = str(r.get("Owner", ""))
+        owner = str(r.get("Owner", "")).strip()
         if owner and owner not in region_of:
             region_of[owner] = str(r.get("Region", ""))
     reps: list[dict] = []
@@ -461,7 +463,7 @@ def _enrich_crm(data: dict) -> dict:
         rid = f"rec-rep-{i}"
         rep_id_by_name[name] = rid
         slug_email = re.sub(r"[^a-z]+", ".", name.lower()).strip(".")
-        owned = [r["id"] for r in records if str(r.get("Owner", "")) == name]
+        owned = [r["id"] for r in records if str(r.get("Owner", "")).strip() == name]
         reps.append({
             "id": rid, "Name": name, "Region": region_of.get(name, ""),
             "Email": f"{slug_email}@northwind.example", "Accounts": owned})
@@ -482,24 +484,25 @@ def _enrich_crm(data: dict) -> dict:
     new_fields.append({"name": "Health Score", "type": "rating"})
 
     for r in records:
-        owner = str(r.get("Owner", ""))
+        owner = str(r.get("Owner", "")).strip()
         r["Owner"] = [rep_id_by_name[owner]] if owner else []
         health = str(r.get("Health", "")).strip().lower()
         r["Health Score"] = {"green": 5, "yellow": 3, "red": 1}.get(health, 3)
 
-    for r in records:
-        if r.get("__comments"):
-            break
-    records[0]["__created"] = "2026-01-06T09:00:00.000Z"
-    records[0]["__modified"] = "2026-03-28T17:20:00.000Z"
-    records[0]["__comments"] = [
-        {"id": "cm-1", "author": "Marcus Chen",
-         "body": "Renewal in commit; expansion into footwear line being scoped.",
-         "createdAt": "2026-03-10T11:00:00.000Z"},
-        {"id": "cm-2", "author": "A. Okafor",
-         "body": "Champion confirmed budget. Pushing for Q2 close.",
-         "createdAt": "2026-03-28T17:20:00.000Z"},
-    ]
+    # Idempotency guard: only seed the comments/activity timeline on the lead
+    # account when no record already carries one (mirrors the incident tracker
+    # pattern, where the guard governs the assignment rather than being dead).
+    if not any(r.get("__comments") for r in records):
+        records[0]["__created"] = "2026-01-06T09:00:00.000Z"
+        records[0]["__modified"] = "2026-03-28T17:20:00.000Z"
+        records[0]["__comments"] = [
+            {"id": "cm-1", "author": "Marcus Chen",
+             "body": "Renewal in commit; expansion into footwear line being scoped.",
+             "createdAt": "2026-03-10T11:00:00.000Z"},
+            {"id": "cm-2", "author": "A. Okafor",
+             "body": "Champion confirmed budget. Pushing for Q2 close.",
+             "createdAt": "2026-03-28T17:20:00.000Z"},
+        ]
 
     rep_fields = [
         {"name": "Name", "type": "text"},
