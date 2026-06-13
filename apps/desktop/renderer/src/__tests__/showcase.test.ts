@@ -9,6 +9,19 @@ import {
   installShowcaseBridge,
   showcasePersonaFromQuery,
 } from "../showcase";
+import { parseBaseDocument, linkTargetRecords } from "../editors/baseDocumentHelpers";
+import {
+  resolveLinkedRecords,
+  aggregateValues,
+  lookupValues,
+} from "../editors/baseEditorHelpers";
+import { parseSheetContent } from "../editors/sheetEditorHelpers";
+import { parseA1Range } from "../editors/sheetCharts";
+import { parseSlideContent } from "../editors/slideEditorHelpers";
+import { isKnownSlideThemeId } from "../editors/slideThemes";
+import { SLIDE_LAYOUTS } from "../editors/slideLayouts";
+import { estimateReadingTimeMinutes } from "../editors/documentOutlineHelpers";
+import type { BaseField, BaseRecord } from "../editors/baseEditorTypes";
 
 // The set of model ids the showcase is ALLOWED to advertise = the
 // `text`-capability entries in Tessera's real model registry. The mock bridge
@@ -261,6 +274,223 @@ describe("buildShowcaseApi Proxy semantics", () => {
     expect(Object.prototype.toString.call(api)).toBe("[object Object]");
     expect(api[Symbol.toStringTag]).toBeUndefined();
   });
+});
+
+// Structural view of a seeded artifact as the editors receive it.
+type SeededArtifact = { id: string; artifactType: string; content: string };
+type ArtifactApi = {
+  artifacts: { list: () => Promise<SeededArtifact[]> };
+};
+
+async function seededArtifacts(persona: string): Promise<SeededArtifact[]> {
+  const api = buildShowcaseApi(persona) as unknown as ArtifactApi;
+  return api.artifacts.list();
+}
+
+/**
+ * The seed data is only valuable if the SHIPPED editors can actually parse and
+ * render it. These tests run each enriched artifact through the real editor
+ * parsers / resolvers (the exact code the renderer uses) and assert the new
+ * capabilities are present AND compute meaningful values — so a malformed seed
+ * (a dangling cross-table link, a chart over a non-existent range, a slide with
+ * no layout) fails loudly here instead of rendering broken in a screenshot.
+ */
+describe("seeded artifacts exercise the shipped editor capabilities", () => {
+  it.each(["healthcare", "retail"] as const)(
+    "%s base is a multi-table document with resolvable linked/lookup/rollup fields",
+    async (persona) => {
+      const arts = await seededArtifacts(persona);
+      const base = arts.find((a) => a.artifactType === "base");
+      expect(base, `${persona}: no base artifact`).toBeDefined();
+
+      const doc = parseBaseDocument(base!.content);
+      // Multi-table Airtable shape (a primary table + a derived linked table).
+      expect(doc.tables.length).toBe(2);
+      const resolver = (id: string) => doc.tables.find((t) => t.id === id);
+
+      // Exactly one cross-table linked_record field, plus lookup + rollup that
+      // traverse it — the Airtable-parity capability the blog claims.
+      let sawLinked = false;
+      let sawLookup = false;
+      let sawRollup = false;
+
+      for (const table of doc.tables) {
+        for (const field of table.fields as BaseField[]) {
+          if (field.type === "linked_record" && field.linkedTableId) {
+            sawLinked = true;
+            // Every link target id resolves to a real record in the target table.
+            const target = resolver(field.linkedTableId);
+            expect(target, `${persona}: link target ${field.linkedTableId} missing`).toBeDefined();
+            const targetIds = new Set((target!.records as BaseRecord[]).map((r) => r.id));
+            for (const rec of table.records as BaseRecord[]) {
+              const ids = rec[field.name];
+              if (Array.isArray(ids)) {
+                for (const id of ids) {
+                  expect(
+                    targetIds.has(id as string),
+                    `${persona}: ${table.name}.${field.name} links dangling id ${String(id)}`,
+                  ).toBe(true);
+                }
+              }
+            }
+          }
+          if (field.type === "lookup") sawLookup = true;
+          if (field.type === "rollup") sawRollup = true;
+        }
+      }
+      expect(sawLinked && sawLookup && sawRollup).toBe(true);
+
+      // Compute every rollup / lookup the way BaseEditor does and assert they
+      // resolve to a real value (never "#REF!" / "—") for at least one record.
+      for (const table of doc.tables) {
+        for (const field of table.fields as BaseField[]) {
+          if (field.type !== "rollup" && field.type !== "lookup") continue;
+          const linkedDef = (table.fields as BaseField[]).find(
+            (f) => f.name === field.linkedField,
+          );
+          expect(linkedDef?.type, `${persona}: ${field.name} bad linkedField`).toBe(
+            "linked_record",
+          );
+          const computed = (table.records as BaseRecord[]).map((rec) => {
+            const linked = resolveLinkedRecords(
+              rec[field.linkedField!],
+              linkTargetRecords(linkedDef!, table.records as BaseRecord[], resolver),
+            );
+            const values = linked.map((r) => r[field.targetField!]);
+            return field.type === "rollup"
+              ? aggregateValues(values, field.aggregation ?? "SUM")
+              : lookupValues(linked, field.targetField!);
+          });
+          expect(
+            computed.some((v) => v !== "" && v !== "0"),
+            `${persona}: ${table.name}.${field.name} computed empty for every record`,
+          ).toBe(true);
+        }
+      }
+
+      // Expand-record modal demo: at least one record carries a comments
+      // timeline so the modal isn't empty in a capture.
+      const hasComments = doc.tables.some((t) =>
+        (t.records as BaseRecord[]).some(
+          (r) => Array.isArray(r.__comments) && r.__comments.length > 0,
+        ),
+      );
+      expect(hasComments, `${persona}: no record with a comments timeline`).toBe(true);
+    },
+  );
+
+  it.each(["legal", "finance"] as const)(
+    "%s sheet ships formulas + named ranges + (validation|chart) over the model's values",
+    async (persona) => {
+      const arts = await seededArtifacts(persona);
+      const sheet = arts.find((a) => a.artifactType === "sheet");
+      expect(sheet, `${persona}: no sheet artifact`).toBeDefined();
+
+      const content = parseSheetContent(sheet!.content);
+      const rowCount = content.rows.length;
+      const colCount = content.columns.length;
+
+      // At least one genuine formula cell, every reference in bounds-shaped A1.
+      const formulaCells = content.rows
+        .flat()
+        .filter((c) => typeof c === "string" && c.startsWith("="));
+      expect(formulaCells.length, `${persona}: no formula cells`).toBeGreaterThan(0);
+
+      // Named ranges round-trip and every chart binds to a parseable A1 range.
+      expect((content.namedRanges ?? []).length).toBeGreaterThan(0);
+      for (const chart of content.charts ?? []) {
+        const rect = parseA1Range(chart.range);
+        expect(rect, `${persona}: chart ${chart.id} bad range ${chart.range}`).not.toBeNull();
+        expect(rect!.r2).toBeLessThan(rowCount);
+        expect(rect!.c2).toBeLessThan(colCount);
+        if (chart.labelRange) {
+          expect(parseA1Range(chart.labelRange)).not.toBeNull();
+        }
+      }
+
+      // Each sheet shows at least one of the two interaction surfaces.
+      const hasValidation =
+        content.validations !== undefined &&
+        Object.keys(content.validations).length > 0;
+      const hasChart = (content.charts ?? []).length > 0;
+      expect(
+        hasValidation || hasChart,
+        `${persona}: sheet has neither validation nor a chart`,
+      ).toBe(true);
+
+      // Validation lists never constrain away a value already in the column.
+      for (const [colKey, rule] of Object.entries(content.validations ?? {})) {
+        if (rule.kind !== "list") continue;
+        const col = Number(colKey);
+        const allowed = new Set(rule.values);
+        for (const row of content.rows) {
+          const v = row[col];
+          if (typeof v === "string" && v !== "" && !v.startsWith("=")) {
+            expect(
+              allowed.has(v),
+              `${persona}: column ${col} value ${v} not in its own dropdown`,
+            ).toBe(true);
+          }
+        }
+      }
+    },
+  );
+
+  it.each(["healthcare", "legal", "finance", "nonprofit"] as const)(
+    "%s document uses callout + toggle + table-of-contents blocks with a real outline",
+    async (persona) => {
+      const arts = await seededArtifacts(persona);
+      const document = arts.find((a) => a.artifactType === "document");
+      expect(document, `${persona}: no document artifact`).toBeDefined();
+      const html = document!.content;
+
+      expect(html).toContain('data-type="callout"');
+      expect(html).toContain('data-type="toggle"');
+      expect(html).toContain('data-type="table-of-contents"');
+
+      // The scroll-tracked outline + reading-time footer derive from real
+      // headings, so the doc must carry several and a non-trivial word count.
+      const headings = html.match(/<h[1-3]\b/g) ?? [];
+      expect(headings.length).toBeGreaterThanOrEqual(3);
+      const words = html
+        .replace(/<[^>]+>/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length;
+      expect(estimateReadingTimeMinutes(words)).toBeGreaterThanOrEqual(1);
+    },
+  );
+
+  it.each(["nonprofit", "retail"] as const)(
+    "%s deck applies a real theme + per-slide layouts + speaker notes",
+    async (persona) => {
+      const arts = await seededArtifacts(persona);
+      const deck = arts.find((a) => a.artifactType === "slides");
+      expect(deck, `${persona}: no slides artifact`).toBeDefined();
+
+      const parsed = parseSlideContent(deck!.content);
+      expect(isKnownSlideThemeId(parsed.themeId)).toBe(true);
+      expect(parsed.slides.length).toBeGreaterThan(0);
+
+      const layoutIds = new Set(SLIDE_LAYOUTS.map((l) => l.id));
+      let sawBullets = false;
+      for (const slide of parsed.slides) {
+        expect(
+          layoutIds.has(slide.layout ?? "titleContent"),
+          `${persona}: slide "${slide.title}" has unknown layout ${slide.layout}`,
+        ).toBe(true);
+        expect(
+          (slide.notes ?? "").trim().length,
+          `${persona}: slide "${slide.title}" has no speaker notes`,
+        ).toBeGreaterThan(0);
+        if (slide.blocks.some((b) => b.type === "bullets")) sawBullets = true;
+      }
+      // The opener divides the deck (section header) and at least one content
+      // slide renders structured bullets.
+      expect(parsed.slides[0].layout).toBe("sectionHeader");
+      expect(sawBullets).toBe(true);
+    },
+  );
 });
 
 describe("installShowcaseBridge", () => {

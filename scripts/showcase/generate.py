@@ -31,6 +31,8 @@ from pathlib import Path
 
 import yaml
 
+import enrich  # local: deterministic structural enrichment (same dir on sys.path)
+
 REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "scripts/showcase/personas.yaml"
 MODEL_REGISTRY = REPO / "sidecars/models.json"
@@ -906,6 +908,21 @@ def to_editor_content(art_type: str, content: str) -> str:
     )
 
 
+def editor_content(art_type: str, raw_content: str, slug: str) -> str:
+    """Editor-persisted content for the renderer dataset: convert the on-disk
+    artifact to its editor form (Markdown -> HTML for documents) and then apply
+    the deterministic structural enrichment so the showcase exercises the
+    shipped editor capabilities (callout/toggle/TOC, sheet formulas/charts,
+    multi-table linked bases, slide layouts/themes/notes)."""
+    return enrich.enrich(art_type, to_editor_content(art_type, raw_content), slug)
+
+
+def showcase_ext(art_type: str) -> str:
+    """On-disk extension for the inspectable ENRICHED artifact: documents are
+    persisted as HTML by the editor, everything else as JSON."""
+    return "html" if art_type == "document" else "json"
+
+
 def preview_markdown(art_type: str, title: str, content: str) -> str:
     if art_type == "document":
         return content
@@ -943,11 +960,20 @@ def ts_escape(s: str) -> str:
 
 
 def main() -> None:
-    # Arg forms: "" (all), "<persona>" (whole persona), "<persona>:<slug>"
-    # (regenerate only that artifact, load the rest from disk).
+    # Arg forms:
+    #   ""                  → (re)generate everything via the on-device runtime
+    #   "<persona>"         → regenerate one whole persona
+    #   "<persona>:<slug>"  → regenerate one artifact, load the rest from disk
+    #   "--reuse"           → re-emit ALL datasets from the committed genuine
+    #                         outputs/ (no runtime needed): reapply the
+    #                         deterministic enrichment + rebuild the .ts modules.
+    #                         Used to refresh the renderer datasets / enriched
+    #                         artifacts after an enrichment change without
+    #                         re-running the model.
     arg = sys.argv[1] if len(sys.argv) > 1 else None
+    reuse = arg in ("--reuse", "--from-disk")
     only_pid = only_slug = None
-    if arg:
+    if arg and not reuse:
         only_pid, _, only_slug = arg.partition(":")
         only_slug = only_slug or None
     manifest = yaml.safe_load(MANIFEST.read_text())
@@ -979,17 +1005,21 @@ def main() -> None:
             template["_path"] = art["template"]
             out_dir = REPO / "docs/showcase/artifacts" / pid / "outputs"
             ext = "md" if art["type"] == "document" else "json"
-            if only_slug and art["slug"] != only_slug:
-                # Preserve a previously-generated artifact: load it from disk.
+            if reuse or (only_slug and art["slug"] != only_slug):
+                # Re-emit from the committed genuine output on disk (reuse
+                # mode, or preserving the other artifacts of a single-slug
+                # regen). No runtime call; reapply the deterministic enrichment.
                 existing = (out_dir / f"{art['slug']}.{ext}").read_text()
                 cc = sum(1 for n in source_names if f"[{n}]" in existing) \
                     if art["type"] == "document" else 0
+                enriched = editor_content(art["type"], existing, art["slug"])
+                (out_dir / f"{art['slug']}.showcase.{showcase_ext(art['type'])}").write_text(enriched)
                 dataset_artifacts.append({
                     "slug": art["slug"], "title": art["title"], "type": art["type"],
                     "templateId": template.get("id"), "templateName": template["name"],
-                    "content": to_editor_content(art["type"], existing), "citationCount": cc,
+                    "content": enriched, "citationCount": cc,
                 })
-                log(f"  Artifact: {art['slug']} ({art['type']}) <- kept existing on disk")
+                log(f"  Artifact: {art['slug']} ({art['type']}) <- enriched from disk")
                 continue
             log(f"  Artifact: {art['slug']} ({art['type']}) <- {template['name']}")
             prompt_log: list[str] = [
@@ -1017,11 +1047,13 @@ def main() -> None:
             (out_dir / f"{art['slug']}.preview.md").write_text(
                 preview_markdown(art["type"], art["title"], content))
             (prm_dir / f"{art['slug']}.md").write_text("\n".join(prompt_log))
+            enriched = editor_content(art["type"], content, art["slug"])
+            (out_dir / f"{art['slug']}.showcase.{showcase_ext(art['type'])}").write_text(enriched)
 
             dataset_artifacts.append({
                 "slug": art["slug"], "title": art["title"], "type": art["type"],
                 "templateId": template.get("id"), "templateName": template["name"],
-                "content": to_editor_content(art["type"], content), "citationCount": citation_count,
+                "content": enriched, "citationCount": citation_count,
             })
             log(f"    -> wrote outputs/{art['slug']}.{ext} (citations: {citation_count})")
 
