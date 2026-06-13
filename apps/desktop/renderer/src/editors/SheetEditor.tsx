@@ -32,6 +32,7 @@ import {
   type BoolFormatKey,
 } from "./sheetFormatting";
 import { conditionalStyleForCell } from "./sheetConditionalFormatting";
+import { sortSheetByColumn } from "./sheetSort";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import { NamedRangePanel } from "./components/NamedRangePanel";
 import { SheetAiPanel } from "./components/SheetAiPanel";
@@ -842,6 +843,45 @@ export default function SheetEditor({
     });
     setContextMenu(null);
   }, [debouncedSave]);
+
+  // ----------------------------------------------------------------
+  // sort all data rows by a column (Sheets' "Sort sheet A→Z / Z→A").
+  // ----------------------------------------------------------------
+
+  const sortByColumn = useCallback(
+    (col: number, ascending: boolean) => {
+      setSheet((prev) => {
+        // Sort by each cell's underlying value, not its formatted
+        // display: a formula sorts by its evaluated result, and a
+        // currency-formatted number sorts numerically rather than by
+        // the `$1,234.50` string.
+        const sortKeyAt = (row: number): string => {
+          const raw = prev.rows[row]?.[col] ?? "";
+          if (!raw.startsWith("=")) return raw;
+          const cached =
+            cellCache.get(cellKey(row, col, activeName)) ??
+            evaluateFormula(raw, prev);
+          if (cached === null) return "";
+          if (isFormulaError(cached)) return cached.code;
+          return String(cached);
+        };
+        const { rows, formats } = sortSheetByColumn(
+          prev.rows,
+          prev.formats,
+          col,
+          ascending,
+          sortKeyAt,
+        );
+        const next: SheetContent = { ...prev, rows };
+        if (formats) next.formats = formats;
+        else delete next.formats;
+        debouncedSave(next);
+        return next;
+      });
+      setContextMenu(null);
+    },
+    [cellCache, activeName, debouncedSave],
+  );
 
   // Close the context menu on any outside click. Listening on
   // document with a capture-phase handler is the most reliable
@@ -1682,6 +1722,34 @@ export default function SheetEditor({
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {contextMenu.kind === "col" && (
+            <>
+              <li
+                role="menuitem"
+                data-testid="sheet-sort-asc"
+                style={{ padding: "4px 12px", cursor: "pointer" }}
+                onClick={() => sortByColumn(contextMenu.index, true)}
+              >
+                Sort sheet A → Z
+              </li>
+              <li
+                role="menuitem"
+                data-testid="sheet-sort-desc"
+                style={{ padding: "4px 12px", cursor: "pointer" }}
+                onClick={() => sortByColumn(contextMenu.index, false)}
+              >
+                Sort sheet Z → A
+              </li>
+              <li
+                aria-hidden="true"
+                style={{
+                  height: 1,
+                  margin: "4px 0",
+                  background: "var(--color-border, #ccc)",
+                }}
+              />
+            </>
+          )}
           <li
             role="menuitem"
             style={{ padding: "4px 12px", cursor: "pointer" }}
