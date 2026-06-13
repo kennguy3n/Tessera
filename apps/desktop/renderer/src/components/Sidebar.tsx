@@ -12,6 +12,7 @@ import { useCspNonce } from "../utils/cspNonce";
 import { useArtifactList } from "../hooks/useArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { useSettings } from "../hooks/useSettings";
+import { useOpenTarget } from "../workspace/useOpenTarget";
 import type { ArtifactInfo } from "../types/ipc";
 
 /**
@@ -65,6 +66,10 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform);
   const modLabel = isMac ? "⌘" : "Ctrl";
+  // Modifier/middle-click → open the destination in a new tab / split
+  // instead of replacing the focused view. Plain clicks fall through to
+  // the default NavLink/Link navigation.
+  const openTarget = useOpenTarget();
 
   // surface pinned artifacts directly in the
   // sidebar so the user can jump to a favorite without opening
@@ -128,6 +133,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
   const renderNavItem = useCallback(
     (item: SidebarNavItem, showHint: boolean) => {
       const hint = SIDEBAR_SHORTCUT_HINTS[item.to];
+      const openHandlers = openTarget(item.to);
       return (
         <li key={item.to}>
           <NavLink
@@ -137,7 +143,13 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
               `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
             }
             aria-keyshortcuts={hint ? `${modLabel}+${hint}` : undefined}
-            title={collapsed ? item.label : undefined}
+            title={
+              collapsed
+                ? item.label
+                : `${item.label} — ${modLabel}-click: new tab, ${modLabel}+Shift-click: new split`
+            }
+            onClick={openHandlers.onClick}
+            onAuxClick={openHandlers.onAuxClick}
           >
             <span className="sidebar-icon" aria-hidden="true">
               <item.Icon size={20} strokeWidth={1.75} />
@@ -156,7 +168,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
         </li>
       );
     },
-    [collapsed, modLabel],
+    [collapsed, modLabel, openTarget],
   );
 
   return (
@@ -204,19 +216,26 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
         <div className="sidebar-section">
           <div className="sidebar-section-label">Pinned</div>
           <ul className="sidebar-pinned-list">
-            {pinnedArtifacts.map((artifact) => (
-              <li key={artifact.id}>
-                <Link
-                  to={`/artifacts/${artifact.id}/edit`}
-                  className="sidebar-link sidebar-pinned-link"
-                >
-                  <Star size={14} fill="currentColor" aria-hidden="true" />
-                  <span className="sidebar-label">
-                    {artifact.title || "(untitled)"}
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {pinnedArtifacts.map((artifact) => {
+              const to = `/artifacts/${artifact.id}/edit`;
+              const handlers = openTarget(to);
+              return (
+                <li key={artifact.id}>
+                  <Link
+                    to={to}
+                    className="sidebar-link sidebar-pinned-link"
+                    title={`${artifact.title || "(untitled)"} — ${modLabel}-click: new tab, ${modLabel}+Shift-click: new split`}
+                    onClick={handlers.onClick}
+                    onAuxClick={handlers.onAuxClick}
+                  >
+                    <Star size={14} fill="currentColor" aria-hidden="true" />
+                    <span className="sidebar-label">
+                      {artifact.title || "(untitled)"}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

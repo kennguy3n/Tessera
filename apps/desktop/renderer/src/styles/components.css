@@ -2482,7 +2482,9 @@
   overflow: hidden;
 }
 
-/* A leaf pane: tab strip on top, scrolling content below. */
+/* A leaf pane: tab strip on top, scrolling content below. The
+   `position: relative` anchors the drag-to-split edge overlay so it
+   stays pinned to the pane's viewport even when the content scrolls. */
 .workspace-pane {
   display: flex;
   flex-direction: column;
@@ -2490,7 +2492,32 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  position: relative;
   background-color: var(--color-bg-page);
+}
+
+/* Drag-to-split edge overlay: highlights the half of the pane where the
+   new split would land as a tab is dragged over an edge. Pointer events
+   stay off so the underlying drop target keeps receiving the drag. */
+.workspace-pane-dropzone {
+  position: absolute;
+  pointer-events: none;
+  background-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border: 1px solid var(--color-primary);
+  z-index: 5;
+  transition: opacity var(--transition-fast);
+}
+.workspace-pane-dropzone.is-left {
+  inset: 0 50% 0 0;
+}
+.workspace-pane-dropzone.is-right {
+  inset: 0 0 0 50%;
+}
+.workspace-pane-dropzone.is-top {
+  inset: 0 0 50% 0;
+}
+.workspace-pane-dropzone.is-bottom {
+  inset: 50% 0 0 0;
 }
 
 .workspace-pane-content {
@@ -2616,6 +2643,36 @@
 .workspace-tab-button:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+/* Maximize toggle reflects its on state with the accent colour. */
+.workspace-tab-action.is-active {
+  color: var(--color-primary);
+  background-color: var(--color-surface-hover);
+}
+/* Leading link glyph on the active tab of a pane that follows another
+   (linked panes). Tinted with the accent so the relationship reads at a
+   glance without extra chrome. */
+.workspace-tab-link-icon {
+  margin-right: var(--spacing-2xs);
+  color: var(--color-primary);
+  flex: 0 0 auto;
+  vertical-align: -1px;
+}
+
+/* Stacked tabs: a pane can present its tabs as wrapped rows so every
+   open tab stays visible at once instead of scrolling horizontally.
+   This is a presentational density change only — the pane still mounts
+   just its active tab (no all-tabs mount / IPC), preserving the
+   single-active-view performance guarantee. */
+.workspace-tabstrip.is-stacked {
+  align-items: stretch;
+}
+.workspace-tabstrip.is-stacked .workspace-tabstrip-tabs {
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
+.workspace-tabstrip.is-stacked .workspace-tab {
+  max-width: none;
 }
 
 /* --- Splitter handle --- */

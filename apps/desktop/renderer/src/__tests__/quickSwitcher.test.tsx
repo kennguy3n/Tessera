@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import WorkspaceProvider from "../workspace/WorkspaceProvider";
 import type { QuickSwitchItem } from "../utils/quickSwitch";
 
 const navigateMock = vi.fn();
@@ -80,7 +81,9 @@ function setItems(items: QuickSwitchItem[], overrides: Partial<ItemsState> = {})
 function renderSwitcher(onClose = vi.fn()) {
   render(
     <MemoryRouter>
-      <QuickSwitcher isOpen onClose={onClose} />
+      <WorkspaceProvider>
+        <QuickSwitcher isOpen onClose={onClose} />
+      </WorkspaceProvider>
     </MemoryRouter>,
   );
   return onClose;
@@ -163,6 +166,27 @@ describe("QuickSwitcher", () => {
     expect(navigateMock).toHaveBeenCalledWith("/a");
   });
 
+  it("Cmd/Ctrl-click opens in a new tab instead of a plain shell navigate", () => {
+    setItems([item("a", "Alpha", "/a")]);
+    const onClose = renderSwitcher();
+    fireEvent.click(screen.getByText("Alpha"), { ctrlKey: true });
+    // The plain shell navigate (single-arg) must NOT fire — the
+    // destination is routed through the workspace's openTab instead.
+    expect(navigateMock).not.toHaveBeenCalledWith("/a");
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("Cmd/Ctrl+Enter opens the active row in a new tab", () => {
+    setItems([item("a", "Alpha", "/a")]);
+    const onClose = renderSwitcher();
+    fireEvent.keyDown(screen.getByRole("combobox"), {
+      key: "Enter",
+      ctrlKey: true,
+    });
+    expect(navigateMock).not.toHaveBeenCalledWith("/a");
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("Escape closes the switcher", () => {
     setItems([item("a", "Alpha", "/a")]);
     const onClose = renderSwitcher();
@@ -239,7 +263,9 @@ describe("QuickSwitcher", () => {
 
     const open = (isOpen: boolean) => (
       <MemoryRouter>
-        <QuickSwitcher isOpen={isOpen} onClose={onClose} />
+        <WorkspaceProvider>
+          <QuickSwitcher isOpen={isOpen} onClose={onClose} />
+        </WorkspaceProvider>
       </MemoryRouter>
     );
 

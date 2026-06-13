@@ -14,21 +14,31 @@ import {
 } from "react-router-dom";
 import {
   DEFAULT_PATH,
+  closeOtherTabs as closeOtherTabsReducer,
   closeTab as closeTabReducer,
+  closeTabsToRight as closeTabsToRightReducer,
   createDefaultWorkspace,
   deserializeWorkspace,
+  equalizeSplits as equalizeSplitsReducer,
   focusAdjacentPane as focusAdjacentPaneReducer,
   focusAdjacentTab as focusAdjacentTabReducer,
   focusPane as focusPaneReducer,
   getActiveTab,
   getFocusedLeaf,
+  listLeaves,
   moveTab as moveTabReducer,
   navigateTab as navigateTabReducer,
   openTab as openTabReducer,
   resizeSplit as resizeSplitReducer,
+  resolveLinkedPath,
   serializeWorkspace,
   setActiveTab as setActiveTabReducer,
+  setPaneLink as setPaneLinkReducer,
+  setTabScroll as setTabScrollReducer,
   splitPane as splitPaneReducer,
+  splitWithTab as splitWithTabReducer,
+  toggleMaximizePane as toggleMaximizePaneReducer,
+  togglePaneStacked as togglePaneStackedReducer,
   type SplitDirection,
   type WorkspaceState,
 } from "../utils/paneTree";
@@ -242,6 +252,79 @@ export default function WorkspaceProvider({
     setState((cur) => resizeSplitReducer(cur, splitId, sizes));
   }, []);
 
+  const openInSplit = useCallback(
+    (path: string, direction: SplitDirection = "row") => {
+      const newPaneId = genId();
+      const newTabId = genId();
+      setState((cur) => {
+        const split = splitPaneReducer(cur, getFocusedLeaf(cur).id, direction, {
+          newPaneId,
+          newTabId,
+          newSplitId: genId(),
+        });
+        // Point the freshly-created pane's tab at the requested route
+        // (no-ops harmlessly if the split hit the leaf ceiling).
+        return navigateTabReducer(split, newPaneId, newTabId, path);
+      });
+    },
+    [],
+  );
+
+  const splitWithTab = useCallback(
+    (
+      source: { paneId: string; tabId: string },
+      targetPaneId: string,
+      direction: SplitDirection,
+      opts?: { before?: boolean },
+    ) => {
+      setState((cur) =>
+        splitWithTabReducer(
+          cur,
+          source,
+          targetPaneId,
+          direction,
+          { newPaneId: genId(), newTabId: genId(), newSplitId: genId() },
+          opts,
+        ),
+      );
+    },
+    [],
+  );
+
+  const equalizeSplits = useCallback(() => {
+    setState((cur) => equalizeSplitsReducer(cur));
+  }, []);
+
+  const toggleMaximize = useCallback((paneId: string) => {
+    setState((cur) => toggleMaximizePaneReducer(cur, paneId));
+  }, []);
+
+  const closeOtherTabs = useCallback((paneId: string, tabId: string) => {
+    setState((cur) => closeOtherTabsReducer(cur, paneId, tabId));
+  }, []);
+
+  const closeTabsToRight = useCallback((paneId: string, tabId: string) => {
+    setState((cur) => closeTabsToRightReducer(cur, paneId, tabId));
+  }, []);
+
+  const togglePaneStacked = useCallback((paneId: string) => {
+    setState((cur) => togglePaneStackedReducer(cur, paneId));
+  }, []);
+
+  const setPaneLink = useCallback(
+    (followerId: string, leaderId: string | null) => {
+      setState((cur) => setPaneLinkReducer(cur, followerId, leaderId));
+    },
+    [],
+  );
+
+  const reportTabScroll = useCallback(
+    (paneId: string, tabId: string, scrollTop: number) => {
+      setState((cur) => setTabScrollReducer(cur, paneId, tabId, scrollTop));
+    },
+    [],
+  );
+
   // --- tessera:* command bus → workspace API ---
   useEffect(() => {
     const onNewTab = () => openTab();
@@ -252,6 +335,19 @@ export default function WorkspaceProvider({
     const onSplitDown = () => splitFocused("column");
     const onFocusNextPane = () => focusAdjacentPane("next");
     const onFocusPrevPane = () => focusAdjacentPane("prev");
+    // Ergonomics commands act on the focused pane / its active tab.
+    const onMaximize = () => toggleMaximize(getFocusedLeaf(stateRef.current).id);
+    const onEvenSplit = () => equalizeSplits();
+    const onCloseOthers = () => {
+      const leaf = getFocusedLeaf(stateRef.current);
+      closeOtherTabs(leaf.id, getActiveTab(leaf).id);
+    };
+    const onCloseToRight = () => {
+      const leaf = getFocusedLeaf(stateRef.current);
+      closeTabsToRight(leaf.id, getActiveTab(leaf).id);
+    };
+    const onToggleStacked = () =>
+      togglePaneStacked(getFocusedLeaf(stateRef.current).id);
     window.addEventListener("tessera:new-tab", onNewTab);
     window.addEventListener("tessera:close-tab", onCloseTab);
     window.addEventListener("tessera:next-tab", onNextTab);
@@ -260,6 +356,11 @@ export default function WorkspaceProvider({
     window.addEventListener("tessera:split-down", onSplitDown);
     window.addEventListener("tessera:focus-next-pane", onFocusNextPane);
     window.addEventListener("tessera:focus-prev-pane", onFocusPrevPane);
+    window.addEventListener("tessera:maximize-pane", onMaximize);
+    window.addEventListener("tessera:even-split", onEvenSplit);
+    window.addEventListener("tessera:close-others", onCloseOthers);
+    window.addEventListener("tessera:close-to-right", onCloseToRight);
+    window.addEventListener("tessera:toggle-stacked", onToggleStacked);
     return () => {
       window.removeEventListener("tessera:new-tab", onNewTab);
       window.removeEventListener("tessera:close-tab", onCloseTab);
@@ -269,6 +370,11 @@ export default function WorkspaceProvider({
       window.removeEventListener("tessera:split-down", onSplitDown);
       window.removeEventListener("tessera:focus-next-pane", onFocusNextPane);
       window.removeEventListener("tessera:focus-prev-pane", onFocusPrevPane);
+      window.removeEventListener("tessera:maximize-pane", onMaximize);
+      window.removeEventListener("tessera:even-split", onEvenSplit);
+      window.removeEventListener("tessera:close-others", onCloseOthers);
+      window.removeEventListener("tessera:close-to-right", onCloseToRight);
+      window.removeEventListener("tessera:toggle-stacked", onToggleStacked);
     };
   }, [
     openTab,
@@ -276,7 +382,35 @@ export default function WorkspaceProvider({
     focusAdjacentTab,
     splitFocused,
     focusAdjacentPane,
+    toggleMaximize,
+    equalizeSplits,
+    closeOtherTabs,
+    closeTabsToRight,
+    togglePaneStacked,
   ]);
+
+  // --- Linked-pane propagation ---
+  // When a leader's active-tab route changes, push it into each pane
+  // that follows it. Bounded by the leaf count (≤ MAX_LEAF_PANES) and
+  // self-correcting: once a follower's path equals the leader's the
+  // walk stops (no loop). We drive the follower's *own* in-memory
+  // router when it is mounted (single navigation code path); otherwise
+  // we update the stored path so it mounts there.
+  useEffect(() => {
+    for (const leaf of listLeaves(state.root)) {
+      if (leaf.followPaneId === undefined) continue;
+      const target = resolveLinkedPath(state, leaf.id);
+      if (target === null) continue;
+      const active = getActiveTab(leaf);
+      if (active.path === target) continue;
+      const navigate = navigatorsRef.current.get(active.id);
+      if (navigate) {
+        navigate(target, { replace: true });
+      } else {
+        setState((s) => navigateTabReducer(s, leaf.id, active.id, target));
+      }
+    }
+  }, [state]);
 
   // --- Shell <-> focused-tab location bridge ---
   // Tracks the previous shell/tab paths so each render we can tell which
@@ -288,11 +422,24 @@ export default function WorkspaceProvider({
   const prevOuterRef = useRef<string | null>(null);
   useEffect(() => {
     const outerPath = createPath(outerLocation);
+    const firstRun =
+      prevActiveRef.current === null && prevOuterRef.current === null;
     const activeChanged = activePath !== prevActiveRef.current;
     const outerChanged = outerPath !== prevOuterRef.current;
     prevActiveRef.current = activePath;
     prevOuterRef.current = outerPath;
 
+    if (firstRun && outerPath !== DEFAULT_PATH && outerPath !== activePath) {
+      // Deep link / reload at a concrete path (the shell opened
+      // somewhere other than the default route): honour the shell URL by
+      // forwarding it into the focused tab instead of clobbering it with
+      // the restored/default tab path. A normal launch (shell at the
+      // default route) skips this and lets the focused tab establish the
+      // URL below, so a restored multi-tab session still wins.
+      prevActiveRef.current = outerPath;
+      navigateActive(outerPath);
+      return;
+    }
     if (activeChanged && activePath !== outerPath) {
       // The focused tab moved (tab switch, pane focus, in-tab <Link>):
       // mirror it onto the shell URL (replace — the shell URL is a
@@ -333,11 +480,20 @@ export default function WorkspaceProvider({
       activateTab,
       navigateActive,
       splitFocused,
+      openInSplit,
+      splitWithTab,
       focusPane,
       focusAdjacentPane,
       focusAdjacentTab,
       moveTab,
       resizeSplit,
+      equalizeSplits,
+      toggleMaximize,
+      closeOtherTabs,
+      closeTabsToRight,
+      togglePaneStacked,
+      setPaneLink,
+      reportTabScroll,
       registerTabNavigator,
       unregisterTabNavigator,
       reportTabLocation,
@@ -351,11 +507,20 @@ export default function WorkspaceProvider({
       activateTab,
       navigateActive,
       splitFocused,
+      openInSplit,
+      splitWithTab,
       focusPane,
       focusAdjacentPane,
       focusAdjacentTab,
       moveTab,
       resizeSplit,
+      equalizeSplits,
+      toggleMaximize,
+      closeOtherTabs,
+      closeTabsToRight,
+      togglePaneStacked,
+      setPaneLink,
+      reportTabScroll,
       registerTabNavigator,
       unregisterTabNavigator,
       reportTabLocation,

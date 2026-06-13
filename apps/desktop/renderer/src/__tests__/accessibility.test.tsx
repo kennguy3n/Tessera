@@ -28,6 +28,7 @@ import { MemoryRouter } from "react-router-dom";
 import Modal from "../components/Modal";
 import SlideEditor from "../editors/SlideEditor";
 import Sidebar from "../components/Sidebar";
+import WorkspaceProvider from "../workspace/WorkspaceProvider";
 import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 
 // ---------------------------------------------------------------------------
@@ -262,7 +263,9 @@ describe("Sidebar accessibility", () => {
   it("renders aria-current=page on the NavLink that matches the URL", () => {
     render(
       <MemoryRouter initialEntries={["/sources"]}>
-        <Sidebar />
+        <WorkspaceProvider>
+          <Sidebar />
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
     const nav = screen.getByRole("navigation", { name: "Main navigation" });

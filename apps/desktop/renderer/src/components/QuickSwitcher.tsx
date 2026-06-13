@@ -39,6 +39,8 @@ import { useCspNonce } from "../utils/cspNonce";
 import { useQuickSwitcherItems } from "../hooks/useQuickSwitcherItems";
 import { useRecentlyViewedArtifacts } from "../hooks/useRecentlyViewedArtifacts";
 import { useVirtualRows } from "../hooks/useVirtualRows";
+import { useWorkspace } from "../workspace/workspaceContext";
+import { openModeFromEvent, type OpenMode } from "../workspace/useOpenTarget";
 import {
   kindLabel,
   rankQuickSwitchItems,
@@ -116,6 +118,7 @@ function HighlightedTitle({
 export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
   const cspNonce = useCspNonce();
   const navigate = useNavigate();
+  const { openTab, openInSplit } = useWorkspace();
   const { items, loading, error, hasBridge, refreshAll } =
     useQuickSwitcherItems();
   const { recentIds } = useRecentlyViewedArtifacts();
@@ -134,6 +137,14 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
   const optionIdPrefix = useId();
 
   const recentKeys = useMemo(() => [...recentIds], [recentIds]);
+  const modKeyLabel = useMemo(
+    () =>
+      typeof navigator !== "undefined" &&
+      /Mac|iPhone|iPad/.test(navigator.platform)
+        ? "⌘"
+        : "Ctrl",
+    [],
+  );
 
   const ranked = useMemo<RankedQuickSwitchItem[]>(
     () =>
@@ -208,13 +219,22 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
   }, [activeIndex, isOpen, ranked.length]);
 
   const handleSelect = useCallback(
-    (index: number) => {
+    (index: number, mode: OpenMode = "current") => {
       const row = ranked[index];
       if (!row) return;
       onClose();
-      navigate(row.item.to);
+      // Modifier-aware open: a plain pick replaces the focused view
+      // (shell navigation), while Ctrl/Cmd (+Shift) routes the same
+      // destination into a new tab / split via the workspace API.
+      if (mode === "new-split") {
+        openInSplit(row.item.to);
+      } else if (mode === "new-tab") {
+        openTab(row.item.to);
+      } else {
+        navigate(row.item.to);
+      }
     },
-    [ranked, navigate, onClose],
+    [ranked, navigate, onClose, openTab, openInSplit],
   );
 
   const handleKeyDown = useCallback(
@@ -240,10 +260,17 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           e.preventDefault();
           setActiveIndex(Math.max(0, ranked.length - 1));
           return;
-        case "Enter":
+        case "Enter": {
           e.preventDefault();
-          handleSelect(activeIndex);
+          const mod = e.metaKey || e.ctrlKey;
+          const mode: OpenMode = mod
+            ? e.shiftKey
+              ? "new-split"
+              : "new-tab"
+            : "current";
+          handleSelect(activeIndex, mode);
           return;
+        }
         default:
           return;
       }
@@ -390,7 +417,12 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
                   onMouseMove={() => {
                     if (!active) setActiveIndex(idx);
                   }}
-                  onClick={() => handleSelect(idx)}
+                  onClick={(e) => handleSelect(idx, openModeFromEvent(e))}
+                  onAuxClick={(e) => {
+                    if (e.button !== 1) return;
+                    e.preventDefault();
+                    handleSelect(idx, "new-split");
+                  }}
                 >
                   <span className={`qs-badge qs-badge-${row.item.kind}`}>
                     {kindLabel(row.item.kind)}
@@ -422,6 +454,13 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           <span>navigate</span>
           <kbd>↵</kbd>
           <span>open</span>
+          <kbd>{modKeyLabel}</kbd>
+          <kbd>↵</kbd>
+          <span>new tab</span>
+          <kbd>{modKeyLabel}</kbd>
+          <kbd>⇧</kbd>
+          <kbd>↵</kbd>
+          <span>split</span>
           <kbd>esc</kbd>
           <span>close</span>
         </div>

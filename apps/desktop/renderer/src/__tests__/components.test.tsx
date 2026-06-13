@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
+import WorkspaceProvider from "../workspace/WorkspaceProvider";
 import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 import Button from "../components/Button";
 import Card from "../components/Card";
@@ -24,7 +25,9 @@ describe("Sidebar", () => {
   it("always renders the primary navigation links", () => {
     render(
       <MemoryRouter>
-        <Sidebar />
+        <WorkspaceProvider>
+          <Sidebar />
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
     expect(screen.getByText("Home")).toBeInTheDocument();
@@ -36,7 +39,9 @@ describe("Sidebar", () => {
   it("collapses secondary tools behind a 'More tools' toggle by default", () => {
     render(
       <MemoryRouter>
-        <Sidebar />
+        <WorkspaceProvider>
+          <Sidebar />
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
     const toggle = screen.getByRole("button", { name: /more tools/i });
@@ -51,7 +56,9 @@ describe("Sidebar", () => {
   it("reveals secondary tools when 'More tools' is expanded", () => {
     render(
       <MemoryRouter>
-        <Sidebar />
+        <WorkspaceProvider>
+          <Sidebar />
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: /more tools/i }));
@@ -67,7 +74,9 @@ describe("Sidebar", () => {
   it("renders the Tessera brand", () => {
     render(
       <MemoryRouter>
-        <Sidebar />
+        <WorkspaceProvider>
+          <Sidebar />
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
     expect(screen.getByText("Tessera")).toBeInTheDocument();
