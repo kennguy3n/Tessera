@@ -905,13 +905,32 @@ function OutlinePanel({
 
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // Track which heading is currently at/above the top of the scroll
-  // container and mark it active. We read each heading's DOM offset via
-  // `editor.view.nodeDOM(pos)` and pick the last one crossed. The
-  // scroll listener is passive + rAF-throttled so it never blocks
-  // scrolling, and we bail when the user prefers reduced motion's
-  // companion: still update active state (it's not motion) but avoid
-  // smooth-scroll on click below.
+  // Latest headings, read by the scroll handler without being a dependency of
+  // the listener effect — otherwise the (new-identity-every-keystroke)
+  // `headings` array would tear down and re-register the DOM scroll listener
+  // on every doc edit. The ref is refreshed in the recompute effect below.
+  const headingsRef = useRef<HeadingEntry[]>(headings);
+
+  // Read each heading's offset relative to the scroll container and mark the
+  // last one crossed as active. Stable across doc edits (deps: [editor] only)
+  // so the scroll listener effect doesn't churn.
+  const recomputeActive = useCallback(() => {
+    const scroller = editor.view.dom.closest(
+      ".document-editor-content",
+    ) as HTMLElement | null;
+    if (!scroller) return;
+    const containerTop = scroller.getBoundingClientRect().top;
+    const offsets = headingsRef.current.map((h) => {
+      const dom = editor.view.nodeDOM(h.pos);
+      return dom instanceof HTMLElement
+        ? dom.getBoundingClientRect().top - containerTop
+        : Number.POSITIVE_INFINITY;
+    });
+    setActiveIndex(pickActiveHeadingIndex(offsets, 0));
+  }, [editor]);
+
+  // Register the scroll listener once per editor. Passive + rAF-throttled so
+  // it never blocks scrolling.
   useEffect(() => {
     const scroller = editor.view.dom.closest(
       ".document-editor-content",
@@ -919,33 +938,28 @@ function OutlinePanel({
     if (!scroller) return;
 
     let frame = 0;
-    const recompute = () => {
-      frame = 0;
-      const containerTop = scroller.getBoundingClientRect().top;
-      const offsets: number[] = [];
-      for (const h of headings) {
-        const dom = editor.view.nodeDOM(h.pos);
-        if (dom instanceof HTMLElement) {
-          offsets.push(dom.getBoundingClientRect().top - containerTop);
-        } else {
-          offsets.push(Number.POSITIVE_INFINITY);
-        }
-      }
-      setActiveIndex(pickActiveHeadingIndex(offsets, 0));
-    };
-
     const onScroll = () => {
       if (frame) return;
-      frame = window.requestAnimationFrame(recompute);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        recomputeActive();
+      });
     };
 
-    recompute();
+    recomputeActive();
     scroller.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       scroller.removeEventListener("scroll", onScroll);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [editor, headings]);
+  }, [editor, recomputeActive]);
+
+  // On a doc edit the heading set changes: refresh the ref and recompute the
+  // active heading, without re-registering the scroll listener above.
+  useEffect(() => {
+    headingsRef.current = headings;
+    recomputeActive();
+  }, [headings, recomputeActive]);
 
   const jumpTo = useCallback(
     (entry: HeadingEntry) => {

@@ -457,10 +457,19 @@ fn build_toc_nav(entries: &[TocEntry]) -> String {
     if !entries.is_empty() {
         nav.push_str("<ul>");
         for entry in entries {
+            // Both the slug and the label are HTML-escaped. Computed slugs are
+            // already `[a-z0-9-]` so escaping is a no-op for them, but a slug
+            // taken verbatim from an author-supplied heading `id`
+            // (`extract_id_value`) can contain `"`/`<`/`&`; escaping stops it
+            // from breaking out of the double-quoted `href` attribute. The
+            // browser attribute-decodes `&quot;` back to `"` on click, so the
+            // fragment still matches the (verbatim) heading `id`.
             let _ = write!(
                 nav,
                 "<li class=\"doc-toc-l{}\"><a href=\"#{}\">{}</a></li>",
-                entry.level, entry.slug, entry.label
+                entry.level,
+                escape_html(&entry.slug),
+                entry.label
             );
         }
         nav.push_str("</ul>");
@@ -780,6 +789,29 @@ mod tests {
         // The second heading slugifies to "intro" but that id is taken, so it
         // gets a numeric suffix.
         assert!(html.contains("<h2 id=\"intro-2\">Intro</h2>"));
+    }
+
+    #[test]
+    fn export_document_html_toc_href_escapes_slug_from_singlequoted_id() {
+        // Security regression: a single-quoted heading `id` can legally contain
+        // a double-quote. That value flows into the TOC slug verbatim; the
+        // generated `href="#..."` must escape it so it cannot break out of the
+        // double-quoted attribute and inject markup into the static export.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<div data-type=\"table-of-contents\"></div>\
+<h1 id='a\"onclick=alert(1)//'>Intro</h1><p>body</p>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // The raw `"` must NOT appear inside the href — it would terminate the
+        // attribute and turn the rest into stray markup.
+        assert!(!html.contains("href=\"#a\"onclick"));
+        // It is emitted as an HTML entity instead, keeping the anchor intact.
+        assert!(html.contains("href=\"#a&quot;onclick=alert(1)//\""));
+        // No bare `onclick` attribute leaks into the generated <a> tag.
+        assert!(!html.contains("<a href=\"#a\" onclick"));
     }
 
     #[test]
