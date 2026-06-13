@@ -185,6 +185,19 @@ function stopServer() {
   }
 }
 
+// Reap the spawned `vite preview` child if this process is interrupted
+// (local Ctrl+C, or a SIGTERM from a runner) rather than exiting through
+// `main()`'s normal path. Without this the preview server would be left
+// holding `PORT`, and the next run — which uses `--strictPort` — would
+// fail to bind. Re-raise the signal with the conventional 128+n code so
+// the exit status still reflects the interruption.
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => {
+    stopServer();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  });
+}
+
 // ---- measurement --------------------------------------------------------
 /** Read in-page time-origin -> ready-signal-painted, in ms. */
 async function measureOnce(ctx, url, ready, min) {

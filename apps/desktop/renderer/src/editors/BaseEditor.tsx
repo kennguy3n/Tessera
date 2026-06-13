@@ -2617,14 +2617,14 @@ function PercentCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   );
 }
 
-function RatingCell({ value, onChange }: CellInputProps) {
+function RatingCell({ value, onChange, ariaLabel }: CellInputProps) {
   const rating = typeof value === "number" ? Math.max(0, Math.min(5, value)) : 0;
   return (
     <div
       className="base-cell-rating"
       style={{ display: "flex", gap: "2px", cursor: "pointer" }}
       role="radiogroup"
-      aria-label="Rating"
+      aria-label={ariaLabel ?? "Rating"}
     >
       {[1, 2, 3, 4, 5].map((n) => (
         <button
@@ -2632,6 +2632,7 @@ function RatingCell({ value, onChange }: CellInputProps) {
           type="button"
           role="radio"
           aria-checked={n === rating}
+          aria-label={`${n} star${n === 1 ? "" : "s"}`}
           className="base-cell-rating-star"
           onClick={() => onChange(n === rating ? 0 : n)}
           style={{
@@ -2728,7 +2729,7 @@ function AutoNumberCell({ recordIndex }: CellInputProps) {
   );
 }
 
-function MultiSelectCell({ field, value, onChange }: CellInputProps) {
+function MultiSelectCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   const selected: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
@@ -2756,6 +2757,9 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
       <button
         type="button"
         className="base-cell-input"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         style={{ textAlign: "left", minHeight: "1.5rem" }}
       >
@@ -2784,6 +2788,7 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
         <div
           className="base-cell-multiselect-menu"
           role="listbox"
+          aria-label={ariaLabel}
           aria-multiselectable
           style={{
             position: "absolute",
@@ -3062,7 +3067,7 @@ function LookupCell({
   );
 }
 
-function AttachmentCell({ value, onChange }: CellInputProps) {
+function AttachmentCell({ value, onChange, ariaLabel }: CellInputProps) {
   const paths: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
@@ -3086,6 +3091,8 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
   return (
     <div
       className="base-cell-attachment"
+      role="group"
+      aria-label={ariaLabel}
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
@@ -3138,6 +3145,7 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
       <button
         type="button"
         className="btn-sm"
+        aria-label={ariaLabel ? `Add file to ${ariaLabel}` : "Add file"}
         onClick={() => inputRef.current?.click()}
         style={{ fontSize: "0.75rem" }}
       >
@@ -3147,6 +3155,7 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
         ref={inputRef}
         type="file"
         multiple
+        aria-label={ariaLabel ? `Add file to ${ariaLabel}` : "Add file"}
         onChange={(e) => handleFiles(e.target.files)}
         style={{ display: "none" }}
       />
@@ -3154,7 +3163,7 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps) {
+function LongTextCell({ value, onChange, onExpand, isExpanded, ariaLabel }: CellInputProps) {
   // When the LongTextModal is open over this cell, lock the inline
   // surface. The modal's `draft` state is initialized once from
   // `value` on mount and only flushes to the record on Save — so if
@@ -3171,6 +3180,7 @@ function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps)
     >
       <textarea
         className="base-cell-input base-cell-longtext"
+        aria-label={ariaLabel}
         value={value != null ? String(value) : ""}
         onChange={(e) => onChange(e.target.value)}
         rows={2}
@@ -3187,6 +3197,7 @@ function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps)
         type="button"
         className="btn-sm"
         title={isExpanded ? "Already open" : "Expand"}
+        aria-label={isExpanded ? "Already expanded" : `Expand ${ariaLabel ?? "cell"}`}
         onClick={onExpand}
         disabled={isExpanded}
         style={{ fontSize: "0.75rem", padding: "0 0.3rem" }}

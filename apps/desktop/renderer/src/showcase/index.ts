@@ -1,4 +1,4 @@
-// Showcase mock bridge (DEV ONLY).
+// Showcase mock bridge (DEV + QA-only — never the production app bundle).
 //
 // Installs a fake `window.tessera` populated with one persona's genuine
 // LLM-generated artifacts so the live renderer can be screenshotted with real
@@ -6,7 +6,10 @@
 //
 // Activate by appending `?showcase=<persona>` to the dev URL, e.g.
 //   http://localhost:5173/?showcase=healthcare#/create
-// Guarded by `import.meta.env.DEV` in the entry point — never ships to prod.
+// Enabled by the entry point in two builds only: dev (`import.meta.env.DEV`)
+// and the dedicated QA bundle (`import.meta.env.VITE_TESSERA_QA`, produced by
+// `npm run build:qa` -> renderer-dist-qa/ for the a11y/visual/perf gates). It
+// is never included in the production `npm run build` (renderer-dist/) output.
 //
 // DESIGN-MODEL INVARIANT: the artifacts injected here are generated ONLY by a
 // Tessera design text model (the Ternary-Bonsai family in sidecars/models.json)
