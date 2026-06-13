@@ -965,7 +965,15 @@ export function buildShowcaseApi(
       update: async (id: string, req: Record<string, unknown>) => {
         const t = tasks.find((x) => x.id === id);
         if (!t) throw new Error(`Unknown task: ${id}`);
-        Object.assign(t, req, { updatedAt: NOW });
+        // Never let a patch overwrite identity/creation fields: `id` keys the
+        // record and `createdAt` is owned at creation. Strip them from the
+        // patch (mirroring how the real bridge ignores them) so a stray
+        // `{ id, createdAt }` can't corrupt the in-memory task. `updatedAt`
+        // is always stamped by us.
+        const patch = { ...req };
+        delete patch.id;
+        delete patch.createdAt;
+        Object.assign(t, patch, { updatedAt: NOW });
         return { ...t };
       },
       remove: async (id: string) => {
