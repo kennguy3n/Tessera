@@ -461,6 +461,55 @@ export function areaLayout(
   return { areas, max };
 }
 
+export interface ScatterDot {
+  seriesIndex: number;
+  categoryIndex: number;
+  /** The plotted value (kept so the renderer can label the dot). */
+  value: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * Lay out one dot per non-blank value, mirroring {@link lineLayout}'s
+ * coordinate maths but without connecting the points. Kept here (rather than
+ * inline in the React mark) so every chart's geometry lives in this pure,
+ * unit-tested module and the renderer stays a thin shell. Blank values are
+ * skipped — a scatter has nothing to draw for a missing point and must not
+ * bridge across it.
+ */
+export function scatterLayout(
+  data: ChartData,
+  layout: ChartLayout,
+  opts: LineLayoutOptions = {},
+): { dots: ScatterDot[]; max: number } {
+  const pad = layout.pad;
+  const plotW = layout.width - pad.left - pad.right;
+  const plotH = layout.height - pad.top - pad.bottom;
+  const { max: rawMax } = valueExtent(data);
+  // Same non-positive-override guard as the line/area/bar layouts: a ≤ 0 max
+  // would send every `v / max` to Infinity/NaN or invert the scale.
+  const max =
+    opts.maxOverride !== undefined && opts.maxOverride > 0
+      ? opts.maxOverride
+      : niceMax(rawMax);
+  const categories = data.labels.length;
+  const dots: ScatterDot[] = [];
+  if (categories === 0 || plotW <= 0 || plotH <= 0) {
+    return { dots, max };
+  }
+  data.series.forEach((s, si) => {
+    for (let ci = 0; ci < categories; ci++) {
+      const v = s.values[ci];
+      if (v === null) continue;
+      const x = categoryX(ci, categories, pad.left, plotW, opts.align);
+      const y = pad.top + (plotH - (v / max) * plotH);
+      dots.push({ seriesIndex: si, categoryIndex: ci, value: v, x, y });
+    }
+  });
+  return { dots, max };
+}
+
 /**
  * Evenly spaced y-axis tick values from 0 to `max` (inclusive), used to
  * draw gridlines + labels. Returns `count + 1` values; falls back to a

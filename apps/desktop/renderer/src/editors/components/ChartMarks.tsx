@@ -29,6 +29,7 @@ import {
   lineLayout,
   niceMax,
   pieLayout,
+  scatterLayout,
   valueExtent,
   yAxisTicks,
 } from "../sheetCharts";
@@ -226,33 +227,22 @@ function renderArea(data: ChartData, layout: MarkLayout) {
 }
 
 function renderScatter(data: ChartData, layout: MarkLayout) {
-  const max = axisMax(data);
-  const { plotW, plotH } = plotSize(layout);
-  const categories = data.labels.length;
-  const dots: ReactNode[] = [];
-  data.series.forEach((s, si) => {
-    s.values.forEach((v, ci) => {
-      if (v === null) return;
-      const x = categoryX(ci, categories, layout.pad.left, plotW, "edge");
-      const y = layout.pad.top + (plotH - (v / max) * plotH);
-      dots.push(
-        <circle
-          key={`${si}-${ci}`}
-          cx={x}
-          cy={y}
-          r={3.5}
-          fill={chartColorAt(si)}
-          fillOpacity={0.85}
-        >
-          <title>{`${data.labels[ci]}: ${v}`}</title>
-        </circle>,
-      );
-    });
-  });
+  const { dots, max } = scatterLayout(data, layout);
   return (
     <>
       {renderYAxis(layout, max)}
-      {dots}
+      {dots.map((d) => (
+        <circle
+          key={`${d.seriesIndex}-${d.categoryIndex}`}
+          cx={d.x}
+          cy={d.y}
+          r={3.5}
+          fill={chartColorAt(d.seriesIndex)}
+          fillOpacity={0.85}
+        >
+          <title>{`${data.labels[d.categoryIndex]}: ${d.value}`}</title>
+        </circle>
+      ))}
       {renderCategoryLabels(data, layout, "edge")}
     </>
   );

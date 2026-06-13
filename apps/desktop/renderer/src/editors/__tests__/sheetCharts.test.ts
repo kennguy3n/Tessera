@@ -12,6 +12,7 @@ import {
   niceMax,
   parseA1Range,
   pieLayout,
+  scatterLayout,
   shiftRangeForStructuralEdit,
   valueExtent,
   yAxisTicks,
@@ -411,6 +412,65 @@ describe("areaLayout", () => {
     // One run before the gap, one after → two fills + two line segments.
     expect(areas[0].fills).toHaveLength(2);
     expect(areas[0].segments).toHaveLength(2);
+  });
+});
+
+describe("scatterLayout", () => {
+  it("emits one dot per non-blank value, skipping gaps", () => {
+    const data: ChartData = {
+      labels: ["1", "2", "3", "4"],
+      series: [{ name: "A", values: [1, null, 3, 4] }],
+    };
+    const { dots, max } = scatterLayout(data, LAYOUT);
+    // Three plotted points (the blank is skipped, not bridged).
+    expect(dots).toHaveLength(3);
+    expect(dots.map((d) => d.categoryIndex)).toEqual([0, 2, 3]);
+    // `niceMax(4)` rounds the raw extent up to a clean axis bound.
+    expect(max).toBe(niceMax(4));
+  });
+
+  it("places dots on the same grid as lineLayout", () => {
+    const data: ChartData = {
+      labels: ["1", "2", "3"],
+      series: [{ name: "A", values: [2, 5, 8] }],
+    };
+    const scatter = scatterLayout(data, LAYOUT);
+    const line = lineLayout(data, LAYOUT);
+    // The scatter dots must coincide with the line vertices: both derive
+    // x from `categoryX` and y from the shared `v / max` mapping.
+    expect(scatter.max).toBe(line.max);
+    scatter.dots.forEach((d, i) => {
+      expect(d.x).toBeCloseTo(line.lines[0].points[i].x);
+      expect(d.y).toBeCloseTo(line.lines[0].points[i].y);
+    });
+  });
+
+  it("keeps every dot inside the plot rectangle", () => {
+    const data: ChartData = {
+      labels: ["a", "b", "c"],
+      series: [{ name: "A", values: [1, 2, 3] }],
+    };
+    const { dots } = scatterLayout(data, LAYOUT);
+    for (const d of dots) {
+      expect(d.x).toBeGreaterThanOrEqual(CHART_PAD.left);
+      expect(d.x).toBeLessThanOrEqual(LAYOUT.width - CHART_PAD.right);
+      expect(d.y).toBeGreaterThanOrEqual(CHART_PAD.top);
+      expect(d.y).toBeLessThanOrEqual(LAYOUT.height - CHART_PAD.bottom);
+    }
+  });
+
+  it("ignores a non-positive maxOverride (no Infinity/NaN coordinates)", () => {
+    const data: ChartData = {
+      labels: ["a", "b"],
+      series: [{ name: "A", values: [3, 6] }],
+    };
+    for (const bad of [0, -10]) {
+      const { dots } = scatterLayout(data, LAYOUT, { maxOverride: bad });
+      for (const d of dots) {
+        expect(Number.isFinite(d.x)).toBe(true);
+        expect(Number.isFinite(d.y)).toBe(true);
+      }
+    }
   });
 });
 
