@@ -238,6 +238,27 @@ describe("buildFillPrompt", () => {
     );
     expect(p).toContain("Lead, Won");
   });
+
+  it("asks for a comma-separated list for multi_select targets", () => {
+    const p = buildFillPrompt(
+      "tag it",
+      { name: "Tags", type: "multi_select", options: ["A", "B", "C"] },
+      [{ name: "Notes", type: "text" }],
+      { id: "r1", Notes: "x" },
+    );
+    expect(p).toContain("A, B, C");
+    expect(p).toContain("separated by commas");
+  });
+
+  it("asks for h:mm or minutes for duration targets", () => {
+    const p = buildFillPrompt(
+      "",
+      { name: "Effort", type: "duration" },
+      [{ name: "Notes", type: "text" }],
+      { id: "r1", Notes: "x" },
+    );
+    expect(p).toContain("h:mm");
+  });
 });
 
 describe("parseFillResponse", () => {
@@ -277,6 +298,46 @@ describe("parseFillResponse", () => {
     };
     expect(parseFillResponse("won", field)).toEqual({ ok: true, value: "Won" });
     expect(parseFillResponse("Closed", field).ok).toBe(false);
+  });
+
+  it("parses multi_select into a deduped string[] snapped to options", () => {
+    const field: BaseField = {
+      name: "Tags",
+      type: "multi_select",
+      options: ["Urgent", "Bug", "Feature"],
+    };
+    expect(parseFillResponse("bug, urgent; bug", field)).toEqual({
+      ok: true,
+      value: ["Bug", "Urgent"],
+    });
+  });
+
+  it("rejects multi_select tokens that are not options", () => {
+    const field: BaseField = {
+      name: "Tags",
+      type: "multi_select",
+      options: ["Urgent", "Bug"],
+    };
+    const r = parseFillResponse("Bug, Nope", field);
+    expect(r.ok).toBe(false);
+  });
+
+  it("keeps free-entry multi_select values when the field is unconstrained", () => {
+    expect(
+      parseFillResponse("alpha, beta , alpha", {
+        name: "Tags",
+        type: "multi_select",
+      }),
+    ).toEqual({ ok: true, value: ["alpha", "beta"] });
+  });
+
+  it("parses duration h:mm into minutes before falling back to a number", () => {
+    expect(
+      parseFillResponse("1:30", { name: "Effort", type: "duration" }),
+    ).toEqual({ ok: true, value: 90 });
+    expect(
+      parseFillResponse("45", { name: "Effort", type: "duration" }),
+    ).toEqual({ ok: true, value: 45 });
   });
 
   it("returns trimmed text for text fields", () => {

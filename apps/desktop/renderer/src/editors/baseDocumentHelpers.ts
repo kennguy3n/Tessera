@@ -249,7 +249,10 @@ export function removeTable(doc: BaseDocument, tableId: string): BaseDocument {
     doc.activeTableId === tableId
       ? (doc.tables[idx - 1] ?? remaining[0]).id
       : doc.activeTableId;
-  // The fallback above can pick the removed table when idx===0; guard.
+  // `doc.tables[idx - 1]` is `undefined` when idx===0, so the fallback
+  // resolves to `remaining[0]` (which excludes the removed table by
+  // construction). This guard is purely defensive against an
+  // activeTableId that somehow points at a scrubbed table.
   const safeActive = scrubbed.some((t) => t.id === activeTableId)
     ? activeTableId
     : scrubbed[0].id;

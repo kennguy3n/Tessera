@@ -342,15 +342,7 @@ export function buildFillPrompt(
   record: BaseRecord,
 ): string {
   const ctx = recordContext(record, sourceFields);
-  const typeHint =
-    target.type === "number" ||
-    target.type === "currency" ||
-    target.type === "percent" ||
-    target.type === "rating"
-      ? "Respond with ONLY a number."
-      : target.type === "select" && target.options?.length
-        ? `Respond with ONLY one of: ${target.options.join(", ")}.`
-        : "Respond with ONLY the value, no prose, no labels.";
+  const typeHint = fillTypeHint(target);
   return [
     `Fill the "${target.name}" field for one record.`,
     instruction.trim() ? `Instruction: ${instruction.trim()}` : "",
@@ -363,12 +355,38 @@ export function buildFillPrompt(
     .join("\n");
 }
 
+/** Build the type-specific instruction appended to a fill prompt so the
+ *  model returns a value `parseFillResponse` can coerce losslessly. */
+function fillTypeHint(target: BaseField): string {
+  switch (target.type) {
+    case "number":
+    case "currency":
+    case "percent":
+    case "rating":
+      return "Respond with ONLY a number.";
+    case "duration":
+      return "Respond with ONLY a duration as h:mm (e.g. 1:30) or a whole number of minutes.";
+    case "select":
+      return target.options?.length
+        ? `Respond with ONLY one of: ${target.options.join(", ")}.`
+        : "Respond with ONLY the value, no prose, no labels.";
+    case "multi_select":
+      return target.options?.length
+        ? `Respond with one or more of: ${target.options.join(", ")} — separated by commas.`
+        : "Respond with one or more comma-separated values, no prose, no labels.";
+    default:
+      return "Respond with ONLY the value, no prose, no labels.";
+  }
+}
+
 /**
  * Coerce a fill completion into a value appropriate for the target
  * field's type. Numbers are extracted from the text; selects are
  * snapped to an existing option (case-insensitive) or rejected;
- * checkboxes map truthy words to booleans. Everything else trims to a
- * single line of text.
+ * multi-selects parse a comma/semicolon list (each token snapped to an
+ * option when the field is constrained) into a `string[]`; durations
+ * accept h:mm or a minutes count; checkboxes map truthy words to
+ * booleans. Everything else trims to a single line of text.
  */
 export function parseFillResponse(
   text: string,
@@ -393,10 +411,22 @@ export function parseFillResponse(
     case "number":
     case "currency":
     case "percent":
-    case "duration":
     case "rating": {
       const m = firstLine.replace(/,/g, "").match(/-?\d+(\.\d+)?/);
       if (!m) return { ok: false, error: "Expected a number." };
+      return { ok: true, value: Number(m[0]) };
+    }
+    case "duration": {
+      // Durations are stored as integer minutes but render as h:mm, and
+      // the model (like a user typing into DurationCell) may answer in
+      // either form. Parse h:mm FIRST so "1:30" becomes 90 rather than
+      // the bare-number branch extracting just the leading "1".
+      const hm = firstLine.match(/^(\d+):([0-5]?\d)$/);
+      if (hm) {
+        return { ok: true, value: Number(hm[1]) * 60 + Number(hm[2]) };
+      }
+      const m = firstLine.replace(/,/g, "").match(/-?\d+(\.\d+)?/);
+      if (!m) return { ok: false, error: "Expected a duration." };
       return { ok: true, value: Number(m[0]) };
     }
     case "checkbox": {
@@ -422,6 +452,39 @@ export function parseFillResponse(
         return { ok: true, value: match };
       }
       return { ok: true, value: firstLine };
+    }
+    case "multi_select": {
+      // multi_select values are stored as a `string[]`; returning the
+      // raw line as a plain string here silently drops the value when
+      // MultiSelectCell does `Array.isArray(value)`. Split the model's
+      // comma/semicolon list, snap each token to an existing option
+      // (case-insensitive) when the field is constrained, and dedupe.
+      const tokens = firstLine
+        .split(/[,;]/)
+        .map((t) => t.trim())
+        .filter((t) => t !== "");
+      if (tokens.length === 0) {
+        return { ok: false, error: "The model returned no value." };
+      }
+      const opts = target.options ?? [];
+      const out: string[] = [];
+      for (const tok of tokens) {
+        if (opts.length > 0) {
+          const match = opts.find(
+            (o) => o.toLowerCase() === tok.toLowerCase(),
+          );
+          if (!match) {
+            return {
+              ok: false,
+              error: `"${tok}" is not one of the field's options.`,
+            };
+          }
+          if (!out.includes(match)) out.push(match);
+        } else if (!out.includes(tok)) {
+          out.push(tok);
+        }
+      }
+      return { ok: true, value: out };
     }
     default:
       return { ok: true, value: firstLine };
