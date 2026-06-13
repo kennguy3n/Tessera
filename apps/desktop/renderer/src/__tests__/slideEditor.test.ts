@@ -1901,12 +1901,49 @@ describe("parseSlideChart", () => {
   });
 
   it("treats type/title/labels as reserved directives (case-insensitive)", () => {
-    // Documents the DSL trade-off: a series may not be named after a
-    // reserved keyword — `Labels:` is consumed as the labels directive,
-    // not added as a series. Picking another name plots the data.
+    // Documents the DSL trade-off: a series may NOT be named after a
+    // reserved keyword. The match is case-insensitive, so `Type`,
+    // `TITLE`, and `Labels` are all consumed as directives rather than
+    // plotted as series — there is no escape that rescues the name; the
+    // user must pick a different one. This pins the limitation flagged
+    // in review so a future change can't silently alter it.
+    const spec = parseSlideChart(
+      ["Type: line", "TITLE: Q3", "Labels: A, B", "Revenue: 1, 2"].join("\n"),
+    );
+    expect(spec?.type).toBe("line");
+    expect(spec?.title).toBe("Q3");
+    expect(spec?.data.labels).toEqual(["A", "B"]);
+    // Only the non-reserved line became a series.
+    expect(spec?.data.series).toEqual([{ name: "Revenue", values: [1, 2] }]);
+    // An escaped keyword does NOT escape the reservation — `\Labels` is
+    // not a thing; the colon split + lowercase still sees `labels`.
     expect(parseSlideChart("Labels: 10, 20\nX: 1, 2")?.data.series).toEqual([
       { name: "X", values: [1, 2] },
     ]);
+  });
+
+  it("treats an escaped comma as a literal inside a label", () => {
+    const spec = parseSlideChart("labels: Revenue\\, FY24, Costs\nX: 1, 2");
+    expect(spec?.data.labels).toEqual(["Revenue, FY24", "Costs"]);
+    expect(spec?.data.series[0].values).toEqual([1, 2]);
+  });
+
+  it("treats an escaped colon as a literal inside a series name", () => {
+    const spec = parseSlideChart("labels: A, B\nEMEA\\: West: 10, 12");
+    expect(spec?.data.series).toEqual([
+      { name: "EMEA: West", values: [10, 12] },
+    ]);
+  });
+
+  it("supports an escaped comma as a thousands separator in a value", () => {
+    const spec = parseSlideChart("labels: A, B\nRevenue: 1\\,000, 2\\,500");
+    expect(spec?.data.series[0].values).toEqual([1000, 2500]);
+  });
+
+  it("unescapes a comma/colon in the title", () => {
+    expect(parseSlideChart("title: Q3\\: EMEA\\, West\nX: 1")?.title).toBe(
+      "Q3: EMEA, West",
+    );
   });
 
   it("returns null when there is no series line", () => {
