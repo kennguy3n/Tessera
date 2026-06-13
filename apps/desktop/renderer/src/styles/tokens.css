@@ -393,12 +393,15 @@
   --slide-surface: #fffdf7;
   --slide-headline: #1a1a1a;
   --slide-font-headline: Georgia, "Times New Roman", serif;
+  --slide-font-body: Georgia, "Times New Roman", serif;
+  --slide-heading-weight: 600;
 }
 [data-slide-theme="noir"] {
   --slide-accent: #111827;
   --slide-surface: #f4f4f5;
   --slide-headline: #09090b;
   --slide-font-headline: var(--font-family);
+  --slide-heading-weight: 800;
 }
 [data-slide-theme="mint"] {
   --slide-accent: #0f766e;
@@ -411,6 +414,7 @@
   --slide-surface: #fffaf2;
   --slide-headline: #7c2d12;
   --slide-font-headline: var(--font-family);
+  --slide-heading-weight: 800;
 }
 [data-slide-theme="slate"] {
   --slide-accent: #334155;
@@ -448,4 +452,55 @@
   --slide-accent: #94a3b8;
   --slide-surface: #131a26;
   --slide-headline: #f1f5f9;
+}
+
+/* ---- Phase 2: new curated themes ---- */
+[data-slide-theme="rosewood"] {
+  --slide-accent: #9f1239;
+  --slide-surface: #fff5f7;
+  --slide-headline: #4c0519;
+  --slide-font-headline: Georgia, "Times New Roman", serif;
+  --slide-font-body: Georgia, "Times New Roman", serif;
+  --slide-heading-weight: 600;
+}
+[data-slide-theme="ocean"] {
+  --slide-accent: #0e7490;
+  --slide-surface: #f0fdfa;
+  --slide-headline: #134e4a;
+  --slide-font-headline: var(--font-family);
+  --slide-heading-weight: 700;
+}
+[data-slide-theme="forest"] {
+  --slide-accent: #166534;
+  --slide-surface: #f5faf7;
+  --slide-headline: #14532d;
+  --slide-font-headline: var(--font-family);
+}
+[data-slide-theme="lavender"] {
+  --slide-accent: #7e22ce;
+  --slide-surface: #faf5ff;
+  --slide-headline: #3b0764;
+  --slide-font-headline: var(--font-family);
+  --slide-heading-weight: 500;
+}
+
+[data-theme="dark"] [data-slide-theme="rosewood"] {
+  --slide-accent: #fb7185;
+  --slide-surface: #1a0a10;
+  --slide-headline: #fecdd3;
+}
+[data-theme="dark"] [data-slide-theme="ocean"] {
+  --slide-accent: #22d3ee;
+  --slide-surface: #0a1a1e;
+  --slide-headline: #cffafe;
+}
+[data-theme="dark"] [data-slide-theme="forest"] {
+  --slide-accent: #4ade80;
+  --slide-surface: #0d1a12;
+  --slide-headline: #dcfce7;
+}
+[data-theme="dark"] [data-slide-theme="lavender"] {
+  --slide-accent: #c084fc;
+  --slide-surface: #1a0d2e;
+  --slide-headline: #f3e8ff;
 }

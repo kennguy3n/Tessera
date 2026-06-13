@@ -612,6 +612,79 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
 }
 
 /**
+ * Materialise a single block blueprint (from a template or insert-card
+ * preset) into a real `SlideBlock` with a fresh id. Image blocks get
+ * an explicit empty `alt` so they match the shape produced by
+ * `buildSlideFromLayout` (where every image block carries `alt`).
+ */
+function materialiseBlueprintBlock(blueprint: {
+  type: SlideBlock["type"];
+  content: string;
+  slot?: string;
+}): SlideBlock {
+  return buildBlock({
+    type: blueprint.type,
+    content: blueprint.content,
+    slot: blueprint.slot,
+    ...(blueprint.type === "image" ? { alt: "" } : {}),
+  });
+}
+
+/**
+ * Materialise a full deck from a template definition. Each template
+ * slide blueprint becomes a real `Slide` with fresh ids and the
+ * template's placeholder content. Returns the slides array ready
+ * to replace the deck.
+ */
+export function buildDeckFromTemplate(
+  template: {
+    slides: ReadonlyArray<{
+      layout: SlideLayout;
+      title: string;
+      blocks: ReadonlyArray<{
+        type: SlideBlock["type"];
+        content: string;
+        slot?: string;
+      }>;
+      notes?: string;
+    }>;
+  },
+): Slide[] {
+  return template.slides.map((ts) => ({
+    id: newSlideId("slide"),
+    title: ts.title,
+    blocks: ts.blocks.map(materialiseBlueprintBlock),
+    notes: ts.notes ?? "",
+    layout: ts.layout,
+  }));
+}
+
+/**
+ * Materialise a single slide from an insert-card preset definition.
+ * Returns a real `Slide` with fresh ids and the preset's placeholder
+ * content, ready to be inserted into the deck at the active position.
+ */
+export function buildSlideFromPreset(
+  preset: {
+    layout: SlideLayout;
+    title: string;
+    blocks: ReadonlyArray<{
+      type: SlideBlock["type"];
+      content: string;
+      slot?: string;
+    }>;
+  },
+): Slide {
+  return {
+    id: newSlideId("slide"),
+    title: preset.title,
+    blocks: preset.blocks.map(materialiseBlueprintBlock),
+    notes: "",
+    layout: preset.layout,
+  };
+}
+
+/**
  * Insert a duplicate of the slide at `index` immediately after it.
  * The duplicate is a deep clone — every block object is recreated so a
  * subsequent edit to either copy doesn't reach across via a shared
