@@ -151,6 +151,25 @@ export function formatRetention(score: number): string {
   return `${Math.round(clamped * 100)}%`;
 }
 
+/**
+ * Whether a memory's content mentions a concept `label`, matched on word
+ * boundaries (so the concept "Atlas" is not surfaced for "Atlassian").
+ * Labels with no word characters (e.g. pure punctuation/CJK where `\b` is
+ * meaningless) fall back to a case-insensitive substring test. Pure and
+ * shared by the concept-graph evidence panel and the decay visualization
+ * so the two correlate concepts to memories *identically* — a single
+ * source of truth for "which memories are about this concept".
+ */
+export function memoryMentionsConcept(label: string, content: string): boolean {
+  const trimmed = label.trim();
+  if (!trimmed) return false;
+  if (/\w/.test(trimmed)) {
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(content);
+  }
+  return content.toLowerCase().includes(trimmed.toLowerCase());
+}
+
 /** Number of leading characters shown for an abbreviated source id. */
 const SOURCE_ID_PREVIEW = 8;
 
