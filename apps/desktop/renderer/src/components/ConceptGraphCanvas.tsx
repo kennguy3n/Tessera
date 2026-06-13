@@ -541,8 +541,11 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
           else panBy(vb.width * KEYBOARD_PAN_STEP, 0);
           return;
         }
-        // Plain Arrow traverses the graph spatially.
-        if (!rovingId) {
+        // Plain Arrow traverses the graph spatially. If the roving target is
+        // absent from the (possibly scrubber-filtered) node set, seed from the
+        // first visible node instead of silently stalling.
+        const present = rovingId !== null && nodes.some((n) => n.id === rovingId);
+        if (!present) {
           moveRoving(nodes[0]?.id ?? null);
           return;
         }

@@ -232,6 +232,43 @@ describe("ConceptGraphPanel — scale features", () => {
         screen.queryByTestId("concept-graph-decay-now"),
       ).not.toBeInTheDocument();
     });
+
+    it("moves the roving tab stop off a node the scrubber hides", async () => {
+      // Regression: the roving target was computed against the full node set,
+      // so scrubbing out the focused node left the keyboard tab stop pointing
+      // at a node that's no longer painted — stalling arrow navigation.
+      const { container } = render(
+        <ConceptGraphPanel memories={MEMORIES} scope="scope-a" />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+      );
+
+      // Focus Atlas (created at 100d) — it owns the roving tab stop.
+      fireEvent.click(screen.getByRole("button", { name: /^Atlas/ }));
+      const atlasTabStop = container.querySelector(
+        'g.cg-node[tabindex="0"]',
+      );
+      expect(atlasTabStop?.getAttribute("aria-label")).toMatch(/^Atlas/);
+
+      // Enable decay and rewind before Atlas exists (but after Beacon@10d).
+      fireEvent.click(screen.getByTestId("concept-graph-decay-toggle"));
+      const scrubber = screen.getByTestId(
+        "concept-graph-decay-scrubber",
+      ) as HTMLInputElement;
+      fireEvent.change(scrubber, { target: { value: String(50 * DAY) } });
+
+      // Atlas is no longer painted...
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: /^Atlas/ }),
+        ).not.toBeInTheDocument(),
+      );
+      // ...and exactly one *visible* node holds the roving tab stop.
+      const tabStops = container.querySelectorAll('g.cg-node[tabindex="0"]');
+      expect(tabStops).toHaveLength(1);
+      expect(tabStops[0].getAttribute("aria-label")).not.toMatch(/^Atlas/);
+    });
   });
 
   describe("scope changes", () => {

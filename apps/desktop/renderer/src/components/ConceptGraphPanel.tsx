@@ -71,7 +71,7 @@ import {
 import ConceptGraphCanvas, {
   type CanvasNodeStyle,
 } from "./ConceptGraphCanvas";
-import { formatSourceId, memoryMentionsConcept } from "../utils/memories";
+import { conceptMentionMatcher, formatSourceId } from "../utils/memories";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
 /**
@@ -1657,12 +1657,11 @@ export default function ConceptGraphPanel({
 
   const selectedEvidence = useMemo(() => {
     if (!selectedNode) return [];
-    const label = selectedNode.label;
     // Shared concept↔memory matcher (word-boundary aware) so the evidence
     // panel and the decay overlay correlate concepts to memories identically.
-    return memories
-      .filter((m) => memoryMentionsConcept(label, m.content))
-      .slice(0, 8);
+    // Compile the matcher once and reuse it across every memory.
+    const mentions = conceptMentionMatcher(selectedNode.label);
+    return memories.filter((m) => mentions(m.content)).slice(0, 8);
   }, [selectedNode, memories]);
 
   // ===== highlight/dim: focus = hovered node, else selected node =====
@@ -1783,13 +1782,20 @@ export default function ConceptGraphPanel({
   // The single tab-focusable node (roving tabindex). Prefer the explicit
   // roving target, then the current selection, then the first (most-
   // connected) node — always falling back to one that still exists so the
-  // tab order never points at a removed node.
+  // tab order never points at a removed node. Nodes hidden by the time
+  // scrubber (`asOfHidden`) are excluded so the roving target is always a
+  // node that's actually painted: otherwise the Canvas (which receives the
+  // `asOfHidden`-filtered node set) would try to navigate from / select a
+  // node that isn't on screen, stalling arrow-key traversal.
   const effectiveRovingId = useMemo(() => {
-    const ids = new Set(layout.nodes.map((n) => n.id));
+    const visible = asOfHidden.size
+      ? layout.nodes.filter((n) => !asOfHidden.has(n.id))
+      : layout.nodes;
+    const ids = new Set(visible.map((n) => n.id));
     if (rovingId && ids.has(rovingId)) return rovingId;
     if (selectedId && ids.has(selectedId)) return selectedId;
-    return layout.nodes[0]?.id ?? null;
-  }, [layout.nodes, rovingId, selectedId]);
+    return visible[0]?.id ?? null;
+  }, [layout.nodes, rovingId, selectedId, asOfHidden]);
 
   // Renderer selection: switch to the Canvas surface once the node count
   // crosses the threshold where per-DOM-node cost starts to drop frames.
