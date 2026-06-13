@@ -15,6 +15,10 @@ import {
 } from "../format";
 import { dateToSerial } from "../functions/date";
 import type { FormulaValue } from "../types";
+import {
+  NUMBER_FORMAT_PRESETS,
+  presetIdForPattern,
+} from "../../sheetFormatting";
 
 describe("applyCellFormat — number formats", () => {
   it("renders General when no format is given", () => {
@@ -192,5 +196,69 @@ describe("valueToDateSerial", () => {
     expect(valueToDateSerial("hello")).toBeNull();
     expect(valueToDateSerial(null)).toBeNull();
     expect(valueToDateSerial(true)).toBeNull();
+  });
+});
+
+describe("NUMBER_FORMAT_PRESETS — every shipped preset renders", () => {
+  // 2024-01-31 14:30:45 UTC, used for the date/time presets.
+  const ts = dateToSerial(new Date(Date.UTC(2024, 0, 31, 14, 30, 45)));
+  const expected: Record<string, FormulaValue> = {
+    general: 1234.567,
+    number: 1234.567,
+    integer: 1234.567,
+    thousands: 1234567,
+    millions: 1234567,
+    percent: 0.1234,
+    "percent-int": 0.1234,
+    currency: 1234.567,
+    "currency-int": 1234.567,
+    accounting: -1234.567,
+    date: ts,
+    "date-us": ts,
+    datetime: ts,
+    time: ts,
+  };
+  const rendered: Record<string, string> = {
+    general: "1234.567",
+    number: "1,234.57",
+    integer: "1,235",
+    thousands: "1,235K",
+    millions: "1.2M",
+    percent: "12.34%",
+    "percent-int": "12%",
+    currency: "$1,234.57",
+    "currency-int": "$1,235",
+    accounting: "(1,234.57)",
+    date: "2024-01-31",
+    "date-us": "1/31/2024",
+    datetime: "2024-01-31 14:30",
+    time: "14:30:45",
+  };
+
+  for (const preset of NUMBER_FORMAT_PRESETS) {
+    if (preset.pattern === undefined) continue;
+    it(`${preset.id} → ${rendered[preset.id]}`, () => {
+      const out = applyCellFormat(expected[preset.id], {
+        numberFormat: preset.pattern,
+      });
+      expect(out).toBe(rendered[preset.id]);
+      // No bracket directive or quote artefacts leak into the output.
+      expect(out).not.toMatch(/[[\]"]/);
+    });
+  }
+});
+
+describe("presetIdForPattern", () => {
+  it("maps known patterns back to their preset id", () => {
+    expect(presetIdForPattern(undefined)).toBe("general");
+    expect(presetIdForPattern("")).toBe("general");
+    expect(presetIdForPattern("#,##0.00")).toBe("number");
+    expect(presetIdForPattern("$#,##0")).toBe("currency-int");
+    expect(presetIdForPattern("hh:mm:ss")).toBe("time");
+  });
+
+  it("returns 'custom' for a hand-entered pattern", () => {
+    expect(presetIdForPattern('#,##0;[Red](#,##0);"–"')).toBe("custom");
+    expect(presetIdForPattern("0.000")).toBe("custom");
   });
 });

@@ -30,6 +30,7 @@ import {
   allCellsHave,
   applyFormatPatch,
   getCellFormat,
+  presetIdForPattern,
   toggleBoolFormat,
   type BoolFormatKey,
 } from "./sheetFormatting";
@@ -770,6 +771,21 @@ export default function SheetEditor({
       ?.numberFormat;
   }, [activeCell, sheet.formats]);
 
+  // Editable draft for the custom-pattern input. Kept in sync with the active
+  // cell so the field always reflects the selection, but locally editable so a
+  // user can type a pattern (committed on Enter / blur) without it being
+  // clobbered mid-keystroke by re-renders.
+  const [numberFormatDraft, setNumberFormatDraft] = useState("");
+  useEffect(() => {
+    setNumberFormatDraft(activeNumberFormat ?? "");
+  }, [activeNumberFormat]);
+
+  const commitNumberFormatDraft = useCallback(() => {
+    const next = numberFormatDraft.trim();
+    if (next === (activeNumberFormat ?? "")) return;
+    applySelectionFormat({ numberFormat: next === "" ? undefined : next });
+  }, [numberFormatDraft, activeNumberFormat, applySelectionFormat]);
+
   // Insert an (already-validated) formula into the active cell. Used by
   // the AI assistant — the formula has passed `validateGeneratedFormula`
   // before reaching here, so this never blind-writes unparseable text.
@@ -1477,12 +1493,9 @@ export default function SheetEditor({
             aria-label="Number format"
             data-testid="sheet-format-number"
             disabled={!activeCell}
-            value={
-              NUMBER_FORMAT_PRESETS.find(
-                (p) => p.pattern === activeNumberFormat,
-              )?.id ?? "general"
-            }
+            value={presetIdForPattern(activeNumberFormat)}
             onChange={(e) => {
+              if (e.target.value === "custom") return;
               const preset = NUMBER_FORMAT_PRESETS.find(
                 (p) => p.id === e.target.value,
               );
@@ -1494,7 +1507,32 @@ export default function SheetEditor({
                 {p.label}
               </option>
             ))}
+            {/* Shown only while a hand-entered pattern is active; selecting it
+                is a no-op — the adjacent input owns custom entry. */}
+            {presetIdForPattern(activeNumberFormat) === "custom" && (
+              <option value="custom">Custom…</option>
+            )}
           </select>
+          <input
+            type="text"
+            className="sheet-format-custom"
+            aria-label="Custom number format"
+            data-testid="sheet-format-custom"
+            placeholder="Custom (e.g. #,##0.00;(#,##0.00))"
+            spellCheck={false}
+            disabled={!activeCell}
+            value={numberFormatDraft}
+            onChange={(e) => setNumberFormatDraft(e.target.value)}
+            onBlur={commitNumberFormatDraft}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitNumberFormatDraft();
+              } else if (e.key === "Escape") {
+                setNumberFormatDraft(activeNumberFormat ?? "");
+              }
+            }}
+          />
         </label>
       </div>
 
