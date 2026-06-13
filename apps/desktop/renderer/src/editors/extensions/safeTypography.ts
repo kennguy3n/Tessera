@@ -216,16 +216,25 @@ export const SafeHighlight = Highlight.extend({
   // change) feeds this method. We re-derive `style` from the validated
   // `data-color` rather than trusting whatever `style` arrives.
   renderHTML({ HTMLAttributes }) {
-    const attrs: Record<string, unknown> = { ...HTMLAttributes };
-    const dataColor = attrs["data-color"];
-    if (isSafeCssColor(dataColor)) {
-      const safe = dataColor.trim();
-      attrs["data-color"] = safe;
-      attrs.style = `background-color: ${safe}; color: inherit`;
+    const dataColor = HTMLAttributes["data-color"];
+    const safe = isSafeCssColor(dataColor) ? dataColor.trim() : null;
+    // Merge option- and node-level attributes first (so classes etc. survive),
+    // then *overwrite* the sanitised keys last. `mergeAttributes` concatenates
+    // `style` strings, so a configured `options.HTMLAttributes.style` could
+    // otherwise be glued onto our output and smuggle unsafe CSS back in;
+    // assigning `style`/`data-color` after the merge discards any such
+    // concatenation and guarantees only the validated value is emitted.
+    const merged: Record<string, unknown> = mergeAttributes(
+      this.options.HTMLAttributes,
+      HTMLAttributes,
+    );
+    if (safe !== null) {
+      merged["data-color"] = safe;
+      merged.style = `background-color: ${safe}; color: inherit`;
     } else {
-      delete attrs["data-color"];
-      delete attrs.style;
+      delete merged["data-color"];
+      delete merged.style;
     }
-    return ["mark", mergeAttributes(this.options.HTMLAttributes, attrs), 0];
+    return ["mark", merged, 0];
   },
 });

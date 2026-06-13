@@ -21,7 +21,7 @@
  * pasted `1; background:url(x)`) is dropped rather than written back out.
  */
 import { Extension } from "@tiptap/core";
-import type { EditorState, Transaction } from "@tiptap/pm/state";
+import type { Transaction } from "@tiptap/pm/state";
 
 export interface BlockLineHeightOptions {
   /** Block node types that may carry a `lineHeight` attribute. */
@@ -62,18 +62,24 @@ function isSafeLineHeight(value: unknown): value is string {
  * `dispatch` is absent (a dry run, e.g. `editor.can()`) the transaction is
  * built but not applied. `null` clears the attribute back to the theme
  * default.
+ *
+ * Positions are read from the *transaction* (`tr.doc` / `tr.selection`), not
+ * the pre-command `state`. `setNodeAttribute` emits an `AttrStep` that applies
+ * its position directly against `tr.doc`, so walking the transaction's current
+ * document keeps every position valid even when an earlier step in the same
+ * chain (e.g. `deleteRange().setLineHeight(...)`) has already shifted the doc.
+ * Using `state.doc` here would feed stale positions into those later steps.
  */
 function applyToBlocks(
-  types: string[],
-  state: EditorState,
   tr: Transaction,
+  types: string[],
   dispatch: ((tr: Transaction) => void) | undefined,
   value: string | null,
 ): boolean {
   const typeSet = new Set(types);
-  const { from, to } = state.selection;
+  const { from, to } = tr.selection;
   let applied = false;
-  state.doc.nodesBetween(from, to, (node, pos) => {
+  tr.doc.nodesBetween(from, to, (node, pos) => {
     if (!typeSet.has(node.type.name)) return;
     tr.setNodeAttribute(pos, "lineHeight", value);
     applied = true;
@@ -128,7 +134,7 @@ export const BlockLineHeight = Extension.create<BlockLineHeightOptions>({
     return {
       setLineHeight:
         (lineHeight) =>
-        ({ state, tr, dispatch }) => {
+        ({ tr, dispatch }) => {
           if (!isSafeLineHeight(lineHeight)) return false;
           // Store the trimmed value so what we persist always matches what
           // we validated (and the toolbar's preset `<option>` values).
@@ -139,15 +145,15 @@ export const BlockLineHeight = Extension.create<BlockLineHeightOptions>({
           // leave all but one paragraph unchanged — surprising next to
           // Word/Google Docs. Walking the range with `setNodeAttribute` gives
           // the expected "format everything I selected" behaviour.
-          return applyToBlocks(this.options.types, state, tr, dispatch, trimmed);
+          return applyToBlocks(tr, this.options.types, dispatch, trimmed);
         },
       unsetLineHeight:
         () =>
-        ({ state, tr, dispatch }) => {
+        ({ tr, dispatch }) => {
           // Same range-wide pass as `setLineHeight`: clear the line height on
           // every selected block back to the theme default.
           const def = this.options.defaultLineHeight;
-          return applyToBlocks(this.options.types, state, tr, dispatch, def);
+          return applyToBlocks(tr, this.options.types, dispatch, def);
         },
     };
   },

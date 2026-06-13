@@ -262,4 +262,30 @@ describe("SafeHighlight — mark-level renderHTML (defense-in-depth)", () => {
     expect(attrs["data-color"]).toBeUndefined();
     expect(JSON.stringify(attrs)).not.toContain("url(");
   });
+
+  it("a configured options.HTMLAttributes.style cannot smuggle CSS via merge", () => {
+    // `mergeAttributes` concatenates `style` strings. If the extension were
+    // ever configured with `HTMLAttributes: { style: ... }`, that value must
+    // NOT be glued onto the sanitised output — we overwrite `style` after the
+    // merge so only the validated declaration survives.
+    const tainted = {
+      options: { HTMLAttributes: { style: "background:url(https://evil/x)" } },
+    };
+    const [, attrs] = renderHTML.call(tainted, {
+      HTMLAttributes: { "data-color": "#ffff00" },
+    });
+    expect(attrs.style).toBe("background-color: #ffff00; color: inherit");
+    expect(JSON.stringify(attrs)).not.toContain("url(");
+  });
+
+  it("a configured options.HTMLAttributes.style is dropped when no safe color", () => {
+    const tainted = {
+      options: { HTMLAttributes: { style: "background:url(https://evil/x)" } },
+    };
+    const [, attrs] = renderHTML.call(tainted, {
+      HTMLAttributes: { "data-color": "not-a-color" },
+    });
+    expect(attrs.style).toBeUndefined();
+    expect(JSON.stringify(attrs)).not.toContain("url(");
+  });
 });

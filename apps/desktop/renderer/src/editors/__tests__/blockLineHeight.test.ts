@@ -158,4 +158,30 @@ describe("BlockLineHeight — block-level line spacing", () => {
     });
     expect(editor.getHTML()).not.toContain("line-height");
   });
+
+  it("stays correct when chained after a structural edit that shifts positions", () => {
+    const editor = makeEditor("<p>One</p><p>Two</p>");
+    // In a single chain, insert a new first paragraph (which shifts every
+    // later block position by its node size) and *then* apply the line
+    // height across the whole document. Reading positions from the live
+    // transaction keeps them valid; the pre-command document would address
+    // now-shifted nodes and miss/mis-target a block.
+    const ok = editor
+      .chain()
+      .insertContentAt(0, "<p>Zero</p>")
+      .selectAll()
+      .setLineHeight("1.5")
+      .run();
+    expect(ok).toBe(true);
+
+    const lineHeights: (string | null)[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "paragraph") {
+        lineHeights.push((node.attrs.lineHeight as string | null) ?? null);
+      }
+    });
+    // All three paragraphs — including the freshly inserted one — carry it.
+    expect(lineHeights).toEqual(["1.5", "1.5", "1.5"]);
+    expect(editor.getHTML().match(/line-height: 1\.5/g)).toHaveLength(3);
+  });
 });
