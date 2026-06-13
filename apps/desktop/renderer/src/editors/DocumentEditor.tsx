@@ -59,15 +59,15 @@ import Image from "@tiptap/extension-image";
 import HorizontalRule from "@tiptap/extension-horizontal-rule";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 // `@tiptap/extension-text-style` is the umbrella mark package: TextStyle is
-// the base inline mark, and Color / FontFamily / FontSize / LineHeight are
-// thin extensions that write their attribute onto it (LineHeight is retargeted
-// to block nodes below). All first-party and tree-shakeable — no new vendor.
+// the base inline mark, and Color / FontFamily / FontSize are thin extensions
+// that write their attribute onto it. All first-party and tree-shakeable — no
+// new vendor. (Line height is block-level, so it comes from BlockLineHeight
+// below rather than this mark-oriented package.)
 import {
   TextStyle,
   Color,
   FontFamily,
   FontSize,
-  LineHeight,
 } from "@tiptap/extension-text-style";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
@@ -75,6 +75,7 @@ import { common, createLowlight } from "lowlight";
 import { MermaidNode } from "./extensions/MermaidExtension";
 import { CalloutNode } from "./extensions/CalloutExtension";
 import { ToggleNode } from "./extensions/ToggleExtension";
+import { BlockLineHeight } from "./extensions/BlockLineHeight";
 import { TableOfContentsNode } from "./extensions/TableOfContentsExtension";
 import {
   FindReplaceExtension,
@@ -294,14 +295,14 @@ export default function DocumentEditor({
       }),
       // Inline typography. TextStyle must precede the extensions that write
       // onto it. FontSize/Color/FontFamily stay inline (default `textStyle`
-      // target); LineHeight is retargeted to block nodes so it sets the CSS
-      // line-height on whole paragraphs/headings rather than a zero-width
-      // inline span. TextAlign is inherently a block attribute.
+      // target). Line height and alignment are block-level attributes set on
+      // whole paragraphs/headings via updateAttributes (BlockLineHeight /
+      // TextAlign), not on the inline mark.
       TextStyle,
       Color,
       FontFamily,
       FontSize,
-      LineHeight.configure({ types: ["paragraph", "heading"] }),
+      BlockLineHeight.configure({ types: ["paragraph", "heading"] }),
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       HorizontalRule,
