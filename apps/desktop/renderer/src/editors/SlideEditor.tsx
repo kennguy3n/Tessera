@@ -223,6 +223,15 @@ export default function SlideEditor({
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
 
+  // Mirror the template-modal open flag into a ref so the always-on
+  // global navigation listener (attached once, below) can suppress
+  // Ctrl+PageUp/Dn while the modal is up without being re-attached on
+  // every toggle.
+  const templatePickerOpenRef = useRef(false);
+  useEffect(() => {
+    templatePickerOpenRef.current = templatePickerOpen;
+  }, [templatePickerOpen]);
+
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
   // "click inside the menu / on the toggle button" (which it must
@@ -357,6 +366,9 @@ export default function SlideEditor({
   useEffect(() => {
     const onNavKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
+      // The template picker is a true modal — don't let slide navigation
+      // mutate the deck behind its backdrop while it's open.
+      if (templatePickerOpenRef.current) return;
       if (event.key === "PageUp") {
         event.preventDefault();
         navigateByRef.current(-1);

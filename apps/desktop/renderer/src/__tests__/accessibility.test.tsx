@@ -317,6 +317,35 @@ describe("SlideEditor accessibility", () => {
     // Find panel is gone after the restore.
     expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
   });
+
+  it("suppresses Ctrl+PageUp/Down slide navigation while the template modal is open", () => {
+    render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+    expect(
+      screen
+        .getByRole("button", { name: /1 First/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+
+    // With the template modal open, the global nav shortcut must not
+    // mutate the deck behind the backdrop.
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    fireEvent.keyDown(document, { key: "PageDown", ctrlKey: true });
+    expect(
+      screen
+        .getByRole("button", { name: /1 First/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+
+    // Once the modal is dismissed the shortcut works again — proving the
+    // listener was only gated, not removed.
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(document, { key: "PageDown", ctrlKey: true });
+    expect(
+      screen
+        .getByRole("button", { name: /2 Second/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+  });
 });
 
 // ---------------------------------------------------------------------------

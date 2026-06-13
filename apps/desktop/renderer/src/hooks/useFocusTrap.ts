@@ -22,8 +22,13 @@ const FOCUSABLE_SELECTOR = [
  *     has none yet).
  *   * While open, `Tab` / `Shift+Tab` cycle within the container so
  *     focus can never escape to the inert content behind the modal.
- *   * `Escape` invokes `onClose` (and stops propagation so a single
- *     keypress doesn't also trigger an ancestor's Escape handler).
+ *   * `Escape` invokes `onClose`. We also `stopPropagation()` so the
+ *     keypress doesn't continue on to any `window`-level handler. Note
+ *     that — because the listener is on `document` — this does NOT block
+ *     other `document` keydown handlers (that would need
+ *     `stopImmediatePropagation`); it's safe here because the mutual
+ *     exclusion of overlays guarantees no competing Escape handler is
+ *     mounted while the trap is active.
  *   * On close, restore focus to the element that opened the modal.
  *
  * The hook is a no-op while `isOpen` is false, so it is safe to call
