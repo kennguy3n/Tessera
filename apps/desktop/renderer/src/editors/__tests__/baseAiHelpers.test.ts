@@ -274,6 +274,25 @@ describe("buildFillPrompt", () => {
     );
     expect(p).toContain("h:mm");
   });
+
+  it("asks for yes/no for checkbox targets so the response is parseable", () => {
+    const p = buildFillPrompt(
+      "is it done",
+      { name: "Done", type: "checkbox" },
+      [{ name: "Status", type: "text" }],
+      { id: "r1", Status: "shipped" },
+    );
+    expect(p).toContain("yes or no");
+    // The hint must elicit a value parseFillResponse actually accepts.
+    expect(parseFillResponse("yes", { name: "Done", type: "checkbox" })).toEqual({
+      ok: true,
+      value: true,
+    });
+    expect(parseFillResponse("no", { name: "Done", type: "checkbox" })).toEqual({
+      ok: true,
+      value: false,
+    });
+  });
 });
 
 describe("parseFillResponse", () => {

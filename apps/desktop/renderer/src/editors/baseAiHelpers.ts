@@ -395,6 +395,11 @@ function fillTypeHint(target: BaseField): string {
       return target.options?.length
         ? `Respond with one or more of: ${target.options.join(", ")} — separated by commas.`
         : "Respond with one or more comma-separated values, no prose, no labels.";
+    case "checkbox":
+      // Pair with the strict yes/no word-list `parseFillResponse` accepts
+      // for checkboxes — without this the model free-forms ("checked",
+      // "✓", prose) and every row fails to parse.
+      return "Respond with ONLY yes or no.";
     default:
       return "Respond with ONLY the value, no prose, no labels.";
   }
