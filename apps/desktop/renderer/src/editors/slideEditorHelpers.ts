@@ -995,9 +995,15 @@ export function parseSlideTable(content: string): SlideTable | null {
 
 /** Split one pipe-table row into trimmed, unescaped cells. */
 function splitTableRow(line: string): string[] {
-  // Trim a single leading / trailing pipe so `| a | b |` and `a | b`
-  // both yield ["a", "b"]. A `\|` is a literal pipe, not a delimiter.
-  const trimmed = line.replace(/^\s*\|/, "").replace(/\|\s*$/, "");
+  // Strip a single leading pipe so `| a | b` and `a | b` both start at
+  // the first cell. The trailing terminator pipe is NOT stripped by
+  // regex (that would also eat an escaped `\|` ending the row); instead
+  // we detect an *unescaped* trailing pipe and drop the empty cell it
+  // produces after scanning. A `\|` is always a literal pipe.
+  const trimmed = line.replace(/^\s*\|/, "");
+  // True when the row ends with an unescaped `|` (optionally followed by
+  // whitespace): that pipe is the row terminator, not a literal cell.
+  const endsWithTerminator = /(^|[^\\])\|\s*$/.test(trimmed);
   const cells: string[] = [];
   let current = "";
   for (let i = 0; i < trimmed.length; i++) {
@@ -1015,6 +1021,16 @@ function splitTableRow(line: string): string[] {
     current += ch;
   }
   cells.push(current.trim());
+  // Drop the empty trailing cell produced by the terminator pipe (e.g.
+  // `| a | b |` → ["a", "b", ""] → ["a", "b"]), but keep it when the row
+  // had no terminator (so a genuinely escaped trailing pipe survives).
+  if (
+    endsWithTerminator &&
+    cells.length > 1 &&
+    cells[cells.length - 1] === ""
+  ) {
+    cells.pop();
+  }
   return cells;
 }
 
@@ -1152,7 +1168,13 @@ export function chartToMarkdownTable(spec: SlideChartSpec): string {
   // `|` can't break the column count (matches `tableToMarkdown`).
   const escape = (cell: string) => cell.replace(/\|/g, "\\|");
   const lines: string[] = [];
-  if (spec.title?.trim()) lines.push(`**${spec.title.trim()}**`, "");
+  if (spec.title?.trim()) {
+    // Escape Markdown emphasis markers in the title so a title that
+    // itself contains `*`/`_` can't corrupt the surrounding `**…**`
+    // bold wrapper (e.g. `Revenue **FY24**`).
+    const title = spec.title.trim().replace(/([*_])/g, "\\$1");
+    lines.push(`**${title}**`, "");
+  }
   const header = ["", ...spec.data.labels.map(escape)];
   lines.push(`| ${header.join(" | ")} |`);
   lines.push(`| ${header.map(() => "---").join(" | ")} |`);

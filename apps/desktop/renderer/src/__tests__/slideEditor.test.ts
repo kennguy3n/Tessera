@@ -1811,6 +1811,20 @@ describe("parseSlideTable", () => {
     expect(table?.header).toEqual(["a | b", "c"]);
   });
 
+  it("keeps an escaped pipe ending a row with no terminator pipe", () => {
+    // `a | b \|` ends with an escaped literal pipe, not a terminator, so
+    // the trailing strip must not eat it (the second cell is `b |`).
+    const table = parseSlideTable("a | b \\|");
+    expect(table?.header).toEqual(["a", "b |"]);
+  });
+
+  it("preserves a genuinely empty trailing cell", () => {
+    // `| a | |` is two cells (the last empty); only the terminator pipe
+    // is dropped, not the legitimately empty cell before it.
+    const table = parseSlideTable("| a | |");
+    expect(table?.header).toEqual(["a", ""]);
+  });
+
   it("returns null for content with no usable row", () => {
     expect(parseSlideTable("")).toBeNull();
     expect(parseSlideTable("   \n  ")).toBeNull();
@@ -1886,6 +1900,15 @@ describe("parseSlideChart", () => {
     expect(spec?.data.series[1].values).toEqual([1, 2, 3]);
   });
 
+  it("treats type/title/labels as reserved directives (case-insensitive)", () => {
+    // Documents the DSL trade-off: a series may not be named after a
+    // reserved keyword — `Labels:` is consumed as the labels directive,
+    // not added as a series. Picking another name plots the data.
+    expect(parseSlideChart("Labels: 10, 20\nX: 1, 2")?.data.series).toEqual([
+      { name: "X", values: [1, 2] },
+    ]);
+  });
+
   it("returns null when there is no series line", () => {
     expect(parseSlideChart("type: bar\nlabels: A, B")).toBeNull();
     expect(parseSlideChart("")).toBeNull();
@@ -1937,6 +1960,15 @@ describe("chartToMarkdownTable", () => {
     });
     expect(md).toContain("|  | a \\| b |");
     expect(md).toContain("| x \\| y | 1 |");
+  });
+
+  it("escapes emphasis markers in the title so the bold wrapper survives", () => {
+    const md = chartToMarkdownTable({
+      type: "bar",
+      title: "Revenue **FY24**",
+      data: { labels: ["Q1"], series: [{ name: "R", values: [1] }] },
+    });
+    expect(md.split("\n")[0]).toBe("**Revenue \\*\\*FY24\\*\\***");
   });
 });
 
