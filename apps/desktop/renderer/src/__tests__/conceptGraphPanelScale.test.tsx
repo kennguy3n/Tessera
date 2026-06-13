@@ -270,6 +270,41 @@ describe("ConceptGraphPanel — scale features", () => {
       expect(tabStops[0].getAttribute("aria-label")).not.toMatch(/^Atlas/);
     });
 
+    it("anchors the SVG node label to the decay-scaled dot, not the base radius", async () => {
+      // Regression: with the decay size ramp on, the dot radius is scaled by
+      // `sizeFactor` but the label y-offset used the *unscaled* radius, so the
+      // label floated off a shrunken node / overlapped a grown one. The label
+      // must track the drawn dot (Atlas is fresh → sizeFactor 1.18 > 1).
+      const { container } = render(
+        <ConceptGraphPanel memories={MEMORIES} scope="scope-a" />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+      );
+
+      // Show every label so Atlas's <text> is rendered.
+      fireEvent.click(screen.getByLabelText("Toggle all labels"));
+      const dotR = () =>
+        Number(
+          (
+            screen
+              .getByTestId("concept-node-atlas")
+              .querySelector(".cg-node-dot") as SVGCircleElement
+          ).getAttribute("r"),
+        );
+      const baseR = dotR();
+
+      // Turn the decay ramp on; Atlas's dot grows away from its base radius.
+      fireEvent.click(screen.getByTestId("concept-graph-decay-toggle"));
+      const scaledR = dotR();
+      expect(scaledR).not.toBeCloseTo(baseR, 2);
+
+      const label = container.querySelector(
+        '[data-testid="concept-node-atlas"] .cg-node-label',
+      ) as SVGTextElement;
+      expect(Number(label.getAttribute("y"))).toBeCloseTo(scaledR + 12, 4);
+    });
+
     it("snaps the scrubber back to now when a preset is applied", async () => {
       // Two decay-on presets; the scrubber instant is ephemeral and must not
       // survive switching between them (it's tied to the live time bounds).
@@ -438,6 +473,75 @@ describe("ConceptGraphPanel — scale features", () => {
       expect(
         screen.queryByTestId("concept-graph-svg"),
       ).not.toBeInTheDocument();
+    });
+
+    it("Escape exits local-graph mode before clearing selection (SVG parity)", async () => {
+      // Regression: the Canvas Escape handler checked `selectedId` first, so
+      // with both a selection and local-graph mode active Escape cleared the
+      // selection instead of exiting local mode — diverging from the SVG path,
+      // where Escape exits local mode first (keeping the selection).
+      // A star graph: the hub's 1-hop neighborhood is the whole graph, so
+      // local-graph mode stays above the Canvas threshold (a chain's local
+      // view would collapse to a handful of nodes and fall back to SVG).
+      const count = CANVAS_RENDER_THRESHOLD + 10;
+      const starNodes = Array.from({ length: count }, (_, i) => ({
+        id: `n${i}`,
+        label: `Concept ${i}`,
+        state: "canonical",
+        scope_id: "scope-esc",
+        connections_count: i === 0 ? count - 1 : 1,
+      }));
+      const starEdges = Array.from({ length: count - 1 }, (_, i) => ({
+        id: `edge-${i}`,
+        from: "n0",
+        to: `n${i + 1}`,
+        relation_type: "is_a",
+        scope_id: "scope-esc",
+      }));
+      window.tessera.substrate.getConceptGraph = vi.fn().mockResolvedValue(
+        JSON.stringify({
+          nodes: starNodes,
+          edges: starEdges,
+          scope_filter: [],
+          depth: 2,
+          truncation: "complete",
+        }),
+      );
+      render(
+        <ConceptGraphPanel
+          memories={MEMORIES}
+          scope="scope-esc"
+          maxNodes={CANVAS_RENDER_THRESHOLD + 50}
+        />,
+      );
+      const canvas = (await screen.findByTestId(
+        "concept-graph-canvas",
+      )) as HTMLCanvasElement;
+
+      // Rove to the hub (highest-degree node = End key target) and select it.
+      fireEvent.keyDown(canvas, { key: "End" });
+      fireEvent.keyDown(canvas, { key: "Enter" });
+      const localToggle = await screen.findByTestId(
+        "concept-graph-local-toggle",
+      );
+      await waitFor(() => expect(localToggle).not.toBeDisabled());
+
+      // Enter local-graph mode (now both selection + local mode are active);
+      // the hub's neighborhood is still large enough to keep the Canvas path.
+      fireEvent.click(localToggle);
+      expect(localToggle).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByTestId("concept-graph-canvas")).toBeInTheDocument();
+
+      // Escape must exit local mode first, keeping the selection — so the
+      // toggle flips off but stays enabled (a node is still selected).
+      fireEvent.keyDown(
+        screen.getByTestId("concept-graph-canvas"),
+        { key: "Escape" },
+      );
+      await waitFor(() =>
+        expect(localToggle).toHaveAttribute("aria-pressed", "false"),
+      );
+      expect(localToggle).not.toBeDisabled();
     });
 
     it("re-draws after a StrictMode mount/unmount/remount cycle", async () => {

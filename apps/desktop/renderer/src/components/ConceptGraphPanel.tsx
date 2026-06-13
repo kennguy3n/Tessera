@@ -2148,6 +2148,7 @@ export default function ConceptGraphPanel({
                   baseFit={baseFit}
                   selectedId={selectedId}
                   rovingId={effectiveRovingId}
+                  localActive={localMode}
                   focus={focus}
                   hubId={hubId}
                   labelsAll={labelsAll}
@@ -2320,7 +2321,7 @@ export default function ConceptGraphPanel({
                         {labelVisible(node) && (
                           <text
                             className="cg-node-label"
-                            y={node.radius + 12}
+                            y={dotRadius + 12}
                             textAnchor="middle"
                           >
                             {node.label.length > 22

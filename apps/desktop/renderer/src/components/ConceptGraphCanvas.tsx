@@ -95,6 +95,8 @@ export interface ConceptGraphCanvasProps {
   baseFit: FitBox;
   selectedId: string | null;
   rovingId: string | null;
+  /** Whether the local-graph (neighborhood) mode is active. */
+  localActive: boolean;
   focus: { nodeIds: ReadonlySet<string>; edgeIds: ReadonlySet<string> } | null;
   /** Highest-degree node id (the `End`-key target). */
   hubId: string | null;
@@ -146,6 +148,7 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
     baseFit,
     selectedId,
     rovingId,
+    localActive,
     focus,
     hubId,
     labelsAll,
@@ -585,8 +588,12 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
           return;
         case "Escape":
           e.preventDefault();
-          if (selectedId) onClearSelection();
-          else onExitLocal();
+          // Match the SVG path's priority: when local-graph mode is on, Escape
+          // exits it first (keeping the selection); otherwise it clears the
+          // selection. Diverging here would make Escape behave differently
+          // above vs. below the Canvas threshold.
+          if (localActive) onExitLocal();
+          else onClearSelection();
           return;
         case "+":
         case "=":
@@ -611,7 +618,7 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
       rovingId,
       nodes,
       hubId,
-      selectedId,
+      localActive,
       panBy,
       moveRoving,
       onSelect,
