@@ -298,9 +298,11 @@ function renderSlideAsMarp(slide: Slide): string {
       parts.push(table ? tableToMarkdown(table) : content);
     } else if (block.type === "chart") {
       // Charts have no Markdown primitive; export the underlying data
-      // as a table so the numbers survive into PPTX/PDF/HTML.
+      // as a table so the numbers survive into PPTX/PDF/HTML. Fall back
+      // to the raw DSL when it doesn't parse (e.g. a half-typed block)
+      // so the content is never silently dropped on export.
       const chart = parseSlideChart(content);
-      if (chart) parts.push(chartToMarkdownTable(chart));
+      parts.push(chart ? chartToMarkdownTable(chart) : content);
     } else if (block.type === "image") {
       // Render as Markdown image so Marp emits a real <img>.
       // `content` is the source URL (typically an inlined data:image/…
@@ -1126,9 +1128,12 @@ function toNumberOrNull(cell: string): number | null {
  * survive into PPTX/PDF/HTML even though the SVG does not.
  */
 export function chartToMarkdownTable(spec: SlideChartSpec): string {
+  // Escape literal pipes in labels / series names so a value containing
+  // `|` can't break the column count (matches `tableToMarkdown`).
+  const escape = (cell: string) => cell.replace(/\|/g, "\\|");
   const lines: string[] = [];
   if (spec.title?.trim()) lines.push(`**${spec.title.trim()}**`, "");
-  const header = ["", ...spec.data.labels];
+  const header = ["", ...spec.data.labels.map(escape)];
   lines.push(`| ${header.join(" | ")} |`);
   lines.push(`| ${header.map(() => "---").join(" | ")} |`);
   for (const s of spec.data.series) {
@@ -1136,7 +1141,7 @@ export function chartToMarkdownTable(spec: SlideChartSpec): string {
       const v = s.values[i];
       return v === null || v === undefined ? "" : String(v);
     });
-    lines.push(`| ${[s.name, ...cells].join(" | ")} |`);
+    lines.push(`| ${[escape(s.name), ...cells].join(" | ")} |`);
   }
   return lines.join("\n");
 }
@@ -1254,6 +1259,10 @@ export function slideWordCount(slide: Slide): number {
  *   - text / bullets — one line per non-blank source line
  *   - diagram — a single `[Diagram]` placeholder (Mermaid DSL is not
  *     re-rendered in the lightweight presentation windows)
+ *   - table — a single `[Table]` placeholder (the GFM source is not
+ *     re-rendered in the lightweight presentation windows)
+ *   - chart — `[Chart: <title>]`, or `[Chart]` when the chart is
+ *     untitled (the data DSL is not re-rendered there)
  *   - image — `[Image: <alt>]`, or `[Image]` when no alt text is set
  *
  * Plain text only by design: the presentation windows render every
@@ -1269,6 +1278,15 @@ export function slideBodyLines(slide: Slide): string[] {
     }
     if (block.type === "diagram") {
       lines.push("[Diagram]");
+      continue;
+    }
+    if (block.type === "table") {
+      lines.push("[Table]");
+      continue;
+    }
+    if (block.type === "chart") {
+      const title = parseSlideChart(block.content)?.title?.trim();
+      lines.push(title ? `[Chart: ${title}]` : "[Chart]");
       continue;
     }
     for (const raw of block.content.split("\n")) {

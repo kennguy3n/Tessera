@@ -1742,6 +1742,25 @@ describe("slideBodyLines / buildPresentationSlides", () => {
     ]);
   });
 
+  it("labels table and chart blocks as placeholders, not raw DSL", () => {
+    const s = slide({
+      blocks: [
+        { id: "b1", type: "table", content: "| a | b |\n| --- | --- |" },
+        {
+          id: "b2",
+          type: "chart",
+          content: "type: bar\ntitle: Revenue\nlabels: Q1\nR: 1",
+        },
+        { id: "b3", type: "chart", content: "labels: Q1\nR: 1" },
+      ],
+    });
+    expect(slideBodyLines(s)).toEqual([
+      "[Table]",
+      "[Chart: Revenue]",
+      "[Chart]",
+    ]);
+  });
+
   it("builds the IPC payload preserving title, lines, and notes", () => {
     const deck = [
       slide({
@@ -1884,6 +1903,18 @@ describe("chartToMarkdownTable", () => {
     expect(md.startsWith("|")).toBe(true);
     expect(md).toContain("| X | 1 |  |");
   });
+
+  it("escapes a literal pipe in a label or series name", () => {
+    const md = chartToMarkdownTable({
+      type: "bar",
+      data: {
+        labels: ["a | b"],
+        series: [{ name: "x | y", values: [1] }],
+      },
+    });
+    expect(md).toContain("|  | a \\| b |");
+    expect(md).toContain("| x \\| y | 1 |");
+  });
 });
 
 describe("slidesToMarpMarkdown — table and chart blocks", () => {
@@ -1918,5 +1949,20 @@ describe("slidesToMarpMarkdown — table and chart blocks", () => {
     ]);
     expect(out).toContain("**Rev**");
     expect(out).toContain("| R | 3 | 7 |");
+  });
+
+  it("falls back to the raw DSL when a chart block does not parse", () => {
+    const out = slidesToMarpMarkdown([
+      {
+        id: "s1",
+        title: "Trend",
+        notes: "",
+        // No series line — parseSlideChart returns null; content must
+        // still survive into the export rather than being dropped.
+        blocks: [{ id: "b1", type: "chart", content: "type: bar\nlabels: A" }],
+      },
+    ]);
+    expect(out).toContain("type: bar");
+    expect(out).toContain("labels: A");
   });
 });
