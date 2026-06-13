@@ -11,12 +11,26 @@ import {
   type CellEdit,
   type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
-import { cellFormatStyle, cellKey, isFormulaError } from "./formulaEngine";
+import {
+  applyCellFormat,
+  cellFormatStyle,
+  cellKey,
+  isFormulaError,
+} from "./formulaEngine";
 import type {
+  CellFormat,
   ConditionalFormatRule,
   SheetContent,
   SheetNamedRange,
 } from "./sheetEditorTypes";
+import {
+  NUMBER_FORMAT_PRESETS,
+  allCellsHave,
+  applyFormatPatch,
+  getCellFormat,
+  toggleBoolFormat,
+  type BoolFormatKey,
+} from "./sheetFormatting";
 import { conditionalStyleForCell } from "./sheetConditionalFormatting";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import { NamedRangePanel } from "./components/NamedRangePanel";
@@ -479,17 +493,22 @@ export default function SheetEditor({
     rowIdx: number,
     colIdx: number,
   ): string => {
-    if (!value.startsWith("=")) return value;
-    const cached = cellCache.get(cellKey(rowIdx, colIdx, activeName));
+    const fmt = getCellFormat(sheet.formats, rowIdx, colIdx);
+    if (!value.startsWith("=")) {
+      // Literals only route through the format engine when a number
+      // format is set, so plain text renders byte-for-byte as typed.
+      return fmt?.numberFormat ? applyCellFormat(value, fmt) : value;
+    }
+    let cached = cellCache.get(cellKey(rowIdx, colIdx, activeName));
     if (cached === undefined) {
       // Shouldn't happen — `cellCache` is built from the same
       // `sheet` we're rendering — but fall back to a one-off
       // evaluation rather than rendering the raw formula text.
-      return String(evaluateFormula(value, sheet));
+      cached = evaluateFormula(value, sheet);
     }
     if (cached === null) return "";
     if (isFormulaError(cached)) return cached.code;
-    return String(cached);
+    return fmt?.numberFormat ? applyCellFormat(cached, fmt) : String(cached);
   };
 
   // Raw text of the currently-active cell, surfaced in the formula
@@ -549,6 +568,71 @@ export default function SheetEditor({
     },
     [debouncedSave],
   );
+
+  // Apply a manual-format patch to every cell in the current selection
+  // (falls back to the active cell). Used by the format toolbar.
+  const applySelectionFormat = useCallback(
+    (patch: Partial<CellFormat>) => {
+      const cells = selection
+        ? selectionCells(selection)
+        : activeCell
+          ? [activeCell]
+          : [];
+      if (cells.length === 0) return;
+      setSheet((prev) => {
+        const nextFormats = applyFormatPatch(prev.formats, cells, patch);
+        const next: SheetContent = { ...prev };
+        if (nextFormats) next.formats = nextFormats;
+        else delete next.formats;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [selection, activeCell, debouncedSave],
+  );
+
+  // Toggle a boolean format (bold/italic/underline) across the
+  // selection: on if any cell lacks it, off when all already have it.
+  const toggleSelectionFormat = useCallback(
+    (key: BoolFormatKey) => {
+      const cells = selection
+        ? selectionCells(selection)
+        : activeCell
+          ? [activeCell]
+          : [];
+      if (cells.length === 0) return;
+      setSheet((prev) => {
+        const nextFormats = toggleBoolFormat(prev.formats, cells, key);
+        const next: SheetContent = { ...prev };
+        if (nextFormats) next.formats = nextFormats;
+        else delete next.formats;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [selection, activeCell, debouncedSave],
+  );
+
+  // Whether the whole selection currently carries a boolean format —
+  // drives the toolbar button's pressed state.
+  const selectionHas = useCallback(
+    (key: BoolFormatKey): boolean => {
+      const cells = selection
+        ? selectionCells(selection)
+        : activeCell
+          ? [activeCell]
+          : [];
+      return allCellsHave(sheet.formats, cells, key);
+    },
+    [selection, activeCell, sheet.formats],
+  );
+
+  // Number-format of the active cell, for the toolbar's format <select>.
+  const activeNumberFormat = useMemo(() => {
+    if (!activeCell) return undefined;
+    return getCellFormat(sheet.formats, activeCell.row, activeCell.col)
+      ?.numberFormat;
+  }, [activeCell, sheet.formats]);
 
   // Insert an (already-validated) formula into the active cell. Used by
   // the AI assistant — the formula has passed `validateGeneratedFormula`
@@ -1106,6 +1190,96 @@ export default function SheetEditor({
         </button>
       </div>
 
+      <div
+        className="sheet-toolbar sheet-format-toolbar"
+        role="toolbar"
+        aria-label="Cell formatting"
+      >
+        <button
+          type="button"
+          className={selectionHas("bold") ? "btn-sm active" : "btn-sm"}
+          aria-pressed={selectionHas("bold")}
+          aria-label="Bold"
+          title="Bold"
+          data-testid="sheet-format-bold"
+          disabled={!activeCell}
+          onClick={() => toggleSelectionFormat("bold")}
+        >
+          <strong>B</strong>
+        </button>
+        <button
+          type="button"
+          className={selectionHas("italic") ? "btn-sm active" : "btn-sm"}
+          aria-pressed={selectionHas("italic")}
+          aria-label="Italic"
+          title="Italic"
+          data-testid="sheet-format-italic"
+          disabled={!activeCell}
+          onClick={() => toggleSelectionFormat("italic")}
+        >
+          <em>I</em>
+        </button>
+        <button
+          type="button"
+          className={selectionHas("underline") ? "btn-sm active" : "btn-sm"}
+          aria-pressed={selectionHas("underline")}
+          aria-label="Underline"
+          title="Underline"
+          data-testid="sheet-format-underline"
+          disabled={!activeCell}
+          onClick={() => toggleSelectionFormat("underline")}
+        >
+          <span style={{ textDecoration: "underline" }}>U</span>
+        </button>
+        <span className="sheet-toolbar-sep" aria-hidden="true" />
+        <label className="sheet-format-field">
+          <select
+            aria-label="Horizontal alignment"
+            data-testid="sheet-format-align"
+            disabled={!activeCell}
+            value={
+              activeCell
+                ? getCellFormat(sheet.formats, activeCell.row, activeCell.col)
+                    ?.align ?? "left"
+                : "left"
+            }
+            onChange={(e) =>
+              applySelectionFormat({
+                align: e.target.value as CellFormat["align"],
+              })
+            }
+          >
+            <option value="left">Left</option>
+            <option value="center">Center</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+        <label className="sheet-format-field">
+          <select
+            aria-label="Number format"
+            data-testid="sheet-format-number"
+            disabled={!activeCell}
+            value={
+              NUMBER_FORMAT_PRESETS.find(
+                (p) => p.pattern === activeNumberFormat,
+              )?.id ?? "general"
+            }
+            onChange={(e) => {
+              const preset = NUMBER_FORMAT_PRESETS.find(
+                (p) => p.id === e.target.value,
+              );
+              applySelectionFormat({ numberFormat: preset?.pattern });
+            }}
+          >
+            {NUMBER_FORMAT_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       {cfOpen && (
         <ConditionalFormatPanel
           rules={sheet.conditionalRules ?? []}
@@ -1373,6 +1547,11 @@ export default function SheetEditor({
                       displayValue,
                     ),
                   );
+                  // Manual per-cell format (bold/align/colour/number).
+                  // Conditional rules overlay it, matching Sheets.
+                  const manualStyle = cellFormatStyle(
+                    getCellFormat(sheet.formats, ri, ci),
+                  );
                   const colFrozen = isFrozenCol(ci);
                   // Frozen cells need an OPAQUE background so scrolled
                   // content doesn't show through. Use the conditional-
@@ -1384,7 +1563,9 @@ export default function SheetEditor({
                   const frozenBackground =
                     typeof conditionalStyle.backgroundColor === "string"
                       ? conditionalStyle.backgroundColor
-                      : "var(--color-bg-page, #ffffff)";
+                      : typeof manualStyle.backgroundColor === "string"
+                        ? manualStyle.backgroundColor
+                        : "var(--color-bg-page, #ffffff)";
                   const stickyStyle: React.CSSProperties =
                     colFrozen
                       ? {
@@ -1418,6 +1599,7 @@ export default function SheetEditor({
                       style={{
                         width: colWidth(ci),
                         position: "relative",
+                        ...manualStyle,
                         ...conditionalStyle,
                         outline: isSelected
                           ? "1px solid var(--color-primary, #1a73e8)"
