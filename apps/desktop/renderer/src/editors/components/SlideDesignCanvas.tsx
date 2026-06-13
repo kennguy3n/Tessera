@@ -323,7 +323,16 @@ function DesignBullets({
     const collapsed = selectionStart === selectionEnd;
     if (e.key === "Enter") {
       e.preventDefault();
-      commit(splitBulletAt(lines, index, selectionStart));
+      // Splice out any selected text first, then split at the caret. With a
+      // collapsed caret `selectionStart === selectionEnd`, so this is the
+      // identity edit and the split is unchanged; with a range selection it
+      // replicates the browser's native "replace selection, then break"
+      // behaviour that `preventDefault` would otherwise suppress — without
+      // it the highlighted text would survive into the trailing bullet.
+      const effective = lines.slice();
+      effective[index] =
+        value.slice(0, selectionStart) + value.slice(selectionEnd);
+      commit(splitBulletAt(effective, index, selectionStart));
       return;
     }
     if (e.key === "Backspace" && collapsed && selectionStart === 0) {

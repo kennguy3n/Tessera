@@ -105,6 +105,20 @@ describe("SlideDesignCanvas — bullets block", () => {
     expect(onChangeBlockContent).not.toHaveBeenCalled();
   });
 
+  it("deletes the selected text before splitting on Enter", () => {
+    // "Hello World" with "lo Wo" (offsets 3–8) selected: pressing Enter must
+    // drop the selection and break at the caret, yielding "Hel" / "rld" —
+    // not preserve the highlighted run into the trailing bullet.
+    const slide = makeSlide([
+      { id: "b0", type: "bullets", content: "Hello World" },
+    ]);
+    const { onChangeBlockContent } = renderCanvas(slide);
+    const bullet = screen.getByLabelText("Bullet 1") as HTMLTextAreaElement;
+    bullet.setSelectionRange(3, 8);
+    fireEvent.keyDown(bullet, { key: "Enter" });
+    expect(onChangeBlockContent).toHaveBeenCalledWith(0, "Hel\nrld");
+  });
+
   it("edits a single bullet line in place", () => {
     const slide = makeSlide([
       { id: "b0", type: "bullets", content: "one\ntwo" },
