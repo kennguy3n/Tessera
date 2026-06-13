@@ -209,6 +209,58 @@ describe("buildPresentationHtml", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
+
+  it("includes an elapsed presenting timer with pause/reset controls", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // The presenter bar carries a dedicated elapsed-time element,
+    // distinct from the wall clock.
+    expect(html).toContain('id="elapsed"');
+    expect(html).toContain('id="clock"');
+    // Pure helpers for the timer exist and the keyboard handler wires
+    // P (pause/resume) and R (reset) to them.
+    expect(html).toContain("function toggleTimer()");
+    expect(html).toContain("function resetTimer()");
+    expect(html).toContain("function formatElapsed(");
+    expect(html).toMatch(/e\.key === "p" \|\| e\.key === "P"/);
+    expect(html).toMatch(/e\.key === "r" \|\| e\.key === "R"/);
+  });
+
+  it("renders an hours component only once past the first hour", () => {
+    // formatElapsed lives inside the generated script, so assert its
+    // contract structurally: minutes:seconds by default, with an hours
+    // segment guarded behind `h > 0`.
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    expect(html).toContain('h > 0 ? h + ":" + pad2(m) + ":" + pad2(s)');
+  });
+
+  it("supports a B/W blank-screen toggle synced across windows", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // A dedicated, namespaced sync key carries the blank state so it
+    // broadcasts independently of the slide index.
+    expect(html).toContain('var BLANK_KEY = KEY + ":blank"');
+    // The overlay only renders for the audience; the presenter shows a
+    // status pill instead of being blinded.
+    expect(html).toContain(".audience .blank-overlay.black");
+    expect(html).toContain(".audience .blank-overlay.white");
+    expect(html).toContain('id="blank-state"');
+    expect(html).toContain("function toggleBlank(");
+    // B and W are wired, and the storage listener reacts to BLANK_KEY.
+    expect(html).toMatch(/e\.key === "b" \|\| e\.key === "B"/);
+    expect(html).toMatch(/e\.key === "w" \|\| e\.key === "W"/);
+    expect(html).toContain("else if (e.key === BLANK_KEY) renderBlank()");
+  });
+
+  it("defines a reduced-motion-aware slide transition", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // A keyframe animation drives the slide-change transition, and the
+    // prefers-reduced-motion query disables it for motion-sensitive users.
+    expect(html).toContain("@keyframes slide-fade-in");
+    expect(html).toContain(".slide.animate");
+    expect(html).toContain("@media (prefers-reduced-motion: reduce)");
+    // The transition is only re-triggered when the slide index changes,
+    // so a passive re-render doesn't flicker.
+    expect(html).toContain("if (i !== lastRenderedIndex)");
+  });
 });
 
 describe("registerSlidesHandlers", () => {
