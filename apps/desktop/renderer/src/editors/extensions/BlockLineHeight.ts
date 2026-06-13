@@ -21,6 +21,7 @@
  * pasted `1; background:url(x)`) is dropped rather than written back out.
  */
 import { Extension } from "@tiptap/core";
+import type { EditorState, Transaction } from "@tiptap/pm/state";
 
 export interface BlockLineHeightOptions {
   /** Block node types that may carry a `lineHeight` attribute. */
@@ -52,6 +53,33 @@ const SAFE_LINE_HEIGHT = /^(?:\d+(?:\.\d+)?|\.\d+)(?:px|em|rem|%)?$/;
 
 function isSafeLineHeight(value: unknown): value is string {
   return typeof value === "string" && SAFE_LINE_HEIGHT.test(value.trim());
+}
+
+/**
+ * Set `lineHeight` to `value` on every block of a configured `type` that
+ * intersects the current selection, in a single transaction. Returns whether
+ * at least one block was touched (so the command reports success). When
+ * `dispatch` is absent (a dry run, e.g. `editor.can()`) the transaction is
+ * built but not applied. `null` clears the attribute back to the theme
+ * default.
+ */
+function applyToBlocks(
+  types: string[],
+  state: EditorState,
+  tr: Transaction,
+  dispatch: ((tr: Transaction) => void) | undefined,
+  value: string | null,
+): boolean {
+  const typeSet = new Set(types);
+  const { from, to } = state.selection;
+  let applied = false;
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (!typeSet.has(node.type.name)) return;
+    tr.setNodeAttribute(pos, "lineHeight", value);
+    applied = true;
+  });
+  if (applied && dispatch) dispatch(tr);
+  return applied;
 }
 
 export const BlockLineHeight = Extension.create<BlockLineHeightOptions>({
@@ -100,27 +128,26 @@ export const BlockLineHeight = Extension.create<BlockLineHeightOptions>({
     return {
       setLineHeight:
         (lineHeight) =>
-        ({ commands }) => {
+        ({ state, tr, dispatch }) => {
           if (!isSafeLineHeight(lineHeight)) return false;
           // Store the trimmed value so what we persist always matches what
           // we validated (and the toolbar's preset `<option>` values).
           const trimmed = lineHeight.trim();
-          // `.some`, not `.every`: `updateAttributes` returns false for a
-          // configured type that isn't in the current selection (e.g. the
-          // caret is in a paragraph, so the "heading" pass is a no-op). A
-          // selection can't be a paragraph *and* a heading at once, so
-          // `.every` would always fail — the command succeeds if it landed
-          // on at least one configured block type.
-          return this.options.types
-            .map((type) => commands.updateAttributes(type, { lineHeight: trimmed }))
-            .some((applied) => applied);
+          // Apply to *every* configured block intersecting the selection, not
+          // just the anchor block. TipTap's `updateAttributes` only touches the
+          // node at the selection anchor, so a multi-paragraph selection would
+          // leave all but one paragraph unchanged — surprising next to
+          // Word/Google Docs. Walking the range with `setNodeAttribute` gives
+          // the expected "format everything I selected" behaviour.
+          return applyToBlocks(this.options.types, state, tr, dispatch, trimmed);
         },
       unsetLineHeight:
         () =>
-        ({ commands }) => {
-          return this.options.types
-            .map((type) => commands.resetAttributes(type, "lineHeight"))
-            .some((applied) => applied);
+        ({ state, tr, dispatch }) => {
+          // Same range-wide pass as `setLineHeight`: clear the line height on
+          // every selected block back to the theme default.
+          const def = this.options.defaultLineHeight;
+          return applyToBlocks(this.options.types, state, tr, dispatch, def);
         },
     };
   },

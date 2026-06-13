@@ -224,3 +224,42 @@ describe("SafeHighlight — render path", () => {
     expect(html).not.toContain("url(");
   });
 });
+
+describe("SafeHighlight — mark-level renderHTML (defense-in-depth)", () => {
+  // The `color` attribute's own renderHTML is the primary sanitiser, but we
+  // also override the *mark-level* renderHTML so a future base-extension change
+  // (e.g. building the inline style straight from `mark.attrs`) can't leak an
+  // unsanitised value. These tests call that override directly with crafted
+  // `HTMLAttributes` standing in for such a pipeline.
+  type RenderHTML = (props: {
+    HTMLAttributes: Record<string, unknown>;
+  }) => [string, Record<string, unknown>, number];
+  const renderHTML = SafeHighlight.config.renderHTML as RenderHTML;
+  const ctx = { options: { HTMLAttributes: {} } };
+
+  it("re-derives the style from a safe data-color, ignoring an incoming style", () => {
+    const [tag, attrs] = renderHTML.call(ctx, {
+      HTMLAttributes: {
+        "data-color": "#ffff00",
+        // A tampered style that should be overwritten, not trusted.
+        style: "background:url(https://evil/x)",
+      },
+    });
+    expect(tag).toBe("mark");
+    expect(attrs.style).toBe("background-color: #ffff00; color: inherit");
+    expect(attrs["data-color"]).toBe("#ffff00");
+    expect(JSON.stringify(attrs)).not.toContain("url(");
+  });
+
+  it("drops style and data-color when the data-color is unsafe", () => {
+    const [, attrs] = renderHTML.call(ctx, {
+      HTMLAttributes: {
+        "data-color": "yellow; background:url(x)",
+        style: "background-color: yellow; background:url(x)",
+      },
+    });
+    expect(attrs.style).toBeUndefined();
+    expect(attrs["data-color"]).toBeUndefined();
+    expect(JSON.stringify(attrs)).not.toContain("url(");
+  });
+});

@@ -23,6 +23,7 @@
  * legitimate toolbar preset (hex colours, `16px`, `Inter, system-ui,
  * sans-serif`) passes unchanged.
  */
+import { mergeAttributes } from "@tiptap/core";
 import { Color, FontFamily, FontSize } from "@tiptap/extension-text-style";
 import Highlight from "@tiptap/extension-highlight";
 
@@ -206,5 +207,25 @@ export const SafeHighlight = Highlight.extend({
         },
       },
     };
+  },
+
+  // Defence-in-depth: the `color` attribute's own `renderHTML` already
+  // sanitises, but we also override the mark-level `renderHTML` so the emitted
+  // `<mark>` can never carry a `style`/`data-color` outside the allow-list —
+  // independent of how the attribute pipeline (or a future base-extension
+  // change) feeds this method. We re-derive `style` from the validated
+  // `data-color` rather than trusting whatever `style` arrives.
+  renderHTML({ HTMLAttributes }) {
+    const attrs: Record<string, unknown> = { ...HTMLAttributes };
+    const dataColor = attrs["data-color"];
+    if (isSafeCssColor(dataColor)) {
+      const safe = dataColor.trim();
+      attrs["data-color"] = safe;
+      attrs.style = `background-color: ${safe}; color: inherit`;
+    } else {
+      delete attrs["data-color"];
+      delete attrs.style;
+    }
+    return ["mark", mergeAttributes(this.options.HTMLAttributes, attrs), 0];
   },
 });

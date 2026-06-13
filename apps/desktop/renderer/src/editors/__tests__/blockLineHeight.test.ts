@@ -125,4 +125,37 @@ describe("BlockLineHeight — block-level line spacing", () => {
     );
     expect(editor.getAttributes("paragraph").lineHeight ?? null).toBeNull();
   });
+
+  it("applies to every block in a multi-paragraph selection", () => {
+    const editor = makeEditor("<p>One</p><h2>Two</h2><p>Three</p>");
+    // Select the whole document so the range spans all three blocks.
+    editor.commands.selectAll();
+    expect(editor.commands.setLineHeight("1.5")).toBe(true);
+
+    // Every configured block node — not just the anchor — carries the value.
+    const lineHeights: (string | null)[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "paragraph" || node.type.name === "heading") {
+        lineHeights.push((node.attrs.lineHeight as string | null) ?? null);
+      }
+    });
+    expect(lineHeights).toEqual(["1.5", "1.5", "1.5"]);
+    // The serialised HTML therefore carries the style on all three blocks.
+    expect(editor.getHTML().match(/line-height: 1\.5/g)).toHaveLength(3);
+  });
+
+  it("clears the line height on every block in a multi-paragraph selection", () => {
+    const editor = makeEditor("<p>One</p><p>Two</p><p>Three</p>");
+    editor.commands.selectAll();
+    editor.commands.setLineHeight("2");
+    expect(editor.getHTML().match(/line-height: 2/g)).toHaveLength(3);
+
+    expect(editor.commands.unsetLineHeight()).toBe(true);
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "paragraph") {
+        expect((node.attrs.lineHeight as string | null) ?? null).toBeNull();
+      }
+    });
+    expect(editor.getHTML()).not.toContain("line-height");
+  });
 });
