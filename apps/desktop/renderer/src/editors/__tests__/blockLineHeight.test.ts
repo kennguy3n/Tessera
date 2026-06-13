@@ -76,6 +76,16 @@ describe("BlockLineHeight — block-level line spacing", () => {
     }
   });
 
+  it("stores the trimmed value so it matches the validated/preset form", () => {
+    const editor = makeEditor("<p>Hello</p>");
+    editor.commands.selectAll();
+    // A programmatic caller may pass surrounding whitespace; the stored
+    // attribute is trimmed so it matches the toolbar's preset option value.
+    expect(editor.commands.setLineHeight("  1.5  ")).toBe(true);
+    expect(editor.getAttributes("paragraph").lineHeight).toBe("1.5");
+    expect(editor.getHTML()).toContain("line-height: 1.5");
+  });
+
   it("rejects unsafe values so nothing leaks into the inline style", () => {
     const editor = makeEditor("<p>Hello</p>");
     editor.commands.selectAll();

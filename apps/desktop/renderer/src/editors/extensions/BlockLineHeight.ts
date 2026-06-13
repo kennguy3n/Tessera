@@ -97,8 +97,17 @@ export const BlockLineHeight = Extension.create<BlockLineHeightOptions>({
         (lineHeight) =>
         ({ commands }) => {
           if (!isSafeLineHeight(lineHeight)) return false;
+          // Store the trimmed value so what we persist always matches what
+          // we validated (and the toolbar's preset `<option>` values).
+          const trimmed = lineHeight.trim();
+          // `.some`, not `.every`: `updateAttributes` returns false for a
+          // configured type that isn't in the current selection (e.g. the
+          // caret is in a paragraph, so the "heading" pass is a no-op). A
+          // selection can't be a paragraph *and* a heading at once, so
+          // `.every` would always fail — the command succeeds if it landed
+          // on at least one configured block type.
           return this.options.types
-            .map((type) => commands.updateAttributes(type, { lineHeight }))
+            .map((type) => commands.updateAttributes(type, { lineHeight: trimmed }))
             .some((applied) => applied);
         },
       unsetLineHeight:
