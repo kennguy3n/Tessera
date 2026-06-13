@@ -339,15 +339,22 @@ fn write_sheet_payload(
     }
 
     // Compile each cell's manual format into a `Format` once, keyed by
-    // the renderer's `"r,c"` cell key (row index is data-row, header
-    // excluded, so cell `"r,c"` lands at Excel row `r + 1`). Two cells
-    // with identical styling produce two equal `Format` values here;
+    // the renderer's `(row, col)` cell coordinate (row index is
+    // data-row, header excluded, so cell `(r, c)` lands at Excel row
+    // `r + 1`). The `"r,c"` string keys are parsed once here so the
+    // per-cell write loop below can look up by integer pair without
+    // allocating a fresh key string for every cell — on a large export
+    // (e.g. 200k cells) that avoids 200k throwaway allocations. Two
+    // cells with identical styling produce two equal `Format` values;
     // rust_xlsxwriter deduplicates equal formats into a single style
     // slot when serialising, so this does not bloat the output file.
-    let mut compiled: HashMap<&str, Format> = HashMap::new();
+    let mut compiled: HashMap<(usize, usize), Format> = HashMap::new();
     for (key, fmt) in &presentation.formats {
-        if !fmt.is_empty() {
-            compiled.entry(key.as_str()).or_insert_with(|| fmt.to_format());
+        if fmt.is_empty() {
+            continue;
+        }
+        if let Some(rc) = parse_rc_key(key) {
+            compiled.entry(rc).or_insert_with(|| fmt.to_format());
         }
     }
 
@@ -355,13 +362,20 @@ fn write_sheet_payload(
         let row_idx = (r + 1) as u32;
         for (c, cell) in row.iter().enumerate() {
             let col_idx = c as u16;
-            let key = format!("{r},{c}");
-            write_cell(worksheet, row_idx, col_idx, cell, compiled.get(key.as_str()));
+            write_cell(worksheet, row_idx, col_idx, cell, compiled.get(&(r, c)));
         }
     }
 
     apply_dimensions(worksheet, &presentation.column_widths, &presentation.row_heights);
     apply_freeze(worksheet, presentation.frozen_rows, presentation.frozen_cols);
+}
+
+/// Parse a renderer cell key (`"r,c"`, both zero-based data-grid
+/// indices) into a `(row, col)` pair. Returns `None` for a malformed
+/// key so a stray entry can never panic the export.
+fn parse_rc_key(key: &str) -> Option<(usize, usize)> {
+    let (r, c) = key.split_once(',')?;
+    Some((r.parse().ok()?, c.parse().ok()?))
 }
 
 /// Apply sparse per-column pixel widths and per-row pixel heights. A
@@ -390,17 +404,20 @@ fn apply_dimensions(
 }
 
 /// Reproduce the grid's freeze panes. The Tessera model counts frozen
-/// *data* rows (the header is always sticky in the renderer), so a
-/// vertical freeze of `n` translates to freezing `n + 1` Excel rows —
-/// the header plus `n` data rows. Columns map one-to-one. No-op when
-/// nothing is frozen, so unfrozen sheets keep their previous bytes.
+/// *data* rows, and the renderer keeps the header row sticky whenever
+/// anything is frozen, so once any freeze exists we pin `n + 1` Excel
+/// rows — the header plus `n` data rows. A column-only freeze
+/// (`frozen_rows == 0`, `frozen_cols > 0`) therefore still freezes the
+/// header row so the exported sheet scrolls the same way it does
+/// on-screen. Columns map one-to-one. No-op when nothing is frozen, so
+/// unfrozen sheets keep their previous bytes.
 fn apply_freeze(worksheet: &mut Worksheet, frozen_rows: Option<u32>, frozen_cols: Option<u32>) {
     let rows = frozen_rows.unwrap_or(0);
     let cols = frozen_cols.unwrap_or(0);
     if rows == 0 && cols == 0 {
         return;
     }
-    let excel_row = if rows == 0 { 0 } else { rows + 1 };
+    let excel_row = rows + 1;
     worksheet
         .set_freeze_panes(excel_row, cols as u16)
         .expect("set freeze panes");
@@ -1135,6 +1152,24 @@ mod tests {
         let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
         assert!(!xml.contains("ySplit"), "unexpected freeze pane: {xml}");
         assert!(!xml.contains("customWidth"), "unexpected custom width: {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_column_only_freeze_still_freezes_header() {
+        // The renderer keeps the header row sticky whenever anything is
+        // frozen. A column-only freeze must therefore still pin the header
+        // row (ySplit=1) so the export scrolls the way the grid does.
+        let content = r##"{
+            "columns":["A","B"],
+            "rows":[["1","2"],["3","4"]],
+            "frozenCols":1
+        }"##;
+        let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
+        assert!(xml.contains("xSplit"), "freeze pane column split missing: {xml}");
+        assert!(
+            xml.contains("ySplit=\"1\""),
+            "header row should be frozen on a column-only freeze: {xml}"
+        );
     }
 
     #[test]

@@ -85,4 +85,34 @@ describe("sortSheetByColumn", () => {
       "0,0": { italic: true },
     });
   });
+
+  it("permutes row heights so a custom height follows its row", () => {
+    const rows = [["b"], ["a"], ["c"]];
+    // 40px on "b" (row 0 -> new row 1); 20px on "a" (row 1 -> new row 0).
+    const rowHeights = [40, 20, undefined];
+    const result = sortSheetByColumn(rows, undefined, 0, true, undefined, rowHeights);
+    expect(result.rows).toEqual([["a"], ["b"], ["c"]]);
+    expect(result.rowHeights).toEqual([20, 40]);
+  });
+
+  it("keeps a height attached to its row alongside the cell's format", () => {
+    const rows = [["b"], ["a"]];
+    const formats: Record<string, CellFormat> = { "0,0": { bold: true } };
+    const rowHeights = [40, undefined];
+    const result = sortSheetByColumn(rows, formats, 0, true, undefined, rowHeights);
+    // "b" moved from row 0 to row 1: both its bold format and 40px height
+    // travel together to row 1.
+    expect(result.rows).toEqual([["a"], ["b"]]);
+    expect(result.formats).toEqual({ "1,0": { bold: true } });
+    expect(result.rowHeights).toEqual([undefined, 40]);
+  });
+
+  it("returns undefined row heights when none are set", () => {
+    const rows = [["b"], ["a"]];
+    const result = sortSheetByColumn(rows, undefined, 0, true, undefined, [
+      undefined,
+      undefined,
+    ]);
+    expect(result.rowHeights).toBeUndefined();
+  });
 });

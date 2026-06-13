@@ -58,6 +58,12 @@ export interface SortResult {
   rows: string[][];
   /** Remapped per-cell formats, or `undefined` when none were given. */
   formats?: Record<string, CellFormat>;
+  /**
+   * Per-row heights permuted to follow their data row, or `undefined`
+   * when none were given. A custom height set on a row travels with that
+   * row exactly as its formats do, so the two never drift apart.
+   */
+  rowHeights?: (number | undefined)[];
 }
 
 /**
@@ -105,12 +111,25 @@ export function sortSheetByColumn(
   col: number,
   ascending: boolean,
   valueAt?: (row: number) => string,
+  rowHeights?: ReadonlyArray<number | undefined>,
 ): SortResult {
   const order = sortOrder(rows, col, ascending, valueAt);
   const nextRows = order.map((orig) => [...rows[orig]]);
+  const result: SortResult = { rows: nextRows };
+
+  // Permute per-row heights so a custom height stays attached to the
+  // data row it was set on (the height at original row `orig` lands at
+  // its new index). Holes are preserved as `undefined`. Trailing holes
+  // are trimmed so an all-default array round-trips to `undefined`.
+  if (rowHeights && rowHeights.some((h) => h !== undefined)) {
+    const moved = order.map((orig) => rowHeights[orig]);
+    let end = moved.length;
+    while (end > 0 && moved[end - 1] === undefined) end -= 1;
+    if (end > 0) result.rowHeights = moved.slice(0, end);
+  }
 
   if (!formats || Object.keys(formats).length === 0) {
-    return { rows: nextRows };
+    return result;
   }
 
   // origRow -> newRow, so a format at "origRow,c" moves to "newRow,c".
@@ -125,5 +144,6 @@ export function sortSheetByColumn(
     const nr = newRowOf.get(r) ?? r;
     nextFormats[`${nr},${c}`] = v;
   }
-  return { rows: nextRows, formats: nextFormats };
+  result.formats = nextFormats;
+  return result;
 }

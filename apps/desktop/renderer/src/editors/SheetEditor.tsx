@@ -985,16 +985,19 @@ export default function SheetEditor({
           if (isFormulaError(cached)) return cached.code;
           return String(cached);
         };
-        const { rows, formats } = sortSheetByColumn(
+        const { rows, formats, rowHeights } = sortSheetByColumn(
           prev.rows,
           prev.formats,
           col,
           ascending,
           sortKeyAt,
+          prev.rowHeights,
         );
         const next: SheetContent = { ...prev, rows };
         if (formats) next.formats = formats;
         else delete next.formats;
+        if (rowHeights) next.rowHeights = rowHeights;
+        else delete next.rowHeights;
         debouncedSave(next);
         return next;
       });
