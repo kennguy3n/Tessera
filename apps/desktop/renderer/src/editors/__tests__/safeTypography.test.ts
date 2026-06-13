@@ -118,6 +118,25 @@ describe("isSafeFontFamily", () => {
     }
   });
 
+  it("accepts the shipped multilingual (CJK / Arabic) preset stacks", () => {
+    // These mirror the `FONT_FAMILY_GROUPS` CJK/Arabic presets in
+    // DocumentEditor; if a future preset introduces a structural CSS character
+    // the sanitiser would silently drop it on render, so guard the grammar here.
+    for (const v of [
+      "'PingFang SC', 'Microsoft YaHei', '微软雅黑', sans-serif",
+      "'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif",
+      "SimSun, '宋体', 'Songti SC', serif",
+      "'Hiragino Sans', 'ヒラギノ角ゴ Pro', 'Yu Gothic', Meiryo, sans-serif",
+      "'Yu Gothic', '游ゴシック', Meiryo, sans-serif",
+      "'Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', sans-serif",
+      "'Noto Naskh Arabic', 'Geeza Pro', 'Traditional Arabic', serif",
+      "'Geeza Pro', 'Noto Naskh Arabic', serif",
+      "Dubai, Tahoma, sans-serif",
+    ]) {
+      expect(isSafeFontFamily(v)).toBe(true);
+    }
+  });
+
   it("rejects families carrying structural CSS characters", () => {
     for (const v of [
       "Arial; background:url(x)",
