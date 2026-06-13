@@ -83,7 +83,10 @@ export const BlockLineHeight = Extension.create<BlockLineHeightOptions>({
               ) {
                 return {};
               }
-              return { style: `line-height: ${value}` };
+              // `isSafeLineHeight` validates the trimmed value, so emit the
+              // trimmed form too — keeps render/parse byte-identical even if a
+              // raw value ever reaches here via direct ProseMirror manipulation.
+              return { style: `line-height: ${value.trim()}` };
             },
           },
         },

@@ -63,13 +63,18 @@ import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 // that write their attribute onto it. All first-party and tree-shakeable — no
 // new vendor. (Line height is block-level, so it comes from BlockLineHeight
 // below rather than this mark-oriented package.)
+//
+// The stock Color/FontFamily/FontSize/Highlight extensions interpolate their
+// stored value straight into an inline `style`, so we swap in sanitised
+// variants (see `extensions/safeTypography`) that allow-list the value before
+// it is serialised — a crafted document cannot inject extra CSS declarations.
+import { TextStyle } from "@tiptap/extension-text-style";
 import {
-  TextStyle,
-  Color,
-  FontFamily,
-  FontSize,
-} from "@tiptap/extension-text-style";
-import Highlight from "@tiptap/extension-highlight";
+  SafeColor,
+  SafeFontFamily,
+  SafeFontSize,
+  SafeHighlight,
+} from "./extensions/safeTypography";
 import TextAlign from "@tiptap/extension-text-align";
 import { common, createLowlight } from "lowlight";
 import { MermaidNode } from "./extensions/MermaidExtension";
@@ -304,11 +309,11 @@ export default function DocumentEditor({
       // whole paragraphs/headings via updateAttributes (BlockLineHeight /
       // TextAlign), not on the inline mark.
       TextStyle,
-      Color,
-      FontFamily,
-      FontSize,
+      SafeColor,
+      SafeFontFamily,
+      SafeFontSize,
       BlockLineHeight.configure({ types: ["paragraph", "heading"] }),
-      Highlight.configure({ multicolor: true }),
+      SafeHighlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       HorizontalRule,
       Placeholder.configure({
