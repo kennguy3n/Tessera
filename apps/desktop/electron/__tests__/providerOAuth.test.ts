@@ -167,6 +167,54 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     }
   });
 
+  it("requests least-privilege read-only scopes for the support/CRM tranche 5", () => {
+    // ClickUp and Intercom take no `scope` parameter — their access is
+    // governed by the authorizing user's workspace permissions / the
+    // app's configured data access (see SCOPELESS_PROVIDERS). Salesforce
+    // requests only `api` (REST read access; the connector issues SOQL
+    // SELECT/GET reads against Cases) plus the `refresh_token` protocol
+    // scope. A future widening to a write/manage grant breaks this test.
+    expect(PROVIDER_OAUTH_CONFIGS.clickup.scope).toBe("");
+    expect(PROVIDER_OAUTH_CONFIGS.intercom.scope).toBe("");
+    expect(PROVIDER_OAUTH_CONFIGS.salesforce.scope).toBe("api refresh_token");
+    // No write/manage/admin/delete scope leaks into any of them.
+    for (const id of ["clickup", "intercom", "salesforce"] as const) {
+      expect(PROVIDER_OAUTH_CONFIGS[id].scope).not.toMatch(
+        /write|manage|admin|delete|full/,
+      );
+    }
+  });
+
+  it("reserves the 9904-9906 loopback ports for tranche 5", () => {
+    expect(PROVIDER_OAUTH_CONFIGS.clickup.redirectPort).toBe(9904);
+    expect(PROVIDER_OAUTH_CONFIGS.intercom.redirectPort).toBe(9905);
+    expect(PROVIDER_OAUTH_CONFIGS.salesforce.redirectPort).toBe(9906);
+  });
+
+  it("flags tranche-5 refresh / PKCE per provider", () => {
+    // ClickUp and Intercom issue long-lived, refresh-less tokens and
+    // do not support PKCE; Salesforce's web-server flow issues a
+    // refresh token (via the `refresh_token` scope) and supports PKCE.
+    expect(PROVIDER_OAUTH_CONFIGS.clickup.supportsRefresh).toBe(false);
+    expect(PROVIDER_OAUTH_CONFIGS.clickup.usePkce).toBe(false);
+    expect(PROVIDER_OAUTH_CONFIGS.intercom.supportsRefresh).toBe(false);
+    expect(PROVIDER_OAUTH_CONFIGS.intercom.usePkce).toBe(false);
+    expect(PROVIDER_OAUTH_CONFIGS.salesforce.supportsRefresh).toBe(true);
+    expect(PROVIDER_OAUTH_CONFIGS.salesforce.usePkce).toBe(true);
+  });
+
+  it("declares Intercom's non-standard access-token field, and only Intercom's", () => {
+    // Intercom's `/auth/eagle/token` endpoint returns the token in a
+    // `token` field rather than the RFC 6749 `access_token`. Guard that
+    // the override is set for Intercom and for no other provider (a
+    // stray override would silently break a standard provider).
+    expect(PROVIDER_OAUTH_CONFIGS.intercom.accessTokenField).toBe("token");
+    for (const id of KNOWN_PROVIDERS) {
+      if (id === "intercom") continue;
+      expect(PROVIDER_OAUTH_CONFIGS[id].accessTokenField).toBeUndefined();
+    }
+  });
+
   it("asks Dropbox for offline access so its token can refresh", () => {
     expect(PROVIDER_OAUTH_CONFIGS.dropbox.supportsRefresh).toBe(true);
     expect(
@@ -240,6 +288,36 @@ describe("buildAuthorizeUrl", () => {
       }),
     );
     expect(url.searchParams.get("scope")).toBeNull();
+  });
+
+  it("omits scope= for the scope-less tranche-5 providers (ClickUp, Intercom)", () => {
+    for (const id of ["clickup", "intercom"] as const) {
+      const cfg = getProviderOAuthConfig(id);
+      const url = new URL(
+        buildAuthorizeUrl(cfg, {
+          clientId: "abc",
+          state: "xyz",
+          redirectUri: getRedirectUri(cfg),
+        }),
+      );
+      expect(url.searchParams.get("scope")).toBeNull();
+    }
+  });
+
+  it("carries Salesforce's `api refresh_token` scope on the authorize URL", () => {
+    const cfg = getProviderOAuthConfig("salesforce");
+    const url = new URL(
+      buildAuthorizeUrl(cfg, {
+        clientId: "abc",
+        state: "xyz",
+        codeChallenge: "ch",
+        redirectUri: getRedirectUri(cfg),
+      }),
+    );
+    const scopes = (url.searchParams.get("scope") ?? "").split(" ");
+    expect(scopes).toContain("api");
+    expect(scopes).toContain("refresh_token");
+    expect(scopes).not.toContain("offline_access");
   });
 
   it("appends offline_access to the scope= for requestOfflineAccess providers", () => {
@@ -402,7 +480,7 @@ describe("exchangeAuthorizationCode", () => {
     ).rejects.toThrow(/Token exchange failed/);
   });
 
-  it("throws when response lacks an access_token", async () => {
+  it("throws when response lacks an access token", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ token_type: "Bearer" }),
@@ -414,7 +492,42 @@ describe("exchangeAuthorizationCode", () => {
         clientId: "ID",
         clientSecret: "SECRET",
       }),
-    ).rejects.toThrow(/no access_token/);
+    ).rejects.toThrow(/no access token/);
+  });
+
+  it("reads Intercom's non-standard `token` field as the access token", async () => {
+    // Intercom's `/auth/eagle/token` endpoint returns
+    // `{ token, type }` rather than the RFC 6749 `{ access_token }`.
+    // The `accessTokenField` override must pick up `token`, and the
+    // raw secret must NOT leak into the passthrough `extra` payload.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: "INTERCOM_AT", type: "bearer" }),
+    });
+    const tokens = await exchangeAuthorizationCode(
+      getProviderOAuthConfig("intercom"),
+      { code: "CODE", clientId: "ID", clientSecret: "SECRET" },
+    );
+    expect(tokens.accessToken).toBe("INTERCOM_AT");
+    // Non-expiring, refresh-less → multi-year default and no refresh token.
+    expect(tokens.refreshToken).toBeNull();
+    expect(tokens.expiresIn).toBe(10 * 365 * 24 * 3600);
+    expect(tokens.extra?.token).toBeUndefined();
+  });
+
+  it("still reads the standard `access_token` when a custom field is configured but absent", async () => {
+    // Defense-in-depth: the `accessTokenField` override falls back to
+    // the standard `access_token`, so a provider that later returns the
+    // standard field keeps working.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ access_token: "STD_AT", token_type: "Bearer" }),
+    });
+    const tokens = await exchangeAuthorizationCode(
+      getProviderOAuthConfig("intercom"),
+      { code: "CODE", clientId: "ID", clientSecret: "SECRET" },
+    );
+    expect(tokens.accessToken).toBe("STD_AT");
   });
 
   it("uses a multi-year `expiresIn` default for non-refreshable providers when the response omits `expires_in` (Notion regression)", async () => {
@@ -573,5 +686,36 @@ describe("refreshProviderToken", () => {
         clientSecret: "SECRET",
       }),
     ).rejects.toThrow(/Token refresh failed/);
+  });
+
+  it("honours a custom accessTokenField on refresh, symmetric with exchange", async () => {
+    // No shipping provider currently sets both `accessTokenField` and
+    // `supportsRefresh`, but the two code paths must stay symmetric so a
+    // future provider that does won't silently read the wrong field on
+    // refresh. Synthesize such a config and assert the override wins and
+    // the raw secret is stripped from `extra`.
+    const cfg = {
+      ...getProviderOAuthConfig("google_drive"),
+      accessTokenField: "token",
+      supportsRefresh: true,
+    } as const;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        token: "REFRESHED_AT",
+        refresh_token: "NEW_RT",
+        expires_in: 3600,
+        type: "bearer",
+      }),
+    });
+    const tokens = await refreshProviderToken(cfg, {
+      refreshToken: "ORIG_RT",
+      clientId: "ID",
+      clientSecret: "SECRET",
+    });
+    expect(tokens.accessToken).toBe("REFRESHED_AT");
+    expect(tokens.refreshToken).toBe("NEW_RT");
+    expect(tokens.extra).not.toHaveProperty("token");
+    expect(tokens.extra).not.toHaveProperty("access_token");
   });
 });

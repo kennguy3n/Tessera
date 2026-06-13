@@ -73,6 +73,9 @@ connectors-v2-stable = [
     "connector-bitbucket",
     "connector-airtable",
     "connector-monday",
+    "connector-clickup",
+    "connector-intercom",
+    "connector-salesforce",
 ]
 connector-google-drive = ["connectors-v2"]
 connector-onedrive = ["connectors-v2"]
@@ -102,6 +105,9 @@ connector-discord = ["connectors-v2"]
 connector-bitbucket = ["connectors-v2"]
 connector-airtable = ["connectors-v2"]
 connector-monday = ["connectors-v2"]
+connector-clickup = ["connectors-v2"]
+connector-intercom = ["connectors-v2"]
+connector-salesforce = ["connectors-v2"]
 
 [dependencies]
 # Knowledge substrate connector layer, pinned by rev for reproducible

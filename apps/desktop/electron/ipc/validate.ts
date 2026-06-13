@@ -87,6 +87,18 @@ export const KNOWN_PROVIDERS = [
   "bitbucket",
   "airtable",
   "monday",
+  // Tranche 5: read-only support / CRM providers from the upstream
+  // `connectors` crate (see docs/CONNECTORS.md and
+  // shared/connectorConfig.ts). All three use the read-only OAuth2
+  // browser grant. ClickUp is per-workspace (collects a Workspace/Team
+  // ID); Intercom syncs the whole workspace's conversations (optional
+  // regional API host); Salesforce reads Cases from a single org and
+  // requires the My Domain instance URL. Zendesk is audited but NOT
+  // wired — its OAuth endpoints are per-subdomain, which the
+  // fixed-endpoint OAuth config model does not express.
+  "clickup",
+  "intercom",
+  "salesforce",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 

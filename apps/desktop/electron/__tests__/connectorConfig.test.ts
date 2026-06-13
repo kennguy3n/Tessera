@@ -216,6 +216,46 @@ describe("validateConnectorField", () => {
     expect(validateConnectorField(field("monday", "board_id"), "not-a-number").valid).toBe(false);
   });
 
+  // ── Tranche 5: read-only support / CRM providers ───────────────────
+
+  it("validates the ClickUp numeric workspace id + optional API base URL", () => {
+    expect(validateConnectorField(field("clickup", "team_id"), "9001234567").valid).toBe(true);
+    expect(validateConnectorField(field("clickup", "team_id"), "not-a-number").valid).toBe(false);
+    // Required: an empty value is rejected before any IPC round-trip.
+    expect(validateConnectorField(field("clickup", "team_id"), "  ").valid).toBe(false);
+    const base = field("clickup", "api_base_url");
+    expect(validateConnectorField(base, "").valid).toBe(true);
+    expect(validateConnectorField(base, "https://api.clickup.com").valid).toBe(true);
+    expect(validateConnectorField(base, "http://api.clickup.com").valid).toBe(false);
+  });
+
+  it("validates Intercom's optional regional API base URL", () => {
+    const base = field("intercom", "api_base_url");
+    expect(validateConnectorField(base, "").valid).toBe(true);
+    expect(validateConnectorField(base, "https://api.eu.intercom.io").valid).toBe(true);
+    expect(validateConnectorField(base, "ftp://api.intercom.io").valid).toBe(false);
+  });
+
+  it("requires a full https:// My Domain URL for Salesforce", () => {
+    const base = field("salesforce", "api_base_url");
+    expect(base.required).toBe(true);
+    expect(validateConnectorField(base, "https://acme.my.salesforce.com").valid).toBe(true);
+    expect(validateConnectorField(base, "acme.my.salesforce.com").valid).toBe(false);
+    // Required: a blank instance URL is rejected inline.
+    expect(validateConnectorField(base, "   ").valid).toBe(false);
+  });
+
+  it("keeps the tranche-5 providers on the OAuth2 browser grant with per-target fields", () => {
+    for (const provider of ["clickup", "intercom", "salesforce"] as const) {
+      expect(getConnectSpec(provider).connectMethod).toBe("oauth2");
+      // OAuth2 specs carry no tokenField (the browser grant supplies it).
+      expect(getConnectSpec(provider).tokenField).toBeUndefined();
+    }
+    // The per-target ids survive into the auth_config bag.
+    expect(authConfigFields("clickup").map((f) => f.key)).toContain("team_id");
+    expect(authConfigFields("salesforce").map((f) => f.key)).toContain("api_base_url");
+  });
+
   it("threads the Discord `Bot` auth scheme and defaults everything else to Bearer", () => {
     // Discord bot tokens must be sent as `Authorization: Bot <token>`.
     expect(connectorTokenType("discord")).toBe("Bot");

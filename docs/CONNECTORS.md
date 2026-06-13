@@ -262,6 +262,53 @@ Bot <token>`. The scheme is single-sourced on the connect spec
 (`ConnectorConnectSpec.tokenType`, defaulting to `"Bearer"`) and threaded
 onto the wire token in `connectorsV2.ts > storedToWire`.
 
+The 2026 support / CRM tranche (**ClickUp, Intercom, Salesforce**)
+surfaces three more upstream `connectors`-crate impls. All three use the
+**read-only OAuth2 browser grant** (loopback ports 9904–9906):
+
+| Provider | Connect method | Inputs (`auth_config_json` key) | Scope | Port |
+| --- | --- | --- | --- | --- |
+| ClickUp | `oauth2` | `team_id` (Workspace ID); optional `api_base_url` | *(scope-less — workspace-bound)* | 9904 |
+| Intercom | `oauth2` | optional `api_base_url` (EU/AU host) | *(scope-less — app-configured)* | 9905 |
+| Salesforce | `oauth2` | `api_base_url` (My Domain instance URL, **required**) | `api refresh_token` | 9906 |
+
+Notes on this tranche:
+
+- **ClickUp** reads tasks from one workspace (`/api/v2/team/{team_id}/task`),
+  so the connect modal collects the numeric Workspace (Team) ID. ClickUp's
+  OAuth flow takes **no `scope` parameter** — access is governed by the
+  authorizing user's own workspace permissions — so it is added to
+  `SCOPELESS_PROVIDERS` and issues no refresh token (reconnect-on-expiry).
+- **Intercom** syncs the whole workspace's conversations
+  (`/conversations/search`); no per-target id is needed. Two quirks are
+  single-sourced in the OAuth config: it is **scope-less** (data access is
+  configured on the app in Intercom's Developer Hub), and its
+  `/auth/eagle/token` endpoint returns the access token in a non-standard
+  **`token`** field — declared via `ProviderOAuthConfig.accessTokenField`
+  (the exchange reads it first, then falls back to `access_token`).
+- **Salesforce** reads support **Cases** via SOQL over the REST API
+  (`/services/data/vXX.X/query`). Orgs are per-instance, so the **My
+  Domain instance URL is required**. It requests only `api` (REST read;
+  the connector issues `SELECT`/`GET` against Cases) plus Salesforce's
+  `refresh_token` protocol scope, which is treated as an OAuth **meta-scope**
+  (`OAUTH_META_SCOPES`, alongside `offline_access`) so it is requested but
+  not validated as an API permission. Salesforce supports PKCE and issues a
+  refresh token.
+
+**Audited but skipped — Zendesk.** Zendesk *is* implemented upstream and
+is read-only, but its OAuth authorize/token endpoints are
+**per-subdomain** (`https://<subdomain>.zendesk.com/oauth/...`). Tessera's
+OAuth config model uses **fixed** `authUrl`/`tokenUrl` constants (never
+runtime-interpolated per tenant), so wiring Zendesk correctly would
+require a per-instance authorize/token URL seam that does not yet exist.
+Rather than ship a stub or a wrong fixed endpoint, Zendesk is deferred
+until that seam lands. No additional Google/Microsoft surfaces were wired
+this tranche: the remaining upstream Google/MS `ConnectorKind`s are either
+already surfaced (Drive, Calendar, Docs, Sheets, Meet, OneDrive,
+SharePoint, Teams) or not read-only/least-privilege candidates.
+
+This tranche brings `STABLE_PROVIDER_IDS` to **31** providers.
+
 The seam is the single source of truth in
 `apps/desktop/shared/connectorConfig.ts` — a dependency-free module
 imported by **both** the Electron main process and the renderer:

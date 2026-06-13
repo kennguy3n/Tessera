@@ -224,7 +224,13 @@ export interface ConnectorStatusInfo {
  * "ProviderX uses an admin-installed app with workspace-bound
  * permissions; the OAuth token has no per-request scope dimension").
  */
-const SCOPELESS_PROVIDERS = new Set<ProviderId>(["notion"]);
+// Providers whose OAuth flow legitimately issues a scope-less token,
+// so the empty-scope sync guard must not warn for them. Notion's
+// integration token is workspace-bound at install time; ClickUp and
+// Intercom take no `scope` parameter at all (access is governed by the
+// authorizing user's workspace permissions / the app's configured
+// data access), and both connectors only ever issue read-only GETs.
+const SCOPELESS_PROVIDERS = new Set<ProviderId>(["notion", "clickup", "intercom"]);
 
 interface BridgeHooks {
   addLocalFile(localPath: string): { id: string; path: string };
@@ -323,6 +329,9 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   bitbucket: "bitbucket",
   airtable: "airtable",
   monday: "monday",
+  clickup: "clickup",
+  intercom: "intercom",
+  salesforce: "salesforce",
 };
 
 /**
@@ -901,6 +910,9 @@ async function runSync(
     case "bitbucket":
     case "airtable":
     case "monday":
+    case "clickup":
+    case "intercom":
+    case "salesforce":
       // Substrate-only providers: reachable here only when the v2
       // path was unavailable; surfaced as a clear config error above,
       // but the explicit cases keep the exhaustiveness check honest.
@@ -1260,6 +1272,9 @@ export async function runDisconnect(
     case "bitbucket":
     case "airtable":
     case "monday":
+    case "clickup":
+    case "intercom":
+    case "salesforce":
       // Substrate-only providers: no legacy disconnect impl exists, so
       // reuse the generic v2 cleanup (unhook sources + purge sync dir
       // + delete manifest/cursor). Token revocation + vault deletion
