@@ -120,6 +120,27 @@ describe("evaluator named-range resolution", () => {
     const v = evalWithNames("=SUM(Unknown)", GRID, RANGES);
     expect(isFormulaError(v) && v.code).toBe("#NAME?");
   });
+
+  it("ROWS/COLUMNS/ROW/COLUMN resolve a named range", () => {
+    expect(evalWithNames("=ROWS(Revenue)", GRID, RANGES)).toBe(3);
+    expect(evalWithNames("=COLUMNS(Revenue)", GRID, RANGES)).toBe(1);
+    expect(evalWithNames("=ROW(Revenue)", GRID, RANGES)).toBe(1);
+    expect(evalWithNames("=COLUMN(Revenue)", GRID, RANGES)).toBe(1);
+    // A name pointing at a single cell behaves like that cell.
+    expect(evalWithNames("=ROWS(First)", GRID, RANGES)).toBe(1);
+    expect(evalWithNames("=COLUMN(First)", GRID, RANGES)).toBe(1);
+  });
+
+  it("a named range skips text cells in aggregation, like a literal range", () => {
+    const grid = [["10"], ["abc"], ["30"]];
+    const ranges = [{ name: "Vals", range: "A1:A3" }];
+    // The semantically-equivalent literal range and named range must
+    // agree: both skip the text cell rather than erroring on it.
+    expect(evalWithNames("=SUM(A1:A3)", grid, ranges)).toBe(40);
+    expect(evalWithNames("=SUM(Vals)", grid, ranges)).toBe(40);
+    expect(evalWithNames("=AVERAGE(Vals)", grid, ranges)).toBe(20);
+    expect(evalWithNames("=MEDIAN(Vals)", grid, ranges)).toBe(20);
+  });
 });
 
 describe("dependency extraction with named ranges", () => {

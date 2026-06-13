@@ -24,6 +24,7 @@ import type { AstNode } from "../parser";
 import {
   collectValues,
   evaluate,
+  isRangeArg,
   toNumber,
   type EvaluationContext,
   type FunctionImpl,
@@ -51,11 +52,11 @@ function collectNumbers(
       }
       if (typeof v === "boolean") {
         // Direct boolean arg = coerce to 1/0; in a range, Excel skips.
-        if (arg.type !== "range") out.push(v ? 1 : 0);
+        if (!isRangeArg(arg, ctx)) out.push(v ? 1 : 0);
         continue;
       }
       if (typeof v === "string") {
-        if (arg.type === "range") continue;
+        if (isRangeArg(arg, ctx)) continue;
         const n = toNumber(v);
         if (isFormulaError(n)) return n;
         out.push(n);

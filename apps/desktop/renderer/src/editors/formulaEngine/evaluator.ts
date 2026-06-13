@@ -102,6 +102,22 @@ export function resolveName(
   return ctx.names?.get(name.toUpperCase());
 }
 
+/**
+ * True when `node` denotes a multi-cell range — either a literal range
+ * node or a named-range identifier that resolves to one. Aggregations
+ * use this to apply the "skip text/blank cells inside a range" rule
+ * identically to `SUM(A1:A10)` and `SUM(Revenue)` (where
+ * `Revenue = A1:A10`), so a named range behaves exactly like the
+ * literal range it points at.
+ */
+export function isRangeArg(node: AstNode, ctx: EvaluationContext): boolean {
+  if (node.type === "range") return true;
+  if (node.type === "identifier") {
+    return resolveName(node.name, ctx)?.type === "range";
+  }
+  return false;
+}
+
 export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
   switch (node.type) {
     case "number":

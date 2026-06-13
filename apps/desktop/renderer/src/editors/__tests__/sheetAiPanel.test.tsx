@@ -131,4 +131,21 @@ describe("NamedRangePanel", () => {
     );
     expect(screen.getByTestId("sheet-nr-row-0")).toBeTruthy();
   });
+
+  it("flags a duplicate name across rows (case-insensitive)", () => {
+    // Two rows colliding on name (one lower-cased) — the panel must
+    // surface a duplicate error rather than silently last-wins'ing it.
+    render(
+      <NamedRangePanel
+        ranges={[
+          { name: "Revenue", range: "A1:A3" },
+          { name: "revenue", range: "B1:B3" },
+        ]}
+        onChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(screen.getAllByText(/Duplicate name/i).length).toBeGreaterThan(0);
+  });
 });

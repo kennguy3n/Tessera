@@ -21,6 +21,7 @@ import type { AstNode } from "../parser";
 import {
   collectValues,
   evaluate,
+  isRangeArg,
   toNumber,
   type EvaluationContext,
   type FunctionImpl,
@@ -55,8 +56,8 @@ function* numericArgs(
       }
       if (typeof v === "string") {
         // Inside aggregation, strings are skipped (Excel ignores
-        // text in SUM/AVERAGE over a range).
-        if (arg.type === "range") continue;
+        // text in SUM/AVERAGE over a range — literal or named).
+        if (isRangeArg(arg, ctx)) continue;
         const n = toNumber(v);
         if (isFormulaError(n)) {
           yield n;
@@ -474,9 +475,10 @@ const GCD: FunctionImpl = (args, ctx) => {
   let acc = 0;
   for (const v of numericArgs(args, ctx, false)) {
     if (isFormulaError(v)) return v;
-    const n = Math.trunc(Math.abs(v));
-    if (n < 0) return makeError("#NUM!", "GCD requires non-negative integers");
-    acc = gcd2(acc, n);
+    // Excel rejects negative arguments outright (validate the raw
+    // value, before truncation, so the check is meaningful).
+    if (v < 0) return makeError("#NUM!", "GCD requires non-negative integers");
+    acc = gcd2(acc, Math.trunc(v));
   }
   return acc;
 };

@@ -32,6 +32,7 @@ import type { AstNode } from "../parser";
 import {
   collectValues,
   evaluate,
+  resolveName,
   toNumber,
   toString as coerceToString,
   type EvaluationContext,
@@ -482,40 +483,54 @@ const CHOOSE: FunctionImpl = (args, ctx) => {
   return evaluate(args[idx], ctx);
 };
 
-const ROWS: FunctionImpl = (args) => {
+/**
+ * Resolve a reference argument to its underlying cell/range node,
+ * expanding a named-range identifier (e.g. `Revenue`) via the context's
+ * name map. Returns the original node for non-identifiers so the
+ * existing cell/range handling is unchanged.
+ */
+function resolveRefNode(arg: AstNode, ctx: EvaluationContext): AstNode {
+  if (arg.type === "identifier") {
+    const named = resolveName(arg.name, ctx);
+    if (named) return named;
+  }
+  return arg;
+}
+
+const ROWS: FunctionImpl = (args, ctx) => {
   if (args.length !== 1) return makeError("#ERR!", "ROWS expects 1 argument");
-  const arg = args[0];
+  const arg = resolveRefNode(args[0], ctx);
   if (arg.type === "range") return arg.end.row - arg.start.row + 1;
   if (arg.type === "cell") return 1;
   return makeError("#REF!", "ROWS expects a range or cell reference");
 };
 
-const COLUMNS: FunctionImpl = (args) => {
+const COLUMNS: FunctionImpl = (args, ctx) => {
   if (args.length !== 1) return makeError("#ERR!", "COLUMNS expects 1 argument");
-  const arg = args[0];
+  const arg = resolveRefNode(args[0], ctx);
   if (arg.type === "range") return arg.end.col - arg.start.col + 1;
   if (arg.type === "cell") return 1;
   return makeError("#REF!", "COLUMNS expects a range or cell reference");
 };
 
-const ROW: FunctionImpl = (args) => {
+const ROW: FunctionImpl = (args, ctx) => {
   if (args.length !== 1) {
     // ROW() with no argument needs the host cell's coordinate, which
     // the pure engine does not carry. Callers that need "this row"
     // should pass an explicit reference.
     return makeError("#N/A", "ROW requires a cell or range reference");
   }
-  const arg = args[0];
+  const arg = resolveRefNode(args[0], ctx);
   if (arg.type === "cell") return arg.row + 1;
   if (arg.type === "range") return arg.start.row + 1;
   return makeError("#REF!", "ROW expects a range or cell reference");
 };
 
-const COLUMN: FunctionImpl = (args) => {
+const COLUMN: FunctionImpl = (args, ctx) => {
   if (args.length !== 1) {
     return makeError("#N/A", "COLUMN requires a cell or range reference");
   }
-  const arg = args[0];
+  const arg = resolveRefNode(args[0], ctx);
   if (arg.type === "cell") return arg.col + 1;
   if (arg.type === "range") return arg.start.col + 1;
   return makeError("#REF!", "COLUMN expects a range or cell reference");

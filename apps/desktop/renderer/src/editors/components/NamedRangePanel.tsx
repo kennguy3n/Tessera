@@ -84,7 +84,21 @@ export function NamedRangePanel({
       ) : (
         <ul className="sheet-cf-list">
           {ranges.map((range, idx) => {
-            const error = validateNamedRange(range);
+            // Surface a duplicate-name error when editing an existing
+            // row collides with another row (case-insensitive). The
+            // draft row guards on add, but inline edits bypass that, so
+            // the collision is flagged here rather than silently
+            // last-wins'd by `buildNamesMap`.
+            const norm = range.name.trim().toLowerCase();
+            const isDuplicate =
+              norm !== "" &&
+              ranges.some(
+                (other, j) =>
+                  j !== idx && other.name.trim().toLowerCase() === norm,
+              );
+            const error =
+              validateNamedRange(range) ??
+              (isDuplicate ? "Duplicate name — names must be unique." : null);
             return (
               <li
                 key={idx}
