@@ -1070,10 +1070,16 @@ const SLIDE_CHART_TYPES: readonly SlideChartType[] = ["bar", "line", "pie"];
  * but series are plotted in source order):
  *   - `type: bar|line|pie`  — defaults to `bar` when absent/unknown
  *   - `title: <text>`       — optional figure caption
- *   - `labels: a, b, c`     — the category axis
+ *   - `labels: a, b, c`     — the category axis (comma-separated)
  *   - `<name>: v, v, v`     — one numeric series; blank / non-numeric
  *     cells become `null` so the geometry leaves a gap rather than
  *     drawing through missing data
+ *
+ * Escaping: comma and colon are the cell / key delimiters, so a label
+ * or series name that needs a literal `,` or `:` writes it as `\,` /
+ * `\:` — e.g. `Revenue\, FY24` is one label, and `EMEA\: West: 10, 12`
+ * is a series literally named `EMEA: West`. An escaped comma inside a
+ * numeric cell doubles as a thousands separator (`1\,000` → `1000`).
  *
  * Returns `null` when there is not a single series line, so the preview
  * can show a placeholder instead of an empty axis.
@@ -1086,9 +1092,12 @@ export function parseSlideChart(content: string): SlideChartSpec | null {
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line === "") continue;
-    const sep = line.indexOf(":");
+    // Split on the first UNESCAPED colon so a series name can carry a
+    // literal colon written as `\:`. The key is then unescaped; the
+    // value is split later by `splitCsvCells` (also escape-aware).
+    const sep = indexOfUnescaped(line, ":");
     if (sep === -1) continue;
-    const key = line.slice(0, sep).trim();
+    const key = unescapeChartCell(line.slice(0, sep).trim());
     const value = line.slice(sep + 1).trim();
     const lowerKey = key.toLowerCase();
     if (lowerKey === "type") {
@@ -1097,7 +1106,7 @@ export function parseSlideChart(content: string): SlideChartSpec | null {
       continue;
     }
     if (lowerKey === "title") {
-      title = value || undefined;
+      title = value ? unescapeChartCell(value) : undefined;
       continue;
     }
     if (lowerKey === "labels") {
@@ -1139,18 +1148,68 @@ export function parseSlideChart(content: string): SlideChartSpec | null {
   return { type, title, data: { labels, series: padded } };
 }
 
-/** Split a comma-separated cell list into trimmed, non-empty-aware cells. */
+/**
+ * Index of the first occurrence of `ch` in `line` that is not escaped.
+ * The only escape sequences are `\,` and `\:` — matching
+ * {@link splitCsvCells} / {@link unescapeChartCell} so all three share
+ * one escape vocabulary. A `\:` is therefore skipped when scanning for a
+ * `:` delimiter, but a lone backslash (e.g. in `C:\path`) is an ordinary
+ * character and never masks the delimiter that follows it.
+ */
+function indexOfUnescaped(line: string, ch: string): number {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\\" && (line[i + 1] === "," || line[i + 1] === ":")) {
+      i++; // skip the escaped delimiter
+      continue;
+    }
+    if (line[i] === ch) return i;
+  }
+  return -1;
+}
+
+/**
+ * Unescape the chart-DSL escape sequences `\,` and `\:` to their literal
+ * characters. Applied after splitting on the *unescaped* delimiters so a
+ * label or series name can itself contain a comma or colon.
+ */
+function unescapeChartCell(cell: string): string {
+  return cell.replace(/\\([,:])/g, "$1");
+}
+
+/**
+ * Split a comma-separated cell list on UNESCAPED commas, so a single
+ * cell can contain a literal comma written as `\,` (e.g.
+ * `Revenue\, FY24, Costs` → `["Revenue, FY24", "Costs"]`). Each cell is
+ * trimmed and has its `\,` / `\:` escapes resolved.
+ */
 function splitCsvCells(value: string): string[] {
-  return value.split(",").map((c) => c.trim());
+  const cells: string[] = [];
+  let current = "";
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "\\" && (value[i + 1] === "," || value[i + 1] === ":")) {
+      current += value[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells;
 }
 
 /** Coerce a cell to a finite number, or `null` for blanks / non-numbers. */
 function toNumberOrNull(cell: string): number | null {
   if (cell === "") return null;
   // Tolerate a leading currency symbol / trailing percent the user might
-  // paste. Commas are the cell delimiter (a cell never contains one), so
-  // there is no thousands-separator to strip here.
-  const cleaned = cell.replace(/[$%\s]/g, "");
+  // paste. A bare comma can only reach here from an escaped `\,`, so we
+  // also strip it — it can only be a thousands separator (`1\,000`).
+  const cleaned = cell.replace(/[$%,\s]/g, "");
   if (cleaned === "") return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
