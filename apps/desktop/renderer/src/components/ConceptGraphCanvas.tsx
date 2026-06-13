@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   findNeighborInDirection,
+  quadraticMidpoint,
   type ConceptGraphEdge,
   type ConceptRelation,
   type EdgeCurve,
@@ -265,15 +266,20 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
       if (!cp) continue;
       const dim = focus && !focus.edgeIds.has(edge.id);
       const labelText = relationLabelOf(edge.relationType);
-      const at = worldToScreen(cp.control, t);
+      // The label sits on the curve at B(½), not at the off-curve control
+      // point — same anchor the SVG path uses (`quadraticEdgePath`).
+      const labelAt = worldToScreen(
+        quadraticMidpoint(cp.from, cp.to, cp.control),
+        t,
+      );
       sceneEdges.push({
         id: edge.id,
         from: worldToScreen(cp.from, t),
         to: worldToScreen(cp.to, t),
-        control: at,
+        control: worldToScreen(cp.control, t),
         color: relationColorOf(edge.relationType),
         alpha: dim ? DIM_ALPHA : 1,
-        label: lod.drawEdgeLabels ? { text: labelText, at } : null,
+        label: lod.drawEdgeLabels ? { text: labelText, at: labelAt } : null,
       });
     }
 
