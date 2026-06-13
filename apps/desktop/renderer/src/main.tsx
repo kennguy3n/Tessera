@@ -38,7 +38,10 @@ function renderApp() {
 //
 // In the REAL `npm run build`, both flags are statically false, so this
 // whole branch (and the dynamic `import("./showcase")`) is tree-shaken
-// out and the showcase datasets never enter the shipped renderer.
+// out and the showcase datasets never enter the shipped renderer. That
+// guarantee is backstopped at build time: `vite.config.ts` fails the build
+// if `VITE_TESSERA_QA=true` is ever set for a non-`qa` mode, so a stray
+// flag in `.env`/`.env.production` can never silently ship showcase to prod.
 const SHOWCASE_ENABLED =
   import.meta.env.DEV || import.meta.env.VITE_TESSERA_QA === "true";
 if (

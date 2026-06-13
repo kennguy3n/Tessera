@@ -259,7 +259,7 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
           // tablist (that violates `aria-required-children`). So the close
           // affordance is a presentational glyph inside the tab, and closing
           // is wired through the tab's own handlers: clicking the glyph,
-          // middle-click, the Delete/Backspace shortcut, or the context menu.
+          // middle-click, the Delete shortcut, or the context menu.
           return (
             <button
               key={tab.id}
@@ -292,7 +292,12 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
                 }
               }}
               onKeyDown={(e) => {
-                if (e.key === "Delete" || e.key === "Backspace") {
+                // Delete only — the WAI-ARIA tabs pattern's destructive key,
+                // and exactly what `aria-keyshortcuts` advertises. Backspace
+                // is deliberately not bound: it's historically browser-back
+                // and would silently close a focused tab, surprising users
+                // who reach for it as an edit key.
+                if (e.key === "Delete") {
                   e.preventDefault();
                   closeTab(leaf.id, tab.id);
                 }
