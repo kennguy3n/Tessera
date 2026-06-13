@@ -166,6 +166,93 @@ describe("SlideEditor accessibility", () => {
     expect(notes).toBeInstanceOf(HTMLTextAreaElement);
     expect((notes as HTMLTextAreaElement).value).toBe("Existing notes");
   });
+
+  const twoSlideDeck = () =>
+    JSON.stringify({
+      slides: [
+        { title: "First", blocks: [{ type: "text", content: "a" }], notes: "" },
+        {
+          title: "Second",
+          blocks: [{ type: "text", content: "b" }],
+          notes: "",
+        },
+      ],
+    });
+
+  it("keeps only one toolbar popover open at a time (mutual exclusion)", () => {
+    render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+
+    // Open the theme picker.
+    fireEvent.click(screen.getByRole("button", { name: "Deck theme" }));
+    expect(
+      screen.getByRole("listbox", { name: "Choose theme" }),
+    ).toBeInTheDocument();
+
+    // Opening the insert-preset menu must close the theme picker.
+    fireEvent.click(screen.getByRole("button", { name: /Insert/ }));
+    expect(
+      screen.queryByRole("listbox", { name: "Choose theme" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("traps focus in the template modal and restores it to the trigger on Escape", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+      const templatesBtn = screen.getByRole("button", { name: "Templates" });
+      templatesBtn.focus();
+      fireEvent.click(templatesBtn);
+
+      const dialog = screen.getByRole("dialog", {
+        name: "Choose a deck template",
+      });
+      // Deferred initial focus lands on the first template card.
+      act(() => {
+        vi.runAllTimers();
+      });
+      const firstCard = within(dialog).getAllByRole("button")[0];
+      expect(document.activeElement).toBe(firstCard);
+
+      // Escape closes the modal and restores focus to the trigger.
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(
+        screen.queryByRole("dialog", { name: "Choose a deck template" }),
+      ).not.toBeInTheDocument();
+      expect(document.activeElement).toBe(templatesBtn);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("dismisses open overlays when the deck is swapped (version restore)", () => {
+    const { rerender } = render(
+      <SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Deck theme" }));
+    expect(
+      screen.getByRole("listbox", { name: "Choose theme" }),
+    ).toBeInTheDocument();
+
+    // A version restore hands the editor a different content prop.
+    rerender(
+      <SlideEditor
+        content={JSON.stringify({
+          slides: [
+            {
+              title: "Restored",
+              blocks: [{ type: "text", content: "x" }],
+              notes: "",
+            },
+          ],
+        })}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("listbox", { name: "Choose theme" }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
