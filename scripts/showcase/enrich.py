@@ -625,8 +625,6 @@ def _to_bullet_lines(content: str) -> list[str]:
 def _presenter_note(bullet_lines: list[str], title: str) -> str:
     """Derive a concise speaker-note cue from the slide's own bullets —
     a re-presentation of content already on the slide, never a new claim."""
-    if not bullet_lines:
-        return f"Open the “{title}” section and frame why it matters."
     leads = []
     for ln in bullet_lines[:3]:
         # First sentence of the bullet, citations stripped. Sentence detection is
@@ -634,6 +632,11 @@ def _presenter_note(bullet_lines: list[str], title: str) -> str:
         clause = _first_sentence(re.sub(r"\[[^\]]+\]", "", ln)).rstrip(" .;")
         if clause:
             leads.append(clause)
+    # Fall back to the title cue whenever there is nothing to say — both when the
+    # slide has no bullets and when every bullet reduces to empty after citation
+    # stripping — so the note is never the broken stub "Talking points: .".
+    if not leads:
+        return f"Open the “{title}” section and frame why it matters."
     return "Talking points: " + "; ".join(leads) + "."
 
 
