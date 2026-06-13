@@ -447,7 +447,12 @@ export default function SlideEditor({
       uploadTokensRef.current.clear();
       openExclusiveMenu(null);
       setTemplatePickerOpen(false);
+      // Close the find panel *and* clear its query (mirroring the panel's
+      // own close button). A non-empty query would otherwise survive the
+      // swap, re-run `findMatches` against the new deck, and silently jump
+      // `activeIndex` to the first match even though the panel is hidden.
       setFindPanelOpen(false);
+      setFindQuery("");
       lastSavedRef.current = content;
     }
   }, [content, openExclusiveMenu]);

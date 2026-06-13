@@ -253,6 +253,70 @@ describe("SlideEditor accessibility", () => {
       screen.queryByRole("listbox", { name: "Choose theme" }),
     ).not.toBeInTheDocument();
   });
+
+  it("clears the find query on restore so a stale query can't silently jump slides", () => {
+    // The original deck contains no match for the query, so the active
+    // slide stays on the first slide while the find panel is open.
+    const deck = JSON.stringify({
+      slides: [
+        {
+          title: "Alpha",
+          blocks: [{ type: "text", content: "alpha body" }],
+          notes: "",
+        },
+        {
+          title: "Beta",
+          blocks: [{ type: "text", content: "beta body" }],
+          notes: "",
+        },
+      ],
+    });
+    const { rerender } = render(
+      <SlideEditor content={deck} onSave={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Find in slides" }));
+    fireEvent.change(screen.getByLabelText("Find query"), {
+      target: { value: "needle" },
+    });
+    // No match in the original deck → still on slide 1.
+    expect(
+      screen
+        .getByRole("button", { name: /1 Alpha/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+
+    // Restore a deck where the (now-stale) query *would* match slide 2.
+    // With the query cleared on restore there are no matches, so the
+    // jump effect can't fire and the active slide stays on slide 1 —
+    // rather than silently jumping to slide 2 behind a hidden panel.
+    rerender(
+      <SlideEditor
+        content={JSON.stringify({
+          slides: [
+            {
+              title: "Gamma",
+              blocks: [{ type: "text", content: "plain" }],
+              notes: "",
+            },
+            {
+              title: "Delta",
+              blocks: [{ type: "text", content: "needle again" }],
+              notes: "",
+            },
+          ],
+        })}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /1 Gamma/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+    // Find panel is gone after the restore.
+    expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
