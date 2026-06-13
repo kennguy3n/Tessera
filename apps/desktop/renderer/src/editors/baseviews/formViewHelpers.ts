@@ -24,6 +24,11 @@ const NON_FILLABLE: ReadonlySet<FieldType> = new Set<FieldType>([
   "rollup",
   "lookup",
   "auto_number",
+  // `created_time` / `modified_time` are derived from record metadata
+  // at render time (never collected from the form), exactly like the
+  // other computed types above.
+  "created_time",
+  "modified_time",
 ]);
 
 /** Field types stored as `string[]` (rendered as comma-separated text). */

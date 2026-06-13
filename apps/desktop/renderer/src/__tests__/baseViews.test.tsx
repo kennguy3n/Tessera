@@ -13,8 +13,15 @@
  *    debounce timer.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  within,
+} from "@testing-library/react";
 import BaseEditor from "../editors/BaseEditor";
+import { formatTimestamp } from "../editors/baseRecordMeta";
 
 function renderEditor(content: object, onSave = vi.fn()) {
   const json = JSON.stringify(content);
@@ -101,8 +108,11 @@ describe("BaseEditor view switcher", () => {
   it("renders Grid by default and switches to each view by clicking the tab", () => {
     renderEditor(KANBAN_BASE);
     // Grid view shows the column-header buttons (sortable field names).
-    // We assert per-tab content by switching and checking.
-    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    // We assert per-tab content by switching and checking. Scope the
+    // count to the "Base view" tablist — the multi-table TableTabs
+    // strip is a separate tablist that also exposes role="tab".
+    const viewTablist = screen.getByRole("tablist", { name: "Base view" });
+    expect(within(viewTablist).getAllByRole("tab")).toHaveLength(6);
     expect(screen.getByRole("tab", { name: "Grid" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -456,5 +466,106 @@ describe("BaseEditor.removeField — drops stale view state", () => {
     // old column headers.
     expect(screen.queryByText(/Todo \(1\)/)).toBeNull();
     expect(screen.queryByText(/Doing \(1\)/)).toBeNull();
+  });
+});
+
+describe("BaseEditor grid filtering — computed timestamp columns", () => {
+  // Regression: a `created_time` column's grid filter must compare
+  // against the SAME locale-formatted string the cell renders
+  // ("Jan 15, 2024"), not the raw ISO ("2024-01-15T…") that the CSV
+  // exporter emits. Typing the locale month name into the filter used
+  // to match nothing because the ISO contains "01", not "Jan".
+  const JAN_ISO = "2024-01-15T10:00:00.000Z";
+  const JUN_ISO = "2024-06-20T10:00:00.000Z";
+
+  function filterInputFor(columnName: string): HTMLElement {
+    const header = screen
+      .getByRole("button", { name: new RegExp(`^${columnName}`) })
+      .closest("th");
+    if (!header) throw new Error(`No header th for column ${columnName}`);
+    return within(header as HTMLElement).getByPlaceholderText("Filter…");
+  }
+
+  it("filters created_time by the locale display string, not the ISO", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Created", type: "created_time" },
+      ],
+      records: [
+        { Title: "January Row", __created: JAN_ISO, __modified: JAN_ISO },
+        { Title: "June Row", __created: JUN_ISO, __modified: JUN_ISO },
+      ],
+    });
+
+    // Both rows visible before filtering (text cells are <input>s, so
+    // assert via their display value).
+    expect(screen.getByDisplayValue("January Row")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("June Row")).toBeInTheDocument();
+
+    // Derive the alphabetic month token from the SAME formatter the
+    // cell uses, so the test is locale-independent. It must not appear
+    // in the raw ISO (which only has digits for the month).
+    const janMonth = (formatTimestamp(JAN_ISO, false).match(/[A-Za-z]{3,}/) ?? [
+      "Jan",
+    ])[0];
+    expect(JAN_ISO.toLowerCase()).not.toContain(janMonth.toLowerCase());
+
+    fireEvent.change(filterInputFor("Created"), {
+      target: { value: janMonth },
+    });
+
+    expect(screen.getByDisplayValue("January Row")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("June Row")).toBeNull();
+  });
+});
+
+describe("BaseEditor grid sorting — computed timestamp columns", () => {
+  // Regression: sorting a `created_time` / `modified_time` column must
+  // order CHRONOLOGICALLY. These columns render a locale date string
+  // ("Jan 15, 2024"), and the filter path deliberately compares that
+  // display text — but the SORT path must use the raw ISO timestamp,
+  // otherwise `localeCompare` orders the month NAMES alphabetically
+  // ("Apr" < "Jan") instead of by date (Jan < Apr).
+  const JAN_ISO = "2024-01-15T10:00:00.000Z";
+  const APR_ISO = "2024-04-10T10:00:00.000Z";
+  const DEC_ISO = "2024-12-01T10:00:00.000Z";
+
+  function headerButton(columnName: string): HTMLElement {
+    return screen.getByRole("button", {
+      name: new RegExp(`^${columnName}`),
+    });
+  }
+
+  it("sorts created_time chronologically, not alphabetically by month name", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Created", type: "created_time" },
+      ],
+      // Insert out of order; months chosen so chronological order
+      // (Jan, Apr, Dec) differs from alphabetical (Apr, Dec, Jan).
+      records: [
+        { Title: "Dec Row", __created: DEC_ISO, __modified: DEC_ISO },
+        { Title: "Jan Row", __created: JAN_ISO, __modified: JAN_ISO },
+        { Title: "Apr Row", __created: APR_ISO, __modified: APR_ISO },
+      ],
+    });
+
+    // Click the column header to sort ascending.
+    fireEvent.click(headerButton("Created"));
+
+    const jan = screen.getByDisplayValue("Jan Row");
+    const apr = screen.getByDisplayValue("Apr Row");
+    const dec = screen.getByDisplayValue("Dec Row");
+
+    // Chronological ascending: Jan precedes Apr precedes Dec. An
+    // alphabetical (buggy) sort would order Apr, Dec, Jan instead.
+    expect(
+      jan.compareDocumentPosition(apr) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      apr.compareDocumentPosition(dec) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

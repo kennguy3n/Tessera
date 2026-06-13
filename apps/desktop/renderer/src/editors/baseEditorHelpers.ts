@@ -37,8 +37,19 @@ import type { BaseViewConfig } from "./baseviews/types";
  *
  * Kept here (next to `makeRecordId`) so the invariant lives in the
  * same module as the function that mints the identifier.
+ *
+ * The `__`-prefixed entries are the intrinsic record-metadata keys
+ * (`RECORD_CREATED_KEY` / `RECORD_MODIFIED_KEY` / `RECORD_COMMENTS_KEY`):
+ * they live alongside user field values on a `BaseRecord` and back the
+ * `created_time` / `modified_time` field types and the comments
+ * timeline, so a user field named `__created` would clobber them.
  */
-export const RESERVED_FIELD_NAMES: ReadonlySet<string> = new Set(["id"]);
+export const RESERVED_FIELD_NAMES: ReadonlySet<string> = new Set([
+  "id",
+  "__created",
+  "__modified",
+  "__comments",
+]);
 
 export function isReservedFieldName(name: string): boolean {
   return RESERVED_FIELD_NAMES.has(name.trim());
@@ -437,7 +448,13 @@ export function isComputedFieldType(type: FieldType): boolean {
     type === "formula" ||
     type === "rollup" ||
     type === "lookup" ||
-    type === "auto_number"
+    type === "auto_number" ||
+    // `created_time` / `modified_time` read the record's intrinsic
+    // metadata (never a stored cell value), so filter + sort must
+    // compare the computed display string — same contract as the
+    // other computed types above.
+    type === "created_time" ||
+    type === "modified_time"
   );
 }
 
@@ -714,13 +731,34 @@ export function matchesFilter(
  * Devin Review on PR #79 flagged the duplication between rename and
  * import paths.
  */
-export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<keyof BaseViewConfig> = [
+/**
+ * Keys of {@link BaseViewConfig} that store a `string | null` field
+ * name (as opposed to the non-pointer grid knobs `gridRowHeight` /
+ * `gridFrozenCount`). Restricting the constant to exactly these keys
+ * lets the rename / prune loops index `config[k]` as `string | null`
+ * and assign `null` / a new name without TS widening to `never`.
+ */
+export type ViewConfigFieldPointer = {
+  [K in keyof BaseViewConfig]: BaseViewConfig[K] extends string | null
+    ? // Require genuine nullability so the non-null `gridRowHeight`
+      // literal union (`"short" | "medium" | ...`, which also extends
+      // `string`) is excluded — only the `string | null` field-name
+      // pointers qualify.
+      null extends BaseViewConfig[K]
+      ? K
+      : never
+    : never;
+}[keyof BaseViewConfig];
+
+export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<ViewConfigFieldPointer> = [
   "kanbanGroupField",
   "calendarDateField",
   "timelineStartField",
   "timelineEndField",
   "galleryCoverField",
   "titleField",
+  "gridGroupField",
+  "gridColorField",
 ];
 
 /**
