@@ -210,7 +210,7 @@ export function buildPresentationHtml(
   <div class="bar">
     <span class="counter"><span id="pos"></span> / <span id="total"></span></span>
     <span id="role-label"></span>
-    <span class="elapsed" id="elapsed" title="Elapsed presenting time (P pause, R reset)">0:00</span>
+    <span class="elapsed" id="elapsed" title="Elapsed presenting time (P pause/resume, R reset & resume)">0:00</span>
     <span class="clock" id="clock"></span>
     <span class="blank-state" id="blank-state"></span>
   </div>
@@ -352,9 +352,14 @@ export function buildPresentationHtml(
       e.preventDefault(); writeIndex(0); render();
     } else if (e.key === "End") {
       e.preventDefault(); writeIndex(total - 1); render();
-    } else if (e.key === "p" || e.key === "P") {
+    } else if ((e.key === "p" || e.key === "P") && role === "presenter") {
+      // Timer keys are presenter-only state, so they are scoped to the
+      // presenter window (the audience has no timer to control and
+      // shouldn't swallow the keystroke). Blank keys below stay global
+      // because the blank state is shared and toggling it from either
+      // window is valid.
       e.preventDefault(); toggleTimer();
-    } else if (e.key === "r" || e.key === "R") {
+    } else if ((e.key === "r" || e.key === "R") && role === "presenter") {
       e.preventDefault(); resetTimer();
     } else if (e.key === "b" || e.key === "B") {
       e.preventDefault(); toggleBlank("black");
@@ -372,7 +377,8 @@ export function buildPresentationHtml(
   // Elapsed presenting timer (presenter view only — the bar is hidden
   // for the audience window). Independent of the wall clock: it counts
   // real elapsed presenting time and supports pause/resume (P) and
-  // reset (R). State is per-window and intentionally NOT synced across
+  // reset (R, which also resumes so R always yields a fresh running
+  // timer). State is per-window and intentionally NOT synced across
   // the two windows — there is only ever one presenter view, and the
   // audience never shows it.
   var elapsedMs = 0;
@@ -409,6 +415,7 @@ export function buildPresentationHtml(
   function resetTimer() {
     elapsedMs = 0;
     timerAnchor = Date.now();
+    timerRunning = true;
     renderTimers();
   }
   renderTimers();

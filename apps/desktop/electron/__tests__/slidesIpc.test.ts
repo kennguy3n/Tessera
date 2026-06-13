@@ -225,6 +225,25 @@ describe("buildPresentationHtml", () => {
     expect(html).toMatch(/e\.key === "r" \|\| e\.key === "R"/);
   });
 
+  it("scopes the presenter-only timer keys to the presenter window", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // P/R mutate presenter-only state, so they are gated on the role and
+    // must not preventDefault in the audience window.
+    expect(html).toContain('(e.key === "p" || e.key === "P") && role === "presenter"');
+    expect(html).toContain('(e.key === "r" || e.key === "R") && role === "presenter"');
+    // Blank keys stay global (shared state, valid from either window).
+    expect(html).toContain('} else if (e.key === "b" || e.key === "B") {');
+  });
+
+  it("resets the timer to a fresh running state (reset also resumes)", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // resetTimer zeroes elapsed AND resumes, so R always yields a running
+    // 0:00 rather than a paused 0:00.
+    expect(html).toContain(
+      "function resetTimer() {\n    elapsedMs = 0;\n    timerAnchor = Date.now();\n    timerRunning = true;",
+    );
+  });
+
   it("renders an hours component only once past the first hour", () => {
     // formatElapsed lives inside the generated script, so assert its
     // contract structurally: minutes:seconds by default, with an hours
