@@ -49,6 +49,28 @@ export interface CellFormat {
 }
 
 /**
+ * A column-scoped data-validation rule. `list` constrains a cell to a
+ * fixed set of values (rendered as a dropdown); `checkbox` constrains
+ * it to `TRUE`/`FALSE` (rendered as a checkbox). A blank cell always
+ * satisfies a rule — validation constrains entered values, it does not
+ * force a value.
+ *
+ * Serialised 1:1 to JSON so the artifact round-trips through
+ * `parseSheetContent`/`JSON.stringify`; producers may omit it and
+ * consumers must tolerate it being absent.
+ */
+export type DataValidation =
+  | { kind: "list"; values: string[] }
+  | { kind: "checkbox" };
+
+/**
+ * Column-index → validation map. Keys are the zero-based column index
+ * stringified (`"2"`), matching the sparse-keying style used elsewhere
+ * in this module. Absent ⇒ the column accepts any value.
+ */
+export type ValidationMap = Record<string, DataValidation>;
+
+/**
  * Comparison operators a conditional-formatting rule can test a cell's
  * value against. Numeric operators (`gt`/`gte`/`lt`/`lte`) coerce both
  * sides to numbers and never match non-numeric cells; the text
@@ -130,6 +152,11 @@ export interface SheetTab {
    */
   conditionalRules?: ConditionalFormatRule[];
   /**
+   * Optional column-scoped data-validation rules (dropdown / checkbox),
+   * keyed by stringified column index. Omitted ⇒ no validation.
+   */
+  validations?: ValidationMap;
+  /**
    * per-column pixel widths. Sparse: an entry of
    * `undefined` (or an index past the array end) means "use the
    * grid's default column width". Persisted so widths survive
@@ -193,6 +220,13 @@ export interface SheetContent {
    * through plain `JSON.stringify`/`parseSheetContent`; absent ⇒ none.
    */
   conditionalRules?: ConditionalFormatRule[];
+  /**
+   * Data-validation rules for the active (legacy) sheet, keyed by
+   * stringified column index. Stored at the top level so the
+   * single-sheet editor round-trips them through plain
+   * `JSON.stringify`/`parseSheetContent`; absent ⇒ none.
+   */
+  validations?: ValidationMap;
   /**
    * optional workbook-level named ranges. Persisted on
    * the artifact JSON so the XLSX exporter can emit `<definedName>`

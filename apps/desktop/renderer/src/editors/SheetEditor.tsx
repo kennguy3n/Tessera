@@ -22,6 +22,7 @@ import type {
   ConditionalFormatRule,
   SheetContent,
   SheetNamedRange,
+  ValidationMap,
 } from "./sheetEditorTypes";
 import {
   NUMBER_FORMAT_PRESETS,
@@ -33,7 +34,14 @@ import {
 } from "./sheetFormatting";
 import { conditionalStyleForCell } from "./sheetConditionalFormatting";
 import { sortSheetByColumn } from "./sheetSort";
+import {
+  CHECKBOX_FALSE,
+  CHECKBOX_TRUE,
+  getColumnValidation,
+  isValueAllowed,
+} from "./sheetDataValidation";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
+import { DataValidationPanel } from "./components/DataValidationPanel";
 import { NamedRangePanel } from "./components/NamedRangePanel";
 import { SheetAiPanel } from "./components/SheetAiPanel";
 import {
@@ -132,6 +140,8 @@ export default function SheetEditor({
   const [nrOpen, setNrOpen] = useState(false);
   // AI assistant panel visibility.
   const [aiOpen, setAiOpen] = useState(false);
+  // Data-validation manager visibility.
+  const [dvOpen, setDvOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -276,6 +286,12 @@ export default function SheetEditor({
   );
 
   const startEdit = (rowIdx: number, colIdx: number) => {
+    // Checkbox cells are toggled via their checkbox, never text-edited.
+    if (
+      getColumnValidation(sheet.validations, colIdx)?.kind === "checkbox"
+    ) {
+      return;
+    }
     const value = sheet.rows[rowIdx]?.[colIdx] ?? "";
     setEditingCell({ row: rowIdx, col: colIdx });
     setSelection(selectionFromCell({ row: rowIdx, col: colIdx }));
@@ -563,6 +579,23 @@ export default function SheetEditor({
         const next: SheetContent = { ...prev };
         if (ranges.length === 0) delete next.namedRanges;
         else next.namedRanges = ranges;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Replace the active sheet's data-validation rules and persist. An
+  // empty/undefined map drops the field so a sheet with no validations
+  // stays byte-identical to its pre-feature JSON.
+  const setValidations = useCallback(
+    (validations: ValidationMap | undefined) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (!validations || Object.keys(validations).length === 0)
+          delete next.validations;
+        else next.validations = validations;
         debouncedSave(next);
         return next;
       });
@@ -1228,6 +1261,18 @@ export default function SheetEditor({
         >
           AI assistant
         </button>
+        <button
+          type="button"
+          className={dvOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={dvOpen}
+          data-testid="sheet-data-validation-toggle"
+          onClick={() => setDvOpen((open) => !open)}
+        >
+          Data validation
+          {sheet.validations && Object.keys(sheet.validations).length > 0
+            ? ` (${Object.keys(sheet.validations).length})`
+            : ""}
+        </button>
       </div>
 
       <div
@@ -1335,6 +1380,15 @@ export default function SheetEditor({
           selectionRef={selectionRef}
           onChange={setNamedRanges}
           onClose={() => setNrOpen(false)}
+        />
+      )}
+
+      {dvOpen && (
+        <DataValidationPanel
+          columns={sheet.columns}
+          validations={sheet.validations ?? {}}
+          onChange={setValidations}
+          onClose={() => setDvOpen(false)}
         />
       )}
 
@@ -1576,6 +1630,14 @@ export default function SheetEditor({
                     })();
                   const rawValue = row[ci] ?? "";
                   const displayValue = getCellDisplay(rawValue, ri, ci);
+                  // Column data-validation (dropdown / checkbox), if any.
+                  const validation = getColumnValidation(
+                    sheet.validations,
+                    ci,
+                  );
+                  const invalidValue =
+                    validation !== undefined &&
+                    !isValueAllowed(validation, rawValue);
                   // Conditional formatting reacts to the *displayed*
                   // value (computed result for formulas), translated
                   // through the same `cellFormatStyle` used by manual
@@ -1656,7 +1718,49 @@ export default function SheetEditor({
                       }
                       onDoubleClick={() => startEdit(ri, ci)}
                     >
-                      {isEditing ? (
+                      {validation?.kind === "checkbox" ? (
+                        <input
+                          type="checkbox"
+                          className="sheet-cell-checkbox"
+                          data-testid={`sheet-checkbox-${ri}-${ci}`}
+                          checked={rawValue === CHECKBOX_TRUE}
+                          aria-label={`${columnLabel(ci)}${ri + 1} checkbox`}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() =>
+                            updateCell(
+                              ri,
+                              ci,
+                              rawValue === CHECKBOX_TRUE
+                                ? CHECKBOX_FALSE
+                                : CHECKBOX_TRUE,
+                            )
+                          }
+                        />
+                      ) : isEditing && validation?.kind === "list" ? (
+                        <select
+                          className="sheet-cell-select"
+                          data-testid={`sheet-select-${ri}-${ci}`}
+                          aria-label={`${columnLabel(ci)}${ri + 1} value`}
+                          autoFocus
+                          value={
+                            validation.values.includes(rawValue)
+                              ? rawValue
+                              : ""
+                          }
+                          onChange={(e) => {
+                            updateCell(ri, ci, e.target.value);
+                            setEditingCell(null);
+                          }}
+                          onBlur={() => setEditingCell(null)}
+                        >
+                          <option value="">(blank)</option>
+                          {validation.values.map((v) => (
+                            <option key={v} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      ) : isEditing ? (
                         <input
                           ref={inputRef}
                           className="sheet-cell-input"
@@ -1669,6 +1773,24 @@ export default function SheetEditor({
                         <span className="sheet-cell-display">
                           {displayValue}
                         </span>
+                      )}
+                      {invalidValue && !isEditing && (
+                        <span
+                          className="sheet-dv-invalid"
+                          data-testid={`sheet-dv-invalid-${ri}-${ci}`}
+                          aria-label="Value not allowed by data validation"
+                          title="Value not in the column's allowed list"
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            right: 0,
+                            width: 0,
+                            height: 0,
+                            borderTop:
+                              "6px solid var(--color-danger, #d93025)",
+                            borderLeft: "6px solid transparent",
+                          }}
+                        />
                       )}
                       {isFillHandle && (
                         <span
