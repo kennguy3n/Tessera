@@ -910,7 +910,10 @@
   color: var(--color-danger);
 }
 
-.toolbar-btn-danger:hover {
+/* Raise specificity to (0,2,0) so it wins over the generic
+   `.toolbar-btn:hover` rule that follows in source order — otherwise the
+   danger hover feedback never renders. */
+.toolbar-btn.toolbar-btn-danger:hover {
   background: var(--color-danger-bg);
   border-color: var(--color-danger-light);
 }
