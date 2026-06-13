@@ -17,11 +17,11 @@
  *
  * with the `rate = 0` degenerate case (`pv + pmt·nper + fv = 0`) handled
  * separately to avoid a divide-by-zero. The amortisation helpers (`IPMT`,
- * `PPMT`, `CUMIPMT`, `CUMPRINC`) and the rate-solvers (`RATE`, `IRR`, `XIRR`)
+ * `PPMT`, `CUMIPMT`, `CUMPRINC`) and the rate-solvers (`IRR`, `XIRR`)
  * are built on top of those primitives and mirror numpy-financial / Excel
  * results to within floating-point tolerance.
  *
- * Iterative solvers (`RATE`, `IRR`, `XIRR`) use Newton–Raphson seeded from a
+ * Iterative solvers (`IRR`, `XIRR`) use Newton–Raphson seeded from a
  * caller-supplied (or default `0.1`) guess and fall back to bisection over a
  * wide bracket when the derivative misbehaves, returning `#NUM!` only when no
  * root can be found — never an infinite loop or a `NaN` leaking into the grid.
@@ -200,6 +200,14 @@ const NPER: FunctionImpl = (args, ctx) => {
   if (rate === 0) {
     if (pmt === 0) return makeError("#NUM!", "NPER: pmt must be non-zero");
     return -(pv + fv) / pmt;
+  }
+  // The result is `log(ratio) / log(1 + rate)`, so `1 + rate` must be a valid
+  // logarithm base (> 0). `rate === -1` makes the denominator `log(0) = -∞`,
+  // and a finite numerator over `-∞` collapses to a silently-wrong `±0` that
+  // slips past `guardFinite` (±0 is finite); `rate < -1` makes it `NaN`. Reject
+  // the whole `rate ≤ -1` domain up front, matching Excel's `#NUM!`.
+  if (1 + rate <= 0) {
+    return makeError("#NUM!", "NPER: rate must be greater than -100%");
   }
   const z = pmt * (1 + rate * when);
   const num1 = z - fv * rate;
@@ -487,17 +495,39 @@ function readDatedFlows(
   ctx: EvaluationContext,
   label: string,
 ): { values: number[]; dates: number[] } | FormulaError {
-  const values = collectNumbers([valuesArg], ctx);
-  if (isFormulaError(values)) return values;
-  const dates = collectNumbers([datesArg], ctx);
-  if (isFormulaError(dates)) return dates;
-  if (values.length !== dates.length) {
+  // Read both columns *positionally* — every cell, blanks included — rather
+  // than via `collectNumbers`, which silently drops blanks/text. Each flow is
+  // a `(value, date)` pair at the same index, so dropping blanks independently
+  // would desynchronise the two arrays: e.g. one blank value in row 3 and one
+  // blank date in row 7 both vanish, the length check still passes, and every
+  // value from row 3 on gets paired with the wrong date. Excel rejects blanks
+  // here rather than skipping them, so a blank/text cell on either side is an
+  // error and the surviving pairs stay correctly aligned.
+  const rawValues = [...collectValues(valuesArg, ctx)];
+  for (const v of rawValues) if (isFormulaError(v)) return v;
+  const rawDates = [...collectValues(datesArg, ctx)];
+  for (const d of rawDates) if (isFormulaError(d)) return d;
+  if (rawValues.length !== rawDates.length) {
     return makeError("#NUM!", `${label}: values and dates must be the same size`);
   }
-  if (values.length < 2) {
+  if (rawValues.length < 2) {
     return makeError("#NUM!", `${label} needs at least two cash flows`);
   }
-  return { values, dates: dates.map((d) => Math.trunc(d)) };
+  const values: number[] = [];
+  const dates: number[] = [];
+  for (let i = 0; i < rawValues.length; i++) {
+    const value = rawValues[i];
+    const date = rawDates[i];
+    if (typeof value !== "number" || typeof date !== "number") {
+      return makeError(
+        "#NUM!",
+        `${label}: every value must pair with a date (no blank or text cells)`,
+      );
+    }
+    values.push(value);
+    dates.push(Math.trunc(date));
+  }
+  return { values, dates };
 }
 
 /** Continuous (Actual/365) discounted value used by XNPV / XIRR. */
@@ -580,8 +610,14 @@ const DB: FunctionImpl = (args, ctx) => {
   if (isFormulaError(cost)) return cost;
   const salvage = num(args[1], ctx);
   if (isFormulaError(salvage)) return salvage;
-  const life = num(args[2], ctx);
-  if (isFormulaError(life)) return life;
+  const lifeRaw = num(args[2], ctx);
+  if (isFormulaError(lifeRaw)) return lifeRaw;
+  // Excel truncates `life` to an integer too: the fixed declining rate uses
+  // `1 / life` and the schedule runs over whole periods `1..life` with a stub
+  // at `life + 1`. Leaving `life` fractional would both compute a wrong rate
+  // and make the stub check `period === life + 1` unreachable (period is an
+  // integer, so `7 === 7.5` never holds) — a spurious `#NUM!`.
+  const life = Math.trunc(lifeRaw);
   const periodRaw = num(args[3], ctx);
   if (isFormulaError(periodRaw)) return periodRaw;
   // Excel truncates `period` to an integer (the schedule is per whole period);

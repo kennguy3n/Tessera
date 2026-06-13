@@ -127,6 +127,15 @@ describe("PMT / FV / PV / NPER — time value of money", () => {
     expect(code(evalFormula("=PV(-1.5, 2.5, 100)"))).toBe("#NUM!");
     expect(code(evalFormula("=PMT(-1.5, 2.5, 100)"))).toBe("#NUM!");
   });
+
+  it("rejects NPER at rate <= -100% as #NUM! (not a silently-wrong 0)", () => {
+    // rate = -1 makes the denominator log(1 + rate) = log(0) = -Infinity, so a
+    // finite numerator collapses to ±0 — finite, so it would slip past the
+    // non-finite guard as a wrong answer. rate < -1 makes it NaN. Both are
+    // outside NPER's domain and must surface as #NUM!.
+    expect(code(evalFormula("=NPER(-1, -100, 1000)"))).toBe("#NUM!");
+    expect(code(evalFormula("=NPER(-2, -100, 1000)"))).toBe("#NUM!");
+  });
 });
 
 describe("IPMT / PPMT / CUMIPMT / CUMPRINC — amortisation", () => {
@@ -248,11 +257,40 @@ describe("XNPV / XIRR — dated cash flows", () => {
   });
 
   it("XNPV rejects mismatched value/date counts", () => {
+    // A1:A3 has three values but B1:B2 only two dates → the ranges differ in
+    // size, which can never form valid (value, date) pairs.
+    const grid: string[][] = [
+      ["-100", "=DATE(2020,1,1)"],
+      ["200", "=DATE(2020,6,1)"],
+      ["300", ""],
+    ];
+    expect(code(evalFormula("=XNPV(0.1, A1:A3, B1:B2)", grid))).toBe("#NUM!");
+  });
+
+  it("XNPV rejects a value whose paired date cell is blank (no silent skip)", () => {
+    // Equal-length ranges, but B2 is blank. Skipping it (the old behaviour)
+    // would mis-pair the 200 with the wrong date; the positional reader rejects
+    // the pair instead so the remaining flows stay aligned.
     const grid: string[][] = [
       ["-100", "=DATE(2020,1,1)"],
       ["200", ""],
     ];
     expect(code(evalFormula("=XNPV(0.1, A1:A2, B1:B2)", grid))).toBe("#NUM!");
+  });
+
+  it("XNPV/XIRR do not silently mispair when blanks straddle the two columns", () => {
+    // The dangerous case the length check alone misses: a blank *value* in one
+    // row and a blank *date* in a different row cancel out in the counts, so
+    // the old skip-based reader paired 300 with the second date (wrong row).
+    // Positional reading rejects the blanks rather than producing a plausible
+    // but incorrect answer.
+    const grid: string[][] = [
+      ["-100", "=DATE(2020,1,1)"],
+      ["", "=DATE(2020,6,1)"],
+      ["300", ""],
+    ];
+    expect(code(evalFormula("=XNPV(0.1, A1:A3, B1:B3)", grid))).toBe("#NUM!");
+    expect(code(evalFormula("=XIRR(A1:A3, B1:B3)", grid))).toBe("#NUM!");
   });
 });
 
@@ -288,6 +326,22 @@ describe("depreciation — SLN / SYD / DB / DDB", () => {
     );
     expect(numberValue("=DB(1000000, 100000, 6, 2.9, 7)")).toBeCloseTo(
       numberValue("=DB(1000000, 100000, 6, 2, 7)"),
+      6,
+    );
+  });
+
+  it("DB truncates a fractional life to an integer (rate + reachable stub)", () => {
+    // life 6.9 truncates to 6: the declining rate (1/life) and the schedule
+    // (periods 1..6, stub at 7) are defined per whole period, so a fractional
+    // life must match the truncated one rather than computing a different rate.
+    expect(numberValue("=DB(1000000, 100000, 6.9, 2, 7)")).toBeCloseTo(
+      numberValue("=DB(1000000, 100000, 6, 2, 7)"),
+      6,
+    );
+    // The stub period (life + 1 = 7) stays reachable for a fractional life —
+    // without truncation `7 === 7.5` fails and DB returns a spurious #NUM!.
+    expect(numberValue("=DB(1000000, 100000, 6.5, 7, 7)")).toBeCloseTo(
+      numberValue("=DB(1000000, 100000, 6, 7, 7)"),
       6,
     );
   });
