@@ -23,7 +23,7 @@
  * prompt/response content.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GenerateChunk } from "../types/ipc";
 import {
   notifyGenerationStarted,
@@ -159,13 +159,20 @@ export function useDocumentAi(): UseDocumentAiResult {
     setError(null);
   }, [teardownSubscription]);
 
-  return {
-    status,
-    output,
-    error,
-    isStreaming: status === "streaming",
-    run,
-    cancel,
-    reset,
-  };
+  // Memoise the result so consumers get a stable object identity across
+  // renders (the callbacks are already stable via useCallback). This keeps
+  // downstream `useCallback`/`useEffect` deps that close over the hook
+  // result from re-firing on every parent render.
+  return useMemo(
+    () => ({
+      status,
+      output,
+      error,
+      isStreaming: status === "streaming",
+      run,
+      cancel,
+      reset,
+    }),
+    [status, output, error, run, cancel, reset],
+  );
 }

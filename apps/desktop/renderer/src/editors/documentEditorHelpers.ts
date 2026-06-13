@@ -40,8 +40,12 @@ export {
  * (e.g. `<script>…`, `<iframe>…`, `<style>…`) can't slip a node into
  * the editor by accident. Tags here match the set of nodes TipTap's
  * `StarterKit` + this editor's enabled extensions can produce on
- * `getHTML()`. Add a new tag here when adding the corresponding
- * TipTap extension; otherwise the round-trip will lose data.
+ * `getHTML()` — including the custom block nodes (`callout` and
+ * `tableOfContents` serialise to `<div>`, `toggle` to `<details>`).
+ * Add a new tag here when adding the corresponding TipTap extension;
+ * otherwise a document whose FIRST block is that node falls through to
+ * the plain-text branch and the entire document is HTML-escaped (i.e.
+ * silently corrupted) on the next mount.
  *
  * NOTE: the entries are lowercase and matched against the lowercased
  * input. Self-closing tags (e.g. `<hr />`) are matched without the
@@ -70,6 +74,7 @@ export const TRUSTED_LEADING_TAGS: readonly string[] = [
   "hr",
   "br",
   "div",
+  "details", // ToggleNode (collapsible) serialises to <details data-type="toggle">
   "span",
   "img",
   "a",

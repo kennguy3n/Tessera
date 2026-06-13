@@ -19,15 +19,24 @@ export interface HeadingEntry {
   id: string;
 }
 
-/** Slugify heading text for anchor ids. Deterministic + ASCII-safe. */
+/**
+ * Slugify heading text for anchor ids. Deterministic and Unicode-aware:
+ * lowercase, then collapse every run of non-alphanumeric characters to a
+ * single `-`, then trim leading/trailing `-`. Unicode letters and digits
+ * are KEPT (e.g. "Café Crème" → "café-crème", "概述" → "概述") so
+ * non-Latin headings produce meaningful slugs rather than empty strings.
+ *
+ * This intentionally mirrors the Rust exporter's `slugify`
+ * (`crates/tessera_export/src/html.rs`) character-for-character. (The
+ * in-app id additionally appends `-<pos>` for uniqueness; the export
+ * disambiguates collisions with a numeric suffix — but the slug stem
+ * each derives from identical heading text is the same.)
+ */
 export function slugifyHeading(text: string): string {
   return text
     .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /**

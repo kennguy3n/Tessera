@@ -189,6 +189,15 @@ describe("slugifyHeading", () => {
   it("returns empty string for punctuation-only input", () => {
     expect(slugifyHeading("!!!")).toBe("");
   });
+  it("keeps Unicode letters/digits so non-Latin headings get real slugs (parity with the Rust exporter)", () => {
+    // Mirrors crates/tessera_export/src/html.rs::slugify, which keeps
+    // Unicode alphanumerics. A pure-ASCII slugifier would mangle these.
+    expect(slugifyHeading("Café Crème")).toBe("café-crème");
+    expect(slugifyHeading("概述")).toBe("概述");
+    expect(slugifyHeading("Q3 — Metrics")).toBe("q3-metrics");
+    // Underscores and other separators collapse to a single dash.
+    expect(slugifyHeading("Hello_World")).toBe("hello-world");
+  });
 });
 
 describe("reading time", () => {

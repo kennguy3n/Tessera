@@ -42,6 +42,19 @@ describe("parseDocumentContent — artifact text → TipTap-friendly HTML", () =
     expect(parseDocumentContent("   <p>spaced</p>")).toBe("   <p>spaced</p>");
   });
 
+  it("preserves a document whose FIRST block is a toggle (<details>) — regression for the escape-on-reload bug", () => {
+    // ToggleNode serialises to <details>; if `details` is missing from
+    // TRUSTED_LEADING_TAGS the whole document falls through to the
+    // plain-text branch and is HTML-escaped (corrupted) on reload.
+    const html =
+      '<details data-type="toggle" open="open"><summary>Notes</summary>' +
+      '<div data-type="toggle-body"><p>Hidden body</p></div></details>' +
+      "<p>Trailing paragraph</p>";
+    expect(parseDocumentContent(html)).toBe(html);
+    // It must NOT be escaped.
+    expect(parseDocumentContent(html)).not.toContain("&lt;details");
+  });
+
   it("wraps plain text into paragraphs and escapes HTML special chars (defence against `<script>` paste)", () => {
     // Two paragraphs separated by a blank line. Each `\n` becomes `<br>`.
     const text = "Line 1\nLine 2\n\nNext para";
@@ -412,6 +425,11 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
       // type="taskList" on a <div>, TextStyle marks on a <span>).
       ["div", "task-list wrapper + arbitrary block extensions"],
       ["span", "@tiptap/extension-text-style (attribute carrier)"],
+      // Custom block nodes (this editor's own extensions). callout +
+      // tableOfContents serialise to <div> (covered above); toggle
+      // serialises to <details> and MUST be trusted or a toggle-first
+      // document is escaped/corrupted on reload.
+      ["details", "ToggleExtension (toggle node serialises to <details>)"],
     ];
     for (const [tag, source] of required) {
       expect(
@@ -504,6 +522,61 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
             `it must be in TRUSTED_LEADING_TAGS or parseDocumentContent will escape the document on reload.`,
         ).toContain(tag);
       }
+    }
+  });
+
+  it("dynamic introspection: every custom block node's leading serialisation tag is trusted", async () => {
+    // The StarterKit test above pins the framework nodes; this one
+    // walks THIS editor's own custom block extensions — the class
+    // BUG-0001 belonged to (ToggleNode → <details>). For each, we
+    // invoke `renderHTML` to read the ACTUAL leading tag it emits and
+    // assert that tag is trusted. Adding a custom node whose root tag
+    // isn't on the allowlist fails here, preventing the
+    // escape-on-reload corruption from ever recurring.
+    const [{ CalloutNode }, { ToggleNode }, { TableOfContentsNode }] =
+      await Promise.all([
+        import("../extensions/CalloutExtension"),
+        import("../extensions/ToggleExtension"),
+        import("../extensions/TableOfContentsExtension"),
+      ]);
+
+    // Minimal node stub exposing the attrs the renderHTML callbacks
+    // read (ToggleNode reads `summary`; the others read none).
+    type RenderFn = (props: {
+      node: { attrs: Record<string, unknown> };
+      HTMLAttributes: Record<string, unknown>;
+    }) => unknown;
+    const stubNode = {
+      attrs: { summary: "", open: true, variant: "info", icon: "•" },
+    };
+
+    const customNodes = [CalloutNode, ToggleNode, TableOfContentsNode];
+    for (const ext of customNodes) {
+      const renderHTML = ext.config.renderHTML as unknown as
+        | RenderFn
+        | null
+        | undefined;
+      expect(
+        typeof renderHTML === "function",
+        `custom node "${ext.name}" must define renderHTML`,
+      ).toBe(true);
+
+      const spec = (renderHTML as RenderFn)({
+        node: stubNode,
+        HTMLAttributes: {},
+      });
+      expect(
+        Array.isArray(spec) && typeof spec[0] === "string",
+        `custom node "${ext.name}" renderHTML must emit a [tag, …] spec`,
+      ).toBe(true);
+
+      const tag = (spec as [string, ...unknown[]])[0].toLowerCase();
+      expect(
+        TRUSTED_LEADING_TAGS,
+        `custom node "${ext.name}" serialises as leading <${tag}>; it must ` +
+          `be in TRUSTED_LEADING_TAGS or parseDocumentContent will escape ` +
+          `(corrupt) the document on reload.`,
+      ).toContain(tag);
     }
   });
 });

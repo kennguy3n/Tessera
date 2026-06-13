@@ -30,12 +30,22 @@ fn is_visual_artifact_type(t: ArtifactType) -> bool {
 pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 
-    // Mermaid runtime is only meaningful when the content is markdown that
-    // can carry ```mermaid``` fences. Pre-rendered HTML from visual artifact
-    // types doesn't go through `mermaid::extract_blocks` (the layout uses
-    // inline `<svg>` from `embedIcons` instead), so we skip the detection
-    // and avoid emitting an unused CDN <script> for those exports.
+    // Mermaid runtime is only meaningful for markdown-shaped content that can
+    // carry ```mermaid``` fences. We skip the scan entirely for:
+    //   (a) pre-rendered visual artifacts — their layout inlines <svg> from
+    //       `embedIcons`, never a fence; and
+    //   (b) HTML documents from the TipTap editor — there a diagram is a
+    //       `<div data-type="mermaid">` node, NOT a fence, so scanning the
+    //       HTML can only ever false-positive on a literal "```mermaid" typed
+    //       inside a code block, which would inject an inert external CDN
+    //       <script> (a needless network dependency for local-first tenants)
+    //       and still wouldn't render those nodes.
+    // `looks_like_html` is a cheap leading-byte check placed before the O(n)
+    // fence scan, so HTML docs short-circuit before doing the scan at all.
+    // Genuine markdown exports start with markdown (so `looks_like_html` is
+    // false) and keep their mermaid runtime.
     let has_mermaid = !is_visual_artifact_type(artifact.artifact_type)
+        && !looks_like_html(&artifact.content)
         && !mermaid::extract_blocks(&artifact.content).is_empty();
 
     output.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
@@ -281,8 +291,12 @@ fn decode_entities(text: &str) -> String {
 }
 
 /// Build a URL-fragment slug from heading text. Mirrors the renderer-side
-/// `slugifyHeading` heuristic (lowercase, alphanumerics kept, every other run
-/// collapsed to a single `-`, no leading/trailing `-`).
+/// `slugifyHeading` (`documentOutlineHelpers.ts`) character-for-character:
+/// lowercase, every run of non-alphanumeric characters collapsed to a single
+/// `-`, no leading/trailing `-`. Both sides keep UNICODE alphanumerics
+/// (`char::is_alphanumeric` here, `\p{L}\p{N}` there) so a heading like
+/// "Café Crème" or "概述" slugs identically in-app and in the export — keep
+/// the two in lockstep if you touch either.
 fn slugify(text: &str) -> String {
     let mut out = String::new();
     let mut pending_dash = false;
@@ -712,6 +726,31 @@ mod tests {
         artifact.update_content("## Section\n\nJust prose.".to_string());
         let html = export_html(&artifact, &[]);
         assert!(!html.contains("mermaid.initialize"));
+    }
+
+    #[test]
+    fn export_html_does_not_inject_mermaid_runtime_for_html_documents() {
+        // An edited Document persists `editor.getHTML()`, so its content is an
+        // HTML fragment. A real diagram is a `<div data-type="mermaid">` node
+        // (no markdown fence), and a user can legitimately type the literal
+        // text "```mermaid" inside a code block. Neither should drag in the
+        // external mermaid CDN <script>: the node renderer doesn't use it and
+        // the code-block text is just prose. Gating the scan on
+        // `!looks_like_html` keeps local-first exports free of needless
+        // network dependencies.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<p>Here is an example fence:</p>\
+<pre><code class=\"language-text\">```mermaid\nflowchart LR\nA--&gt;B\n```</code></pre>\
+<div data-type=\"mermaid\" data-dsl=\"flowchart LR\nA--&gt;B\"></div>"
+                .to_string(),
+        );
+        let html = export_html(&artifact, &[]);
+        // No external CDN runtime is injected for HTML documents.
+        assert!(!html.contains("mermaid.initialize"));
+        assert!(!html.contains("cdn.jsdelivr.net"));
+        // The document body itself is still inlined verbatim.
+        assert!(html.contains("<div data-type=\"mermaid\""));
     }
 
     #[test]
