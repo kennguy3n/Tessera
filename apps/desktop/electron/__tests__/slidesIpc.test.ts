@@ -238,8 +238,9 @@ describe("buildPresentationHtml", () => {
   it("ticks the timer only in the presenter window", () => {
     const html = buildPresentationHtml(normalizePresentation(SAMPLE));
     // The interval is gated on the presenter role so the hidden audience
-    // bar doesn't do wasted DOM writes every 500ms.
-    expect(html).toContain('if (role === "presenter") {\n    renderTimers();\n    setInterval(renderTimers, 500);');
+    // bar doesn't do wasted DOM writes every 500ms. Its handle is kept so
+    // pagehide can clear it (see the cleanup test below).
+    expect(html).toContain('var timerInterval = null;\n  if (role === "presenter") {\n    renderTimers();\n    timerInterval = setInterval(renderTimers, 500);');
   });
 
   it("cleans up its localStorage sync keys when the window closes", () => {
@@ -249,6 +250,9 @@ describe("buildPresentationHtml", () => {
     expect(html).toContain('window.addEventListener("pagehide"');
     expect(html).toContain("window.localStorage.removeItem(KEY)");
     expect(html).toContain("window.localStorage.removeItem(BLANK_KEY)");
+    // The 500ms timer interval is cleared on the same teardown so it
+    // can't keep firing against a tearing-down document.
+    expect(html).toContain("if (timerInterval !== null) clearInterval(timerInterval);");
     // The storage listener ignores removals so teardown cleanup in one
     // window doesn't transiently re-render / un-blank the sibling.
     expect(html).toContain("if (e.newValue === null) return;");
