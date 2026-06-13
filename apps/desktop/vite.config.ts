@@ -14,7 +14,12 @@ export default defineConfig(({ mode }) => ({
   // relative URLs (`./assets/main-abc.js`) which resolve correctly under
   // `file://`. The dev server runs from `http://localhost:5173/` so relative
   // and absolute base both work in dev.
-  base: "./",
+  //
+  // The `qa` bundle is the exception: it is served over HTTP at the server
+  // root by `preview:qa` and navigated to *deep* SPA routes (e.g.
+  // `/artifacts/:id/edit`). Relative asset URLs would resolve against the
+  // deep path and 404, leaving a blank page — so QA uses an absolute base.
+  base: mode === "qa" ? "/" : "./",
   build: {
     // The `qa` mode (`build:qa`) emits a parallel, showcase-enabled
     // bundle into `renderer-dist-qa/` so it never clobbers the real

@@ -408,6 +408,7 @@ export default function SourcesPage() {
                     checked={selectedIds.has(source.id)}
                     onChange={() => toggleSelected(source.id)}
                     data-testid={`source-select-${source.id}`}
+                    aria-label={`Select ${source.path}`}
                     style={{ marginTop: 6 }}
                   />
                   <div>

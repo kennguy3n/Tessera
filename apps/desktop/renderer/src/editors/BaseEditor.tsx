@@ -2332,10 +2332,16 @@ interface CellInputProps {
   // sole edit surface and can't be overwritten by an inline edit
   // committed while the user types in the modal).
   isExpanded?: boolean;
+  // Accessible name for the cell's form control. The grid's column header
+  // does not name a native control, so each editable cell needs its own
+  // label; computed once in `CellInput` (field name + row) and threaded down.
+  ariaLabel?: string;
 }
 
 function CellInput(props: CellInputProps) {
   const { field } = props;
+  const ariaLabel = `${field.name}, row ${props.recordIndex + 1}`;
+  props = { ...props, ariaLabel };
   switch (field.type) {
     case "checkbox":
       return <CheckboxCell {...props} />;
@@ -2387,39 +2393,42 @@ function CellInput(props: CellInputProps) {
   }
 }
 
-function TextCell({ value, onChange }: CellInputProps) {
+function TextCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="text"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-function CheckboxCell({ value, onChange }: CellInputProps) {
+function CheckboxCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="checkbox"
+      aria-label={ariaLabel}
       checked={Boolean(value)}
       onChange={(e) => onChange(e.target.checked)}
     />
   );
 }
 
-function NumberCell({ value, onChange }: CellInputProps) {
+function NumberCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="number"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
     />
   );
 }
 
-function DateCell({ field, value, onChange }: CellInputProps) {
+function DateCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   // `dateIncludeTime` switches the native picker to `datetime-local`.
   // The two input types use different value formats — `YYYY-MM-DD` vs
   // `YYYY-MM-DDTHH:mm` — so we normalise the stored string to the
@@ -2440,6 +2449,7 @@ function DateCell({ field, value, onChange }: CellInputProps) {
       <input
         type="datetime-local"
         className="base-cell-input"
+        aria-label={ariaLabel}
         value={local}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -2449,6 +2459,7 @@ function DateCell({ field, value, onChange }: CellInputProps) {
     <input
       type="date"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={raw.includes("T") ? raw.slice(0, 10) : raw}
       onChange={(e) => onChange(e.target.value)}
     />
@@ -2459,11 +2470,12 @@ function DateCell({ field, value, onChange }: CellInputProps) {
 // no central identity directory, so we store the name the user types
 // rather than resolving against a remote roster — keeping the field
 // fully usable offline and in the packaged app.
-function UserCell({ value, onChange }: CellInputProps) {
+function UserCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="text"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="Collaborator"
@@ -2497,10 +2509,11 @@ function TimestampCell({
   );
 }
 
-function SelectCell({ field, value, onChange }: CellInputProps) {
+function SelectCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   return (
     <select
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
     >
@@ -2514,11 +2527,12 @@ function SelectCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
-function UrlCell({ value, onChange }: CellInputProps) {
+function UrlCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="url"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="https://..."
@@ -2526,11 +2540,12 @@ function UrlCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function EmailCell({ value, onChange }: CellInputProps) {
+function EmailCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="email"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="name@example.com"
@@ -2538,11 +2553,12 @@ function EmailCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function PhoneCell({ value, onChange }: CellInputProps) {
+function PhoneCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="tel"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="+1 555-0123"
@@ -2550,7 +2566,7 @@ function PhoneCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function CurrencyCell({ field, value, onChange }: CellInputProps) {
+function CurrencyCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   const symbol = field.currencySymbol ?? "$";
   return (
     <div className="base-cell-currency" style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
@@ -2559,6 +2575,7 @@ function CurrencyCell({ field, value, onChange }: CellInputProps) {
         type="number"
         step="0.01"
         className="base-cell-input"
+        aria-label={ariaLabel}
         value={value != null ? String(value) : ""}
         onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
       />
@@ -2566,7 +2583,7 @@ function CurrencyCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
-function PercentCell({ field, value, onChange }: CellInputProps) {
+function PercentCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   // Defense in depth: `parseBaseContent` runs every field through
   // `sanitizeBaseField`, which already clamps `percentPrecision` to
   // [0,20]. We re-clamp here so an in-memory mutation (e.g. a future
@@ -2589,6 +2606,7 @@ function PercentCell({ field, value, onChange }: CellInputProps) {
         type="number"
         step={1 / Math.pow(10, precision)}
         className="base-cell-input"
+        aria-label={ariaLabel}
         value={displayed}
         onChange={(e) =>
           onChange(e.target.value === "" ? null : Number(e.target.value) / 100)
@@ -2648,7 +2666,7 @@ function formatDurationMinutes(value: unknown): string {
   return `${hh}:${String(mm).padStart(2, "0")}`;
 }
 
-function DurationCell({ value, onChange }: CellInputProps) {
+function DurationCell({ value, onChange, ariaLabel }: CellInputProps) {
   // Stored as integer minutes; rendered as h:mm. We keep a local
   // `draft` string so users can type freely (intermediate keystrokes
   // like `"2"` or `"2:"` are not valid h:mm but must be allowed) —
@@ -2685,6 +2703,7 @@ function DurationCell({ value, onChange }: CellInputProps) {
     <input
       type="text"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={text}
       placeholder="h:mm"
       onChange={(e) => setDraft(e.target.value)}

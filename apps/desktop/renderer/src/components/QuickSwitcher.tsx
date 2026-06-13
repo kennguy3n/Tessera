@@ -393,6 +393,11 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           className="qs-list-scroll"
           onScroll={onScroll}
           data-testid="quick-switcher-scroll"
+          // The results can overflow and scroll; make the region keyboard
+          // focusable so keyboard-only users can scroll it directly (the
+          // combobox arrow-key navigation already scrolls the active option
+          // into view, but the region must be reachable on its own too).
+          tabIndex={0}
         >
           <ul className="qs-list" role="listbox" id={listboxId}>
             {ranked.length === 0 && renderStatus()}

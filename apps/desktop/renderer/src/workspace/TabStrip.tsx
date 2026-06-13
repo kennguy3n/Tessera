@@ -253,55 +253,68 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
           const isActive = tab.id === active.id;
           const title = tabTitleForPath(tab.path);
           const linked = leaf.followPaneId !== undefined;
+          // The tab itself is the only role="tab" — a closable tab cannot
+          // own a nested interactive close button (that violates ARIA's
+          // `nested-interactive`) nor sit beside a sibling button inside the
+          // tablist (that violates `aria-required-children`). So the close
+          // affordance is a presentational glyph inside the tab, and closing
+          // is wired through the tab's own handlers: clicking the glyph,
+          // middle-click, the Delete/Backspace shortcut, or the context menu.
           return (
-            <div
+            <button
               key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-keyshortcuts="Delete"
               className={`workspace-tab ${isActive ? "is-active" : ""} ${
                 dropIndex === i ? "drop-before" : ""
               }`}
+              title={`${tab.path} — press Delete to close`}
               draggable
               onDragStart={(e) => onTabDragStart(e, tab.id)}
               onDragOver={(e) => onTabDragOver(e, i)}
               onContextMenu={(e) => openTabMenu(e, tab.id)}
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                className="workspace-tab-button"
-                title={tab.path}
-                onClick={() => activateTab(leaf.id, tab.id)}
-                onAuxClick={(e) => {
-                  // Middle-click closes the tab (browser-style).
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    closeTab(leaf.id, tab.id);
-                  }
-                }}
-              >
-                {isActive && linked && (
-                  <Link2
-                    size={12}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                    className="workspace-tab-link-icon"
-                  />
-                )}
-                {title}
-              </button>
-              <button
-                type="button"
-                className="workspace-tab-close"
-                aria-label={`Close ${title} tab`}
-                title="Close tab"
-                onClick={(e) => {
-                  e.stopPropagation();
+              onClick={(e) => {
+                // Clicking the close glyph closes; anywhere else activates.
+                if ((e.target as HTMLElement).closest(".workspace-tab-close")) {
+                  e.preventDefault();
                   closeTab(leaf.id, tab.id);
-                }}
+                  return;
+                }
+                activateTab(leaf.id, tab.id);
+              }}
+              onAuxClick={(e) => {
+                // Middle-click closes the tab (browser-style).
+                if (e.button === 1) {
+                  e.preventDefault();
+                  closeTab(leaf.id, tab.id);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Delete" || e.key === "Backspace") {
+                  e.preventDefault();
+                  closeTab(leaf.id, tab.id);
+                }
+              }}
+            >
+              {isActive && linked && (
+                <Link2
+                  size={12}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                  className="workspace-tab-link-icon"
+                />
+              )}
+              <span className="workspace-tab-label">{title}</span>
+              <span
+                className="workspace-tab-close"
+                aria-hidden="true"
+                title="Close tab"
               >
-                <X size={14} strokeWidth={2} aria-hidden="true" />
-              </button>
-            </div>
+                <X size={14} strokeWidth={2} />
+              </span>
+            </button>
           );
         })}
         {dropIndex === leaf.tabs.length && (

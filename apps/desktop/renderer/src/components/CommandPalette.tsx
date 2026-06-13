@@ -675,7 +675,9 @@ export default function CommandPalette({
         }
         .cmdk-tag-pinned {
           background: var(--color-warning-bg, var(--color-bg-secondary));
-          color: var(--color-warning, var(--color-text-body));
+          /* warning-fg pairs with warning-bg for AA contrast; the brand
+             warning (#f59e0b) only made ~1.9:1 on the amber chip. */
+          color: var(--color-warning-fg, var(--color-text-body));
         }
         .cmdk-tag-recent {
           background: var(--color-primary-light);

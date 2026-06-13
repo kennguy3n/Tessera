@@ -639,6 +639,10 @@ export default function ArtifactEditorPage() {
                 border: "1px solid var(--color-border)",
                 borderRadius: "var(--radius-sm)",
                 background: "var(--color-bg-elevated, #fff)",
+                // Explicit themed text colour — without it the native control
+                // falls back to UA black, which fails contrast on the dark
+                // elevated background.
+                color: "var(--color-text-body)",
                 fontSize: "var(--font-size-sm)",
               }}
             >

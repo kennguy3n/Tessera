@@ -412,7 +412,15 @@ npm run lint --workspace=apps/desktop
 
 # Type-check
 npm run type-check --workspace=apps/desktop
+
+# Quality gates — performance budgets, accessibility, visual regression
+npm run perf:budgets                              # interaction/render budgets
+npm run qa:a11y --workspace=apps/desktop          # browser axe-core pass
+npm run qa:visual --workspace=apps/desktop        # visual-regression snapshots
 ```
+
+See [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md) for how each gate works,
+how to read failures, and how to update budgets/baselines.
 
 ### Development
 

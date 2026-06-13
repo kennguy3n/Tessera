@@ -65,7 +65,10 @@ export default function PinButton({
           border-color: var(--color-primary, currentColor);
         }
         .pin-button-active {
-          color: var(--color-warning, #b58105);
+          /* warning-fg for the label/icon so the pinned text clears AA on a
+             white toolbar (brand #f59e0b only made ~2.1:1); the border keeps
+             the brighter brand amber as a non-text state ring. */
+          color: var(--color-warning-fg, #92400e);
           border-color: var(--color-warning, #b58105);
         }
       `}</style>

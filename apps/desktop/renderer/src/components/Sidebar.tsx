@@ -329,7 +329,10 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
         .sidebar-kbd {
           margin-left: auto;
           font-size: var(--font-size-xs);
-          color: var(--color-text-secondary);
+          /* Body (not secondary) text: secondary on the bg-secondary chip
+             only reaches ~4.4:1, just under the 4.5:1 AA floor for this
+             12px text. Body text clears it in both themes. */
+          color: var(--color-text-body);
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
           padding: 1px 4px;
           border-radius: 4px;
