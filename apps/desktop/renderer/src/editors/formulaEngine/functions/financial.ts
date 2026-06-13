@@ -311,6 +311,9 @@ function cumulative(
   if (isFormulaError(typeRaw)) return typeRaw;
   const when = toWhen(typeRaw, label);
   if (isFormulaError(when)) return when;
+  // CUMIPMT/CUMPRINC require a strictly positive rate (Excel parity). This is
+  // intentionally stricter than IPMT/PPMT, which accept rate = 0 as a flat
+  // zero-interest split — do not "harmonize" the two; the asymmetry is by spec.
   if (rate <= 0 || nper <= 0 || pv <= 0) {
     return makeError("#NUM!", `${label}: rate, nper and pv must be positive`);
   }
