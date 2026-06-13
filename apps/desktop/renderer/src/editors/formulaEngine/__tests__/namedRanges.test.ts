@@ -143,6 +143,47 @@ describe("evaluator named-range resolution", () => {
   });
 });
 
+describe("conditional aggregation over a named range", () => {
+  // SUMIF/COUNTIF/AVERAGEIF must expand a named range to every cell it
+  // covers — not collapse it to its first cell via implicit
+  // intersection — so a name behaves exactly like the literal range it
+  // points at.
+  const GRID = [
+    ["paid", "10"],
+    ["unpaid", "20"],
+    ["paid", "30"],
+    ["paid", "40"],
+  ];
+  const RANGES = [
+    { name: "Status", range: "A1:A4" },
+    { name: "Amount", range: "B1:B4" },
+    { name: "FirstAmount", range: "B1" },
+  ];
+
+  it("SUMIF tests every cell of a named criteria/sum range", () => {
+    // paid rows are 10 + 30 + 40 = 80; the named-range and literal forms agree.
+    expect(evalWithNames('=SUMIF(Status,"paid",Amount)', GRID, RANGES)).toBe(80);
+    expect(evalWithNames('=SUMIF(A1:A4,"paid",B1:B4)', GRID, RANGES)).toBe(80);
+  });
+  it("SUMIF with a numeric criterion over a named range", () => {
+    expect(evalWithNames('=SUMIF(Amount,">=30")', GRID, RANGES)).toBe(70);
+  });
+  it("COUNTIF counts every matching cell of a named range", () => {
+    expect(evalWithNames('=COUNTIF(Status,"paid")', GRID, RANGES)).toBe(3);
+  });
+  it("AVERAGEIF averages every matching cell of a named range", () => {
+    // (10 + 30 + 40) / 3
+    expect(
+      evalWithNames('=AVERAGEIF(Status,"paid",Amount)', GRID, RANGES),
+    ).toBeCloseTo(80 / 3);
+  });
+  it("a single-cell named range still behaves like that one cell", () => {
+    // FirstAmount = B1 (value 10); only matches the ">=10" criterion once.
+    expect(evalWithNames('=SUMIF(FirstAmount,">=10")', GRID, RANGES)).toBe(10);
+    expect(evalWithNames('=COUNTIF(FirstAmount,">=10")', GRID, RANGES)).toBe(1);
+  });
+});
+
 describe("dependency extraction with named ranges", () => {
   it("expands a name to the cells it covers", () => {
     const names = buildNamesMap([{ name: "Revenue", range: "A1:A3" }]);
