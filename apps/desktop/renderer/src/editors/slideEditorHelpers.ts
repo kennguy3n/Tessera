@@ -16,6 +16,7 @@ import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
 import { DEFAULT_SLIDE_THEME_ID, isKnownSlideThemeId } from "./slideThemes";
 import { getSlideLayout } from "./slideLayouts";
+import type { ChartData } from "./sheetCharts";
 import type {
   Slide,
   SlideBlock,
@@ -187,7 +188,12 @@ export function backfillSlideIds(slides: readonly Slide[]): Slide[] {
 export function parseSlideContent(content: string): ParsedSlideContent {
   const emptyDefault: ParsedSlideContent = {
     slides: backfillSlideIds([
-      { id: "", title: "Title Slide", blocks: [{ id: "", type: "text", content: "" }], notes: "" },
+      {
+        id: "",
+        title: "Title Slide",
+        blocks: [{ id: "", type: "text", content: "" }],
+        notes: "",
+      },
     ]),
     marpMode: false,
     marpSource: "",
@@ -197,7 +203,11 @@ export function parseSlideContent(content: string): ParsedSlideContent {
   if (!content) return emptyDefault;
   try {
     const parsed = JSON.parse(content) as SlideContent;
-    if (parsed.slides && Array.isArray(parsed.slides) && parsed.slides.length > 0) {
+    if (
+      parsed.slides &&
+      Array.isArray(parsed.slides) &&
+      parsed.slides.length > 0
+    ) {
       return {
         slides: backfillSlideIds(parsed.slides),
         marpMode: parsed.marp?.enabled ?? false,
@@ -211,7 +221,12 @@ export function parseSlideContent(content: string): ParsedSlideContent {
   }
   return {
     slides: backfillSlideIds([
-      { id: "", title: "Slide 1", blocks: [{ id: "", type: "text", content }], notes: "" },
+      {
+        id: "",
+        title: "Slide 1",
+        blocks: [{ id: "", type: "text", content }],
+        notes: "",
+      },
     ]),
     marpMode: false,
     marpSource: "",
@@ -273,6 +288,21 @@ function renderSlideAsMarp(slide: Slide): string {
       if (lines.length > 0) parts.push(lines.join("\n"));
     } else if (block.type === "diagram") {
       parts.push("```mermaid\n" + content + "\n```");
+    } else if (block.type === "table") {
+      // A table block's content is already GitHub-flavoured Markdown,
+      // which Marp renders natively. Re-serialise through the parser so
+      // a half-typed / pipe-ragged source still exports a well-formed
+      // table (and a separator row is inserted when the user omitted
+      // one). If nothing parses, fall back to the raw content.
+      const table = parseSlideTable(content);
+      parts.push(table ? tableToMarkdown(table) : content);
+    } else if (block.type === "chart") {
+      // Charts have no Markdown primitive; export the underlying data
+      // as a table so the numbers survive into PPTX/PDF/HTML. Fall back
+      // to the raw DSL when it doesn't parse (e.g. a half-typed block)
+      // so the content is never silently dropped on export.
+      const chart = parseSlideChart(content);
+      parts.push(chart ? chartToMarkdownTable(chart) : content);
     } else if (block.type === "image") {
       // Render as Markdown image so Marp emits a real <img>.
       // `content` is the source URL (typically an inlined data:image/…
@@ -411,8 +441,8 @@ export function applyMarpToShadow(
 ): void {
   const supportsConstructable =
     typeof CSSStyleSheet !== "undefined" &&
-    typeof (CSSStyleSheet.prototype as { replaceSync?: unknown }).replaceSync ===
-      "function" &&
+    typeof (CSSStyleSheet.prototype as { replaceSync?: unknown })
+      .replaceSync === "function" &&
     "adoptedStyleSheets" in shadow;
 
   if (supportsConstructable) {
@@ -528,9 +558,7 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
       return {
         id: baseId,
         title: "Section Title",
-        blocks: [
-          buildBlock({ type: "text", content: "", slot: "subtitle" }),
-        ],
+        blocks: [buildBlock({ type: "text", content: "", slot: "subtitle" })],
         notes: "",
         layout,
       };
@@ -636,20 +664,18 @@ function materialiseBlueprintBlock(blueprint: {
  * template's placeholder content. Returns the slides array ready
  * to replace the deck.
  */
-export function buildDeckFromTemplate(
-  template: {
-    slides: ReadonlyArray<{
-      layout: SlideLayout;
-      title: string;
-      blocks: ReadonlyArray<{
-        type: SlideBlock["type"];
-        content: string;
-        slot?: string;
-      }>;
-      notes?: string;
+export function buildDeckFromTemplate(template: {
+  slides: ReadonlyArray<{
+    layout: SlideLayout;
+    title: string;
+    blocks: ReadonlyArray<{
+      type: SlideBlock["type"];
+      content: string;
+      slot?: string;
     }>;
-  },
-): Slide[] {
+    notes?: string;
+  }>;
+}): Slide[] {
   return template.slides.map((ts) => ({
     id: newSlideId("slide"),
     title: ts.title,
@@ -664,17 +690,15 @@ export function buildDeckFromTemplate(
  * Returns a real `Slide` with fresh ids and the preset's placeholder
  * content, ready to be inserted into the deck at the active position.
  */
-export function buildSlideFromPreset(
-  preset: {
-    layout: SlideLayout;
-    title: string;
-    blocks: ReadonlyArray<{
-      type: SlideBlock["type"];
-      content: string;
-      slot?: string;
-    }>;
-  },
-): Slide {
+export function buildSlideFromPreset(preset: {
+  layout: SlideLayout;
+  title: string;
+  blocks: ReadonlyArray<{
+    type: SlideBlock["type"];
+    content: string;
+    slot?: string;
+  }>;
+}): Slide {
   return {
     id: newSlideId("slide"),
     title: preset.title,
@@ -728,11 +752,7 @@ export function duplicateSlideAt(
  * return the input reference unchanged so callers can use `===` to
  * short-circuit a re-render (same contract as `moveBlock`).
  */
-export function moveSlide(
-  slides: Slide[],
-  from: number,
-  to: number,
-): Slide[] {
+export function moveSlide(slides: Slide[], from: number, to: number): Slide[] {
   if (
     from < 0 ||
     from >= slides.length ||
@@ -851,7 +871,9 @@ export function appendBlock(slide: Slide, block: SlideBlock): Slide {
   // Defence-in-depth: callers should construct blocks via `buildBlock`,
   // but if a caller passes a block without an `id` we mint one so the
   // helper's contract ("every block in a Slide has an id") holds.
-  const withId: SlideBlock = block.id ? block : { ...block, id: newSlideId("block") };
+  const withId: SlideBlock = block.id
+    ? block
+    : { ...block, id: newSlideId("block") };
   return { ...slide, blocks: [...slide.blocks, withId] };
 }
 
@@ -914,6 +936,318 @@ export const DEFAULT_DIAGRAM_DSL = `flowchart LR
   Source --> Process --> Output`;
 
 /**
+ * Starter GitHub-flavoured Markdown table seeded into a new `table`
+ * block. A header row, the `---` separator (so the preview renders a
+ * real `<thead>`), and one data row give the user an immediately
+ * editable, meaningful grid.
+ */
+export const DEFAULT_TABLE_MD = `| Metric | Q1 | Q2 |
+| --- | --- | --- |
+| Revenue | 10 | 14 |`;
+
+/**
+ * Starter data DSL seeded into a new `chart` block. The grammar is one
+ * directive per line: `type:` (bar/line/pie), `title:` (optional),
+ * `labels:` (the category axis), then one `name: v, v, …` line per
+ * series. Parsed by {@link parseSlideChart}.
+ */
+export const DEFAULT_CHART_DSL = `type: bar
+title: Quarterly revenue
+labels: Q1, Q2, Q3, Q4
+Revenue: 10, 14, 12, 18`;
+
+/** A parsed slide table: a header row plus zero or more body rows. */
+export interface SlideTable {
+  header: string[];
+  rows: string[][];
+}
+
+/**
+ * Parse a GitHub-flavoured Markdown pipe table out of a `table` block's
+ * content. Tolerant of the optional leading/trailing `|` on each row
+ * and of the `| --- | :--: |` alignment separator (which is detected
+ * and dropped rather than rendered as data). Returns `null` when there
+ * is no usable row, so the preview can fall back to a placeholder.
+ *
+ * Every cell is split on unescaped `|`; a backslash-escaped `\|` is
+ * unescaped to a literal pipe so a cell can contain the delimiter.
+ */
+export function parseSlideTable(content: string): SlideTable | null {
+  const rows: string[][] = [];
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    const cells = splitTableRow(line);
+    // A GFM alignment separator row (`---`, `:--`, `--:`, `:-:`) carries
+    // no data; skip it so it never shows up as a body row.
+    if (cells.every((c) => /^:?-{1,}:?$/.test(c.replace(/\s/g, "")))) {
+      continue;
+    }
+    rows.push(cells);
+  }
+  if (rows.length === 0) return null;
+  const [header, ...body] = rows;
+  const width = rows.reduce((max, r) => Math.max(max, r.length), 0);
+  const pad = (r: string[]) =>
+    r.length === width ? r : [...r, ...Array(width - r.length).fill("")];
+  return { header: pad(header), rows: body.map(pad) };
+}
+
+/** Split one pipe-table row into trimmed, unescaped cells. */
+function splitTableRow(line: string): string[] {
+  // Strip a single leading pipe so `| a | b` and `a | b` both start at
+  // the first cell. The trailing terminator pipe is NOT stripped by
+  // regex (that would also eat an escaped `\|` ending the row); instead
+  // we detect an *unescaped* trailing pipe and drop the empty cell it
+  // produces after scanning. A `\|` is always a literal pipe.
+  const trimmed = line.replace(/^\s*\|/, "");
+  // True when the row ends with an unescaped `|` (optionally followed by
+  // whitespace): that pipe is the row terminator, not a literal cell.
+  const endsWithTerminator = /(^|[^\\])\|\s*$/.test(trimmed);
+  const cells: string[] = [];
+  let current = "";
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch === "\\" && trimmed[i + 1] === "|") {
+      current += "|";
+      i++;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  // Drop the empty trailing cell produced by the terminator pipe (e.g.
+  // `| a | b |` → ["a", "b", ""] → ["a", "b"]), but keep it when the row
+  // had no terminator (so a genuinely escaped trailing pipe survives).
+  if (
+    endsWithTerminator &&
+    cells.length > 1 &&
+    cells[cells.length - 1] === ""
+  ) {
+    cells.pop();
+  }
+  return cells;
+}
+
+/**
+ * Serialise a parsed {@link SlideTable} back to well-formed GitHub-
+ * flavoured Markdown: a header row, a `---` separator (always inserted),
+ * then the body rows. A cell's literal `|` is re-escaped so the output
+ * round-trips through {@link parseSlideTable}.
+ */
+export function tableToMarkdown(table: SlideTable): string {
+  const escape = (cell: string) => cell.replace(/\|/g, "\\|");
+  const row = (cells: string[]) => `| ${cells.map(escape).join(" | ")} |`;
+  const lines = [
+    row(table.header),
+    `| ${table.header.map(() => "---").join(" | ")} |`,
+    ...table.rows.map(row),
+  ];
+  return lines.join("\n");
+}
+
+/** Chart kinds a slide `chart` block can render (mirrors `ChartMarks`). */
+export type SlideChartType = "bar" | "line" | "pie";
+
+/** A parsed slide chart: render type, optional title, and plot data. */
+export interface SlideChartSpec {
+  type: SlideChartType;
+  title?: string;
+  data: ChartData;
+}
+
+const SLIDE_CHART_TYPES: readonly SlideChartType[] = ["bar", "line", "pie"];
+
+/**
+ * Parse a `chart` block's data DSL into a {@link SlideChartSpec}.
+ *
+ * Grammar (one directive per line, order-independent for the directives
+ * but series are plotted in source order):
+ *   - `type: bar|line|pie`  — defaults to `bar` when absent/unknown
+ *   - `title: <text>`       — optional figure caption
+ *   - `labels: a, b, c`     — the category axis (comma-separated)
+ *   - `<name>: v, v, v`     — one numeric series; blank / non-numeric
+ *     cells become `null` so the geometry leaves a gap rather than
+ *     drawing through missing data
+ *
+ * Escaping: comma and colon are the cell / key delimiters, so a label
+ * or series name that needs a literal `,` or `:` writes it as `\,` /
+ * `\:` — e.g. `Revenue\, FY24` is one label, and `EMEA\: West: 10, 12`
+ * is a series literally named `EMEA: West`. An escaped comma inside a
+ * numeric cell doubles as a thousands separator (`1\,000` → `1000`).
+ *
+ * Returns `null` when there is not a single series line, so the preview
+ * can show a placeholder instead of an empty axis.
+ */
+export function parseSlideChart(content: string): SlideChartSpec | null {
+  let type: SlideChartType = "bar";
+  let title: string | undefined;
+  let labels: string[] = [];
+  const series: ChartData["series"] = [];
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    // Split on the first UNESCAPED colon so a series name can carry a
+    // literal colon written as `\:`. The key is then unescaped; the
+    // value is split later by `splitCsvCells` (also escape-aware).
+    const sep = indexOfUnescaped(line, ":");
+    if (sep === -1) continue;
+    const key = unescapeChartCell(line.slice(0, sep).trim());
+    const value = line.slice(sep + 1).trim();
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === "type") {
+      const candidate = value.toLowerCase() as SlideChartType;
+      if (SLIDE_CHART_TYPES.includes(candidate)) type = candidate;
+      continue;
+    }
+    if (lowerKey === "title") {
+      title = value ? unescapeChartCell(value) : undefined;
+      continue;
+    }
+    if (lowerKey === "labels") {
+      labels = splitCsvCells(value);
+      continue;
+    }
+    series.push({
+      name: key,
+      values: splitCsvCells(value).map(toNumberOrNull),
+    });
+  }
+  if (series.length === 0) return null;
+  // Normalise to a single rectangular width = the longest of the label
+  // list and every series. Pad labels (missing ones become "") AND every
+  // series' values (missing ones become `null`). Padding the *values* is
+  // essential: the layout helpers iterate `0..labels.length` and read
+  // `values[ci]`, so a short series would otherwise yield `undefined`,
+  // which slips past the `=== null` / `<= 0` guards and produces NaN SVG
+  // geometry (a `<rect>` with NaN height, or a polyline point `x,NaN`
+  // that corrupts the whole line).
+  const width = series.reduce(
+    (max, s) => Math.max(max, s.values.length),
+    labels.length,
+  );
+  if (labels.length < width) {
+    labels = [...labels, ...Array(width - labels.length).fill("")];
+  }
+  const padded = series.map((s) =>
+    s.values.length < width
+      ? {
+          ...s,
+          values: [
+            ...s.values,
+            ...Array<number | null>(width - s.values.length).fill(null),
+          ],
+        }
+      : s,
+  );
+  return { type, title, data: { labels, series: padded } };
+}
+
+/**
+ * Index of the first occurrence of `ch` in `line` that is not escaped.
+ * The only escape sequences are `\,` and `\:` — matching
+ * {@link splitCsvCells} / {@link unescapeChartCell} so all three share
+ * one escape vocabulary. A `\:` is therefore skipped when scanning for a
+ * `:` delimiter, but a lone backslash (e.g. in `C:\path`) is an ordinary
+ * character and never masks the delimiter that follows it.
+ */
+function indexOfUnescaped(line: string, ch: string): number {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\\" && (line[i + 1] === "," || line[i + 1] === ":")) {
+      i++; // skip the escaped delimiter
+      continue;
+    }
+    if (line[i] === ch) return i;
+  }
+  return -1;
+}
+
+/**
+ * Unescape the chart-DSL escape sequences `\,` and `\:` to their literal
+ * characters. Applied after splitting on the *unescaped* delimiters so a
+ * label or series name can itself contain a comma or colon.
+ */
+function unescapeChartCell(cell: string): string {
+  return cell.replace(/\\([,:])/g, "$1");
+}
+
+/**
+ * Split a comma-separated cell list on UNESCAPED commas, so a single
+ * cell can contain a literal comma written as `\,` (e.g.
+ * `Revenue\, FY24, Costs` → `["Revenue, FY24", "Costs"]`). Each cell is
+ * trimmed and has its `\,` / `\:` escapes resolved.
+ */
+function splitCsvCells(value: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "\\" && (value[i + 1] === "," || value[i + 1] === ":")) {
+      current += value[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+/** Coerce a cell to a finite number, or `null` for blanks / non-numbers. */
+function toNumberOrNull(cell: string): number | null {
+  if (cell === "") return null;
+  // Tolerate a leading currency symbol / trailing percent the user might
+  // paste. A bare comma can only reach here from an escaped `\,`, so we
+  // also strip it — it can only be a thousands separator (`1\,000`).
+  const cleaned = cell.replace(/[$%,\s]/g, "");
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Serialise a parsed chart to a GitHub-flavoured Markdown table for the
+ * Marp export pipeline. Charts have no Markdown primitive, so the
+ * exported deck shows the underlying data as a table (labelled with the
+ * chart title) rather than dropping the block entirely — the numbers
+ * survive into PPTX/PDF/HTML even though the SVG does not.
+ */
+export function chartToMarkdownTable(spec: SlideChartSpec): string {
+  // Escape literal pipes in labels / series names so a value containing
+  // `|` can't break the column count (matches `tableToMarkdown`).
+  const escape = (cell: string) => cell.replace(/\|/g, "\\|");
+  const lines: string[] = [];
+  if (spec.title?.trim()) {
+    // Escape Markdown emphasis markers in the title so a title that
+    // itself contains `*`/`_` can't corrupt the surrounding `**…**`
+    // bold wrapper (e.g. `Revenue **FY24**`).
+    const title = spec.title.trim().replace(/([*_])/g, "\\$1");
+    lines.push(`**${title}**`, "");
+  }
+  const header = ["", ...spec.data.labels.map(escape)];
+  lines.push(`| ${header.join(" | ")} |`);
+  lines.push(`| ${header.map(() => "---").join(" | ")} |`);
+  for (const s of spec.data.series) {
+    const cells = spec.data.labels.map((_, i) => {
+      const v = s.values[i];
+      return v === null || v === undefined ? "" : String(v);
+    });
+    lines.push(`| ${[escape(s.name), ...cells].join(" | ")} |`);
+  }
+  return lines.join("\n");
+}
+
+/**
  * Pure transition function for the type-select dropdown: returns the
  * `SlideBlock` value that should replace `block` when the user picks
  * `nextType` from the type picker.
@@ -936,16 +1270,25 @@ export const DEFAULT_DIAGRAM_DSL = `flowchart LR
  *     intent (an image's URL is not the same kind of thing as prose
  *     or a mermaid DSL).
  *
- * If the user picks `diagram` and the current content is empty, we
- * seed the well-known starter DSL so the Marp preview shows
- * something meaningful immediately. Otherwise content is kept
- * verbatim so toggling `text` ↔ `bullets` is non-destructive (a
- * common workflow when rewriting an outline as prose or vice versa).
+ * If the user picks a structured type (`diagram` / `table` / `chart`)
+ * and the current content is empty, we seed that type's well-known
+ * starter so the preview shows something meaningful immediately.
+ * Otherwise content is kept verbatim so toggling `text` ↔ `bullets`
+ * is non-destructive (a common workflow when rewriting an outline as
+ * prose or vice versa).
  *
  * The `alt` field is only meaningful for image blocks, so it's set
  * to `undefined` whenever the new type is not `image` (this also
  * frees the saved JSON of a dead `alt` field on non-image blocks).
  */
+/** Starter content for a structured block type, or `""` for free text. */
+function starterFor(type: SlideBlock["type"]): string {
+  if (type === "diagram") return DEFAULT_DIAGRAM_DSL;
+  if (type === "table") return DEFAULT_TABLE_MD;
+  if (type === "chart") return DEFAULT_CHART_DSL;
+  return "";
+}
+
 export function nextBlockForTypeChange(
   block: SlideBlock,
   nextType: SlideBlock["type"],
@@ -968,15 +1311,14 @@ export function nextBlockForTypeChange(
   // not survive into a `<textarea>`, and why prose must not survive
   // into the image-source field).
   const carried = wasImage || becomesImage ? "" : block.content;
-  // Step 2 — seed the diagram starter only when the new type is
-  // `diagram` AND we have no carried content. The order matters: if
-  // a user does image → diagram, step 1 clears the data URL and
-  // step 2 then seeds the starter DSL, so the diagram preview shows
-  // something meaningful instead of staying blank. A user with
-  // prose already typed (text → diagram with existing content)
-  // keeps their work — `carried` is non-empty so step 2 is a no-op.
-  const content =
-    nextType === "diagram" && !carried ? DEFAULT_DIAGRAM_DSL : carried;
+  // Step 2 — seed a structured type's starter only when we have no
+  // carried content. The order matters: if a user does image →
+  // diagram, step 1 clears the data URL and step 2 then seeds the
+  // starter DSL, so the preview shows something meaningful instead of
+  // staying blank. A user with prose already typed (text → diagram
+  // with existing content) keeps their work — `carried` is non-empty
+  // so step 2 is a no-op.
+  const content = carried || starterFor(nextType);
   return {
     ...block,
     type: nextType,
@@ -1018,6 +1360,10 @@ export function slideWordCount(slide: Slide): number {
  *   - text / bullets — one line per non-blank source line
  *   - diagram — a single `[Diagram]` placeholder (Mermaid DSL is not
  *     re-rendered in the lightweight presentation windows)
+ *   - table — a single `[Table]` placeholder (the GFM source is not
+ *     re-rendered in the lightweight presentation windows)
+ *   - chart — `[Chart: <title>]`, or `[Chart]` when the chart is
+ *     untitled (the data DSL is not re-rendered there)
  *   - image — `[Image: <alt>]`, or `[Image]` when no alt text is set
  *
  * Plain text only by design: the presentation windows render every
@@ -1033,6 +1379,15 @@ export function slideBodyLines(slide: Slide): string[] {
     }
     if (block.type === "diagram") {
       lines.push("[Diagram]");
+      continue;
+    }
+    if (block.type === "table") {
+      lines.push("[Table]");
+      continue;
+    }
+    if (block.type === "chart") {
+      const title = parseSlideChart(block.content)?.title?.trim();
+      lines.push(title ? `[Chart: ${title}]` : "[Chart]");
       continue;
     }
     for (const raw of block.content.split("\n")) {

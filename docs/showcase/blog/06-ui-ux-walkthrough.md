@@ -32,7 +32,7 @@ declares the *shape* of the outcome before they're asked to choose among specifi
 
 Having picked an intent, the user sees a curated handful of templates for that artifact type —
 not the full library. PRD, Proposal, SOP, Report, Meeting Notes for documents; QBR, Strategy,
-Pitch for slides; and so on. A "Show all templates" affordance reveals the full 170+ for power
+Pitch for slides; and so on. A "Show all templates" affordance reveals the full 173 for power
 users who know exactly what they want. New users get a confident shortlist; experts keep the
 firehose. Each template is the same structured object the personas used — a set of sections,
 each with its own grounded prompt.
@@ -43,8 +43,10 @@ each with its own grounded prompt.
 
 This is the step that makes Tessera Tessera. Before anything is generated, the user chooses
 *what the model is allowed to see* — local folders that have been indexed, and any explicitly
-connected cloud sources (Google Drive, OneDrive/SharePoint, Notion, Jira, Confluence, Figma).
-Cloud connectors are opt-in and show a clear connected/disconnected state. Nothing is
+connected cloud sources from a catalog of **31 read-only, least-privilege connectors** (Google
+Drive, OneDrive/SharePoint, Dropbox, Box, Notion, Confluence, Jira, Linear, Asana, ClickUp,
+GitHub/GitLab, HubSpot, Salesforce, Figma, Slack, Teams, and more). Cloud connectors are
+opt-in, read-only, and show a clear connected/disconnected state plus a scope disclosure. Nothing is
 generated from data the user didn't deliberately select.
 
 This is also the local-first guarantee made visible: the index is on the machine, the model
@@ -57,17 +59,26 @@ Once generated, the artifact opens in a real editor matched to its type. Across 
 personas you've now seen all four:
 
 - **Document** (Maya's HIPAA report, David's contract summary, Priya's credit memo, Sofia's
-  grant proposal): a rich-text editor with a live **outline panel** built from the headings,
-  inline tables, and a full formatting toolbar. The outline is what makes a 12-section
-  compliance report navigable.
-- **Sheet** (David's obligation tracker, Priya's projection): a spreadsheet grid with typed
-  columns, add row/column, CSV/JSON import-export, and conditional formatting.
-- **Base** (Maya's incident tracker, Marcus's CRM): a database with typed fields — text,
-  date, number, and **select dropdowns** carrying real option sets — plus Grid, Kanban,
-  Calendar, Timeline, Gallery, and Form views.
-- **Slides** (Sofia's board deck, Marcus's QBR): a deck editor with a slide navigator,
-  per-slide content blocks (text, bullets, diagram, image), speaker notes, a presenter mode,
-  and a raw Marp markdown mode.
+  grant proposal) — *Google-Docs / Notion level.* A rich-text editor with **callout**,
+  **toggle**, and **table-of-contents** blocks, a scroll-tracked **outline panel** with a
+  **reading-time** estimate, inline tables, and an on-device **AI writing assistant**
+  (rewrite / shorten / expand / change-tone / translate / continue, plus Ask-AI with a
+  word-diff preview). The outline is what makes a 12-section compliance report navigable.
+- **Sheet** (David's obligation tracker, Priya's projection) — *Google-Sheets level.* A
+  spreadsheet grid with a real formula engine (**140+ functions**), **named ranges**, **data
+  validation** (dropdown / checkbox), **conditional formatting**, **range-bound charts**
+  (bar / line / pie), CSV/JSON import-export, and an AI assistant for NL→formula / explain /
+  fix.
+- **Base** (Maya's incident tracker, Marcus's CRM) — *Airtable level.* A multi-table database
+  with **cross-table linked records** carrying **lookup** and **rollup** fields, typed fields
+  (text, date, number, checkbox, rating, **select dropdowns** with real option sets, formula),
+  an **expand-record modal** with **comments + activity**, grid **group-by / row-height /
+  frozen-columns**, and Grid / Kanban / Calendar / Timeline / Gallery / Form views — plus
+  on-device AI for schema-gen / NL→formula / column-fill.
+- **Slides** (Sofia's board deck, Marcus's QBR) — *Google-Slides / Gamma level.* A deck editor
+  with a **layout engine**, **deck templates** and insert-card presets, richer **themes** with
+  a visual picker, a slide navigator, per-slide content blocks, **speaker notes**, a
+  **present mode**, AI deck generation, and a raw Marp markdown mode.
 
 Every editor exports to the formats that matter for that artifact — Markdown / HTML / PDF /
 DOCX for documents, CSV / XLSX for sheets and bases, PPTX for slides. Documents and bases
@@ -75,6 +86,17 @@ also offer **Export Evidence Pack** (visible in the editor header above): a sing
 bundles the artifact, the source files it cited, and a **post-quantum provenance signature**
 (ML-DSA-65 / FIPS 204) so a recipient — a regulator, an auditor, a credit committee — can
 verify the package wasn't altered after it left the author's machine.
+
+## The workspace — work two artifacts at once
+
+Artifacts don't each take over the window. Tessera's workspace is an **Obsidian-style
+split-pane + tabbed** surface: every editor header carries **New tab**, **Split right**, and
+**Split down** controls, panes resize with a draggable handle, and the layout (which tabs are
+open in which panes) is **restored on next launch**. Below, Marcus has his **CRM base** open
+on the left and the **QBR deck** on the right — the operational view and the narrative view
+side by side, from the same grounded data.
+
+![The Obsidian-style workspace — a multi-table CRM base in the left pane and the QBR slide editor (layout dropdown, Aurora theme, Present, AI actions) in the right pane](../assets/screenshots/workspace-split-panes.png)
 
 ## Step 5 — the knowledge substrate underneath
 

@@ -7,7 +7,13 @@
  * declarations only — no value-level code lives here, by design.
  */
 
-export type SlideBlockType = "text" | "bullets" | "diagram" | "image";
+export type SlideBlockType =
+  | "text"
+  | "bullets"
+  | "diagram"
+  | "table"
+  | "chart"
+  | "image";
 
 export interface SlideBlock {
   /**
@@ -28,6 +34,14 @@ export interface SlideBlock {
    * Block content. Semantics depend on `type`:
    *   - text / bullets — plain user text
    *   - diagram — Mermaid DSL
+   *   - table — a GitHub-flavoured Markdown pipe table (one `| a | b |`
+   *     row per line, an optional `| --- | --- |` separator). Parsed by
+   *     `parseSlideTable` for the live preview and emitted verbatim on
+   *     Marp export.
+   *   - chart — a small line-oriented data DSL parsed by
+   *     `parseSlideChart` (`type:`, `labels:`, then one `name: v, v, …`
+   *     series line each). Rendered as inline SVG via `SlideChart`,
+   *     reusing the `sheetCharts` geometry; exported as a data table.
    *   - image — a `data:` URL (the image-upload path embeds the file
    *     inline so the slide content stays self-contained and round-
    *     trips through the JSON storage layer without needing a

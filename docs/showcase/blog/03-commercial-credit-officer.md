@@ -33,7 +33,7 @@ proceeds, grounded in the source figures.
 
 ## The result
 
-![Credit memo in the Tessera document editor](../assets/screenshots/finance-document-loan.png)
+![Credit memo in the Tessera document editor](../assets/screenshots/finance-document-credit-memo.png)
 
 A full credit memo: Transaction Summary (Equipment Term Loan, $3,200,000, 60 months, Prime +
 1.75% with an 8.0% floor), Borrower Profile, Business Description, a three-year **Financial
@@ -43,7 +43,9 @@ fixed-charge coverage floor, minimum liquidity), Risk Rating, and an Approval Re
 
 The numbers trace back to the source files with `[01-borrower-financials.md]` and
 `[02-market-and-risk-notes.md]` markers — the LTV at funding, the DSCR threshold of 1.25x,
-the appraised collateral values. Full output:
+the appraised collateral values. A **callout** leads the memo, a **table-of-contents block**
+and the scroll-tracked **outline panel** (with a reading-time estimate) make the long memo
+navigable, and the on-device AI assistant is on hand to tighten any section. Full output:
 [`outputs/loan-proposal.md`](../artifacts/finance/outputs/loan-proposal.md).
 
 ### The companion: a 3-year projection
@@ -55,8 +57,12 @@ a **sheet**:
 
 Revenue ($32.2M → $34.3M → $36.5M), gross margin (22.1% → 24.0%), EBITDA, new-facility debt
 service, total debt service, DSCR (2.40x → 2.60x), net income, and cash, laid out across
-FY2026E–FY2028E. It's a grid the committee can edit and re-run assumptions against, not a
-static paragraph. Source JSON:
+FY2026E–FY2028E. The sheet exercises the full spreadsheet surface: a derived **Rev Growth**
+formula column (`=(B3-B2)/B2`), an **AVERAGE summary row** over every numeric series, a
+named **`Revenue`** range, a **frozen header**, and two **range-bound charts** — a *Revenue
+trajectory* line and an *EBITDA by period* bar — both bound to the model's own values and
+excluding the summary row. It's a grid the committee can edit and re-run assumptions
+against, not a static paragraph. Source JSON:
 [`outputs/financial-projection.json`](../artifacts/finance/outputs/financial-projection.json).
 
 ## Why it matters

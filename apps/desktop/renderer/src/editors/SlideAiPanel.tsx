@@ -26,18 +26,23 @@ import { useCallback, useEffect, useState } from "react";
 import { useModelGeneration } from "../hooks/useModelGeneration";
 import {
   buildDeckPrompt,
+  buildDeckRestylePrompt,
   buildImagePromptSuggestion,
   buildLayoutSuggestionPrompt,
   buildNotesPrompt,
   buildRewritePrompt,
+  buildSlideRegeneratePrompt,
   clampDeckSlideCount,
+  mergeRestyledDeck,
   outlineToSlides,
   parseBulletResponse,
   parseDeckOutline,
   parseImagePromptResponse,
   parseLayoutSuggestion,
   parseNotesResponse,
+  parseRegeneratedSlide,
   type DeckTone,
+  type RegeneratedSlide,
   type SlideRewriteMode,
 } from "./slideAiHelpers";
 import type { Slide, SlideLayout } from "./slideEditorTypes";
@@ -297,7 +302,187 @@ export function SlideDeckGenerator({
   );
 }
 
-type ActiveAiAction = SlideRewriteMode | "notes" | "image" | "layout" | null;
+export interface SlideDeckRestylerProps {
+  /** Whether the panel is expanded. */
+  open: boolean;
+  /** Collapse the panel. */
+  onClose: () => void;
+  /** The current deck to restyle. */
+  slides: Slide[];
+  /** Apply the restyled deck. The editor replaces the deck wholesale. */
+  onApply: (slides: Slide[]) => void;
+}
+
+/**
+ * "Restyle deck" panel: takes the EXISTING deck, asks the on-device
+ * model to tighten the copy and re-pick the best layout per slide
+ * (preserving meaning, order, images and notes via
+ * {@link mergeRestyledDeck}), streams a live preview, and applies the
+ * reconciled deck on confirm. Mirrors {@link SlideDeckGenerator} but
+ * operates on the current deck instead of a free-text topic, so there
+ * is no prompt field — the deck itself is the input.
+ */
+export function SlideDeckRestyler({
+  open,
+  onClose,
+  slides,
+  onApply,
+}: SlideDeckRestylerProps) {
+  const gen = useModelGeneration();
+  const modelAvailable = useModelAvailability(open);
+  const [tone, setTone] = useState<DeckTone>("professional");
+  const [preview, setPreview] = useState<Slide[] | null>(null);
+  const [noUsableDeck, setNoUsableDeck] = useState(false);
+
+  const onRestyle = useCallback(async () => {
+    if (slides.length === 0) return;
+    setPreview(null);
+    setNoUsableDeck(false);
+    const result = await gen.run({
+      prompt: buildDeckRestylePrompt({ slides, tone }),
+      maxTokens: 2048,
+      // Lower than generation: a restyle should stay close to the
+      // existing content rather than invent freely.
+      temperature: 0.5,
+    });
+    if (result.status !== "completed") return;
+    const restyled = outlineToSlides(parseDeckOutline(result.text));
+    if (restyled.length === 0) {
+      setNoUsableDeck(true);
+      return;
+    }
+    setPreview(mergeRestyledDeck(slides, restyled));
+  }, [gen, slides, tone]);
+
+  const onApplyClick = useCallback(() => {
+    if (!preview || preview.length === 0) return;
+    onApply(preview);
+    setPreview(null);
+    onClose();
+  }, [preview, onApply, onClose]);
+
+  if (!open) return null;
+
+  const disabled =
+    gen.isStreaming || slides.length === 0 || modelAvailable === false;
+
+  return (
+    <div className="slide-ai-panel" role="region" aria-label="Restyle deck">
+      <div className="slide-ai-panel-header">
+        <h2 className="slide-ai-panel-title">Restyle deck</h2>
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={onClose}
+          aria-label="Close deck restyler"
+        >
+          ×
+        </button>
+      </div>
+
+      {modelAvailable === false && (
+        <p className="slide-ai-hint" role="status">
+          {UNAVAILABLE_HINT}
+        </p>
+      )}
+
+      <p className="slide-ai-hint">
+        Tightens every slide’s wording and re-picks the best layout, keeping
+        your content, order, images and notes.
+      </p>
+
+      <label className="slide-ai-field">
+        <span className="slide-ai-field-label">Tone</span>
+        <select
+          className="slide-ai-select"
+          value={tone}
+          onChange={(e) => setTone(e.target.value as DeckTone)}
+          disabled={gen.isStreaming}
+          aria-label="Restyle tone"
+        >
+          {TONE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="slide-ai-actions-row">
+        {gen.isStreaming ? (
+          <button
+            type="button"
+            className="btn-sm danger"
+            onClick={gen.cancel}
+            aria-label="Stop restyling deck"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-sm primary"
+            onClick={() => void onRestyle()}
+            disabled={disabled}
+          >
+            Restyle
+          </button>
+        )}
+        {preview && !gen.isStreaming && (
+          <button
+            type="button"
+            className="btn-sm primary"
+            onClick={onApplyClick}
+          >
+            Apply {preview.length} slide{preview.length === 1 ? "" : "s"}
+          </button>
+        )}
+      </div>
+
+      {gen.error && (
+        <p className="slide-ai-error" role="alert">
+          {gen.error}
+        </p>
+      )}
+      {noUsableDeck && !gen.isStreaming && (
+        <p className="slide-ai-error" role="alert">
+          The model didn’t return a usable restyle. Try again.
+        </p>
+      )}
+
+      {(gen.isStreaming || gen.text) && !preview && (
+        <pre
+          className="slide-ai-stream"
+          aria-live="polite"
+          aria-label="Restyle preview"
+        >
+          {gen.text || "…"}
+        </pre>
+      )}
+
+      {preview && (
+        <ol className="slide-ai-preview-list" aria-label="Restyled slides">
+          {preview.map((slide, i) => (
+            <li key={slide.id} className="slide-ai-preview-item">
+              <span className="slide-ai-preview-num">{i + 1}</span>
+              <span className="slide-ai-preview-title">
+                {slide.title || "Untitled slide"}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+type ActiveAiAction =
+  | SlideRewriteMode
+  | "notes"
+  | "image"
+  | "layout"
+  | "regen"
+  | null;
 
 export interface SlideAiActionsProps {
   /** The slide the actions operate on. */
@@ -306,6 +491,17 @@ export interface SlideAiActionsProps {
   onApplyBullets: (bullets: string[]) => void;
   /** Apply generated speaker notes (also reveals the notes pane). */
   onApplyNotes: (notes: string) => void;
+  /**
+   * Apply a regenerated slide (fresh title + bullets) to the active
+   * slide, preserving its layout, notes and images. Optional so the
+   * action degrades gracefully when the host doesn't support it.
+   */
+  onApplyRegenerated?: (regen: RegeneratedSlide) => void;
+  /**
+   * Deck title (the first slide's title), woven into the regenerate
+   * prompt for topic/tone context. Optional.
+   */
+  deckTitle?: string;
   /**
    * Apply an AI-suggested layout to the slide. Optional so the action
    * row degrades gracefully when the host doesn't support changing the
@@ -333,6 +529,8 @@ export function SlideAiActions({
   slide,
   onApplyBullets,
   onApplyNotes,
+  onApplyRegenerated,
+  deckTitle,
   onApplyLayout,
   onInsertImage,
   artifactId,
@@ -390,6 +588,20 @@ export function SlideAiActions({
     },
     [gen, slide, onApplyBullets],
   );
+
+  const runRegenerate = useCallback(async () => {
+    setActive("regen");
+    setLayoutNotice(null);
+    const result = await gen.run({
+      prompt: buildSlideRegeneratePrompt(slide, deckTitle),
+      maxTokens: 512,
+      temperature: 0.7,
+    });
+    setActive(null);
+    if (result.status !== "completed") return;
+    const regen = parseRegeneratedSlide(result.text);
+    if (regen && onApplyRegenerated) onApplyRegenerated(regen);
+  }, [gen, slide, deckTitle, onApplyRegenerated]);
 
   const runNotes = useCallback(async () => {
     setActive("notes");
@@ -505,6 +717,17 @@ export function SlideAiActions({
       >
         {active === "rewrite" ? "Rewriting…" : "Rewrite"}
       </button>
+      {onApplyRegenerated && (
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={() => void runRegenerate()}
+          disabled={busy}
+          title="Regenerate this slide with a fresh title and bullets"
+        >
+          {active === "regen" ? "Regenerating…" : "Regenerate"}
+        </button>
+      )}
       <button
         type="button"
         className="btn-xs"

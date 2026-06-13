@@ -44,7 +44,9 @@ heatmap** rating each clause High/Medium/Low with a recommended action.
 The model picked up the supervising partner's steer from the reviewer notes: the §5.1
 liability cap is flagged **High**, with the recommendation to push from 1× to **2× annual
 fees** for data-related claims. Inline `[01-master-saas-agreement.md]` markers tie the
-representations and IP clauses back to the source. Full output:
+representations and IP clauses back to the source. The summary opens with a **callout**, a
+**table-of-contents block** and scroll-tracked **outline** make a dense abstract navigable,
+and the on-device AI assistant can shorten or re-tone any section in place. Full output:
 [`outputs/contract-summary.md`](../artifacts/legal/outputs/contract-summary.md).
 
 ### The companion: an obligation & renewal tracker
@@ -54,10 +56,17 @@ The risks are only useful if someone acts on them in time. The same sources, run
 
 ![Obligation and renewal tracker in the Tessera sheet editor](../assets/screenshots/legal-sheet-obligations.png)
 
-Nine rows of obligations, each with the responsible party, the triggering clause (§1.2,
-§4.3, §3.2 …), a due date, a priority, and a status. The non-renewal notice deadline
-(2027-12-31), the breach-notification window, and the liability-cap negotiation all become
-trackable line items. Source JSON:
+Every obligation gets a row — the responsible party, the triggering clause (§1.2, §4.3,
+§3.2 …), a due date, a priority, and a status — and the sheet is a real spreadsheet, not a
+static table. **Data validation** turns Responsible Party, Priority, and Status into
+dropdowns; **conditional formatting** paints High-priority clauses red and *Under Review*
+rows amber; a **named range** (`Obligations`) anchors the column; and a **formula** column
+(`=IF(Status="Under Review","REVIEW","")`) auto-flags anything still in negotiation — the
+§5.1 liability-cap rows light up exactly as you'd want. The toolbar exposes the full
+spreadsheet surface (140+ formula functions, named ranges, validation, charts, on-device AI
+assistant) over the model's own values. The non-renewal notice deadline (2027-12-31), the
+breach-notification window, and the liability-cap negotiation all become trackable line
+items. Source JSON:
 [`outputs/obligation-tracker.json`](../artifacts/legal/outputs/obligation-tracker.json).
 
 ## Why it matters

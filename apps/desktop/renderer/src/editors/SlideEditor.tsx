@@ -41,18 +41,27 @@ import {
   nextBlockForTypeChange,
   buildDeckFromTemplate,
   buildSlideFromPreset,
+  parseSlideTable,
+  parseSlideChart,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
+import { SlideChart } from "./components/SlideChart";
 import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
-import {
-  SLIDE_TEMPLATES,
-  INSERT_CARD_PRESETS,
-} from "./slideTemplates";
+import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
 
-import { applyBulletsToSlide } from "./slideAiHelpers";
-import { SlideAiActions, SlideDeckGenerator } from "./SlideAiPanel";
+import {
+  applyBulletsToSlide,
+  applyRegeneratedSlide,
+  type RegeneratedSlide,
+} from "./slideAiHelpers";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import {
+  SlideAiActions,
+  SlideDeckGenerator,
+  SlideDeckRestyler,
+} from "./SlideAiPanel";
 import type {
   MarpModeState,
   Slide,
@@ -166,6 +175,7 @@ export default function SlideEditor({
   );
   const [themeId, setThemeId] = useState<string>(() => initial.themeId);
   const [deckGenOpen, setDeckGenOpen] = useState(false);
+  const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [themePickerOpen, setThemePickerOpen] = useState(false);
@@ -222,6 +232,15 @@ export default function SlideEditor({
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
 
+  // Mirror the template-modal open flag into a ref so the always-on
+  // global navigation listener (attached once, below) can suppress
+  // Ctrl+PageUp/Dn while the modal is up without being re-attached on
+  // every toggle.
+  const templatePickerOpenRef = useRef(false);
+  useEffect(() => {
+    templatePickerOpenRef.current = templatePickerOpen;
+  }, [templatePickerOpen]);
+
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
   // "click inside the menu / on the toggle button" (which it must
@@ -233,6 +252,27 @@ export default function SlideEditor({
   const themePickerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const insertPresetRef = useRef<HTMLDivElement | null>(null);
   const insertPresetTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const templatePickerRef = useRef<HTMLDivElement | null>(null);
+
+  // The toolbar popovers (Add-Slide layout menu, AI Deck, theme picker,
+  // insert-preset menu) are mutually exclusive: opening one closes the
+  // others so they can never visually stack or strand keyboard focus in
+  // a popover hidden behind another. Passing `null` closes them all.
+  const openExclusiveMenu = useCallback(
+    (menu: "layout" | "deck" | "restyle" | "theme" | "insert" | null) => {
+      setLayoutMenuOpen(menu === "layout");
+      setDeckGenOpen(menu === "deck");
+      setDeckRestyleOpen(menu === "restyle");
+      setThemePickerOpen(menu === "theme");
+      setInsertPresetOpen(menu === "insert");
+    },
+    [],
+  );
+
+  const closeTemplatePicker = useCallback(
+    () => setTemplatePickerOpen(false),
+    [],
+  );
 
   // Close the layout picker when the user clicks anywhere outside it.
   // We listen on `mousedown` (not `click`) so the dismiss happens
@@ -304,19 +344,11 @@ export default function SlideEditor({
     };
   }, [insertPresetOpen]);
 
-  // Close the template picker modal on Escape via a document-level
-  // listener (the overlay <div> is not focusable by default, so an
-  // inline onKeyDown would only fire after the user clicks inside).
-  useEffect(() => {
-    if (!templatePickerOpen) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setTemplatePickerOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [templatePickerOpen]);
+  // The template picker is a true modal: trap keyboard focus inside it,
+  // close it on Escape, and restore focus to the trigger on close. The
+  // shared hook also handles the deferred initial focus so the first
+  // template card is reachable by keyboard the moment the modal opens.
+  useFocusTrap(templatePickerOpen, templatePickerRef, closeTemplatePicker);
 
   // Global Ctrl+PageUp / Ctrl+PageDown — navigate to the previous /
   // next slide regardless of which control inside the editor has
@@ -344,6 +376,9 @@ export default function SlideEditor({
   useEffect(() => {
     const onNavKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
+      // The template picker is a true modal — don't let slide navigation
+      // mutate the deck behind its backdrop while it's open.
+      if (templatePickerOpenRef.current) return;
       if (event.key === "PageUp") {
         event.preventDefault();
         navigateByRef.current(-1);
@@ -411,6 +446,12 @@ export default function SlideEditor({
   //     `currentToken !== ownToken` mismatch (good, it bails) but the
   //     entry itself would persist forever — same leak the round 7 fix
   //     closed for block deletion, just at the deck level.
+  //   * Every transient overlay (the toolbar popovers, the template
+  //     picker modal, the find panel) is dismissed. They all reference
+  //     the old deck — the find panel's match list indexes into slides
+  //     that no longer exist, and an open popover/modal floating over a
+  //     freshly swapped deck is disorienting — so a hard swap resets the
+  //     editor chrome to a clean state.
   useEffect(() => {
     if (content !== lastSavedRef.current) {
       const parsed = parseSlideContent(content);
@@ -426,9 +467,17 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      openExclusiveMenu(null);
+      setTemplatePickerOpen(false);
+      // Close the find panel *and* clear its query (mirroring the panel's
+      // own close button). A non-empty query would otherwise survive the
+      // swap, re-run `findMatches` against the new deck, and silently jump
+      // `activeIndex` to the first match even though the panel is hidden.
+      setFindPanelOpen(false);
+      setFindQuery("");
       lastSavedRef.current = content;
     }
-  }, [content]);
+  }, [content, openExclusiveMenu]);
 
   const updateSlide = useCallback(
     (index: number, patch: Partial<Slide>) => {
@@ -593,6 +642,11 @@ export default function SlideEditor({
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      // Clear the find query too — otherwise a stale query re-runs
+      // against the new deck and the jump effect overrides the
+      // setActiveIndex(0) above (same hazard as the restore path).
+      setFindPanelOpen(false);
+      setFindQuery("");
       if (template.suggestedTheme) {
         setThemeId(template.suggestedTheme);
         themeIdRef.current = template.suggestedTheme;
@@ -637,12 +691,17 @@ export default function SlideEditor({
       setActiveIndex(0);
       setMarpMode(false);
       setDeckGenOpen(false);
+      setDeckRestyleOpen(false);
       // Clear stale drag/upload state — the entire deck is being
       // replaced, matching applyTemplate and the version-restore
       // sync effect.
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
+      // See applyTemplate: a surviving find query would re-jump the
+      // active slide away from the freshly-anchored slide 0.
+      setFindPanelOpen(false);
+      setFindQuery("");
       debouncedSave(generated, {
         enabled: false,
         source: marpSource,
@@ -909,6 +968,26 @@ export default function SlideEditor({
         const slide = prev[slideIndex];
         if (!slide) return prev;
         const updatedSlide = applyBulletsToSlide(slide, bullets);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Replace the active slide's title + primary bullets with an AI-
+  // regenerated version, preserving the slide's layout, notes, images
+  // and diagrams (see `applyRegeneratedSlide`). Same `setSlides` +
+  // `debouncedSave` path as a manual edit.
+  const regenerateSlide = useCallback(
+    (slideIndex: number, regen: RegeneratedSlide) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = applyRegeneratedSlide(slide, regen);
         if (updatedSlide === slide) return prev;
         const next = [...prev];
         next[slideIndex] = updatedSlide;
@@ -1235,7 +1314,7 @@ export default function SlideEditor({
             ref={layoutButtonRef}
             type="button"
             className="btn-sm"
-            onClick={() => setLayoutMenuOpen((open) => !open)}
+            onClick={() => openExclusiveMenu(layoutMenuOpen ? null : "layout")}
             aria-haspopup="menu"
             aria-expanded={layoutMenuOpen}
           >
@@ -1385,19 +1464,31 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckGenOpen ? "active" : ""}`}
-            onClick={() => setDeckGenOpen((open) => !open)}
+            onClick={() => openExclusiveMenu(deckGenOpen ? null : "deck")}
             aria-label="Generate a deck with AI"
             aria-expanded={deckGenOpen}
             title="Generate a deck from a prompt using the on-device model"
           >
             ✨ AI Deck
           </button>
+          <button
+            type="button"
+            className={`btn-sm ${deckRestyleOpen ? "active" : ""}`}
+            onClick={() => openExclusiveMenu(deckRestyleOpen ? null : "restyle")}
+            aria-label="Restyle the deck with AI"
+            aria-expanded={deckRestyleOpen}
+            title="Restyle the current deck with the on-device model"
+          >
+            Restyle
+          </button>
           {!marpMode && (
             <label className="slide-layout-picker">
               Layout
               <select
                 className="slide-layout-select"
-                value={activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"}
+                value={
+                  activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"
+                }
                 onChange={(e) => changeLayout(e.target.value as SlideLayout)}
                 aria-label="Slide layout"
                 title="Layout region arrangement for this slide"
@@ -1416,7 +1507,9 @@ export default function SlideEditor({
                 ref={themePickerTriggerRef}
                 type="button"
                 className="slide-theme-picker-trigger"
-                onClick={() => setThemePickerOpen((open) => !open)}
+                onClick={() =>
+                  openExclusiveMenu(themePickerOpen ? null : "theme")
+                }
                 aria-haspopup="listbox"
                 aria-expanded={themePickerOpen}
                 aria-label="Deck theme"
@@ -1424,12 +1517,20 @@ export default function SlideEditor({
               >
                 <span
                   className="slide-theme-swatch"
-                  style={{ background: getSlideTheme(themeId).swatch ?? "var(--color-primary)" }}
+                  style={{
+                    background:
+                      getSlideTheme(themeId).swatch ?? "var(--color-primary)",
+                  }}
                 />
                 {getSlideTheme(themeId).label}
               </button>
               {themePickerOpen && (
-                <div ref={themePickerRef} className="slide-theme-picker-dropdown" role="listbox" aria-label="Choose theme">
+                <div
+                  ref={themePickerRef}
+                  className="slide-theme-picker-dropdown"
+                  role="listbox"
+                  aria-label="Choose theme"
+                >
                   {SLIDE_THEMES.map((theme) => (
                     <button
                       key={theme.id}
@@ -1444,12 +1545,18 @@ export default function SlideEditor({
                     >
                       <span
                         className="slide-theme-card-swatch"
-                        style={{ background: theme.swatch ?? "var(--color-primary)" }}
+                        style={{
+                          background: theme.swatch ?? "var(--color-primary)",
+                        }}
                       />
                       <span>
-                        <span className="slide-theme-card-label">{theme.label}</span>
+                        <span className="slide-theme-card-label">
+                          {theme.label}
+                        </span>
                         <br />
-                        <span className="slide-theme-card-desc">{theme.description}</span>
+                        <span className="slide-theme-card-desc">
+                          {theme.description}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -1463,7 +1570,9 @@ export default function SlideEditor({
                 ref={insertPresetTriggerRef}
                 type="button"
                 className="btn-sm"
-                onClick={() => setInsertPresetOpen((open) => !open)}
+                onClick={() =>
+                  openExclusiveMenu(insertPresetOpen ? null : "insert")
+                }
                 aria-haspopup="menu"
                 aria-expanded={insertPresetOpen}
                 title="Quick-insert a pre-built slide card"
@@ -1471,7 +1580,11 @@ export default function SlideEditor({
                 + Insert
               </button>
               {insertPresetOpen && (
-                <div ref={insertPresetRef} className="slide-insert-presets" role="menu">
+                <div
+                  ref={insertPresetRef}
+                  className="slide-insert-presets"
+                  role="menu"
+                >
                   {INSERT_CARD_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
@@ -1480,11 +1593,17 @@ export default function SlideEditor({
                       className="slide-insert-preset-item"
                       onClick={() => insertPreset(preset)}
                     >
-                      <span className="slide-insert-preset-icon">{preset.icon}</span>
+                      <span className="slide-insert-preset-icon">
+                        {preset.icon}
+                      </span>
                       <span>
-                        <span className="slide-insert-preset-label">{preset.label}</span>
+                        <span className="slide-insert-preset-label">
+                          {preset.label}
+                        </span>
                         <br />
-                        <span className="slide-insert-preset-desc">{preset.description}</span>
+                        <span className="slide-insert-preset-desc">
+                          {preset.description}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -1496,7 +1615,10 @@ export default function SlideEditor({
             <button
               type="button"
               className="btn-sm"
-              onClick={() => setTemplatePickerOpen(true)}
+              onClick={() => {
+                openExclusiveMenu(null);
+                setTemplatePickerOpen(true);
+              }}
               title="Start from a pre-built deck template"
             >
               Templates
@@ -1573,6 +1695,13 @@ export default function SlideEditor({
         <SlideDeckGenerator
           open={deckGenOpen}
           onClose={() => setDeckGenOpen(false)}
+          onApply={applyGeneratedDeck}
+        />
+
+        <SlideDeckRestyler
+          open={deckRestyleOpen}
+          onClose={() => setDeckRestyleOpen(false)}
+          slides={slides}
           onApply={applyGeneratedDeck}
         />
 
@@ -1748,6 +1877,10 @@ export default function SlideEditor({
                 updateSlide(activeIndex, { notes });
                 setShowNotes(true);
               }}
+              onApplyRegenerated={(regen) =>
+                regenerateSlide(activeIndex, regen)
+              }
+              deckTitle={slides[0]?.title}
               onApplyLayout={(layout) => changeLayout(layout)}
               onInsertImage={(assetUrl, alt) =>
                 onBlockAppend(
@@ -1772,11 +1905,15 @@ export default function SlideEditor({
           onClick={(e) => {
             if (e.target === e.currentTarget) setTemplatePickerOpen(false);
           }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Choose a deck template"
         >
-          <div className="slide-template-picker">
+          <div
+            ref={templatePickerRef}
+            className="slide-template-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose a deck template"
+            tabIndex={-1}
+          >
             <h2>Start from a Template</h2>
             <div className="slide-template-picker-grid">
               {SLIDE_TEMPLATES.map((template) => (
@@ -1786,9 +1923,15 @@ export default function SlideEditor({
                   className="slide-template-card"
                   onClick={() => applyTemplate(template)}
                 >
-                  <span className="slide-template-card-icon">{template.icon}</span>
-                  <span className="slide-template-card-title">{template.label}</span>
-                  <span className="slide-template-card-desc">{template.description}</span>
+                  <span className="slide-template-card-icon">
+                    {template.icon}
+                  </span>
+                  <span className="slide-template-card-title">
+                    {template.label}
+                  </span>
+                  <span className="slide-template-card-desc">
+                    {template.description}
+                  </span>
                 </button>
               ))}
             </div>
@@ -1912,6 +2055,8 @@ function SlideBlockRow({
           <option value="text">Text</option>
           <option value="bullets">Bullets</option>
           <option value="diagram">Diagram</option>
+          <option value="table">Table</option>
+          <option value="chart">Chart</option>
           <option value="image">Image</option>
         </select>
         <button
@@ -2002,18 +2147,102 @@ function SlideBlockRow({
             // gutter on a wrap-wrapped line).
             draggable={false}
             placeholder={
-              block.type === "bullets"
-                ? "One bullet point per line..."
-                : block.type === "diagram"
-                  ? "Mermaid diagram DSL..."
-                  : "Enter text content..."
+              BLOCK_PLACEHOLDERS[block.type] ?? "Enter text content..."
             }
-            rows={block.type === "diagram" ? 8 : 4}
-            spellCheck={block.type !== "diagram"}
+            rows={MONOSPACE_BLOCK_TYPES.has(block.type) ? 8 : 4}
+            spellCheck={!MONOSPACE_BLOCK_TYPES.has(block.type)}
           />
           {block.type === "diagram" && <MermaidPreview dsl={block.content} />}
+          {block.type === "table" && (
+            <SlideTablePreview source={block.content} />
+          )}
+          {block.type === "chart" && (
+            <SlideChartPreview source={block.content} />
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Per-block textarea placeholder copy, keyed by block type. Falls back
+ * to the generic prompt for `text` (and any future plain-text type).
+ */
+const BLOCK_PLACEHOLDERS: Partial<Record<SlideBlockType, string>> = {
+  bullets: "One bullet point per line...",
+  diagram: "Mermaid diagram DSL...",
+  table: "| Header | Header |\n| --- | --- |\n| Cell | Cell |",
+  chart: "type: bar\nlabels: A, B, C\nSeries: 1, 2, 3",
+};
+
+/**
+ * Block types whose content is structured source rather than prose:
+ * they get a taller textarea and spell-check disabled so the editor
+ * doesn't flag DSL tokens / cell values.
+ */
+const MONOSPACE_BLOCK_TYPES: ReadonlySet<SlideBlockType> =
+  new Set<SlideBlockType>(["diagram", "table", "chart"]);
+
+/**
+ * Live preview of a `table` block. Parses the GitHub-flavoured Markdown
+ * source into a header + rows and renders a real `<table>`; every cell
+ * goes through React's text interpolation (never `innerHTML`), so the
+ * preview is injection-safe. Falls back to a placeholder while the
+ * source is empty / unparseable.
+ */
+function SlideTablePreview({ source }: { source: string }) {
+  const table = useMemo(() => parseSlideTable(source), [source]);
+  if (!table) {
+    return (
+      <div className="slide-table-placeholder">
+        Add a row like <code>| A | B |</code> to preview a table.
+      </div>
+    );
+  }
+  return (
+    <div className="slide-table-preview">
+      <table className="slide-table">
+        <thead>
+          <tr>
+            {table.header.map((cell, i) => (
+              <th key={i} scope="col">
+                {cell}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td key={ci}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Live preview of a `chart` block. Parses the data DSL and renders it
+ * through {@link SlideChart} (shared SVG geometry); shows a placeholder
+ * while the source has no plottable series.
+ */
+function SlideChartPreview({ source }: { source: string }) {
+  const spec = useMemo(() => parseSlideChart(source), [source]);
+  if (!spec) {
+    return (
+      <div className="slide-chart-placeholder">
+        Add a <code>labels:</code> line and a data series to preview a chart.
+      </div>
+    );
+  }
+  return (
+    <div className="slide-chart-preview">
+      <SlideChart type={spec.type} data={spec.data} title={spec.title} />
     </div>
   );
 }

@@ -2547,6 +2547,85 @@
   border-color: var(--color-primary);
 }
 
+/* ── Table block: live preview of a `table` block's GFM source ──── */
+
+.slide-table-preview {
+  margin-top: var(--spacing-sm);
+  overflow-x: auto;
+}
+
+.slide-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.slide-table th,
+.slide-table td {
+  border: 1px solid var(--color-border);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  text-align: left;
+  vertical-align: top;
+}
+
+.slide-table thead th {
+  background: var(--color-bg-subtle);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+.slide-table tbody tr:nth-child(even) td {
+  background: var(--color-bg-subtle);
+}
+
+.slide-table-placeholder,
+.slide-chart-placeholder {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.slide-table-placeholder code,
+.slide-chart-placeholder code {
+  font-family: var(--font-family-mono, monospace);
+  font-size: 0.9em;
+}
+
+/* ── Chart block: inline SVG preview of a `chart` block ─────────── */
+
+.slide-chart-preview {
+  margin-top: var(--spacing-sm);
+}
+
+.slide-chart {
+  margin: 0;
+}
+
+.slide-chart-title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.slide-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+}
+
+.slide-chart-empty {
+  padding: var(--spacing-lg) var(--spacing-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
 .slide-block-toolbar {
   display: flex;
   align-items: center;
@@ -2638,7 +2717,12 @@
   background: linear-gradient(
     135deg,
     var(--slide-surface, transparent) 0%,
-    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 6%, var(--slide-surface, transparent)) 100%
+    color-mix(
+        in srgb,
+        var(--slide-accent, var(--color-primary)) 6%,
+        var(--slide-surface, transparent)
+      )
+      100%
   );
 }
 
@@ -2646,12 +2730,22 @@
   background:
     radial-gradient(
       ellipse at 20% 50%,
-      color-mix(in srgb, var(--slide-accent, var(--color-primary)) 5%, transparent) 0%,
+      color-mix(
+          in srgb,
+          var(--slide-accent, var(--color-primary)) 5%,
+          transparent
+        )
+        0%,
       transparent 70%
     ),
     radial-gradient(
       ellipse at 80% 20%,
-      color-mix(in srgb, var(--slide-accent, var(--color-primary)) 4%, transparent) 0%,
+      color-mix(
+          in srgb,
+          var(--slide-accent, var(--color-primary)) 4%,
+          transparent
+        )
+        0%,
       transparent 60%
     ),
     var(--slide-surface, transparent);
@@ -2659,7 +2753,12 @@
 
 .slide-canvas[data-slide-bg="dots"] {
   background-image: radial-gradient(
-    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 8%, transparent) 1px,
+    color-mix(
+        in srgb,
+        var(--slide-accent, var(--color-primary)) 8%,
+        transparent
+      )
+      1px,
     transparent 1px
   );
   background-size: 20px 20px;
@@ -2671,8 +2770,18 @@
     0deg,
     transparent,
     transparent 23px,
-    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 6%, transparent) 23px,
-    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 6%, transparent) 24px
+    color-mix(
+        in srgb,
+        var(--slide-accent, var(--color-primary)) 6%,
+        transparent
+      )
+      23px,
+    color-mix(
+        in srgb,
+        var(--slide-accent, var(--color-primary)) 6%,
+        transparent
+      )
+      24px
   );
   background-color: var(--slide-surface, transparent);
 }
@@ -2759,7 +2868,8 @@
   border-radius: var(--radius-sm);
   background: var(--color-bg-page);
   cursor: pointer;
-  transition: border-color var(--duration-fast, 150ms),
+  transition:
+    border-color var(--duration-fast, 150ms),
     background var(--duration-fast, 150ms);
   font-size: var(--font-size-xs);
   color: var(--color-text-body);
@@ -2847,7 +2957,8 @@
   border-radius: var(--radius-md);
   background: var(--color-bg-page);
   cursor: pointer;
-  transition: border-color var(--duration-fast, 150ms),
+  transition:
+    border-color var(--duration-fast, 150ms),
     box-shadow var(--duration-fast, 150ms);
   text-align: center;
 }
@@ -3021,7 +3132,9 @@
   gap: var(--spacing-sm);
 }
 
-.slide-canvas[data-slide-layout="bigNumber"] .slide-block[data-slot="number"] .slide-block-content {
+.slide-canvas[data-slide-layout="bigNumber"]
+  .slide-block[data-slot="number"]
+  .slide-block-content {
   font-size: var(--font-size-3xl, 2rem);
   font-weight: var(--font-weight-bold);
   text-align: center;
@@ -3030,7 +3143,9 @@
   background: transparent;
 }
 
-.slide-canvas[data-slide-layout="bigNumber"] .slide-block[data-slot="caption"] .slide-block-content {
+.slide-canvas[data-slide-layout="bigNumber"]
+  .slide-block[data-slot="caption"]
+  .slide-block-content {
   text-align: center;
   font-size: var(--font-size-lg, 1.125rem);
   color: var(--color-text-secondary);
@@ -3053,7 +3168,9 @@
   max-width: 680px;
 }
 
-.slide-canvas[data-slide-layout="quote"] .slide-block[data-slot="quote"] .slide-block-content {
+.slide-canvas[data-slide-layout="quote"]
+  .slide-block[data-slot="quote"]
+  .slide-block-content {
   font-size: var(--font-size-xl, 1.25rem);
   font-style: italic;
   text-align: center;
@@ -3062,7 +3179,9 @@
   background: transparent;
 }
 
-.slide-canvas[data-slide-layout="quote"] .slide-block[data-slot="attribution"] .slide-block-content {
+.slide-canvas[data-slide-layout="quote"]
+  .slide-block[data-slot="attribution"]
+  .slide-block-content {
   text-align: center;
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
@@ -3078,7 +3197,9 @@
   gap: var(--spacing-sm);
 }
 
-.slide-canvas[data-slide-layout="imageCaption"] .slide-block[data-slot="caption"] .slide-block-content {
+.slide-canvas[data-slide-layout="imageCaption"]
+  .slide-block[data-slot="caption"]
+  .slide-block-content {
   text-align: center;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -3104,7 +3225,8 @@
   font-size: var(--font-size-sm);
   text-align: center;
   cursor: pointer;
-  transition: border-color var(--duration-fast, 150ms) var(--ease-out, ease),
+  transition:
+    border-color var(--duration-fast, 150ms) var(--ease-out, ease),
     background var(--duration-fast, 150ms) var(--ease-out, ease);
 }
 
@@ -3910,8 +4032,10 @@
   border-radius: 999px;
   color: var(--color-text-body);
   cursor: pointer;
-  transition: background var(--transition-fast),
-    border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 .ai-action-chip:hover:not(:disabled) {
   background: var(--color-surface-hover);

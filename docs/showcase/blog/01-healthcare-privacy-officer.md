@@ -62,6 +62,13 @@ finding, and a notification-requirements table that distinguishes individual not
 timing, and state obligations. The inline `[02-endpoint-mdm-report.md]`-style markers show
 the model citing the source behind each claim.
 
+The document editor itself is a full writing surface, not a read-only render: a
+**table-of-contents block** anchors the report, the lead paragraph is promoted to a
+**callout**, a detail-heavy section folds into a **toggle**, and the right-hand **outline
+panel** tracks your scroll position with a reading-time estimate. An on-device AI writing
+assistant (rewrite / shorten / expand / change tone / continue) is one keystroke away — and
+like everything else here, it runs on Maya's machine.
+
 The full generated document is in
 [`outputs/hipaa-incident-report.md`](../artifacts/healthcare/outputs/hipaa-incident-report.md).
 
@@ -72,11 +79,20 @@ sources, run through a **base** template, produce a structured Privacy Incident 
 
 ![Privacy incident tracker in the Tessera base editor](../assets/screenshots/healthcare-base-tracker.png)
 
-Eight records with typed fields — Incident ID, Date Discovered (date), Type / Severity /
-Encrypted / Status (dropdown selects), and Individuals Affected (number). INC-4471 sits at
-the top, classified, severity High, 220 individuals, unencrypted. The dropdowns carry the
-real option sets derived from the data, so the grid behaves like a tool she'd actually
-filter and sort. Source JSON: [`outputs/incident-tracker.json`](../artifacts/healthcare/outputs/incident-tracker.json).
+This is a **multi-table base**, not a flat grid. The **Incidents** table carries typed
+fields — Incident ID, Date Discovered (date), Severity, Status, Individuals Affected
+(number), and an **Encrypted checkbox** — and links to a second **Owners** table through a
+cross-table **linked-record** field. From that link the grid derives an **Owner Role
+lookup**, a **Reportable formula** (`IF({Individuals Affected} >= 500, …)`), and a **Risk
+Score rating**, while the Owners table **rolls up** each owner's open-incident count and
+total individuals affected. INC-4471 sits at the top — classified, severity High, 220
+individuals, unencrypted.
+
+![Expanding the INC-4471 record — comments and an activity timeline in the base editor's expand-record modal](../assets/screenshots/healthcare-base-expand.png)
+
+Opening a record expands it into a full **expand-record modal** with a **comments + activity
+timeline** — here, the four-factor assessment discussion on INC-4471. Source JSON:
+[`outputs/incident-tracker.json`](../artifacts/healthcare/outputs/incident-tracker.json).
 
 ## Why it matters
 

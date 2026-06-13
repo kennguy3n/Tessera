@@ -144,6 +144,17 @@ export function buildPresentationHtml(
     flex: 1; display: flex; flex-direction: column; justify-content: center;
     padding: 6vmin; gap: 3vmin; overflow: hidden;
   }
+  /* Tasteful slide-change transition, disabled under reduced-motion.
+     Re-triggered from the render() path by toggling the .animate class
+     only when the slide index actually changes. */
+  @keyframes slide-fade-in {
+    from { opacity: 0; transform: translateY(1.2vmin); }
+    to { opacity: 1; transform: none; }
+  }
+  .slide.animate { animation: slide-fade-in 240ms ease both; }
+  @media (prefers-reduced-motion: reduce) {
+    .slide.animate { animation: none; }
+  }
   .slide h1 { font-size: 6vmin; margin: 0; line-height: 1.1; }
   .slide ul { font-size: 3.4vmin; margin: 0; padding-left: 1.2em; line-height: 1.5; }
   .slide li { margin: 0.3em 0; }
@@ -152,7 +163,22 @@ export function buildPresentationHtml(
     background: #16161a; border-top: 1px solid #2a2a30; font-size: 0.9rem;
   }
   .bar .counter { font-variant-numeric: tabular-nums; }
-  .bar .clock { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .bar .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .bar .elapsed.paused { color: #e0b341; }
+  .bar .clock { font-variant-numeric: tabular-nums; color: #9a9aa2; }
+  .hint {
+    padding: 0.5rem 1.25rem; font-size: 0.72rem; color: #6b6b73;
+    border-top: 1px solid #2a2a30; background: #101014;
+  }
+  .audience .hint { display: none; }
+  .bar .blank-state { color: #e0b341; }
+  /* Blank-screen overlay. Only the audience window renders it (the
+     presenter keeps notes visible and shows a status pill instead), so
+     pressing B/W blanks what the room sees without blinding the
+     speaker. Highest z-index so it covers the whole stage. */
+  .blank-overlay { position: fixed; inset: 0; display: none; z-index: 10; }
+  .audience .blank-overlay.black { display: block; background: #000; }
+  .audience .blank-overlay.white { display: block; background: #fff; }
   .next-pane, .notes-pane {
     padding: 1rem 1.25rem; border-top: 1px solid #2a2a30; background: #101014;
   }
@@ -184,9 +210,13 @@ export function buildPresentationHtml(
   <div class="bar">
     <span class="counter"><span id="pos"></span> / <span id="total"></span></span>
     <span id="role-label"></span>
+    <span class="elapsed" id="elapsed" title="Elapsed presenting time (P pause/resume, R reset & resume)">0:00</span>
     <span class="clock" id="clock"></span>
+    <span class="blank-state" id="blank-state"></span>
   </div>
+  <p class="hint">\u2190 \u2192 / Space navigate \u00b7 Home / End jump \u00b7 B / W blank audience \u00b7 P pause timer \u00b7 R reset timer \u00b7 Esc exit</p>
 </div>
+<div class="blank-overlay" id="blank"></div>
 <script type="application/json" id="deck-data">${data}</script>
 <script>
 (function () {
@@ -194,6 +224,10 @@ export function buildPresentationHtml(
   var slides = Array.isArray(deck.slides) ? deck.slides : [];
   var total = slides.length;
   var KEY = ${escapeJsonForScript(JSON.stringify(indexKey))};
+  // Separate sync channel for the blank-screen state so it broadcasts
+  // independently of the slide index. Namespaced under the same
+  // per-presentation key so concurrent presentations never collide.
+  var BLANK_KEY = KEY + ":blank";
   var role = location.hash.replace("#", "") === "presenter" ? "presenter" : "audience";
   document.body.classList.add(role);
   document.getElementById("role-label").textContent =
@@ -232,6 +266,19 @@ export function buildPresentationHtml(
     });
   }
 
+  // Re-trigger the slide-change animation only when the index actually
+  // changes, so a passive re-render (e.g. a storage event echoing the
+  // current index) doesn't flicker. The CSS itself disables the
+  // animation under prefers-reduced-motion, so no JS branch is needed.
+  var lastRenderedIndex = -1;
+  function animateSlide() {
+    var slideEl = document.querySelector(".slide");
+    if (!slideEl) return;
+    slideEl.classList.remove("animate");
+    void slideEl.offsetWidth; // force reflow so the animation restarts
+    slideEl.classList.add("animate");
+  }
+
   function render() {
     var i = readIndex();
     var s = slides[i] || { title: "", lines: [], notes: "" };
@@ -259,9 +306,40 @@ export function buildPresentationHtml(
       notes.textContent = "No notes for this slide.";
       notes.classList.add("empty");
     }
+
+    if (i !== lastRenderedIndex) {
+      animateSlide();
+      lastRenderedIndex = i;
+    }
   }
 
   function go(delta) { writeIndex(readIndex() + delta); render(); }
+
+  // Blank-screen state ("" | "black" | "white"). Synced across windows
+  // through BLANK_KEY so toggling it in the presenter view blanks the
+  // audience display, while the presenter keeps notes and shows a status
+  // pill. Falls back to per-window memory when storage is unavailable.
+  var memBlank = "";
+  function blankGet() {
+    try {
+      var v = window.localStorage.getItem(BLANK_KEY);
+      return v === "black" || v === "white" ? v : "";
+    } catch (e) { return memBlank; }
+  }
+  function renderBlank() {
+    var mode = blankGet();
+    document.getElementById("blank").className =
+      "blank-overlay" + (mode ? " " + mode : "");
+    document.getElementById("blank-state").textContent =
+      mode === "black" ? "Audience: black screen"
+        : mode === "white" ? "Audience: white screen" : "";
+  }
+  function toggleBlank(mode) {
+    var next = blankGet() === mode ? "" : mode;
+    memBlank = next;
+    try { window.localStorage.setItem(BLANK_KEY, next); } catch (e) { /* mem fallback */ }
+    renderBlank();
+  }
 
   if (storageGet() === null) writeIndex(deck.startIndex || 0);
 
@@ -274,23 +352,100 @@ export function buildPresentationHtml(
       e.preventDefault(); writeIndex(0); render();
     } else if (e.key === "End") {
       e.preventDefault(); writeIndex(total - 1); render();
+    } else if ((e.key === "p" || e.key === "P") && role === "presenter") {
+      // Timer keys are presenter-only state, so they are scoped to the
+      // presenter window (the audience has no timer to control and
+      // shouldn't swallow the keystroke). Blank keys below stay global
+      // because the blank state is shared and toggling it from either
+      // window is valid.
+      e.preventDefault(); toggleTimer();
+    } else if ((e.key === "r" || e.key === "R") && role === "presenter") {
+      e.preventDefault(); resetTimer();
+    } else if (e.key === "b" || e.key === "B") {
+      e.preventDefault(); toggleBlank("black");
+    } else if (e.key === "w" || e.key === "W") {
+      e.preventDefault(); toggleBlank("white");
     } else if (e.key === "Escape") {
       window.close();
     }
   });
   window.addEventListener("storage", function (e) {
+    // A null newValue means the key was removed, which only happens during
+    // teardown (see the pagehide cleanup below). It is never a navigate or
+    // blank instruction, so ignoring it keeps a closing window from
+    // momentarily un-blanking or re-rendering the sibling.
+    if (e.newValue === null) return;
     if (e.key === KEY) render();
+    else if (e.key === BLANK_KEY) renderBlank();
   });
 
-  var clock = document.getElementById("clock");
-  function tick() {
-    var d = new Date();
-    clock.textContent = d.toLocaleTimeString();
+  // Elapsed presenting timer (presenter view only — the bar is hidden
+  // for the audience window). Independent of the wall clock: it counts
+  // real elapsed presenting time and supports pause/resume (P) and
+  // reset (R, which also resumes so R always yields a fresh running
+  // timer). State is per-window and intentionally NOT synced across
+  // the two windows — there is only ever one presenter view, and the
+  // audience never shows it.
+  var elapsedMs = 0;
+  var timerRunning = true;
+  var timerAnchor = Date.now();
+  function currentElapsed() {
+    return timerRunning ? elapsedMs + (Date.now() - timerAnchor) : elapsedMs;
   }
-  tick();
-  setInterval(tick, 1000);
+  function pad2(n) { return n < 10 ? "0" + n : String(n); }
+  function formatElapsed(ms) {
+    var totalSec = Math.floor(ms / 1000);
+    var s = totalSec % 60;
+    var m = Math.floor(totalSec / 60) % 60;
+    var h = Math.floor(totalSec / 3600);
+    return h > 0 ? h + ":" + pad2(m) + ":" + pad2(s) : m + ":" + pad2(s);
+  }
+  var elapsedEl = document.getElementById("elapsed");
+  var clockEl = document.getElementById("clock");
+  function renderTimers() {
+    elapsedEl.textContent = formatElapsed(currentElapsed());
+    elapsedEl.classList.toggle("paused", !timerRunning);
+    clockEl.textContent = new Date().toLocaleTimeString();
+  }
+  function toggleTimer() {
+    if (timerRunning) {
+      elapsedMs += Date.now() - timerAnchor;
+      timerRunning = false;
+    } else {
+      timerAnchor = Date.now();
+      timerRunning = true;
+    }
+    renderTimers();
+  }
+  function resetTimer() {
+    elapsedMs = 0;
+    timerAnchor = Date.now();
+    timerRunning = true;
+    renderTimers();
+  }
+  // The timer/clock live in the presenter bar (hidden for the audience),
+  // so only the presenter window needs to render and tick them.
+  var timerInterval = null;
+  if (role === "presenter") {
+    renderTimers();
+    timerInterval = setInterval(renderTimers, 500);
+  }
+
+  // Tidy this presentation's sync keys when the window goes away so the
+  // persistent partition's localStorage doesn't accumulate stale
+  // per-presentation entries over time. removeItem is idempotent, so it
+  // is safe for both windows to run it. We also stop the timer tick so
+  // the interval can't keep firing while the document is tearing down.
+  window.addEventListener("pagehide", function () {
+    if (timerInterval !== null) clearInterval(timerInterval);
+    try {
+      window.localStorage.removeItem(KEY);
+      window.localStorage.removeItem(BLANK_KEY);
+    } catch (e) { /* storage unavailable — nothing to clean up */ }
+  });
 
   render();
+  renderBlank();
 })();
 </script>
 </body>

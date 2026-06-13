@@ -27,8 +27,12 @@
  * user's own deck content and are only ever sent to the LOCAL model
  * surface by the calling hook — see `hooks/useModelGeneration.ts`.
  */
-import { buildBlock, newSlideId } from "./slideEditorHelpers";
-import { SLIDE_LAYOUTS, isKnownSlideLayout } from "./slideLayouts";
+import { buildBlock, newSlideId, parseSlideChart } from "./slideEditorHelpers";
+import {
+  SLIDE_LAYOUTS,
+  isKnownSlideLayout,
+  resolveSlideLayout,
+} from "./slideLayouts";
 import type { Slide, SlideBlock, SlideLayout } from "./slideEditorTypes";
 
 // ---------------------------------------------------------------------------
@@ -479,9 +483,7 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
             }),
           );
         } else {
-          blocks.push(
-            buildBlock({ type: "text", content: "", slot: "body" }),
-          );
+          blocks.push(buildBlock({ type: "text", content: "", slot: "body" }));
         }
         break;
     }
@@ -502,9 +504,11 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
 /**
  * Flatten a slide into the compact plain-text context fed to the model
  * for a per-slide operation. Title first, then each text/bullets
- * block's lines; image/diagram blocks contribute a short placeholder
- * so the model knows they exist without being handed a multi-MB data
- * URL or raw Mermaid DSL.
+ * block's lines; image/diagram/table/chart blocks contribute a short
+ * placeholder so the model knows they exist without being handed a
+ * multi-MB data URL or raw Mermaid/table/chart DSL. This mirrors the
+ * presenter-mode `slideBodyLines` placeholders so all serialisation
+ * paths describe non-text blocks the same way.
  */
 export function slideToContext(slide: Slide): string {
   const parts: string[] = [];
@@ -515,6 +519,11 @@ export function slideToContext(slide: Slide): string {
       parts.push(alt ? `[image: ${alt}]` : "[image]");
     } else if (block.type === "diagram") {
       parts.push("[diagram]");
+    } else if (block.type === "table") {
+      parts.push("[table]");
+    } else if (block.type === "chart") {
+      const title = parseSlideChart(block.content)?.title?.trim();
+      parts.push(title ? `[chart: ${title}]` : "[chart]");
     } else {
       const body = block.content
         .split(/\r?\n/)
@@ -534,6 +543,30 @@ const TONE_GUIDANCE: Record<DeckTone, string> = {
 };
 
 /**
+ * Shared output contract + layout vocabulary for the deck-level
+ * prompts. Both {@link buildDeckPrompt} (generate from a topic) and
+ * {@link buildDeckRestylePrompt} (restyle an existing deck) emit the
+ * EXACT same `## [layout] title` + bullets format, so a single
+ * {@link parseDeckOutline} / {@link outlineToSlides} pipeline parses
+ * both responses. Keeping the spec in one place means the parser and
+ * the prompt can never drift apart.
+ */
+const DECK_OUTPUT_CONTRACT_LINES: readonly string[] = [
+  "Output format (follow EXACTLY, output nothing else):",
+  "TITLE: <deck title>",
+  "## [layout] <slide title>",
+  "- <bullet, max ~12 words>",
+  "- <bullet>",
+  "",
+  "Choose [layout] for each slide from this list, picking the best fit:",
+  "- twoColumn: two parallel points or a comparison (exactly 2 bullets)",
+  "- bigNumber: one headline statistic (a single short numeric bullet)",
+  "- quote: a notable quotation (bullet 1 = quote, bullet 2 = attribution)",
+  "- sectionHeader: a divider with no bullets",
+  "- titleContent: standard bullets (use this when unsure)",
+];
+
+/**
  * Build the "generate a deck" prompt. The strict output contract at
  * the top is what makes {@link parseDeckOutline} reliable against a
  * small local model.
@@ -550,18 +583,7 @@ export function buildDeckPrompt(input: DeckPromptInput): string {
     "You are a presentation outline generator.",
     `Produce a slide deck outline of exactly ${count} slides for the topic below.`,
     "",
-    "Output format (follow EXACTLY, output nothing else):",
-    "TITLE: <deck title>",
-    "## [layout] <slide title>",
-    "- <bullet, max ~12 words>",
-    "- <bullet>",
-    "",
-    "Choose [layout] for each slide from this list, picking the best fit:",
-    "- twoColumn: two parallel points or a comparison (exactly 2 bullets)",
-    "- bigNumber: one headline statistic (a single short numeric bullet)",
-    "- quote: a notable quotation (bullet 1 = quote, bullet 2 = attribution)",
-    "- sectionHeader: a divider with no bullets",
-    "- titleContent: standard bullets (use this when unsure)",
+    ...DECK_OUTPUT_CONTRACT_LINES,
     "",
     "Rules:",
     "- The first slide is the title slide: omit the [layout] tag, 0-1 bullets.",
@@ -575,6 +597,159 @@ export function buildDeckPrompt(input: DeckPromptInput): string {
   }
   lines.push(`Topic: ${input.topic.trim()}`);
   return lines.join("\n");
+}
+
+export interface DeckRestyleInput {
+  /** The deck to restyle, in display order. */
+  slides: Slide[];
+  /** Optional tone; defaults to "professional". */
+  tone?: DeckTone;
+}
+
+/**
+ * Serialise an existing deck into the same line-oriented outline format
+ * the deck prompts ask the model to PRODUCE, so a restyle is a
+ * round-trip through one shared grammar. Each slide becomes a
+ * `## [layout] title` heading (the first slide omits the tag, matching
+ * the title-slide convention) followed by its text/bullets content and
+ * an optional `NOTES:` line. Image / diagram / table / chart blocks are
+ * intentionally omitted from the text stream — they are re-attached
+ * structurally by {@link mergeRestyledDeck} so a binary asset or raw
+ * table/chart DSL is never serialised into a prompt (privacy + token
+ * budget; the model would otherwise restyle the DSL as prose). Pure —
+ * no IO.
+ */
+export function serializeDeckForRestyle(slides: Slide[]): string {
+  const lines: string[] = [];
+  slides.forEach((slide, index) => {
+    const layout = resolveSlideLayout(slide);
+    const title = slide.title.trim() || "Untitled slide";
+    lines.push(index === 0 ? `## ${title}` : `## [${layout}] ${title}`);
+    for (const block of slide.blocks) {
+      if (
+        block.type === "image" ||
+        block.type === "diagram" ||
+        block.type === "table" ||
+        block.type === "chart"
+      ) {
+        continue;
+      }
+      const body = block.content
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      for (const line of body) lines.push(`- ${line}`);
+    }
+    const notes = slide.notes?.trim();
+    if (notes) lines.push(`NOTES: ${notes}`);
+  });
+  return lines.join("\n");
+}
+
+/**
+ * Build the "restyle this deck" prompt. Reuses the shared deck output
+ * contract so the model's response parses through the same
+ * {@link parseDeckOutline} → {@link outlineToSlides} pipeline as a
+ * fresh generation; the difference is the instruction set, which pins
+ * the slide count + order and asks the model to improve wording and
+ * layout choices rather than invent new content.
+ */
+export function buildDeckRestylePrompt(input: DeckRestyleInput): string {
+  const count = input.slides.length;
+  const tone = TONE_GUIDANCE[input.tone ?? "professional"];
+  return [
+    "You are a presentation design editor.",
+    `Restyle the existing ${count}-slide deck below.`,
+    "Keep the meaning and order of every slide; do not add, drop, or reorder slides.",
+    "For each slide, tighten the wording and pick the [layout] that best fits its content.",
+    "",
+    ...DECK_OUTPUT_CONTRACT_LINES,
+    "",
+    "Rules:",
+    `- Output exactly ${count} slides, in the same order, each covering the same point as the input.`,
+    "- The first slide is the title slide: omit the [layout] tag.",
+    "- Tighten bullets to be short and punchy; keep every key fact.",
+    "- No preamble, no closing remarks, no code fences, no bold/italic.",
+    `- ${tone}`,
+    "",
+    "Current deck:",
+    serializeDeckForRestyle(input.slides),
+  ].join("\n");
+}
+
+/**
+ * Layouts that carry an image region. Derived from the layout
+ * catalogue (single source of truth) so a new image layout is picked
+ * up automatically. Used by {@link mergeRestyledDeck} to decide when a
+ * slide's original (image-bearing) layout must be preserved.
+ */
+const IMAGE_LAYOUTS: ReadonlySet<SlideLayout> = new Set(
+  SLIDE_LAYOUTS.filter((l) => l.regions.some((r) => r.slot === "image")).map(
+    (l) => l.id,
+  ),
+);
+
+/**
+ * Reconcile a model-restyled deck back onto the originals, index by
+ * index, so a restyle improves presentation WITHOUT silently losing
+ * user content:
+ *
+ *   - The slide id is carried over from the original at the same index
+ *     so the thumbnail navigator and selection stay stable across a
+ *     restyle (the deck is re-keyed in place, not rebuilt).
+ *   - Non-text blocks (image / diagram / table / chart) never travel
+ *     through the text outline, so they are re-attached from the
+ *     original slide; a restyle can never drop a picture, diagram,
+ *     table, or chart.
+ *   - When the original slide used an image layout but the model picked
+ *     a text-only layout, the original layout is preserved so the
+ *     re-attached image keeps its region instead of becoming an
+ *     orphaned block.
+ *   - Notes fall back to the original when the model omitted them.
+ *
+ * Any extra slides the model emitted beyond the original count are kept
+ * as-is (fresh ids from `outlineToSlides`); the prompt pins the count,
+ * but the merge stays total in case a model over-produces. Pure — no IO.
+ */
+export function mergeRestyledDeck(
+  originals: Slide[],
+  restyled: Slide[],
+): Slide[] {
+  return restyled.map((next, index) => {
+    const original = originals[index];
+    if (!original) return next;
+    // Every non-text block is re-attached structurally (none travel
+    // through the text outline): images, diagrams, and the data blocks
+    // (table / chart), so a restyle can't destroy a user's table/chart.
+    const preserved = original.blocks.filter(
+      (b) =>
+        b.type === "image" ||
+        b.type === "diagram" ||
+        b.type === "table" ||
+        b.type === "chart",
+    );
+    // Only image/diagram blocks anchor to an image region, so only they
+    // drive whether a model-downgraded layout must be restored. Tables
+    // and charts render as ordinary blocks and need no image region.
+    const regionVisuals = original.blocks.filter(
+      (b) => b.type === "image" || b.type === "diagram",
+    );
+    const nextLayout = next.layout ?? resolveSlideLayout(next);
+    const layout =
+      regionVisuals.length > 0 &&
+      IMAGE_LAYOUTS.has(resolveSlideLayout(original)) &&
+      !IMAGE_LAYOUTS.has(nextLayout)
+        ? resolveSlideLayout(original)
+        : nextLayout;
+    return {
+      ...next,
+      id: original.id,
+      layout,
+      blocks:
+        preserved.length > 0 ? [...next.blocks, ...preserved] : next.blocks,
+      notes: next.notes?.trim() ? next.notes : original.notes,
+    };
+  });
 }
 
 /**
@@ -603,6 +778,47 @@ export function buildRewritePrompt(
     "Current slide:",
     context,
   ].join("\n");
+}
+
+/**
+ * A regenerated single slide: a fresh title + bullets the model
+ * produced for one existing slide. Distinct from the per-slide rewrite
+ * (which only transforms the existing bullets) — regenerate is allowed
+ * to rephrase the title too.
+ */
+export interface RegeneratedSlide {
+  title: string;
+  bullets: string[];
+}
+
+/**
+ * Build a per-slide "regenerate" prompt: ask the model for a fresh,
+ * sharper take on ONE slide while staying on the same subject. Uses the
+ * single-slide `## title` + bullets contract (no `[layout]` tag — the
+ * slide keeps its current layout) so {@link parseRegeneratedSlide} can
+ * recover it via the shared outline parser. The optional deck title
+ * gives the model context for tone/topic without leaking other slides.
+ */
+export function buildSlideRegeneratePrompt(
+  slide: Slide,
+  deckTitle?: string,
+): string {
+  const lines = [
+    "You are regenerating one slide of a presentation.",
+    "Produce a fresh, sharper version of this slide on the SAME subject.",
+    "Keep the slide's topic and intent; improve the title and the bullets.",
+    "",
+    "Output format (follow EXACTLY, output nothing else):",
+    "## <slide title>",
+    "- <bullet, max ~12 words>",
+    "- <bullet>",
+    "",
+    "Rules:",
+    "- 2-5 short bullets. No preamble, no code fences, no bold/italic.",
+  ];
+  if (deckTitle?.trim()) lines.push(`Deck: ${deckTitle.trim()}`);
+  lines.push("", "Current slide:", slideToContext(slide));
+  return lines.join("\n");
 }
 
 /** Build a prompt that asks the model for speaker notes for a slide. */
@@ -801,4 +1017,42 @@ export function applyBulletsToSlide(slide: Slide, bullets: string[]): Slide {
       : block,
   );
   return { ...slide, blocks: nextBlocks };
+}
+
+/**
+ * Parse a per-slide "regenerate" response into a fresh title + bullets.
+ * Reuses the shared {@link parseDeckOutline} grammar and takes the
+ * first slide it recovers (the response describes a single slide), so
+ * the same heading / bullet tolerances apply. Returns null when the
+ * model returned nothing usable (no title AND no bullets) so the caller
+ * can no-op rather than blank the slide. Pure — no IO.
+ */
+export function parseRegeneratedSlide(raw: string): RegeneratedSlide | null {
+  const first = parseDeckOutline(raw).slides[0];
+  if (!first) return null;
+  const title = first.title.trim();
+  if (!title && first.bullets.length === 0) return null;
+  return { title, bullets: first.bullets };
+}
+
+/**
+ * Apply a regenerated slide onto an existing one: swap in the new
+ * bullets (via {@link applyBulletsToSlide}, so images/diagrams and the
+ * slide's layout + notes are preserved) and the new title. An empty
+ * regenerated title keeps the current title rather than blanking it.
+ * Returns the input slide unchanged (referential equality) when neither
+ * the title nor the bullets would change, so the caller can
+ * short-circuit a no-op apply.
+ */
+export function applyRegeneratedSlide(
+  slide: Slide,
+  regen: RegeneratedSlide,
+): Slide {
+  const title = regen.title || slide.title;
+  const withBullets =
+    regen.bullets.length > 0
+      ? applyBulletsToSlide(slide, regen.bullets)
+      : slide;
+  if (title === slide.title && withBullets === slide) return slide;
+  return { ...withBullets, title };
 }

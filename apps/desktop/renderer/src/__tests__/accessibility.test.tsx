@@ -166,6 +166,215 @@ describe("SlideEditor accessibility", () => {
     expect(notes).toBeInstanceOf(HTMLTextAreaElement);
     expect((notes as HTMLTextAreaElement).value).toBe("Existing notes");
   });
+
+  const twoSlideDeck = () =>
+    JSON.stringify({
+      slides: [
+        { title: "First", blocks: [{ type: "text", content: "a" }], notes: "" },
+        {
+          title: "Second",
+          blocks: [{ type: "text", content: "b" }],
+          notes: "",
+        },
+      ],
+    });
+
+  it("keeps only one toolbar popover open at a time (mutual exclusion)", () => {
+    render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+
+    // Open the theme picker.
+    fireEvent.click(screen.getByRole("button", { name: "Deck theme" }));
+    expect(
+      screen.getByRole("listbox", { name: "Choose theme" }),
+    ).toBeInTheDocument();
+
+    // Opening the insert-preset menu must close the theme picker.
+    fireEvent.click(screen.getByRole("button", { name: /Insert/ }));
+    expect(
+      screen.queryByRole("listbox", { name: "Choose theme" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("traps focus in the template modal and restores it to the trigger on Escape", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+      const templatesBtn = screen.getByRole("button", { name: "Templates" });
+      templatesBtn.focus();
+      fireEvent.click(templatesBtn);
+
+      const dialog = screen.getByRole("dialog", {
+        name: "Choose a deck template",
+      });
+      // Deferred initial focus lands on the first template card.
+      act(() => {
+        vi.runAllTimers();
+      });
+      const firstCard = within(dialog).getAllByRole("button")[0];
+      expect(document.activeElement).toBe(firstCard);
+
+      // Escape closes the modal and restores focus to the trigger.
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(
+        screen.queryByRole("dialog", { name: "Choose a deck template" }),
+      ).not.toBeInTheDocument();
+      expect(document.activeElement).toBe(templatesBtn);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("dismisses open overlays when the deck is swapped (version restore)", () => {
+    const { rerender } = render(
+      <SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Deck theme" }));
+    expect(
+      screen.getByRole("listbox", { name: "Choose theme" }),
+    ).toBeInTheDocument();
+
+    // A version restore hands the editor a different content prop.
+    rerender(
+      <SlideEditor
+        content={JSON.stringify({
+          slides: [
+            {
+              title: "Restored",
+              blocks: [{ type: "text", content: "x" }],
+              notes: "",
+            },
+          ],
+        })}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("listbox", { name: "Choose theme" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the find query on restore so a stale query can't silently jump slides", () => {
+    // The original deck contains no match for the query, so the active
+    // slide stays on the first slide while the find panel is open.
+    const deck = JSON.stringify({
+      slides: [
+        {
+          title: "Alpha",
+          blocks: [{ type: "text", content: "alpha body" }],
+          notes: "",
+        },
+        {
+          title: "Beta",
+          blocks: [{ type: "text", content: "beta body" }],
+          notes: "",
+        },
+      ],
+    });
+    const { rerender } = render(
+      <SlideEditor content={deck} onSave={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Find in slides" }));
+    fireEvent.change(screen.getByLabelText("Find query"), {
+      target: { value: "needle" },
+    });
+    // No match in the original deck → still on slide 1.
+    expect(
+      screen
+        .getByRole("button", { name: /1 Alpha/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+
+    // Restore a deck where the (now-stale) query *would* match slide 2.
+    // With the query cleared on restore there are no matches, so the
+    // jump effect can't fire and the active slide stays on slide 1 —
+    // rather than silently jumping to slide 2 behind a hidden panel.
+    rerender(
+      <SlideEditor
+        content={JSON.stringify({
+          slides: [
+            {
+              title: "Gamma",
+              blocks: [{ type: "text", content: "plain" }],
+              notes: "",
+            },
+            {
+              title: "Delta",
+              blocks: [{ type: "text", content: "needle again" }],
+              notes: "",
+            },
+          ],
+        })}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /1 Gamma/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+    // Find panel is gone after the restore.
+    expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
+  });
+
+  it("clears the find query when a template replaces the deck", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+
+      // Open Find with a query that matches nothing in the current deck.
+      fireEvent.click(screen.getByRole("button", { name: "Find in slides" }));
+      fireEvent.change(screen.getByLabelText("Find query"), {
+        target: { value: "needle" },
+      });
+
+      // Apply the first template (replaces the whole deck, anchors to
+      // slide 0). The find query must be cleared so it can't re-run
+      // against the new deck and jump the active slide.
+      fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+      const dialog = screen.getByRole("dialog", {
+        name: "Choose a deck template",
+      });
+      act(() => {
+        vi.runAllTimers();
+      });
+      fireEvent.click(within(dialog).getAllByRole("button")[0]);
+
+      expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("suppresses Ctrl+PageUp/Down slide navigation while the template modal is open", () => {
+    render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+    expect(
+      screen
+        .getByRole("button", { name: /1 First/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+
+    // With the template modal open, the global nav shortcut must not
+    // mutate the deck behind the backdrop.
+    fireEvent.click(screen.getByRole("button", { name: "Templates" }));
+    fireEvent.keyDown(document, { key: "PageDown", ctrlKey: true });
+    expect(
+      screen
+        .getByRole("button", { name: /1 First/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+
+    // Once the modal is dismissed the shortcut works again — proving the
+    // listener was only gated, not removed.
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(document, { key: "PageDown", ctrlKey: true });
+    expect(
+      screen
+        .getByRole("button", { name: /2 Second/ })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+  });
 });
 
 // ---------------------------------------------------------------------------

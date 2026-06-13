@@ -6,13 +6,17 @@ import {
   MAX_LINE_LENGTH,
   MIN_DECK_SLIDES,
   applyBulletsToSlide,
+  applyRegeneratedSlide,
   buildDeckPrompt,
+  buildDeckRestylePrompt,
   buildImagePromptSuggestion,
   buildLayoutSuggestionPrompt,
   buildNotesPrompt,
   buildRewritePrompt,
+  buildSlideRegeneratePrompt,
   clampDeckSlideCount,
   cleanModelLine,
+  mergeRestyledDeck,
   outlineToSlides,
   parseBulletResponse,
   parseDeckOutline,
@@ -20,7 +24,9 @@ import {
   parseImagePromptResponse,
   parseLayoutSuggestion,
   parseNotesResponse,
+  parseRegeneratedSlide,
   resolveGeneratedSlideLayout,
+  serializeDeckForRestyle,
   slideToContext,
   splitLayoutHint,
 } from "../editors/slideAiHelpers";
@@ -221,6 +227,25 @@ describe("slideToContext", () => {
         "[image: a chart]",
         "[diagram]",
       ].join("\n"),
+    );
+  });
+
+  it("placeholders table and chart blocks instead of dumping raw DSL", () => {
+    const slide = makeSlide({
+      title: "Metrics",
+      blocks: [
+        buildBlock({ type: "table", content: "| Metric | Q1 |\n| Rev | 10 |" }),
+        buildBlock({
+          type: "chart",
+          content: "type: bar\ntitle: Revenue\nlabels: Q1, Q2\nRev: 10, 14",
+        }),
+        buildBlock({ type: "chart", content: "type: pie\nShare: 1, 2" }),
+      ],
+    });
+    // The raw GFM pipes / chart DSL must not leak into the model prompt;
+    // they collapse to the same placeholders presenter mode uses.
+    expect(slideToContext(slide)).toBe(
+      ["Title: Metrics", "[table]", "[chart: Revenue]", "[chart]"].join("\n"),
     );
   });
 });
@@ -491,9 +516,9 @@ describe("parseLayoutSuggestion", () => {
 
   it("recognises an unambiguous id inside prose or code fences", () => {
     expect(parseLayoutSuggestion("```\nbigNumber\n```")).toBe("bigNumber");
-    expect(
-      parseLayoutSuggestion("The recommended layout is bigNumber."),
-    ).toBe("bigNumber");
+    expect(parseLayoutSuggestion("The recommended layout is bigNumber.")).toBe(
+      "bigNumber",
+    );
   });
 
   it("recognises the human label and hyphenated forms", () => {
@@ -511,8 +536,12 @@ describe("parseLayoutSuggestion", () => {
   it("does NOT match an ambiguous common word buried in prose", () => {
     // "title"/"quote"/"blank" double as English words, so they only
     // count as the first token — never deep inside a sentence.
-    expect(parseLayoutSuggestion("I think the title works best here")).toBeNull();
-    expect(parseLayoutSuggestion("Use a memorable quote from the CEO")).toBeNull();
+    expect(
+      parseLayoutSuggestion("I think the title works best here"),
+    ).toBeNull();
+    expect(
+      parseLayoutSuggestion("Use a memorable quote from the CEO"),
+    ).toBeNull();
   });
 
   it("returns null when no known layout is named", () => {
@@ -528,5 +557,295 @@ describe("buildDeckPrompt layout contract", () => {
     expect(prompt).toContain("twoColumn");
     expect(prompt).toContain("bigNumber");
     expect(prompt).toContain("quote");
+  });
+});
+
+describe("serializeDeckForRestyle", () => {
+  const deck: Slide[] = [
+    makeSlide({
+      id: "s0",
+      title: "Cover",
+      blocks: [
+        buildBlock({ type: "text", content: "Subtitle", slot: "subtitle" }),
+      ],
+    }),
+    makeSlide({
+      id: "s1",
+      title: "Comparison",
+      layout: "twoColumn",
+      blocks: [
+        buildBlock({ type: "text", content: "Left point", slot: "left" }),
+        buildBlock({ type: "text", content: "Right point", slot: "right" }),
+      ],
+      notes: "Say this aloud.",
+    }),
+  ];
+
+  it("emits the shared outline grammar: untagged first slide, tagged rest", () => {
+    const text = serializeDeckForRestyle(deck);
+    expect(text).toContain("## Cover");
+    // The non-first slide carries its current layout as a [tag] so the
+    // model has a starting point.
+    expect(text).toContain("## [twoColumn] Comparison");
+    expect(text).toContain("- Left point");
+    expect(text).toContain("- Right point");
+    expect(text).toContain("NOTES: Say this aloud.");
+  });
+
+  it("never serialises an image/diagram block into the prompt", () => {
+    const withImage = [
+      makeSlide({
+        id: "s0",
+        title: "Visual",
+        layout: "imageRight",
+        blocks: [
+          buildBlock({ type: "text", content: "Body", slot: "body" }),
+          buildBlock({ type: "image", content: "asset://x.png", alt: "chart" }),
+        ],
+      }),
+    ];
+    const text = serializeDeckForRestyle(withImage);
+    expect(text).toContain("- Body");
+    // No asset url or data leaks into the prompt.
+    expect(text).not.toContain("asset://x.png");
+    expect(text).not.toContain("[image");
+  });
+
+  it("falls back to a placeholder title for an untitled slide", () => {
+    const text = serializeDeckForRestyle([
+      makeSlide({ id: "s0", title: "  " }),
+    ]);
+    expect(text).toContain("## Untitled slide");
+  });
+
+  it("never serialises table/chart DSL into the prompt", () => {
+    const withData = [
+      makeSlide({
+        id: "s0",
+        title: "Metrics",
+        blocks: [
+          buildBlock({ type: "text", content: "Body", slot: "body" }),
+          buildBlock({
+            type: "table",
+            content: "| Metric | Q1 |\n| Rev | 10 |",
+          }),
+          buildBlock({
+            type: "chart",
+            content: "type: bar\ntitle: Revenue\nlabels: Q1\nRev: 10",
+          }),
+        ],
+      }),
+    ];
+    const text = serializeDeckForRestyle(withData);
+    expect(text).toContain("- Body");
+    // Raw GFM pipes / chart DSL must not leak in as restylable bullets;
+    // the data blocks are re-attached structurally by mergeRestyledDeck.
+    expect(text).not.toContain("| Metric | Q1 |");
+    expect(text).not.toContain("type: bar");
+    expect(text).not.toContain("Rev: 10");
+  });
+});
+
+describe("buildDeckRestylePrompt", () => {
+  const deck: Slide[] = [
+    makeSlide({ id: "s0", title: "Intro" }),
+    makeSlide({
+      id: "s1",
+      title: "Body",
+      blocks: [buildBlock({ type: "bullets", content: "a\nb" })],
+    }),
+  ];
+
+  it("pins the slide count + order and embeds the serialised deck", () => {
+    const prompt = buildDeckRestylePrompt({ slides: deck });
+    expect(prompt).toContain("Restyle the existing 2-slide deck");
+    expect(prompt).toContain("Output exactly 2 slides, in the same order");
+    expect(prompt).toContain("do not add, drop, or reorder slides");
+    // Reuses the shared output contract so the same parser applies.
+    expect(prompt).toContain("## [layout] <slide title>");
+    // Embeds the current deck as the input.
+    expect(prompt).toContain("Current deck:");
+    expect(prompt).toContain("## Intro");
+  });
+
+  it("weaves in the requested tone", () => {
+    const prompt = buildDeckRestylePrompt({ slides: deck, tone: "persuasive" });
+    expect(prompt).toContain("persuasive");
+  });
+});
+
+describe("mergeRestyledDeck", () => {
+  it("carries original ids by index for navigator stability", () => {
+    const originals = [
+      makeSlide({ id: "orig-0", title: "A" }),
+      makeSlide({ id: "orig-1", title: "B" }),
+    ];
+    const restyled = [
+      makeSlide({ id: "new-0", title: "A2", layout: "titleContent" }),
+      makeSlide({ id: "new-1", title: "B2", layout: "titleContent" }),
+    ];
+    const merged = mergeRestyledDeck(originals, restyled);
+    expect(merged.map((s) => s.id)).toEqual(["orig-0", "orig-1"]);
+    expect(merged.map((s) => s.title)).toEqual(["A2", "B2"]);
+  });
+
+  it("re-attaches original images/diagrams so a restyle never drops visuals", () => {
+    const originals = [
+      makeSlide({
+        id: "orig-0",
+        title: "Chart slide",
+        layout: "imageRight",
+        blocks: [
+          buildBlock({ type: "text", content: "old", slot: "body" }),
+          buildBlock({ type: "image", content: "asset://c.png", alt: "chart" }),
+        ],
+      }),
+    ];
+    const restyled = [
+      makeSlide({
+        id: "new-0",
+        title: "Chart slide",
+        layout: "titleContent",
+        blocks: [buildBlock({ type: "bullets", content: "fresh" })],
+      }),
+    ];
+    const [merged] = mergeRestyledDeck(originals, restyled);
+    const images = merged.blocks.filter((b) => b.type === "image");
+    expect(images).toHaveLength(1);
+    expect(images[0].content).toBe("asset://c.png");
+    // The original image layout is preserved (model picked a text-only
+    // layout) so the re-attached image keeps a region instead of being
+    // orphaned.
+    expect(merged.layout).toBe("imageRight");
+  });
+
+  it("keeps the restyled layout when the original had no image", () => {
+    const originals = [
+      makeSlide({ id: "orig-0", title: "A", layout: "titleContent" }),
+    ];
+    const restyled = [
+      makeSlide({ id: "new-0", title: "A2", layout: "twoColumn" }),
+    ];
+    expect(mergeRestyledDeck(originals, restyled)[0].layout).toBe("twoColumn");
+  });
+
+  it("re-attaches original table/chart blocks so a restyle never drops data", () => {
+    const originals = [
+      makeSlide({
+        id: "orig-0",
+        title: "Metrics",
+        layout: "titleContent",
+        blocks: [
+          buildBlock({ type: "text", content: "old", slot: "body" }),
+          buildBlock({ type: "table", content: "| A | B |\n| 1 | 2 |" }),
+          buildBlock({ type: "chart", content: "type: bar\nRev: 10, 14" }),
+        ],
+      }),
+    ];
+    const restyled = [
+      makeSlide({
+        id: "new-0",
+        title: "Metrics",
+        layout: "titleContent",
+        blocks: [buildBlock({ type: "bullets", content: "fresh" })],
+      }),
+    ];
+    const [merged] = mergeRestyledDeck(originals, restyled);
+    const table = merged.blocks.find((b) => b.type === "table");
+    const chart = merged.blocks.find((b) => b.type === "chart");
+    expect(table?.content).toBe("| A | B |\n| 1 | 2 |");
+    expect(chart?.content).toBe("type: bar\nRev: 10, 14");
+    // Table/chart don't anchor an image region, so the restyled
+    // (text-only) layout is kept as-is.
+    expect(merged.layout).toBe("titleContent");
+  });
+
+  it("falls back to original notes when the model omitted them", () => {
+    const originals = [
+      makeSlide({ id: "orig-0", title: "A", notes: "keep me" }),
+    ];
+    const restyled = [makeSlide({ id: "new-0", title: "A2", notes: "" })];
+    expect(mergeRestyledDeck(originals, restyled)[0].notes).toBe("keep me");
+  });
+
+  it("keeps extra slides the model over-produced (total merge)", () => {
+    const originals = [makeSlide({ id: "orig-0", title: "A" })];
+    const restyled = [
+      makeSlide({ id: "new-0", title: "A2" }),
+      makeSlide({ id: "new-1", title: "extra" }),
+    ];
+    const merged = mergeRestyledDeck(originals, restyled);
+    expect(merged).toHaveLength(2);
+    expect(merged[1].id).toBe("new-1");
+  });
+});
+
+describe("buildSlideRegeneratePrompt", () => {
+  it("asks for a fresh single-slide title + bullets and includes context", () => {
+    const slide = makeSlide({
+      id: "s1",
+      title: "Original title",
+      blocks: [buildBlock({ type: "bullets", content: "point a\npoint b" })],
+    });
+    const prompt = buildSlideRegeneratePrompt(slide, "My Deck");
+    expect(prompt).toContain("regenerating one slide");
+    expect(prompt).toContain("## <slide title>");
+    expect(prompt).toContain("Deck: My Deck");
+    expect(prompt).toContain("Title: Original title");
+    expect(prompt).toContain("- point a");
+  });
+
+  it("omits the Deck line when no deck title is given", () => {
+    const prompt = buildSlideRegeneratePrompt(makeSlide({ title: "X" }));
+    expect(prompt).not.toContain("Deck:");
+  });
+});
+
+describe("parseRegeneratedSlide", () => {
+  it("recovers the first slide's title + bullets via the shared grammar", () => {
+    const regen = parseRegeneratedSlide("## New Title\n- one\n- two");
+    expect(regen).toEqual({ title: "New Title", bullets: ["one", "two"] });
+  });
+
+  it("returns null for an empty / unusable response", () => {
+    expect(parseRegeneratedSlide("")).toBeNull();
+    expect(parseRegeneratedSlide("   \n  ")).toBeNull();
+  });
+});
+
+describe("applyRegeneratedSlide", () => {
+  it("swaps in the new title + bullets while preserving images, notes, layout", () => {
+    const slide = makeSlide({
+      id: "s1",
+      title: "Old",
+      layout: "imageRight",
+      notes: "keep",
+      blocks: [
+        buildBlock({ type: "bullets", content: "old", slot: "body" }),
+        buildBlock({ type: "image", content: "asset://i.png", alt: "pic" }),
+      ],
+    });
+    const out = applyRegeneratedSlide(slide, {
+      title: "Fresh",
+      bullets: ["x", "y"],
+    });
+    expect(out.title).toBe("Fresh");
+    expect(out.notes).toBe("keep");
+    expect(out.layout).toBe("imageRight");
+    expect(out.blocks.some((b) => b.type === "image")).toBe(true);
+    const bullets = out.blocks.find((b) => b.type === "bullets");
+    expect(bullets?.content).toBe("x\ny");
+  });
+
+  it("keeps the existing title when the regenerated title is empty", () => {
+    const slide = makeSlide({ id: "s1", title: "Keep" });
+    const out = applyRegeneratedSlide(slide, { title: "", bullets: ["z"] });
+    expect(out.title).toBe("Keep");
+  });
+
+  it("returns the same reference when nothing would change", () => {
+    const slide = makeSlide({ id: "s1", title: "Keep" });
+    const out = applyRegeneratedSlide(slide, { title: "", bullets: [] });
+    expect(out).toBe(slide);
   });
 });
