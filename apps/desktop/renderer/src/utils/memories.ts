@@ -151,6 +151,45 @@ export function formatRetention(score: number): string {
   return `${Math.round(clamped * 100)}%`;
 }
 
+/**
+ * Build a reusable predicate that tests whether arbitrary content mentions a
+ * concept `label`, matched on word boundaries (so "Atlas" is not surfaced for
+ * "Atlassian"). Labels with no word characters (e.g. pure punctuation/CJK
+ * where `\b` is meaningless) fall back to a case-insensitive substring test.
+ *
+ * The regex (or lowercased needle) is compiled *once* here and captured in the
+ * returned closure, so a caller correlating one concept against many memories
+ * pays the compile cost a single time instead of per memory — the hot path for
+ * the decay map's O(nodes × memories) correlation. Pure; shared with
+ * {@link memoryMentionsConcept} so single-shot and batched callers match
+ * identically.
+ */
+export function conceptMentionMatcher(
+  label: string,
+): (content: string) => boolean {
+  const trimmed = label.trim();
+  if (!trimmed) return () => false;
+  if (/\w/.test(trimmed)) {
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`\\b${escaped}\\b`, "i");
+    return (content: string) => re.test(content);
+  }
+  const needle = trimmed.toLowerCase();
+  return (content: string) => content.toLowerCase().includes(needle);
+}
+
+/**
+ * Whether a memory's content mentions a concept `label`. Single-shot
+ * convenience over {@link conceptMentionMatcher}; shared by the concept-graph
+ * evidence panel and the decay visualization so the two correlate concepts to
+ * memories *identically* — a single source of truth for "which memories are
+ * about this concept". Callers matching one label against many contents should
+ * use {@link conceptMentionMatcher} directly to compile the matcher once.
+ */
+export function memoryMentionsConcept(label: string, content: string): boolean {
+  return conceptMentionMatcher(label)(content);
+}
+
 /** Number of leading characters shown for an abbreviated source id. */
 const SOURCE_ID_PREVIEW = 8;
 

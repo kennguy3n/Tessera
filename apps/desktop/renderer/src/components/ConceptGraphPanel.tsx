@@ -44,7 +44,34 @@ import {
   saveViewState,
   type ConceptGraphViewState,
 } from "../utils/conceptGraphViewState";
-import { formatSourceId } from "../utils/memories";
+import { CANVAS_RENDER_THRESHOLD } from "../utils/conceptGraphRenderer";
+import {
+  buildConceptDecayMap,
+  computeTimeBounds,
+  decayColor,
+  decayLegendStops,
+  decayOpacity,
+  decaySizeFactor,
+  isPresentAsOf,
+  recencyFraction,
+  type ConceptDecay,
+  type TimeBounds,
+} from "../utils/conceptGraphDecay";
+import {
+  activePresetId,
+  findPreset,
+  loadPresetStore,
+  removePreset,
+  savePresetStore,
+  upsertPresetByName,
+  type ConceptGraphPreset,
+  type ConceptGraphPresetStore,
+  type PresetFilter,
+} from "../utils/conceptGraphPresets";
+import ConceptGraphCanvas, {
+  type CanvasNodeStyle,
+} from "./ConceptGraphCanvas";
+import { conceptMentionMatcher, formatSourceId } from "../utils/memories";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
 /**
@@ -101,6 +128,38 @@ const RELATION_COLORS: Record<ConceptRelation, string> = {
   assigned_to: "#db2777",
   unknown: "#6b7280",
 };
+
+/**
+ * Concrete (non-`var()`) node fills for the Canvas renderer, mirroring the
+ * fallbacks baked into {@link STATE_COLORS}. The SVG path can use CSS
+ * custom properties directly, but the canvas draws to a bitmap and needs
+ * resolved colors; these brand hues read well on both light and dark
+ * surfaces (the canvas resolves surface/label/stroke from tokens for true
+ * theme parity).
+ */
+const STATE_CANVAS_COLORS: Record<ConceptNodeState, string> = {
+  candidate: "#6b7280",
+  canonical: "#7c3aed",
+  superseded: "#f59e0b",
+  contradicted: "#ef4444",
+  deleted: "#9ca3af",
+  unknown: "#6b7280",
+};
+
+/** Resolve the active color scheme from the `data-theme` override or OS. */
+function detectColorScheme(): "light" | "dark" {
+  if (typeof document !== "undefined") {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "dark") return "dark";
+    if (attr === "light") return "light";
+  }
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+  return "light";
+}
 
 export interface ConceptGraphPanelProps {
   /** Scope label forwarded to the bridge; `null`/omitted = default scope. */
@@ -472,6 +531,66 @@ const CONCEPT_GRAPH_STYLES = `
     flex: 0 0 auto;
   }
   .cg-legend-trunc { font-style: italic; }
+  /* Canvas (large-graph) renderer surface — same box as the SVG canvas. */
+  .cg-canvas-gl {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: var(--color-surface-soft, #f9fafb);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md, 8px);
+    touch-action: none;
+    cursor: grab;
+  }
+  .cg-canvas-gl.cg-panning { cursor: grabbing; }
+  .cg-canvas-gl:focus { outline: none; }
+  .cg-canvas-gl:focus-visible {
+    outline: 2px solid var(--color-focus-ring, var(--color-primary, #7c3aed));
+    outline-offset: 2px;
+  }
+  /* Saved-view preset controls. */
+  .cg-preset-group { flex-wrap: wrap; }
+  .cg-preset-name { width: 9rem; max-width: 40vw; }
+  .cg-preset-pick .input { max-width: 11rem; }
+  /* Decay overlay: time scrubber + recency legend. */
+  .cg-decay-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--color-surface-soft, #f9fafb);
+  }
+  .cg-decay-scrubber {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex: 1 1 16rem;
+    min-width: 12rem;
+  }
+  .cg-decay-scrubber input[type="range"] { flex: 1 1 auto; min-width: 6rem; }
+  .cg-decay-time {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .cg-decay-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+  .cg-decay-ramp {
+    display: inline-flex;
+    height: 10px;
+    width: 140px;
+    border-radius: 9999px;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+  }
+  .cg-decay-ramp span { flex: 1 1 auto; }
   @media (max-width: 720px) {
     .cg-body { grid-template-columns: 1fr; }
   }
@@ -479,6 +598,104 @@ const CONCEPT_GRAPH_STYLES = `
     .cg-edge, .cg-node circle.cg-node-dot { transition: none; }
   }
 `;
+
+/** Format a unix-seconds instant as a short, locale-aware date label. */
+function formatDay(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+interface DecayControlsProps {
+  bounds: TimeBounds;
+  asOf: number | null;
+  onScrub: (value: number | null) => void;
+  scheme: "light" | "dark";
+}
+
+/**
+ * Time scrubber + recency legend for the decay overlay. Thin presentational
+ * shell: the ramp colors come from {@link decayLegendStops} and the "as of"
+ * filtering lives in the panel. With no temporal data it degrades to a
+ * static legend (the scrubber would have nothing to move over).
+ */
+function DecayControls({ bounds, asOf, onScrub, scheme }: DecayControlsProps) {
+  const stops = decayLegendStops(scheme);
+  const hasRange =
+    bounds.min !== null && bounds.max !== null && bounds.max > bounds.min;
+  const ramp = (
+    <span className="cg-decay-legend" data-testid="concept-graph-decay-legend">
+      <span className="cg-legend-caption">Older</span>
+      <span className="cg-decay-ramp" aria-hidden="true">
+        {stops.map((s) => (
+          <span key={s.t} style={{ background: s.color }} />
+        ))}
+      </span>
+      <span className="cg-legend-caption">Recent</span>
+    </span>
+  );
+
+  if (!hasRange || bounds.min === null || bounds.max === null) {
+    return (
+      <div className="cg-decay-controls" data-testid="concept-graph-decay-controls">
+        <span>Recency overlay (no dated memories for these concepts).</span>
+        {ramp}
+      </div>
+    );
+  }
+
+  // Local copies so the change handler's closure keeps the narrowed
+  // non-null types (TS doesn't carry control-flow narrowing into callbacks).
+  const min = bounds.min;
+  const max = bounds.max;
+  const value = asOf ?? max;
+  const step = Math.max(1, Math.round((max - min) / 200));
+  return (
+    <div className="cg-decay-controls" data-testid="concept-graph-decay-controls">
+      <label className="cg-decay-scrubber">
+        <span className="cg-sr-only">Show graph as of date</span>
+        <span className="cg-decay-time" aria-hidden="true">
+          {formatDay(min)}
+        </span>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          data-testid="concept-graph-decay-scrubber"
+          aria-label={`Show concept graph as of ${formatDay(value)}`}
+          aria-valuetext={formatDay(value)}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            onScrub(next >= max ? null : next);
+          }}
+        />
+        <span className="cg-decay-time" aria-hidden="true">
+          {formatDay(max)}
+        </span>
+      </label>
+      <span className="cg-decay-time" data-testid="concept-graph-decay-asof">
+        As of {asOf === null ? "now" : formatDay(asOf)}
+      </span>
+      {asOf !== null && (
+        <button
+          type="button"
+          className="cg-iconbtn"
+          data-testid="concept-graph-decay-now"
+          onClick={() => onScrub(null)}
+        >
+          Now
+        </button>
+      )}
+      {ramp}
+    </div>
+  );
+}
 
 export default function ConceptGraphPanel({
   scope = null,
@@ -535,8 +752,43 @@ export default function ConceptGraphPanel({
   const [labelsAll, setLabelsAll] = useState(
     () => initialViewState.current.labelsAll,
   );
+  // Time-based decay overlay: color/size/opacity by concept recency, with
+  // an optional "as of" scrubber. Off by default so the baseline render is
+  // unchanged. `asOf` is a unix-seconds instant or null = "now" (graph max).
+  const [decayMode, setDecayMode] = useState(false);
+  const [asOf, setAsOf] = useState<number | null>(null);
   // Debounced screen-reader announcement (selection + local-graph state).
   const [announcement, setAnnouncement] = useState("");
+
+  // Active color scheme for the decay ramp (data-theme override, else the
+  // OS preference). Tokens.css drives the rest of the palette; the decay
+  // colors are computed in JS so they need the resolved scheme.
+  const [scheme, setScheme] = useState<"light" | "dark">(detectColorScheme);
+  useEffect(() => {
+    const update = () => setScheme(detectColorScheme());
+    const root = document.documentElement;
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    const mq =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : null;
+    mq?.addEventListener?.("change", update);
+    return () => {
+      observer.disconnect();
+      mq?.removeEventListener?.("change", update);
+    };
+  }, []);
+
+  // ----- saved filter presets (per scope, separate storage key) -----
+  const [presetStore, setPresetStore] = useState<ConceptGraphPresetStore>(() =>
+    loadPresetStore(scope ?? "__default__"),
+  );
+  const [presetName, setPresetName] = useState("");
+  // The scope the currently-held `presetStore` was loaded for. The store is
+  // replaced via async `setState` on scope change, so persistence keys off
+  // this ref (the store's true owner) rather than the live `scopeKey`.
+  const presetStoreScopeRef = useRef(scopeKey);
 
   // ----- scope filtering (preserved from the prior implementation) -----
   const scopes = useMemo(() => {
@@ -610,6 +862,63 @@ export default function ConceptGraphPanel({
   const viewSignature = useMemo(
     () => computeViewSignature(view.nodes.map((n) => n.id)),
     [view.nodes],
+  );
+
+  // ===== time-based decay model (driven by real substrate fields) =====
+  // Correlate each visible concept to its mentioning memories and aggregate
+  // their real timestamps / retention / lifecycle state. Built only while
+  // the overlay is on so the baseline render pays nothing. Bounded by the
+  // visible node set × memories.
+  const decayMap = useMemo(
+    () =>
+      decayMode
+        ? buildConceptDecayMap(view.nodes, memories)
+        : new Map<string, ConceptDecay>(),
+    [decayMode, view.nodes, memories],
+  );
+  const timeBounds = useMemo(() => computeTimeBounds(decayMap), [decayMap]);
+  // The scrubber instant: an explicit `asOf`, else "now" (the latest known
+  // access across the graph). null bounds → no temporal data at all.
+  const decayNow = asOf ?? timeBounds.max;
+  // Whether the scrubber is rewound before the newest instant (so the
+  // "as of" filter actually hides not-yet-present concepts).
+  const scrubbing =
+    decayMode &&
+    asOf !== null &&
+    timeBounds.max !== null &&
+    asOf < timeBounds.max;
+
+  // Concepts not yet present as of the scrubber instant — hidden (not
+  // re-laid-out) so the graph appears to grow over time without churning
+  // positions on every scrub tick.
+  const asOfHidden = useMemo(() => {
+    const set = new Set<string>();
+    if (!scrubbing || decayNow === null) return set;
+    for (const node of view.nodes) {
+      const d = decayMap.get(node.id);
+      if (d && !isPresentAsOf(d, decayNow)) set.add(node.id);
+    }
+    return set;
+  }, [scrubbing, decayNow, view.nodes, decayMap]);
+
+  // Resolve a node's decay-driven visual style. `null` recency = timeless
+  // (no memory time data) → neutral. Pure lookups; memoized indirectly via
+  // its inputs through the callers' own memos.
+  const decayStyleOf = useCallback(
+    (state: ConceptNodeState, id: string): CanvasNodeStyle => {
+      if (!decayMode) {
+        return { fill: STATE_CANVAS_COLORS[state], alpha: 1, sizeFactor: 1 };
+      }
+      const d = decayMap.get(id);
+      const t =
+        d && decayNow !== null ? recencyFraction(d, decayNow, timeBounds) : null;
+      return {
+        fill: decayColor(t, scheme),
+        alpha: decayOpacity(t),
+        sizeFactor: decaySizeFactor(t),
+      };
+    },
+    [decayMode, decayMap, decayNow, timeBounds, scheme],
   );
 
   // Restore-time invariant: a persisted `selectedId` that no longer exists
@@ -1057,6 +1366,24 @@ export default function ConceptGraphPanel({
     [],
   );
 
+  // Apply a preset's captured filter to the live controls. Selection is
+  // preserved (a now-hidden selection is handled by existing invariants);
+  // the viewBox re-fits via the layout-change effect. Declared before the
+  // scope-change effect so that effect can apply a new scope's default inline.
+  const applyPreset = useCallback((preset: ConceptGraphPreset) => {
+    setDisabledRelations(new Set(preset.disabledRelations));
+    setDisabledStates(new Set(preset.disabledStates));
+    setScopeFilter(preset.scopeFilter);
+    setLocalMode(preset.localMode);
+    setLocalHops(preset.localHops);
+    setLabelsAll(preset.labelsAll);
+    setDecayMode(preset.decayMode);
+    // The scrubber instant is ephemeral (tied to the live time bounds) and is
+    // not captured by presets, so snap back to "now" — otherwise applying a
+    // preset while scrubbed would re-enter decay at the stale instant.
+    setAsOf(null);
+  }, []);
+
   // Scope *changes* on an already-mounted panel reload that scope's saved
   // view state (the initial scope was applied via lazy state initialisers).
   const appliedScopeRef = useRef(scopeKey);
@@ -1084,7 +1411,23 @@ export default function ConceptGraphPanel({
     pendingRestoreRef.current = next.viewBox
       ? { box: next.viewBox, signature: next.viewSignature }
       : null;
-  }, [scopeKey]);
+    // Reset the time-decay controls: the scrubber's "as of" instant is keyed
+    // to the previous scope's time bounds so it must not carry over, and the
+    // overlay returns to its off baseline (the new scope's default preset, if
+    // any, turns it back on just below).
+    setDecayMode(false);
+    setAsOf(null);
+    // Load the new scope's presets *synchronously* so its default can be
+    // applied from the fresh store here. Keying the default-apply on the async
+    // `presetStore` state instead would read the previous scope's store (the
+    // `setPresetStore` below has not committed yet on this render).
+    const nextStore = loadPresetStore(scopeKey);
+    presetStoreScopeRef.current = scopeKey;
+    setPresetStore(nextStore);
+    setPresetName("");
+    const def = findPreset(nextStore.presets, nextStore.defaultPresetId);
+    if (def) applyPreset(def);
+  }, [scopeKey, applyPreset]);
 
   // Debounced write of the (privacy-minimal) UI state. Only ids / enums /
   // numbers already present in the renderer are persisted — never source
@@ -1106,6 +1449,84 @@ export default function ConceptGraphPanel({
     viewBox,
     viewSignature,
   ]);
+
+  // ===== saved filter presets =====
+  // The live filter combination, compared against saved presets to surface
+  // the active one and to capture on "save".
+  const liveFilter: PresetFilter = useMemo(
+    () => ({
+      disabledRelations: [...disabledRelations],
+      disabledStates: [...disabledStates],
+      scopeFilter,
+      localMode,
+      localHops,
+      labelsAll,
+      decayMode,
+    }),
+    [
+      disabledRelations,
+      disabledStates,
+      scopeFilter,
+      localMode,
+      localHops,
+      labelsAll,
+      decayMode,
+    ],
+  );
+  // Id of the preset matching the live filter (highlighted in the picker),
+  // or null when the user has diverged from every saved view.
+  const currentPresetId = useMemo(
+    () => activePresetId(presetStore.presets, liveFilter),
+    [presetStore.presets, liveFilter],
+  );
+
+  // Persist the preset store (separate key from the view state). Written to
+  // the scope the store was *loaded* for (`presetStoreScopeRef`), not the live
+  // `scopeKey`, and keyed on the store value alone: during a scope switch the
+  // `setPresetStore` in the scope-change effect is async, so keying on
+  // `scopeKey` would briefly write the previous scope's presets under the new
+  // scope's key (a crash in that window would corrupt it).
+  useEffect(() => {
+    savePresetStore(presetStoreScopeRef.current, presetStore);
+  }, [presetStore]);
+
+  // Apply the default preset on initial mount only; scope *changes* apply the
+  // new scope's default inline in the scope-change effect (from the
+  // synchronously loaded store). A ref guards against re-running on unrelated
+  // re-renders.
+  const appliedInitialDefaultRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialDefaultRef.current) return;
+    appliedInitialDefaultRef.current = true;
+    const def = findPreset(presetStore.presets, presetStore.defaultPresetId);
+    if (def) applyPreset(def);
+  }, [presetStore, applyPreset]);
+
+  // Save the current filter under the entered name, updating the existing
+  // preset with that name in place rather than appending a duplicate. Empty
+  // names fall back to a placeholder.
+  const saveCurrentPreset = useCallback(() => {
+    setPresetStore((store) => ({
+      ...store,
+      presets: upsertPresetByName(store.presets, presetName, liveFilter),
+    }));
+    setPresetName("");
+  }, [presetName, liveFilter]);
+
+  const deletePreset = useCallback((id: string) => {
+    setPresetStore((store) => ({
+      presets: removePreset(store.presets, id),
+      defaultPresetId:
+        store.defaultPresetId === id ? null : store.defaultPresetId,
+    }));
+  }, []);
+
+  const setDefaultPreset = useCallback((id: string | null) => {
+    setPresetStore((store) => ({
+      ...store,
+      defaultPresetId: store.defaultPresetId === id ? null : id,
+    }));
+  }, []);
 
   // ===== pointer interactions: drag-to-pan + drag-node + click-to-select =====
   const panRef = useRef<{ x: number; y: number; box: FitBox } | null>(null);
@@ -1240,18 +1661,11 @@ export default function ConceptGraphPanel({
 
   const selectedEvidence = useMemo(() => {
     if (!selectedNode) return [];
-    const label = selectedNode.label.trim();
-    if (!label) return [];
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const matcher = /\w/.test(label)
-      ? new RegExp(`\\b${escaped}\\b`, "i")
-      : null;
-    const needle = label.toLowerCase();
-    return memories
-      .filter((m) =>
-        matcher ? matcher.test(m.content) : m.content.toLowerCase().includes(needle),
-      )
-      .slice(0, 8);
+    // Shared concept↔memory matcher (word-boundary aware) so the evidence
+    // panel and the decay overlay correlate concepts to memories identically.
+    // Compile the matcher once and reuse it across every memory.
+    const mentions = conceptMentionMatcher(selectedNode.label);
+    return memories.filter((m) => mentions(m.content)).slice(0, 8);
   }, [selectedNode, memories]);
 
   // ===== highlight/dim: focus = hovered node, else selected node =====
@@ -1372,13 +1786,66 @@ export default function ConceptGraphPanel({
   // The single tab-focusable node (roving tabindex). Prefer the explicit
   // roving target, then the current selection, then the first (most-
   // connected) node — always falling back to one that still exists so the
-  // tab order never points at a removed node.
+  // tab order never points at a removed node. Nodes hidden by the time
+  // scrubber (`asOfHidden`) are excluded so the roving target is always a
+  // node that's actually painted: otherwise the Canvas (which receives the
+  // `asOfHidden`-filtered node set) would try to navigate from / select a
+  // node that isn't on screen, stalling arrow-key traversal.
   const effectiveRovingId = useMemo(() => {
-    const ids = new Set(layout.nodes.map((n) => n.id));
+    const visible = asOfHidden.size
+      ? layout.nodes.filter((n) => !asOfHidden.has(n.id))
+      : layout.nodes;
+    const ids = new Set(visible.map((n) => n.id));
     if (rovingId && ids.has(rovingId)) return rovingId;
     if (selectedId && ids.has(selectedId)) return selectedId;
-    return layout.nodes[0]?.id ?? null;
-  }, [layout.nodes, rovingId, selectedId]);
+    return visible[0]?.id ?? null;
+  }, [layout.nodes, rovingId, selectedId, asOfHidden]);
+
+  // Renderer selection: switch to the Canvas surface once the node count
+  // crosses the threshold where per-DOM-node cost starts to drop frames.
+  const useCanvas = nodeCount >= CANVAS_RENDER_THRESHOLD;
+  // Highest-degree node — the End-key target for both renderers.
+  const hubId = useMemo(
+    () => highestDegreeNodeId(view, degrees),
+    [view, degrees],
+  );
+
+  // Node/edge sets fed to the canvas, with the as-of scrubber filter applied
+  // (layout positions preserved; not-yet-present concepts simply omitted so
+  // the graph appears to grow over time without re-laying-out on each tick).
+  const canvasNodes = useMemo(
+    () =>
+      asOfHidden.size
+        ? layout.nodes.filter((n) => !asOfHidden.has(n.id))
+        : layout.nodes,
+    [layout.nodes, asOfHidden],
+  );
+  const canvasEdges = useMemo(
+    () =>
+      asOfHidden.size
+        ? view.edges.filter(
+            (e) => !asOfHidden.has(e.from) && !asOfHidden.has(e.to),
+          )
+        : view.edges,
+    [view.edges, asOfHidden],
+  );
+  const canvasStyleOf = useCallback(
+    (node: PositionedNode): CanvasNodeStyle => decayStyleOf(node.state, node.id),
+    [decayStyleOf],
+  );
+
+  // Canvas interaction callbacks (stable). Selection / hover / roving reuse
+  // the panel's existing setters; node drag mirrors the SVG path's override.
+  const dragNodeTo = useCallback(
+    (id: string, world: Point) => {
+      const next = new Map(dragPosRef.current);
+      next.set(id, world);
+      commitDragPos(next);
+    },
+    [commitDragPos],
+  );
+  const clearSelection = useCallback(() => setSelectedId(null), []);
+  const exitLocal = useCallback(() => setLocalMode(false), []);
 
   const toggleRelation = (relation: ConceptRelation) => {
     setDisabledRelations((prev) => {
@@ -1541,8 +2008,110 @@ export default function ConceptGraphPanel({
                   </select>
                 </label>
               )}
+              <button
+                type="button"
+                className="cg-iconbtn"
+                aria-pressed={decayMode}
+                aria-label="Toggle time-based decay overlay"
+                data-testid="concept-graph-decay-toggle"
+                title="Color, size and fade concepts by how recently their memories were touched"
+                onClick={() => {
+                  setDecayMode((v) => !v);
+                  setAsOf(null);
+                }}
+              >
+                Decay
+              </button>
+            </div>
+            <div className="cg-controlbar-sep" aria-hidden="true" />
+            <div className="cg-controlbar-group cg-preset-group">
+              <label className="cg-preset-pick">
+                <span className="cg-sr-only">Saved view preset</span>
+                <select
+                  className="input"
+                  aria-label="Saved view preset"
+                  data-testid="concept-graph-preset-select"
+                  value={currentPresetId ?? ""}
+                  onChange={(e) => {
+                    const preset = findPreset(
+                      presetStore.presets,
+                      e.target.value || null,
+                    );
+                    if (preset) applyPreset(preset);
+                  }}
+                >
+                  <option value="">
+                    {currentPresetId ? "Saved views" : "Custom view"}
+                  </option>
+                  {presetStore.presets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.id === presetStore.defaultPresetId ? "★ " : ""}
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <input
+                type="text"
+                className="input cg-preset-name"
+                aria-label="New preset name"
+                data-testid="concept-graph-preset-name"
+                placeholder="Name this view"
+                maxLength={60}
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    saveCurrentPreset();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="cg-iconbtn"
+                data-testid="concept-graph-preset-save"
+                onClick={saveCurrentPreset}
+                title="Save the current filter combination as a preset"
+              >
+                Save view
+              </button>
+              {currentPresetId && (
+                <>
+                  <button
+                    type="button"
+                    className="cg-iconbtn"
+                    aria-pressed={presetStore.defaultPresetId === currentPresetId}
+                    data-testid="concept-graph-preset-default"
+                    onClick={() => setDefaultPreset(currentPresetId)}
+                    title="Load this view automatically for this scope"
+                  >
+                    {presetStore.defaultPresetId === currentPresetId
+                      ? "★ Default"
+                      : "Set default"}
+                  </button>
+                  <button
+                    type="button"
+                    className="cg-iconbtn"
+                    data-testid="concept-graph-preset-delete"
+                    onClick={() => deletePreset(currentPresetId)}
+                    title="Delete this preset"
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           </div>
+
+          {decayMode && (
+            <DecayControls
+              bounds={timeBounds}
+              asOf={asOf}
+              onScrub={setAsOf}
+              scheme={scheme}
+            />
+          )}
 
           {truncated && (
             <div className="cg-banner" role="status" data-testid="concept-graph-truncation">
@@ -1567,6 +2136,39 @@ export default function ConceptGraphPanel({
 
           <div className="cg-body">
             <div className="cg-canvas-wrap">
+              {useCanvas ? (
+                <ConceptGraphCanvas
+                  width={CANVAS_WIDTH}
+                  height={height}
+                  nodes={canvasNodes}
+                  edges={canvasEdges}
+                  edgeCurves={edgeCurves}
+                  renderPos={renderPos}
+                  viewBox={viewBox}
+                  baseFit={baseFit}
+                  selectedId={selectedId}
+                  rovingId={effectiveRovingId}
+                  localActive={localMode}
+                  focus={focus}
+                  hubId={hubId}
+                  labelsAll={labelsAll}
+                  styleOf={canvasStyleOf}
+                  relationColorOf={(rel) => RELATION_COLORS[rel]}
+                  relationLabelOf={(rel) => RELATION_LABELS[rel]}
+                  ariaLabel={`Concept graph with ${view.nodes.length} concepts and ${view.edges.length} relationships. Arrow keys move between concepts, Shift plus arrows pan, plus and minus zoom, 0 or F fits to view, Enter selects.`}
+                  onSelect={setSelectedId}
+                  onHover={setHoveredId}
+                  onRove={setRovingId}
+                  onDragNodeTo={dragNodeTo}
+                  onClearSelection={clearSelection}
+                  onExitLocal={exitLocal}
+                  applyViewBox={applyViewBox}
+                  zoomAround={zoomAround}
+                  panBy={panBy}
+                  fitToView={fitToView}
+                  announce={announce}
+                />
+              ) : (
               <svg
                 ref={attachSvg}
                 className={`cg-canvas${isPanning ? " cg-panning" : ""}`}
@@ -1606,6 +2208,11 @@ export default function ConceptGraphPanel({
                 </defs>
                 <g className="cg-edges">
                   {view.edges.map((edge) => {
+                    // As-of scrubber: hide edges touching a not-yet-present
+                    // concept (keeps layout stable; see `asOfHidden`).
+                    if (asOfHidden.has(edge.from) || asOfHidden.has(edge.to)) {
+                      return null;
+                    }
                     const geo = edgeGeometry.get(edge.id);
                     if (!geo) return null;
                     const color = RELATION_COLORS[edge.relationType];
@@ -1642,10 +2249,27 @@ export default function ConceptGraphPanel({
                 </g>
                 <g className="cg-nodes" ref={nodesGroupRef}>
                   {paintNodes.map((node) => {
+                    // As-of scrubber: omit concepts not yet present.
+                    if (asOfHidden.has(node.id)) return null;
                     const pos = renderPos.get(node.id) ?? { x: node.x, y: node.y };
                     const isSelected = node.id === selectedId;
                     const dimmed = focus ? !focus.nodeIds.has(node.id) : false;
-                    const fill = STATE_COLORS[node.state] ?? STATE_COLORS.unknown;
+                    // Decay overlay overrides fill/opacity/size with the
+                    // recency ramp; otherwise the lifecycle-state palette.
+                    const decay = decayMode
+                      ? decayStyleOf(node.state, node.id)
+                      : null;
+                    const fill = decay
+                      ? decay.fill
+                      : STATE_COLORS[node.state] ?? STATE_COLORS.unknown;
+                    const dotRadius = decay
+                      ? node.radius * decay.sizeFactor
+                      : node.radius;
+                    const dotOpacity = decay
+                      ? decay.alpha
+                      : isSelected
+                        ? 0.95
+                        : 0.78;
                     return (
                       <g
                         key={node.id}
@@ -1684,9 +2308,9 @@ export default function ConceptGraphPanel({
                         />
                         <circle
                           className="cg-node-dot"
-                          r={node.radius}
+                          r={dotRadius}
                           fill={fill}
-                          fillOpacity={isSelected ? 0.95 : 0.78}
+                          fillOpacity={dotOpacity}
                           stroke={
                             isSelected
                               ? "var(--color-text, #111827)"
@@ -1697,7 +2321,7 @@ export default function ConceptGraphPanel({
                         {labelVisible(node) && (
                           <text
                             className="cg-node-label"
-                            y={node.radius + 12}
+                            y={dotRadius + 12}
                             textAnchor="middle"
                           >
                             {node.label.length > 22
@@ -1710,6 +2334,7 @@ export default function ConceptGraphPanel({
                   })}
                 </g>
               </svg>
+              )}
               {localMode && selectedNode && (
                 <div className="cg-focus-pill" data-testid="concept-graph-focus-pill">
                   <span>

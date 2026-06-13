@@ -19,6 +19,7 @@ import {
   computeEdgeCurves,
   quadraticControlPoint,
   quadraticEdgePath,
+  quadraticMidpoint,
   placeEdgeLabels,
   type ConceptGraphView,
   type ConceptGraphEdge,
@@ -707,6 +708,20 @@ describe("quadraticControlPoint / quadraticEdgePath", () => {
     const forward = quadraticEdgePath({ x: 0, y: 0 }, { x: 100, y: 0 }, control);
     const reverse = quadraticEdgePath({ x: 100, y: 0 }, { x: 0, y: 0 }, control);
     expect(reverse.labelPoint).toEqual(forward.labelPoint);
+  });
+
+  it("quadraticMidpoint backs the path's label anchor and sits off the control point when bowed", () => {
+    const from = { x: 0, y: 0 };
+    const to = { x: 100, y: 0 };
+    const control = { x: 50, y: -20 };
+    const mid = quadraticMidpoint(from, to, control);
+    // Single source of truth: the path's label anchor is this midpoint.
+    expect(quadraticEdgePath(from, to, control).labelPoint).toEqual(mid);
+    // B(½) lies on the curve, halfway toward the control point — not at it.
+    expect(mid).toEqual({ x: 50, y: -10 });
+    expect(mid.y).not.toBeCloseTo(control.y);
+    // A straight edge (control on the segment) collapses to the geometric mid.
+    expect(quadraticMidpoint(from, to, { x: 50, y: 0 })).toEqual({ x: 50, y: 0 });
   });
 });
 

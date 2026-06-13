@@ -1074,10 +1074,22 @@ export interface EdgePath {
 export function quadraticEdgePath(from: Point, to: Point, control: Point): EdgePath {
   return {
     d: `M ${from.x} ${from.y} Q ${control.x} ${control.y} ${to.x} ${to.y}`,
-    labelPoint: {
-      x: 0.25 * from.x + 0.5 * control.x + 0.25 * to.x,
-      y: 0.25 * from.y + 0.5 * control.y + 0.25 * to.y,
-    },
+    labelPoint: quadraticMidpoint(from, to, control),
+  };
+}
+
+/**
+ * On-curve midpoint of the quadratic bezier `from → to` with `control`,
+ * `B(½) = ¼·from + ½·control + ¼·to`. This is the correct edge-label anchor:
+ * the raw `control` point lies *off* the drawn curve once an edge is bowed
+ * (parallel/reciprocal pairs), so anchoring there floats the label away from
+ * the line. Shared by the SVG path and the Canvas renderer so both place
+ * labels identically.
+ */
+export function quadraticMidpoint(from: Point, to: Point, control: Point): Point {
+  return {
+    x: 0.25 * from.x + 0.5 * control.x + 0.25 * to.x,
+    y: 0.25 * from.y + 0.5 * control.y + 0.25 * to.y,
   };
 }
 
