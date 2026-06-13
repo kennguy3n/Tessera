@@ -113,15 +113,29 @@ describe("colorForLabel / rowColor", () => {
     expect(colorForLabel("Lead")).toMatch(/^#[0-9a-f]{6}$/i);
   });
 
-  it("returns null for empty-ish labels", () => {
+  it("returns null only for genuinely empty label strings (not the literal 'Empty')", () => {
     expect(colorForLabel("")).toBeNull();
-    expect(colorForLabel(EMPTY_GROUP_LABEL)).toBeNull();
+    // The label string "Empty" is a real option, so colorForLabel gives
+    // it a stable color — emptiness gating happens upstream in rowColor.
+    expect(colorForLabel(EMPTY_GROUP_LABEL)).toMatch(/^#[0-9a-f]{6}$/i);
   });
 
-  it("rowColor reads the field value", () => {
+  it("rowColor reads the field value and gates emptiness off the RAW value", () => {
     expect(rowColor({ id: "1", S: "Won" }, "S")).toBe(colorForLabel("Won"));
     expect(rowColor({ id: "1", S: "" }, "S")).toBeNull();
+    expect(rowColor({ id: "1", S: null }, "S")).toBeNull();
+    expect(rowColor({ id: "1", S: [] }, "S")).toBeNull();
     expect(rowColor({ id: "1" }, null)).toBeNull();
+  });
+
+  it("does not strip the color from a record whose value is literally 'Empty'", () => {
+    // Regression: a select option named "Empty" must get a real color
+    // strip, distinct from genuine blanks (which get none).
+    const real = rowColor({ id: "1", S: "Empty" }, "S");
+    const blank = rowColor({ id: "2", S: null }, "S");
+    expect(real).toBe(colorForLabel("Empty"));
+    expect(real).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(blank).toBeNull();
   });
 });
 

@@ -142,6 +142,21 @@ function useModelRunner() {
   }, []);
 }
 
+/**
+ * Field types AI Fill can't write to *beyond* the computed types covered
+ * by `isComputedFieldType` (formula / rollup / lookup / auto_number /
+ * created_time / modified_time). These are structurally-typed fields that
+ * need a dedicated picker UI (file attachment, cross-table record link)
+ * rather than free-text generation. Kept as a Set so the fill-target
+ * predicate composes `isComputedFieldType(t) || AI_FILL_STRUCTURAL_TYPES.has(t)`
+ * — any new computed type added to `isComputedFieldType` is then excluded
+ * automatically, with no second list to keep in sync.
+ */
+const AI_FILL_STRUCTURAL_TYPES: ReadonlySet<BaseField["type"]> = new Set([
+  "attachment",
+  "linked_record",
+]);
+
 const MODE_LABELS: Record<Mode, string> = {
   schema: "New table",
   fields: "Suggest fields",
@@ -198,14 +213,7 @@ export default function BaseAiAssistant({
     () =>
       fields.filter(
         (f) =>
-          f.type !== "formula" &&
-          f.type !== "rollup" &&
-          f.type !== "lookup" &&
-          f.type !== "auto_number" &&
-          f.type !== "created_time" &&
-          f.type !== "modified_time" &&
-          f.type !== "attachment" &&
-          f.type !== "linked_record",
+          !isComputedFieldType(f.type) && !AI_FILL_STRUCTURAL_TYPES.has(f.type),
       ),
     [fields],
   );

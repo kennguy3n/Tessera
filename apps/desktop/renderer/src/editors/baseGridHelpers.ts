@@ -123,11 +123,17 @@ const GRID_COLOR_PALETTE: ReadonlyArray<string> = [
  * Deterministically map a label to a palette color. The same label
  * always yields the same color across renders and sessions (pure hash
  * → palette index), so a given select option keeps a stable color
- * without us having to persist a color per option. Empty values get no
- * color (returns null).
+ * without us having to persist a color per option.
+ *
+ * This maps off the label STRING alone, so it deliberately does NOT
+ * special-case `EMPTY_GROUP_LABEL` ("Empty") — a record whose value is
+ * literally "Empty" is a real option and gets a stable color like any
+ * other. Emptiness gating lives upstream in `rowColor`, which checks the
+ * RAW value via `isEmptyGroupValue` (matching `buildGroups`) so genuine
+ * blanks get no color. The `null` / `""` guard here is purely defensive.
  */
 export function colorForLabel(label: string): string | null {
-  if (label == null || label === "" || label === EMPTY_GROUP_LABEL) {
+  if (label == null || label === "") {
     return null;
   }
   let hash = 0;
@@ -144,7 +150,12 @@ export function rowColor(
   fieldName: string | null,
 ): string | null {
   if (!fieldName) return null;
-  return colorForLabel(groupValueLabel(record[fieldName]));
+  const raw = record[fieldName];
+  // Gate emptiness on the RAW value (same predicate as `buildGroups`),
+  // never on the rendered label — otherwise a real value of "Empty"
+  // would be treated as blank and lose its color strip.
+  if (isEmptyGroupValue(raw)) return null;
+  return colorForLabel(groupValueLabel(raw));
 }
 
 // ──────────────────────────────────────────────────────────────────────
