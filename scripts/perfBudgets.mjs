@@ -42,6 +42,7 @@
  */
 import { spawn } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { chromium } from "@playwright/test";
@@ -208,15 +209,17 @@ function stopServer() {
 }
 
 // Reap the spawned `vite preview` child if this process is interrupted
-// (local Ctrl+C, or a SIGTERM from a runner) rather than exiting through
-// `main()`'s normal path. Without this the preview server would be left
-// holding `PORT`, and the next run — which uses `--strictPort` — would
-// fail to bind. Re-raise the signal with the conventional 128+n code so
-// the exit status still reflects the interruption.
+// (local Ctrl+C, or a SIGTERM/SIGHUP from a runner) rather than exiting
+// through `main()`'s normal path. Without this the preview server would be
+// left holding `PORT`, and the next run — which uses `--strictPort` — would
+// fail to bind. Re-raise as the conventional 128+signo exit code (SIGINT=130,
+// SIGTERM=143, SIGHUP=129) so a parent/runner can still tell which signal
+// interrupted us; derived from the signal number rather than hard-coded so it
+// stays correct per-signal.
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(sig, () => {
     stopServer();
-    process.exit(sig === "SIGINT" ? 130 : 143);
+    process.exit(128 + (osConstants.signals[sig] ?? 0));
   });
 }
 
