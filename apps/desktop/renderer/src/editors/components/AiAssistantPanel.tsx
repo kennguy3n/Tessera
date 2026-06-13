@@ -69,6 +69,12 @@ export function AiAssistantPanel({
   onClose,
 }: AiAssistantPanelProps) {
   const ai = useDocumentAi();
+  // `useDocumentAi` re-memoises its return object on every streaming token
+  // (because `output` changes), but the imperative methods are individually
+  // stable (`useCallback`). Destructure them so callbacks below can depend on
+  // the stable references instead of the whole `ai` object — otherwise `run` /
+  // `onKeyDown` would be recreated on every token during streaming.
+  const { run: runGeneration, cancel: cancelGeneration } = ai;
   const [action, setAction] = useState<DocumentAiActionId>(
     initialAction ?? (context.selection.trim() ? "improve" : "custom"),
   );
@@ -127,8 +133,16 @@ export function AiAssistantPanel({
       language,
       precedingText: context.precedingText,
     });
-    ai.run(prompt);
-  }, [runDisabled, action, context, instruction, tone, language, ai]);
+    runGeneration(prompt);
+  }, [
+    runDisabled,
+    action,
+    context,
+    instruction,
+    tone,
+    language,
+    runGeneration,
+  ]);
 
   const apply = useCallback(
     (mode: DocumentAiApplyMode) => {
@@ -145,7 +159,7 @@ export function AiAssistantPanel({
       if (e.key === "Escape") {
         e.preventDefault();
         if (ai.isStreaming) {
-          ai.cancel();
+          cancelGeneration();
         } else {
           onClose();
         }
@@ -157,7 +171,7 @@ export function AiAssistantPanel({
         run();
       }
     },
-    [ai, onClose, run],
+    [ai.isStreaming, cancelGeneration, onClose, run],
   );
 
   const showResult = ai.output.length > 0 || ai.status === "streaming";
@@ -271,7 +285,7 @@ export function AiAssistantPanel({
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={ai.cancel}
+            onClick={cancelGeneration}
             data-testid="ai-stop"
           >
             Stop

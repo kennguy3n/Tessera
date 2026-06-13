@@ -314,16 +314,37 @@ fn slugify(text: &str) -> String {
     out
 }
 
+/// Extract the value of an `id` attribute from a tag's opening markup, if one
+/// is present. Handles both double- and single-quoted forms
+/// (`id="x"` / `id='x'`). Returns `None` when the tag carries no `id`.
+fn extract_id_value(open_tag: &str) -> Option<String> {
+    for pat in [" id=\"", " id='"] {
+        if let Some(start) = open_tag.find(pat) {
+            let quote = pat.chars().last().unwrap();
+            let rest = &open_tag[start + pat.len()..];
+            if let Some(end) = rest.find(quote) {
+                return Some(rest[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
 /// If `content[start..]` opens an `<h1>`–`<h3>` tag, return its level and the
 /// byte index of the closing `>` of the open tag. Heading levels h4–h6 are
 /// intentionally excluded to match the in-app outline (which tracks h1–h3).
+///
+/// Only lowercase `<hN>` is matched: the `looks_like_html` gate guarantees this
+/// path only sees editor-produced HTML (`editor.getHTML()`), which always emits
+/// lowercase tag names. Keeping the open matcher lowercase-only stays in lockstep
+/// with the lowercase `</hN>` close tag built in `collect_and_anchor_headings`.
 fn match_heading_open(content: &str, start: usize) -> Option<(u8, usize)> {
     let bytes = content.as_bytes();
     if bytes.get(start) != Some(&b'<') {
         return None;
     }
     let tag = *bytes.get(start + 1)?;
-    if tag != b'h' && tag != b'H' {
+    if tag != b'h' {
         return None;
     }
     let level = *bytes.get(start + 2)?;
@@ -368,31 +389,39 @@ fn collect_and_anchor_headings(content: &str) -> (String, Vec<TocEntry>) {
                 let text = decode_entities(&strip_tags(inner));
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    let base = {
-                        let s = slugify(trimmed);
-                        if s.is_empty() {
-                            "section".to_string()
-                        } else {
-                            s
-                        }
-                    };
-                    let count = used.entry(base.clone()).or_insert(0);
-                    *count += 1;
-                    let slug = if *count == 1 {
-                        base.clone()
-                    } else {
-                        format!("{base}-{count}")
-                    };
-
                     let open_tag = &content[i..=open_end];
-                    if open_tag.contains(" id=\"") || open_tag.contains(" id='") {
+                    // The TOC link must point at the heading's *actual* anchor.
+                    // If the author already set an `id`, preserve it verbatim and
+                    // use it as the slug; only compute (and inject) a slug when the
+                    // heading has none. Registering the existing id in `used` keeps
+                    // a later computed slug from colliding with it.
+                    let slug = if let Some(existing) = extract_id_value(open_tag) {
+                        *used.entry(existing.clone()).or_insert(0) += 1;
                         out.push_str(open_tag);
+                        existing
                     } else {
+                        let base = {
+                            let s = slugify(trimmed);
+                            if s.is_empty() {
+                                "section".to_string()
+                            } else {
+                                s
+                            }
+                        };
+                        let count = used.entry(base.clone()).or_insert(0);
+                        *count += 1;
+                        let slug = if *count == 1 {
+                            base.clone()
+                        } else {
+                            format!("{base}-{count}")
+                        };
                         // Insert the id immediately after `<hN`.
                         out.push_str(&content[i..i + 3]);
                         let _ = write!(out, " id=\"{slug}\"");
                         out.push_str(&content[i + 3..=open_end]);
-                    }
+                        slug
+                    };
+
                     out.push_str(inner);
                     out.push_str(&close_tag);
 
@@ -440,11 +469,84 @@ fn build_toc_nav(entries: &[TocEntry]) -> String {
     nav
 }
 
+/// Case-insensitive ASCII substring search over raw bytes. Used to locate
+/// `</tag>` close markers regardless of their casing, without allocating a
+/// lowercased copy of the haystack (which could shift byte offsets for
+/// non-ASCII input and desync them from the original string).
+fn find_ascii_ci(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    (0..=haystack.len() - needle.len())
+        .find(|&k| haystack[k..k + needle.len()].eq_ignore_ascii_case(needle))
+}
+
+/// Defense-in-depth: strip executable / embedding elements (and their content)
+/// from document HTML before it is inlined verbatim into an export.
+///
+/// TipTap's schema never emits these — `editor.getHTML()` yields only the
+/// editor's whitelisted nodes and marks — so for well-formed content this is a
+/// no-op. It exists purely so that if artifact content were ever populated from
+/// a source that bypassed the editor, no `<script>`/`<iframe>`/`<object>`/
+/// `<embed>`/`<applet>`/`<noscript>` can survive into the static HTML file. The
+/// scan is byte-oriented and ASCII-case-insensitive; non-`<` runs are copied
+/// wholesale so UTF-8 content is preserved intact.
+fn strip_unsafe_elements(html: &str) -> String {
+    const BLOCK_TAGS: [&str; 6] = ["script", "iframe", "object", "embed", "applet", "noscript"];
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0usize;
+
+    while i < html.len() {
+        if bytes[i] != b'<' {
+            let next = html[i..].find('<').map_or(html.len(), |p| i + p);
+            out.push_str(&html[i..next]);
+            i = next;
+            continue;
+        }
+
+        let mut matched = false;
+        for tag in BLOCK_TAGS {
+            let rest = &bytes[i + 1..];
+            if rest.len() >= tag.len() && rest[..tag.len()].eq_ignore_ascii_case(tag.as_bytes()) {
+                // Require a tag-name boundary so `<embedded>` doesn't match `embed`.
+                let boundary = bytes.get(i + 1 + tag.len()).copied();
+                let ok = boundary.is_none()
+                    || matches!(boundary, Some(b) if b == b'>' || b == b'/' || b.is_ascii_whitespace());
+                if ok {
+                    let close = format!("</{tag}>");
+                    let search_from = i + 1 + tag.len();
+                    if let Some(rel) = find_ascii_ci(&bytes[search_from..], close.as_bytes()) {
+                        i = search_from + rel + close.len();
+                    } else if let Some(gt) = html[i..].find('>') {
+                        // Unclosed / void form: drop just the opening tag.
+                        i += gt + 1;
+                    } else {
+                        i = html.len();
+                    }
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if matched {
+            continue;
+        }
+
+        out.push('<');
+        i += 1;
+    }
+
+    out
+}
+
 /// Render an edited Document (HTML content) for HTML export. Inlines the
-/// fragment verbatim after anchoring headings and expanding the
-/// table-of-contents marker into a generated `<nav>`.
+/// fragment verbatim after stripping any unsafe elements (defense-in-depth),
+/// anchoring headings, and expanding the table-of-contents marker into a
+/// generated `<nav>`.
 fn render_document_html(content: &str) -> String {
-    let (anchored, entries) = collect_and_anchor_headings(content);
+    let sanitized = strip_unsafe_elements(content);
+    let (anchored, entries) = collect_and_anchor_headings(&sanitized);
     let nav = build_toc_nav(&entries);
     let body = anchored.replace(TOC_MARKER, &nav);
 
@@ -642,6 +744,74 @@ mod tests {
         assert!(html.contains("<h1 id=\"intro\">Intro</h1>"));
         // No second id attribute injected.
         assert!(!html.contains("id=\"intro\" id="));
+    }
+
+    #[test]
+    fn export_document_html_toc_link_targets_existing_heading_id() {
+        // Regression for BUG-0001: when a heading already carries an `id`, the
+        // generated TOC entry must link to that *actual* id, not a freshly
+        // computed slug derived from the heading text.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<div data-type=\"table-of-contents\"></div>\
+<h1 id=\"my-intro\">Intro</h1><p>body</p>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // The heading keeps its author-supplied id…
+        assert!(html.contains("<h1 id=\"my-intro\">Intro</h1>"));
+        // …and the TOC anchor points at it (not at the computed "#intro").
+        assert!(html.contains("<a href=\"#my-intro\">Intro</a>"));
+        assert!(!html.contains("href=\"#intro\""));
+    }
+
+    #[test]
+    fn export_document_html_existing_id_is_reserved_against_computed_collision() {
+        // A later heading whose text slugifies to an already-used explicit id
+        // must be disambiguated rather than producing a duplicate anchor.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<h1 id=\"intro\">Preface</h1><p>a</p><h2>Intro</h2><p>b</p>".to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<h1 id=\"intro\">Preface</h1>"));
+        // The second heading slugifies to "intro" but that id is taken, so it
+        // gets a numeric suffix.
+        assert!(html.contains("<h2 id=\"intro-2\">Intro</h2>"));
+    }
+
+    #[test]
+    fn export_document_html_strips_unsafe_elements() {
+        // Defense-in-depth: even if a <script>/<iframe> ever reached an HTML
+        // document artifact, it must not survive into the static export.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<p>Safe</p><script>alert('xss')</script>\
+<p>More</p><IFRAME src=\"evil\"></IFRAME><embed src=\"x\">\
+<p>End</p>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // Legitimate paragraphs survive verbatim.
+        assert!(html.contains("<p>Safe</p>"));
+        assert!(html.contains("<p>More</p>"));
+        assert!(html.contains("<p>End</p>"));
+        // Executable / embedding constructs are gone (case-insensitive).
+        assert!(!html.contains("alert('xss')"));
+        assert!(!html.to_lowercase().contains("<script"));
+        assert!(!html.to_lowercase().contains("<iframe"));
+        assert!(!html.to_lowercase().contains("<embed"));
+    }
+
+    #[test]
+    fn strip_unsafe_elements_keeps_lookalike_tags_and_unicode() {
+        // `<embedded>` must not be mistaken for `<embed>`, and UTF-8 content is
+        // preserved intact.
+        let input = "<p>Café — 概要</p><embedded data=\"1\">keep</embedded>";
+        assert_eq!(strip_unsafe_elements(input), input);
     }
 
     #[test]

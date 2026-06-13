@@ -284,10 +284,12 @@ export default function DocumentEditor({
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
         // Open the on-device AI assistant against the current selection.
         e.preventDefault();
+        setLinkPopoverOpen(false);
         setAiState({ context: captureAiContext(editor), action: undefined });
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         // Add / edit a link on the current selection.
         e.preventDefault();
+        setAiState(null);
         setLinkPopoverOpen(true);
       }
     };
@@ -304,6 +306,8 @@ export default function DocumentEditor({
   const openAi = useCallback(
     (action?: DocumentAiActionId) => {
       if (!editor) return;
+      // Only one floating panel at a time: opening AI dismisses the link popover.
+      setLinkPopoverOpen(false);
       setAiState({ context: captureAiContext(editor), action });
     },
     [editor],
@@ -314,6 +318,8 @@ export default function DocumentEditor({
   // the editor.
   const openLinkPopover = useCallback(() => {
     if (!editor) return;
+    // Only one floating panel at a time: opening the link popover dismisses AI.
+    setAiState(null);
     setLinkPopoverOpen(true);
   }, [editor]);
 
