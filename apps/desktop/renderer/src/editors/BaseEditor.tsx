@@ -19,6 +19,16 @@ import {
   clampFrozenCount,
   frozenLeftOffsets,
   FROZEN_COL_WIDTH,
+  cycleSort,
+  sortRecordsByRules,
+  pruneSorts,
+  renameSortField,
+  summaryKindsForFieldType,
+  pruneColumnSummaries,
+  renameColumnSummaryKey,
+  formatSummaryValue,
+  SUMMARY_LABELS,
+  type SortRule,
 } from "./baseGridHelpers";
 import {
   makeRecordId,
@@ -147,8 +157,10 @@ export default function BaseEditor({
   useEffect(() => {
     docRef.current = doc;
   }, [doc]);
-  const [sortField, setSortField] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Ordered, multi-column sort (Airtable's "Sort by … then by …").
+  // Empty = unsorted (incoming record order). A plain header click sets
+  // a single sort; shift-click builds additional tie-break levels.
+  const [sorts, setSorts] = useState<SortRule[]>([]);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showAddField, setShowAddField] = useState(false);
   // Bulk-select state: a Set of record ids the user has ticked. The
@@ -284,8 +296,7 @@ export default function BaseEditor({
   // the old sort field, filter inputs, selection ids, or viewConfig
   // pointers would dangle against a schema that no longer has them.
   const resetViewStateForTable = useCallback((table: BaseTable) => {
-    setSortField(null);
-    setSortDir("asc");
+    setSorts([]);
     setFilters({});
     setSelectedIds(new Set());
     setExpandedCell(null);
@@ -462,7 +473,7 @@ export default function BaseEditor({
     // in lock-step when a new field-name pointer is added to
     // `BaseViewConfig`.
     const names = new Set(nextFields.map((f) => f.name));
-    setSortField((prev) => (prev !== null && !names.has(prev) ? null : prev));
+    setSorts((prev) => pruneSorts(prev, names));
     setFilters((prev) => {
       let dirty = false;
       const out: Record<string, string> = {};
@@ -484,6 +495,16 @@ export default function BaseEditor({
           next[k] = null;
           dirty = true;
         }
+      }
+      // The column-summary map is keyed by field name (like `filters`),
+      // not one of the nullable pointers, so prune it separately.
+      const prunedSummaries = pruneColumnSummaries(
+        prev.gridColumnSummaries,
+        names,
+      );
+      if (prunedSummaries !== prev.gridColumnSummaries) {
+        next.gridColumnSummaries = prunedSummaries;
+        dirty = true;
       }
       return dirty ? next : prev;
     });
@@ -639,8 +660,9 @@ export default function BaseEditor({
         return { ...rest, [trimmed]: carried } as BaseRecord;
       });
       updateData({ fields: nextFields, records: nextRecords });
-      // (4) Sort + filter state.
-      setSortField((prev) => (prev === oldName ? trimmed : prev));
+      // (4) Sort + filter state. The sort is now an ordered list, so
+      // rewrite the renamed field across every level it appears in.
+      setSorts((prev) => renameSortField(prev, oldName, trimmed));
       setFilters((prev) => {
         if (!(oldName in prev)) return prev;
         const { [oldName]: carriedFilter, ...rest } = prev;
@@ -650,8 +672,10 @@ export default function BaseEditor({
       // pointers in BaseViewConfig (centralised in
       // `VIEW_CONFIG_FIELD_POINTERS`) so adding a new view (e.g. a
       // "color by" pointer) only needs the field listed once and both
-      // rename + import paths pick it up. Bail out with the same
-      // reference if nothing changed so React skips the re-render.
+      // rename + import paths pick it up. The column-summary map is
+      // keyed by field name (not a nullable pointer), so rewrite its key
+      // separately. Bail out with the same reference if nothing changed
+      // so React skips the re-render.
       setViewConfig((prev) => {
         let dirty = false;
         const next: BaseViewConfig = { ...prev };
@@ -660,6 +684,15 @@ export default function BaseEditor({
             next[k] = trimmed;
             dirty = true;
           }
+        }
+        const renamedSummaries = renameColumnSummaryKey(
+          prev.gridColumnSummaries,
+          oldName,
+          trimmed,
+        );
+        if (renamedSummaries !== prev.gridColumnSummaries) {
+          next.gridColumnSummaries = renamedSummaries;
+          dirty = true;
         }
         return dirty ? next : prev;
       });
@@ -890,13 +923,32 @@ export default function BaseEditor({
     [data, updateData],
   );
 
-  const handleSort = (fieldName: string) => {
-    if (sortField === fieldName) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(fieldName);
-      setSortDir("asc");
-    }
+  // `additive` (shift / cmd-click) builds a multi-level sort; a plain
+  // click collapses to a single sort and toggles direction when the
+  // same lone column is re-clicked. The cycling logic lives in the pure
+  // `cycleSort` helper so it stays unit-tested.
+  const handleSort = (fieldName: string, additive: boolean) => {
+    setSorts((prev) => cycleSort(prev, fieldName, additive));
+  };
+
+  // Toggle a column's summary footer aggregation. `null` clears it.
+  // Returns the same viewConfig reference when nothing changed so the
+  // memoised footer doesn't recompute needlessly.
+  const setColumnSummary = (
+    fieldName: string,
+    kind: RollupAggregation | null,
+  ) => {
+    setViewConfig((prev) => {
+      const current = prev.gridColumnSummaries[fieldName] ?? null;
+      if (current === kind) return prev;
+      const nextSummaries = { ...prev.gridColumnSummaries };
+      if (kind === null) {
+        delete nextSummaries[fieldName];
+      } else {
+        nextSummaries[fieldName] = kind;
+      }
+      return { ...prev, gridColumnSummaries: nextSummaries };
+    });
   };
 
   const filteredAndSorted = useMemo(() => {
@@ -1001,42 +1053,76 @@ export default function BaseEditor({
     // timestamp instead, which is lexicographically chronological by
     // construction. The filter path above still uses the locale
     // display so typing "Jan" matches the cell text.
-    if (sortField) {
-      const sortFieldDef = data.fields.find((f) => f.name === sortField);
-      const sortIsComputed =
-        sortFieldDef !== undefined && isComputedFieldType(sortFieldDef.type);
-      const sortIsTimestamp =
-        sortFieldDef !== undefined &&
-        (sortFieldDef.type === "created_time" ||
-          sortFieldDef.type === "modified_time");
-      const displayFor = (r: BaseRecord): string => {
-        if (sortIsTimestamp && sortFieldDef) {
-          const iso =
-            r[
-              sortFieldDef.type === "created_time"
-                ? RECORD_CREATED_KEY
-                : RECORD_MODIFIED_KEY
-            ];
-          return typeof iso === "string" ? iso : "";
-        }
-        if (sortIsComputed && sortFieldDef) {
-          return getDisplay(sortFieldDef, r);
-        }
-        const raw = r[sortField];
-        return raw == null ? "" : String(raw);
-      };
-      records.sort((a, b) => {
-        const va = displayFor(a);
-        const vb = displayFor(b);
-        const cmp = va.localeCompare(vb, undefined, {
-          numeric: true,
-        });
-        return sortDir === "asc" ? cmp : -cmp;
-      });
-    }
+    // Resolve the comparison key for ANY field by name — the same
+    // resolution the single-sort path used, now reusable across every
+    // level of a multi-column sort. Unknown field names compare as "".
+    const sortKeyFor = (r: BaseRecord, fieldName: string): string => {
+      const def = data.fields.find((f) => f.name === fieldName);
+      if (def === undefined) return "";
+      if (def.type === "created_time" || def.type === "modified_time") {
+        const iso =
+          r[def.type === "created_time" ? RECORD_CREATED_KEY : RECORD_MODIFIED_KEY];
+        return typeof iso === "string" ? iso : "";
+      }
+      if (isComputedFieldType(def.type)) {
+        return getDisplay(def, r);
+      }
+      const raw = r[fieldName];
+      return raw == null ? "" : String(raw);
+    };
+    records = sortRecordsByRules(records, sorts, sortKeyFor);
 
     return records;
-  }, [data.records, data.fields, filters, sortField, sortDir, tableResolver]);
+  }, [data.records, data.fields, filters, sorts, tableResolver]);
+
+  // Column-summary footer values, computed over the CURRENTLY VISIBLE
+  // (filtered) rows — matching Airtable, where the summary bar reflects
+  // what you're looking at, not the whole table. Only configured
+  // columns are computed (typically 0–2), so this stays cheap. The
+  // per-value resolution mirrors the cell render: numeric raw types
+  // aggregate their stored value; computed types (formula / rollup /
+  // lookup / auto_number) aggregate their display string so numeric
+  // results still parse; timestamps reduce to their ISO (only ever
+  // COUNT-ed). `aggregateValues` handles the math; `formatSummaryValue`
+  // rounds + groups for display.
+  const columnSummaries = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    const entries = Object.entries(viewConfig.gridColumnSummaries);
+    if (entries.length === 0) return out;
+    for (const [fieldName, kind] of entries) {
+      const def = data.fields.find((f) => f.name === fieldName);
+      if (!def) continue;
+      const values = filteredAndSorted.map((r) => {
+        if (def.type === "created_time" || def.type === "modified_time") {
+          return (
+            r[
+              def.type === "created_time"
+                ? RECORD_CREATED_KEY
+                : RECORD_MODIFIED_KEY
+            ] ?? ""
+          );
+        }
+        if (isComputedFieldType(def.type)) {
+          return formatValueForCsv(
+            def,
+            r,
+            data.records,
+            data.fields,
+            tableResolver,
+          );
+        }
+        return r[fieldName];
+      });
+      out[fieldName] = formatSummaryValue(kind, aggregateValues(values, kind));
+    }
+    return out;
+  }, [
+    viewConfig.gridColumnSummaries,
+    filteredAndSorted,
+    data.fields,
+    data.records,
+    tableResolver,
+  ]);
 
   // See the visibility-scoping commentary higher up — this is the
   // implementation half. `visibleSelectedIds` is the intersection of
@@ -1222,6 +1308,19 @@ export default function BaseEditor({
         : {}),
     };
   };
+
+  // Summary-footer cell positioning: sticky to the BOTTOM of the scroll
+  // viewport so the summary bar stays visible while scrolling rows, and
+  // additionally sticky-LEFT for frozen columns (a cell can stick to
+  // two edges at once), so the footer stays aligned with frozen fields
+  // on horizontal scroll. The `bottom`/`zIndex` win over any left-only
+  // frozen style via property order. Non-frozen cells get their z-index
+  // from the CSS class.
+  const footerCellStyle = (colIndex: number): React.CSSProperties => ({
+    ...frozenCellStyle(colIndex),
+    position: "sticky",
+    bottom: 0,
+  });
 
   // Render one data row. Shared by the flat and grouped grid bodies so
   // row height / color strip / frozen styling stay identical between
@@ -1647,16 +1746,37 @@ export default function BaseEditor({
                 />
               </th>
               <th className="base-row-num">#</th>
-              {data.fields.map((field) => (
+              {data.fields.map((field) => {
+                const sortIdx = sorts.findIndex(
+                  (s) => s.field === field.name,
+                );
+                const sortRule = sortIdx >= 0 ? sorts[sortIdx] : null;
+                return (
                 <th key={field.name} className="base-col-header">
                   <div className="base-col-header-content">
                     <button
                       type="button"
                       className="base-col-sort"
-                      onClick={() => handleSort(field.name)}
+                      onClick={(e) =>
+                        handleSort(
+                          field.name,
+                          e.shiftKey || e.metaKey || e.ctrlKey,
+                        )
+                      }
+                      title="Click to sort. Shift- or Cmd-click to add a secondary sort level."
                     >
                       {field.name}
-                      {sortField === field.name && (sortDir === "asc" ? " ▲" : " ▼")}
+                      {sortRule && (
+                        <span
+                          className="base-col-sort-ind"
+                          aria-label={`sorted ${
+                            sortRule.dir === "asc" ? "ascending" : "descending"
+                          }${sorts.length > 1 ? `, level ${sortIdx + 1}` : ""}`}
+                        >
+                          {sortRule.dir === "asc" ? " ▲" : " ▼"}
+                          {sorts.length > 1 ? sortIdx + 1 : ""}
+                        </span>
+                      )}
                     </button>
                     <span className="base-col-type">({field.type})</span>
                     <button
@@ -1677,7 +1797,8 @@ export default function BaseEditor({
                     }
                   />
                 </th>
-              ))}
+                );
+              })}
               <th className="base-actions-header">Actions</th>
             </tr>
           </thead>
@@ -1789,6 +1910,61 @@ export default function BaseEditor({
                   return rows;
                 })()}
           </tbody>
+          <tfoot>
+            {/* Airtable-style summary bar: a per-column aggregation
+                selector + value, pinned to the bottom of the scroll
+                viewport. Each cell offers COUNT ("Filled") for any
+                field plus SUM/AVG/MIN/MAX for numeric types. The value
+                reflects the currently filtered rows. */}
+            <tr className="base-grid-summary-row">
+              <td className="base-grid-summary-cell" style={footerCellStyle(0)} />
+              <td className="base-grid-summary-cell" style={footerCellStyle(1)} />
+              {data.fields.map((field, fi) => {
+                const kinds = summaryKindsForFieldType(field.type);
+                const hasSummary = Object.prototype.hasOwnProperty.call(
+                  viewConfig.gridColumnSummaries,
+                  field.name,
+                );
+                const current = hasSummary
+                  ? viewConfig.gridColumnSummaries[field.name]
+                  : "";
+                return (
+                  <td
+                    key={field.name}
+                    className="base-grid-summary-cell"
+                    style={footerCellStyle(fi + 2)}
+                  >
+                    <select
+                      className="base-grid-summary-select"
+                      aria-label={`${field.name} column summary`}
+                      value={current}
+                      onChange={(e) =>
+                        setColumnSummary(
+                          field.name,
+                          e.target.value === ""
+                            ? null
+                            : (e.target.value as RollupAggregation),
+                        )
+                      }
+                    >
+                      <option value="">Summary…</option>
+                      {kinds.map((k) => (
+                        <option key={k} value={k}>
+                          {SUMMARY_LABELS[k]}
+                        </option>
+                      ))}
+                    </select>
+                    {hasSummary && (
+                      <span className="base-grid-summary-value">
+                        {columnSummaries[field.name] ?? ""}
+                      </span>
+                    )}
+                  </td>
+                );
+              })}
+              <td className="base-grid-summary-cell base-actions-cell" />
+            </tr>
+          </tfoot>
         </table>
       </div>
       </>

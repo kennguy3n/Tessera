@@ -28,6 +28,7 @@ import type {
   RollupAggregation,
 } from "./baseEditorTypes";
 import type { BaseViewConfig } from "./baseviews/types";
+import { pruneColumnSummaries } from "./baseGridHelpers";
 
 /**
  * Names the user must not assign to a field. `id` is the stable
@@ -826,6 +827,17 @@ export function pruneViewStateAgainstFields(
       nextView[k] = null;
       viewDirty = true;
     }
+  }
+  // The column-summary map is keyed by field name (like `filters`),
+  // not a nullable pointer, so prune it separately to keep this helper
+  // the faithful single source of truth for view-state cleanup.
+  const prunedSummaries = pruneColumnSummaries(
+    prev.viewConfig.gridColumnSummaries,
+    names,
+  );
+  if (prunedSummaries !== prev.viewConfig.gridColumnSummaries) {
+    nextView.gridColumnSummaries = prunedSummaries;
+    viewDirty = true;
   }
 
   return {

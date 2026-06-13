@@ -1,12 +1,17 @@
 /**
  * Pure helpers for the Base grid's Airtable-style enhancements:
- * grouping, row coloring, and frozen-column geometry. Kept React-free
- * and side-effect-free so the partitioning / color / offset logic can
- * be unit-tested in isolation, mirroring the
+ * grouping, row coloring, frozen-column geometry, multi-column sort and
+ * the column-summary footer. Kept React-free and side-effect-free so
+ * the partitioning / color / offset / sort / summary logic can be
+ * unit-tested in isolation, mirroring the
  * `baseEditorHelpers` / `baseFormulaEngine` split. `BaseEditor.tsx`
  * stays a thin shell that calls these.
  */
-import type { BaseRecord } from "./baseEditorTypes";
+import type {
+  BaseRecord,
+  FieldType,
+  RollupAggregation,
+} from "./baseEditorTypes";
 
 // ──────────────────────────────────────────────────────────────────────
 // Grouping
@@ -203,4 +208,194 @@ export function frozenLeftOffsets(frozenCount: number): number[] {
     left += FROZEN_COL_WIDTH;
   }
   return offsets;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Multi-column sort
+// ──────────────────────────────────────────────────────────────────────
+
+export type SortDir = "asc" | "desc";
+
+/** One level of an ordered, multi-column sort (Airtable's "Sort by … then by …"). */
+export interface SortRule {
+  field: string;
+  dir: SortDir;
+}
+
+/**
+ * Apply a header click to the current sort stack and return the next one.
+ *
+ * Two interaction modes, matching Airtable:
+ *   - `additive` (shift / cmd-click): build a multi-level sort. If the
+ *     field is already a level, toggle just that level's direction in
+ *     place (preserving its priority); otherwise append it as the
+ *     lowest-priority level, ascending.
+ *   - plain click: the field becomes the sole sort. Clicking the field
+ *     that is *already* the sole sort toggles its direction; clicking a
+ *     different field (or when a multi-level sort is active) resets to a
+ *     single ascending sort on that field.
+ *
+ * Always returns a new array (callers replace state wholesale).
+ */
+export function cycleSort(
+  sorts: readonly SortRule[],
+  field: string,
+  additive: boolean,
+): SortRule[] {
+  const existing = sorts.find((s) => s.field === field);
+  if (additive) {
+    if (existing) {
+      return sorts.map((s) =>
+        s.field === field
+          ? { field, dir: s.dir === "asc" ? "desc" : "asc" }
+          : s,
+      );
+    }
+    return [...sorts, { field, dir: "asc" }];
+  }
+  // Plain click: collapse to a single sort on `field`.
+  if (sorts.length === 1 && sorts[0].field === field) {
+    return [{ field, dir: sorts[0].dir === "asc" ? "desc" : "asc" }];
+  }
+  return [{ field, dir: "asc" }];
+}
+
+/**
+ * Stable, multi-level sort. `getKey(record, field)` resolves the
+ * comparison string for a field (the caller supplies the same
+ * display-vs-raw resolution the cells use, so computed/timestamp
+ * columns sort correctly). Keys are compared with a numeric-aware
+ * locale compare so "2" precedes "10". Levels are applied in order;
+ * the first non-equal level decides. Returns a new array; the input is
+ * not mutated. `[].sort` is a stable sort in modern engines, so records
+ * equal on every level keep their incoming order.
+ */
+export function sortRecordsByRules<T>(
+  records: readonly T[],
+  sorts: readonly SortRule[],
+  getKey: (record: T, field: string) => string,
+): T[] {
+  if (sorts.length === 0) return [...records];
+  const out = [...records];
+  out.sort((a, b) => {
+    for (const { field, dir } of sorts) {
+      const cmp = getKey(a, field).localeCompare(getKey(b, field), undefined, {
+        numeric: true,
+      });
+      if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
+    }
+    return 0;
+  });
+  return out;
+}
+
+/** Drop sort levels whose field no longer exists. Returns the same
+ *  reference when nothing changed so React can skip re-rendering. */
+export function pruneSorts(
+  sorts: readonly SortRule[],
+  validFieldNames: ReadonlySet<string>,
+): SortRule[] {
+  const kept = sorts.filter((s) => validFieldNames.has(s.field));
+  return kept.length === sorts.length ? (sorts as SortRule[]) : kept;
+}
+
+/** Rewrite a renamed field across every sort level. Returns the same
+ *  reference when the field wasn't used as a sort key. */
+export function renameSortField(
+  sorts: readonly SortRule[],
+  oldName: string,
+  newName: string,
+): SortRule[] {
+  if (!sorts.some((s) => s.field === oldName)) return sorts as SortRule[];
+  return sorts.map((s) => (s.field === oldName ? { ...s, field: newName } : s));
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Column summary footer
+// ──────────────────────────────────────────────────────────────────────
+
+/** Field types whose stored / displayed value is meaningfully numeric,
+ *  so SUM / AVG / MIN / MAX make sense in the summary footer. Every
+ *  other type only offers a non-empty count. `auto_number` is computed
+ *  (its sequence value resolves via the display path) but is still a
+ *  number, so it belongs here. */
+const NUMERIC_SUMMARY_TYPES: ReadonlySet<FieldType> = new Set<FieldType>([
+  "number",
+  "currency",
+  "percent",
+  "rating",
+  "duration",
+  "auto_number",
+]);
+
+/**
+ * Which summary aggregations a column of the given type offers. COUNT
+ * (rendered as "Filled" — the number of non-empty cells) applies to
+ * every type; numeric types additionally offer SUM/AVG/MIN/MAX. CONCAT
+ * is intentionally excluded — it belongs to rollups, not a footer.
+ */
+export function summaryKindsForFieldType(type: FieldType): RollupAggregation[] {
+  return NUMERIC_SUMMARY_TYPES.has(type)
+    ? ["SUM", "AVG", "MIN", "MAX", "COUNT"]
+    : ["COUNT"];
+}
+
+/** Short footer labels for each aggregation. COUNT is "Filled" because
+ *  `aggregateValues("COUNT")` counts non-empty cells, matching
+ *  Airtable's "Filled" summary rather than a raw row count. */
+export const SUMMARY_LABELS: Record<RollupAggregation, string> = {
+  SUM: "Sum",
+  AVG: "Avg",
+  MIN: "Min",
+  MAX: "Max",
+  COUNT: "Filled",
+  CONCAT: "List",
+};
+
+/**
+ * Render a raw `aggregateValues` result for the footer. COUNT / CONCAT
+ * pass through verbatim (an integer count, a joined list). Numeric
+ * aggregations come back as a full-precision `String(number)` (e.g.
+ * "0.30000000000000004"), so round to ≤2 fraction digits and add
+ * locale grouping for readability. An empty numeric result (MIN/MAX of
+ * a column with no numbers) renders as an em dash.
+ */
+export function formatSummaryValue(
+  kind: RollupAggregation,
+  raw: string,
+): string {
+  if (kind === "COUNT" || kind === "CONCAT") return raw;
+  if (raw === "") return "—";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+/** Drop summaries for columns that no longer exist. Returns the same
+ *  reference when nothing changed. */
+export function pruneColumnSummaries(
+  summaries: Readonly<Record<string, RollupAggregation>>,
+  validFieldNames: ReadonlySet<string>,
+): Record<string, RollupAggregation> {
+  let dirty = false;
+  const next: Record<string, RollupAggregation> = {};
+  for (const [field, kind] of Object.entries(summaries)) {
+    if (validFieldNames.has(field)) next[field] = kind;
+    else dirty = true;
+  }
+  return dirty ? next : (summaries as Record<string, RollupAggregation>);
+}
+
+/** Rewrite a renamed field's summary key. Returns the same reference
+ *  when the field had no summary. */
+export function renameColumnSummaryKey(
+  summaries: Readonly<Record<string, RollupAggregation>>,
+  oldName: string,
+  newName: string,
+): Record<string, RollupAggregation> {
+  if (!(oldName in summaries)) {
+    return summaries as Record<string, RollupAggregation>;
+  }
+  const { [oldName]: carried, ...rest } = summaries;
+  return { ...rest, [newName]: carried };
 }

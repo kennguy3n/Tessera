@@ -881,6 +881,7 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
     gridGroupField: null,
     gridColorField: null,
     gridFrozenCount: 0,
+    gridColumnSummaries: {},
     ...overrides,
   });
 
@@ -987,5 +988,28 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
     expect(out.filters).toEqual({ New1: "keep" });
     expect(out.viewConfig.kanbanGroupField).toBe(null);
     expect(out.viewConfig.titleField).toBe(null);
+  });
+
+  it("drops column-summary entries whose field was removed, keeps survivors", () => {
+    const out = pruneViewStateAgainstFields(fields("A", "C"), {
+      sortField: null,
+      filters: {},
+      viewConfig: viewConfigWith({
+        gridColumnSummaries: { A: "SUM", B: "COUNT", C: "AVG" },
+      }),
+    });
+    expect(out.viewConfig.gridColumnSummaries).toEqual({ A: "SUM", C: "AVG" });
+  });
+
+  it("preserves the viewConfig reference when no summary needs pruning", () => {
+    const prev = {
+      sortField: null,
+      filters: {},
+      viewConfig: viewConfigWith({
+        gridColumnSummaries: { A: "SUM" },
+      }),
+    };
+    const out = pruneViewStateAgainstFields(fields("A", "B"), prev);
+    expect(out.viewConfig).toBe(prev.viewConfig);
   });
 });

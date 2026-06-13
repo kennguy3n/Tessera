@@ -12,6 +12,15 @@ import {
   FROZEN_COL_WIDTH,
   SELECT_COL_WIDTH,
   ROWNUM_COL_WIDTH,
+  cycleSort,
+  sortRecordsByRules,
+  pruneSorts,
+  renameSortField,
+  summaryKindsForFieldType,
+  formatSummaryValue,
+  pruneColumnSummaries,
+  renameColumnSummaryKey,
+  type SortRule,
 } from "../baseGridHelpers";
 import type { BaseRecord } from "../baseEditorTypes";
 
@@ -165,5 +174,231 @@ describe("frozenLeftOffsets", () => {
       SELECT_COL_WIDTH + ROWNUM_COL_WIDTH + FROZEN_COL_WIDTH,
     ); // col 2
     expect(offsets).toHaveLength(4);
+  });
+});
+
+describe("cycleSort", () => {
+  it("a plain click on an unsorted column sets a single ascending sort", () => {
+    expect(cycleSort([], "A", false)).toEqual([{ field: "A", dir: "asc" }]);
+  });
+
+  it("a plain re-click on the lone sorted column toggles its direction", () => {
+    expect(cycleSort([{ field: "A", dir: "asc" }], "A", false)).toEqual([
+      { field: "A", dir: "desc" },
+    ]);
+    expect(cycleSort([{ field: "A", dir: "desc" }], "A", false)).toEqual([
+      { field: "A", dir: "asc" },
+    ]);
+  });
+
+  it("a plain click on a DIFFERENT column collapses to a single sort", () => {
+    expect(
+      cycleSort(
+        [
+          { field: "A", dir: "desc" },
+          { field: "B", dir: "asc" },
+        ],
+        "C",
+        false,
+      ),
+    ).toEqual([{ field: "C", dir: "asc" }]);
+  });
+
+  it("a plain click while multi-sorted on that same column still collapses to a single asc sort", () => {
+    // Two levels active; plain-clicking the primary should NOT just
+    // toggle it in place — it collapses the whole multi-sort to a single
+    // ascending sort on that column (Airtable behaviour).
+    expect(
+      cycleSort(
+        [
+          { field: "A", dir: "asc" },
+          { field: "B", dir: "asc" },
+        ],
+        "A",
+        false,
+      ),
+    ).toEqual([{ field: "A", dir: "asc" }]);
+  });
+
+  it("an additive (shift) click appends a new tie-break level", () => {
+    expect(cycleSort([{ field: "A", dir: "asc" }], "B", true)).toEqual([
+      { field: "A", dir: "asc" },
+      { field: "B", dir: "asc" },
+    ]);
+  });
+
+  it("an additive click on an existing level toggles only that level, preserving order", () => {
+    expect(
+      cycleSort(
+        [
+          { field: "A", dir: "asc" },
+          { field: "B", dir: "asc" },
+        ],
+        "A",
+        true,
+      ),
+    ).toEqual([
+      { field: "A", dir: "desc" },
+      { field: "B", dir: "asc" },
+    ]);
+  });
+});
+
+describe("sortRecordsByRules", () => {
+  type Row = { id: string; a: string; b: string };
+  const key = (r: Row, f: string): string =>
+    f === "a" ? r.a : f === "b" ? r.b : "";
+  const rows: Row[] = [
+    { id: "1", a: "Apple", b: "2" },
+    { id: "2", a: "Apple", b: "10" },
+    { id: "3", a: "Banana", b: "1" },
+  ];
+
+  it("returns a copy in incoming order when no rules", () => {
+    const out = sortRecordsByRules(rows, [], key);
+    expect(out.map((r) => r.id)).toEqual(["1", "2", "3"]);
+    expect(out).not.toBe(rows);
+  });
+
+  it("sorts by a single rule with numeric-aware compare", () => {
+    const out = sortRecordsByRules(rows, [{ field: "b", dir: "asc" }], key);
+    // numeric collation: 1 < 2 < 10 (not lexicographic 1 < 10 < 2)
+    expect(out.map((r) => r.id)).toEqual(["3", "1", "2"]);
+  });
+
+  it("applies the second rule only to break ties on the first", () => {
+    const out = sortRecordsByRules(
+      rows,
+      [
+        { field: "a", dir: "asc" },
+        { field: "b", dir: "asc" },
+      ],
+      key,
+    );
+    // Both Apples first (b: 2 then 10), then Banana.
+    expect(out.map((r) => r.id)).toEqual(["1", "2", "3"]);
+  });
+
+  it("honours descending direction per level", () => {
+    const out = sortRecordsByRules(
+      rows,
+      [
+        { field: "a", dir: "asc" },
+        { field: "b", dir: "desc" },
+      ],
+      key,
+    );
+    expect(out.map((r) => r.id)).toEqual(["2", "1", "3"]);
+  });
+});
+
+describe("pruneSorts", () => {
+  it("drops rules whose field no longer exists, preserving order", () => {
+    const sorts: SortRule[] = [
+      { field: "A", dir: "asc" },
+      { field: "B", dir: "desc" },
+      { field: "C", dir: "asc" },
+    ];
+    expect(pruneSorts(sorts, new Set(["A", "C"]))).toEqual([
+      { field: "A", dir: "asc" },
+      { field: "C", dir: "asc" },
+    ]);
+  });
+
+  it("returns the same reference when nothing is pruned", () => {
+    const sorts: SortRule[] = [{ field: "A", dir: "asc" }];
+    expect(pruneSorts(sorts, new Set(["A"]))).toBe(sorts);
+  });
+});
+
+describe("renameSortField", () => {
+  it("rewrites the field across every level it appears in", () => {
+    const sorts: SortRule[] = [
+      { field: "Old", dir: "desc" },
+      { field: "B", dir: "asc" },
+    ];
+    expect(renameSortField(sorts, "Old", "New")).toEqual([
+      { field: "New", dir: "desc" },
+      { field: "B", dir: "asc" },
+    ]);
+  });
+
+  it("returns the same reference when the field is absent", () => {
+    const sorts: SortRule[] = [{ field: "A", dir: "asc" }];
+    expect(renameSortField(sorts, "Old", "New")).toBe(sorts);
+  });
+});
+
+describe("summaryKindsForFieldType", () => {
+  it("offers the full numeric aggregation set for numeric types", () => {
+    expect(summaryKindsForFieldType("number")).toEqual([
+      "SUM",
+      "AVG",
+      "MIN",
+      "MAX",
+      "COUNT",
+    ]);
+    expect(summaryKindsForFieldType("currency")).toContain("SUM");
+    expect(summaryKindsForFieldType("auto_number")).toContain("AVG");
+  });
+
+  it("offers only COUNT for non-numeric types", () => {
+    expect(summaryKindsForFieldType("text")).toEqual(["COUNT"]);
+    expect(summaryKindsForFieldType("select")).toEqual(["COUNT"]);
+    expect(summaryKindsForFieldType("date")).toEqual(["COUNT"]);
+  });
+});
+
+describe("formatSummaryValue", () => {
+  it("passes COUNT / CONCAT through verbatim", () => {
+    expect(formatSummaryValue("COUNT", "7")).toBe("7");
+    expect(formatSummaryValue("CONCAT", "a, b")).toBe("a, b");
+  });
+
+  it("renders an empty numeric result as an em dash", () => {
+    expect(formatSummaryValue("MIN", "")).toBe("—");
+    expect(formatSummaryValue("MAX", "")).toBe("—");
+  });
+
+  it("rounds noisy floats to at most two fraction digits", () => {
+    // Parse the (possibly locale-grouped) output back to a number so the
+    // assertion is locale-independent.
+    const out = formatSummaryValue("AVG", "0.30000000000000004");
+    expect(Number(out.replace(/[^0-9.-]/g, ""))).toBeCloseTo(0.3, 5);
+  });
+
+  it("keeps integer sums intact", () => {
+    const out = formatSummaryValue("SUM", "1000");
+    expect(Number(out.replace(/[^0-9.-]/g, ""))).toBe(1000);
+  });
+
+  it("passes non-finite raw values through unchanged", () => {
+    expect(formatSummaryValue("SUM", "NaN")).toBe("NaN");
+  });
+});
+
+describe("pruneColumnSummaries", () => {
+  it("drops summaries for removed fields and keeps the rest", () => {
+    expect(
+      pruneColumnSummaries({ A: "SUM", B: "COUNT" }, new Set(["A"])),
+    ).toEqual({ A: "SUM" });
+  });
+
+  it("returns the same reference when nothing is pruned", () => {
+    const summaries = { A: "SUM" as const };
+    expect(pruneColumnSummaries(summaries, new Set(["A"]))).toBe(summaries);
+  });
+});
+
+describe("renameColumnSummaryKey", () => {
+  it("moves the summary onto the renamed key", () => {
+    expect(renameColumnSummaryKey({ Old: "SUM", B: "COUNT" }, "Old", "New")).toEqual(
+      { B: "COUNT", New: "SUM" },
+    );
+  });
+
+  it("returns the same reference when the field had no summary", () => {
+    const summaries = { A: "SUM" as const };
+    expect(renameColumnSummaryKey(summaries, "Old", "New")).toBe(summaries);
   });
 });
