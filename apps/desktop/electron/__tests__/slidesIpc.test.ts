@@ -235,6 +235,22 @@ describe("buildPresentationHtml", () => {
     expect(html).toContain('} else if (e.key === "b" || e.key === "B") {');
   });
 
+  it("ticks the timer only in the presenter window", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // The interval is gated on the presenter role so the hidden audience
+    // bar doesn't do wasted DOM writes every 500ms.
+    expect(html).toContain('if (role === "presenter") {\n    renderTimers();\n    setInterval(renderTimers, 500);');
+  });
+
+  it("cleans up its localStorage sync keys when the window closes", () => {
+    const html = buildPresentationHtml(normalizePresentation(SAMPLE));
+    // On pagehide each window removes its per-presentation keys so the
+    // persistent partition doesn't accumulate stale entries.
+    expect(html).toContain('window.addEventListener("pagehide"');
+    expect(html).toContain("window.localStorage.removeItem(KEY)");
+    expect(html).toContain("window.localStorage.removeItem(BLANK_KEY)");
+  });
+
   it("resets the timer to a fresh running state (reset also resumes)", () => {
     const html = buildPresentationHtml(normalizePresentation(SAMPLE));
     // resetTimer zeroes elapsed AND resumes, so R always yields a running
