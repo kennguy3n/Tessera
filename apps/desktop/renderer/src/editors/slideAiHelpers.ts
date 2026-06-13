@@ -28,6 +28,7 @@
  * surface by the calling hook — see `hooks/useModelGeneration.ts`.
  */
 import { buildBlock, newSlideId } from "./slideEditorHelpers";
+import { SLIDE_LAYOUTS, isKnownSlideLayout } from "./slideLayouts";
 import type { Slide, SlideBlock, SlideLayout } from "./slideEditorTypes";
 
 // ---------------------------------------------------------------------------
@@ -63,7 +64,31 @@ export interface ParsedOutlineSlide {
   title: string;
   bullets: string[];
   notes?: string;
+  /**
+   * Optional layout id the model emitted for this slide via the
+   * `## [layout] title` heading convention. Validated and resolved by
+   * {@link resolveGeneratedSlideLayout}; an unknown / unsupported hint
+   * is ignored in favour of the deterministic heuristic.
+   */
+  layoutHint?: string;
 }
+
+/**
+ * Layouts the deck generator is allowed to assign from a model hint.
+ * Restricted to content-only layouts so an AI-generated slide never
+ * materialises an empty image region (image layouts are reserved for
+ * the per-slide "Suggest layout" action where the user is editing a
+ * real slide and can fill the image). The first slide is always the
+ * cover (`title`).
+ */
+export const AI_DECK_LAYOUTS: ReadonlySet<SlideLayout> = new Set<SlideLayout>([
+  "title",
+  "titleContent",
+  "twoColumn",
+  "bigNumber",
+  "sectionHeader",
+  "quote",
+]);
 
 export interface ParsedDeckOutline {
   /** Deck-level title parsed from a leading `TITLE:` line, if present. */
@@ -152,6 +177,45 @@ export function parseHeadingLine(line: string): string | null {
   return null;
 }
 
+/** Matches a leading `[layout]` tag on a slide heading, e.g. `[twoColumn]`. */
+const LAYOUT_HINT_RE = /^\[\s*([a-zA-Z]+)\s*\]\s*(.*)$/;
+
+/**
+ * Split an optional leading `[layout]` tag off a slide heading. The
+ * deck generator asks the model to prefix each slide heading with a
+ * layout hint (`## [twoColumn] Comparison`); this recovers the hint and
+ * the bare title. Returns `{ title }` unchanged when no tag is present
+ * so a normal heading is untouched.
+ */
+export function splitLayoutHint(heading: string): {
+  layoutHint?: string;
+  title: string;
+} {
+  const match = LAYOUT_HINT_RE.exec(heading);
+  if (!match) return { title: heading };
+  const title = match[2].trim();
+  return { layoutHint: match[1].trim(), title };
+}
+
+/**
+ * Resolve the layout for a generated slide: prefer the model's hint
+ * when it names a layout supported for generation, otherwise fall back
+ * to the deterministic {@link suggestLayoutForGeneratedSlide} heuristic.
+ * The first slide is always the cover (`title`). Pure — no IO.
+ */
+export function resolveGeneratedSlideLayout(
+  parsed: ParsedOutlineSlide,
+  index: number,
+  total: number,
+): SlideLayout {
+  if (index === 0) return "title";
+  const hint = parsed.layoutHint;
+  if (hint && isKnownSlideLayout(hint) && AI_DECK_LAYOUTS.has(hint)) {
+    return hint;
+  }
+  return suggestLayoutForGeneratedSlide(parsed, index, total);
+}
+
 /**
  * Parse a model's free-form deck outline into structured slides.
  *
@@ -194,7 +258,8 @@ export function parseDeckOutline(raw: string): ParsedDeckOutline {
     if (heading !== null) {
       pushCurrent();
       if (slides.length >= MAX_DECK_SLIDES) break;
-      current = { title: heading, bullets: [] };
+      const { layoutHint, title } = splitLayoutHint(heading);
+      current = { title, bullets: [], layoutHint };
       continue;
     }
 
@@ -293,12 +358,7 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
   return outline.slides.map((parsed, index) => {
     const isTitleSlide = index === 0;
     const title = isTitleSlide && outline.title ? outline.title : parsed.title;
-    const layout = suggestLayoutForGeneratedSlide(
-      parsed,
-      index,
-      total,
-      outline.title,
-    );
+    const layout = resolveGeneratedSlideLayout(parsed, index, total);
 
     const blocks: SlideBlock[] = [];
     switch (layout) {
@@ -348,6 +408,26 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
             slot: "right",
           }),
         );
+        break;
+      case "quote":
+        // First bullet (or the heading) is the quotation; a second
+        // bullet, if present, becomes the attribution line.
+        blocks.push(
+          buildBlock({
+            type: "text",
+            content: parsed.bullets[0] ?? parsed.title,
+            slot: "quote",
+          }),
+        );
+        if (parsed.bullets.length > 1) {
+          blocks.push(
+            buildBlock({
+              type: "text",
+              content: parsed.bullets.slice(1).join(" "),
+              slot: "attribution",
+            }),
+          );
+        }
         break;
       default:
         // titleContent and fallback
@@ -439,13 +519,20 @@ export function buildDeckPrompt(input: DeckPromptInput): string {
     "",
     "Output format (follow EXACTLY, output nothing else):",
     "TITLE: <deck title>",
-    "## <slide title>",
+    "## [layout] <slide title>",
     "- <bullet, max ~12 words>",
     "- <bullet>",
     "",
+    "Choose [layout] for each slide from this list, picking the best fit:",
+    "- twoColumn: two parallel points or a comparison (exactly 2 bullets)",
+    "- bigNumber: one headline statistic (a single short numeric bullet)",
+    "- quote: a notable quotation (bullet 1 = quote, bullet 2 = attribution)",
+    "- sectionHeader: a divider with no bullets",
+    "- titleContent: standard bullets (use this when unsure)",
+    "",
     "Rules:",
-    "- The first slide is the title slide and may have 0-1 bullets.",
-    "- Every other slide has 2-5 short bullets.",
+    "- The first slide is the title slide: omit the [layout] tag, 0-1 bullets.",
+    "- Every other slide starts with a [layout] tag and has 2-5 short bullets.",
     "- No preamble, no closing remarks, no code fences, no bold/italic.",
     `- ${tone}`,
     "",
@@ -508,6 +595,31 @@ export function buildImagePromptSuggestion(slide: Slide): string {
   ].join("\n");
 }
 
+/**
+ * Build a prompt asking the model to pick the single best layout for a
+ * slide from the curated catalogue. Every layout's stable id +
+ * one-line description is listed so the model has the full vocabulary;
+ * the output contract (the bare id, nothing else) lets
+ * {@link parseLayoutSuggestion} recover it reliably.
+ */
+export function buildLayoutSuggestionPrompt(slide: Slide): string {
+  const options = SLIDE_LAYOUTS.map(
+    (layout) => `- ${layout.id}: ${layout.description}`,
+  ).join("\n");
+  return [
+    "You are a presentation design assistant.",
+    "Choose the single best layout for the slide below.",
+    "Available layouts:",
+    options,
+    "",
+    "Output ONLY the layout id (for example: twoColumn).",
+    "No explanation, no punctuation, no other text.",
+    "",
+    "Slide:",
+    slideToContext(slide),
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Response parsers + appliers
 // ---------------------------------------------------------------------------
@@ -562,6 +674,53 @@ export function parseImagePromptResponse(raw: string): string {
     if (cleaned) return cleaned;
   }
   return "";
+}
+
+/**
+ * Normalise a layout token for tolerant matching: lower-case and strip
+ * everything but letters/digits so `twoColumn`, `Two Columns` and
+ * `two-column` all collapse to the same key.
+ */
+function normLayoutKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Lookup from a normalised token to a layout id, built from every
+ * layout's stable id AND its human label so the parser recognises both
+ * `twoColumn` and `Two Columns`.
+ */
+const LAYOUT_KEY_LOOKUP: ReadonlyMap<string, SlideLayout> = (() => {
+  const map = new Map<string, SlideLayout>();
+  for (const layout of SLIDE_LAYOUTS) {
+    map.set(normLayoutKey(layout.id), layout.id);
+    map.set(normLayoutKey(layout.label), layout.id);
+  }
+  return map;
+})();
+
+/**
+ * Parse a per-slide "suggest a layout" response into a known layout id.
+ * Tolerant of a small model that wraps the id in prose, code fences, or
+ * uses the human label / hyphenated form. Scans whole lines first (to
+ * catch multi-word labels like "Two Columns") then individual tokens,
+ * returning the FIRST recognised layout. Returns null when nothing in
+ * the response names a known layout, so the caller can no-op rather
+ * than apply a bogus layout. Pure — no IO.
+ */
+export function parseLayoutSuggestion(raw: string): SlideLayout | null {
+  const text = stripCodeFences(raw);
+  for (const rawLine of text.split(/\r?\n/)) {
+    const lineKey = normLayoutKey(rawLine);
+    const lineMatch = LAYOUT_KEY_LOOKUP.get(lineKey);
+    if (lineMatch) return lineMatch;
+    for (const token of rawLine.split(/[^a-zA-Z0-9]+/)) {
+      if (!token) continue;
+      const tokenMatch = LAYOUT_KEY_LOOKUP.get(normLayoutKey(token));
+      if (tokenMatch) return tokenMatch;
+    }
+  }
+  return null;
 }
 
 /**

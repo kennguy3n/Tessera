@@ -133,6 +133,60 @@ describe("SlideAiActions", () => {
     );
   });
 
+  it("applies an AI-suggested layout to the slide", async () => {
+    mockModelAvailable();
+    mockGenerate("twoColumn");
+    const onApplyLayout = vi.fn();
+    render(
+      <SlideAiActions
+        slide={slide}
+        onApplyBullets={() => undefined}
+        onApplyNotes={() => undefined}
+        onApplyLayout={onApplyLayout}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Suggest layout"));
+    await waitFor(() =>
+      expect(onApplyLayout).toHaveBeenCalledWith("twoColumn"),
+    );
+    expect(await screen.findByText(/Applied/i)).toBeInTheDocument();
+  });
+
+  it("shows a notice when the model returns no usable layout", async () => {
+    mockModelAvailable();
+    mockGenerate("I really cannot decide");
+    const onApplyLayout = vi.fn();
+    render(
+      <SlideAiActions
+        slide={slide}
+        onApplyBullets={() => undefined}
+        onApplyNotes={() => undefined}
+        onApplyLayout={onApplyLayout}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Suggest layout"));
+    expect(
+      await screen.findByText(/didn’t suggest a usable layout/i),
+    ).toBeInTheDocument();
+    expect(onApplyLayout).not.toHaveBeenCalled();
+  });
+
+  it("omits the Suggest layout button when onApplyLayout is not provided", async () => {
+    mockModelAvailable();
+    render(
+      <SlideAiActions
+        slide={slide}
+        onApplyBullets={() => undefined}
+        onApplyNotes={() => undefined}
+      />,
+    );
+    // Wait for the action row to settle (model status probe resolves).
+    expect(await screen.findByText("Condense")).toBeInTheDocument();
+    expect(screen.queryByText("Suggest layout")).not.toBeInTheDocument();
+  });
+
   it("hides actions and shows a hint when no model is available", async () => {
     vi.spyOn(window.tessera.model, "status").mockResolvedValue({
       available: false,

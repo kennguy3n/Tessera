@@ -1748,6 +1748,7 @@ export default function SlideEditor({
                 updateSlide(activeIndex, { notes });
                 setShowNotes(true);
               }}
+              onApplyLayout={(layout) => changeLayout(layout)}
               onInsertImage={(assetUrl, alt) =>
                 onBlockAppend(
                   activeIndex,

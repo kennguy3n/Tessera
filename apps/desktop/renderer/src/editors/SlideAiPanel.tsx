@@ -27,6 +27,7 @@ import { useModelGeneration } from "../hooks/useModelGeneration";
 import {
   buildDeckPrompt,
   buildImagePromptSuggestion,
+  buildLayoutSuggestionPrompt,
   buildNotesPrompt,
   buildRewritePrompt,
   clampDeckSlideCount,
@@ -34,11 +35,13 @@ import {
   parseBulletResponse,
   parseDeckOutline,
   parseImagePromptResponse,
+  parseLayoutSuggestion,
   parseNotesResponse,
   type DeckTone,
   type SlideRewriteMode,
 } from "./slideAiHelpers";
-import type { Slide } from "./slideEditorTypes";
+import type { Slide, SlideLayout } from "./slideEditorTypes";
+import { getSlideLayout } from "./slideLayouts";
 
 /**
  * Probe the local text model's availability so the AI surface can gate
@@ -294,7 +297,7 @@ export function SlideDeckGenerator({
   );
 }
 
-type ActiveAiAction = SlideRewriteMode | "notes" | "image" | null;
+type ActiveAiAction = SlideRewriteMode | "notes" | "image" | "layout" | null;
 
 export interface SlideAiActionsProps {
   /** The slide the actions operate on. */
@@ -303,6 +306,12 @@ export interface SlideAiActionsProps {
   onApplyBullets: (bullets: string[]) => void;
   /** Apply generated speaker notes (also reveals the notes pane). */
   onApplyNotes: (notes: string) => void;
+  /**
+   * Apply an AI-suggested layout to the slide. Optional so the action
+   * row degrades gracefully when the host doesn't support changing the
+   * active slide's layout.
+   */
+  onApplyLayout?: (layout: SlideLayout) => void;
   /**
    * Insert a generated image (asset URL + alt text) as a new image
    * block. Only offered when image generation is available AND the
@@ -324,6 +333,7 @@ export function SlideAiActions({
   slide,
   onApplyBullets,
   onApplyNotes,
+  onApplyLayout,
   onInsertImage,
   artifactId,
 }: SlideAiActionsProps) {
@@ -336,6 +346,13 @@ export function SlideAiActions({
   );
   const [imageInFlight, setImageInFlight] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [layoutNotice, setLayoutNotice] = useState<string | null>(null);
+
+  // Clear the transient layout notice when the active slide changes so
+  // a "applied X layout" message never lingers on a different slide.
+  useEffect(() => {
+    setLayoutNotice(null);
+  }, [slide.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -398,6 +415,27 @@ export function SlideAiActions({
     if (result.status !== "completed") return;
     setImagePrompt(parseImagePromptResponse(result.text));
   }, [gen, slide]);
+
+  const runSuggestLayout = useCallback(async () => {
+    setActive("layout");
+    setLayoutNotice(null);
+    // Low temperature: layout selection is a classification, not a
+    // creative task — we want the model to commit to one id.
+    const result = await gen.run({
+      prompt: buildLayoutSuggestionPrompt(slide),
+      maxTokens: 32,
+      temperature: 0.2,
+    });
+    setActive(null);
+    if (result.status !== "completed") return;
+    const layout = parseLayoutSuggestion(result.text);
+    if (!layout || !onApplyLayout) {
+      setLayoutNotice("The model didn’t suggest a usable layout.");
+      return;
+    }
+    onApplyLayout(layout);
+    setLayoutNotice(`Applied “${getSlideLayout(layout).label}” layout.`);
+  }, [gen, slide, onApplyLayout]);
 
   const onGenerateImage = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -473,6 +511,17 @@ export function SlideAiActions({
       >
         {active === "notes" ? "Writing…" : "Speaker notes"}
       </button>
+      {onApplyLayout && (
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={() => void runSuggestLayout()}
+          disabled={busy}
+          title="Let AI pick the best layout for this slide"
+        >
+          {active === "layout" ? "Choosing…" : "Suggest layout"}
+        </button>
+      )}
       <button
         type="button"
         className="btn-xs"
@@ -496,6 +545,12 @@ export function SlideAiActions({
       {gen.error && (
         <span className="slide-ai-error" role="alert">
           {gen.error}
+        </span>
+      )}
+
+      {layoutNotice && (
+        <span className="slide-ai-hint" role="status">
+          {layoutNotice}
         </span>
       )}
 
