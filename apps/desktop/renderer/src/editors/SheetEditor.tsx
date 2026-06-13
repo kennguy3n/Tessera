@@ -627,12 +627,17 @@ export default function SheetEditor({
   // Replace the sheet's charts and persist. An empty array drops the
   // field so a sheet with no charts stays byte-identical to its
   // pre-feature JSON.
+  // Accepts either a plain array or an updater so callers can derive the
+  // next list from the latest `prev.charts` (avoids a stale-closure
+  // lost-update when a chart is added/removed between render and click).
   const setCharts = useCallback(
-    (charts: ChartSpec[]) => {
+    (charts: ChartSpec[] | ((prev: ChartSpec[]) => ChartSpec[])) => {
       setSheet((prev) => {
+        const nextCharts =
+          typeof charts === "function" ? charts(prev.charts ?? []) : charts;
         const next: SheetContent = { ...prev };
-        if (charts.length === 0) delete next.charts;
-        else next.charts = charts;
+        if (nextCharts.length === 0) delete next.charts;
+        else next.charts = nextCharts;
         debouncedSave(next);
         return next;
       });
@@ -1939,7 +1944,7 @@ export default function SheetEditor({
               spec={spec}
               data={data}
               onRemove={() =>
-                setCharts((sheet.charts ?? []).filter((c) => c.id !== spec.id))
+                setCharts((prev) => prev.filter((c) => c.id !== spec.id))
               }
             />
           ))}

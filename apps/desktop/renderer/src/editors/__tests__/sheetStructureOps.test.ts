@@ -81,10 +81,12 @@ describe("removeColumnAt", () => {
 
   it("preserves unrelated workbook fields", () => {
     const c = fixture();
+    // A chart referencing column A is unaffected by removing column B, so
+    // its object identity is kept (the array is rebuilt by the remap pass).
     c.charts = [{ id: "ch1", type: "bar", range: "A1:A2" }];
     c.namedRanges = [{ name: "foo", range: "A1:A2" }];
     const next = removeColumnAt(c, 1);
-    expect(next.charts).toBe(c.charts);
+    expect(next.charts?.[0]).toBe(c.charts[0]);
     expect(next.namedRanges).toBe(c.namedRanges);
   });
 });
@@ -134,6 +136,58 @@ describe("removeRowAt", () => {
   it("returns the input unchanged for an out-of-range index", () => {
     const c = fixture();
     expect(removeRowAt(c, 9)).toBe(c);
+  });
+
+  it("refuses to remove the last remaining row", () => {
+    const c: SheetContent = { columns: ["A"], rows: [["only"]] };
+    expect(removeRowAt(c, 0)).toBe(c);
+  });
+});
+
+/** A content fixture carrying charts bound to A1 ranges. */
+function chartFixture(): SheetContent {
+  return {
+    columns: ["A", "B", "C"],
+    rows: [
+      ["1", "2", "3"],
+      ["4", "5", "6"],
+    ],
+    charts: [
+      { id: "c1", type: "bar", range: "B1:B2" },
+      { id: "c2", type: "line", range: "A1:C2", labelRange: "A1:A2" },
+    ],
+  };
+}
+
+describe("structural edits remap chart ranges", () => {
+  it("shifts/shrinks chart ranges when a column is removed", () => {
+    const next = removeColumnAt(chartFixture(), 0);
+    expect(next.charts).toEqual([
+      { id: "c1", type: "bar", range: "A1:A2" },
+      { id: "c2", type: "line", range: "A1:B2", labelRange: "#REF!" },
+    ]);
+  });
+
+  it("shifts/widens chart ranges when a column is inserted", () => {
+    const next = insertColumnAt(chartFixture(), 0, "Z");
+    expect(next.charts).toEqual([
+      { id: "c1", type: "bar", range: "C1:C2" },
+      { id: "c2", type: "line", range: "B1:D2", labelRange: "B1:B2" },
+    ]);
+  });
+
+  it("shifts chart ranges when a row is removed", () => {
+    const next = removeRowAt(chartFixture(), 0);
+    expect(next.charts?.[0]).toEqual({ id: "c1", type: "bar", range: "B1" });
+  });
+
+  it("leaves charts untouched when no chart references the edit", () => {
+    const c = chartFixture();
+    // Remove the last column (C, index 2): c1 (B) and c2 (A:C) both touch it,
+    // so identity isn't expected — instead verify an unrelated insert far to
+    // the right keeps the same array reference for unaffected charts.
+    const next = insertColumnAt(c, 9, "Z");
+    expect(next.charts?.[0]).toBe(c.charts?.[0]);
   });
 });
 

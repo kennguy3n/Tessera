@@ -14,16 +14,24 @@
  * These helpers do the full remap in one place so every caller stays
  * consistent and the logic is unit-testable without React. They always
  * return a fresh `SheetContent`, preserving any unrelated fields
- * (`sheets`, `activeSheetIndex`, `namedRanges`, `charts`, …) via spread.
+ * (`sheets`, `activeSheetIndex`, `namedRanges`, …) via spread.
  *
- * Out of scope (documented limitation): A1 string references inside
- * `namedRanges` and `charts` are NOT rewritten when a column/row is
- * inserted or removed — matching the fact that those features bind to
- * textual ranges the user authored. A future pass could shift / `#REF!`
- * them the way Excel does.
+ * Chart A1 ranges (`charts[].range` / `charts[].labelRange`) ARE shifted
+ * the way Excel adjusts references — an insert moves/widens the range, a
+ * removal shrinks it, and deleting the range's only line collapses it to
+ * `#REF!` (the chart then shows its empty state).
+ *
+ * Out of scope (documented limitation): A1 strings inside `namedRanges`
+ * are NOT rewritten. Those references can be sheet-qualified
+ * (`Sheet2!$B$2`) and bind to a specific tab, so shifting them correctly
+ * needs sheet context these single-sheet helpers don't carry — a partial
+ * remap would silently corrupt cross-sheet names, which is worse than
+ * leaving the authored text intact.
  */
+import { shiftRangeForStructuralEdit } from "./sheetCharts";
 import type {
   CellFormat,
+  ChartSpec,
   ConditionalFormatRule,
   DataValidation,
   SheetContent,
@@ -139,6 +147,28 @@ function adjustFreeze(
   return count;
 }
 
+/** Shift chart A1 ranges under a column/row insert or removal. */
+function remapCharts(
+  charts: ChartSpec[] | undefined,
+  axis: "row" | "col",
+  at: number,
+  delta: 1 | -1,
+): ChartSpec[] | undefined {
+  if (!charts) return undefined;
+  const next = charts.map((chart) => {
+    const range = shiftRangeForStructuralEdit(chart.range, axis, at, delta);
+    const labelRange =
+      chart.labelRange === undefined
+        ? undefined
+        : shiftRangeForStructuralEdit(chart.labelRange, axis, at, delta);
+    if (range === chart.range && labelRange === chart.labelRange) return chart;
+    const updated: ChartSpec = { ...chart, range };
+    if (labelRange !== undefined) updated.labelRange = labelRange;
+    return updated;
+  });
+  return next.length === 0 ? undefined : next;
+}
+
 /** Strip a field from an object when the value is `undefined`. */
 function withField<K extends keyof SheetContent>(
   target: SheetContent,
@@ -172,6 +202,7 @@ export function removeColumnAt(
   );
   withField(next, "columnWidths", spliceSizes(content.columnWidths, colIdx, -1));
   withField(next, "frozenCols", adjustFreeze(content.frozenCols, colIdx, -1));
+  withField(next, "charts", remapCharts(content.charts, "col", colIdx, -1));
   return next;
 }
 
@@ -206,20 +237,27 @@ export function insertColumnAt(
   );
   withField(next, "columnWidths", spliceSizes(content.columnWidths, clamped, 1));
   withField(next, "frozenCols", adjustFreeze(content.frozenCols, clamped, 1));
+  withField(next, "charts", remapCharts(content.charts, "col", clamped, 1));
   return next;
 }
 
-/** Remove the row at `rowIdx`, remapping every row-indexed field. */
+/**
+ * Remove the row at `rowIdx`, remapping every row-indexed field. Returns
+ * the content unchanged when it would empty the grid (always keep at
+ * least one row, mirroring {@link removeColumnAt}'s column guard).
+ */
 export function removeRowAt(
   content: SheetContent,
   rowIdx: number,
 ): SheetContent {
   if (rowIdx < 0 || rowIdx >= content.rows.length) return content;
+  if (content.rows.length <= 1) return content;
   const next: SheetContent = { ...content };
   next.rows = content.rows.filter((_, i) => i !== rowIdx);
   withField(next, "formats", remapFormatsForRow(content.formats, rowIdx, -1));
   withField(next, "rowHeights", spliceSizes(content.rowHeights, rowIdx, -1));
   withField(next, "frozenRows", adjustFreeze(content.frozenRows, rowIdx, -1));
+  withField(next, "charts", remapCharts(content.charts, "row", rowIdx, -1));
   return next;
 }
 
@@ -239,5 +277,6 @@ export function insertRowAt(
   withField(next, "formats", remapFormatsForRow(content.formats, clamped, 1));
   withField(next, "rowHeights", spliceSizes(content.rowHeights, clamped, 1));
   withField(next, "frozenRows", adjustFreeze(content.frozenRows, clamped, 1));
+  withField(next, "charts", remapCharts(content.charts, "row", clamped, 1));
   return next;
 }

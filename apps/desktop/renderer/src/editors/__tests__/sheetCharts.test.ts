@@ -4,11 +4,13 @@ import {
   CHART_PAD,
   barLayout,
   extractChartData,
+  formatA1Range,
   hasPlottableData,
   lineLayout,
   niceMax,
   parseA1Range,
   pieLayout,
+  shiftRangeForStructuralEdit,
   valueExtent,
   type ChartData,
   type ChartLayout,
@@ -53,11 +55,68 @@ describe("parseA1Range", () => {
     expect(parseA1Range("  a1:b2 ")).toEqual({ r1: 0, c1: 0, r2: 1, c2: 1 });
   });
 
+  it("accepts $-qualified absolute references", () => {
+    expect(parseA1Range("$A$1")).toEqual({ r1: 0, c1: 0, r2: 0, c2: 0 });
+    expect(parseA1Range("$A$1:$C$10")).toEqual({ r1: 0, c1: 0, r2: 9, c2: 2 });
+    expect(parseA1Range("$b$2:c3")).toEqual({ r1: 1, c1: 1, r2: 2, c2: 2 });
+  });
+
   it("rejects malformed input", () => {
     expect(parseA1Range("")).toBeNull();
     expect(parseA1Range("xyz")).toBeNull();
     expect(parseA1Range("A1:B2:C3")).toBeNull();
     expect(parseA1Range("Sheet1!A1")).toBeNull();
+  });
+});
+
+describe("formatA1Range", () => {
+  it("serialises a single cell and a range", () => {
+    expect(formatA1Range({ r1: 0, c1: 0, r2: 0, c2: 0 })).toBe("A1");
+    expect(formatA1Range({ r1: 0, c1: 0, r2: 9, c2: 2 })).toBe("A1:C10");
+  });
+
+  it("round-trips through parseA1Range", () => {
+    for (const r of ["A1", "B2:D5", "A1:C10"]) {
+      expect(formatA1Range(parseA1Range(r)!)).toBe(r);
+    }
+  });
+});
+
+describe("shiftRangeForStructuralEdit", () => {
+  it("shifts a range right when a column is inserted before it", () => {
+    expect(shiftRangeForStructuralEdit("B1:B3", "col", 0, 1)).toBe("C1:C3");
+  });
+
+  it("widens a range when a column is inserted inside it", () => {
+    expect(shiftRangeForStructuralEdit("A1:C3", "col", 1, 1)).toBe("A1:D3");
+  });
+
+  it("leaves a range untouched when the insert is after it", () => {
+    expect(shiftRangeForStructuralEdit("A1:B3", "col", 5, 1)).toBe("A1:B3");
+  });
+
+  it("shifts a range left when an earlier column is removed", () => {
+    expect(shiftRangeForStructuralEdit("C1:C3", "col", 0, -1)).toBe("B1:B3");
+  });
+
+  it("shrinks a range when an interior column is removed", () => {
+    expect(shiftRangeForStructuralEdit("A1:C3", "col", 1, -1)).toBe("A1:B3");
+  });
+
+  it("collapses to #REF! when the range's only column is removed", () => {
+    expect(shiftRangeForStructuralEdit("B1:B3", "col", 1, -1)).toBe("#REF!");
+  });
+
+  it("applies the same rules on the row axis", () => {
+    expect(shiftRangeForStructuralEdit("A2:C2", "row", 0, 1)).toBe("A3:C3");
+    expect(shiftRangeForStructuralEdit("A1:C5", "row", 2, -1)).toBe("A1:C4");
+    expect(shiftRangeForStructuralEdit("A3:C3", "row", 2, -1)).toBe("#REF!");
+  });
+
+  it("returns unparseable input unchanged", () => {
+    expect(shiftRangeForStructuralEdit("not-a-range", "col", 0, 1)).toBe(
+      "not-a-range",
+    );
   });
 });
 

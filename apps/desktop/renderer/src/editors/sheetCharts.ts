@@ -46,7 +46,7 @@ export type NumericValueAt = (row: number, col: number) => number | null;
 export type TextValueAt = (row: number, col: number) => string;
 
 /** Convert a zero-based column index to its A1 letter (0 → "A"). */
-function columnLetter(index: number): string {
+export function columnLetter(index: number): string {
   let label = "";
   let n = index;
   while (n >= 0) {
@@ -59,21 +59,26 @@ function columnLetter(index: number): string {
 /**
  * Parse an A1 range (`"A1"`, `"A1:C10"`, reversed `"C10:A1"`) into a
  * normalised {@link RangeRect}. Returns `null` for malformed input.
- * Sheet-qualified prefixes (`Sheet1!A1`) are not accepted — charts bind
- * to the active sheet only.
+ * Absolute markers (`$A$1`, `$A$1:$C$10`) are accepted and ignored — a
+ * chart range is always relative to the active sheet, so the `$` carries
+ * no extra meaning here, but users routinely paste Excel-style absolute
+ * references. Sheet-qualified prefixes (`Sheet1!A1`) are not accepted —
+ * charts bind to the active sheet only.
  */
 export function parseA1Range(range: string): RangeRect | null {
   const trimmed = range.trim();
   if (trimmed === "") return null;
+  // Strip `$` absolute markers before delegating to the bare-ref parser.
+  const cellOf = (token: string) => parseCellRef(token.replace(/\$/g, "").toUpperCase());
   const parts = trimmed.split(":");
   if (parts.length === 1) {
-    const cell = parseCellRef(parts[0].toUpperCase());
+    const cell = cellOf(parts[0]);
     if (!cell) return null;
     return { r1: cell.row, c1: cell.col, r2: cell.row, c2: cell.col };
   }
   if (parts.length !== 2) return null;
-  const a = parseCellRef(parts[0].toUpperCase());
-  const b = parseCellRef(parts[1].toUpperCase());
+  const a = cellOf(parts[0]);
+  const b = cellOf(parts[1]);
   if (!a || !b) return null;
   return {
     r1: Math.min(a.row, b.row),
@@ -81,6 +86,54 @@ export function parseA1Range(range: string): RangeRect | null {
     r2: Math.max(a.row, b.row),
     c2: Math.max(a.col, b.col),
   };
+}
+
+/** Serialise a normalised {@link RangeRect} back to an A1 range string. */
+export function formatA1Range(rect: RangeRect): string {
+  const a = `${columnLetter(rect.c1)}${rect.r1 + 1}`;
+  if (rect.r1 === rect.r2 && rect.c1 === rect.c2) return a;
+  return `${a}:${columnLetter(rect.c2)}${rect.r2 + 1}`;
+}
+
+/**
+ * Rewrite a chart's A1 range when a column (`axis: "col"`) or row
+ * (`axis: "row"`) is inserted (`delta: 1`) or removed (`delta: -1`) at
+ * zero-based index `at`, mirroring Excel's reference-adjustment rules:
+ *
+ *   - an insert at or before the range shifts it; an insert *inside* the
+ *     range widens it to include the new blank line,
+ *   - a removal of an interior or edge line shrinks the range,
+ *   - removing the range's only line on that axis collapses it to the
+ *     `"#REF!"` sentinel (the chart then renders its empty state).
+ *
+ * Unparseable input is returned unchanged so a malformed range a user is
+ * still typing is never silently mangled.
+ */
+export function shiftRangeForStructuralEdit(
+  range: string,
+  axis: "row" | "col",
+  at: number,
+  delta: 1 | -1,
+): string {
+  const rect = parseA1Range(range);
+  if (!rect) return range;
+  let lo = axis === "col" ? rect.c1 : rect.r1;
+  let hi = axis === "col" ? rect.c2 : rect.r2;
+  if (delta === -1) {
+    if (lo === at && hi === at) return "#REF!";
+    if (lo === at) lo = at + 1; // first surviving line
+    if (hi === at) hi = at - 1; // last surviving line
+    if (lo > at) lo -= 1;
+    if (hi > at) hi -= 1;
+  } else {
+    if (lo >= at) lo += 1;
+    if (hi >= at) hi += 1;
+  }
+  const shifted: RangeRect =
+    axis === "col"
+      ? { r1: rect.r1, c1: lo, r2: rect.r2, c2: hi }
+      : { r1: lo, c1: rect.c1, r2: hi, c2: rect.c2 };
+  return formatA1Range(shifted);
 }
 
 /**
