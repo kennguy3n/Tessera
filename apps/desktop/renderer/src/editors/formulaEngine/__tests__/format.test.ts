@@ -55,6 +55,68 @@ describe("applyCellFormat — number formats", () => {
   });
 });
 
+describe("applyCellFormat — multi-section custom formats", () => {
+  it("uses a dedicated negative section without doubling the sign", () => {
+    const fmt = { numberFormat: "#,##0.00;(#,##0.00)" };
+    expect(applyCellFormat(1234.5, fmt)).toBe("1,234.50");
+    expect(applyCellFormat(-1234.5, fmt)).toBe("(1,234.50)");
+  });
+
+  it("routes zero to the third section", () => {
+    const fmt = { numberFormat: '#,##0;(#,##0);"–"' };
+    expect(applyCellFormat(42, fmt)).toBe("42");
+    expect(applyCellFormat(-42, fmt)).toBe("(42)");
+    expect(applyCellFormat(0, fmt)).toBe("–");
+  });
+
+  it("treats zero as positive when there is no zero section", () => {
+    const fmt = { numberFormat: "#,##0.00;(#,##0.00)" };
+    expect(applyCellFormat(0, fmt)).toBe("0.00");
+  });
+
+  it("hides values with an empty section", () => {
+    // `0;-0;` → zeros render as nothing.
+    expect(applyCellFormat(0, { numberFormat: "0;-0;" })).toBe("");
+    expect(applyCellFormat(5, { numberFormat: "0;-0;" })).toBe("5");
+  });
+
+  it("applies the text section to non-numeric strings", () => {
+    const fmt = { numberFormat: '0;-0;0;"» "@' };
+    expect(applyCellFormat("note", fmt)).toBe("» note");
+    // Numeric strings still go through the numeric sections.
+    expect(applyCellFormat("12", fmt)).toBe("12");
+  });
+});
+
+describe("applyCellFormat — scaling and bracket directives", () => {
+  it("scales by 1000 per trailing comma", () => {
+    expect(applyCellFormat(1234567, { numberFormat: "#,##0," })).toBe("1,235");
+    expect(applyCellFormat(1234567, { numberFormat: '#,##0,"K"' })).toBe(
+      "1,235K",
+    );
+    expect(applyCellFormat(1234567890, { numberFormat: '0.0,,"M"' })).toBe(
+      "1234.6M",
+    );
+  });
+
+  it("keeps interior commas as thousands separators (not scaling)", () => {
+    expect(applyCellFormat(1234567, { numberFormat: "#,##0" })).toBe(
+      "1,234,567",
+    );
+  });
+
+  it("strips colour / locale brackets instead of emitting them", () => {
+    expect(applyCellFormat(1234, { numberFormat: "[Red]#,##0" })).toBe("1,234");
+    expect(applyCellFormat(1234, { numberFormat: "[$-409]#,##0" })).toBe(
+      "1,234",
+    );
+    // A negative section with a colour directive renders cleanly.
+    expect(
+      applyCellFormat(-99, { numberFormat: "#,##0;[Red](#,##0)" }),
+    ).toBe("(99)");
+  });
+});
+
 describe("applyCellFormat — date formats", () => {
   // Excel serial 36526 = 2000-01-01.
   const newMillennium: FormulaValue = dateToSerial(
