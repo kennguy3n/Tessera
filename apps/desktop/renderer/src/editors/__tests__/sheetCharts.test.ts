@@ -448,8 +448,10 @@ describe("lineLayout — combo options", () => {
     for (const bad of [0, -5]) {
       const line = lineLayout(data, LAYOUT, { maxOverride: bad });
       const bar = barLayout(data, LAYOUT, bad);
+      const area = areaLayout(data, LAYOUT, { maxOverride: bad });
       expect(line.max).toBeGreaterThanOrEqual(1);
       expect(bar.max).toBeGreaterThanOrEqual(1);
+      expect(area.max).toBeGreaterThanOrEqual(1);
       // No Infinity/NaN leaks into the rendered coordinates.
       for (const p of line.lines[0].points) {
         expect(Number.isFinite(p.x)).toBe(true);
@@ -457,6 +459,10 @@ describe("lineLayout — combo options", () => {
       }
       for (const r of bar.bars) {
         expect(Number.isFinite(r.height)).toBe(true);
+      }
+      for (const p of area.areas[0].points) {
+        expect(Number.isFinite(p.x)).toBe(true);
+        expect(Number.isFinite(p.y)).toBe(true);
       }
     }
   });

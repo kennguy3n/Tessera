@@ -415,7 +415,12 @@ export function areaLayout(
   const plotW = layout.width - pad.left - pad.right;
   const plotH = layout.height - pad.top - pad.bottom;
   const { max: rawMax } = valueExtent(data);
-  const max = opts.maxOverride ?? niceMax(rawMax);
+  // Ignore a non-positive override (same guard as `barLayout`/`lineLayout`):
+  // it would make `v / max` blow up to Infinity/NaN or invert the scale.
+  const max =
+    opts.maxOverride !== undefined && opts.maxOverride > 0
+      ? opts.maxOverride
+      : niceMax(rawMax);
   const baselineY = pad.top + plotH;
   const categories = data.labels.length;
   const areas: AreaPath[] = [];
