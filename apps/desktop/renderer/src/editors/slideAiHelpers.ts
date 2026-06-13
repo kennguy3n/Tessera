@@ -28,7 +28,7 @@
  * surface by the calling hook — see `hooks/useModelGeneration.ts`.
  */
 import { buildBlock, newSlideId } from "./slideEditorHelpers";
-import type { Slide, SlideBlock } from "./slideEditorTypes";
+import type { Slide, SlideBlock, SlideLayout } from "./slideEditorTypes";
 
 // ---------------------------------------------------------------------------
 // Bounds. Every parsed dimension is clamped so a pathological completion
@@ -242,26 +242,144 @@ export function parseDeckOutline(raw: string): ParsedDeckOutline {
  * surface "the model didn't return a usable deck" instead of applying
  * an empty deck.
  */
+/**
+ * Select the best layout for a generated slide based on its content.
+ * Pure, deterministic — no IO or model calls.
+ *
+ * Heuristics:
+ *   - First slide (title slide) → "title" (just the deck title)
+ *   - No bullets, short title → "sectionHeader" (section divider)
+ *   - Single short bullet (≤ 20 chars starting with a digit) → "bigNumber"
+ *   - Single bullet → "titleContent" (text block)
+ *   - 2 bullets → "twoColumn" (parallel comparison)
+ *   - 3+ bullets → "titleContent" (standard bullets)
+ *   - Last slide → "sectionHeader" (closing slide)
+ */
+export function suggestLayoutForGeneratedSlide(
+  parsed: ParsedOutlineSlide,
+  index: number,
+  total: number,
+  _deckTitle?: string,
+): SlideLayout {
+  const isTitleSlide = index === 0;
+  const isClosingSlide = index === total - 1 && total > 2;
+
+  // Title slide: deck-level title only
+  if (isTitleSlide) return "title";
+
+  // Closing slide: section header style (clean ending)
+  if (isClosingSlide && parsed.bullets.length === 0) return "sectionHeader";
+
+  // No bullets → section header
+  if (parsed.bullets.length === 0) return "sectionHeader";
+
+  // Single short bullet starting with digit → big number
+  if (parsed.bullets.length === 1) {
+    const bullet = parsed.bullets[0].trim();
+    if (/^\d/.test(bullet) && bullet.length <= 20) return "bigNumber";
+    return "titleContent";
+  }
+
+  // Two bullets → two columns
+  if (parsed.bullets.length === 2) return "twoColumn";
+
+  // Default: title + content with bullets
+  return "titleContent";
+}
+
 export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
   if (outline.slides.length === 0) return [];
+  const total = outline.slides.length;
   return outline.slides.map((parsed, index) => {
     const isTitleSlide = index === 0;
     const title = isTitleSlide && outline.title ? outline.title : parsed.title;
+    const layout = suggestLayoutForGeneratedSlide(
+      parsed,
+      index,
+      total,
+      outline.title,
+    );
+
     const blocks: SlideBlock[] = [];
-    if (parsed.bullets.length > 1) {
-      blocks.push(
-        buildBlock({ type: "bullets", content: parsed.bullets.join("\n") }),
-      );
-    } else if (parsed.bullets.length === 1) {
-      blocks.push(buildBlock({ type: "text", content: parsed.bullets[0] }));
-    } else if (!isTitleSlide) {
-      blocks.push(buildBlock({ type: "text", content: "" }));
+    switch (layout) {
+      case "title":
+      case "sectionHeader":
+        // No body blocks for title/section slides
+        if (parsed.bullets.length > 0) {
+          blocks.push(
+            buildBlock({
+              type: "text",
+              content: parsed.bullets.join("\n"),
+              slot: "subtitle",
+            }),
+          );
+        }
+        break;
+      case "bigNumber":
+        blocks.push(
+          buildBlock({
+            type: "text",
+            content: parsed.bullets[0],
+            slot: "number",
+          }),
+        );
+        if (parsed.title) {
+          blocks.push(
+            buildBlock({
+              type: "text",
+              content: parsed.title,
+              slot: "caption",
+            }),
+          );
+        }
+        break;
+      case "twoColumn":
+        blocks.push(
+          buildBlock({
+            type: "text",
+            content: parsed.bullets[0],
+            slot: "left",
+          }),
+        );
+        blocks.push(
+          buildBlock({
+            type: "text",
+            content: parsed.bullets.slice(1).join("\n"),
+            slot: "right",
+          }),
+        );
+        break;
+      default:
+        // titleContent and fallback
+        if (parsed.bullets.length > 1) {
+          blocks.push(
+            buildBlock({
+              type: "bullets",
+              content: parsed.bullets.join("\n"),
+              slot: "body",
+            }),
+          );
+        } else if (parsed.bullets.length === 1) {
+          blocks.push(
+            buildBlock({
+              type: "text",
+              content: parsed.bullets[0],
+              slot: "body",
+            }),
+          );
+        } else {
+          blocks.push(
+            buildBlock({ type: "text", content: "", slot: "body" }),
+          );
+        }
+        break;
     }
     return {
       id: newSlideId("slide"),
-      title,
+      title: layout === "bigNumber" ? "" : title,
       blocks,
       notes: parsed.notes ?? "",
+      layout,
     };
   });
 }

@@ -244,9 +244,10 @@ describe("slidesToMarpMarkdown", () => {
     expect(separatorCount).toBe(3);
 
     // Each slide's heading must follow a separator (or the opening header).
-    expect(out).toMatch(/\n---\n\n# First\n/);
-    expect(out).toMatch(/\n---\n\n# Second\n/);
-    expect(out).toMatch(/\n---\n\n# Third\n/);
+    // Layout engine adds a <!-- _class: ... --> comment before each heading.
+    expect(out).toMatch(/\n---\n\n<!-- _class: layout-\w+ -->\n\n# First\n/);
+    expect(out).toMatch(/\n---\n\n<!-- _class: layout-\w+ -->\n\n# Second\n/);
+    expect(out).toMatch(/\n---\n\n<!-- _class: layout-\w+ -->\n\n# Third\n/);
 
     // Sanity: slide bodies preserved in order.
     const firstIdx = out.indexOf("alpha");
@@ -274,8 +275,13 @@ describe("slidesToMarpMarkdown", () => {
     ]);
     // The dangerous `-->` substring must NOT appear anywhere except as the
     // explicit comment terminator we emit at the end of the notes line.
-    const occurrences = (out.match(/-->/g) ?? []).length;
-    expect(occurrences).toBe(1);
+    // The layout comment emits one `-->` per slide (from `<!-- _class: ... -->`).
+    // The ONLY additional `-->` should be the notes comment terminator.
+    // Count layout-class `-->` and the notes terminator separately.
+    const layoutCommentCount = (out.match(/<!-- _class: layout-\w+ -->/g) ?? []).length;
+    const totalArrows = (out.match(/-->/g) ?? []).length;
+    // Exactly one notes `-->` beyond the per-slide layout comments.
+    expect(totalArrows - layoutCommentCount).toBe(1);
     // Sanity: the escaped form is present and the original payload survives
     // (we only insert a space, not strip characters).
     expect(out).toContain("close -- > evil");
@@ -449,9 +455,10 @@ describe("buildSlideFromLayout", () => {
     const s = buildSlideFromLayout("blank");
     expect(s.title).toBe("");
     expect(s.blocks).toEqual([
-      { id: expect.any(String), type: "text", content: "" },
+      { id: expect.any(String), type: "text", content: "", slot: "body" },
     ]);
     expect(s.notes).toBe("");
+    expect(s.layout).toBe("blank");
   });
 
   it("returns no blocks for the title layout", () => {
@@ -464,8 +471,9 @@ describe("buildSlideFromLayout", () => {
     const s = buildSlideFromLayout("titleContent");
     expect(s.title).toBe("New Slide");
     expect(s.blocks).toEqual([
-      { id: expect.any(String), type: "text", content: "" },
+      { id: expect.any(String), type: "text", content: "", slot: "body" },
     ]);
+    expect(s.layout).toBe("titleContent");
   });
 
   it("returns two text blocks for the twoColumn layout", () => {
@@ -482,12 +490,15 @@ describe("buildSlideFromLayout", () => {
       type: "image",
       content: "",
       alt: "",
+      slot: "image",
     });
     expect(s.blocks[1]).toEqual({
       id: expect.any(String),
       type: "text",
       content: "",
+      slot: "caption",
     });
+    expect(s.layout).toBe("imageCaption");
   });
 
   it("returns a fresh object each call so multiple inserts don't alias", () => {

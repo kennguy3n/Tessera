@@ -43,6 +43,8 @@ import {
   type SlideFindMatch,
 } from "./slideEditorHelpers";
 import { SLIDE_THEMES } from "./slideThemes";
+import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
+
 import { applyBulletsToSlide } from "./slideAiHelpers";
 import { SlideAiActions, SlideDeckGenerator } from "./SlideAiPanel";
 import type {
@@ -123,21 +125,11 @@ function SpeakerNotesField({
  * non-UI callers (e.g. the future export pipeline) and shouldn't ship
  * a hard dependency on English labels.
  */
-const LAYOUT_LABELS: Record<SlideLayout, string> = {
-  blank: "Blank",
-  title: "Title only",
-  titleContent: "Title + content",
-  twoColumn: "Two columns",
-  imageCaption: "Image + caption",
-};
+const LAYOUT_LABELS: Record<SlideLayout, string> = Object.fromEntries(
+  SLIDE_LAYOUTS.map((l) => [l.id, l.label]),
+) as Record<SlideLayout, string>;
 
-const LAYOUT_ORDER: SlideLayout[] = [
-  "blank",
-  "title",
-  "titleContent",
-  "twoColumn",
-  "imageCaption",
-];
+const LAYOUT_ORDER: SlideLayout[] = SLIDE_LAYOUTS.map((l) => l.id);
 
 export default function SlideEditor({
   content,
@@ -390,6 +382,18 @@ export default function SlideEditor({
       setLayoutMenuOpen(false);
     },
     [debouncedSave],
+  );
+
+  const changeLayout = useCallback(
+    (newLayout: SlideLayout) => {
+      setSlides((prev) => {
+        const updated = [...prev];
+        updated[activeIndex] = { ...updated[activeIndex], layout: newLayout };
+        debouncedSave(updated);
+        return updated;
+      });
+    },
+    [activeIndex, debouncedSave],
   );
 
   const duplicateSlide = useCallback(
@@ -1255,6 +1259,24 @@ export default function SlideEditor({
             ✨ AI Deck
           </button>
           {!marpMode && (
+            <label className="slide-layout-picker">
+              Layout
+              <select
+                className="slide-layout-select"
+                value={activeSlide ? resolveSlideLayout(activeSlide) : "titleContent"}
+                onChange={(e) => changeLayout(e.target.value as SlideLayout)}
+                aria-label="Slide layout"
+                title="Layout region arrangement for this slide"
+              >
+                {SLIDE_LAYOUTS.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!marpMode && (
             <label className="slide-theme-switcher">
               Theme
               <select
@@ -1413,7 +1435,11 @@ export default function SlideEditor({
         )}
 
         {!marpMode && activeSlide && (
-          <div className="slide-canvas" data-slide-theme={themeId}>
+          <div
+            className="slide-canvas"
+            data-slide-theme={themeId}
+            data-slide-layout={resolveSlideLayout(activeSlide)}
+          >
             <input
               className="slide-title-input"
               value={activeSlide.title}
@@ -1601,6 +1627,7 @@ function SlideBlockRow({
   return (
     <div
       className={`slide-block ${isDragging ? "is-dragging" : ""}`}
+      data-slot={block.slot ?? undefined}
       // Block-level drag-and-drop. We attach to the outer wrapper so
       // the whole block "card" is the drag handle / drop target, not
       // just one button inside it. The `<textarea>` and `<input>`

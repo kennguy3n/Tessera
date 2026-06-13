@@ -2601,6 +2601,212 @@
 }
 
 /* -----------------------------------------------------------------
+ * Slide layout engine — CSS-grid regions
+ *
+ * Each layout stamps `data-slide-layout="<id>"` on `.slide-canvas`.
+ * The grid-template-areas define named regions that blocks flow into
+ * via their `slot` property. Unslotted blocks fall into the "body"
+ * region. The title input is always in the "title" grid-area (placed
+ * via the existing `.slide-title-input` selector).
+ * ----------------------------------------------------------------- */
+
+/* --- titleContent: title row + body below --- */
+.slide-canvas[data-slide-layout="titleContent"] .slide-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+/* --- title: centred, no body --- */
+.slide-canvas[data-slide-layout="title"] {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.slide-canvas[data-slide-layout="title"] .slide-title-input {
+  text-align: center;
+  font-size: var(--font-size-3xl, 2rem);
+}
+
+/* --- sectionHeader: bold centred --- */
+.slide-canvas[data-slide-layout="sectionHeader"] {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.slide-canvas[data-slide-layout="sectionHeader"] .slide-title-input {
+  text-align: center;
+  font-size: var(--font-size-3xl, 2rem);
+  font-weight: var(--font-weight-bold);
+}
+
+.slide-canvas[data-slide-layout="sectionHeader"] .slide-blocks {
+  max-width: 600px;
+  text-align: center;
+}
+
+/* --- twoColumn: side-by-side --- */
+.slide-canvas[data-slide-layout="twoColumn"] .slide-blocks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-md);
+}
+
+/* --- imageLeft: image | body --- */
+.slide-canvas[data-slide-layout="imageLeft"] .slide-blocks {
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: var(--spacing-md);
+  align-items: start;
+}
+
+/* --- imageRight: body | image --- */
+.slide-canvas[data-slide-layout="imageRight"] .slide-blocks {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: var(--spacing-md);
+  align-items: start;
+}
+
+/* --- bigNumber: hero stat + caption --- */
+.slide-canvas[data-slide-layout="bigNumber"] {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.slide-canvas[data-slide-layout="bigNumber"] .slide-blocks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.slide-canvas[data-slide-layout="bigNumber"] .slide-block[data-slot="number"] .slide-block-content {
+  font-size: var(--font-size-3xl, 2rem);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+  min-height: auto;
+  border: none;
+  background: transparent;
+}
+
+.slide-canvas[data-slide-layout="bigNumber"] .slide-block[data-slot="caption"] .slide-block-content {
+  text-align: center;
+  font-size: var(--font-size-lg, 1.125rem);
+  color: var(--color-text-secondary);
+  min-height: auto;
+  border: none;
+  background: transparent;
+}
+
+/* --- quote: centred quotation --- */
+.slide-canvas[data-slide-layout="quote"] {
+  justify-content: center;
+  align-items: center;
+}
+
+.slide-canvas[data-slide-layout="quote"] .slide-blocks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  max-width: 680px;
+}
+
+.slide-canvas[data-slide-layout="quote"] .slide-block[data-slot="quote"] .slide-block-content {
+  font-size: var(--font-size-xl, 1.25rem);
+  font-style: italic;
+  text-align: center;
+  min-height: auto;
+  border: none;
+  background: transparent;
+}
+
+.slide-canvas[data-slide-layout="quote"] .slide-block[data-slot="attribution"] .slide-block-content {
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  min-height: auto;
+  border: none;
+  background: transparent;
+}
+
+/* --- imageCaption: full-width image + caption --- */
+.slide-canvas[data-slide-layout="imageCaption"] .slide-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.slide-canvas[data-slide-layout="imageCaption"] .slide-block[data-slot="caption"] .slide-block-content {
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* --- blank: no special styling --- */
+.slide-canvas[data-slide-layout="blank"] .slide-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+/* Layout empty-region placeholder */
+.slide-layout-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  padding: var(--spacing-md);
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--duration-fast, 150ms) var(--ease-out, ease),
+    background var(--duration-fast, 150ms) var(--ease-out, ease);
+}
+
+.slide-layout-placeholder:hover {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+}
+
+/* Layout picker in toolbar */
+.slide-layout-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.slide-layout-select {
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+}
+
+.slide-layout-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--color-primary);
+}
+
+/* Reduced motion: skip any layout transition */
+@media (prefers-reduced-motion: reduce) {
+  .slide-layout-placeholder {
+    transition: none;
+  }
+}
+
+/* -----------------------------------------------------------------
  * Slide theme switcher (toolbar)
  * ----------------------------------------------------------------- */
 .slide-theme-switcher {
