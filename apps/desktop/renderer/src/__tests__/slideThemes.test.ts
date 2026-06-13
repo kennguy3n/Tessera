@@ -81,3 +81,52 @@ describe("resolveThemeId", () => {
     expect(resolveThemeId(undefined)).toBe(DEFAULT_SLIDE_THEME_ID);
   });
 });
+
+describe("Phase 2: extended theme properties", () => {
+  it("includes all 10 curated themes", () => {
+    expect(SLIDE_THEMES.length).toBe(10);
+    const ids = SLIDE_THEMES.map((t) => t.id);
+    expect(ids).toContain("aurora");
+    expect(ids).toContain("editorial");
+    expect(ids).toContain("noir");
+    expect(ids).toContain("mint");
+    expect(ids).toContain("solar");
+    expect(ids).toContain("slate");
+    expect(ids).toContain("rosewood");
+    expect(ids).toContain("ocean");
+    expect(ids).toContain("forest");
+    expect(ids).toContain("lavender");
+  });
+
+  it("every theme has a swatch colour", () => {
+    for (const theme of SLIDE_THEMES) {
+      expect(theme.swatch).toBeTruthy();
+      expect(theme.swatch).toMatch(/^#[0-9a-fA-F]{6}$/);
+    }
+  });
+
+  it("themes with bgStyle use a valid style", () => {
+    const valid = new Set(["solid", "gradient", "mesh", "dots", "lines"]);
+    for (const theme of SLIDE_THEMES) {
+      if (theme.bgStyle) {
+        expect(valid.has(theme.bgStyle)).toBe(true);
+      }
+    }
+  });
+
+  it("themes with headingWeight use a valid weight", () => {
+    for (const theme of SLIDE_THEMES) {
+      if (theme.headingWeight != null) {
+        expect(theme.headingWeight).toBeGreaterThanOrEqual(100);
+        expect(theme.headingWeight).toBeLessThanOrEqual(900);
+      }
+    }
+  });
+
+  it("new themes are known to the catalogue", () => {
+    expect(isKnownSlideThemeId("rosewood")).toBe(true);
+    expect(isKnownSlideThemeId("ocean")).toBe(true);
+    expect(isKnownSlideThemeId("forest")).toBe(true);
+    expect(isKnownSlideThemeId("lavender")).toBe(true);
+  });
+});

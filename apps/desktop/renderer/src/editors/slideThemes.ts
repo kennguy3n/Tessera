@@ -36,6 +36,12 @@ import type { MarpRenderOptions } from "../services/marpRenderer";
 /** Marp built-in themes the structured themes can map onto for export. */
 export type MarpBuiltinTheme = NonNullable<MarpRenderOptions["theme"]>;
 
+/**
+ * Decorative background style applied via CSS. These map to
+ * `--slide-bg-style` in `components.css`. "solid" is the default.
+ */
+export type SlideBgStyle = "solid" | "gradient" | "mesh" | "dots" | "lines";
+
 export interface SlideTheme {
   /**
    * Stable identifier persisted in the saved deck JSON
@@ -57,6 +63,32 @@ export interface SlideTheme {
    * theme picks the closest match.
    */
   marpTheme: MarpBuiltinTheme;
+  /**
+   * Font family for body/content blocks. When absent, inherits the
+   * global `--font-family`. Declared here (not CSS) so the picker
+   * preview can display accurate typography without loading a
+   * separate stylesheet.
+   */
+  bodyFont?: string;
+  /**
+   * Font weight for the heading. Defaults to 700 when absent.
+   * Lets themes differentiate between bold geometric headings
+   * and lighter, elegant typographic treatments.
+   */
+  headingWeight?: number;
+  /**
+   * Decorative background style. Maps to CSS class
+   * `slide-bg-<style>` applied alongside the theme. Defaults to
+   * "solid" when absent. Gradient/mesh/dots/lines are subtle
+   * decorative patterns — NOT background images.
+   */
+  bgStyle?: SlideBgStyle;
+  /**
+   * Hex swatch colour displayed in the theme picker preview card.
+   * Falls back to the CSS `--slide-accent` when omitted. Kept in
+   * TS so the React picker can render without CSS variable lookups.
+   */
+  swatch?: string;
 }
 
 /**
@@ -70,36 +102,82 @@ export const SLIDE_THEMES: readonly SlideTheme[] = [
     label: "Aurora",
     description: "Clean sans-serif on a soft, accent-tinted surface.",
     marpTheme: "default",
+    swatch: "#7c3aed",
   },
   {
     id: "editorial",
     label: "Editorial",
     description: "Serif headlines on warm paper for long-form decks.",
     marpTheme: "default",
+    bodyFont: "Georgia, 'Times New Roman', serif",
+    headingWeight: 600,
+    swatch: "#1d4ed8",
   },
   {
     id: "noir",
     label: "Noir",
     description: "High-contrast dark-forward theme for the stage.",
     marpTheme: "uncover",
+    headingWeight: 800,
+    swatch: "#111827",
   },
   {
     id: "mint",
     label: "Mint",
     description: "Fresh teal palette with airy spacing.",
     marpTheme: "default",
+    swatch: "#0f766e",
   },
   {
     id: "solar",
     label: "Solar",
     description: "Warm amber accents with bold geometric headings.",
     marpTheme: "gaia",
+    headingWeight: 800,
+    bgStyle: "gradient",
+    swatch: "#c2410c",
   },
   {
     id: "slate",
     label: "Slate",
     description: "Neutral, corporate-safe blue-grey.",
     marpTheme: "default",
+    swatch: "#334155",
+  },
+  {
+    id: "rosewood",
+    label: "Rosewood",
+    description: "Warm rose tones with elegant serif headings.",
+    marpTheme: "default",
+    bodyFont: "Georgia, 'Times New Roman', serif",
+    headingWeight: 600,
+    bgStyle: "gradient",
+    swatch: "#9f1239",
+  },
+  {
+    id: "ocean",
+    label: "Ocean",
+    description: "Deep navy with cyan accents — confident and modern.",
+    marpTheme: "uncover",
+    headingWeight: 700,
+    bgStyle: "mesh",
+    swatch: "#0e7490",
+  },
+  {
+    id: "forest",
+    label: "Forest",
+    description: "Deep greens with earthy, organic feel.",
+    marpTheme: "default",
+    bgStyle: "dots",
+    swatch: "#166534",
+  },
+  {
+    id: "lavender",
+    label: "Lavender",
+    description: "Soft purple with lightweight, modern typography.",
+    marpTheme: "default",
+    headingWeight: 500,
+    swatch: "#7e22ce",
   },
 ] as const;
 

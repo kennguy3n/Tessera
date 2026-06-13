@@ -2589,6 +2589,7 @@
 .slide-canvas[data-slide-theme] .slide-title-input {
   color: var(--slide-headline, var(--color-text-headline));
   font-family: var(--slide-font-headline, var(--font-family));
+  font-weight: var(--slide-heading-weight, 700);
   border-bottom-color: color-mix(
     in srgb,
     var(--slide-accent, var(--color-primary)) 32%,
@@ -2598,6 +2599,322 @@
 
 .slide-canvas[data-slide-theme] .slide-title-input:focus {
   border-bottom-color: var(--slide-accent, var(--color-primary));
+}
+
+/* Body font: some themes use a different font family for content */
+.slide-canvas[data-slide-theme] .slide-block-content {
+  font-family: var(--slide-font-body, var(--font-family));
+}
+
+/* -----------------------------------------------------------------
+ * Decorative background styles
+ *
+ * Themes declare a `bgStyle` in TS; the editor stamps it as
+ * `data-slide-bg` on the canvas. These are subtle, non-intrusive
+ * patterns layered on top of `--slide-surface` using pseudo-elements
+ * so the background never interferes with content readability.
+ * ----------------------------------------------------------------- */
+.slide-canvas[data-slide-bg="gradient"] {
+  background: linear-gradient(
+    135deg,
+    var(--slide-surface, transparent) 0%,
+    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 6%, var(--slide-surface, transparent)) 100%
+  );
+}
+
+.slide-canvas[data-slide-bg="mesh"] {
+  background:
+    radial-gradient(
+      ellipse at 20% 50%,
+      color-mix(in srgb, var(--slide-accent, var(--color-primary)) 5%, transparent) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse at 80% 20%,
+      color-mix(in srgb, var(--slide-accent, var(--color-primary)) 4%, transparent) 0%,
+      transparent 60%
+    ),
+    var(--slide-surface, transparent);
+}
+
+.slide-canvas[data-slide-bg="dots"] {
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 8%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 20px 20px;
+  background-color: var(--slide-surface, transparent);
+}
+
+.slide-canvas[data-slide-bg="lines"] {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 23px,
+    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 6%, transparent) 23px,
+    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 6%, transparent) 24px
+  );
+  background-color: var(--slide-surface, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-canvas[data-slide-bg="gradient"],
+  .slide-canvas[data-slide-bg="mesh"] {
+    background: var(--slide-surface, transparent);
+  }
+}
+
+/* -----------------------------------------------------------------
+ * Theme picker — visual swatch cards
+ *
+ * Replaces the plain <select> with a dropdown of swatch-labelled
+ * cards that live-preview the theme's accent colour, font, and
+ * background style.
+ * ----------------------------------------------------------------- */
+.slide-theme-picker-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.slide-theme-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: border-color var(--duration-fast, 150ms);
+}
+
+.slide-theme-picker-trigger:hover {
+  border-color: var(--color-primary);
+}
+
+.slide-theme-picker-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--color-primary);
+}
+
+.slide-theme-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-xs, 2px);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  flex-shrink: 0;
+}
+
+.slide-theme-picker-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  margin-top: var(--spacing-2xs, 2px);
+  padding: var(--spacing-xs);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12));
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-xs);
+  min-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.slide-theme-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  cursor: pointer;
+  transition: border-color var(--duration-fast, 150ms),
+    background var(--duration-fast, 150ms);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-body);
+  text-align: left;
+}
+
+.slide-theme-card:hover {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-bg-page));
+}
+
+.slide-theme-card[aria-selected="true"] {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.slide-theme-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.slide-theme-card-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  flex-shrink: 0;
+}
+
+.slide-theme-card-label {
+  font-weight: var(--font-weight-medium, 500);
+  line-height: 1.2;
+}
+
+.slide-theme-card-desc {
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-tertiary);
+  line-height: 1.3;
+}
+
+/* -----------------------------------------------------------------
+ * Template picker
+ * ----------------------------------------------------------------- */
+.slide-template-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.slide-template-picker {
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+  padding: var(--spacing-lg);
+  max-width: 640px;
+  width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.slide-template-picker h2 {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-lg);
+  color: var(--color-text-headline);
+}
+
+.slide-template-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.slide-template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-page);
+  cursor: pointer;
+  transition: border-color var(--duration-fast, 150ms),
+    box-shadow var(--duration-fast, 150ms);
+  text-align: center;
+}
+
+.slide-template-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.slide-template-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.slide-template-card-icon {
+  font-size: var(--font-size-2xl, 1.5rem);
+  line-height: 1;
+}
+
+.slide-template-card-title {
+  font-weight: var(--font-weight-medium, 500);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-headline);
+}
+
+.slide-template-card-desc {
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-tertiary);
+  line-height: 1.3;
+}
+
+/* -----------------------------------------------------------------
+ * Insert-card preset menu
+ * ----------------------------------------------------------------- */
+.slide-insert-presets {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  margin-top: var(--spacing-2xs, 2px);
+  padding: var(--spacing-xs);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12));
+  min-width: 200px;
+}
+
+.slide-insert-preset-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-body);
+  transition: background var(--duration-fast, 150ms);
+}
+
+.slide-insert-preset-item:hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-page));
+}
+
+.slide-insert-preset-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.slide-insert-preset-icon {
+  font-size: var(--font-size-base, 0.875rem);
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.slide-insert-preset-label {
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.slide-insert-preset-desc {
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-tertiary);
 }
 
 /* -----------------------------------------------------------------

@@ -39,11 +39,17 @@ import {
   fileToDataUrl,
   buildPresentationSlides,
   nextBlockForTypeChange,
+  buildDeckFromTemplate,
+  buildSlideFromPreset,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
-import { SLIDE_THEMES } from "./slideThemes";
+import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
+import {
+  SLIDE_TEMPLATES,
+  INSERT_CARD_PRESETS,
+} from "./slideTemplates";
 
 import { applyBulletsToSlide } from "./slideAiHelpers";
 import { SlideAiActions, SlideDeckGenerator } from "./SlideAiPanel";
@@ -161,6 +167,9 @@ export default function SlideEditor({
   const [themeId, setThemeId] = useState<string>(() => initial.themeId);
   const [deckGenOpen, setDeckGenOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+  const [insertPresetOpen, setInsertPresetOpen] = useState(false);
   const [findPanelOpen, setFindPanelOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
@@ -211,6 +220,10 @@ export default function SlideEditor({
   // state) from "click outside" (which should dismiss the popover).
   const layoutMenuRef = useRef<HTMLDivElement | null>(null);
   const layoutButtonRef = useRef<HTMLButtonElement | null>(null);
+  const themePickerRef = useRef<HTMLDivElement | null>(null);
+  const themePickerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const insertPresetRef = useRef<HTMLDivElement | null>(null);
+  const insertPresetTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   // Close the layout picker when the user clicks anywhere outside it.
   // We listen on `mousedown` (not `click`) so the dismiss happens
@@ -239,6 +252,48 @@ export default function SlideEditor({
       document.removeEventListener("keydown", onKey);
     };
   }, [layoutMenuOpen]);
+
+  // Close the theme picker on click-outside or Escape.
+  useEffect(() => {
+    if (!themePickerOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (themePickerRef.current?.contains(target)) return;
+      if (themePickerTriggerRef.current?.contains(target)) return;
+      setThemePickerOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setThemePickerOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [themePickerOpen]);
+
+  // Close the insert-preset dropdown on click-outside or Escape.
+  useEffect(() => {
+    if (!insertPresetOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (insertPresetRef.current?.contains(target)) return;
+      if (insertPresetTriggerRef.current?.contains(target)) return;
+      setInsertPresetOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setInsertPresetOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [insertPresetOpen]);
 
   // Global Ctrl+PageUp / Ctrl+PageDown — navigate to the previous /
   // next slide regardless of which control inside the editor has
@@ -496,6 +551,47 @@ export default function SlideEditor({
       debouncedSave(slides);
     },
     [debouncedSave, slides],
+  );
+
+  // Apply a pre-built deck template. Replaces the entire deck with
+  // the template's slides and optionally switches to the suggested
+  // theme if the template declares one.
+  const applyTemplate = useCallback(
+    (template: (typeof SLIDE_TEMPLATES)[number]) => {
+      const newSlides = buildDeckFromTemplate(template);
+      if (newSlides.length === 0) return;
+      setSlides(newSlides);
+      setActiveIndex(0);
+      setMarpMode(false);
+      setTemplatePickerOpen(false);
+      if (template.suggestedTheme) {
+        setThemeId(template.suggestedTheme);
+        themeIdRef.current = template.suggestedTheme;
+      }
+      debouncedSave(newSlides, {
+        enabled: false,
+        source: marpSource,
+        theme: marpTheme,
+      });
+    },
+    [debouncedSave, marpSource, marpTheme],
+  );
+
+  // Insert a single slide from an insert-card preset after the
+  // current active slide.
+  const insertPreset = useCallback(
+    (preset: (typeof INSERT_CARD_PRESETS)[number]) => {
+      const newSlide = buildSlideFromPreset(preset);
+      setSlides((prev) => {
+        const idx = activeIndex + 1;
+        const next = [...prev.slice(0, idx), newSlide, ...prev.slice(idx)];
+        debouncedSave(next);
+        return next;
+      });
+      setActiveIndex(activeIndex + 1);
+      setInsertPresetOpen(false);
+    },
+    [activeIndex, debouncedSave],
   );
 
   // Replace the entire deck with an AI-generated one. We anchor the
@@ -1277,22 +1373,96 @@ export default function SlideEditor({
             </label>
           )}
           {!marpMode && (
-            <label className="slide-theme-switcher">
-              Theme
-              <select
-                className="slide-theme-select"
-                value={themeId}
-                onChange={(e) => changeTheme(e.target.value)}
+            <div className="slide-theme-picker-wrap">
+              <button
+                ref={themePickerTriggerRef}
+                type="button"
+                className="slide-theme-picker-trigger"
+                onClick={() => setThemePickerOpen((open) => !open)}
+                aria-haspopup="listbox"
+                aria-expanded={themePickerOpen}
                 aria-label="Deck theme"
                 title="Curated deck theme (typography + colour)"
               >
-                {SLIDE_THEMES.map((theme) => (
-                  <option key={theme.id} value={theme.id}>
-                    {theme.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <span
+                  className="slide-theme-swatch"
+                  style={{ background: getSlideTheme(themeId).swatch ?? "var(--color-primary)" }}
+                />
+                {getSlideTheme(themeId).label}
+              </button>
+              {themePickerOpen && (
+                <div ref={themePickerRef} className="slide-theme-picker-dropdown" role="listbox" aria-label="Choose theme">
+                  {SLIDE_THEMES.map((theme) => (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      role="option"
+                      className="slide-theme-card"
+                      aria-selected={theme.id === themeId}
+                      onClick={() => {
+                        changeTheme(theme.id);
+                        setThemePickerOpen(false);
+                      }}
+                    >
+                      <span
+                        className="slide-theme-card-swatch"
+                        style={{ background: theme.swatch ?? "var(--color-primary)" }}
+                      />
+                      <span>
+                        <span className="slide-theme-card-label">{theme.label}</span>
+                        <br />
+                        <span className="slide-theme-card-desc">{theme.description}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!marpMode && (
+            <div style={{ position: "relative", display: "inline-flex" }}>
+              <button
+                ref={insertPresetTriggerRef}
+                type="button"
+                className="btn-sm"
+                onClick={() => setInsertPresetOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={insertPresetOpen}
+                title="Quick-insert a pre-built slide card"
+              >
+                + Insert
+              </button>
+              {insertPresetOpen && (
+                <div ref={insertPresetRef} className="slide-insert-presets" role="menu">
+                  {INSERT_CARD_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      role="menuitem"
+                      className="slide-insert-preset-item"
+                      onClick={() => insertPreset(preset)}
+                    >
+                      <span className="slide-insert-preset-icon">{preset.icon}</span>
+                      <span>
+                        <span className="slide-insert-preset-label">{preset.label}</span>
+                        <br />
+                        <span className="slide-insert-preset-desc">{preset.description}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!marpMode && (
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setTemplatePickerOpen(true)}
+              title="Start from a pre-built deck template"
+            >
+              Templates
+            </button>
           )}
         </div>
 
@@ -1439,6 +1609,7 @@ export default function SlideEditor({
             className="slide-canvas"
             data-slide-theme={themeId}
             data-slide-layout={resolveSlideLayout(activeSlide)}
+            data-slide-bg={getSlideTheme(themeId).bgStyle ?? undefined}
           >
             <input
               className="slide-title-input"
@@ -1556,6 +1727,38 @@ export default function SlideEditor({
           </div>
         )}
       </div>
+      {templatePickerOpen && (
+        <div
+          className="slide-template-picker-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setTemplatePickerOpen(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setTemplatePickerOpen(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Choose a deck template"
+        >
+          <div className="slide-template-picker">
+            <h2>Start from a Template</h2>
+            <div className="slide-template-picker-grid">
+              {SLIDE_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  className="slide-template-card"
+                  onClick={() => applyTemplate(template)}
+                >
+                  <span className="slide-template-card-icon">{template.icon}</span>
+                  <span className="slide-template-card-title">{template.label}</span>
+                  <span className="slide-template-card-desc">{template.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
