@@ -218,7 +218,12 @@ export default function BaseAiAssistant({
     [fields],
   );
 
-  const clearPreviews = () => {
+  // Wrapped in `useCallback` so it has a stable identity and can be a
+  // listed dependency of the `handleGenerate` / `handleFill` callbacks
+  // (making the dependency explicit rather than relying on the fact that
+  // its body only calls render-stable state setters). Empty dep array: a
+  // setter's identity never changes across renders.
+  const clearPreviews = useCallback(() => {
     setSchemaPreview(null);
     setFieldsPreview(null);
     setFormulaPreview(null);
@@ -226,7 +231,7 @@ export default function BaseAiAssistant({
     setFillPreview(null);
     setFillProgress(null);
     setError(null);
-  };
+  }, []);
 
   const handleGenerate = useCallback(async () => {
     // `fill` has its own bounded row-by-row driver (`handleFill`); the
@@ -294,7 +299,7 @@ export default function BaseAiAssistant({
     } finally {
       setBusy(false);
     }
-  }, [mode, prompt, fields, records, selectedIds, run]);
+  }, [mode, prompt, fields, records, selectedIds, run, clearPreviews]);
 
   // Fill runs a bounded, cancellable, row-by-row loop. Only records in
   // scope (selection if any, else all) with an EMPTY target cell are
@@ -374,7 +379,7 @@ export default function BaseAiAssistant({
     } finally {
       setBusy(false);
     }
-  }, [fields, fillFieldName, prompt, records, selectedIds, run]);
+  }, [fields, fillFieldName, prompt, records, selectedIds, run, clearPreviews]);
 
   const handleCancel = useCallback(() => {
     cancelRef.current = true;
