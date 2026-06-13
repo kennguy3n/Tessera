@@ -612,10 +612,12 @@ export interface DeckRestyleInput {
  * round-trip through one shared grammar. Each slide becomes a
  * `## [layout] title` heading (the first slide omits the tag, matching
  * the title-slide convention) followed by its text/bullets content and
- * an optional `NOTES:` line. Image / diagram blocks are intentionally
- * omitted from the text stream — they are re-attached structurally by
- * {@link mergeRestyledDeck} so a binary asset is never serialised into
- * a prompt (privacy + token budget). Pure — no IO.
+ * an optional `NOTES:` line. Image / diagram / table / chart blocks are
+ * intentionally omitted from the text stream — they are re-attached
+ * structurally by {@link mergeRestyledDeck} so a binary asset or raw
+ * table/chart DSL is never serialised into a prompt (privacy + token
+ * budget; the model would otherwise restyle the DSL as prose). Pure —
+ * no IO.
  */
 export function serializeDeckForRestyle(slides: Slide[]): string {
   const lines: string[] = [];
@@ -624,7 +626,14 @@ export function serializeDeckForRestyle(slides: Slide[]): string {
     const title = slide.title.trim() || "Untitled slide";
     lines.push(index === 0 ? `## ${title}` : `## [${layout}] ${title}`);
     for (const block of slide.blocks) {
-      if (block.type === "image" || block.type === "diagram") continue;
+      if (
+        block.type === "image" ||
+        block.type === "diagram" ||
+        block.type === "table" ||
+        block.type === "chart"
+      ) {
+        continue;
+      }
       const body = block.content
         .split(/\r?\n/)
         .map((l) => l.trim())
@@ -688,9 +697,10 @@ const IMAGE_LAYOUTS: ReadonlySet<SlideLayout> = new Set(
  *   - The slide id is carried over from the original at the same index
  *     so the thumbnail navigator and selection stay stable across a
  *     restyle (the deck is re-keyed in place, not rebuilt).
- *   - Image / diagram blocks (which never travel through the text
- *     outline) are re-attached from the original slide, so a restyle
- *     can never drop a picture or a chart.
+ *   - Non-text blocks (image / diagram / table / chart) never travel
+ *     through the text outline, so they are re-attached from the
+ *     original slide; a restyle can never drop a picture, diagram,
+ *     table, or chart.
  *   - When the original slide used an image layout but the model picked
  *     a text-only layout, the original layout is preserved so the
  *     re-attached image keeps its region instead of becoming an
@@ -708,12 +718,25 @@ export function mergeRestyledDeck(
   return restyled.map((next, index) => {
     const original = originals[index];
     if (!original) return next;
-    const visuals = original.blocks.filter(
+    // Every non-text block is re-attached structurally (none travel
+    // through the text outline): images, diagrams, and the data blocks
+    // (table / chart), so a restyle can't destroy a user's table/chart.
+    const preserved = original.blocks.filter(
+      (b) =>
+        b.type === "image" ||
+        b.type === "diagram" ||
+        b.type === "table" ||
+        b.type === "chart",
+    );
+    // Only image/diagram blocks anchor to an image region, so only they
+    // drive whether a model-downgraded layout must be restored. Tables
+    // and charts render as ordinary blocks and need no image region.
+    const regionVisuals = original.blocks.filter(
       (b) => b.type === "image" || b.type === "diagram",
     );
     const nextLayout = next.layout ?? resolveSlideLayout(next);
     const layout =
-      visuals.length > 0 &&
+      regionVisuals.length > 0 &&
       IMAGE_LAYOUTS.has(resolveSlideLayout(original)) &&
       !IMAGE_LAYOUTS.has(nextLayout)
         ? resolveSlideLayout(original)
@@ -722,7 +745,8 @@ export function mergeRestyledDeck(
       ...next,
       id: original.id,
       layout,
-      blocks: visuals.length > 0 ? [...next.blocks, ...visuals] : next.blocks,
+      blocks:
+        preserved.length > 0 ? [...next.blocks, ...preserved] : next.blocks,
       notes: next.notes?.trim() ? next.notes : original.notes,
     };
   });
