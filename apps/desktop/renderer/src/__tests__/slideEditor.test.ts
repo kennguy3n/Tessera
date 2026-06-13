@@ -1915,10 +1915,21 @@ describe("parseSlideChart", () => {
     expect(spec?.data.labels).toEqual(["A", "B"]);
     // Only the non-reserved line became a series.
     expect(spec?.data.series).toEqual([{ name: "Revenue", values: [1, 2] }]);
-    // An escaped keyword does NOT escape the reservation — `\Labels` is
-    // not a thing; the colon split + lowercase still sees `labels`.
+    // Reserved words are matched on the unescaped, lowercased key, so a
+    // bare `Labels:` is always the directive — there is no way to plot a
+    // series named exactly `labels` / `type` / `title`.
     expect(parseSlideChart("Labels: 10, 20\nX: 1, 2")?.data.series).toEqual([
       { name: "X", values: [1, 2] },
+    ]);
+    // A leading backslash doesn't recover the name `Labels`: `\L` isn't
+    // an escape sequence (only `\,` / `\:` are), so the key stays
+    // `\Labels`, lowercases to `\labels`, misses the reservation, and
+    // becomes a (differently-named) series rather than the directive.
+    // `X` is padded to the 2-wide rectangle (the `\Labels` series sets
+    // the width since there's no `labels:` directive here).
+    expect(parseSlideChart("\\Labels: 10, 20\nX: 1")?.data.series).toEqual([
+      { name: "\\Labels", values: [10, 20] },
+      { name: "X", values: [1, null] },
     ]);
   });
 

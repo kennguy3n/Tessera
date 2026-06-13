@@ -1149,14 +1149,17 @@ export function parseSlideChart(content: string): SlideChartSpec | null {
 }
 
 /**
- * Index of the first occurrence of `ch` in `line` that is not preceded
- * by an escaping backslash. A `\` always escapes the following
- * character, so `\:` is skipped when scanning for a `:` delimiter.
+ * Index of the first occurrence of `ch` in `line` that is not escaped.
+ * The only escape sequences are `\,` and `\:` — matching
+ * {@link splitCsvCells} / {@link unescapeChartCell} so all three share
+ * one escape vocabulary. A `\:` is therefore skipped when scanning for a
+ * `:` delimiter, but a lone backslash (e.g. in `C:\path`) is an ordinary
+ * character and never masks the delimiter that follows it.
  */
 function indexOfUnescaped(line: string, ch: string): number {
   for (let i = 0; i < line.length; i++) {
-    if (line[i] === "\\") {
-      i++; // skip the escaped character
+    if (line[i] === "\\" && (line[i + 1] === "," || line[i + 1] === ":")) {
+      i++; // skip the escaped delimiter
       continue;
     }
     if (line[i] === ch) return i;
