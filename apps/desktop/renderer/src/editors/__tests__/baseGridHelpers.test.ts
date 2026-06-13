@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildGroups,
   groupValueLabel,
+  isEmptyGroupValue,
   colorForLabel,
   rowColor,
   clampFrozenCount,
@@ -58,6 +59,51 @@ describe("buildGroups", () => {
     );
     expect(g.map((x) => x.label)).toEqual(["Lead", EMPTY_GROUP_LABEL]);
     expect(g[g.length - 1].key).toBe(EMPTY_GROUP_KEY);
+  });
+
+  it("does not conflate a literal 'Empty' value with genuine blanks", () => {
+    // A select option literally named "Empty" must form its OWN group,
+    // keyed off the value (not sunk into the blank catch-all). Genuine
+    // blanks still land in the trailing sentinel group.
+    const g = buildGroups(
+      [
+        { id: "1", Stage: "Empty" }, // real value that happens to read "Empty"
+        { id: "2", Stage: "Lead" },
+        { id: "3", Stage: null }, // genuine blank
+        { id: "4", Stage: "Empty" },
+      ],
+      "Stage",
+    );
+    // Two groups labelled "Empty" — the real-value one (in first-
+    // appearance order) and the trailing blank sentinel — kept distinct
+    // by their keys.
+    const real = g.find((x) => x.key === EMPTY_GROUP_LABEL);
+    const blank = g.find((x) => x.key === EMPTY_GROUP_KEY);
+    expect(real?.records.map((r) => r.id)).toEqual(["1", "4"]);
+    expect(blank?.records.map((r) => r.id)).toEqual(["3"]);
+    // The blank sentinel group is sunk to the very end.
+    expect(g[g.length - 1].key).toBe(EMPTY_GROUP_KEY);
+    expect(g.map((x) => x.label)).toEqual([
+      EMPTY_GROUP_LABEL,
+      "Lead",
+      EMPTY_GROUP_LABEL,
+    ]);
+  });
+});
+
+describe("isEmptyGroupValue", () => {
+  it("treats null/blank/empty-array as empty and real values as non-empty", () => {
+    expect(isEmptyGroupValue(null)).toBe(true);
+    expect(isEmptyGroupValue(undefined)).toBe(true);
+    expect(isEmptyGroupValue("")).toBe(true);
+    expect(isEmptyGroupValue("   ")).toBe(true);
+    expect(isEmptyGroupValue([])).toBe(true);
+    expect(isEmptyGroupValue([null, ""])).toBe(true);
+    // The literal string "Empty" is a real value, NOT a blank.
+    expect(isEmptyGroupValue("Empty")).toBe(false);
+    expect(isEmptyGroupValue(0)).toBe(false);
+    expect(isEmptyGroupValue(false)).toBe(false);
+    expect(isEmptyGroupValue(["a"])).toBe(false);
   });
 });
 

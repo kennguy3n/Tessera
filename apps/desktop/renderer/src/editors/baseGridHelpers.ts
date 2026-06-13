@@ -26,20 +26,36 @@ export const EMPTY_GROUP_KEY = "__empty__";
 export const EMPTY_GROUP_LABEL = "Empty";
 
 /**
+ * Whether a raw cell value should fall into the trailing "Empty"
+ * group: `null` / `undefined`, the empty/whitespace string, or an
+ * array with no non-empty entries. This is the AUTHORITATIVE emptiness
+ * test — grouping keys off the raw value here, never off the rendered
+ * label, so a record whose value is literally the string `"Empty"`
+ * (e.g. a select option named "Empty") is NOT conflated with genuine
+ * blanks.
+ */
+export function isEmptyGroupValue(value: unknown): boolean {
+  if (value == null) return true;
+  if (Array.isArray(value)) {
+    return value.every((v) => v == null || String(v) === "");
+  }
+  return String(value).trim() === "";
+}
+
+/**
  * Render a single cell value as a group label. Arrays
  * (multi_select / linked_record) join with ", "; null / undefined /
  * "" collapse to the empty sentinel. Numbers and booleans stringify.
  */
 export function groupValueLabel(value: unknown): string {
-  if (value == null) return EMPTY_GROUP_LABEL;
+  if (isEmptyGroupValue(value)) return EMPTY_GROUP_LABEL;
   if (Array.isArray(value)) {
     const parts = value
       .map((v) => (v == null ? "" : String(v)))
       .filter((s) => s !== "");
-    return parts.length === 0 ? EMPTY_GROUP_LABEL : parts.join(", ");
+    return parts.join(", ");
   }
-  const s = String(value);
-  return s.trim() === "" ? EMPTY_GROUP_LABEL : s;
+  return String(value);
 }
 
 /**
@@ -59,8 +75,12 @@ export function buildGroups(
   const order: string[] = [];
   const byKey = new Map<string, GridGroup>();
   for (const record of records) {
-    const label = groupValueLabel(record[fieldName]);
-    const key = label === EMPTY_GROUP_LABEL ? EMPTY_GROUP_KEY : label;
+    const raw = record[fieldName];
+    const label = groupValueLabel(raw);
+    // Derive the bucket key from the RAW value's emptiness, never from
+    // the label string — otherwise a real value of "Empty" (matching
+    // EMPTY_GROUP_LABEL) would be sunk into the blank catch-all group.
+    const key = isEmptyGroupValue(raw) ? EMPTY_GROUP_KEY : label;
     let group = byKey.get(key);
     if (!group) {
       group = { key, label, records: [] };
