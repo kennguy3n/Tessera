@@ -87,13 +87,19 @@ export function parseCellKey(key: string): {
 export function extractReferences(
   ast: AstNode,
   activeSheet?: string,
+  names?: ReadonlyMap<string, AstNode>,
 ): Set<string> {
   const out = new Set<string>();
-  walk(ast, out, activeSheet);
+  walk(ast, out, activeSheet, names);
   return out;
 }
 
-function walk(node: AstNode, out: Set<string>, activeSheet?: string): void {
+function walk(
+  node: AstNode,
+  out: Set<string>,
+  activeSheet?: string,
+  names?: ReadonlyMap<string, AstNode>,
+): void {
   switch (node.type) {
     case "cell":
       out.add(cellKey(node.row, node.col, node.sheet ?? activeSheet));
@@ -108,19 +114,27 @@ function walk(node: AstNode, out: Set<string>, activeSheet?: string): void {
       return;
     }
     case "function":
-      for (const arg of node.args) walk(arg, out, activeSheet);
+      for (const arg of node.args) walk(arg, out, activeSheet, names);
       return;
     case "unary":
-      walk(node.operand, out, activeSheet);
+      walk(node.operand, out, activeSheet, names);
       return;
     case "binary":
-      walk(node.left, out, activeSheet);
-      walk(node.right, out, activeSheet);
+      walk(node.left, out, activeSheet, names);
+      walk(node.right, out, activeSheet, names);
       return;
+    case "identifier": {
+      // A bare identifier may be a named range. Expand it to the cells
+      // it covers so editing any of those cells invalidates the
+      // dependent formula. The named-range AST already carries its own
+      // sheet qualifier, so we don't override `activeSheet` here.
+      const target = names?.get(node.name.toUpperCase());
+      if (target) walk(target, out, activeSheet, names);
+      return;
+    }
     case "number":
     case "string":
     case "boolean":
-    case "identifier":
       return;
     default: {
       const _exhaust: never = node;

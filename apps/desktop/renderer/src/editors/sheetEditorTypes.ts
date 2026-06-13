@@ -49,6 +49,55 @@ export interface CellFormat {
 }
 
 /**
+ * A column-scoped data-validation rule. `list` constrains a cell to a
+ * fixed set of values (rendered as a dropdown); `checkbox` constrains
+ * it to `TRUE`/`FALSE` (rendered as a checkbox). A blank cell always
+ * satisfies a rule — validation constrains entered values, it does not
+ * force a value.
+ *
+ * Serialised 1:1 to JSON so the artifact round-trips through
+ * `parseSheetContent`/`JSON.stringify`; producers may omit it and
+ * consumers must tolerate it being absent.
+ */
+export type DataValidation =
+  | { kind: "list"; values: string[] }
+  | { kind: "checkbox" };
+
+/**
+ * Column-index → validation map. Keys are the zero-based column index
+ * stringified (`"2"`), matching the sparse-keying style used elsewhere
+ * in this module. Absent ⇒ the column accepts any value.
+ */
+export type ValidationMap = Record<string, DataValidation>;
+
+/** Supported chart marks. */
+export type ChartType = "bar" | "line" | "pie";
+
+/**
+ * A chart bound to a range on the active sheet, re-derived from live
+ * cell values on every render. Persisted on the artifact JSON so it
+ * round-trips through `parseSheetContent`/`JSON.stringify`; the XLSX
+ * exporter currently ignores it (charts are a renderer-only feature).
+ */
+export interface ChartSpec {
+  /** Stable id for React keys / removal. */
+  id: string;
+  type: ChartType;
+  /** Optional title shown above the plot and used as the a11y label. */
+  title?: string;
+  /**
+   * A1 value range on the active sheet, e.g. `"B2:B10"` (one series) or
+   * `"B2:D10"` (one series per column). Sheet-qualified refs are not
+   * accepted.
+   */
+  range: string;
+  /** Optional A1 range whose first column supplies category labels. */
+  labelRange?: string;
+  /** When true, the value range's first row provides series names. */
+  useFirstRowAsHeader?: boolean;
+}
+
+/**
  * Comparison operators a conditional-formatting rule can test a cell's
  * value against. Numeric operators (`gt`/`gte`/`lt`/`lte`) coerce both
  * sides to numbers and never match non-numeric cells; the text
@@ -130,6 +179,11 @@ export interface SheetTab {
    */
   conditionalRules?: ConditionalFormatRule[];
   /**
+   * Optional column-scoped data-validation rules (dropdown / checkbox),
+   * keyed by stringified column index. Omitted ⇒ no validation.
+   */
+  validations?: ValidationMap;
+  /**
    * per-column pixel widths. Sparse: an entry of
    * `undefined` (or an index past the array end) means "use the
    * grid's default column width". Persisted so widths survive
@@ -193,6 +247,19 @@ export interface SheetContent {
    * through plain `JSON.stringify`/`parseSheetContent`; absent ⇒ none.
    */
   conditionalRules?: ConditionalFormatRule[];
+  /**
+   * Data-validation rules for the active (legacy) sheet, keyed by
+   * stringified column index. Stored at the top level so the
+   * single-sheet editor round-trips them through plain
+   * `JSON.stringify`/`parseSheetContent`; absent ⇒ none.
+   */
+  validations?: ValidationMap;
+  /**
+   * Charts bound to ranges on the active sheet (bar / line / pie),
+   * re-derived from live values. Persisted on the artifact JSON; absent
+   * ⇒ no charts.
+   */
+  charts?: ChartSpec[];
   /**
    * optional workbook-level named ranges. Persisted on
    * the artifact JSON so the XLSX exporter can emit `<definedName>`

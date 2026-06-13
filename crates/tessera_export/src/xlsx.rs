@@ -13,8 +13,17 @@
 //! Formulas: cells whose string value starts with `=` are written via
 //! `write_formula` so Excel will evaluate them on open. Everything else is
 //! written as a string, with numeric strings auto-converted to numbers.
+//!
+//! Presentation fidelity: per-cell manual formatting (`formats`), column
+//! pixel widths (`columnWidths`), row pixel heights (`rowHeights`) and
+//! freeze panes (`frozenRows`/`frozenCols`) mirrored from `SheetContent`
+//! are reproduced in the workbook. All of these are gated on the
+//! metadata actually being present, so an artifact carrying none of them
+//! exports byte-for-byte as it did before this was added.
 
-use rust_xlsxwriter::{Format, Workbook};
+use std::collections::HashMap;
+
+use rust_xlsxwriter::{Format, FormatAlign, FormatUnderline, Workbook, Worksheet};
 use serde::Deserialize;
 use tessera_artifacts::Artifact;
 
@@ -46,6 +55,105 @@ struct SheetContent {
     sheets: Option<Vec<SheetTab>>,
     #[serde(default, rename = "activeSheetIndex")]
     active_sheet_index: Option<usize>,
+    #[serde(flatten)]
+    presentation: Presentation,
+}
+
+/// The presentation-layer metadata shared by the legacy top-level
+/// `SheetContent` and each `SheetTab`. Mirrors the optional fields on the
+/// TS `SheetContent`/`SheetTab` interfaces. Every field defaults to
+/// "absent" so older artifacts (and the CSV fallback) parse unchanged.
+#[derive(Debug, Default, Deserialize, Clone)]
+struct Presentation {
+    /// `"row,col"` (zero-based, header excluded) → manual cell format.
+    #[serde(default)]
+    formats: HashMap<String, CellFmt>,
+    /// Sparse per-column pixel widths (`null` ⇒ default width).
+    #[serde(default, rename = "columnWidths")]
+    column_widths: Vec<Option<f64>>,
+    /// Sparse per-row pixel heights (`null` ⇒ default height).
+    #[serde(default, rename = "rowHeights")]
+    row_heights: Vec<Option<f64>>,
+    /// Frozen data rows from the top (the header row is excluded in the
+    /// Tessera model; the export freezes the header alongside them).
+    #[serde(default, rename = "frozenRows")]
+    frozen_rows: Option<u32>,
+    /// Frozen columns from the left.
+    #[serde(default, rename = "frozenCols")]
+    frozen_cols: Option<u32>,
+}
+
+/// A per-cell manual format, mirroring the TS `CellFormat` interface.
+/// Visual-only; absent fields inherit Excel's defaults.
+#[derive(Debug, Default, Deserialize, Clone)]
+struct CellFmt {
+    #[serde(default, rename = "numberFormat")]
+    number_format: Option<String>,
+    #[serde(default)]
+    align: Option<String>,
+    #[serde(default)]
+    bold: bool,
+    #[serde(default)]
+    italic: bool,
+    #[serde(default)]
+    underline: bool,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    background: Option<String>,
+}
+
+impl CellFmt {
+    /// True when the format carries no styling — such entries are skipped
+    /// so we never attach an empty `Format` (which would still cost a
+    /// workbook style slot).
+    fn is_empty(&self) -> bool {
+        self.number_format.as_deref().unwrap_or("").is_empty()
+            && self.align.is_none()
+            && !self.bold
+            && !self.italic
+            && !self.underline
+            && self.color.is_none()
+            && self.background.is_none()
+    }
+
+    /// Build the `rust_xlsxwriter` `Format` for this cell. Colours are
+    /// validated as `#RRGGBB` first so a malformed value is dropped
+    /// rather than panicking the export.
+    fn to_format(&self) -> Format {
+        let mut fmt = Format::new();
+        if self.bold {
+            fmt = fmt.set_bold();
+        }
+        if self.italic {
+            fmt = fmt.set_italic();
+        }
+        if self.underline {
+            fmt = fmt.set_underline(FormatUnderline::Single);
+        }
+        if let Some(color) = self.color.as_deref().filter(|c| is_hex_color(c)) {
+            fmt = fmt.set_font_color(color);
+        }
+        if let Some(bg) = self.background.as_deref().filter(|c| is_hex_color(c)) {
+            fmt = fmt.set_background_color(bg);
+        }
+        if let Some(pattern) = self.number_format.as_deref().filter(|p| !p.is_empty()) {
+            fmt = fmt.set_num_format(pattern);
+        }
+        match self.align.as_deref() {
+            Some("center") => fmt = fmt.set_align(FormatAlign::Center),
+            Some("right") => fmt = fmt.set_align(FormatAlign::Right),
+            Some("left") => fmt = fmt.set_align(FormatAlign::Left),
+            _ => {}
+        }
+        fmt
+    }
+}
+
+/// `#RRGGBB` validator — the only colour shape the renderer emits.
+fn is_hex_color(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +163,8 @@ struct SheetTab {
     columns: Vec<String>,
     #[serde(default)]
     rows: Vec<Vec<String>>,
+    #[serde(flatten)]
+    presentation: Presentation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +199,7 @@ fn parse_sheet(content: &str) -> Option<SheetContent> {
         named_ranges: Vec::new(),
         sheets: None,
         active_sheet_index: None,
+        presentation: Presentation::default(),
     })
 }
 
@@ -147,7 +258,13 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
                 if i == active_idx {
                     worksheet.set_active(true);
                 }
-                write_sheet_payload(worksheet, &tab.columns, &tab.rows, &header_fmt);
+                write_sheet_payload(
+                    worksheet,
+                    &tab.columns,
+                    &tab.rows,
+                    &header_fmt,
+                    &tab.presentation,
+                );
                 taken.push(unique);
             }
         }
@@ -160,7 +277,13 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
                 .add_worksheet()
                 .set_name(sanitize_sheet_name(&artifact.title))
                 .expect("worksheet name should be valid after sanitization");
-            write_sheet_payload(worksheet, &sheet.columns, &sheet.rows, &header_fmt);
+            write_sheet_payload(
+                worksheet,
+                &sheet.columns,
+                &sheet.rows,
+                &header_fmt,
+                &sheet.presentation,
+            );
         }
         None => {
             // Empty / unparseable artifact: still emit a single
@@ -197,27 +320,112 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
     workbook.save_to_buffer().expect("save XLSX to buffer")
 }
 
-/// Populate `worksheet` with a header row and a body. Pulled out of
-/// `export_xlsx` so the multi-sheet and single-sheet branches share
-/// identical row/column emission semantics.
+/// Populate `worksheet` with a header row and a body, then apply the
+/// presentation metadata (manual cell formats, column widths, row
+/// heights, freeze panes). Pulled out of `export_xlsx` so the
+/// multi-sheet and single-sheet branches share identical emission
+/// semantics.
 fn write_sheet_payload(
-    worksheet: &mut rust_xlsxwriter::Worksheet,
+    worksheet: &mut Worksheet,
     columns: &[String],
     rows: &[Vec<String>],
     header_fmt: &Format,
+    presentation: &Presentation,
 ) {
     for (col, header) in columns.iter().enumerate() {
         worksheet
             .write_string_with_format(0, col as u16, header, header_fmt)
             .expect("write header");
     }
+
+    // Compile each cell's manual format into a `Format` once, keyed by
+    // the renderer's `(row, col)` cell coordinate (row index is
+    // data-row, header excluded, so cell `(r, c)` lands at Excel row
+    // `r + 1`). The `"r,c"` string keys are parsed once here so the
+    // per-cell write loop below can look up by integer pair without
+    // allocating a fresh key string for every cell — on a large export
+    // (e.g. 200k cells) that avoids 200k throwaway allocations. Two
+    // cells with identical styling produce two equal `Format` values;
+    // rust_xlsxwriter deduplicates equal formats into a single style
+    // slot when serialising, so this does not bloat the output file.
+    let mut compiled: HashMap<(usize, usize), Format> = HashMap::new();
+    for (key, fmt) in &presentation.formats {
+        if fmt.is_empty() {
+            continue;
+        }
+        if let Some(rc) = parse_rc_key(key) {
+            compiled.entry(rc).or_insert_with(|| fmt.to_format());
+        }
+    }
+
     for (r, row) in rows.iter().enumerate() {
         let row_idx = (r + 1) as u32;
         for (c, cell) in row.iter().enumerate() {
             let col_idx = c as u16;
-            write_cell(worksheet, row_idx, col_idx, cell);
+            write_cell(worksheet, row_idx, col_idx, cell, compiled.get(&(r, c)));
         }
     }
+
+    apply_dimensions(worksheet, &presentation.column_widths, &presentation.row_heights);
+    apply_freeze(worksheet, presentation.frozen_rows, presentation.frozen_cols);
+}
+
+/// Parse a renderer cell key (`"r,c"`, both zero-based data-grid
+/// indices) into a `(row, col)` pair. Returns `None` for a malformed
+/// key so a stray entry can never panic the export.
+fn parse_rc_key(key: &str) -> Option<(usize, usize)> {
+    let (r, c) = key.split_once(',')?;
+    Some((r.parse().ok()?, c.parse().ok()?))
+}
+
+/// Apply sparse per-column pixel widths and per-row pixel heights. A
+/// `None` / non-positive entry leaves Excel's default in place. Row
+/// heights are offset by one to account for the header row the export
+/// inserts at row 0.
+///
+/// The renderer stores dimensions as floating-point pixels (CSS can
+/// produce sub-pixel values), but Excel only addresses whole pixels, so
+/// each value is rounded to the nearest integer rather than truncated —
+/// a 24.7px row becomes 25, not 24, matching what the user sees.
+fn apply_dimensions(
+    worksheet: &mut Worksheet,
+    column_widths: &[Option<f64>],
+    row_heights: &[Option<f64>],
+) {
+    for (c, width) in column_widths.iter().enumerate() {
+        if let Some(px) = width.filter(|w| *w > 0.0) {
+            worksheet
+                .set_column_width_pixels(c as u16, px.round() as u32)
+                .expect("set column width");
+        }
+    }
+    for (r, height) in row_heights.iter().enumerate() {
+        if let Some(px) = height.filter(|h| *h > 0.0) {
+            worksheet
+                .set_row_height_pixels((r + 1) as u32, px.round() as u32)
+                .expect("set row height");
+        }
+    }
+}
+
+/// Reproduce the grid's freeze panes. The Tessera model counts frozen
+/// *data* rows, and the renderer keeps the header row sticky whenever
+/// anything is frozen, so once any freeze exists we pin `n + 1` Excel
+/// rows — the header plus `n` data rows. A column-only freeze
+/// (`frozen_rows == 0`, `frozen_cols > 0`) therefore still freezes the
+/// header row so the exported sheet scrolls the same way it does
+/// on-screen. Columns map one-to-one. No-op when nothing is frozen, so
+/// unfrozen sheets keep their previous bytes.
+fn apply_freeze(worksheet: &mut Worksheet, frozen_rows: Option<u32>, frozen_cols: Option<u32>) {
+    let rows = frozen_rows.unwrap_or(0);
+    let cols = frozen_cols.unwrap_or(0);
+    if rows == 0 && cols == 0 {
+        return;
+    }
+    let excel_row = rows + 1;
+    worksheet
+        .set_freeze_panes(excel_row, cols as u16)
+        .expect("set freeze panes");
 }
 
 /// Append a numeric suffix until `name` no longer collides
@@ -313,7 +521,13 @@ fn is_valid_defined_name(name: &str) -> bool {
     true
 }
 
-fn write_cell(worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, value: &str) {
+fn write_cell(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    value: &str,
+    fmt: Option<&Format>,
+) {
     // CSV/XLSX-injection escape: `'=foo` is the standard convention for
     // "please don't interpret the leading `=` as a formula trigger". We strip
     // the apostrophe and emit the remainder verbatim as text. This mirrors
@@ -323,26 +537,37 @@ fn write_cell(worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, va
         let mut as_text = String::with_capacity(literal.len() + 1);
         as_text.push('=');
         as_text.push_str(literal);
-        worksheet
-            .write_string(row, col, &as_text)
-            .expect("write string");
+        match fmt {
+            Some(f) => worksheet.write_string_with_format(row, col, &as_text, f),
+            None => worksheet.write_string(row, col, &as_text),
+        }
+        .expect("write string");
         return;
     }
     if let Some(formula) = value.strip_prefix('=') {
         // Strip the leading '=' since rust_xlsxwriter's write_formula adds
         // it automatically.
-        worksheet
-            .write_formula(row, col, formula)
-            .expect("write formula");
+        let formula = rust_xlsxwriter::Formula::new(formula);
+        match fmt {
+            Some(f) => worksheet.write_formula_with_format(row, col, formula, f),
+            None => worksheet.write_formula(row, col, formula),
+        }
+        .expect("write formula");
         return;
     }
     if let Ok(n) = value.parse::<f64>() {
-        worksheet.write_number(row, col, n).expect("write number");
+        match fmt {
+            Some(f) => worksheet.write_number_with_format(row, col, n, f),
+            None => worksheet.write_number(row, col, n),
+        }
+        .expect("write number");
         return;
     }
-    worksheet
-        .write_string(row, col, value)
-        .expect("write string");
+    match fmt {
+        Some(f) => worksheet.write_string_with_format(row, col, value, f),
+        None => worksheet.write_string(row, col, value),
+    }
+    .expect("write string");
 }
 
 /// Excel sheet names must be ≤ 31 chars and cannot contain `: \\ / ? * [ ]`.
@@ -859,5 +1084,139 @@ mod tests {
             names.push(entry.name().to_string());
         }
         names
+    }
+
+    fn sheet_artifact(content: &str) -> Artifact {
+        let mut a = Artifact::new("Sheet".to_string(), ArtifactType::Sheet, None);
+        a.update_content(content.to_string());
+        a
+    }
+
+    #[test]
+    fn export_xlsx_applies_manual_cell_formats() {
+        // A bold red cell, a currency-formatted number, and a highlighted
+        // cell. The styling lands in xl/styles.xml; assert the workbook
+        // carries the number-format code, the colour, and bold.
+        let content = r##"{
+            "columns":["A","B"],
+            "rows":[["1234.5","hi"]],
+            "formats":{
+                "0,0":{"numberFormat":"$#,##0.00","bold":true,"color":"#1A73E8"},
+                "0,1":{"background":"#FFF2CC","align":"right"}
+            }
+        }"##;
+        let bytes = export_xlsx(&sheet_artifact(content));
+        assert_is_zip(&bytes);
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("$#,##0.00"), "number format code missing: {xml}");
+        // rust_xlsxwriter serialises colours as ARGB (`FF` alpha prefix).
+        assert!(xml.contains("FF1A73E8"), "font colour missing: {xml}");
+        assert!(xml.contains("FFFFF2CC"), "background colour missing: {xml}");
+        assert!(xml.contains("<b/>"), "bold run property missing: {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_currency_cell_stays_numeric() {
+        // A currency-formatted numeric string must be written as a number
+        // (so Excel can sum it), not as text. Numeric cells live inline as
+        // `<c ...><v>1234.5</v>` with no `t="str"`/`t="s"` type attribute.
+        let content = r##"{
+            "columns":["Amount"],
+            "rows":[["1234.5"]],
+            "formats":{"0,0":{"numberFormat":"$#,##0.00"}}
+        }"##;
+        let bytes = export_xlsx(&sheet_artifact(content));
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("<v>1234.5</v>"), "value not stored numerically: {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_applies_widths_and_freeze() {
+        let content = r##"{
+            "columns":["A","B"],
+            "rows":[["1","2"],["3","4"]],
+            "columnWidths":[140,null],
+            "rowHeights":[null,40],
+            "frozenRows":1,
+            "frozenCols":1
+        }"##;
+        let bytes = export_xlsx(&sheet_artifact(content));
+        assert_is_zip(&bytes);
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("customWidth"), "custom column width missing: {xml}");
+        // A freeze pane is serialised as `<pane xSplit=.. ySplit=.. .../>`.
+        assert!(xml.contains("ySplit"), "freeze pane row split missing: {xml}");
+        assert!(xml.contains("xSplit"), "freeze pane column split missing: {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_rounds_fractional_row_height_to_nearest_pixel() {
+        // A sub-pixel row height (40.7px) must round to 41px, not truncate
+        // to 40px. rust_xlsxwriter stores row height in points
+        // (points = pixels * 0.75), so 41px -> 30.75pt while a truncated
+        // 40px would be 30pt. Asserting the points value pins the rounding.
+        let content = r##"{
+            "columns":["A"],
+            "rows":[["1"],["2"]],
+            "rowHeights":[null,40.7]
+        }"##;
+        let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
+        assert!(xml.contains("customHeight"), "custom row height missing: {xml}");
+        assert!(
+            xml.contains("ht=\"30.75\""),
+            "fractional row height should round to 41px (30.75pt): {xml}"
+        );
+    }
+
+    #[test]
+    fn export_xlsx_without_presentation_has_no_panes_or_widths() {
+        // Gating check: a plain sheet must not emit any freeze pane or
+        // custom-width markup, so unstyled artifacts keep their old bytes.
+        let content = r##"{"columns":["A"],"rows":[["1"]]}"##;
+        let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
+        assert!(!xml.contains("ySplit"), "unexpected freeze pane: {xml}");
+        assert!(!xml.contains("customWidth"), "unexpected custom width: {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_column_only_freeze_still_freezes_header() {
+        // The renderer keeps the header row sticky whenever anything is
+        // frozen. A column-only freeze must therefore still pin the header
+        // row (ySplit=1) so the export scrolls the way the grid does.
+        let content = r##"{
+            "columns":["A","B"],
+            "rows":[["1","2"],["3","4"]],
+            "frozenCols":1
+        }"##;
+        let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
+        assert!(xml.contains("xSplit"), "freeze pane column split missing: {xml}");
+        assert!(
+            xml.contains("ySplit=\"1\""),
+            "header row should be frozen on a column-only freeze: {xml}"
+        );
+    }
+
+    #[test]
+    fn export_xlsx_ignores_malformed_colour() {
+        // A non-`#RRGGBB` colour is dropped rather than panicking the export.
+        let content = r##"{
+            "columns":["A"],
+            "rows":[["x"]],
+            "formats":{"0,0":{"bold":true,"color":"red"}}
+        }"##;
+        let bytes = export_xlsx(&sheet_artifact(content));
+        assert_is_zip(&bytes);
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("<b/>"), "bold still applied: {xml}");
+    }
+
+    #[test]
+    fn is_hex_color_validates_shape() {
+        assert!(is_hex_color("#1A73E8"));
+        assert!(is_hex_color("#ffffff"));
+        assert!(!is_hex_color("1A73E8"));
+        assert!(!is_hex_color("#1A73E"));
+        assert!(!is_hex_color("#1A73E8 "));
+        assert!(!is_hex_color("red"));
     }
 }

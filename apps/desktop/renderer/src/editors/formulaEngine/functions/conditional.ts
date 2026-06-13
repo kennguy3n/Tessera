@@ -26,6 +26,7 @@ import type { AstNode } from "../parser";
 import {
   collectValues,
   evaluate,
+  isRangeArg,
   toNumber,
   type EvaluationContext,
   type FunctionImpl,
@@ -206,8 +207,13 @@ function escapeRegex(ch: string): string {
 }
 
 function expandRange(arg: AstNode, ctx: EvaluationContext): FormulaValue[] | FormulaError {
-  if (arg.type !== "range") {
-    // Single value — treat as a 1-cell "range".
+  // A literal range OR a named range that resolves to one is expanded
+  // across every cell, so `SUMIF(Revenue, ">0")` (Revenue = A1:A10)
+  // tests all ten cells rather than collapsing to A1 via implicit
+  // intersection. Anything else — a single cell, a literal, or a
+  // single-cell named range — is a 1-element "range" equal to its
+  // scalar value, matching `SUMIF(A1, ...)`.
+  if (!isRangeArg(arg, ctx)) {
     const v = evaluate(arg, ctx);
     if (isFormulaError(v)) return v;
     return [v];

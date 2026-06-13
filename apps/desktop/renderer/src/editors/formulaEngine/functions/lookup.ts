@@ -32,6 +32,7 @@ import type { AstNode } from "../parser";
 import {
   collectValues,
   evaluate,
+  resolveName,
   toNumber,
   toString as coerceToString,
   type EvaluationContext,
@@ -465,10 +466,119 @@ function binarySearchLargestLE(arr: FormulaValue[], key: FormulaValue): number {
   return best;
 }
 
+const CHOOSE: FunctionImpl = (args, ctx) => {
+  if (args.length < 2) {
+    return makeError("#ERR!", "CHOOSE expects an index and at least one value");
+  }
+  const idxV = evaluate(args[0], ctx);
+  if (isFormulaError(idxV)) return idxV;
+  const idxN = toNumber(idxV);
+  if (isFormulaError(idxN)) return idxN;
+  const idx = Math.trunc(idxN);
+  // CHOOSE is 1-based; args[0] is the selector, so option k is
+  // args[k].
+  if (idx < 1 || idx > args.length - 1) {
+    return makeError("#VALUE!", "CHOOSE index out of range");
+  }
+  return evaluate(args[idx], ctx);
+};
+
+/**
+ * Resolve a reference argument to its underlying cell/range node,
+ * expanding a named-range identifier (e.g. `Revenue`) via the context's
+ * name map. Returns the original node for non-identifiers so the
+ * existing cell/range handling is unchanged.
+ */
+function resolveRefNode(arg: AstNode, ctx: EvaluationContext): AstNode {
+  if (arg.type === "identifier") {
+    const named = resolveName(arg.name, ctx);
+    if (named) return named;
+  }
+  return arg;
+}
+
+const ROWS: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "ROWS expects 1 argument");
+  const arg = resolveRefNode(args[0], ctx);
+  if (arg.type === "range") return arg.end.row - arg.start.row + 1;
+  if (arg.type === "cell") return 1;
+  return makeError("#REF!", "ROWS expects a range or cell reference");
+};
+
+const COLUMNS: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "COLUMNS expects 1 argument");
+  const arg = resolveRefNode(args[0], ctx);
+  if (arg.type === "range") return arg.end.col - arg.start.col + 1;
+  if (arg.type === "cell") return 1;
+  return makeError("#REF!", "COLUMNS expects a range or cell reference");
+};
+
+const ROW: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) {
+    // ROW() with no argument needs the host cell's coordinate, which
+    // the pure engine does not carry. Callers that need "this row"
+    // should pass an explicit reference.
+    return makeError("#N/A", "ROW requires a cell or range reference");
+  }
+  const arg = resolveRefNode(args[0], ctx);
+  if (arg.type === "cell") return arg.row + 1;
+  if (arg.type === "range") return arg.start.row + 1;
+  return makeError("#REF!", "ROW expects a range or cell reference");
+};
+
+const COLUMN: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) {
+    return makeError("#N/A", "COLUMN requires a cell or range reference");
+  }
+  const arg = resolveRefNode(args[0], ctx);
+  if (arg.type === "cell") return arg.col + 1;
+  if (arg.type === "range") return arg.start.col + 1;
+  return makeError("#REF!", "COLUMN expects a range or cell reference");
+};
+
+/**
+ * LOOKUP(search_key, search_range, [result_range]) — the "vector"
+ * form. Scans `search_range` for the largest value ≤ `search_key`
+ * (assumes ascending order, like Excel) and returns the corresponding
+ * value from `result_range` (or from `search_range` itself when no
+ * result range is supplied).
+ */
+const LOOKUP: FunctionImpl = (args, ctx) => {
+  if (args.length < 2 || args.length > 3) {
+    return makeError("#ERR!", "LOOKUP expects 2 or 3 arguments");
+  }
+  const key = evaluate(args[0], ctx);
+  if (isFormulaError(key)) return key;
+  const search: FormulaValue[] = [];
+  for (const v of collectValues(args[1], ctx)) {
+    if (isFormulaError(v)) return v;
+    search.push(v);
+  }
+  let result = search;
+  if (args.length === 3) {
+    result = [];
+    for (const v of collectValues(args[2], ctx)) {
+      if (isFormulaError(v)) return v;
+      result.push(v);
+    }
+  }
+  const hit = binarySearchLargestLE(search, key);
+  if (hit < 0 || hit >= result.length) {
+    return makeError("#N/A", "LOOKUP: no value <= search key");
+  }
+  return result[hit];
+};
+
 export const LOOKUP_FUNCTIONS: Record<string, FunctionImpl> = {
   VLOOKUP,
   HLOOKUP,
   INDEX,
   MATCH,
   XLOOKUP,
+  CHOOSE,
+  ROWS,
+  COLUMNS,
+  ROW,
+  COLUMN,
+  LOOKUP,
 };

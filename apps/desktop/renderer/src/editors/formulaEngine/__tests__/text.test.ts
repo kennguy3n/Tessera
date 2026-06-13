@@ -153,3 +153,74 @@ describe("VALUE", () => {
     expect(isFormulaError(res) && res.code).toBe("#VALUE!");
   });
 });
+
+describe("PROPER / REPT / REPLACE / EXACT", () => {
+  it("PROPER title-cases each word", () => {
+    expect(evalFormula('=PROPER("hello WORLD")')).toBe("Hello World");
+    expect(evalFormula('=PROPER("o\'brien-smith")')).toBe("O'Brien-Smith");
+  });
+  it("REPT repeats and guards the length cap", () => {
+    expect(evalFormula('=REPT("ab", 3)')).toBe("ababab");
+    expect(evalFormula('=REPT("x", 0)')).toBe("");
+    const res = evalFormula('=REPT("x", 40000)');
+    expect(isFormulaError(res) && res.code).toBe("#VALUE!");
+  });
+  it("REPLACE splices by position and length", () => {
+    expect(evalFormula('=REPLACE("abcdef", 2, 3, "XY")')).toBe("aXYef");
+    expect(evalFormula('=REPLACE("abc", 4, 0, "d")')).toBe("abcd");
+  });
+  it("EXACT is case-sensitive", () => {
+    expect(evalFormula('=EXACT("foo", "foo")')).toBe(true);
+    expect(evalFormula('=EXACT("foo", "Foo")')).toBe(false);
+  });
+});
+
+describe("CHAR / CODE / CLEAN / T", () => {
+  it("CHAR and CODE round-trip", () => {
+    expect(evalFormula("=CHAR(65)")).toBe("A");
+    expect(evalFormula('=CODE("A")')).toBe(65);
+  });
+  it("CHAR rejects an out-of-range code point", () => {
+    const res = evalFormula("=CHAR(0)");
+    expect(isFormulaError(res) && res.code).toBe("#VALUE!");
+  });
+  it("CLEAN strips control characters", () => {
+    expect(evalFormula('=CLEAN(CONCATENATE("a", CHAR(9), "b"))')).toBe("ab");
+  });
+  it("T returns text args and blanks out numbers", () => {
+    expect(evalFormula('=T("hi")')).toBe("hi");
+    expect(evalFormula("=T(42)")).toBe("");
+  });
+});
+
+describe("TEXTJOIN / JOIN", () => {
+  it("TEXTJOIN honours the ignore-empty flag", () => {
+    expect(evalFormula('=TEXTJOIN("-", TRUE, "a", "", "b")')).toBe("a-b");
+    expect(evalFormula('=TEXTJOIN("-", FALSE, "a", "", "b")')).toBe("a--b");
+  });
+  it("JOIN never skips empties", () => {
+    expect(evalFormula('=JOIN(",", "a", "", "b")')).toBe("a,,b");
+  });
+});
+
+describe("REGEX family", () => {
+  it("REGEXMATCH tests a pattern", () => {
+    expect(evalFormula('=REGEXMATCH("abc123", "[0-9]+")')).toBe(true);
+    expect(evalFormula('=REGEXMATCH("abc", "[0-9]+")')).toBe(false);
+  });
+  it("REGEXEXTRACT returns the first capture group or whole match", () => {
+    expect(evalFormula('=REGEXEXTRACT("id=42", "id=([0-9]+)")')).toBe("42");
+    expect(evalFormula('=REGEXEXTRACT("xx99yy", "[0-9]+")')).toBe("99");
+  });
+  it("REGEXEXTRACT returns #N/A on no match", () => {
+    const res = evalFormula('=REGEXEXTRACT("abc", "[0-9]+")');
+    expect(isFormulaError(res) && res.code).toBe("#N/A");
+  });
+  it("REGEXREPLACE replaces all matches", () => {
+    expect(evalFormula('=REGEXREPLACE("a1b2c3", "[0-9]", "#")')).toBe("a#b#c#");
+  });
+  it("returns #VALUE! on an invalid pattern", () => {
+    const res = evalFormula('=REGEXMATCH("a", "[")');
+    expect(isFormulaError(res) && res.code).toBe("#VALUE!");
+  });
+});

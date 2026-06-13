@@ -11,13 +11,49 @@ import {
   type CellEdit,
   type IncrementalRecalcState,
 } from "./sheetEditorHelpers";
-import { cellFormatStyle, cellKey, isFormulaError } from "./formulaEngine";
+import {
+  applyCellFormat,
+  cellFormatStyle,
+  cellKey,
+  isFormulaError,
+} from "./formulaEngine";
 import type {
+  CellFormat,
+  ChartSpec,
   ConditionalFormatRule,
   SheetContent,
+  SheetNamedRange,
+  ValidationMap,
 } from "./sheetEditorTypes";
+import {
+  NUMBER_FORMAT_PRESETS,
+  allCellsHave,
+  applyFormatPatch,
+  getCellFormat,
+  toggleBoolFormat,
+  type BoolFormatKey,
+} from "./sheetFormatting";
 import { conditionalStyleForCell } from "./sheetConditionalFormatting";
+import { sortSheetByColumn } from "./sheetSort";
+import {
+  CHECKBOX_FALSE,
+  CHECKBOX_TRUE,
+  getColumnValidation,
+  isValueAllowed,
+} from "./sheetDataValidation";
+import {
+  insertColumnAt,
+  insertRowAt,
+  removeColumnAt,
+  removeRowAt,
+} from "./sheetStructureOps";
+import { extractChartData } from "./sheetCharts";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
+import { DataValidationPanel } from "./components/DataValidationPanel";
+import { NamedRangePanel } from "./components/NamedRangePanel";
+import { SheetAiPanel } from "./components/SheetAiPanel";
+import { ChartsPanel } from "./components/ChartsPanel";
+import { SheetChart } from "./components/SheetChart";
 import {
   type CellCoord,
   type Selection,
@@ -110,6 +146,14 @@ export default function SheetEditor({
   } | null>(null);
   // Conditional-formatting rules editor visibility.
   const [cfOpen, setCfOpen] = useState(false);
+  // Named-range manager visibility.
+  const [nrOpen, setNrOpen] = useState(false);
+  // AI assistant panel visibility.
+  const [aiOpen, setAiOpen] = useState(false);
+  // Data-validation manager visibility.
+  const [dvOpen, setDvOpen] = useState(false);
+  // Charts manager visibility.
+  const [chartsOpen, setChartsOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -203,11 +247,15 @@ export default function SheetEditor({
 
   const addColumn = useCallback(() => {
     setSheet((prev) => {
-      const colName = columnLabel(prev.columns.length);
-      const updated: SheetContent = {
-        columns: [...prev.columns, colName],
-        rows: prev.rows.map((r) => [...r, ""]),
-      };
+      // Append a fresh column via the structural helper so every
+      // column-indexed field (formats / validations / conditional rules
+      // / widths / freeze) is carried over — a bare rebuild used to wipe
+      // all sheet metadata on every "+ Column".
+      const updated = insertColumnAt(
+        prev,
+        prev.columns.length,
+        columnLabel(prev.columns.length),
+      );
       debouncedSave(updated);
       return updated;
     });
@@ -216,11 +264,10 @@ export default function SheetEditor({
   const removeColumn = useCallback(
     (colIdx: number) => {
       setSheet((prev) => {
-        if (prev.columns.length <= 1) return prev;
-        const updated: SheetContent = {
-          columns: prev.columns.filter((_, i) => i !== colIdx),
-          rows: prev.rows.map((r) => r.filter((_, i) => i !== colIdx)),
-        };
+        // Preserves all metadata and shifts every column-indexed key
+        // past `colIdx` down by one (no silent data loss, no stale keys).
+        const updated = removeColumnAt(prev, colIdx);
+        if (updated === prev) return prev;
         debouncedSave(updated);
         return updated;
       });
@@ -230,10 +277,7 @@ export default function SheetEditor({
 
   const addRow = useCallback(() => {
     setSheet((prev) => {
-      const updated: SheetContent = {
-        ...prev,
-        rows: [...prev.rows, new Array(prev.columns.length).fill("")],
-      };
+      const updated = insertRowAt(prev, prev.rows.length);
       debouncedSave(updated);
       return updated;
     });
@@ -242,10 +286,8 @@ export default function SheetEditor({
   const removeRow = useCallback(
     (rowIdx: number) => {
       setSheet((prev) => {
-        const updated: SheetContent = {
-          ...prev,
-          rows: prev.rows.filter((_, i) => i !== rowIdx),
-        };
+        const updated = removeRowAt(prev, rowIdx);
+        if (updated === prev) return prev;
         debouncedSave(updated);
         return updated;
       });
@@ -254,6 +296,12 @@ export default function SheetEditor({
   );
 
   const startEdit = (rowIdx: number, colIdx: number) => {
+    // Checkbox cells are toggled via their checkbox, never text-edited.
+    if (
+      getColumnValidation(sheet.validations, colIdx)?.kind === "checkbox"
+    ) {
+      return;
+    }
     const value = sheet.rows[rowIdx]?.[colIdx] ?? "";
     setEditingCell({ row: rowIdx, col: colIdx });
     setSelection(selectionFromCell({ row: rowIdx, col: colIdx }));
@@ -386,6 +434,17 @@ export default function SheetEditor({
     ) {
       e.preventDefault();
       const { row, col } = selection.anchor;
+      // Checkbox-validated cells are never free-text editable; typing a
+      // character must not bypass the same guard `startEdit` applies on
+      // Enter/F2 (it would otherwise overwrite TRUE/FALSE with junk).
+      // Space toggles the box, matching the checkbox's own affordance.
+      if (getColumnValidation(sheet.validations, col)?.kind === "checkbox") {
+        if (e.key === " ") {
+          const cur = sheet.rows[row]?.[col] ?? "";
+          updateCell(row, col, cur === CHECKBOX_TRUE ? CHECKBOX_FALSE : CHECKBOX_TRUE);
+        }
+        return;
+      }
       setEditingCell({ row, col });
       setEditValue(e.key);
       return;
@@ -472,17 +531,22 @@ export default function SheetEditor({
     rowIdx: number,
     colIdx: number,
   ): string => {
-    if (!value.startsWith("=")) return value;
-    const cached = cellCache.get(cellKey(rowIdx, colIdx, activeName));
+    const fmt = getCellFormat(sheet.formats, rowIdx, colIdx);
+    if (!value.startsWith("=")) {
+      // Literals only route through the format engine when a number
+      // format is set, so plain text renders byte-for-byte as typed.
+      return fmt?.numberFormat ? applyCellFormat(value, fmt) : value;
+    }
+    let cached = cellCache.get(cellKey(rowIdx, colIdx, activeName));
     if (cached === undefined) {
       // Shouldn't happen — `cellCache` is built from the same
       // `sheet` we're rendering — but fall back to a one-off
       // evaluation rather than rendering the raw formula text.
-      return String(evaluateFormula(value, sheet));
+      cached = evaluateFormula(value, sheet);
     }
     if (cached === null) return "";
     if (isFormulaError(cached)) return cached.code;
-    return String(cached);
+    return fmt?.numberFormat ? applyCellFormat(cached, fmt) : String(cached);
   };
 
   // Raw text of the currently-active cell, surfaced in the formula
@@ -526,6 +590,193 @@ export default function SheetEditor({
     },
     [debouncedSave],
   );
+
+  // Replace the workbook's named ranges and persist. An empty array
+  // drops the field so a workbook with no names stays byte-identical
+  // to its pre-feature JSON.
+  const setNamedRanges = useCallback(
+    (ranges: SheetNamedRange[]) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (ranges.length === 0) delete next.namedRanges;
+        else next.namedRanges = ranges;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Replace the active sheet's data-validation rules and persist. An
+  // empty/undefined map drops the field so a sheet with no validations
+  // stays byte-identical to its pre-feature JSON.
+  const setValidations = useCallback(
+    (validations: ValidationMap | undefined) => {
+      setSheet((prev) => {
+        const next: SheetContent = { ...prev };
+        if (!validations || Object.keys(validations).length === 0)
+          delete next.validations;
+        else next.validations = validations;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Replace the sheet's charts and persist. An empty array drops the
+  // field so a sheet with no charts stays byte-identical to its
+  // pre-feature JSON.
+  // Accepts either a plain array or an updater so callers can derive the
+  // next list from the latest `prev.charts` (avoids a stale-closure
+  // lost-update when a chart is added/removed between render and click).
+  const setCharts = useCallback(
+    (charts: ChartSpec[] | ((prev: ChartSpec[]) => ChartSpec[])) => {
+      setSheet((prev) => {
+        const nextCharts =
+          typeof charts === "function" ? charts(prev.charts ?? []) : charts;
+        const next: SheetContent = { ...prev };
+        if (nextCharts.length === 0) delete next.charts;
+        else next.charts = nextCharts;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Numeric value of a cell for charting: a formula's computed result
+  // (via the recalc cache) or a literal parsed as a number; `null` for
+  // blanks, text, booleans, and errors so they're skipped in plots.
+  const chartValueAt = useCallback(
+    (row: number, col: number): number | null => {
+      const raw = sheet.rows[row]?.[col] ?? "";
+      if (raw === "") return null;
+      if (raw.startsWith("=")) {
+        let cached = cellCache.get(cellKey(row, col, activeName));
+        if (cached === undefined) cached = evaluateFormula(raw, sheet);
+        return typeof cached === "number" && Number.isFinite(cached)
+          ? cached
+          : null;
+      }
+      const n = Number(raw.trim());
+      return raw.trim() !== "" && Number.isFinite(n) ? n : null;
+    },
+    [sheet, cellCache, activeName],
+  );
+
+  // Displayed text of a cell for chart labels / headers.
+  const chartTextAt = useCallback(
+    (row: number, col: number): string =>
+      getCellDisplay(sheet.rows[row]?.[col] ?? "", row, col),
+    // getCellDisplay closes over `sheet`/`cellCache`; depend on `sheet`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sheet],
+  );
+
+  // Each chart's live data, re-derived whenever the sheet changes. The
+  // pure extractor never throws on a bad range — it yields empty data,
+  // which `SheetChart` renders as a friendly "no data" state.
+  const renderedCharts = useMemo(
+    () =>
+      (sheet.charts ?? []).map((spec) => ({
+        spec,
+        data:
+          extractChartData(spec, chartValueAt, chartTextAt) ?? {
+            labels: [],
+            series: [],
+          },
+      })),
+    [sheet.charts, chartValueAt, chartTextAt],
+  );
+
+  // Apply a manual-format patch to every cell in the current selection
+  // (falls back to the active cell). Used by the format toolbar.
+  const applySelectionFormat = useCallback(
+    (patch: Partial<CellFormat>) => {
+      const cells = selection
+        ? selectionCells(selection)
+        : activeCell
+          ? [activeCell]
+          : [];
+      if (cells.length === 0) return;
+      setSheet((prev) => {
+        const nextFormats = applyFormatPatch(prev.formats, cells, patch);
+        const next: SheetContent = { ...prev };
+        if (nextFormats) next.formats = nextFormats;
+        else delete next.formats;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [selection, activeCell, debouncedSave],
+  );
+
+  // Toggle a boolean format (bold/italic/underline) across the
+  // selection: on if any cell lacks it, off when all already have it.
+  const toggleSelectionFormat = useCallback(
+    (key: BoolFormatKey) => {
+      const cells = selection
+        ? selectionCells(selection)
+        : activeCell
+          ? [activeCell]
+          : [];
+      if (cells.length === 0) return;
+      setSheet((prev) => {
+        const nextFormats = toggleBoolFormat(prev.formats, cells, key);
+        const next: SheetContent = { ...prev };
+        if (nextFormats) next.formats = nextFormats;
+        else delete next.formats;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [selection, activeCell, debouncedSave],
+  );
+
+  // Whether the whole selection currently carries a boolean format —
+  // drives the toolbar button's pressed state.
+  const selectionHas = useCallback(
+    (key: BoolFormatKey): boolean => {
+      const cells = selection
+        ? selectionCells(selection)
+        : activeCell
+          ? [activeCell]
+          : [];
+      return allCellsHave(sheet.formats, cells, key);
+    },
+    [selection, activeCell, sheet.formats],
+  );
+
+  // Number-format of the active cell, for the toolbar's format <select>.
+  const activeNumberFormat = useMemo(() => {
+    if (!activeCell) return undefined;
+    return getCellFormat(sheet.formats, activeCell.row, activeCell.col)
+      ?.numberFormat;
+  }, [activeCell, sheet.formats]);
+
+  // Insert an (already-validated) formula into the active cell. Used by
+  // the AI assistant — the formula has passed `validateGeneratedFormula`
+  // before reaching here, so this never blind-writes unparseable text.
+  const insertFormulaIntoActiveCell = useCallback(
+    (formula: string) => {
+      const target = activeCell;
+      if (!target) return;
+      updateCell(target.row, target.col, formula);
+    },
+    [activeCell, updateCell],
+  );
+
+  // A1-style reference of the current selection's primary range
+  // (e.g. `A1:C10`, or just `B2` for a single cell). Fed to the AI
+  // assistant as grounding context.
+  const selectionRef = useMemo(() => {
+    if (!selection) return undefined;
+    const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+    const a = `${columnLabel(c1)}${r1 + 1}`;
+    const b = `${columnLabel(c2)}${r2 + 1}`;
+    return a === b ? a : `${a}:${b}`;
+  }, [selection]);
 
   // ----------------------------------------------------------------
   // copy / paste via the system clipboard.
@@ -712,6 +963,48 @@ export default function SheetEditor({
     });
     setContextMenu(null);
   }, [debouncedSave]);
+
+  // ----------------------------------------------------------------
+  // sort all data rows by a column (Sheets' "Sort sheet A→Z / Z→A").
+  // ----------------------------------------------------------------
+
+  const sortByColumn = useCallback(
+    (col: number, ascending: boolean) => {
+      setSheet((prev) => {
+        // Sort by each cell's underlying value, not its formatted
+        // display: a formula sorts by its evaluated result, and a
+        // currency-formatted number sorts numerically rather than by
+        // the `$1,234.50` string.
+        const sortKeyAt = (row: number): string => {
+          const raw = prev.rows[row]?.[col] ?? "";
+          if (!raw.startsWith("=")) return raw;
+          const cached =
+            cellCache.get(cellKey(row, col, activeName)) ??
+            evaluateFormula(raw, prev);
+          if (cached === null) return "";
+          if (isFormulaError(cached)) return cached.code;
+          return String(cached);
+        };
+        const { rows, formats, rowHeights } = sortSheetByColumn(
+          prev.rows,
+          prev.formats,
+          col,
+          ascending,
+          sortKeyAt,
+          prev.rowHeights,
+        );
+        const next: SheetContent = { ...prev, rows };
+        if (formats) next.formats = formats;
+        else delete next.formats;
+        if (rowHeights) next.rowHeights = rowHeights;
+        else delete next.rowHeights;
+        debouncedSave(next);
+        return next;
+      });
+      setContextMenu(null);
+    },
+    [cellCache, activeName, debouncedSave],
+  );
 
   // Close the context menu on any outside click. Listening on
   // document with a capture-phase handler is the most reliable
@@ -1037,6 +1330,141 @@ export default function SheetEditor({
             ? ` (${sheet.conditionalRules.length})`
             : ""}
         </button>
+        <button
+          type="button"
+          className={nrOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={nrOpen}
+          data-testid="sheet-named-ranges-toggle"
+          onClick={() => setNrOpen((open) => !open)}
+        >
+          Named ranges
+          {sheet.namedRanges && sheet.namedRanges.length > 0
+            ? ` (${sheet.namedRanges.length})`
+            : ""}
+        </button>
+        <button
+          type="button"
+          className={aiOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={aiOpen}
+          data-testid="sheet-ai-toggle"
+          onClick={() => setAiOpen((open) => !open)}
+        >
+          AI assistant
+        </button>
+        <button
+          type="button"
+          className={dvOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={dvOpen}
+          data-testid="sheet-data-validation-toggle"
+          onClick={() => setDvOpen((open) => !open)}
+        >
+          Data validation
+          {sheet.validations && Object.keys(sheet.validations).length > 0
+            ? ` (${Object.keys(sheet.validations).length})`
+            : ""}
+        </button>
+        <button
+          type="button"
+          className={chartsOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={chartsOpen}
+          data-testid="sheet-charts-toggle"
+          onClick={() => setChartsOpen((open) => !open)}
+        >
+          Charts
+          {sheet.charts && sheet.charts.length > 0
+            ? ` (${sheet.charts.length})`
+            : ""}
+        </button>
+      </div>
+
+      <div
+        className="sheet-toolbar sheet-format-toolbar"
+        role="toolbar"
+        aria-label="Cell formatting"
+      >
+        <button
+          type="button"
+          className={selectionHas("bold") ? "btn-sm active" : "btn-sm"}
+          aria-pressed={selectionHas("bold")}
+          aria-label="Bold"
+          title="Bold"
+          data-testid="sheet-format-bold"
+          disabled={!activeCell}
+          onClick={() => toggleSelectionFormat("bold")}
+        >
+          <strong>B</strong>
+        </button>
+        <button
+          type="button"
+          className={selectionHas("italic") ? "btn-sm active" : "btn-sm"}
+          aria-pressed={selectionHas("italic")}
+          aria-label="Italic"
+          title="Italic"
+          data-testid="sheet-format-italic"
+          disabled={!activeCell}
+          onClick={() => toggleSelectionFormat("italic")}
+        >
+          <em>I</em>
+        </button>
+        <button
+          type="button"
+          className={selectionHas("underline") ? "btn-sm active" : "btn-sm"}
+          aria-pressed={selectionHas("underline")}
+          aria-label="Underline"
+          title="Underline"
+          data-testid="sheet-format-underline"
+          disabled={!activeCell}
+          onClick={() => toggleSelectionFormat("underline")}
+        >
+          <span style={{ textDecoration: "underline" }}>U</span>
+        </button>
+        <span className="sheet-toolbar-sep" aria-hidden="true" />
+        <label className="sheet-format-field">
+          <select
+            aria-label="Horizontal alignment"
+            data-testid="sheet-format-align"
+            disabled={!activeCell}
+            value={
+              activeCell
+                ? getCellFormat(sheet.formats, activeCell.row, activeCell.col)
+                    ?.align ?? "left"
+                : "left"
+            }
+            onChange={(e) =>
+              applySelectionFormat({
+                align: e.target.value as CellFormat["align"],
+              })
+            }
+          >
+            <option value="left">Left</option>
+            <option value="center">Center</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+        <label className="sheet-format-field">
+          <select
+            aria-label="Number format"
+            data-testid="sheet-format-number"
+            disabled={!activeCell}
+            value={
+              NUMBER_FORMAT_PRESETS.find(
+                (p) => p.pattern === activeNumberFormat,
+              )?.id ?? "general"
+            }
+            onChange={(e) => {
+              const preset = NUMBER_FORMAT_PRESETS.find(
+                (p) => p.id === e.target.value,
+              );
+              applySelectionFormat({ numberFormat: preset?.pattern });
+            }}
+          >
+            {NUMBER_FORMAT_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {cfOpen && (
@@ -1045,6 +1473,45 @@ export default function SheetEditor({
           columns={sheet.columns}
           onChange={setConditionalRules}
           onClose={() => setCfOpen(false)}
+        />
+      )}
+
+      {nrOpen && (
+        <NamedRangePanel
+          ranges={sheet.namedRanges ?? []}
+          selectionRef={selectionRef}
+          onChange={setNamedRanges}
+          onClose={() => setNrOpen(false)}
+        />
+      )}
+
+      {dvOpen && (
+        <DataValidationPanel
+          columns={sheet.columns}
+          validations={sheet.validations ?? {}}
+          onChange={setValidations}
+          onClose={() => setDvOpen(false)}
+        />
+      )}
+
+      {chartsOpen && (
+        <ChartsPanel
+          charts={sheet.charts ?? []}
+          selectionRef={selectionRef}
+          onChange={setCharts}
+          onClose={() => setChartsOpen(false)}
+        />
+      )}
+
+      {aiOpen && (
+        <SheetAiPanel
+          columns={sheet.columns}
+          rows={sheet.rows}
+          activeCellRef={activeAddress || undefined}
+          activeFormula={formulaBarValue}
+          selectionRef={selectionRef}
+          onInsertFormula={insertFormulaIntoActiveCell}
+          onClose={() => setAiOpen(false)}
         />
       )}
 
@@ -1274,6 +1741,14 @@ export default function SheetEditor({
                     })();
                   const rawValue = row[ci] ?? "";
                   const displayValue = getCellDisplay(rawValue, ri, ci);
+                  // Column data-validation (dropdown / checkbox), if any.
+                  const validation = getColumnValidation(
+                    sheet.validations,
+                    ci,
+                  );
+                  const invalidValue =
+                    validation !== undefined &&
+                    !isValueAllowed(validation, rawValue);
                   // Conditional formatting reacts to the *displayed*
                   // value (computed result for formulas), translated
                   // through the same `cellFormatStyle` used by manual
@@ -1284,6 +1759,11 @@ export default function SheetEditor({
                       ci,
                       displayValue,
                     ),
+                  );
+                  // Manual per-cell format (bold/align/colour/number).
+                  // Conditional rules overlay it, matching Sheets.
+                  const manualStyle = cellFormatStyle(
+                    getCellFormat(sheet.formats, ri, ci),
                   );
                   const colFrozen = isFrozenCol(ci);
                   // Frozen cells need an OPAQUE background so scrolled
@@ -1296,7 +1776,9 @@ export default function SheetEditor({
                   const frozenBackground =
                     typeof conditionalStyle.backgroundColor === "string"
                       ? conditionalStyle.backgroundColor
-                      : "var(--color-bg-page, #ffffff)";
+                      : typeof manualStyle.backgroundColor === "string"
+                        ? manualStyle.backgroundColor
+                        : "var(--color-bg-page, #ffffff)";
                   const stickyStyle: React.CSSProperties =
                     colFrozen
                       ? {
@@ -1330,6 +1812,7 @@ export default function SheetEditor({
                       style={{
                         width: colWidth(ci),
                         position: "relative",
+                        ...manualStyle,
                         ...conditionalStyle,
                         outline: isSelected
                           ? "1px solid var(--color-primary, #1a73e8)"
@@ -1346,7 +1829,49 @@ export default function SheetEditor({
                       }
                       onDoubleClick={() => startEdit(ri, ci)}
                     >
-                      {isEditing ? (
+                      {validation?.kind === "checkbox" ? (
+                        <input
+                          type="checkbox"
+                          className="sheet-cell-checkbox"
+                          data-testid={`sheet-checkbox-${ri}-${ci}`}
+                          checked={rawValue === CHECKBOX_TRUE}
+                          aria-label={`${columnLabel(ci)}${ri + 1} checkbox`}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() =>
+                            updateCell(
+                              ri,
+                              ci,
+                              rawValue === CHECKBOX_TRUE
+                                ? CHECKBOX_FALSE
+                                : CHECKBOX_TRUE,
+                            )
+                          }
+                        />
+                      ) : isEditing && validation?.kind === "list" ? (
+                        <select
+                          className="sheet-cell-select"
+                          data-testid={`sheet-select-${ri}-${ci}`}
+                          aria-label={`${columnLabel(ci)}${ri + 1} value`}
+                          autoFocus
+                          value={
+                            validation.values.includes(rawValue)
+                              ? rawValue
+                              : ""
+                          }
+                          onChange={(e) => {
+                            updateCell(ri, ci, e.target.value);
+                            setEditingCell(null);
+                          }}
+                          onBlur={() => setEditingCell(null)}
+                        >
+                          <option value="">(blank)</option>
+                          {validation.values.map((v) => (
+                            <option key={v} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      ) : isEditing ? (
                         <input
                           ref={inputRef}
                           className="sheet-cell-input"
@@ -1359,6 +1884,24 @@ export default function SheetEditor({
                         <span className="sheet-cell-display">
                           {displayValue}
                         </span>
+                      )}
+                      {invalidValue && !isEditing && (
+                        <span
+                          className="sheet-dv-invalid"
+                          data-testid={`sheet-dv-invalid-${ri}-${ci}`}
+                          aria-label="Value not allowed by data validation"
+                          title="Value not in the column's allowed list"
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            right: 0,
+                            width: 0,
+                            height: 0,
+                            borderTop:
+                              "6px solid var(--color-danger, #d93025)",
+                            borderLeft: "6px solid transparent",
+                          }}
+                        />
                       )}
                       {isFillHandle && (
                         <span
@@ -1392,6 +1935,25 @@ export default function SheetEditor({
         </table>
       </div>
 
+      {renderedCharts.length > 0 && (
+        <div
+          className="sheet-charts-strip"
+          data-testid="sheet-charts-strip"
+          aria-label="Charts"
+        >
+          {renderedCharts.map(({ spec, data }) => (
+            <SheetChart
+              key={spec.id}
+              spec={spec}
+              data={data}
+              onRemove={() =>
+                setCharts((prev) => prev.filter((c) => c.id !== spec.id))
+              }
+            />
+          ))}
+        </div>
+      )}
+
       {contextMenu && (
         <ul
           className="sheet-context-menu"
@@ -1412,6 +1974,34 @@ export default function SheetEditor({
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {contextMenu.kind === "col" && (
+            <>
+              <li
+                role="menuitem"
+                data-testid="sheet-sort-asc"
+                style={{ padding: "4px 12px", cursor: "pointer" }}
+                onClick={() => sortByColumn(contextMenu.index, true)}
+              >
+                Sort sheet A → Z
+              </li>
+              <li
+                role="menuitem"
+                data-testid="sheet-sort-desc"
+                style={{ padding: "4px 12px", cursor: "pointer" }}
+                onClick={() => sortByColumn(contextMenu.index, false)}
+              >
+                Sort sheet Z → A
+              </li>
+              <li
+                aria-hidden="true"
+                style={{
+                  height: 1,
+                  margin: "4px 0",
+                  background: "var(--color-border, #ccc)",
+                }}
+              />
+            </>
+          )}
           <li
             role="menuitem"
             style={{ padding: "4px 12px", cursor: "pointer" }}

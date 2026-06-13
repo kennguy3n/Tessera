@@ -136,14 +136,110 @@ function equals(a: FormulaValue, b: FormulaValue): boolean {
   return false;
 }
 
+const TRUE_FN: FunctionImpl = (args) => {
+  if (args.length !== 0) return makeError("#ERR!", "TRUE expects 0 arguments");
+  return true;
+};
+
+const FALSE_FN: FunctionImpl = (args) => {
+  if (args.length !== 0) return makeError("#ERR!", "FALSE expects 0 arguments");
+  return false;
+};
+
+const XOR: FunctionImpl = (args, ctx) => {
+  if (args.length === 0) {
+    return makeError("#ERR!", "XOR expects at least 1 argument");
+  }
+  let trues = 0;
+  for (const arg of args) {
+    const v = evaluate(arg, ctx);
+    if (isFormulaError(v)) return v;
+    const b = toBoolean(v);
+    if (isFormulaError(b)) return b;
+    if (b) trues++;
+  }
+  // XOR is true when an odd number of arguments are true.
+  return trues % 2 === 1;
+};
+
+const IFNA: FunctionImpl = (args, ctx) => {
+  if (args.length !== 2) return makeError("#ERR!", "IFNA expects 2 arguments");
+  const primary = evaluate(args[0], ctx);
+  if (isFormulaError(primary) && primary.code === "#N/A") {
+    return evaluate(args[1], ctx);
+  }
+  return primary;
+};
+
+const NA: FunctionImpl = (args) => {
+  if (args.length !== 0) return makeError("#ERR!", "NA expects 0 arguments");
+  return makeError("#N/A", "NA()");
+};
+
+const N: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) return makeError("#ERR!", "N expects 1 argument");
+  const v = evaluate(args[0], ctx);
+  if (isFormulaError(v)) return v;
+  if (typeof v === "number") return v;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  // Text and blanks become 0, matching Excel's N().
+  return 0;
+};
+
+/** Build an IS* predicate that inspects the evaluated argument. */
+function isPredicate(
+  name: string,
+  test: (v: FormulaValue) => boolean,
+): FunctionImpl {
+  return (args, ctx) => {
+    if (args.length !== 1) return makeError("#ERR!", `${name} expects 1 argument`);
+    const v = evaluate(args[0], ctx);
+    // IS* functions never propagate errors — that's the whole point
+    // of ISERROR / ISERR / ISNA. They classify the value instead.
+    return test(v);
+  };
+}
+
+const ISBLANK = isPredicate("ISBLANK", (v) => v === null);
+const ISNUMBER = isPredicate("ISNUMBER", (v) => typeof v === "number");
+const ISTEXT = isPredicate("ISTEXT", (v) => typeof v === "string");
+const ISNONTEXT = isPredicate(
+  "ISNONTEXT",
+  (v) => typeof v !== "string",
+);
+const ISLOGICAL = isPredicate("ISLOGICAL", (v) => typeof v === "boolean");
+const ISERROR = isPredicate("ISERROR", (v) => isFormulaError(v));
+const ISERR = isPredicate(
+  "ISERR",
+  (v) => isFormulaError(v) && v.code !== "#N/A",
+);
+const ISNA = isPredicate(
+  "ISNA",
+  (v) => isFormulaError(v) && v.code === "#N/A",
+);
+
 export const LOGIC_FUNCTIONS: Record<string, FunctionImpl> = {
   IF,
   AND,
   OR,
   NOT,
+  XOR,
   IFERROR,
+  IFNA,
   IFS,
   SWITCH,
+  TRUE: TRUE_FN,
+  FALSE: FALSE_FN,
+  NA,
+  N,
+  ISBLANK,
+  ISNUMBER,
+  ISTEXT,
+  ISNONTEXT,
+  ISLOGICAL,
+  ISERROR,
+  ISERR,
+  ISNA,
 };
 
 // Re-exported for callers that need to know which codes IFERROR catches.

@@ -132,3 +132,50 @@ describe("RANK", () => {
     expect(isFormulaError(v) && v.code).toBe("#N/A");
   });
 });
+
+describe("VARP", () => {
+  it("returns the population variance (divides by N)", () => {
+    // data = 2,4,4,4,5,5,7,9 → ssq=32, N=8 → 4.
+    expect(evalFormula("=VARP(A1:A8)", DATA)).toBe(4);
+  });
+});
+
+describe("COUNTBLANK / COUNTUNIQUE", () => {
+  const MIXED = [["a"], [""], ["b"], ["a"], [""]];
+  it("COUNTBLANK counts empty cells", () => {
+    expect(evalFormula("=COUNTBLANK(A1:A5)", MIXED)).toBe(2);
+  });
+  it("COUNTUNIQUE counts distinct non-blank values, case-insensitively", () => {
+    expect(evalFormula("=COUNTUNIQUE(A1:A5)", MIXED)).toBe(2);
+  });
+  it("COUNTUNIQUE distinguishes number 1 from string \"1\"", () => {
+    expect(evalFormula("=COUNTUNIQUE(1, \"1\", 1)", [])).toBe(2);
+  });
+});
+
+describe("MODE", () => {
+  it("returns the most frequent value", () => {
+    // 4 occurs three times in DATA.
+    expect(evalFormula("=MODE(A1:A8)", DATA)).toBe(4);
+  });
+  it("returns #N/A when nothing repeats", () => {
+    const v = evalFormula("=MODE(1, 2, 3)", []);
+    expect(isFormulaError(v) && v.code).toBe("#N/A");
+  });
+});
+
+describe("LARGE / SMALL", () => {
+  it("LARGE returns the kth largest", () => {
+    expect(evalFormula("=LARGE(A1:A8, 1)", DATA)).toBe(9);
+    expect(evalFormula("=LARGE(A1:A8, 2)", DATA)).toBe(7);
+  });
+  it("SMALL returns the kth smallest", () => {
+    expect(evalFormula("=SMALL(A1:A8, 1)", DATA)).toBe(2);
+    expect(evalFormula("=SMALL(A1:A8, 2)", DATA)).toBe(4);
+  });
+  it("rejects out-of-range k", () => {
+    expect(isFormulaError(evalFormula("=LARGE(A1:A8, 0)", DATA)) && true).toBe(true);
+    const v = evalFormula("=SMALL(A1:A8, 99)", DATA);
+    expect(isFormulaError(v) && v.code).toBe("#NUM!");
+  });
+});

@@ -24,6 +24,7 @@ import type { AstNode } from "../parser";
 import {
   collectValues,
   evaluate,
+  isRangeArg,
   toNumber,
   type EvaluationContext,
   type FunctionImpl,
@@ -51,11 +52,11 @@ function collectNumbers(
       }
       if (typeof v === "boolean") {
         // Direct boolean arg = coerce to 1/0; in a range, Excel skips.
-        if (arg.type !== "range") out.push(v ? 1 : 0);
+        if (!isRangeArg(arg, ctx)) out.push(v ? 1 : 0);
         continue;
       }
       if (typeof v === "string") {
-        if (arg.type === "range") continue;
+        if (isRangeArg(arg, ctx)) continue;
         const n = toNumber(v);
         if (isFormulaError(n)) return n;
         out.push(n);
@@ -162,11 +163,95 @@ const RANK: FunctionImpl = (args, ctx) => {
   return better + 1;
 };
 
+const VARP: FunctionImpl = (args, ctx) => variance(args, ctx, true);
+
+const COUNTBLANK: FunctionImpl = (args, ctx) => {
+  if (args.length !== 1) {
+    return makeError("#ERR!", "COUNTBLANK expects 1 argument");
+  }
+  let blanks = 0;
+  for (const v of collectValues(args[0], ctx)) {
+    if (isFormulaError(v)) return v;
+    // Excel counts both truly-empty cells and cells whose value is an
+    // empty string as blank.
+    if (v === null || v === "") blanks++;
+  }
+  return blanks;
+};
+
+const COUNTUNIQUE: FunctionImpl = (args, ctx) => {
+  const seen = new Set<string>();
+  for (const arg of args) {
+    for (const v of collectValues(arg, ctx)) {
+      if (isFormulaError(v)) return v;
+      if (v === null) continue;
+      // Tag the value with its type so the number 1 and the string
+      // "1" are counted as distinct, matching Google Sheets.
+      seen.add(`${typeof v}:${typeof v === "string" ? v.toLowerCase() : String(v)}`);
+    }
+  }
+  return seen.size;
+};
+
+const MODE: FunctionImpl = (args, ctx) => {
+  const xs = collectNumbers(args, ctx);
+  if (isFormulaError(xs)) return xs;
+  if (xs.length === 0) return makeError("#N/A", "MODE: empty input");
+  const counts = new Map<number, number>();
+  let bestValue = xs[0];
+  let bestCount = 0;
+  for (const x of xs) {
+    const c = (counts.get(x) ?? 0) + 1;
+    counts.set(x, c);
+    // Prefer the higher count; on a tie keep the value that first
+    // reached that count earliest in the data (Excel's behaviour),
+    // which falls out of iterating in source order with a strict `>`.
+    if (c > bestCount) {
+      bestCount = c;
+      bestValue = x;
+    }
+  }
+  if (bestCount < 2) return makeError("#N/A", "MODE: no value repeats");
+  return bestValue;
+};
+
+const LARGE: FunctionImpl = (args, ctx) => nthOrdered(args, ctx, "LARGE");
+const SMALL: FunctionImpl = (args, ctx) => nthOrdered(args, ctx, "SMALL");
+
+/** Shared kth-largest / kth-smallest implementation for LARGE / SMALL. */
+function nthOrdered(
+  args: AstNode[],
+  ctx: EvaluationContext,
+  which: "LARGE" | "SMALL",
+): FormulaValue {
+  if (args.length !== 2) {
+    return makeError("#ERR!", `${which} expects 2 arguments`);
+  }
+  const xs = collectNumbers([args[0]], ctx);
+  if (isFormulaError(xs)) return xs;
+  const kV = evaluate(args[1], ctx);
+  if (isFormulaError(kV)) return kV;
+  const kNum = toNumber(kV);
+  if (isFormulaError(kNum)) return kNum;
+  const k = Math.trunc(kNum);
+  if (k < 1 || k > xs.length) {
+    return makeError("#NUM!", `${which}: k is out of range`);
+  }
+  const sorted = [...xs].sort((a, b) => (which === "LARGE" ? b - a : a - b));
+  return sorted[k - 1];
+}
+
 export const STATS_FUNCTIONS: Record<string, FunctionImpl> = {
   MEDIAN,
   STDEV,
   STDEVP,
   VAR,
+  VARP,
   PERCENTILE,
   RANK,
+  COUNTBLANK,
+  COUNTUNIQUE,
+  MODE,
+  LARGE,
+  SMALL,
 };
