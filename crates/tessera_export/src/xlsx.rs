@@ -153,7 +153,7 @@ impl CellFmt {
 /// `#RRGGBB` validator — the only colour shape the renderer emits.
 fn is_hex_color(s: &str) -> bool {
     let bytes = s.as_bytes();
-    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 #[derive(Debug, Deserialize)]
@@ -366,8 +366,16 @@ fn write_sheet_payload(
         }
     }
 
-    apply_dimensions(worksheet, &presentation.column_widths, &presentation.row_heights);
-    apply_freeze(worksheet, presentation.frozen_rows, presentation.frozen_cols);
+    apply_dimensions(
+        worksheet,
+        &presentation.column_widths,
+        &presentation.row_heights,
+    );
+    apply_freeze(
+        worksheet,
+        presentation.frozen_rows,
+        presentation.frozen_cols,
+    );
 }
 
 /// Parse a renderer cell key (`"r,c"`, both zero-based data-grid
@@ -521,13 +529,7 @@ fn is_valid_defined_name(name: &str) -> bool {
     true
 }
 
-fn write_cell(
-    worksheet: &mut Worksheet,
-    row: u32,
-    col: u16,
-    value: &str,
-    fmt: Option<&Format>,
-) {
+fn write_cell(worksheet: &mut Worksheet, row: u32, col: u16, value: &str, fmt: Option<&Format>) {
     // CSV/XLSX-injection escape: `'=foo` is the standard convention for
     // "please don't interpret the leading `=` as a formula trigger". We strip
     // the apostrophe and emit the remainder verbatim as text. This mirrors
@@ -1108,7 +1110,10 @@ mod tests {
         let bytes = export_xlsx(&sheet_artifact(content));
         assert_is_zip(&bytes);
         let xml = read_xlsx_text(&bytes);
-        assert!(xml.contains("$#,##0.00"), "number format code missing: {xml}");
+        assert!(
+            xml.contains("$#,##0.00"),
+            "number format code missing: {xml}"
+        );
         // rust_xlsxwriter serialises colours as ARGB (`FF` alpha prefix).
         assert!(xml.contains("FF1A73E8"), "font colour missing: {xml}");
         assert!(xml.contains("FFFFF2CC"), "background colour missing: {xml}");
@@ -1127,7 +1132,10 @@ mod tests {
         }"##;
         let bytes = export_xlsx(&sheet_artifact(content));
         let xml = read_xlsx_text(&bytes);
-        assert!(xml.contains("<v>1234.5</v>"), "value not stored numerically: {xml}");
+        assert!(
+            xml.contains("<v>1234.5</v>"),
+            "value not stored numerically: {xml}"
+        );
     }
 
     #[test]
@@ -1143,10 +1151,19 @@ mod tests {
         let bytes = export_xlsx(&sheet_artifact(content));
         assert_is_zip(&bytes);
         let xml = read_xlsx_text(&bytes);
-        assert!(xml.contains("customWidth"), "custom column width missing: {xml}");
+        assert!(
+            xml.contains("customWidth"),
+            "custom column width missing: {xml}"
+        );
         // A freeze pane is serialised as `<pane xSplit=.. ySplit=.. .../>`.
-        assert!(xml.contains("ySplit"), "freeze pane row split missing: {xml}");
-        assert!(xml.contains("xSplit"), "freeze pane column split missing: {xml}");
+        assert!(
+            xml.contains("ySplit"),
+            "freeze pane row split missing: {xml}"
+        );
+        assert!(
+            xml.contains("xSplit"),
+            "freeze pane column split missing: {xml}"
+        );
     }
 
     #[test]
@@ -1161,7 +1178,10 @@ mod tests {
             "rowHeights":[null,40.7]
         }"##;
         let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
-        assert!(xml.contains("customHeight"), "custom row height missing: {xml}");
+        assert!(
+            xml.contains("customHeight"),
+            "custom row height missing: {xml}"
+        );
         assert!(
             xml.contains("ht=\"30.75\""),
             "fractional row height should round to 41px (30.75pt): {xml}"
@@ -1175,7 +1195,10 @@ mod tests {
         let content = r##"{"columns":["A"],"rows":[["1"]]}"##;
         let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
         assert!(!xml.contains("ySplit"), "unexpected freeze pane: {xml}");
-        assert!(!xml.contains("customWidth"), "unexpected custom width: {xml}");
+        assert!(
+            !xml.contains("customWidth"),
+            "unexpected custom width: {xml}"
+        );
     }
 
     #[test]
@@ -1189,7 +1212,10 @@ mod tests {
             "frozenCols":1
         }"##;
         let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
-        assert!(xml.contains("xSplit"), "freeze pane column split missing: {xml}");
+        assert!(
+            xml.contains("xSplit"),
+            "freeze pane column split missing: {xml}"
+        );
         assert!(
             xml.contains("ySplit=\"1\""),
             "header row should be frozen on a column-only freeze: {xml}"
