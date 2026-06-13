@@ -425,16 +425,19 @@ export function buildPresentationHtml(
   }
   // The timer/clock live in the presenter bar (hidden for the audience),
   // so only the presenter window needs to render and tick them.
+  var timerInterval = null;
   if (role === "presenter") {
     renderTimers();
-    setInterval(renderTimers, 500);
+    timerInterval = setInterval(renderTimers, 500);
   }
 
   // Tidy this presentation's sync keys when the window goes away so the
   // persistent partition's localStorage doesn't accumulate stale
   // per-presentation entries over time. removeItem is idempotent, so it
-  // is safe for both windows to run it.
+  // is safe for both windows to run it. We also stop the timer tick so
+  // the interval can't keep firing while the document is tearing down.
   window.addEventListener("pagehide", function () {
+    if (timerInterval !== null) clearInterval(timerInterval);
     try {
       window.localStorage.removeItem(KEY);
       window.localStorage.removeItem(BLANK_KEY);
