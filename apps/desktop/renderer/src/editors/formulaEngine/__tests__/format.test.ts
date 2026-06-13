@@ -177,6 +177,24 @@ describe("applyCellFormat — date formats", () => {
     const ts = dateToSerial(new Date(Date.UTC(2024, 5, 15, 13, 45, 30)));
     expect(applyCellFormat(ts, { numberFormat: "hh:mm:ss" })).toBe("13:45:30");
   });
+
+  it("treats an unquoted m/M next to numeric placeholders as a literal, not a date", () => {
+    // `#,##0M` (millions suffix, common in finance) must format as a number
+    // with a literal "M", not be mis-read as a month-token date.
+    expect(applyCellFormat(1234567, { numberFormat: "#,##0M" })).toBe(
+      "1,234,567M",
+    );
+    // With trailing-comma scaling the suffix still rides along as a literal.
+    expect(applyCellFormat(1234567, { numberFormat: "0.0,,M" })).toBe("1.2M");
+    // A lowercase variant behaves identically.
+    expect(applyCellFormat(5000, { numberFormat: "#,##0m" })).toBe("5,000m");
+  });
+
+  it("still recognises month-only patterns (no numeric placeholder) as dates", () => {
+    expect(applyCellFormat(newMillennium, { numberFormat: "mmmm" })).toBe(
+      "January",
+    );
+  });
 });
 
 describe("cellFormatStyle", () => {

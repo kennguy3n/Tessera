@@ -270,12 +270,23 @@ function renderNumberOrDate(value: number, pattern: string): string {
 }
 
 /**
- * Heuristic: a pattern is a date format if it contains any
- * date-token character outside of a quoted segment. Numeric
- * patterns use `#`/`0`/`,`/`.`/`%`/literal chars.
+ * Heuristic: is `pattern` a date/time format (vs. a numeric one)?
+ *
+ * Date tokens live outside quoted (`"..."`) and escaped (`\x`) segments.
+ * `y`/`d`/`h`/`s` are *unambiguous* date/time codes — any of them flips the
+ * pattern to date. `m`/`M` is **ambiguous**: it's the month/minute code, but
+ * users also write it as a literal magnitude suffix (e.g. `#,##0,,"M"` for
+ * millions — common in finance). A real date/time format that uses month or
+ * minutes always also carries a `y`/`d` (month) or `h`/`s` (minutes) token, so
+ * a lone `m`/`M` sitting next to numeric placeholders (`#`/`0`) is treated as a
+ * literal, not a date. Month-name-only patterns (`mmm`, `mmmm`) have no numeric
+ * placeholder, so they're still correctly recognised as dates.
  */
 function looksLikeDateFormat(pattern: string): boolean {
   let inQuote = false;
+  let hasStrongDateToken = false; // y / d / h / s — unambiguous
+  let hasMonthToken = false; // m / M — ambiguous (month/minute vs. literal)
+  let hasNumericPlaceholder = false; // # / 0
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
     if (ch === '"') {
@@ -295,16 +306,19 @@ function looksLikeDateFormat(pattern: string): boolean {
       ch === "h" ||
       ch === "H" ||
       ch === "s" ||
-      ch === "S" ||
-      ch === "m" ||
-      ch === "M"
+      ch === "S"
     ) {
-      // `m`/`M` is ambiguous with numeric "thousands marker"? No —
-      // numeric uses `,` not `m`. So any of these wins.
-      return true;
+      hasStrongDateToken = true;
+    } else if (ch === "m" || ch === "M") {
+      hasMonthToken = true;
+    } else if (ch === "#" || ch === "0") {
+      hasNumericPlaceholder = true;
     }
   }
-  return false;
+  if (hasStrongDateToken) return true;
+  // A bare `m`/`M` is only a date token when it isn't acting as a literal
+  // alongside numeric placeholders (so `#,##0M` stays a number; `mmm` stays a date).
+  return hasMonthToken && !hasNumericPlaceholder;
 }
 
 /** Format `value` as a number using an Excel-style pattern. */
