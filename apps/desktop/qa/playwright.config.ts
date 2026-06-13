@@ -25,7 +25,14 @@ import { defineConfig } from "@playwright/test";
  *     residual sub-pixel AA without hiding real diffs.
  */
 const PORT = Number(process.env.TESSERA_QA_PORT || 5180);
-const BASE_URL = `http://localhost:${PORT}`;
+// 127.0.0.1, not "localhost": `vite preview` binds IPv4 by default, but in
+// some environments (notably the CI Playwright container) "localhost"
+// resolves to IPv6 (::1) first, so a "localhost" health-check would hang on a
+// refused IPv6 connection until the webServer timeout even though the server
+// is up on IPv4. The `webServer.command` below pins vite to the same IPv4 host
+// so the probe and the bind agree. This mirrors scripts/perfBudgets.mjs.
+const HOST = "127.0.0.1";
+const BASE_URL = `http://${HOST}:${PORT}`;
 
 export default defineConfig({
   testDir: ".",
@@ -87,7 +94,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run preview:qa",
+    // `-- --host 127.0.0.1`: pin vite preview to the same IPv4 address the
+    // health-check (`url` below) probes, so the bind and the probe agree even
+    // where "localhost" would resolve to IPv6 first. preview:qa already pins
+    // the port and passes --strictPort.
+    command: `npm run preview:qa -- --host ${HOST}`,
     cwd: "..",
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,

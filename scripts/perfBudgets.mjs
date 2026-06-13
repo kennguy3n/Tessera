@@ -168,6 +168,10 @@ async function startServer() {
       cwd: DESKTOP_DIR,
       env: { ...process.env, TESSERA_QA_PORT: String(PORT) },
       stdio: "ignore",
+      // Run the launcher in its own process group so stopServer() can signal
+      // the whole tree (npm -> sh -> vite), not just the npm launcher — see
+      // stopServer() for why signalling npm alone orphans vite.
+      detached: true,
     },
   );
   serverProc.on("error", (err) =>
@@ -175,10 +179,28 @@ async function startServer() {
   );
   await waitForServer();
 }
+let serverStopped = false;
 function stopServer() {
-  if (serverProc && !serverProc.killed) {
+  if (!serverProc || serverStopped) return;
+  serverStopped = true;
+  const pid = serverProc.pid;
+  if (!pid) return;
+  // `npm run preview:qa` spawns a tree: npm -> sh -> vite, and the npm
+  // launcher exits as soon as it has handed off, so `vite` is reparented to
+  // init while still holding PORT. We must therefore signal the *process
+  // group*, not `serverProc` (npm) — which has usually already exited by the
+  // time we get here (so we deliberately do NOT gate on `serverProc.exitCode`:
+  // the group outlives its leader). `detached: true` gave the tree its own
+  // group whose id equals the npm pid, so the negative-pid signal reaches the
+  // surviving sh + vite; SIGTERM lets vite close its listener and free the
+  // port before the next `--strictPort` run.
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    // No group to signal (truly gone, or a platform without POSIX
+    // process-group semantics): fall back to the direct child.
     try {
-      serverProc.kill("SIGKILL");
+      serverProc.kill("SIGTERM");
     } catch {
       /* already gone */
     }

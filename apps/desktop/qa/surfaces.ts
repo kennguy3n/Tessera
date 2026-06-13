@@ -175,11 +175,27 @@ export async function gotoSurface(
     await page.locator('[role="dialog"]').first().waitFor({ state: "visible", timeout: 10_000 });
   }
 
-  // Settle: fonts loaded + the route's primary heading present (every
-  // page renders a PageHeader <h1>; editors render their own chrome).
+  // Settle: wait for a signal that proves the surface has finished
+  // mounting — not merely that *an* <h1> exists — then for fonts.
+  //
+  // Editors need special care: ArtifactEditorPage's loading state renders
+  // its own `<PageHeader title="Editor">` (an <h1>) and a "Loading…"
+  // paragraph, so a generic "first <h1> visible" wait is satisfied by the
+  // *loading* DOM and axe/screenshot can run before the real editor chrome
+  // and body have mounted (an intermittent contrast flake). The loaded
+  // editor — and only the loaded editor — renders a Breadcrumb
+  // (`<nav aria-label="Breadcrumb">`), so we key on that to guarantee
+  // `loading` has flipped false and the editor tree is committed.
+  if (surface.kind === "editor") {
+    await page
+      .locator('nav[aria-label="Breadcrumb"]')
+      .first()
+      .waitFor({ state: "visible", timeout: 10_000 });
+  } else {
+    await page
+      .locator("h1, [role='dialog']")
+      .first()
+      .waitFor({ state: "visible", timeout: 10_000 });
+  }
   await page.evaluate(() => document.fonts.ready);
-  await page
-    .locator("h1, [role='dialog']")
-    .first()
-    .waitFor({ state: "visible", timeout: 10_000 });
 }
