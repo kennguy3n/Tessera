@@ -249,6 +249,9 @@ describe("buildPresentationHtml", () => {
     expect(html).toContain('window.addEventListener("pagehide"');
     expect(html).toContain("window.localStorage.removeItem(KEY)");
     expect(html).toContain("window.localStorage.removeItem(BLANK_KEY)");
+    // The storage listener ignores removals so teardown cleanup in one
+    // window doesn't transiently re-render / un-blank the sibling.
+    expect(html).toContain("if (e.newValue === null) return;");
   });
 
   it("resets the timer to a fresh running state (reset also resumes)", () => {

@@ -370,6 +370,11 @@ export function buildPresentationHtml(
     }
   });
   window.addEventListener("storage", function (e) {
+    // A null newValue means the key was removed, which only happens during
+    // teardown (see the pagehide cleanup below). It is never a navigate or
+    // blank instruction, so ignoring it keeps a closing window from
+    // momentarily un-blanking or re-rendering the sibling.
+    if (e.newValue === null) return;
     if (e.key === KEY) render();
     else if (e.key === BLANK_KEY) renderBlank();
   });
