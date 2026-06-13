@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { SlideAiActions, SlideDeckGenerator } from "../editors/SlideAiPanel";
+import {
+  SlideAiActions,
+  SlideDeckGenerator,
+  SlideDeckRestyler,
+} from "../editors/SlideAiPanel";
 import { _resetActiveGenerationForTests } from "../hooks/useActiveGeneration";
 import { buildBlock } from "../editors/slideEditorHelpers";
 import type { GenerateChunk } from "../types/ipc";
@@ -87,6 +91,71 @@ describe("SlideDeckGenerator", () => {
   });
 });
 
+describe("SlideDeckRestyler", () => {
+  const deck: Slide[] = [
+    {
+      id: "s0",
+      title: "Intro",
+      blocks: [
+        buildBlock({ type: "text", content: "Welcome", slot: "subtitle" }),
+      ],
+      notes: "",
+    },
+    {
+      id: "s1",
+      title: "Detail",
+      layout: "imageRight",
+      blocks: [
+        buildBlock({ type: "bullets", content: "old a\nold b" }),
+        buildBlock({ type: "image", content: "asset://i.png", alt: "pic" }),
+      ],
+      notes: "keep me",
+    },
+  ];
+
+  it("restyles the current deck and applies the reconciled result", async () => {
+    mockModelAvailable();
+    mockGenerate(
+      "TITLE: Intro\n## Intro\n- Welcome\n## [titleContent] Detail\n- new a\n- new b\n",
+    );
+    const onApply = vi.fn();
+    render(
+      <SlideDeckRestyler
+        open
+        onClose={() => undefined}
+        slides={deck}
+        onApply={onApply}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("Restyle"));
+    fireEvent.click(await screen.findByText(/Apply 2 slides/i));
+
+    expect(onApply).toHaveBeenCalledTimes(1);
+    const out: Slide[] = onApply.mock.calls[0][0];
+    expect(out).toHaveLength(2);
+    // Original ids preserved by index (navigator stability).
+    expect(out.map((s) => s.id)).toEqual(["s0", "s1"]);
+    // Image re-attached + original image layout preserved.
+    expect(out[1].blocks.some((b) => b.type === "image")).toBe(true);
+    expect(out[1].layout).toBe("imageRight");
+    // Original notes kept when the model omitted them.
+    expect(out[1].notes).toBe("keep me");
+  });
+
+  it("renders nothing when closed", () => {
+    const { container } = render(
+      <SlideDeckRestyler
+        open={false}
+        onClose={() => undefined}
+        slides={deck}
+        onApply={() => undefined}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
 describe("SlideAiActions", () => {
   const slide: Slide = {
     id: "s1",
@@ -111,6 +180,41 @@ describe("SlideAiActions", () => {
     await waitFor(() =>
       expect(onApplyBullets).toHaveBeenCalledWith(["short one", "short two"]),
     );
+  });
+
+  it("regenerates the slide with a fresh title + bullets", async () => {
+    mockModelAvailable();
+    mockGenerate("## Sharper title\n- fresh one\n- fresh two");
+    const onApplyRegenerated = vi.fn();
+    render(
+      <SlideAiActions
+        slide={slide}
+        onApplyBullets={() => undefined}
+        onApplyNotes={() => undefined}
+        onApplyRegenerated={onApplyRegenerated}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("Regenerate"));
+    await waitFor(() =>
+      expect(onApplyRegenerated).toHaveBeenCalledWith({
+        title: "Sharper title",
+        bullets: ["fresh one", "fresh two"],
+      }),
+    );
+  });
+
+  it("omits the Regenerate button when onApplyRegenerated is not provided", async () => {
+    mockModelAvailable();
+    render(
+      <SlideAiActions
+        slide={slide}
+        onApplyBullets={() => undefined}
+        onApplyNotes={() => undefined}
+      />,
+    );
+    expect(await screen.findByText("Condense")).toBeInTheDocument();
+    expect(screen.queryByText("Regenerate")).not.toBeInTheDocument();
   });
 
   it("applies generated speaker notes", async () => {
