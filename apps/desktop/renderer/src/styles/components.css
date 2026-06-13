@@ -942,6 +942,110 @@
   background: var(--color-border);
 }
 
+/* ── Document typography controls ────────────────────────────────── */
+.toolbar-typography {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.toolbar-select {
+  height: 32px;
+  max-width: 140px;
+  padding: 0 var(--spacing-xs);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.toolbar-select-narrow {
+  max-width: 84px;
+}
+
+.toolbar-select:hover {
+  border-color: var(--color-border-strong, var(--color-primary));
+}
+
+.toolbar-select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* Colour picker disguised as a toolbar button: the icon + a thin colour bar
+   show the current colour, while the native <input type=color> is overlaid
+   transparently so the OS picker opens on click. */
+.toolbar-color {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--spacing-xs);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  cursor: pointer;
+}
+
+.toolbar-color:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+}
+
+.toolbar-color.active {
+  border-color: var(--color-primary);
+}
+
+.toolbar-color-bar {
+  width: 16px;
+  height: 3px;
+  border-radius: 1px;
+}
+
+.toolbar-color input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.toolbar-align-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Join the alignment buttons into one segmented pill. */
+.toolbar-align-group .toolbar-btn {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.toolbar-align-group .toolbar-btn:first-child {
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  margin-left: 0;
+}
+
+.toolbar-align-group .toolbar-btn:last-child {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.toolbar-align-group .toolbar-btn.active {
+  position: relative;
+  z-index: 1;
+}
+
 .document-editor-outline {
   grid-area: outline;
   border-right: 1px solid var(--color-border);
