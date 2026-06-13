@@ -2991,3 +2991,456 @@
     transition: none;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   Document editor — Notion/GDocs gap-close
+   Outline active state, AI assistant button + panel, link popover,
+   callout / toggle / table-of-contents blocks. All token-driven so
+   light + dark parity is automatic.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── Outline active heading ──────────────────────────────────────── */
+.outline-item-active {
+  background: var(--color-primary-soft);
+  border-left-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ── Toolbar "Ask AI" button ─────────────────────────────────────── */
+.toolbar-btn-ai {
+  gap: 4px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
+  border-color: var(--color-primary-soft);
+}
+.toolbar-btn-ai:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+/* ── AI assistant panel ──────────────────────────────────────────── */
+.ai-panel {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  width: 360px;
+  max-height: calc(100% - 2 * var(--spacing-sm));
+  overflow-y: auto;
+  padding: var(--spacing-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.ai-panel-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+.ai-panel-badge {
+  padding: 2px 6px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+}
+
+.ai-panel-close {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.ai-panel-close:hover {
+  background: var(--color-surface-hover);
+}
+
+.ai-panel-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.ai-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.ai-action-chip {
+  padding: 4px var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-body);
+  cursor: pointer;
+  transition: background var(--transition-fast),
+    border-color var(--transition-fast), color var(--transition-fast);
+}
+.ai-action-chip:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+.ai-action-chip.active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.ai-action-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ai-action-chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.ai-panel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.ai-panel-field select,
+.ai-panel-field input {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  color: var(--color-text-headline);
+  font-size: var(--font-size-sm);
+}
+
+.ai-panel-prompt {
+  width: 100%;
+  resize: vertical;
+  padding: var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  color: var(--color-text-headline);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+}
+.ai-panel-prompt:focus,
+.ai-panel-field select:focus,
+.ai-panel-field input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.ai-panel-run-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+.ai-panel-shortcut {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-panel-error {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger-fg);
+  background: var(--color-danger-bg);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+.ai-panel-result {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed, 1.6);
+  white-space: pre-wrap;
+}
+.ai-result-text {
+  color: var(--color-text-body);
+  white-space: pre-wrap;
+}
+
+.ai-diff {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-diff-equal {
+  color: var(--color-text-body);
+}
+.ai-diff-added {
+  background: var(--color-success-bg);
+  color: var(--color-success-fg);
+  border-radius: 2px;
+}
+.ai-diff-removed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+  text-decoration: line-through;
+  border-radius: 2px;
+}
+
+.ai-panel-apply {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+/* ── Link popover ────────────────────────────────────────────────── */
+.link-popover {
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  width: 320px;
+  padding: var(--spacing-sm);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card-hover);
+}
+.link-popover-input {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  color: var(--color-text-headline);
+  font-size: var(--font-size-sm);
+}
+.link-popover-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+.link-popover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+.link-popover-btn {
+  padding: 4px var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  cursor: pointer;
+}
+.link-popover-btn:hover {
+  background: var(--color-surface-hover);
+}
+.link-popover-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.link-popover-btn.primary {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.link-popover-btn.danger {
+  color: var(--color-danger-fg);
+}
+.link-popover-error {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger-fg);
+}
+
+/* ── Callout block ───────────────────────────────────────────────── */
+.document-editor-content .ProseMirror .doc-callout {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+}
+.document-editor-content .ProseMirror .doc-callout[data-variant="info"] {
+  background: var(--color-primary-soft);
+  border-left-color: var(--color-primary);
+}
+.document-editor-content .ProseMirror .doc-callout[data-variant="success"] {
+  background: var(--color-success-bg);
+  border-left-color: var(--color-success);
+}
+.document-editor-content .ProseMirror .doc-callout[data-variant="warning"] {
+  background: var(--color-warning-bg);
+  border-left-color: var(--color-warning);
+}
+.document-editor-content .ProseMirror .doc-callout[data-variant="danger"] {
+  background: var(--color-danger-bg);
+  border-left-color: var(--color-danger);
+}
+.document-editor-content .ProseMirror .doc-callout[data-variant="note"] {
+  background: var(--color-bg-surface);
+  border-left-color: var(--color-border);
+}
+.doc-callout-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-base);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+}
+.doc-callout-icon:hover {
+  background: var(--color-surface-hover);
+}
+.doc-callout-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.doc-callout-content > :first-child {
+  margin-top: 0;
+}
+.doc-callout-content > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── Toggle (collapsible) block ──────────────────────────────────── */
+.document-editor-content .ProseMirror .doc-toggle {
+  margin: var(--spacing-sm) 0;
+}
+.doc-toggle-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+.doc-toggle-caret {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+.doc-toggle-caret:hover {
+  background: var(--color-surface-hover);
+}
+.doc-toggle[data-open="true"] .doc-toggle-caret {
+  transform: rotate(90deg);
+}
+.doc-toggle-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px var(--spacing-xs);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-headline);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+}
+.doc-toggle-summary:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.doc-toggle-body {
+  margin-left: 26px;
+  padding-left: var(--spacing-sm);
+  border-left: 1px solid var(--color-border);
+}
+.doc-toggle[data-open="false"] .doc-toggle-body {
+  display: none;
+}
+
+/* ── Table-of-contents block ─────────────────────────────────────── */
+.document-editor-content .ProseMirror .doc-toc {
+  margin: var(--spacing-md) 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+}
+.doc-toc-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-xs);
+}
+.doc-toc-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+.doc-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.doc-toc-item {
+  margin: 0;
+}
+.doc-toc-link {
+  display: block;
+  width: 100%;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.doc-toc-link:hover {
+  text-decoration: underline;
+}
+.doc-toc-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-action-chip,
+  .toolbar-btn-ai,
+  .doc-toggle-caret,
+  .outline-item-active {
+    transition: none;
+  }
+}

@@ -27,6 +27,9 @@ import HorizontalRule from "@tiptap/extension-horizontal-rule";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
 import { MermaidNode } from "./extensions/MermaidExtension";
+import { CalloutNode } from "./extensions/CalloutExtension";
+import { ToggleNode } from "./extensions/ToggleExtension";
+import { TableOfContentsNode } from "./extensions/TableOfContentsExtension";
 import {
   FindReplaceExtension,
 } from "./extensions/FindReplaceExtension";
@@ -59,6 +62,19 @@ import { FindReplacePanel } from "./components/FindReplacePanel";
 import { CommentsPanel } from "./components/CommentsPanel";
 import { SlashMenu } from "./components/SlashMenu";
 import { MentionMenu } from "./components/MentionMenu";
+import {
+  AiAssistantPanel,
+  type AiAssistantContext,
+} from "./components/AiAssistantPanel";
+import { LinkPopover } from "./components/LinkPopover";
+import { captureAiContext } from "./ai/documentAiApply";
+import type { DocumentAiActionId } from "./ai/documentAiTypes";
+import {
+  collectHeadings,
+  formatReadingTime,
+  pickActiveHeadingIndex,
+  type HeadingEntry,
+} from "./documentOutlineHelpers";
 import type { KchatUserSearchResultView } from "../types/ipc";
 
 interface DocumentEditorProps {
@@ -122,6 +138,18 @@ export default function DocumentEditor({
   // Comments side-panel visibility — toggled by the toolbar.
   const [commentsOpen, setCommentsOpen] = useState(false);
 
+  // AI assistant panel. `null` = closed; when open it carries a
+  // snapshot of the selection captured at open time + the action to
+  // preselect. Snapshotting (rather than reading live selection) keeps
+  // the panel stable once focus moves into its own inputs.
+  const [aiState, setAiState] = useState<{
+    context: AiAssistantContext;
+    action?: DocumentAiActionId;
+  } | null>(null);
+
+  // Link editor popover. `null` = closed.
+  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
+
   // Bumped on every TipTap `onUpdate` so memos that derive from the
   // editor's plain-text content (e.g. word count, outline headings)
   // recompute when the doc changes. Naïvely depending on
@@ -182,6 +210,9 @@ export default function DocumentEditor({
       CharacterCount,
       Image.configure({ inline: false, allowBase64: true }),
       MermaidNode,
+      CalloutNode,
+      ToggleNode,
+      TableOfContentsNode,
       FindReplaceExtension,
       CommentMark,
       SlashCommandExtension.configure({
@@ -250,6 +281,16 @@ export default function DocumentEditor({
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setFindOpen(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        // Open the on-device AI assistant against the current selection.
+        e.preventDefault();
+        setLinkPopoverOpen(false);
+        setAiState({ context: captureAiContext(editor), action: undefined });
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        // Add / edit a link on the current selection.
+        e.preventDefault();
+        setAiState(null);
+        setLinkPopoverOpen(true);
       }
     };
     dom.addEventListener("keydown", onKeyDown);
@@ -258,12 +299,28 @@ export default function DocumentEditor({
     };
   }, [editor]);
 
-  const setLink = useCallback(() => {
+  // Open the AI assistant against a snapshot of the current selection.
+  // `action` lets a caller (slash `/ai`, selection toolbar) preselect
+  // the writing action; omit it to let the panel choose based on
+  // whether there's a selection.
+  const openAi = useCallback(
+    (action?: DocumentAiActionId) => {
+      if (!editor) return;
+      // Only one floating panel at a time: opening AI dismisses the link popover.
+      setLinkPopoverOpen(false);
+      setAiState({ context: captureAiContext(editor), action });
+    },
+    [editor],
+  );
+
+  // Open the link popover. Replaces the old `window.prompt` flow with a
+  // proper editable popover (add / edit / visit / remove) anchored to
+  // the editor.
+  const openLinkPopover = useCallback(() => {
     if (!editor) return;
-    const url = window.prompt("Enter URL:");
-    if (url) {
-      editor.chain().focus().setLink({ href: url }).run();
-    }
+    // Only one floating panel at a time: opening the link popover dismisses AI.
+    setAiState(null);
+    setLinkPopoverOpen(true);
   }, [editor]);
 
   // Common splice for slash-menu activation: drop the `/<query>`
@@ -272,6 +329,14 @@ export default function DocumentEditor({
   const dispatchSlash = useCallback(
     (cmd: SlashCommand) => {
       if (!editor) return;
+      // `/ai` is special: drop the trigger text, then open the AI
+      // assistant panel rather than inserting a block.
+      if (cmd.id === "ai") {
+        editor.chain().focus().deleteSlashTrigger().run();
+        setSlashTrigger(SLASH_TRIGGER_INITIAL);
+        openAi("custom");
+        return;
+      }
       const chain = editor.chain().focus().deleteSlashTrigger();
       switch (cmd.id) {
         case "heading-1":
@@ -314,13 +379,22 @@ export default function DocumentEditor({
         case "mermaid":
           chain.insertMermaid().run();
           break;
+        case "callout":
+          chain.toggleCallout().run();
+          break;
+        case "toggle":
+          chain.insertToggle().run();
+          break;
+        case "table-of-contents":
+          chain.insertTableOfContents().run();
+          break;
         default:
           chain.run();
           break;
       }
       setSlashTrigger(SLASH_TRIGGER_INITIAL);
     },
-    [editor],
+    [editor, openAi],
   );
 
   const dismissSlash = useCallback(() => {
@@ -478,16 +552,17 @@ export default function DocumentEditor({
     <div className="document-editor">
       <Toolbar
         editor={editor}
-        onSetLink={setLink}
+        onSetLink={openLinkPopover}
         onInsertImage={insertImageFromToolbar}
         onOpenFind={() => setFindOpen(true)}
+        onOpenAi={() => openAi()}
         onAddComment={addCommentFromToolbar}
         onToggleComments={() => setCommentsOpen((open) => !open)}
         commentsOpen={commentsOpen}
         openCommentCount={openCommentCount}
       />
       <div className="document-editor-outline">
-        <OutlinePanel editor={editor} />
+        <OutlinePanel editor={editor} docVersion={docVersion} />
       </div>
       <div className="document-editor-content">
         <EditorContent editor={editor} />
@@ -520,11 +595,26 @@ export default function DocumentEditor({
             onDismiss={dismissMention}
           />
         )}
+        {aiState && (
+          <AiAssistantPanel
+            editor={editor}
+            context={aiState.context}
+            initialAction={aiState.action}
+            onClose={() => setAiState(null)}
+          />
+        )}
+        {linkPopoverOpen && (
+          <LinkPopover
+            editor={editor}
+            onClose={() => setLinkPopoverOpen(false)}
+          />
+        )}
       </div>
       <div className="document-editor-footer" aria-live="polite">
         <span>{counts.words} words</span>
         <span>{counts.characters} characters</span>
         <span>{counts.charactersNoSpaces} without spaces</span>
+        <span>{formatReadingTime(counts.words)}</span>
       </div>
       <input
         ref={imageInputRef}
@@ -543,6 +633,7 @@ function Toolbar({
   onSetLink,
   onInsertImage,
   onOpenFind,
+  onOpenAi,
   onAddComment,
   onToggleComments,
   commentsOpen,
@@ -552,6 +643,7 @@ function Toolbar({
   onSetLink: () => void;
   onInsertImage: () => void;
   onOpenFind: () => void;
+  onOpenAi: () => void;
   onAddComment: () => void;
   onToggleComments: () => void;
   commentsOpen: boolean;
@@ -560,6 +652,16 @@ function Toolbar({
   const inTable = editor.isActive("table");
   return (
     <div className="editor-toolbar">
+      <button
+        type="button"
+        className="toolbar-btn toolbar-btn-ai"
+        onClick={onOpenAi}
+        title="Ask AI (Ctrl+J)"
+        aria-label="Ask AI"
+      >
+        ✨ AI
+      </button>
+      <span className="toolbar-separator" />
       <button
         type="button"
         className={editor.isActive("bold") ? "toolbar-btn active" : "toolbar-btn"}
@@ -727,6 +829,22 @@ function Toolbar({
           <button
             type="button"
             className="toolbar-btn"
+            onClick={() => editor.chain().focus().toggleHeaderRow().run()}
+            title="Toggle header row"
+          >
+            H-row
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => editor.chain().focus().mergeOrSplit().run()}
+            title="Merge or split cells"
+          >
+            Merge
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
             onClick={() => editor.chain().focus().deleteTable().run()}
             title="Delete table"
           >
@@ -769,35 +887,114 @@ function Toolbar({
   );
 }
 
-function OutlinePanel({ editor }: { editor: Editor }) {
-  const headings: { level: number; text: string; pos: number }[] = [];
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name === "heading") {
-      headings.push({
-        level: node.attrs.level as number,
-        text: node.textContent,
-        pos,
+function OutlinePanel({
+  editor,
+  docVersion,
+}: {
+  editor: Editor;
+  docVersion: number;
+}) {
+  // Headings re-collected on every doc edit (`docVersion` bumps in
+  // `onUpdate`). Pure walk lives in `documentOutlineHelpers` so it's
+  // unit-tested without TipTap.
+  const headings = useMemo<HeadingEntry[]>(
+    () => collectHeadings(editor.state.doc),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor, docVersion],
+  );
+
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  // Latest headings, read by the scroll handler without being a dependency of
+  // the listener effect — otherwise the (new-identity-every-keystroke)
+  // `headings` array would tear down and re-register the DOM scroll listener
+  // on every doc edit. The ref is refreshed in the recompute effect below.
+  const headingsRef = useRef<HeadingEntry[]>(headings);
+
+  // Read each heading's offset relative to the scroll container and mark the
+  // last one crossed as active. Stable across doc edits (deps: [editor] only)
+  // so the scroll listener effect doesn't churn.
+  const recomputeActive = useCallback(() => {
+    const scroller = editor.view.dom.closest(
+      ".document-editor-content",
+    ) as HTMLElement | null;
+    if (!scroller) return;
+    const containerTop = scroller.getBoundingClientRect().top;
+    const offsets = headingsRef.current.map((h) => {
+      const dom = editor.view.nodeDOM(h.pos);
+      return dom instanceof HTMLElement
+        ? dom.getBoundingClientRect().top - containerTop
+        : Number.POSITIVE_INFINITY;
+    });
+    setActiveIndex(pickActiveHeadingIndex(offsets, 0));
+  }, [editor]);
+
+  // Register the scroll listener once per editor. Passive + rAF-throttled so
+  // it never blocks scrolling.
+  useEffect(() => {
+    const scroller = editor.view.dom.closest(
+      ".document-editor-content",
+    ) as HTMLElement | null;
+    if (!scroller) return;
+
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        recomputeActive();
       });
-    }
-  });
+    };
+
+    recomputeActive();
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      scroller.removeEventListener("scroll", onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [editor, recomputeActive]);
+
+  // On a doc edit the heading set changes: refresh the ref and recompute the
+  // active heading, without re-registering the scroll listener above.
+  useEffect(() => {
+    headingsRef.current = headings;
+    recomputeActive();
+  }, [headings, recomputeActive]);
+
+  const jumpTo = useCallback(
+    (entry: HeadingEntry) => {
+      editor.chain().focus().setTextSelection(entry.pos + 1).run();
+      const dom = editor.view.nodeDOM(entry.pos);
+      if (dom instanceof HTMLElement) {
+        const reduceMotion = window.matchMedia(
+          "(prefers-reduced-motion: reduce)",
+        ).matches;
+        dom.scrollIntoView({
+          behavior: reduceMotion ? "auto" : "smooth",
+          block: "start",
+        });
+      }
+    },
+    [editor],
+  );
 
   if (headings.length === 0) {
     return <div className="outline-empty">No headings yet</div>;
   }
 
   return (
-    <nav className="outline-nav">
+    <nav className="outline-nav" aria-label="Document outline">
       <div className="outline-title">Outline</div>
       {headings.map((h, i) => (
         <button
-          key={i}
+          key={h.id}
           type="button"
-          className="outline-item"
+          className={
+            i === activeIndex ? "outline-item outline-item-active" : "outline-item"
+          }
+          aria-current={i === activeIndex ? "true" : undefined}
           style={{ paddingLeft: `${(h.level - 1) * 12 + 8}px` }}
-          onClick={() => {
-            editor.commands.focus();
-            editor.commands.setTextSelection(h.pos);
-          }}
+          onClick={() => jumpTo(h)}
         >
           {h.text || "(empty heading)"}
         </button>
