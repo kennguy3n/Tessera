@@ -126,6 +126,17 @@ describe("TIME / HOUR / MINUTE / SECOND", () => {
     expect(evalAt(`=MINUTE(${expr.slice(1)})`)).toBe(45);
     expect(evalAt(`=SECOND(${expr.slice(1)})`)).toBe(30);
   });
+  it("HOUR decomposes exact hour boundaries consistently with MINUTE/SECOND", () => {
+    // Every whole hour of the day must report that hour (not hour-1) even
+    // when `hour/24` rounds a hair below the integer in IEEE-754. MINUTE
+    // and SECOND must read 0 at the same boundary.
+    for (let h = 0; h < 24; h++) {
+      const expr = `DATE(2024,1,1)+TIME(${h},0,0)`;
+      expect(evalAt(`=HOUR(${expr})`)).toBe(h);
+      expect(evalAt(`=MINUTE(${expr})`)).toBe(0);
+      expect(evalAt(`=SECOND(${expr})`)).toBe(0);
+    }
+  });
 });
 
 describe("WEEKDAY / WEEKNUM", () => {

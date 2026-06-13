@@ -348,7 +348,13 @@ const HOUR: FunctionImpl = (args, ctx) => {
   if (args.length !== 1) return makeError("#ERR!", "HOUR expects 1 argument");
   const s = singleNumber(args[0], ctx);
   if (isFormulaError(s)) return s;
-  return Math.floor(timeFraction(s) * 24);
+  // Derive every time component from the same rounded second count as
+  // MINUTE/SECOND so an exact boundary (e.g. 13:00:00) decomposes
+  // consistently — `timeFraction(s) * 24` alone can land a hair below
+  // the integer and floor to the previous hour. `% 24` guards the
+  // end-of-day rounding edge where the second count rolls to 86400.
+  const totalSeconds = Math.round(timeFraction(s) * 86400);
+  return Math.floor(totalSeconds / 3600) % 24;
 };
 
 const MINUTE: FunctionImpl = (args, ctx) => {

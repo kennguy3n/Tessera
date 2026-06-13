@@ -338,11 +338,12 @@ fn write_sheet_payload(
             .expect("write header");
     }
 
-    // Compile each distinct manual format once. The renderer keys
-    // `formats` by data-row index (header excluded), so cell `"r,c"`
-    // lands at Excel row `r + 1`. Building a `Format` per *unique*
-    // signature (rather than per cell) keeps a densely-formatted sheet
-    // from allocating one style object per cell.
+    // Compile each cell's manual format into a `Format` once, keyed by
+    // the renderer's `"r,c"` cell key (row index is data-row, header
+    // excluded, so cell `"r,c"` lands at Excel row `r + 1`). Two cells
+    // with identical styling produce two equal `Format` values here;
+    // rust_xlsxwriter deduplicates equal formats into a single style
+    // slot when serialising, so this does not bloat the output file.
     let mut compiled: HashMap<&str, Format> = HashMap::new();
     for (key, fmt) in &presentation.formats {
         if !fmt.is_empty() {
