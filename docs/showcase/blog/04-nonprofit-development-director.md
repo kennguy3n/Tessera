@@ -44,7 +44,9 @@ Statement of Need, Project Description & SMART Goals, Methodology & Activities, 
 The numbers come straight from Sofia's notes: the 78% attendance rate, the +11 percentile
 math gain, the 96-student waitlist, the enrollment target of 214 → 360, the $185,000 ask. The
 abstract explicitly ties the program to the Halverson Foundation's priority of closing the
-STEM opportunity gap. Full output:
+STEM opportunity gap. A success **callout** opens the proposal, a **table-of-contents block**
+and the scroll-tracked **outline** keep a ten-section document navigable, and the on-device
+AI assistant can expand or re-tone any section. Full output:
 [`outputs/grant-proposal.md`](../artifacts/nonprofit/outputs/grant-proposal.md).
 
 ### The companion: a board update deck
@@ -56,7 +58,10 @@ run through a **slides** template, becomes a board deck:
 
 Ten slides — Title, Executive Summary, Quarterly Performance, Financial Detail, Strategic
 Progress, Product & Customer, Talent & Organization, Risks & Mitigations, Asks & Decisions
-Required, and Appendix — with speaker-ready bullet content drawn from the same sources. Source
+Required, and Appendix. The deck runs through the slide editor's **layout engine** (a
+*Section Header* opener followed by *Title + Content* layouts), wears the **Editorial**
+theme, and carries **speaker notes** on every slide — so Sofia can rehearse in **present
+mode** (a fullscreen second window with her notes) straight from the generated deck. Source
 JSON: [`outputs/board-update.json`](../artifacts/nonprofit/outputs/board-update.json).
 
 ## Why it matters

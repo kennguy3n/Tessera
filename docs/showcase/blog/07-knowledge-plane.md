@@ -83,6 +83,11 @@ aged out of the working set). Scrolling down the same list walks the full gradie
 
 ![The decay gradient on the Memory page — an active observation (62%), a fading one (CHG-2208, 34%), and three archived ones (22% / 15% / 12%), each with a colored state badge](../assets/screenshots/flow-07b-memory-decay.png)
 
+The whole app ships a **dark theme** as well — the same Memory page, the same retention
+badges and decay buckets, rendered in dark mode:
+
+![The Memory page in dark mode — the same observations, memory states, and retention scores rendered with Tessera's dark theme](../assets/screenshots/memory-page-dark.png)
+
 ## Step 3 — the concept graph: linking sources through shared entities
 
 Entities that recur across files become **concept nodes**, each linked to every source it
@@ -112,6 +117,11 @@ Selecting a node lists its relationships and the source evidence behind each one
 tracks the concept's lifecycle state (canonical, candidate, `superseded`, `contradicted`).
 
 ![The concept-graph panel — typed concept edges (is_a / part_of / supersedes / contradicts) around the `INC-4471` incident hub, with the node selected to show its relationships and source evidence](../assets/screenshots/flow-08-concept-graph.png)
+
+The canvas renderer carries the dark theme through too — the same typed graph around the
+`INC-4471` hub in dark mode:
+
+![The concept-graph panel in dark mode — the same typed edges and node colors around the INC-4471 hub, rendered with Tessera's dark theme](../assets/screenshots/concept-graph-dark.png)
 
 In the Create flow, this graph powers **"related source" suggestions**: as you select sources
 for a new artifact, Tessera proposes others that share concepts with your selection

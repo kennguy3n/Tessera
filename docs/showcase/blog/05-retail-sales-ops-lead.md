@@ -38,7 +38,10 @@ with cited, decision-ready bullets. The opening summary leads with the numbers t
 bookings of **$14.2M (105% of plan, +12% YoY)**, the West region carrying the quarter,
 Central lagging on risk from a key account, Q2 pipeline coverage light at **1.6x**, and gross
 margin up 150bps on an apparel mix shift. Each bullet carries a `[01-quarterly-sales-data.md]`
-or `[02-key-accounts-and-deals.md]` citation. Source JSON:
+or `[02-key-accounts-and-deals.md]` citation. The deck is built with the slide editor's
+**layout engine** (a *Section Header* opener into *Title + Content* slides), wears the
+**Aurora** theme, and carries **speaker notes** on every slide for rehearsal in **present
+mode**. Source JSON:
 [`outputs/qbr.json`](../artifacts/retail/outputs/qbr.json).
 
 ### The companion: a working CRM
@@ -47,10 +50,14 @@ The deck tells the story; the **base** gives the team something to work:
 
 ![CRM in the Tessera base editor](../assets/screenshots/retail-base-crm.png)
 
-A CRM with the key accounts as records and typed fields — Account, Region, Stage, Health,
-ARR, and owner — where Region, Stage, and Health are dropdown selects carrying the real
-option sets (West/Central/East/Intl; Best Case/Commit/Pipeline; Green/Yellow/Red). It's a
-grid the team can filter by health and sort by value, not a static table. Source JSON:
+This is a **two-table CRM**, not a flat list. The **Accounts** table holds the key accounts
+with typed fields — Account, Region/Stage/Health **dropdown selects** (West/Central/East/Intl;
+Best Case/Commit/Pipeline; Green/Yellow/Red), ARR, and a **Health Score rating** — and links
+each account to an **Owner** in a second **Sales Reps** table. From that link the grid derives
+a **Rep Region lookup**, while the Sales Reps table **rolls up** each rep's account count and
+total pipeline ARR. Opening a record brings up the **expand-record modal** with a comments
+timeline on the lead strategic account. It's a CRM the team can filter by health, group by
+owner, and actually work — not a static table. Source JSON:
 [`outputs/crm.json`](../artifacts/retail/outputs/crm.json).
 
 ## Why it matters

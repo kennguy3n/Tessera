@@ -31,12 +31,12 @@ because that's where the buyer's budget and habits already are.
 | Inference location | Vendor cloud | Vendor cloud | **Your device** | **Your device** |
 | Usable with PHI / privileged / NPI | Usually blocked by policy | Usually blocked | Yes | **Yes — the design point** |
 | Raw model quality (prose) | **Best (frontier)** | **Strong** | Varies | Good, small on-device model |
-| Structured deliverables (doc/slides/sheet/base) | Chat text | **Native + AI add-on** | Mostly chat/notes | **Four first-class editors** |
+| Structured deliverables (doc/slides/sheet/base) | Chat text | **Native + AI add-on** | Mostly chat/notes | **Four parity-level editors (Docs/Sheets/Slides/Airtable-class)** |
 | Source grounding | You paste context | Workspace-scoped | **Yes (RAG)** | **You select sources; output cites them** |
 | Inline per-claim citations | Rare | Limited | Sometimes | **Built-in, per-section** |
 | Structure enforcement | None | Some | None | **Template sections enforce completeness** |
 | Real-time multi-user collaboration | N/A | **Excellent** | No | **No (KChat for async)** |
-| Ecosystem / integrations breadth | **Large** | **Large** | Small | Growing (connectors v2) |
+| Ecosystem / integrations breadth | **Large** | **Large** | Small | 31 read-only connectors (still smaller) |
 | Verifiable export provenance | No | No | Rare | **PQC-signed evidence pack** |
 | Cost model | Per-seat + usage | Per-seat | Free/OSS | **OSS, no per-token cost** |
 | Auditability | Closed | Closed | Varies | **MIT-licensed, inspectable** |
@@ -79,6 +79,15 @@ a 12-section HIPAA report, a credit memo, a QBR deck — whose structure is enfo
 source file it drew from**. For regulated work, "where did this number come from?" is the whole
 job, and Tessera answers it by construction.
 
+**The editors are real editing surfaces, not just generation targets.** What the model drafts
+lands in four parity-level editors you actually keep working in: a Notion-style document editor
+(callout/toggle/table-of-contents blocks, a scroll-tracked outline with reading-time, an
+on-device rewrite/shorten/expand/tone/translate AI assistant), a Sheets-class spreadsheet (140+
+formula functions, named ranges, dropdown/checkbox validation, bar/line/pie charts), an
+Airtable-style multi-table base (cross-table linked records with lookup/rollup, an expand-record
+modal with comments, group-by), and a Slides-class deck builder (layout engine, themes, speaker
+notes, present mode) — all on-device. The artifacts in posts 1–5 exercise exactly these.
+
 **Verifiable, post-quantum-ready provenance on export.** The Evidence Pack bundles the artifact,
 its cited sources, and an ML-DSA-65 (FIPS 204) signature. No mainstream cloud workspace ships
 verifiable, tamper-evident export provenance; Tessera does, on-device.
@@ -94,8 +103,10 @@ and generation work.
   narrow the gap for *deliverables*, but they don't erase it for open-ended writing.
 - **No real-time collaboration.** No live co-editing or presence. Teams that need that will keep
   a cloud workspace alongside Tessera.
-- **Ecosystem breadth.** Connectors v2 (Drive, OneDrive/SharePoint, Notion, Jira, Confluence,
-  Figma) is growing but far smaller than the integration catalogs of Notion/Google/Microsoft.
+- **Ecosystem breadth.** The connector catalog is now **31 read-only, least-privilege
+  providers** (storage, docs/wikis, issue trackers, CRM/support, design, and comms/calendar) —
+  a real catalog, but still smaller and read-only-by-design versus the read/write integration
+  ecosystems of Notion/Google/Microsoft.
 - **No first-party mobile app.** It's a desktop-first Electron + Rust application.
 
 The knowledge-browser UI used to be on this list — the dedicated Memory page, concept-graph

@@ -37,7 +37,13 @@ editor it landed in.
 
 Between them they cover all four Tessera artifact types — **document, slides, sheet, base** —
 and five regulated or detail-heavy markets where "the AI made something up" is not an
-acceptable outcome.
+acceptable outcome. Each artifact lands in a **parity-level editor**, not a read-only render:
+a Notion-style document editor (callout/toggle/table-of-contents blocks, scroll-tracked
+outline, on-device AI writing assistant), a Google-Sheets-class spreadsheet (140+ formula
+functions, named ranges, data validation, charts), an Airtable-style multi-table base
+(cross-table linked records with lookup/rollup, an expand-record modal), and a
+Google-Slides-class deck builder (layout engine, themes, speaker notes, present mode) — all
+running on-device, alongside a catalog of **31 read-only, least-privilege connectors**.
 
 Each story is framed around a real **job to be done** — not "play with an AI," but a concrete
 deliverable with a deadline, a reviewer, and a consequence for getting it wrong:

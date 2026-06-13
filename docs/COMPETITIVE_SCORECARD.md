@@ -16,7 +16,7 @@ board); "After" reflects this release.
 | Dimension | Before | After | What moved it |
 |---|:---:|:---:|---|
 | Architecture | 7 | 9 | Versioned migration framework + typed errors + auto-sized read pool; **knowledge substrate as an additive native layer (encrypted sibling DBs)** |
-| Features | 7 | 9 | Comments, conditional formatting, form view, presenter mode, task deps + Gantt, multi-step automations; **observation extraction, decay-based memory, concept graph, connectors v2, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) now ships in the renderer** |
+| Features | 7 | 9 | **Editor parity wave: Document callout/toggle/TOC blocks + outline/reading-time + AI writing assistant; Sheet 140+ formula functions + named ranges + data validation + range-bound charts; Base multi-table linked records + lookup/rollup + expand-record modal + group-by; Slide layout engine + deck templates + themes + speaker notes + present mode**; comments, conditional formatting, form view, task deps + Gantt, multi-step automations; observation extraction, decay-based memory, concept graph, **31 read-only connectors**, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) ships in the renderer |
 | Performance | 6 | 9 | Incremental IVF, 100K/500K benches, virtual scrolling, read-pool pre-warm, 3s cold-start CI gate |
 | Cost / install size | 7 | 8 | Symbol stripping, locale pruning, delta updates, resumable model downloads, sharper CI cache |
 | Security | 8 | 9 | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates; **XChaCha20-Poly1305 DEK wrapping, optional ML-KEM-768 KEM, ML-DSA-65 export signing** |
@@ -44,18 +44,50 @@ of Notion/Coda; parity-or-better on engineering rigor.
 
 ## Features — 7 → 9
 
-- **Editors:** inline document comments (author/timestamp/resolved +
-  side panel), Sheet conditional formatting, a fillable Base **form
-  view** (6th view type), and a **Slides presenter mode** (fullscreen
-  second window with speaker notes).
+- **Editor parity wave.** The four editors moved from "structured output
+  targets" to full editing surfaces at parity with the category leaders,
+  all on-device:
+  - **Document → Google-Docs/Notion level.** Callout, toggle, and
+    table-of-contents blocks (`DocumentEditor.tsx` + TipTap extensions);
+    a scroll-tracked outline panel with reading-time estimate; and an
+    on-device AI writing assistant (`AiAssistantPanel.tsx`:
+    rewrite/shorten/expand/tone/translate/continue + Ask-AI with a
+    word-diff preview).
+  - **Sheet → Google-Sheets level.** A real formula engine with **140+
+    functions** (`editors/formulaEngine/functions/*`: math, stats, logic,
+    conditional, lookup, text, date), **named ranges**
+    (`NamedRangePanel.tsx`), **data validation** (dropdown/checkbox,
+    `sheetDataValidation.ts`), and **range-bound charts** (bar/line/pie,
+    `ChartsPanel.tsx`), plus AI NL→formula/explain/fix (`SheetAiPanel.tsx`).
+  - **Base → Airtable level.** Multi-table bases with **cross-table
+    linked records** carrying **lookup/rollup** fields, an
+    **expand-record modal** with comments + activity, and grid
+    group-by / row-height / frozen-columns; on-device AI for
+    schema-gen / NL→formula / column-fill (`baseEditorTypes.ts`,
+    base views incl. Gallery/Form).
+  - **Slide → Google-Slides/Gamma level.** A **layout engine**, **deck
+    templates** and insert-card presets (`slideTemplates.ts`), richer
+    themes with a visual picker, **speaker notes**, a **present mode**
+    (fullscreen second window), and AI deck generation
+    (`SlideAiPanel.tsx`).
+- **Connectors.** A catalog of **31 read-only, least-privilege
+  providers** (`connectorDescriptors.ts`) spanning storage (Drive,
+  OneDrive, Dropbox, Box, SharePoint), docs/wikis (Notion, Confluence,
+  Google Docs/Sheets), project/issue tracking (Jira, Linear, Asana,
+  ClickUp, Trello, Monday.com, GitHub, GitLab, Bitbucket), CRM/support
+  (HubSpot, Salesforce, Intercom), design (Figma, Miro), and
+  comms/calendar (Slack, Teams, Discord, Zoom, Google Calendar/Meet,
+  Gmail).
 - **Tasks & automations:** task **dependencies** with topological cycle
   detection, an **SVG Gantt** timeline, an
   `on_kchat_message_match(channel_id, regex)` trigger, and **multi-step**
   automation actions with per-step error handling.
 
-*vs. competitors:* closes the most visible gaps with Notion/Coda
-(comments, conditional formatting, forms, dependencies, Gantt) while
-keeping everything offline-capable.
+*vs. competitors:* closes the visible gaps with Notion/Coda/Airtable and
+Google/Microsoft (rich blocks + AI writing, a real formula library,
+multi-table linked records with lookup/rollup, slide layouts/themes/
+present mode) while keeping every editor and every connector
+offline-capable and least-privilege.
 
 ## Performance — 6 → 9
 
