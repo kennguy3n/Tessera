@@ -74,13 +74,29 @@ describe("SheetPivot", () => {
     fireEvent.click(screen.getByTestId(`sheet-pivot-remove-${SPEC.id}`));
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
+
+  it("shows a specific message when a field's source column was removed", () => {
+    // A structural edit collapsed the value field to the -1 sentinel.
+    const broken: PivotSpec = { ...SPEC, valueField: -1 };
+    render(
+      <SheetPivot spec={broken} result={null} onRemove={() => undefined} />,
+    );
+    expect(
+      screen.getByTestId(`sheet-pivot-removed-${broken.id}`),
+    ).toHaveTextContent(/source column .* was removed/i);
+    // It is distinct from the ordinary "no data" empty state.
+    expect(
+      screen.queryByTestId(`sheet-pivot-empty-${broken.id}`),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("PivotPanel", () => {
-  const columnLabelAt = (c: number) => `col-${c}`;
+  // Encodes both args so tests can assert which header row the panel asked for.
+  const columnLabelAt = (c: number, headerRow = 0) => `col-${c}@${headerRow}`;
 
   it("builds a spec from the range + field pickers", () => {
-    const onChange = vi.fn<(pivots: PivotSpec[]) => void>();
+    const onChange = vi.fn<[PivotSpec[]], void>();
     render(
       <PivotPanel
         pivots={[]}
@@ -132,7 +148,7 @@ describe("PivotPanel", () => {
   });
 
   it("removes a pivot via its row button", () => {
-    const onChange = vi.fn<(pivots: PivotSpec[]) => void>();
+    const onChange = vi.fn<[PivotSpec[]], void>();
     render(
       <PivotPanel
         pivots={[SPEC]}
@@ -148,5 +164,41 @@ describe("PivotPanel", () => {
       ),
     );
     expect(onChange).toHaveBeenCalledWith([]);
+  });
+
+  it("labels a listed pivot using its own source-range header row", () => {
+    // Range starts at row 5 (0-based header row 4), so the label hint must be
+    // resolved from row 4 — not the grid's row 0.
+    const offset: PivotSpec = { ...SPEC, id: "p2", range: "A5:C20" };
+    render(
+      <PivotPanel
+        pivots={[offset]}
+        columnLabelAt={columnLabelAt}
+        onChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    expect(
+      within(screen.getByTestId(`sheet-pivot-row-${offset.id}`)).getByText(
+        /col-2@4/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("labels a field whose column was removed as (removed column)", () => {
+    const broken: PivotSpec = { ...SPEC, id: "p3", valueField: -1 };
+    render(
+      <PivotPanel
+        pivots={[broken]}
+        columnLabelAt={columnLabelAt}
+        onChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    expect(
+      within(screen.getByTestId(`sheet-pivot-row-${broken.id}`)).getByText(
+        /\(removed column\)/,
+      ),
+    ).toBeInTheDocument();
   });
 });

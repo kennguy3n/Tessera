@@ -88,9 +88,13 @@ function aggregate(agg: PivotAggregation, b: Bucket | undefined): number | null 
     case "average":
       return b.values.reduce((a, v) => a + v, 0) / b.values.length;
     case "min":
-      return Math.min(...b.values);
+      // Reduce rather than `Math.min(...b.values)`: a single bucket can, in
+      // the worst case, hold every data row, and the argument-spread form has
+      // a JS engine cap (~65K args in V8) that would throw on very large
+      // sheets. The fold is O(n) with no argument-count ceiling.
+      return b.values.reduce((a, v) => (v < a ? v : a), b.values[0]);
     case "max":
-      return Math.max(...b.values);
+      return b.values.reduce((a, v) => (v > a ? v : a), b.values[0]);
     default:
       return null;
   }
@@ -237,6 +241,18 @@ export function computePivot(
 /** True when the pivot produced at least one row group to display. */
 export function hasPivotData(result: PivotResult | null): boolean {
   return result !== null && result.rowLabels.length > 0;
+}
+
+/**
+ * True when a structural edit removed a column one of the pivot's *required*
+ * fields pointed at, leaving the `-1` sentinel {@link shiftPivotForStructuralEdit}
+ * assigns. Such a pivot can't be computed until the user re-points it, so the
+ * UI distinguishes this from an ordinary "no data" range and prompts a fix.
+ * (An optional `colField` is dropped outright when removed, so only the
+ * mandatory `rowField` / `valueField` can carry the sentinel.)
+ */
+export function pivotHasRemovedField(spec: PivotSpec): boolean {
+  return spec.rowField < 0 || spec.valueField < 0;
 }
 
 /**

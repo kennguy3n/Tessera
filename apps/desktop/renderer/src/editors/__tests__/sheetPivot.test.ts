@@ -5,6 +5,7 @@ import {
   PIVOT_TOTAL_LABEL,
   computePivot,
   hasPivotData,
+  pivotHasRemovedField,
   shiftPivotForStructuralEdit,
 } from "../sheetPivot";
 import type { PivotSpec } from "../sheetEditorTypes";
@@ -68,6 +69,25 @@ describe("computePivot — single row field", () => {
     expect(min!.rowTotals).toEqual([10, 5]);
     const max = computePivot(spec({ agg: "max" }), valueAt, textAt);
     expect(max!.rowTotals).toEqual([20, 30]);
+  });
+
+  it("min/max fold over a huge single bucket without a spread arg-limit", () => {
+    // A bucket can, worst case, hold every data row. `Math.min(...values)`
+    // throws a RangeError past the engine's ~65K argument cap; the reduce-based
+    // fold must compute the extremes for a bucket far larger than that.
+    const n = 200_000;
+    const big: string[][] = [["Group", "Value"]];
+    for (let i = 0; i < n; i++) big.push(["G", String(i)]);
+    const t = (r: number, c: number) => big[r]?.[c] ?? "";
+    const v = (r: number, c: number) => {
+      const raw = big[r]?.[c] ?? "";
+      return raw.trim() === "" ? null : Number(raw);
+    };
+    const range = `A1:B${n + 1}`;
+    const base: PivotSpec = { id: "big", range, rowField: 0, valueField: 1, agg: "min" };
+    expect(() => computePivot(base, v, t)).not.toThrow();
+    expect(computePivot(base, v, t)!.grandTotal).toBe(0);
+    expect(computePivot({ ...base, agg: "max" }, v, t)!.grandTotal).toBe(n - 1);
   });
 });
 
@@ -170,5 +190,16 @@ describe("shiftPivotForStructuralEdit", () => {
     expect(next.rowField).toBe(0);
     expect(next.colField).toBe(1);
     expect(next.valueField).toBe(2);
+  });
+
+  it("flags a required field collapsed to the -1 sentinel via pivotHasRemovedField", () => {
+    // Removing the rowField's own column (col 0) collapses it to -1.
+    const removed = shiftPivotForStructuralEdit(spec({ rowField: 0 }), "col", 0, -1);
+    expect(removed.rowField).toBe(-1);
+    expect(pivotHasRemovedField(removed)).toBe(true);
+    // A healthy spec (and one that only lost its optional colField) is not flagged.
+    expect(pivotHasRemovedField(spec())).toBe(false);
+    const colOnly = shiftPivotForStructuralEdit(spec({ colField: 1 }), "col", 1, -1);
+    expect(pivotHasRemovedField(colOnly)).toBe(false);
   });
 });

@@ -18,8 +18,12 @@ export interface PivotPanelProps {
   pivots: PivotSpec[];
   /** A1 reference of the current selection, prefilled into a new pivot. */
   selectionRef?: string;
-  /** Human label for a grid column, e.g. `"A · Region"`. */
-  columnLabelAt: (col: number) => string;
+  /**
+   * Human label for a grid column, e.g. `"A · Region"`. `headerRow` lets the
+   * caller resolve the name from a pivot's own source-range header row rather
+   * than always the grid's first row.
+   */
+  columnLabelAt: (col: number, headerRow?: number) => string;
   onChange: (pivots: PivotSpec[]) => void;
   onClose: () => void;
 }
@@ -51,13 +55,27 @@ export function PivotPanel({
   const [draftTitle, setDraftTitle] = useState("");
 
   // Columns the parsed range spans; the field pickers choose from these.
+  // `parseA1Range` returns a fresh object each render, so the memo keys off the
+  // scalar `draftRange` string it derives from — keying off `rect` would defeat
+  // memoisation (new reference every render) and recompute on unrelated edits.
   const rect = parseA1Range(draftRange);
+  const headerRow = rect?.r1 ?? 0;
   const columns = useMemo(() => {
     if (!rect) return [] as number[];
     const cols: number[] = [];
     for (let c = rect.c1; c <= rect.c2; c++) cols.push(c);
     return cols;
-  }, [rect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftRange]);
+
+  // Label a pivot's field, reading from that pivot's own header row. A field
+  // whose column was removed by a structural edit carries the `-1` sentinel —
+  // surface that explicitly instead of an empty/garbled label.
+  const fieldLabel = useCallback(
+    (col: number, rangeHeaderRow: number): string =>
+      col < 0 ? "(removed column)" : columnLabelAt(col, rangeHeaderRow),
+    [columnLabelAt],
+  );
 
   // Effective field selections: fall back to the first / last columns of
   // the range so a valid range always yields an addable pivot.
@@ -141,7 +159,8 @@ export function PivotPanel({
                 {p.title?.trim() || "Pivot"}
               </span>
               <span className="sheet-dv-kind">
-                {PIVOT_AGG_LABELS[p.agg]} of {columnLabelAt(p.valueField)} ·{" "}
+                {PIVOT_AGG_LABELS[p.agg]} of{" "}
+                {fieldLabel(p.valueField, parseA1Range(p.range)?.r1 ?? 0)} ·{" "}
                 {p.range}
               </span>
               <button
@@ -179,7 +198,7 @@ export function PivotPanel({
           >
             {columns.map((c) => (
               <option key={c} value={c}>
-                {columnLabelAt(c)}
+                {columnLabelAt(c, headerRow)}
               </option>
             ))}
           </select>
@@ -198,7 +217,7 @@ export function PivotPanel({
             <option value="">None</option>
             {columns.map((c) => (
               <option key={c} value={c}>
-                {columnLabelAt(c)}
+                {columnLabelAt(c, headerRow)}
               </option>
             ))}
           </select>
@@ -214,7 +233,7 @@ export function PivotPanel({
           >
             {columns.map((c) => (
               <option key={c} value={c}>
-                {columnLabelAt(c)}
+                {columnLabelAt(c, headerRow)}
               </option>
             ))}
           </select>

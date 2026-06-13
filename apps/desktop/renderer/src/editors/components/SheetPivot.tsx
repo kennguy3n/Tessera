@@ -10,7 +10,12 @@
  * grand-total row is always shown.
  */
 import type { PivotResult } from "../sheetPivot";
-import { PIVOT_AGG_LABELS, PIVOT_TOTAL_LABEL, hasPivotData } from "../sheetPivot";
+import {
+  PIVOT_AGG_LABELS,
+  PIVOT_TOTAL_LABEL,
+  hasPivotData,
+  pivotHasRemovedField,
+} from "../sheetPivot";
 import type { PivotSpec } from "../sheetEditorTypes";
 
 export interface SheetPivotProps {
@@ -32,6 +37,7 @@ function formatCell(value: number | null): string {
 
 export function SheetPivot({ spec, result, onRemove }: SheetPivotProps) {
   const title = spec.title?.trim() || "Pivot";
+  const removedField = pivotHasRemovedField(spec);
   const empty = !hasPivotData(result);
   const showRowTotals = result?.colFieldName !== undefined;
 
@@ -56,7 +62,16 @@ export function SheetPivot({ spec, result, onRemove }: SheetPivotProps) {
         </button>
       </figcaption>
 
-      {empty || !result ? (
+      {removedField ? (
+        <p
+          className="sheet-pivot-empty"
+          data-testid={`sheet-pivot-removed-${spec.id}`}
+          role="alert"
+        >
+          A source column for this pivot was removed. Re-select its fields in
+          the Pivot tables panel.
+        </p>
+      ) : empty || !result ? (
         <p
           className="sheet-pivot-empty"
           data-testid={`sheet-pivot-empty-${spec.id}`}

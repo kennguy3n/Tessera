@@ -732,10 +732,13 @@ export default function SheetEditor({
   );
 
   // Label a grid column for the pivot field pickers, e.g. `"A · Region"`:
-  // the column letter plus its header text (row 0) when present.
+  // the column letter plus its header text. `headerRow` defaults to the grid's
+  // first row but the caller passes the pivot's *own* source-range header row
+  // so the picker labels match the headers the pivot actually computes from
+  // (e.g. a range starting at A5 reads its names from row 5, not row 1).
   const columnLabelAt = useCallback(
-    (col: number): string => {
-      const header = chartTextAt(0, col).trim();
+    (col: number, headerRow = 0): string => {
+      const header = chartTextAt(headerRow, col).trim();
       const letter = columnLetter(col);
       return header !== "" ? `${letter} · ${header}` : letter;
     },
