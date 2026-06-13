@@ -17,6 +17,7 @@
 // Llama/Qwen Instruct build) here or in the generator without adding it to the
 // product model registry first.
 
+import { ACCENT_COLORS } from "../types/ipc";
 import type { ShowcaseDataset, ShowcaseKnowledgePlane } from "./types";
 import { healthcareDataset } from "./generated/healthcare";
 import { legalDataset } from "./generated/legal";
@@ -55,6 +56,39 @@ export function showcasePersonaFromQuery(): string | null {
     return persona && DATASETS[persona] ? persona : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Theme/accent overrides for the showcase bridge.
+ *
+ * `useTheme` derives the `data-theme` / `data-accent` attributes from
+ * `settings.theme` / `settings.accentColor`, so to drive deterministic
+ * theming for QA captures (visual-regression + the browser a11y
+ * contrast pass) we let `?theme=` / `?accent=` seed those settings
+ * fields. Values are validated against the same allowlists the real
+ * Settings UI uses; anything unrecognised is ignored (the persona's
+ * default light/violet applies).
+ */
+const THEME_VALUES: ReadonlySet<string> = new Set(["light", "dark", "system"]);
+const ACCENT_VALUES: ReadonlySet<string> = new Set(ACCENT_COLORS);
+
+export interface ShowcaseThemeOverrides {
+  theme?: string;
+  accentColor?: string;
+}
+
+export function showcaseThemeFromQuery(): ShowcaseThemeOverrides {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const overrides: ShowcaseThemeOverrides = {};
+    const theme = params.get("theme");
+    if (theme && THEME_VALUES.has(theme)) overrides.theme = theme;
+    const accent = params.get("accent");
+    if (accent && ACCENT_VALUES.has(accent)) overrides.accentColor = accent;
+    return overrides;
+  } catch {
+    return {};
   }
 }
 
@@ -367,14 +401,23 @@ const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
  * through a Proxy: `on*` subscription methods return a no-op unsubscribe, all
  * other unknown methods resolve to `undefined`.
  */
-export function buildShowcaseApi(personaId: string): unknown {
+export function buildShowcaseApi(
+  personaId: string,
+  themeOverrides: ShowcaseThemeOverrides = {},
+): unknown {
   const ds = DATASETS[personaId];
   if (!ds) throw new Error(`Unknown showcase persona: ${personaId}`);
 
   const artifacts = buildArtifacts(ds);
   const sources = buildSources(ds);
   const plane = KNOWLEDGE[personaId] ?? { entities: [], facts: [], concepts: [] };
-  let settings = settingsData(artifacts);
+  let settings = {
+    ...settingsData(artifacts),
+    ...(themeOverrides.theme ? { theme: themeOverrides.theme } : {}),
+    ...(themeOverrides.accentColor
+      ? { accentColor: themeOverrides.accentColor }
+      : {}),
+  };
 
   // Mutable backup state so Settings → Backup is fully interactive in the demo
   // (configure persists, "Back up now" prepends a new entry).
@@ -779,8 +822,14 @@ export function buildShowcaseApi(personaId: string): unknown {
   );
 }
 
-export function installShowcaseBridge(personaId: string): void {
-  (window as unknown as { tessera: unknown }).tessera = buildShowcaseApi(personaId);
+export function installShowcaseBridge(
+  personaId: string,
+  themeOverrides: ShowcaseThemeOverrides = {},
+): void {
+  (window as unknown as { tessera: unknown }).tessera = buildShowcaseApi(
+    personaId,
+    themeOverrides,
+  );
   (window as unknown as { tesseraCspNonce: string }).tesseraCspNonce = "showcase";
   console.info(`[showcase] mock bridge installed for persona "${personaId}"`);
 }

@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.node.json && vite build && tsc -p tsconfig.electron.json",
+    "build:qa": "vite build --mode qa",
+    "preview:qa": "vite preview --mode qa --port 5180 --strictPort",
     "build:native": "cargo build --release -p tessera_bridge",
     "preview": "vite preview",
     "test": "vitest run",

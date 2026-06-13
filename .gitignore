@@ -21,6 +21,7 @@ build/
 # Electron
 apps/desktop/dist/
 apps/desktop/renderer-dist/
+apps/desktop/renderer-dist-qa/
 apps/desktop/dist-electron/
 apps/desktop/out/
 apps/desktop/release/

@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   root: path.resolve(__dirname, "renderer"),
   // Vite defaults `base` to `/`, which makes the built `index.html` reference
@@ -16,7 +16,14 @@ export default defineConfig({
   // and absolute base both work in dev.
   base: "./",
   build: {
-    outDir: path.resolve(__dirname, "renderer-dist"),
+    // The `qa` mode (`build:qa`) emits a parallel, showcase-enabled
+    // bundle into `renderer-dist-qa/` so it never clobbers the real
+    // `renderer-dist/` that the packaged app and the cold-start gate
+    // consume. See `renderer/.env.qa` for the `VITE_TESSERA_QA` flag.
+    outDir: path.resolve(
+      __dirname,
+      mode === "qa" ? "renderer-dist-qa" : "renderer-dist",
+    ),
     emptyOutDir: true,
   },
   resolve: {
@@ -33,4 +40,4 @@ export default defineConfig({
       "../electron/**/*.{test,spec}.ts",
     ],
   },
-});
+}));
