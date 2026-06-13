@@ -26,7 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspaceProvider from "../workspace/WorkspaceProvider";
 import WorkspaceView from "../workspace/WorkspaceView";
 import { useWorkspace } from "../workspace/workspaceContext";
-import { countLeaves, getFocusedLeaf } from "../utils/paneTree";
+import { countLeaves, getFocusedLeaf, listLeaves } from "../utils/paneTree";
 
 vi.mock("../components/AppRoutes", () => ({
   default: () => <div data-testid="route-stub" />,
@@ -55,16 +55,32 @@ function Probe() {
   const ws = useWorkspace();
   const loc = useLocation();
   const navigate = useNavigate();
+  const focused = getFocusedLeaf(ws.state);
   return (
     <div>
       <span data-testid="leaves">{countLeaves(ws.state.root)}</span>
-      <span data-testid="focused-tabs">
-        {getFocusedLeaf(ws.state).tabs.length}
-      </span>
+      <span data-testid="focused-tabs">{focused.tabs.length}</span>
       <span data-testid="active-path">{ws.activePath}</span>
       <span data-testid="outer-path">{loc.pathname}</span>
+      <span data-testid="maximized">{ws.state.maximizedPaneId ?? ""}</span>
+      <span data-testid="focused-stacked">
+        {focused.stacked === true ? "yes" : "no"}
+      </span>
+      <span data-testid="focused-follows">{focused.followPaneId ?? ""}</span>
       <button onClick={() => navigate("/memory")}>shell-nav</button>
       <button onClick={() => ws.navigateActive("/templates")}>tab-nav</button>
+      <button onClick={() => ws.openTab("/templates")}>api-open-tab</button>
+      <button onClick={() => ws.openInSplit("/memory")}>api-open-split</button>
+      <button
+        onClick={() => {
+          // Link the focused (follower) pane to the other leaf (leader).
+          const leaves = listLeaves(ws.state.root);
+          const other = leaves.find((l) => l.id !== focused.id);
+          if (other) ws.setPaneLink(focused.id, other.id);
+        }}
+      >
+        link-to-other
+      </button>
     </div>
   );
 }
@@ -261,5 +277,110 @@ describe("workspace shell — persistence", () => {
     renderWorkspace();
     expect(screen.getByTestId("leaves").textContent).toBe("1");
     expect(screen.getAllByRole("tab")).toHaveLength(1);
+  });
+});
+
+describe("workspace shell — open-in affordances (Feature 2)", () => {
+  it("opens a new tab in the focused pane via the workspace API", () => {
+    renderWorkspace();
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("1");
+    fireEvent.click(screen.getByText("api-open-tab"));
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("2");
+    // Still a single pane — a new *tab*, not a split.
+    expect(screen.getByTestId("leaves").textContent).toBe("1");
+  });
+
+  it("opens a destination in a new split via the workspace API", () => {
+    renderWorkspace();
+    expect(screen.getByTestId("leaves").textContent).toBe("1");
+    fireEvent.click(screen.getByText("api-open-split"));
+    expect(screen.getByTestId("leaves").textContent).toBe("2");
+    expect(screen.getAllByRole("tablist")).toHaveLength(2);
+  });
+});
+
+describe("workspace shell — ergonomics (Feature 4)", () => {
+  it("maximizes and restores the focused pane via the bus", () => {
+    renderWorkspace();
+    fireBus("tessera:split-right");
+    expect(screen.getAllByRole("tablist")).toHaveLength(2);
+
+    // Maximize: only the focused pane is mounted.
+    fireBus("tessera:maximize-pane");
+    expect(screen.getByTestId("maximized").textContent).not.toBe("");
+    expect(screen.getAllByRole("tablist")).toHaveLength(1);
+
+    // Restore: both panes are mounted again.
+    fireBus("tessera:maximize-pane");
+    expect(screen.getByTestId("maximized").textContent).toBe("");
+    expect(screen.getAllByRole("tablist")).toHaveLength(2);
+  });
+
+  it("closes other tabs in the focused pane via the bus", () => {
+    renderWorkspace();
+    fireBus("tessera:new-tab");
+    fireBus("tessera:new-tab");
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("3");
+    fireBus("tessera:close-others");
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("1");
+  });
+
+  it("closes tabs to the right of the active tab via the bus", () => {
+    renderWorkspace();
+    fireBus("tessera:new-tab"); // tab 2 (active)
+    fireBus("tessera:new-tab"); // tab 3 (active)
+    fireBus("tessera:prev-tab"); // back to tab 2 active
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("3");
+    fireBus("tessera:close-to-right");
+    // Tab 3 (to the right of active) is closed; tabs 1 and 2 remain.
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("2");
+  });
+
+  it("toggles stacked tabs on the focused pane via the bus", () => {
+    renderWorkspace();
+    expect(screen.getByTestId("focused-stacked").textContent).toBe("no");
+    fireBus("tessera:toggle-stacked");
+    expect(screen.getByTestId("focused-stacked").textContent).toBe("yes");
+    expect(document.querySelector(".workspace-tabstrip.is-stacked")).toBeTruthy();
+    fireBus("tessera:toggle-stacked");
+    expect(screen.getByTestId("focused-stacked").textContent).toBe("no");
+  });
+
+  it("creates a split when a tab is dropped on a pane edge (drag-to-split)", () => {
+    const { container } = renderWorkspace();
+    // Two tabs in the single pane so one can be carried into a split.
+    fireBus("tessera:new-tab");
+    expect(screen.getByTestId("leaves").textContent).toBe("1");
+
+    const tab = container.querySelector(".workspace-tab")!;
+    const content = container.querySelector(".workspace-pane-content")!;
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(tab, { dataTransfer: dt });
+    fireEvent.dragOver(content, { dataTransfer: dt, clientX: 5, clientY: 200 });
+    // The edge overlay appears while hovering.
+    expect(container.querySelector(".workspace-pane-dropzone")).toBeTruthy();
+    fireEvent.drop(content, { dataTransfer: dt, clientX: 5, clientY: 200 });
+    expect(screen.getByTestId("leaves").textContent).toBe("2");
+  });
+});
+
+describe("workspace shell — linked panes (Feature 3)", () => {
+  it("makes a follower pane track the leader's active route", async () => {
+    renderWorkspace();
+    fireBus("tessera:split-right"); // pane B focused
+    fireBus("tessera:focus-prev-pane"); // focus pane A (the leader)
+    fireEvent.click(screen.getByText("tab-nav")); // A → /templates
+    await waitFor(() =>
+      expect(screen.getByTestId("active-path").textContent).toBe("/templates"),
+    );
+
+    fireBus("tessera:focus-next-pane"); // focus pane B (the follower)
+    expect(screen.getByTestId("active-path").textContent).toBe("/");
+    fireEvent.click(screen.getByText("link-to-other")); // B follows A
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-path").textContent).toBe("/templates"),
+    );
+    expect(screen.getByTestId("focused-follows").textContent).not.toBe("");
   });
 });

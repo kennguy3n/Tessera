@@ -1,10 +1,15 @@
 import {
   useCallback,
+  useMemo,
   useState,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import {
+  Link2,
+  Maximize2,
+  MoreVertical,
   Plus,
   SplitSquareHorizontal,
   SplitSquareVertical,
@@ -12,39 +17,14 @@ import {
 } from "lucide-react";
 import {
   getActiveTab,
+  listLeaves,
   tabTitleForPath,
   type LeafPane,
 } from "../utils/paneTree";
 import { useWorkspace } from "./workspaceContext";
-
-/** Custom drag MIME carrying the dragged tab's origin. Using a typed
- *  payload (not `text/plain`) keeps unrelated text drags from being
- *  mistaken for a tab move. */
-const TAB_MIME = "application/x-tessera-tab";
-
-interface TabDragData {
-  paneId: string;
-  tabId: string;
-}
-
-function readTabDrag(e: ReactDragEvent): TabDragData | null {
-  try {
-    const raw = e.dataTransfer.getData(TAB_MIME);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as TabDragData).paneId === "string" &&
-      typeof (parsed as TabDragData).tabId === "string"
-    ) {
-      return parsed as TabDragData;
-    }
-  } catch {
-    // Not our payload.
-  }
-  return null;
-}
+import { TAB_MIME, readTabDrag, writeTabDrag } from "./tabDrag";
+import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
+import { useContextMenu } from "../hooks/useContextMenu";
 
 interface TabStripProps {
   leaf: LeafPane;
@@ -52,25 +32,153 @@ interface TabStripProps {
 
 /**
  * The per-pane tab bar: an ARIA `tablist` of the pane's tabs plus pane
- * actions (new tab, split right, split down). Tabs are reorderable
- * within the strip and draggable to other panes (HTML5 DnD with a
- * typed payload); the drop index is derived from the pointer's
- * position relative to each tab's midpoint. All mutations go through
- * the pure `paneTree` reducers via the workspace API.
+ * actions (new tab, split right, split down, pane options). Tabs are
+ * reorderable within the strip and draggable to other panes (HTML5 DnD
+ * with a typed payload); the drop index is derived from the pointer's
+ * position relative to each tab's midpoint. Right-clicking a tab opens
+ * a context menu (close others / close to the right / open in split);
+ * the pane-options button toggles stacked tabs, maximize, even split,
+ * and linked-pane following. All mutations go through the pure
+ * `paneTree` reducers via the workspace API.
  */
 export default function TabStrip({ leaf }: TabStripProps): ReactNode {
-  const { activateTab, closeTab, openTab, splitFocused, moveTab, focusPane } =
-    useWorkspace();
+  const {
+    state,
+    activateTab,
+    closeTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    openTab,
+    openInSplit,
+    splitFocused,
+    moveTab,
+    focusPane,
+    togglePaneStacked,
+    toggleMaximize,
+    equalizeSplits,
+    setPaneLink,
+  } = useWorkspace();
   const active = getActiveTab(leaf);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const tabMenu = useContextMenu();
+  const paneMenu = useContextMenu();
+  const [menuTabId, setMenuTabId] = useState<string | null>(null);
+
+  const stacked = leaf.stacked === true;
+  const isMaximized = state.maximizedPaneId === leaf.id;
+  const otherLeaves = useMemo(
+    () => listLeaves(state.root).filter((l) => l.id !== leaf.id),
+    [state.root, leaf.id],
+  );
+  const leafCount = useMemo(() => listLeaves(state.root).length, [state.root]);
+
+  const openTabMenu = useCallback(
+    (e: ReactMouseEvent, tabId: string) => {
+      focusPane(leaf.id);
+      setMenuTabId(tabId);
+      tabMenu.open(e);
+    },
+    [focusPane, leaf.id, tabMenu],
+  );
+
+  const tabMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (menuTabId === null) return [];
+    const idx = leaf.tabs.findIndex((t) => t.id === menuTabId);
+    if (idx === -1) return [];
+    const tab = leaf.tabs[idx];
+    return [
+      {
+        id: "close",
+        label: "Close tab",
+        onSelect: () => closeTab(leaf.id, tab.id),
+      },
+      {
+        id: "close-others",
+        label: "Close other tabs",
+        disabled: leaf.tabs.length <= 1,
+        onSelect: () => closeOtherTabs(leaf.id, tab.id),
+      },
+      {
+        id: "close-right",
+        label: "Close tabs to the right",
+        disabled: idx === leaf.tabs.length - 1,
+        onSelect: () => closeTabsToRight(leaf.id, tab.id),
+      },
+      {
+        id: "split",
+        label: "Open in new split",
+        separatorAbove: true,
+        onSelect: () => {
+          focusPane(leaf.id);
+          openInSplit(tab.path, "row");
+        },
+      },
+    ];
+  }, [
+    menuTabId,
+    leaf.id,
+    leaf.tabs,
+    closeTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    focusPane,
+    openInSplit,
+  ]);
+
+  const paneMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const items: ContextMenuItem[] = [
+      {
+        id: "stacked",
+        label: stacked ? "Unstack tabs" : "Stack tabs",
+        onSelect: () => togglePaneStacked(leaf.id),
+      },
+      {
+        id: "maximize",
+        label: isMaximized ? "Restore pane" : "Maximize pane",
+        onSelect: () => toggleMaximize(leaf.id),
+      },
+      {
+        id: "even",
+        label: "Even split sizes",
+        disabled: leafCount < 2,
+        onSelect: () => equalizeSplits(),
+      },
+    ];
+    if (leaf.followPaneId !== undefined) {
+      items.push({
+        id: "unlink",
+        label: "Unlink this pane",
+        separatorAbove: true,
+        onSelect: () => setPaneLink(leaf.id, null),
+      });
+    }
+    otherLeaves.forEach((other, i) => {
+      const label = tabTitleForPath(getActiveTab(other).path);
+      const isLeader = leaf.followPaneId === other.id;
+      items.push({
+        id: `link-${other.id}`,
+        label: isLeader ? `\u2713 Following: ${label}` : `Follow: ${label}`,
+        separatorAbove: i === 0 && leaf.followPaneId === undefined,
+        onSelect: () => setPaneLink(leaf.id, isLeader ? null : other.id),
+      });
+    });
+    return items;
+  }, [
+    stacked,
+    isMaximized,
+    leafCount,
+    leaf.id,
+    leaf.followPaneId,
+    otherLeaves,
+    togglePaneStacked,
+    toggleMaximize,
+    equalizeSplits,
+    setPaneLink,
+  ]);
 
   const onTabDragStart = useCallback(
     (e: ReactDragEvent, tabId: string) => {
-      e.dataTransfer.setData(
-        TAB_MIME,
-        JSON.stringify({ paneId: leaf.id, tabId }),
-      );
-      e.dataTransfer.effectAllowed = "move";
+      writeTabDrag(e, { paneId: leaf.id, tabId });
     },
     [leaf.id],
   );
@@ -129,16 +237,22 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
 
   return (
     <div
-      className="workspace-tabstrip"
+      className={`workspace-tabstrip ${stacked ? "is-stacked" : ""}`}
       onDragOver={onStripDragOver}
       onDrop={onDrop}
       onDragLeave={onDragLeaveStrip}
       onMouseDown={() => focusPane(leaf.id)}
     >
-      <div className="workspace-tabstrip-tabs" role="tablist" aria-label="Open tabs">
+      <div
+        className="workspace-tabstrip-tabs"
+        role="tablist"
+        aria-label="Open tabs"
+        aria-orientation="horizontal"
+      >
         {leaf.tabs.map((tab, i) => {
           const isActive = tab.id === active.id;
           const title = tabTitleForPath(tab.path);
+          const linked = leaf.followPaneId !== undefined;
           return (
             <div
               key={tab.id}
@@ -148,6 +262,7 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
               draggable
               onDragStart={(e) => onTabDragStart(e, tab.id)}
               onDragOver={(e) => onTabDragOver(e, i)}
+              onContextMenu={(e) => openTabMenu(e, tab.id)}
             >
               <button
                 type="button"
@@ -156,7 +271,22 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
                 className="workspace-tab-button"
                 title={tab.path}
                 onClick={() => activateTab(leaf.id, tab.id)}
+                onAuxClick={(e) => {
+                  // Middle-click closes the tab (browser-style).
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    closeTab(leaf.id, tab.id);
+                  }
+                }}
               >
+                {isActive && linked && (
+                  <Link2
+                    size={12}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                    className="workspace-tab-link-icon"
+                  />
+                )}
                 {title}
               </button>
               <button
@@ -215,7 +345,42 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
         >
           <SplitSquareVertical size={16} strokeWidth={2} aria-hidden="true" />
         </button>
+        <button
+          type="button"
+          className={`workspace-tab-action ${isMaximized ? "is-active" : ""}`}
+          aria-label={isMaximized ? "Restore pane" : "Maximize pane"}
+          aria-pressed={isMaximized}
+          title={isMaximized ? "Restore pane" : "Maximize pane"}
+          onClick={() => toggleMaximize(leaf.id)}
+        >
+          <Maximize2 size={16} strokeWidth={2} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="workspace-tab-action"
+          aria-label="Pane options"
+          aria-haspopup="menu"
+          title="Pane options"
+          onClick={(e) => {
+            focusPane(leaf.id);
+            paneMenu.open(e);
+          }}
+        >
+          <MoreVertical size={16} strokeWidth={2} aria-hidden="true" />
+        </button>
       </div>
+      <ContextMenu
+        isOpen={tabMenu.isOpen}
+        position={tabMenu.position}
+        items={tabMenuItems}
+        onClose={tabMenu.close}
+      />
+      <ContextMenu
+        isOpen={paneMenu.isOpen}
+        position={paneMenu.position}
+        items={paneMenuItems}
+        onClose={paneMenu.close}
+      />
     </div>
   );
 }

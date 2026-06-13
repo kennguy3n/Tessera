@@ -5,10 +5,13 @@ import {
   MAX_TABS_PER_PANE,
   MIN_PANE_FRACTION,
   WORKSPACE_SCHEMA_VERSION,
+  closeOtherTabs,
   closeTab,
+  closeTabsToRight,
   countLeaves,
   createDefaultWorkspace,
   deserializeWorkspace,
+  equalizeSplits,
   findLeaf,
   focusAdjacentPane,
   focusAdjacentTab,
@@ -16,14 +19,26 @@ import {
   getActiveTab,
   getFocusedLeaf,
   listLeaves,
+  listLinkedFollowers,
+  maximizePane,
   moveTab,
   navigateTab,
   openTab,
+  pruneStaleLinks,
   resizeSplit,
+  resolveLinkedPath,
+  restorePanes,
   serializeWorkspace,
   setActiveTab,
+  setPaneLink,
+  setPaneStacked,
+  setTabScroll,
   splitPane,
+  splitWithTab,
   tabTitleForPath,
+  toggleMaximizePane,
+  togglePaneStacked,
+  wouldCreateLinkCycle,
   type LeafPane,
   type SplitPane,
   type WorkspaceState,
@@ -37,6 +52,15 @@ function asLeaf(state: WorkspaceState, id: string): LeafPane {
   const leaf = findLeaf(state.root, id);
   if (!leaf) throw new Error(`leaf ${id} not found`);
   return leaf;
+}
+
+/** Two side-by-side leaves: pane-1 (tab-1) | pane-2 (tab-2), focus pane-2. */
+function twoPane(): WorkspaceState {
+  return splitPane(defaultWs(), "pane-1", "row", {
+    newPaneId: "pane-2",
+    newTabId: "tab-2",
+    newSplitId: "split-1",
+  });
 }
 
 describe("paneTree — construction", () => {
@@ -554,5 +578,319 @@ describe("paneTree — immutability", () => {
     const after = (ws.root as SplitPane).children[0];
     expect(after).toBe(before);
     expect(listLeaves(ws.root)).toHaveLength(2);
+  });
+});
+
+describe("paneTree — scroll persistence", () => {
+  it("records a finite, non-negative scrollTop on the active tab", () => {
+    const ws = setTabScroll(defaultWs(), "pane-1", "tab-1", 240.6);
+    expect(asLeaf(ws, "pane-1").tabs[0].scrollTop).toBe(241);
+  });
+
+  it("clamps negatives to zero and ignores non-finite values", () => {
+    // Clamp a previously-set offset back down to 0.
+    let ws = setTabScroll(defaultWs(), "pane-1", "tab-1", 80);
+    ws = setTabScroll(ws, "pane-1", "tab-1", -5);
+    expect(asLeaf(ws, "pane-1").tabs[0].scrollTop).toBe(0);
+    const fresh = defaultWs();
+    expect(setTabScroll(fresh, "pane-1", "tab-1", Number.NaN)).toBe(fresh);
+    expect(setTabScroll(fresh, "pane-1", "tab-1", Infinity)).toBe(fresh);
+  });
+
+  it("no-ops (same reference) when the value is unchanged or target missing", () => {
+    const ws = setTabScroll(defaultWs(), "pane-1", "tab-1", 100);
+    expect(setTabScroll(ws, "pane-1", "tab-1", 100)).toBe(ws);
+    expect(setTabScroll(ws, "ghost", "tab-1", 50)).toBe(ws);
+    expect(setTabScroll(ws, "pane-1", "ghost", 50)).toBe(ws);
+  });
+
+  it("clears scrollTop when the tab navigates to a new path", () => {
+    let ws = setTabScroll(defaultWs(), "pane-1", "tab-1", 120);
+    expect(asLeaf(ws, "pane-1").tabs[0].scrollTop).toBe(120);
+    ws = navigateTab(ws, "pane-1", "tab-1", "/tasks");
+    expect(asLeaf(ws, "pane-1").tabs[0].scrollTop).toBeUndefined();
+  });
+
+  it("round-trips scrollTop through serialize/deserialize", () => {
+    const ws = setTabScroll(defaultWs(), "pane-1", "tab-1", 333);
+    const restored = deserializeWorkspace(serializeWorkspace(ws));
+    expect(asLeaf(restored!, "pane-1").tabs[0].scrollTop).toBe(333);
+  });
+
+  it("tolerates a bad scrollTop in a persisted blob (drops it, keeps layout)", () => {
+    const blob = {
+      version: WORKSPACE_SCHEMA_VERSION,
+      state: {
+        focusedPaneId: "leaf",
+        root: {
+          type: "leaf",
+          id: "leaf",
+          tabs: [{ id: "a", path: "/", scrollTop: "nope" }],
+          activeTabId: "a",
+        },
+      },
+    };
+    const ws = deserializeWorkspace(JSON.stringify(blob));
+    expect(ws).not.toBeNull();
+    expect((ws!.root as LeafPane).tabs[0].scrollTop).toBeUndefined();
+  });
+});
+
+describe("paneTree — maximize / restore", () => {
+  it("maximizes a live pane and focuses it", () => {
+    let ws = twoPane();
+    ws = maximizePane(ws, "pane-1");
+    expect(ws.maximizedPaneId).toBe("pane-1");
+    expect(ws.focusedPaneId).toBe("pane-1");
+  });
+
+  it("no-ops maximize on a missing pane", () => {
+    const ws = twoPane();
+    expect(maximizePane(ws, "ghost")).toBe(ws);
+  });
+
+  it("restore clears the flag; toggle flips it", () => {
+    let ws = maximizePane(twoPane(), "pane-2");
+    ws = restorePanes(ws);
+    expect(ws.maximizedPaneId).toBeUndefined();
+    ws = toggleMaximizePane(ws, "pane-2");
+    expect(ws.maximizedPaneId).toBe("pane-2");
+    ws = toggleMaximizePane(ws, "pane-2");
+    expect(ws.maximizedPaneId).toBeUndefined();
+  });
+
+  it("auto-clears the maximize flag when the maximized pane collapses", () => {
+    let ws = maximizePane(twoPane(), "pane-2");
+    expect(ws.maximizedPaneId).toBe("pane-2");
+    // Closing pane-2's only tab collapses it back to a single leaf.
+    ws = closeTab(ws, "pane-2", "tab-2");
+    expect(ws.maximizedPaneId).toBeUndefined();
+    expect(ws.root.type).toBe("leaf");
+  });
+
+  it("preserves the maximize flag across a tab open in another pane", () => {
+    let ws = maximizePane(twoPane(), "pane-1");
+    ws = openTab(ws, "pane-2", { id: "t-extra", path: "/tasks" });
+    expect(ws.maximizedPaneId).toBe("pane-1");
+  });
+
+  it("does not survive serialize when the pane is gone", () => {
+    const blob = {
+      version: WORKSPACE_SCHEMA_VERSION,
+      state: {
+        focusedPaneId: "leaf",
+        maximizedPaneId: "ghost",
+        root: { type: "leaf", id: "leaf", tabs: [{ id: "a", path: "/" }], activeTabId: "a" },
+      },
+    };
+    const ws = deserializeWorkspace(JSON.stringify(blob));
+    expect(ws!.maximizedPaneId).toBeUndefined();
+  });
+
+  it("restores a valid maximize flag from a persisted blob", () => {
+    const ws = deserializeWorkspace(serializeWorkspace(maximizePane(twoPane(), "pane-1")));
+    expect(ws!.maximizedPaneId).toBe("pane-1");
+  });
+});
+
+describe("paneTree — equalizeSplits", () => {
+  it("rebalances an uneven split to equal fractions", () => {
+    let ws = twoPane();
+    ws = resizeSplit(ws, "split-1", [0.8, 0.2]);
+    expect((ws.root as SplitPane).sizes).toEqual([0.8, 0.2]);
+    ws = equalizeSplits(ws);
+    expect((ws.root as SplitPane).sizes).toEqual([0.5, 0.5]);
+  });
+
+  it("no-ops (same reference) on a single pane or already-even tree", () => {
+    const single = defaultWs();
+    expect(equalizeSplits(single)).toBe(single);
+    const even = twoPane();
+    expect(equalizeSplits(even)).toBe(even);
+  });
+});
+
+describe("paneTree — closeOtherTabs / closeTabsToRight", () => {
+  function fourTabs(): WorkspaceState {
+    let ws = openTab(defaultWs(), "pane-1", { id: "t2", path: "/a" });
+    ws = openTab(ws, "pane-1", { id: "t3", path: "/b" });
+    ws = openTab(ws, "pane-1", { id: "t4", path: "/c" });
+    return ws;
+  }
+
+  it("closeOtherTabs keeps only the named tab and activates it", () => {
+    const ws = closeOtherTabs(fourTabs(), "pane-1", "t3");
+    const leaf = asLeaf(ws, "pane-1");
+    expect(leaf.tabs.map((t) => t.id)).toEqual(["t3"]);
+    expect(leaf.activeTabId).toBe("t3");
+  });
+
+  it("closeOtherTabs no-ops on a single-tab pane or missing tab", () => {
+    const single = defaultWs();
+    expect(closeOtherTabs(single, "pane-1", "tab-1")).toBe(single);
+    const four = fourTabs();
+    expect(closeOtherTabs(four, "pane-1", "ghost")).toBe(four);
+  });
+
+  it("closeTabsToRight removes trailing tabs and repairs active id", () => {
+    let ws = fourTabs(); // active = t4 (last opened)
+    ws = closeTabsToRight(ws, "pane-1", "t2");
+    const leaf = asLeaf(ws, "pane-1");
+    expect(leaf.tabs.map((t) => t.id)).toEqual(["tab-1", "t2"]);
+    // t4 was active and got removed → falls back to the boundary tab.
+    expect(leaf.activeTabId).toBe("t2");
+  });
+
+  it("closeTabsToRight keeps an active tab that survives", () => {
+    let ws = fourTabs();
+    ws = setActiveTab(ws, "pane-1", "tab-1");
+    ws = closeTabsToRight(ws, "pane-1", "t2");
+    expect(asLeaf(ws, "pane-1").activeTabId).toBe("tab-1");
+  });
+
+  it("closeTabsToRight no-ops when the tab is already last", () => {
+    const four = fourTabs();
+    expect(closeTabsToRight(four, "pane-1", "t4")).toBe(four);
+  });
+});
+
+describe("paneTree — splitWithTab (drag-to-split)", () => {
+  it("moves a tab into a new pane on the trailing side of the target", () => {
+    let ws = openTab(defaultWs(), "pane-1", { id: "t2", path: "/a" });
+    ws = splitWithTab(
+      ws,
+      { paneId: "pane-1", tabId: "t2" },
+      "pane-1",
+      "row",
+      { newPaneId: "p2", newTabId: "ignored", newSplitId: "s1" },
+    );
+    // Same pane with >1 tab falls back to splitPane carving t2 out.
+    expect(countLeaves(ws.root)).toBe(2);
+    const moved = listLeaves(ws.root).find((l) => l.tabs.some((t) => t.id === "t2"));
+    expect(moved).toBeTruthy();
+  });
+
+  it("moves a tab from one pane into a new split of another", () => {
+    let ws = twoPane(); // pane-1 | pane-2
+    ws = openTab(ws, "pane-1", { id: "t1b", path: "/a" });
+    ws = splitWithTab(
+      ws,
+      { paneId: "pane-1", tabId: "t1b" },
+      "pane-2",
+      "column",
+      { newPaneId: "p3", newTabId: "x", newSplitId: "s2" },
+      { before: false },
+    );
+    expect(countLeaves(ws.root)).toBe(3);
+    expect(asLeaf(ws, "p3").tabs.map((t) => t.id)).toEqual(["t1b"]);
+    expect(ws.focusedPaneId).toBe("p3");
+    // pane-1 retains its remaining tab.
+    expect(asLeaf(ws, "pane-1").tabs.map((t) => t.id)).toEqual(["tab-1"]);
+  });
+
+  it("no-ops at the leaf ceiling and for missing source/target", () => {
+    const ws = twoPane();
+    expect(
+      splitWithTab(ws, { paneId: "ghost", tabId: "x" }, "pane-2", "row", {
+        newPaneId: "p", newTabId: "t", newSplitId: "s",
+      }),
+    ).toBe(ws);
+    expect(
+      splitWithTab(ws, { paneId: "pane-1", tabId: "tab-1" }, "ghost", "row", {
+        newPaneId: "p", newTabId: "t", newSplitId: "s",
+      }),
+    ).toBe(ws);
+  });
+});
+
+describe("paneTree — stacked tabs", () => {
+  it("sets and clears the stacked flag, dropping it when false", () => {
+    let ws = setPaneStacked(defaultWs(), "pane-1", true);
+    expect(asLeaf(ws, "pane-1").stacked).toBe(true);
+    ws = setPaneStacked(ws, "pane-1", false);
+    expect("stacked" in asLeaf(ws, "pane-1")).toBe(false);
+  });
+
+  it("toggle flips the flag and no-ops on missing pane", () => {
+    const ws = togglePaneStacked(defaultWs(), "pane-1");
+    expect(asLeaf(ws, "pane-1").stacked).toBe(true);
+    expect(togglePaneStacked(ws, "ghost")).toBe(ws);
+  });
+
+  it("round-trips the stacked flag through persistence", () => {
+    const ws = setPaneStacked(defaultWs(), "pane-1", true);
+    const restored = deserializeWorkspace(serializeWorkspace(ws));
+    expect(asLeaf(restored!, "pane-1").stacked).toBe(true);
+  });
+});
+
+describe("paneTree — linked panes", () => {
+  it("links a follower to a leader and resolves the leader's path", () => {
+    let ws = twoPane();
+    ws = navigateTab(ws, "pane-1", "tab-1", "/sources");
+    ws = setPaneLink(ws, "pane-2", "pane-1");
+    expect(asLeaf(ws, "pane-2").followPaneId).toBe("pane-1");
+    expect(resolveLinkedPath(ws, "pane-2")).toBe("/sources");
+    expect(resolveLinkedPath(ws, "pane-1")).toBeNull();
+  });
+
+  it("follows the leader's active tab as it changes", () => {
+    let ws = twoPane();
+    ws = openTab(ws, "pane-1", { id: "t1b", path: "/tasks" });
+    ws = setPaneLink(ws, "pane-2", "pane-1");
+    expect(resolveLinkedPath(ws, "pane-2")).toBe("/tasks");
+    ws = setActiveTab(ws, "pane-1", "tab-1");
+    expect(resolveLinkedPath(ws, "pane-2")).toBe("/");
+  });
+
+  it("rejects self-links and cycles", () => {
+    let ws = twoPane();
+    expect(setPaneLink(ws, "pane-1", "pane-1")).toBe(ws);
+    expect(wouldCreateLinkCycle(ws, "pane-1", "pane-1")).toBe(true);
+    ws = setPaneLink(ws, "pane-2", "pane-1");
+    // pane-1 following pane-2 would close the loop.
+    expect(wouldCreateLinkCycle(ws, "pane-1", "pane-2")).toBe(true);
+    expect(setPaneLink(ws, "pane-1", "pane-2")).toBe(ws);
+  });
+
+  it("clears a link with null and lists followers", () => {
+    let ws = setPaneLink(twoPane(), "pane-2", "pane-1");
+    expect(listLinkedFollowers(ws.root, "pane-1").map((l) => l.id)).toEqual(["pane-2"]);
+    ws = setPaneLink(ws, "pane-2", null);
+    expect(asLeaf(ws, "pane-2").followPaneId).toBeUndefined();
+    expect(listLinkedFollowers(ws.root, "pane-1")).toHaveLength(0);
+  });
+
+  it("prunes a dangling link when the leader pane collapses", () => {
+    let ws = twoPane();
+    ws = setPaneLink(ws, "pane-1", "pane-2");
+    expect(asLeaf(ws, "pane-1").followPaneId).toBe("pane-2");
+    // Collapse pane-2 (close its only tab) → pane-1's link is pruned.
+    ws = closeTab(ws, "pane-2", "tab-2");
+    expect(ws.root.type).toBe("leaf");
+    expect((ws.root as LeafPane).followPaneId).toBeUndefined();
+  });
+
+  it("pruneStaleLinks is a no-op when all links are live", () => {
+    const ws = setPaneLink(twoPane(), "pane-2", "pane-1");
+    expect(pruneStaleLinks(ws)).toBe(ws);
+  });
+
+  it("drops a dangling follow link on deserialize", () => {
+    const blob = {
+      version: WORKSPACE_SCHEMA_VERSION,
+      state: {
+        focusedPaneId: "leaf",
+        root: {
+          type: "leaf",
+          id: "leaf",
+          tabs: [{ id: "a", path: "/" }],
+          activeTabId: "a",
+          followPaneId: "missing",
+        },
+      },
+    };
+    const ws = deserializeWorkspace(JSON.stringify(blob));
+    expect((ws!.root as LeafPane).followPaneId).toBeUndefined();
   });
 });

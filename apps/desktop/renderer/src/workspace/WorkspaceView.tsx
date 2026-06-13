@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import {
   MIN_PANE_FRACTION,
+  findLeaf,
   tabTitleForPath,
   getActiveTab,
   type SplitPane,
@@ -93,5 +94,21 @@ function renderNode(node: WorkspaceNode): ReactNode {
  */
 export default function WorkspaceView(): ReactNode {
   const { state } = useWorkspace();
-  return <div className="workspace-root">{renderNode(state.root)}</div>;
+  // When a pane is maximized, render only it full-bleed; the rest of
+  // the tree stays in state (so restoring is exact) but is not mounted,
+  // keeping a maximized view as cheap as a single pane. The flag is
+  // pruned by the reducers if its pane ever disappears, so this can
+  // never render nothing.
+  const maximized =
+    state.maximizedPaneId !== undefined
+      ? findLeaf(state.root, state.maximizedPaneId)
+      : null;
+  return (
+    <div
+      className="workspace-root"
+      data-maximized={maximized ? "true" : undefined}
+    >
+      {maximized ? <Pane leaf={maximized} /> : renderNode(state.root)}
+    </div>
+  );
 }

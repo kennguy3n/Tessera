@@ -77,6 +77,14 @@ export interface WorkspaceTab {
   readonly id: string;
   /** Route location string, e.g. `"/sources"` or `"/sources/abc#x"`. */
   readonly path: string;
+  /**
+   * Best-effort persisted scroll offset (px) of the tab's scroll
+   * container, restored when the tab remounts. Pure UI state — like
+   * `path` it is a position, never document/source content — so it is
+   * safe under the multi-tenant privacy posture. Optional and additive:
+   * old persisted blobs without it round-trip unchanged.
+   */
+  readonly scrollTop?: number;
 }
 
 /** A leaf pane: an ordered tab list and the active tab's id. */
@@ -85,6 +93,21 @@ export interface LeafPane {
   readonly id: string;
   readonly tabs: readonly WorkspaceTab[];
   readonly activeTabId: string;
+  /**
+   * When `true`, the pane renders its tabs as a vertical "stack"
+   * (Obsidian's stacked-tabs mode) rather than the default horizontal
+   * strip. Purely a presentation toggle; the tab model is identical.
+   * Optional/additive so the default layout is unaffected.
+   */
+  readonly stacked?: boolean;
+  /**
+   * Id of another leaf this pane *follows*. When set and the leader's
+   * active-tab route changes, this pane's active tab mirrors it (an
+   * Obsidian-style "linked pane" — e.g. a detail pane that tracks the
+   * selection of a list pane). Cleared automatically if the leader
+   * disappears or a link would form a cycle. Optional/additive.
+   */
+  readonly followPaneId?: string;
 }
 
 /** A split branch: a direction, ordered children, and their sizes. */
@@ -102,6 +125,14 @@ export type WorkspaceNode = LeafPane | SplitPane;
 export interface WorkspaceState {
   readonly root: WorkspaceNode;
   readonly focusedPaneId: string;
+  /**
+   * When set to an existing leaf id, that pane is rendered full-bleed
+   * (maximized) while the rest of the tree is hidden but preserved, so
+   * toggling restores the exact prior layout. Always cleared if it ever
+   * stops referencing a live leaf (collapse, deserialize) so the view
+   * can never get stuck showing nothing. Optional/additive.
+   */
+  readonly maximizedPaneId?: string;
 }
 
 /** Ids needed to create a fresh single-pane workspace. */
@@ -322,6 +353,24 @@ function ensureFocus(
   return { root, focusedPaneId: first.id };
 }
 
+/**
+ * Carry the `maximizedPaneId` from `prev` onto `next`, but only while
+ * it still references a live leaf in `next.root`. A mutation that
+ * collapses the maximized pane therefore drops the flag automatically,
+ * so the view can never get stuck rendering a pane that no longer
+ * exists. Returns `next` unchanged when there is nothing to carry.
+ */
+function carryMaximize(
+  prev: WorkspaceState,
+  next: WorkspaceState,
+): WorkspaceState {
+  const id = prev.maximizedPaneId;
+  if (!id) return next;
+  if (!findLeaf(next.root, id)) return next;
+  if (next.maximizedPaneId === id) return next;
+  return { ...next, maximizedPaneId: id };
+}
+
 function withActiveTab(leaf: LeafPane, tabs: readonly WorkspaceTab[]): LeafPane {
   const activeStillThere = tabs.some((t) => t.id === leaf.activeTabId);
   return {
@@ -354,7 +403,7 @@ export function openTab(
   if (target.tabs.length >= MAX_TABS_PER_PANE) return state;
   if (target.tabs.some((t) => t.id === newTab.id)) return state;
   const activate = opts.activate ?? true;
-  const tab: WorkspaceTab = { id: newTab.id, path: normalizePath(newTab.path) };
+  const tab: WorkspaceTab = sanitizeTab(newTab);
   const root = rebuild(state.root, paneId, (leaf) => {
     const tabs = [...leaf.tabs];
     const at = clampIndex(opts.index, tabs.length);
@@ -362,7 +411,17 @@ export function openTab(
     return { ...leaf, tabs, activeTabId: activate ? tab.id : leaf.activeTabId };
   });
   if (!root) return state;
-  return { root, focusedPaneId: paneId };
+  return carryMaximize(state, { root, focusedPaneId: paneId });
+}
+
+/** Build a clean {@link WorkspaceTab}: normalized path and a finite,
+ *  non-negative `scrollTop` (dropped when absent/invalid). */
+function sanitizeTab(tab: WorkspaceTab): WorkspaceTab {
+  const out: WorkspaceTab = { id: tab.id, path: normalizePath(tab.path) };
+  if (typeof tab.scrollTop === "number" && Number.isFinite(tab.scrollTop)) {
+    return { ...out, scrollTop: Math.max(0, tab.scrollTop) };
+  }
+  return out;
 }
 
 /**
@@ -399,7 +458,7 @@ export function closeTab(
   });
   if (!root) return state;
   const normalized = normalizeTree(root);
-  return ensureFocus(normalized, paneId);
+  return carryMaximize(state, pruneStaleLinks(ensureFocus(normalized, paneId)));
 }
 
 /** Make `tabId` the active tab of pane `paneId` and focus the pane.
@@ -419,7 +478,7 @@ export function setActiveTab(
     activeTabId: tabId,
   }));
   if (!root) return state;
-  return { root, focusedPaneId: paneId };
+  return carryMaximize(state, { root, focusedPaneId: paneId });
 }
 
 /**
@@ -442,7 +501,40 @@ export function navigateTab(
   if (!tab || tab.path === next) return state;
   const root = rebuild(state.root, paneId, (leaf) => ({
     ...leaf,
-    tabs: leaf.tabs.map((t) => (t.id === tabId ? { ...t, path: next } : t)),
+    // Reset the persisted scroll offset on navigation: it belonged to
+    // the previous route and would otherwise be restored against an
+    // unrelated page. (`scrollTop` is intentionally dropped here.)
+    tabs: leaf.tabs.map((t) => (t.id === tabId ? { id: t.id, path: next } : t)),
+  }));
+  if (!root) return state;
+  return { ...state, root };
+}
+
+/**
+ * Record the scroll offset of a tab's scroll container so it can be
+ * restored when the tab is re-shown / the workspace reloads. Pure
+ * position state (never content). No-ops (returns same reference) when
+ * the pane/tab is missing or the value is unchanged so the scroll →
+ * state report can't loop. Does not move focus.
+ */
+export function setTabScroll(
+  state: WorkspaceState,
+  paneId: string,
+  tabId: string,
+  scrollTop: number,
+): WorkspaceState {
+  if (!Number.isFinite(scrollTop)) return state;
+  const value = Math.max(0, Math.round(scrollTop));
+  const target = findLeaf(state.root, paneId);
+  if (!target) return state;
+  const tab = target.tabs.find((t) => t.id === tabId);
+  if (!tab) return state;
+  if ((tab.scrollTop ?? 0) === value) return state;
+  const root = rebuild(state.root, paneId, (leaf) => ({
+    ...leaf,
+    tabs: leaf.tabs.map((t) =>
+      t.id === tabId ? { ...t, scrollTop: value } : t,
+    ),
   }));
   if (!root) return state;
   return { ...state, root };
@@ -514,7 +606,7 @@ export function moveTab(
       return { ...leaf, tabs, activeTabId: moving.id };
     });
     if (!root) return state;
-    return { root, focusedPaneId: source.paneId };
+    return carryMaximize(state, { root, focusedPaneId: source.paneId });
   }
 
   const targetLeaf = findLeaf(state.root, target.paneId);
@@ -536,7 +628,10 @@ export function moveTab(
   });
   if (!inserted) return state;
   const normalized = normalizeTree(inserted);
-  return ensureFocus(normalized, target.paneId);
+  return carryMaximize(
+    state,
+    pruneStaleLinks(ensureFocus(normalized, target.paneId)),
+  );
 }
 
 /**
@@ -623,6 +718,334 @@ export function resizeSplit(
   return { ...state, root };
 }
 
+// ---------------------------------------------------------------------------
+// Ergonomics: maximize, rebalance, bulk tab close, drag-to-split
+// ---------------------------------------------------------------------------
+
+/**
+ * Rebalance every split so its children share the axis equally
+ * (Obsidian's "even split"). No-op (same reference) when the tree is a
+ * single pane or every split is already even.
+ */
+export function equalizeSplits(state: WorkspaceState): WorkspaceState {
+  let changed = false;
+  const root = mapSplits(state.root, (split) => {
+    const even = 1 / split.children.length;
+    if (split.sizes.every((s) => Math.abs(s - even) < 1e-9)) return split;
+    changed = true;
+    return { ...split, sizes: split.children.map(() => even) };
+  });
+  if (!changed) return state;
+  return { ...state, root };
+}
+
+/**
+ * Maximize pane `paneId`: it renders full-bleed while the rest of the
+ * tree is hidden but preserved. Also focuses the pane. No-ops if the
+ * pane is missing or already maximized.
+ */
+export function maximizePane(
+  state: WorkspaceState,
+  paneId: string,
+): WorkspaceState {
+  if (!findLeaf(state.root, paneId)) return state;
+  if (state.maximizedPaneId === paneId && state.focusedPaneId === paneId) {
+    return state;
+  }
+  return { ...state, maximizedPaneId: paneId, focusedPaneId: paneId };
+}
+
+/** Restore from maximized mode (show the whole tree again). No-op when
+ *  nothing is maximized. */
+export function restorePanes(state: WorkspaceState): WorkspaceState {
+  if (state.maximizedPaneId === undefined) return state;
+  return { root: state.root, focusedPaneId: state.focusedPaneId };
+}
+
+/** Toggle maximize for `paneId`. */
+export function toggleMaximizePane(
+  state: WorkspaceState,
+  paneId: string,
+): WorkspaceState {
+  if (state.maximizedPaneId === paneId) return restorePanes(state);
+  return maximizePane(state, paneId);
+}
+
+/**
+ * Close every tab in pane `paneId` except `tabId`, which becomes
+ * active. The pane is never collapsed (it always keeps the one tab).
+ * No-ops if the pane/tab is missing or the pane already has a single
+ * tab.
+ */
+export function closeOtherTabs(
+  state: WorkspaceState,
+  paneId: string,
+  tabId: string,
+): WorkspaceState {
+  const target = findLeaf(state.root, paneId);
+  if (!target) return state;
+  const keep = target.tabs.find((t) => t.id === tabId);
+  if (!keep) return state;
+  if (target.tabs.length <= 1) return state;
+  const root = rebuild(state.root, paneId, (leaf) => ({
+    ...leaf,
+    tabs: [keep],
+    activeTabId: keep.id,
+  }));
+  if (!root) return state;
+  return carryMaximize(state, { root, focusedPaneId: paneId });
+}
+
+/**
+ * Close every tab to the right of `tabId` in pane `paneId`. If the
+ * active tab was among those removed it falls back to `tabId`. No-ops
+ * if the pane/tab is missing or `tabId` is already the last tab.
+ */
+export function closeTabsToRight(
+  state: WorkspaceState,
+  paneId: string,
+  tabId: string,
+): WorkspaceState {
+  const target = findLeaf(state.root, paneId);
+  if (!target) return state;
+  const idx = target.tabs.findIndex((t) => t.id === tabId);
+  if (idx === -1) return state;
+  if (idx === target.tabs.length - 1) return state;
+  const root = rebuild(state.root, paneId, (leaf) => {
+    const tabs = leaf.tabs.slice(0, idx + 1);
+    const activeStill = tabs.some((t) => t.id === leaf.activeTabId);
+    return {
+      ...leaf,
+      tabs,
+      activeTabId: activeStill ? leaf.activeTabId : tabs[tabs.length - 1].id,
+    };
+  });
+  if (!root) return state;
+  return carryMaximize(state, { root, focusedPaneId: paneId });
+}
+
+/**
+ * Drag-to-split: move tab `source.tabId` out of `source.paneId` and
+ * into a brand-new pane created by splitting `targetPaneId` along
+ * `direction`. `opts.before` puts the new pane on the leading
+ * (left/top) side; by default it goes on the trailing (right/bottom)
+ * side — matching which edge the tab was dropped on. The moved tab
+ * becomes active in the new pane and that pane gains focus.
+ *
+ * Degenerate cases fall back gracefully: dropping a pane's only tab
+ * onto itself (nothing to move out) clones instead via
+ * {@link splitPane}. No-ops at the {@link MAX_LEAF_PANES} ceiling or
+ * when the source/target is missing.
+ */
+export function splitWithTab(
+  state: WorkspaceState,
+  source: { paneId: string; tabId: string },
+  targetPaneId: string,
+  direction: SplitDirection,
+  ids: SplitIds,
+  opts: { before?: boolean } = {},
+): WorkspaceState {
+  const sourceLeaf = findLeaf(state.root, source.paneId);
+  if (!sourceLeaf) return state;
+  const moving = sourceLeaf.tabs.find((t) => t.id === source.tabId);
+  if (!moving) return state;
+  const targetLeaf = findLeaf(state.root, targetPaneId);
+  if (!targetLeaf) return state;
+  if (countLeaves(state.root) >= MAX_LEAF_PANES) return state;
+
+  // Same pane: if it's the only tab there's nothing to split out, so
+  // clone. Otherwise splitPane already knows how to carve the named tab
+  // into a sibling.
+  if (source.paneId === targetPaneId) {
+    return splitPane(state, targetPaneId, direction, ids, {
+      tabId: source.tabId,
+    });
+  }
+
+  // Remove the tab from its source pane (which may collapse).
+  const removed = rebuild(state.root, source.paneId, (leaf) => {
+    const tabs = leaf.tabs.filter((t) => t.id !== source.tabId);
+    if (tabs.length === 0) return null;
+    return withActiveTab(leaf, tabs);
+  });
+  if (!removed) return state;
+
+  const newLeaf: LeafPane = {
+    type: "leaf",
+    id: ids.newPaneId,
+    tabs: [moving],
+    activeTabId: moving.id,
+  };
+  const wrapped = rebuild(removed, targetPaneId, (leaf): WorkspaceNode => ({
+    type: "split",
+    id: ids.newSplitId,
+    direction,
+    children: opts.before ? [newLeaf, leaf] : [leaf, newLeaf],
+    sizes: [0.5, 0.5],
+  }));
+  if (!wrapped) return state;
+  const normalized = normalizeTree(wrapped);
+  return pruneStaleLinks(ensureFocus(normalized, ids.newPaneId));
+}
+
+// ---------------------------------------------------------------------------
+// Stacked tabs + linked panes
+// ---------------------------------------------------------------------------
+
+/**
+ * Set pane `paneId`'s stacked-tabs presentation flag. Storing `false`
+ * drops the field so an un-stacked pane serializes identically to the
+ * default. No-ops if the pane is missing or already in the requested
+ * state.
+ */
+export function setPaneStacked(
+  state: WorkspaceState,
+  paneId: string,
+  stacked: boolean,
+): WorkspaceState {
+  const target = findLeaf(state.root, paneId);
+  if (!target) return state;
+  if ((target.stacked ?? false) === stacked) return state;
+  const root = rebuild(state.root, paneId, (leaf) =>
+    stacked ? { ...leaf, stacked: true } : omitField(leaf, "stacked"),
+  );
+  if (!root) return state;
+  return { ...state, root };
+}
+
+/** Toggle pane `paneId`'s stacked-tabs flag. */
+export function togglePaneStacked(
+  state: WorkspaceState,
+  paneId: string,
+): WorkspaceState {
+  const target = findLeaf(state.root, paneId);
+  if (!target) return state;
+  return setPaneStacked(state, paneId, !(target.stacked ?? false));
+}
+
+/** Every leaf that currently follows `leaderId`. */
+export function listLinkedFollowers(
+  root: WorkspaceNode,
+  leaderId: string,
+): LeafPane[] {
+  return listLeaves(root).filter((l) => l.followPaneId === leaderId);
+}
+
+/**
+ * Would making `followerId` follow `leaderId` create a follow cycle?
+ * True when they are the same pane, or when `leaderId` already follows
+ * `followerId` (transitively). Guards {@link setPaneLink} so the
+ * propagation walk can never loop.
+ */
+export function wouldCreateLinkCycle(
+  state: WorkspaceState,
+  followerId: string,
+  leaderId: string,
+): boolean {
+  if (followerId === leaderId) return true;
+  const seen = new Set<string>();
+  let cur: string | undefined = leaderId;
+  while (cur !== undefined) {
+    if (cur === followerId) return true;
+    if (seen.has(cur)) break;
+    seen.add(cur);
+    cur = findLeaf(state.root, cur)?.followPaneId;
+  }
+  return false;
+}
+
+/**
+ * Link pane `followerId` so it follows `leaderId` (its active tab will
+ * mirror the leader's route — see {@link resolveLinkedPath}). Pass
+ * `null` to clear the link. No-ops if the follower is missing, the
+ * leader is missing, the link is unchanged, or it would form a cycle.
+ */
+export function setPaneLink(
+  state: WorkspaceState,
+  followerId: string,
+  leaderId: string | null,
+): WorkspaceState {
+  const follower = findLeaf(state.root, followerId);
+  if (!follower) return state;
+  if (leaderId === null) {
+    if (follower.followPaneId === undefined) return state;
+    const root = rebuild(state.root, followerId, (leaf) =>
+      omitField(leaf, "followPaneId"),
+    );
+    if (!root) return state;
+    return { ...state, root };
+  }
+  if (!findLeaf(state.root, leaderId)) return state;
+  if (follower.followPaneId === leaderId) return state;
+  if (wouldCreateLinkCycle(state, followerId, leaderId)) return state;
+  const root = rebuild(state.root, followerId, (leaf) => ({
+    ...leaf,
+    followPaneId: leaderId,
+  }));
+  if (!root) return state;
+  return { ...state, root };
+}
+
+/**
+ * The route a pane should mirror because it follows another pane, or
+ * `null` when the pane follows nothing (or its leader has gone away).
+ * The effectful layer reads this to push the follower's router to the
+ * leader's location; the relationship itself stays pure here.
+ */
+export function resolveLinkedPath(
+  state: WorkspaceState,
+  paneId: string,
+): string | null {
+  const pane = findLeaf(state.root, paneId);
+  if (!pane || pane.followPaneId === undefined) return null;
+  const leader = findLeaf(state.root, pane.followPaneId);
+  if (!leader) return null;
+  return getActiveTab(leader).path;
+}
+
+/**
+ * Drop any `followPaneId` that no longer points at a live, distinct
+ * leaf. Applied after structural mutations (tab close / move) and on
+ * deserialize so a collapsed leader can never strand a dangling link.
+ */
+export function pruneStaleLinks(state: WorkspaceState): WorkspaceState {
+  const ids = new Set(listLeaves(state.root).map((l) => l.id));
+  let changed = false;
+  const root = mapLeaves(state.root, (leaf) => {
+    if (leaf.followPaneId === undefined) return leaf;
+    if (leaf.followPaneId !== leaf.id && ids.has(leaf.followPaneId)) {
+      return leaf;
+    }
+    changed = true;
+    return omitField(leaf, "followPaneId");
+  });
+  if (!changed) return state;
+  return { ...state, root };
+}
+
+/** Map a function over every leaf, preserving reference identity for
+ *  untouched branches. */
+function mapLeaves(
+  node: WorkspaceNode,
+  fn: (leaf: LeafPane) => LeafPane,
+): WorkspaceNode {
+  if (node.type === "leaf") return fn(node);
+  const children = node.children.map((c) => mapLeaves(c, fn));
+  const changed = children.some((c, i) => c !== node.children[i]);
+  return changed ? { ...node, children } : node;
+}
+
+/** Return a copy of `leaf` with an optional field removed. */
+function omitField(
+  leaf: LeafPane,
+  field: "stacked" | "followPaneId",
+): LeafPane {
+  if (leaf[field] === undefined) return leaf;
+  const next = { ...leaf };
+  delete next[field];
+  return next;
+}
+
 function mapSplits(
   node: WorkspaceNode,
   fn: (split: SplitPane) => SplitPane,
@@ -702,17 +1125,59 @@ export function deserializeWorkspace(
     return null;
   }
   if (!isRecord(parsed)) return null;
-  if (parsed.version !== WORKSPACE_SCHEMA_VERSION) return null;
-  if (!isRecord(parsed.state)) return null;
-  const focusedPaneId = parsed.state.focusedPaneId;
+  // Version gate + migration hook. Older versions are upgraded by
+  // `migratePersisted` to the current shape; anything it can't upgrade
+  // (unknown/future version) yields `null` so the caller falls back to
+  // the single-pane default rather than mis-parsing.
+  const migrated = migratePersisted(parsed);
+  if (!migrated) return null;
+  if (!isRecord(migrated.state)) return null;
+  const focusedPaneId = migrated.state.focusedPaneId;
   if (typeof focusedPaneId !== "string") return null;
 
   const ids = new Set<string>();
-  const root = parseNode(parsed.state.root, ids);
+  const root = parseNode(migrated.state.root, ids);
   if (!root) return null;
   const normalized = normalizeTree(root);
-  // Re-point focus if the persisted id no longer maps to a leaf.
-  return ensureFocus(normalized, focusedPaneId);
+  // Re-point focus if the persisted id no longer maps to a leaf, drop
+  // any dangling follow links, then restore the maximized pane only if
+  // it still references a live leaf.
+  const focused = pruneStaleLinks(ensureFocus(normalized, focusedPaneId));
+  const maximizedPaneId = migrated.state.maximizedPaneId;
+  if (
+    typeof maximizedPaneId === "string" &&
+    findLeaf(focused.root, maximizedPaneId)
+  ) {
+    return { ...focused, maximizedPaneId };
+  }
+  return focused;
+}
+
+/**
+ * Bring a parsed persisted blob up to {@link WORKSPACE_SCHEMA_VERSION}.
+ *
+ * Today the only supported on-disk version is the current one, so this
+ * is the single extension point for future migrations: when the schema
+ * changes incompatibly, bump {@link WORKSPACE_SCHEMA_VERSION} and add a
+ * `case` here that rewrites the older `state` shape forward. Returning
+ * `null` rejects a blob we don't know how to read (e.g. a newer version
+ * written by a future build), which falls back to the default layout.
+ */
+function migratePersisted(
+  parsed: Record<string, unknown>,
+): { version: number; state: Record<string, unknown> } | null {
+  const { version } = parsed;
+  if (typeof version !== "number" || !Number.isInteger(version)) return null;
+  if (version > WORKSPACE_SCHEMA_VERSION) return null;
+  if (!isRecord(parsed.state)) return null;
+  // No historical versions to upgrade yet; v1 is consumed as-is. Future
+  // migrations chain here, e.g.:
+  //   let state = parsed.state;
+  //   if (version < 2) state = migrateV1toV2(state);
+  if (version === WORKSPACE_SCHEMA_VERSION) {
+    return { version, state: parsed.state };
+  }
+  return null;
 }
 
 /**
@@ -736,7 +1201,15 @@ function parseNode(
       if (typeof raw.id !== "string" || seenIds.has(raw.id)) return null;
       if (typeof raw.path !== "string") return null;
       seenIds.add(raw.id);
-      tabs.push({ id: raw.id, path: normalizePath(raw.path) });
+      // `scrollTop` is optional, additive UI state — tolerate its
+      // absence (old blobs) and ignore non-finite garbage rather than
+      // rejecting the whole layout.
+      const tab: WorkspaceTab = { id: raw.id, path: normalizePath(raw.path) };
+      if (typeof raw.scrollTop === "number" && Number.isFinite(raw.scrollTop)) {
+        tabs.push({ ...tab, scrollTop: Math.max(0, raw.scrollTop) });
+      } else {
+        tabs.push(tab);
+      }
       if (tabs.length > MAX_TABS_PER_PANE) return null;
     }
     const activeTabId =
@@ -744,7 +1217,16 @@ function parseNode(
       tabs.some((t) => t.id === value.activeTabId)
         ? value.activeTabId
         : tabs[0].id;
-    return { type: "leaf", id: value.id, tabs, activeTabId };
+    const leaf: LeafPane = { type: "leaf", id: value.id, tabs, activeTabId };
+    // Optional presentation/link fields: tolerate absence and bad
+    // types. `followPaneId` validity (must point at a live, distinct
+    // leaf) is enforced once the whole tree is known, via
+    // `pruneStaleLinks` in `deserializeWorkspace`.
+    const withStacked =
+      value.stacked === true ? { ...leaf, stacked: true } : leaf;
+    return typeof value.followPaneId === "string"
+      ? { ...withStacked, followPaneId: value.followPaneId }
+      : withStacked;
   }
   if (value.type === "split") {
     if (typeof value.id !== "string" || seenIds.has(value.id)) return null;

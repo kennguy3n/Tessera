@@ -5,6 +5,7 @@ import { ToastProvider } from "../components/Toast";
 import { useToast } from "../components/toastContext";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Sidebar from "../components/Sidebar";
+import WorkspaceProvider from "../workspace/WorkspaceProvider";
 import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
@@ -296,7 +297,9 @@ describe("Sidebar shortcut hints", () => {
   it("annotates nav links with the matching Ctrl/Cmd shortcut", () => {
     render(
       <MemoryRouter>
-        <Sidebar />
+        <WorkspaceProvider>
+          <Sidebar />
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
     // Primary items keep their shortcut even though the visible
