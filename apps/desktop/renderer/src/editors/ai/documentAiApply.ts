@@ -82,6 +82,15 @@ export function blockEndAfter(editor: Editor, pos: number): number {
  *    `range.to` (or the current selection when `range` is null).
  *  - `append`: inserts at the end of the document.
  *
+ * The `range` is a snapshot captured when the panel opened. The doc can
+ * in principle shrink before the user applies (e.g. an async edit), which
+ * would push the captured positions past the current end and make
+ * `insertContentAt` throw a "Position out of range" error. We therefore
+ * clamp the range to the live document bounds before using it — in the
+ * normal (unchanged-doc) case this is a no-op, and if the snapshot has
+ * gone stale we degrade safely (replace a valid sub-range, or reject when
+ * it collapses) instead of crashing.
+ *
  * Returns `true` when the mutation was dispatched, `false` when it was
  * rejected (e.g. `replace` with no selection) so the caller can keep
  * the preview open and surface a hint.
@@ -94,13 +103,17 @@ export function applyAiResult(
   action: DocumentAiActionId,
 ): boolean {
   const html = aiResultToHtml(text, action);
+  const docSize = editor.state.doc.content.size;
 
   if (mode === "replace") {
-    if (!range || range.from >= range.to) return false;
+    if (!range) return false;
+    const from = Math.max(0, Math.min(range.from, docSize));
+    const to = Math.max(from, Math.min(range.to, docSize));
+    if (from >= to) return false;
     return editor
       .chain()
       .focus()
-      .insertContentAt({ from: range.from, to: range.to }, html)
+      .insertContentAt({ from, to }, html)
       .run();
   }
 
