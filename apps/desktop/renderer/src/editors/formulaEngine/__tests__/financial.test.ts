@@ -181,6 +181,14 @@ describe("IPMT / PPMT / CUMIPMT / CUMPRINC — amortisation", () => {
   it("CUMIPMT rejects a non-positive present value", () => {
     expect(code(evalFormula("=CUMIPMT(0.01, 12, 0, 1, 12, 0)"))).toBe("#NUM!");
   });
+
+  it("CUMIPMT truncates a fractional nper for the range check (Excel parity)", () => {
+    // nper 360.9 truncates to 360, so end = 360 is the valid final period and
+    // must not be rejected as out of range; the result matches integer nper 360.
+    const fractional = numberValue("=CUMIPMT(0.06/12, 360.9, 200000, 1, 360, 0)");
+    const integer = numberValue("=CUMIPMT(0.06/12, 360, 200000, 1, 360, 0)");
+    expect(fractional).toBeCloseTo(integer, 6);
+  });
 });
 
 describe("NPV / IRR / MIRR — cash-flow analysis", () => {
@@ -366,6 +374,19 @@ describe("depreciation — SLN / SYD / DB / DDB", () => {
     // Late periods are clamped so the book value floors at salvage.
     const last = numberValue("=DDB(2400, 300, 10, 10)");
     expect(last).toBeGreaterThanOrEqual(0);
+  });
+
+  it("DDB truncates a fractional period (Excel/DB parity, not ceil)", () => {
+    // 1.5 truncates to 1 → period-1 depreciation (480), NOT ceil to 2 (384).
+    expect(numberValue("=DDB(2400, 300, 10, 1.5)")).toBe(480);
+    expect(numberValue("=DDB(2400, 300, 10, 2.9)")).toBe(384);
+  });
+
+  it("DDB allows a fractional period that truncates to the final period", () => {
+    // period 10.5 truncates to 10 ≤ life, so it is valid rather than #NUM!.
+    expect(numberValue("=DDB(2400, 300, 10, 10.5)")).toBe(
+      numberValue("=DDB(2400, 300, 10, 10)"),
+    );
   });
 });
 

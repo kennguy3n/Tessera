@@ -307,8 +307,13 @@ function cumulative(
   }
   const rate = num(args[0], ctx);
   if (isFormulaError(rate)) return rate;
-  const nper = num(args[1], ctx);
-  if (isFormulaError(nper)) return nper;
+  const nperRaw = num(args[1], ctx);
+  if (isFormulaError(nperRaw)) return nperRaw;
+  // Excel truncates `nper` to a whole number of periods here, just like the
+  // `start`/`end` bounds below. Truncating up front keeps the `end > nper`
+  // range check symmetric (integer-vs-integer) and the per-period loop bound
+  // consistent with the amortisation schedule.
+  const nper = Math.trunc(nperRaw);
   const pv = num(args[2], ctx);
   if (isFormulaError(pv)) return pv;
   const start = num(args[3], ctx);
@@ -622,7 +627,8 @@ const DB: FunctionImpl = (args, ctx) => {
   if (isFormulaError(periodRaw)) return periodRaw;
   // Excel truncates `period` to an integer (the schedule is per whole period);
   // do the same up front so the stub-period check (`period === life + 1`)
-  // matches Excel for fractional inputs and stays consistent with `DDB`.
+  // matches Excel for fractional inputs. `DDB` truncates its `period` the same
+  // way, so the two depreciation functions stay consistent.
   const period = Math.trunc(periodRaw);
   const monthRaw = optNum(args, 4, ctx, 12);
   if (isFormulaError(monthRaw)) return monthRaw;
@@ -669,8 +675,14 @@ const DDB: FunctionImpl = (args, ctx) => {
   if (isFormulaError(salvage)) return salvage;
   const life = num(args[2], ctx);
   if (isFormulaError(life)) return life;
-  const period = num(args[3], ctx);
-  if (isFormulaError(period)) return period;
+  const periodRaw = num(args[3], ctx);
+  if (isFormulaError(periodRaw)) return periodRaw;
+  // Excel truncates `period` to an integer here (the schedule is per whole
+  // period), so a fractional `period` like `1.5` selects period 1, not 2 — and
+  // `period > life` must compare the truncated value so `period = 10.5, life = 10`
+  // still resolves to the valid final period 10 rather than a spurious `#NUM!`.
+  // This mirrors `DB` (see its `Math.trunc(periodRaw)` above) for consistency.
+  const period = Math.trunc(periodRaw);
   const factorRaw = optNum(args, 4, ctx, 2);
   if (isFormulaError(factorRaw)) return factorRaw;
   if (cost < 0 || salvage < 0 || life <= 0 || period < 1 || factorRaw <= 0) {
@@ -680,10 +692,10 @@ const DDB: FunctionImpl = (args, ctx) => {
     return makeError("#NUM!", "DDB: period must not exceed life");
   }
   // Iterate the book value forward; clamp so it never drops below salvage.
+  // `period` is already an integer (truncated above), so it is the loop bound.
   let accumulated = 0;
   let dep = 0;
-  const p = Math.ceil(period);
-  for (let i = 1; i <= p; i++) {
+  for (let i = 1; i <= period; i++) {
     dep = Math.min(
       ((cost - accumulated) * factorRaw) / life,
       cost - salvage - accumulated,
