@@ -112,6 +112,21 @@ describe("PMT / FV / PV / NPER — time value of money", () => {
   it("rejects the wrong number of arguments", () => {
     expect(code(evalFormula("=PMT(0.01)"))).toBe("#ERR!");
   });
+
+  it("surfaces a degenerate NPER (0/0 and x/0) as #NUM!, not NaN/Infinity", () => {
+    // den === 0 with num1 === 0 → 0/0 → NaN; the guard must still reject it.
+    expect(code(evalFormula("=NPER(0.1, -100, 1000, -1000)"))).toBe("#NUM!");
+    // den === 0 with num1 > 0 → +Infinity; likewise rejected.
+    expect(code(evalFormula("=NPER(0.1, -100, 1000, -2000)"))).toBe("#NUM!");
+  });
+
+  it("surfaces a non-finite TVM result (rate < -1, non-integer nper) as #NUM!", () => {
+    // Math.pow(1 + rate, nper) = Math.pow(-0.5, 2.5) = NaN in JS; the finite
+    // guard converts that to #NUM! rather than leaking NaN into the grid.
+    expect(code(evalFormula("=FV(-1.5, 2.5, 100)"))).toBe("#NUM!");
+    expect(code(evalFormula("=PV(-1.5, 2.5, 100)"))).toBe("#NUM!");
+    expect(code(evalFormula("=PMT(-1.5, 2.5, 100)"))).toBe("#NUM!");
+  });
 });
 
 describe("IPMT / PPMT / CUMIPMT / CUMPRINC — amortisation", () => {
@@ -260,6 +275,20 @@ describe("depreciation — SLN / SYD / DB / DDB", () => {
     expect(numberValue("=DB(1000000, 100000, 6, 2, 7)")).toBeCloseTo(
       259639.42,
       2,
+    );
+  });
+
+  it("DB truncates a fractional period to match Excel (incl. the stub)", () => {
+    // life 6, month 7 → schedule covers periods 1..7 (period 7 is the stub).
+    // A fractional period truncates to its integer part, so 7.5 → period 7,
+    // and never falls through to the "exceeds the schedule" #NUM!.
+    expect(numberValue("=DB(1000000, 100000, 6, 7.5, 7)")).toBeCloseTo(
+      numberValue("=DB(1000000, 100000, 6, 7, 7)"),
+      6,
+    );
+    expect(numberValue("=DB(1000000, 100000, 6, 2.9, 7)")).toBeCloseTo(
+      numberValue("=DB(1000000, 100000, 6, 2, 7)"),
+      6,
     );
   });
 

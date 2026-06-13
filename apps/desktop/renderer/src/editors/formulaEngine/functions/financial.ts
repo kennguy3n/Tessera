@@ -60,6 +60,27 @@ function optNum(
   return num(args[index], ctx);
 }
 
+/**
+ * Surface a non-finite computation (`NaN` / `±Infinity`) as `#NUM!` instead of
+ * letting it leak into the grid. Several closed-form relations here evaluate
+ * `Math.pow(1 + rate, nper)`, which is `NaN` when `1 + rate < 0` and `nper` is
+ * non-integer (e.g. `FV(-1.5, 2.5, 100)`), or divide by zero at degenerate
+ * inputs (`NPER` when its ratio is `0/0`). Routing every function's result
+ * through this single choke point (see {@link FINANCIAL_FUNCTIONS}) keeps the
+ * module's documented "never leak NaN/Infinity" contract true for all 19
+ * functions and any future arithmetic, rather than scattering ad-hoc guards.
+ * Errors, strings, booleans and blanks pass through untouched.
+ */
+function guardFinite(label: string, fn: FunctionImpl): FunctionImpl {
+  return (args, ctx) => {
+    const result = fn(args, ctx);
+    if (typeof result === "number" && !Number.isFinite(result)) {
+      return makeError("#NUM!", `${label}: result is not a finite number`);
+    }
+    return result;
+  };
+}
+
 /** Validate and narrow a raw `type`/`when` value to `0 | 1`. */
 function toWhen(value: number, label: string): When | FormulaError {
   const t = Math.trunc(value);
@@ -183,10 +204,14 @@ const NPER: FunctionImpl = (args, ctx) => {
   const z = pmt * (1 + rate * when);
   const num1 = z - fv * rate;
   const den = z + pv * rate;
-  if (num1 / den <= 0) {
+  // `num1 / den` can be `0/0` (→ NaN) or `x/0` (→ ±Infinity) at degenerate
+  // terms; `NaN <= 0` / `Infinity <= 0` are both `false`, so guard finiteness
+  // explicitly before taking the log of a non-positive / non-finite ratio.
+  const ratio = num1 / den;
+  if (!Number.isFinite(ratio) || ratio <= 0) {
     return makeError("#NUM!", "NPER: no solution for these terms");
   }
-  return Math.log(num1 / den) / Math.log(1 + rate);
+  return Math.log(ratio) / Math.log(1 + rate);
 };
 
 /** Interest portion of the payment in period `per` (numpy-financial parity). */
@@ -377,9 +402,15 @@ function solveRate(
     if (Math.abs(next - rate) < TOL) return next;
     rate = next;
   }
-  // Bisection fallback over a wide, economically sensible bracket.
-  let lo = -0.999999;
-  let hi = 10;
+  // Bisection fallback over a wide, economically sensible bracket. Stretch the
+  // bracket to also contain a caller-supplied guess that sits outside the
+  // default `[-0.999999, 10]` window, so an unusual `guess` (e.g. a >1000%
+  // expected return) still benefits from the fallback search rather than only
+  // seeding Newton.
+  let lo = Math.min(-0.999999, guess);
+  let hi = Math.max(10, guess);
+  // Never cross the `rate = -1` pole, where every discount factor diverges.
+  if (lo <= -1) lo = -0.999999;
   let flo = f(lo);
   let fhi = f(hi);
   if (!Number.isFinite(flo) || !Number.isFinite(fhi) || flo * fhi > 0) {
@@ -548,8 +579,12 @@ const DB: FunctionImpl = (args, ctx) => {
   if (isFormulaError(salvage)) return salvage;
   const life = num(args[2], ctx);
   if (isFormulaError(life)) return life;
-  const period = num(args[3], ctx);
-  if (isFormulaError(period)) return period;
+  const periodRaw = num(args[3], ctx);
+  if (isFormulaError(periodRaw)) return periodRaw;
+  // Excel truncates `period` to an integer (the schedule is per whole period);
+  // do the same up front so the stub-period check (`period === life + 1`)
+  // matches Excel for fractional inputs and stays consistent with `DDB`.
+  const period = Math.trunc(periodRaw);
   const monthRaw = optNum(args, 4, ctx, 12);
   if (isFormulaError(monthRaw)) return monthRaw;
   const month = Math.trunc(monthRaw);
@@ -640,7 +675,8 @@ const NOMINAL: FunctionImpl = (args, ctx) => {
   return (Math.pow(1 + effect, 1 / npery) - 1) * npery;
 };
 
-export const FINANCIAL_FUNCTIONS: Record<string, FunctionImpl> = {
+/** Raw (unwrapped) implementations, keyed by their spreadsheet name. */
+const RAW_FINANCIAL_FUNCTIONS: Record<string, FunctionImpl> = {
   PMT,
   FV,
   PV,
@@ -661,3 +697,15 @@ export const FINANCIAL_FUNCTIONS: Record<string, FunctionImpl> = {
   EFFECT,
   NOMINAL,
 };
+
+// Every financial function is wrapped in `guardFinite` so a non-finite result
+// (NaN / ±Infinity) from any code path surfaces as `#NUM!` — the single place
+// that enforces the module's "never leak a non-finite number into the grid"
+// contract.
+export const FINANCIAL_FUNCTIONS: Record<string, FunctionImpl> =
+  Object.fromEntries(
+    Object.entries(RAW_FINANCIAL_FUNCTIONS).map(([name, fn]) => [
+      name,
+      guardFinite(name, fn),
+    ]),
+  );
