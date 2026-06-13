@@ -359,6 +359,38 @@ fn match_heading_open(content: &str, start: usize) -> Option<(u8, usize)> {
     Some((level - b'0', gt))
 }
 
+/// Pre-scan headings and seed the `used` slug map with every author-supplied
+/// `id`, so the main pass can reserve them before assigning computed slugs.
+///
+/// This makes computed-vs-explicit de-duplication order-independent: without
+/// it, a *computed* slug (e.g. `intro`) injected on an earlier heading could
+/// collide with an *explicit* `id="intro"` on a later heading, emitting two
+/// elements with the same id. Reserving every explicit id up front means the
+/// computed heading is disambiguated to `intro-2` instead, regardless of which
+/// heading appears first. Each reserved id starts at count `1` so the first
+/// colliding computed slug bumps straight to a `-2` suffix.
+fn reserve_existing_heading_ids(content: &str) -> std::collections::HashMap<String, u32> {
+    let mut used: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut i = 0usize;
+    while i < content.len() {
+        if content.as_bytes()[i] != b'<' {
+            let next = content[i..].find('<').map_or(content.len(), |p| i + p);
+            i = next;
+            continue;
+        }
+        if let Some((_level, open_end)) = match_heading_open(content, i) {
+            let open_tag = &content[i..=open_end];
+            if let Some(existing) = extract_id_value(open_tag) {
+                used.entry(existing).or_insert(1);
+            }
+            i = open_end + 1;
+            continue;
+        }
+        i += 1;
+    }
+    used
+}
+
 /// Walk a document's HTML once, copying it through while (a) collecting h1–h3
 /// headings for the TOC and (b) injecting a unique `id` anchor into each
 /// heading that lacks one. Returns the rewritten HTML and the heading list.
@@ -369,7 +401,10 @@ fn match_heading_open(content: &str, start: usize) -> Option<(u8, usize)> {
 fn collect_and_anchor_headings(content: &str) -> (String, Vec<TocEntry>) {
     let mut out = String::with_capacity(content.len() + 64);
     let mut entries: Vec<TocEntry> = Vec::new();
-    let mut used: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    // Seed with every author-supplied heading id (see
+    // `reserve_existing_heading_ids`) so a computed slug can never collide with
+    // an explicit id that appears on a *later* heading.
+    let mut used = reserve_existing_heading_ids(content);
     let mut i = 0usize;
 
     while i < content.len() {
@@ -393,10 +428,10 @@ fn collect_and_anchor_headings(content: &str) -> (String, Vec<TocEntry>) {
                     // The TOC link must point at the heading's *actual* anchor.
                     // If the author already set an `id`, preserve it verbatim and
                     // use it as the slug; only compute (and inject) a slug when the
-                    // heading has none. Registering the existing id in `used` keeps
-                    // a later computed slug from colliding with it.
+                    // heading has none. Existing ids were already reserved in
+                    // `reserve_existing_heading_ids`, so a computed slug below
+                    // can't collide with one — regardless of heading order.
                     let slug = if let Some(existing) = extract_id_value(open_tag) {
-                        *used.entry(existing.clone()).or_insert(0) += 1;
                         out.push_str(open_tag);
                         existing
                     } else {
@@ -549,6 +584,78 @@ fn strip_unsafe_elements(html: &str) -> String {
     out
 }
 
+/// If `html[start..]` begins an *empty* table-of-contents marker element,
+/// return the byte index just past its closing `</div>`.
+///
+/// The exact serialised form (`TOC_MARKER`) is matched as a fast path, but we
+/// also tolerate attribute-order changes and extra attributes (e.g. a future
+/// TipTap version emitting `<div class="x" data-type="table-of-contents">`):
+/// any empty `<div>` whose opening tag carries a `data-type="table-of-contents"`
+/// attribute counts. Relying on a byte-exact match alone would silently leave
+/// an empty `<div>` in the export if serialization ever changed. Only *empty*
+/// markers match (open tag immediately followed by `</div>`, modulo
+/// whitespace) so an authored div that happens to carry the attribute and has
+/// real content is never clobbered.
+fn match_toc_marker(html: &str, start: usize) -> Option<usize> {
+    let rest = &html[start..];
+    // Fast path: the exact marker the editor currently emits.
+    if let Some(stripped) = rest.strip_prefix(TOC_MARKER) {
+        return Some(html.len() - stripped.len());
+    }
+
+    let bytes = html.as_bytes();
+    // Must open with `<div` followed by a tag-name boundary.
+    let after_div = bytes.get(start + 1..start + 4)?;
+    if !after_div.eq_ignore_ascii_case(b"div") {
+        return None;
+    }
+    match bytes.get(start + 4) {
+        Some(&b) if b == b'>' || b == b'/' || b.is_ascii_whitespace() => {}
+        _ => return None,
+    }
+
+    let open_end = html[start..].find('>')? + start;
+    let open_tag = &html[start..=open_end];
+    let has_toc = open_tag.contains("data-type=\"table-of-contents\"")
+        || open_tag.contains("data-type='table-of-contents'");
+    if !has_toc {
+        return None;
+    }
+    // `<div ... />` self-closing form (unlikely from TipTap) is already empty.
+    if open_tag.ends_with("/>") {
+        return Some(open_end + 1);
+    }
+    // Otherwise require an immediately-following `</div>` (only whitespace
+    // allowed between) so we only ever replace the empty marker element.
+    let after = html[open_end + 1..].trim_start();
+    let remainder = after.strip_prefix("</div>")?;
+    Some(html.len() - remainder.len())
+}
+
+/// Replace every table-of-contents marker element in `html` with `nav`.
+/// Scans linearly, copying non-marker content through unchanged.
+fn expand_toc_markers(html: &str, nav: &str) -> String {
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len() + nav.len());
+    let mut i = 0usize;
+    while i < html.len() {
+        if bytes[i] != b'<' {
+            let next = html[i..].find('<').map_or(html.len(), |p| i + p);
+            out.push_str(&html[i..next]);
+            i = next;
+            continue;
+        }
+        if let Some(end) = match_toc_marker(html, i) {
+            out.push_str(nav);
+            i = end;
+            continue;
+        }
+        out.push('<');
+        i += 1;
+    }
+    out
+}
+
 /// Render an edited Document (HTML content) for HTML export. Inlines the
 /// fragment verbatim after stripping any unsafe elements (defense-in-depth),
 /// anchoring headings, and expanding the table-of-contents marker into a
@@ -557,7 +664,7 @@ fn render_document_html(content: &str) -> String {
     let sanitized = strip_unsafe_elements(content);
     let (anchored, entries) = collect_and_anchor_headings(&sanitized);
     let nav = build_toc_nav(&entries);
-    let body = anchored.replace(TOC_MARKER, &nav);
+    let body = expand_toc_markers(&anchored, &nav);
 
     let mut out = String::with_capacity(body.len() + 8);
     out.push_str("    ");
@@ -812,6 +919,59 @@ mod tests {
         assert!(html.contains("href=\"#a&quot;onclick=alert(1)//\""));
         // No bare `onclick` attribute leaks into the generated <a> tag.
         assert!(!html.contains("<a href=\"#a\" onclick"));
+    }
+
+    #[test]
+    fn export_document_html_computed_slug_yields_to_later_explicit_id() {
+        // ANALYSIS-0002: a computed slug for an *earlier* heading must not
+        // collide with an *explicit* id on a *later* heading. Here the first
+        // heading slugifies to "intro" and the second carries id="intro"; the
+        // computed one must be disambiguated so the export has no duplicate id.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<h1>Intro</h1><p>a</p><h2 id=\"intro\">Preface</h2><p>b</p>".to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // The explicit id is preserved verbatim…
+        assert!(html.contains("<h2 id=\"intro\">Preface</h2>"));
+        // …and the earlier computed heading is pushed to a suffixed slug.
+        assert!(html.contains("<h1 id=\"intro-2\">Intro</h1>"));
+        // Exactly one element carries the bare id="intro" (no duplicates).
+        assert_eq!(html.matches("id=\"intro\"").count(), 1);
+    }
+
+    #[test]
+    fn export_document_html_expands_toc_marker_with_extra_attributes() {
+        // ANALYSIS-0001: the marker must still expand if TipTap ever serialises
+        // it with extra attributes or a different attribute order, instead of
+        // silently leaving an empty <div> in the export.
+        let mut artifact = Artifact::new("Guide".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<div class=\"foo\" data-type=\"table-of-contents\"></div>\
+<h1>Start</h1><p>x</p>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // The marker (regardless of its extra attribute) is replaced by a nav…
+        assert!(html.contains("<nav class=\"doc-toc\" aria-label=\"Table of contents\">"));
+        assert!(html.contains("<a href=\"#start\">Start</a>"));
+        // …and no empty table-of-contents div survives.
+        assert!(!html.contains("data-type=\"table-of-contents\"></div>"));
+    }
+
+    #[test]
+    fn export_document_html_leaves_nonempty_toc_lookalike_div_intact() {
+        // Only the *empty* marker element is expanded; an authored div that
+        // happens to carry the attribute but has real content is preserved.
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<div data-type=\"table-of-contents\">hand-written</div><h1>Start</h1>".to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<div data-type=\"table-of-contents\">hand-written</div>"));
     }
 
     #[test]

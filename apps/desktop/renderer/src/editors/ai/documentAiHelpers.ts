@@ -273,6 +273,15 @@ export function buildAiPrompt(input: DocumentAiPromptInput): string {
       break;
   }
 
+  // Non-custom actions use a fixed task template, but the panel still shows
+  // an "Optional: add extra instructions" box for every selection-based
+  // action. Fold any text the user typed into the task so it actually
+  // influences the output instead of being silently dropped. (For `custom`
+  // the instruction already *is* the task, so we don't append it twice.)
+  if (input.action !== "custom" && instruction.length > 0) {
+    task += ` Additional instruction from the user: ${instruction}`;
+  }
+
   const parts: string[] = [SYSTEM_PREAMBLE, "", task];
 
   // For a custom instruction that ALSO has a selection, give the model

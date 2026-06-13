@@ -104,6 +104,40 @@ describe("buildAiPrompt", () => {
     expect(prompt).toContain("Write a haiku about rain");
   });
 
+  it("folds extra instructions into non-custom actions", () => {
+    const prompt = buildAiPrompt({
+      action: "improve",
+      selection: "teh cat",
+      instruction: "keep it under 10 words",
+    });
+    // The fixed task template is still present...
+    expect(prompt).toContain("Improve the writing");
+    // ...and the user's extra guidance is honoured rather than dropped.
+    expect(prompt).toContain(
+      "Additional instruction from the user: keep it under 10 words",
+    );
+  });
+
+  it("does not duplicate the instruction for custom actions", () => {
+    const prompt = buildAiPrompt({
+      action: "custom",
+      selection: "",
+      instruction: "Write a haiku about rain",
+    });
+    // For custom the instruction IS the task; it must not also be appended
+    // as an "Additional instruction" line.
+    expect(prompt).not.toContain("Additional instruction from the user:");
+  });
+
+  it("ignores blank/whitespace extra instructions for non-custom actions", () => {
+    const prompt = buildAiPrompt({
+      action: "fix",
+      selection: "teh cat",
+      instruction: "   ",
+    });
+    expect(prompt).not.toContain("Additional instruction from the user:");
+  });
+
   it("is deterministic for identical input", () => {
     const a = buildAiPrompt({ action: "improve", selection: "wrold" });
     const b = buildAiPrompt({ action: "fix", selection: "wrold" });
