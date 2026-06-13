@@ -1193,7 +1193,7 @@ export async function refreshProviderToken(
   }
 
   const raw = (await resp.json()) as {
-    access_token: string;
+    access_token?: string;
     refresh_token?: string;
     expires_in?: number;
     token_type?: string;
@@ -1201,15 +1201,30 @@ export async function refreshProviderToken(
     [k: string]: unknown;
   };
 
-  if (!raw.access_token) {
+  // Mirror `exchangeAuthorizationCode`: honour a provider-specific
+  // access-token field (Intercom → `token`) with a fallback to the
+  // standard `access_token`, so a future provider that both overrides
+  // `accessTokenField` and supports refresh reads the right field here
+  // instead of silently failing.
+  const accessTokenField = config.accessTokenField ?? "access_token";
+  const fieldValue = raw[accessTokenField];
+  const accessToken =
+    (typeof fieldValue === "string" ? fieldValue : undefined) ?? raw.access_token;
+
+  if (!accessToken) {
     throw new Error(
-      `Token refresh for ${config.provider} returned no access_token`,
+      `Token refresh for ${config.provider} returned no access token`,
     );
   }
 
-  const { access_token, refresh_token, expires_in, token_type, scope, ...extra } = raw;
+  const { refresh_token, expires_in, token_type, scope, ...rest } = raw;
+  // Keep the raw access-token secret out of the passthrough `extra`
+  // payload — strip both the standard and the provider-specific field.
+  delete rest.access_token;
+  delete rest[accessTokenField];
+  const extra = rest;
   return {
-    accessToken: access_token,
+    accessToken,
     refreshToken: refresh_token ?? params.refreshToken,
     grantedScopes: parseGrantedScopes(scope),
     // We bail out at the top of this function when `!supportsRefresh`,

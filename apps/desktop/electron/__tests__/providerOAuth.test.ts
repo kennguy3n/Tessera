@@ -687,4 +687,35 @@ describe("refreshProviderToken", () => {
       }),
     ).rejects.toThrow(/Token refresh failed/);
   });
+
+  it("honours a custom accessTokenField on refresh, symmetric with exchange", async () => {
+    // No shipping provider currently sets both `accessTokenField` and
+    // `supportsRefresh`, but the two code paths must stay symmetric so a
+    // future provider that does won't silently read the wrong field on
+    // refresh. Synthesize such a config and assert the override wins and
+    // the raw secret is stripped from `extra`.
+    const cfg = {
+      ...getProviderOAuthConfig("google_drive"),
+      accessTokenField: "token",
+      supportsRefresh: true,
+    } as const;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        token: "REFRESHED_AT",
+        refresh_token: "NEW_RT",
+        expires_in: 3600,
+        type: "bearer",
+      }),
+    });
+    const tokens = await refreshProviderToken(cfg, {
+      refreshToken: "ORIG_RT",
+      clientId: "ID",
+      clientSecret: "SECRET",
+    });
+    expect(tokens.accessToken).toBe("REFRESHED_AT");
+    expect(tokens.refreshToken).toBe("NEW_RT");
+    expect(tokens.extra).not.toHaveProperty("token");
+    expect(tokens.extra).not.toHaveProperty("access_token");
+  });
 });
