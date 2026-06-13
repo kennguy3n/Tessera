@@ -35,7 +35,16 @@ export default function EmptyState({
   return (
     <div className="empty-state">
       {iconNode && <span className="empty-state-icon">{iconNode}</span>}
-      <h3 className="empty-state-title">{title}</h3>
+      {/*
+        Empty states are always the primary content of a page or a
+        top-level section that sits directly beneath the page `<h1>`
+        (rendered by `PageHeader`), so the title is an `<h2>`: it is the
+        first outline level under the page heading. Using `<h3>` here
+        skipped a level (h1 → h3), which `heading-order` correctly flags
+        and which makes the document outline misleading for screen-reader
+        users navigating by heading.
+      */}
+      <h2 className="empty-state-title">{title}</h2>
       <p className="empty-state-message">{message}</p>
       {action && <div className="empty-state-action">{action}</div>}
       <style nonce={cspNonce}>{`

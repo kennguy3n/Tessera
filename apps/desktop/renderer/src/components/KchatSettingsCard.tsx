@@ -275,7 +275,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
 
   return (
     <Card data-testid="kchat-settings-card">
-      <h3 style={{ marginBottom: "var(--spacing-md)" }}>KChat</h3>
+      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>KChat</h2>
       <p
         style={{
           fontSize: "var(--font-size-sm)",

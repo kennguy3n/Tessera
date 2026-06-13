@@ -101,6 +101,18 @@
   margin-bottom: var(--spacing-sm);
 }
 
+/*
+ * Section heading whose semantic LEVEL was corrected to <h2> (the first
+ * outline level beneath a page's <h1>) for accessibility, but whose
+ * visual SIZE must stay the same as the previous design (the base <h3>
+ * size). This decouples heading level (document outline / a11y) from
+ * heading size (visual hierarchy) so fixing the outline never inflates
+ * the UI. Used by page sections that previously rendered as <h3>.
+ */
+.section-title {
+  font-size: var(--font-size-xl);
+}
+
 .card-description {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -212,6 +224,12 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   border-radius: var(--radius-button);
+  /* Inherit the themed text colour. Modifier classes (`.badge-success`,
+     `.badge-info`, …) set their own colour and override this. Without it a
+     bare `.badge` rendered on a <button> (e.g. the Memory decay-filter
+     chips) falls back to the UA button text (black), which fails contrast
+     on the dark page surface. */
+  color: inherit;
 }
 
 /*
@@ -937,7 +955,9 @@
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--color-text-tertiary);
+  /* Readable section label — secondary (AA) not tertiary, which is reserved
+     for decorative/placeholder text and misses 4.5:1 at this size. */
+  color: var(--color-text-secondary);
 }
 
 .outline-item {
@@ -2094,7 +2114,7 @@
 .sheet-formula-bar-fx {
   font-style: italic;
   font-weight: var(--font-weight-semibold);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .sheet-formula-bar-input {
@@ -2258,7 +2278,7 @@
 .base-col-type {
   font-weight: var(--font-weight-normal);
   font-size: 0.6875rem;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   text-transform: lowercase;
 }
 
@@ -2468,7 +2488,7 @@
 .slide-word-count {
   margin-left: auto;
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
@@ -3442,7 +3462,7 @@
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .slide-ai-image-suggestion {
@@ -3751,6 +3771,12 @@
   border: 1px solid transparent;
   position: relative;
   user-select: none;
+  /* The tab is a <button> (the single role="tab"); reset the UA chrome so
+     it reads as a tab, not a default button. */
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast),
@@ -3784,13 +3810,9 @@
   background-color: var(--color-primary);
 }
 
-.workspace-tab-button {
-  background: none;
-  border: none;
-  padding: var(--spacing-2xs) var(--spacing-2xs);
+.workspace-tab-label {
   font-size: var(--font-size-sm);
   color: inherit;
-  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3825,9 +3847,8 @@
   gap: var(--spacing-2xs);
   padding-left: var(--spacing-2xs);
 }
-.workspace-tab-close:focus-visible,
-.workspace-tab-action:focus-visible,
-.workspace-tab-button:focus-visible {
+.workspace-tab:focus-visible,
+.workspace-tab-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -4317,13 +4338,19 @@
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--color-text-tertiary);
+  /* Secondary, not tertiary: this is a real informative label sitting on the
+     tinted `--color-bg-surface`, where tertiary (#9ca3af / #6b7280) only
+     reaches ~2.3–3.1:1 and fails WCAG AA. Secondary is the AA-tuned body token
+     (>=4.5:1 on every surface in all three themes). */
+  color: var(--color-text-secondary);
   margin-bottom: var(--spacing-xs);
 }
 .doc-toc-empty {
   margin: 0;
   font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
+  /* Same reasoning as `.doc-toc-title`: informative text on the surface tint
+     must clear AA, so use the secondary token rather than tertiary. */
+  color: var(--color-text-secondary);
   font-style: italic;
 }
 .doc-toc-list {

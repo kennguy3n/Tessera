@@ -25,22 +25,30 @@ const REPO_ROOT = path.resolve(DESKTOP_ROOT, "..", "..");
  * never resolve under `file://` — captured here too.
  */
 describe("packaged Electron renderer wiring", () => {
-  it("vite.config.ts builds the renderer into renderer-dist/", () => {
+  it("vite.config.ts builds the production renderer into renderer-dist/ (and QA into renderer-dist-qa/)", () => {
     const viteConfig = readFileSync(
       path.join(DESKTOP_ROOT, "vite.config.ts"),
       "utf-8",
     );
+    // `outDir` is mode-conditional: the default (production) build emits to
+    // `renderer-dist/` — the directory the packaged app and cold-start gate
+    // consume — while `build:qa` emits a parallel showcase bundle to
+    // `renderer-dist-qa/` so it never clobbers the real one. Pin both branches
+    // so a future rename has to touch this guard.
     expect(viteConfig).toMatch(
-      /outDir:\s*path\.resolve\(__dirname,\s*"renderer-dist"\)/,
+      /mode === "qa" \? "renderer-dist-qa" : "renderer-dist"/,
     );
   });
 
-  it("vite.config.ts sets base to './' so assets resolve under file://", () => {
+  it("vite.config.ts sets the production base to './' so assets resolve under file:// (QA uses '/')", () => {
     const viteConfig = readFileSync(
       path.join(DESKTOP_ROOT, "vite.config.ts"),
       "utf-8",
     );
-    expect(viteConfig).toMatch(/base:\s*"\.\/"/);
+    // Production uses a relative base so `file://` asset URLs resolve; the
+    // HTTP-served QA bundle uses an absolute base so assets resolve on deep
+    // SPA routes. Assert the actual code expression (not just the prose).
+    expect(viteConfig).toMatch(/base:\s*mode === "qa" \? "\/" : "\.\/"/);
   });
 
   it("electron/main.ts production branch loads ../../renderer-dist/index.html", () => {

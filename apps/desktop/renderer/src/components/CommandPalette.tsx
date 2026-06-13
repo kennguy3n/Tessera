@@ -55,6 +55,14 @@ import type { ArtifactInfo } from "../types/ipc";
 
 const MAX_RESULTS = 50;
 
+// Stable ids wiring the editable combobox (the query input) to its
+// popup listbox and the active option, per the WAI-ARIA "combobox with
+// list autocomplete" pattern. The input owns the single tab stop and
+// publishes the active row via `aria-activedescendant`; options are
+// never themselves focused.
+const LISTBOX_ID = "command-palette-listbox";
+const optionDomId = (index: number): string => `command-palette-option-${index}`;
+
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
@@ -83,7 +91,7 @@ export default function CommandPalette({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const listRef = useRef<HTMLUListElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const previousActiveRef = useRef<HTMLElement | null>(null);
   const isMac =
     typeof navigator !== "undefined" &&
@@ -451,66 +459,114 @@ export default function CommandPalette({
           onKeyDown={handleKeyDown}
           placeholder="Type a command, search artifacts…"
           aria-label="Command palette query"
+          // Editable combobox: the input is the single tab stop and
+          // controls the popup listbox, exposing the highlighted row via
+          // `aria-activedescendant` so screen readers announce it without
+          // moving DOM focus off the input.
+          role="combobox"
+          aria-expanded={groups.length > 0}
+          aria-controls={groups.length > 0 ? LISTBOX_ID : undefined}
+          aria-activedescendant={
+            groups.length > 0 ? optionDomId(activeIndex) : undefined
+          }
+          aria-autocomplete="list"
           autoComplete="off"
           spellCheck={false}
           data-testid="command-palette-input"
         />
-        <ul ref={listRef} className="cmdk-list" role="listbox">
-          {groups.length === 0 && (
-            <li className="cmdk-empty">No matches</li>
-          )}
-          {groups.map((group, gi) => (
-            <li key={group.label} className="cmdk-group">
-              <div className="cmdk-group-label">{group.label}</div>
-              <ul className="cmdk-group-rows">
-                {group.rows.map((row, ri) => {
-                  const idx = groupStartIndexes[gi] + ri;
-                  const active = idx === activeIndex;
-                  const rowKey =
-                    row.kind === "command"
-                      ? `cmd-${row.command.id}`
-                      : `art-${row.artifact.id}`;
-                  return (
-                    <li
-                      key={rowKey}
-                      data-row-index={idx}
-                      data-row-active={active ? "true" : "false"}
-                      className={`cmdk-row ${active ? "cmdk-row-active" : ""}`}
-                      role="option"
-                      aria-selected={active}
-                      onMouseEnter={() => setActiveIndex(idx)}
-                      onClick={() => handleSelect(row)}
-                    >
-                      <div className="cmdk-row-main">
-                        <div className="cmdk-row-title">
-                          {row.kind === "command"
-                            ? row.command.title
-                            : row.artifact.title || "(untitled)"}
+        {/*
+          The popup is built from role-bearing <div>s rather than <ul>/<li>
+          on purpose: a `role="listbox"` flips its <ul> off the `list`
+          role, which then orphans the <li>s (`listitem`/`list` rule
+          conflicts) and makes the grouped options fail
+          `aria-required-parent`. Divs let the accessibility tree be
+          exactly listbox → group → option with no HTML list semantics
+          fighting the ARIA roles. The listbox is only rendered when it
+          has options so it never violates `aria-required-children`.
+        */}
+        {groups.length === 0 ? (
+          <div className="cmdk-list cmdk-empty">No matches</div>
+        ) : (
+          <div
+            ref={listRef}
+            id={LISTBOX_ID}
+            className="cmdk-list"
+            role="listbox"
+            aria-label="Commands and results"
+          >
+            {groups.map((group, gi) => {
+              const groupLabelId = `${LISTBOX_ID}-group-${gi}`;
+              return (
+                <div
+                  key={group.label}
+                  className="cmdk-group"
+                  role="group"
+                  aria-labelledby={groupLabelId}
+                >
+                  {/* Group heading is the group's visible label, exposed
+                      via `aria-labelledby`; `role="presentation"` keeps it
+                      out of the listbox's owned children. */}
+                  <div
+                    className="cmdk-group-label"
+                    id={groupLabelId}
+                    role="presentation"
+                  >
+                    {group.label}
+                  </div>
+                  {group.rows.map((row, ri) => {
+                    const idx = groupStartIndexes[gi] + ri;
+                    const active = idx === activeIndex;
+                    const rowKey =
+                      row.kind === "command"
+                        ? `cmd-${row.command.id}`
+                        : `art-${row.artifact.id}`;
+                    return (
+                      <div
+                        key={rowKey}
+                        id={optionDomId(idx)}
+                        data-row-index={idx}
+                        data-row-active={active ? "true" : "false"}
+                        className={`cmdk-row ${active ? "cmdk-row-active" : ""}`}
+                        role="option"
+                        aria-selected={active}
+                        onMouseEnter={() => setActiveIndex(idx)}
+                        onClick={() => handleSelect(row)}
+                      >
+                        <div className="cmdk-row-main">
+                          <div className="cmdk-row-title">
+                            {row.kind === "command"
+                              ? row.command.title
+                              : row.artifact.title || "(untitled)"}
+                          </div>
+                          <div className="cmdk-row-sub">
+                            {row.kind === "command"
+                              ? row.command.description
+                              : row.artifact.artifactType}
+                          </div>
                         </div>
-                        <div className="cmdk-row-sub">
-                          {row.kind === "command"
-                            ? row.command.description
-                            : row.artifact.artifactType}
-                        </div>
+                        {row.kind === "command" && row.command.chord && (
+                          <kbd className="cmdk-kbd">
+                            {formatChord(row.command.chord, isMac)}
+                          </kbd>
+                        )}
+                        {row.kind === "artifact" && row.tag === "pinned" && (
+                          <span className="cmdk-tag cmdk-tag-pinned">
+                            Pinned
+                          </span>
+                        )}
+                        {row.kind === "artifact" && row.tag === "recent" && (
+                          <span className="cmdk-tag cmdk-tag-recent">
+                            Recent
+                          </span>
+                        )}
                       </div>
-                      {row.kind === "command" && row.command.chord && (
-                        <kbd className="cmdk-kbd">
-                          {formatChord(row.command.chord, isMac)}
-                        </kbd>
-                      )}
-                      {row.kind === "artifact" && row.tag === "pinned" && (
-                        <span className="cmdk-tag cmdk-tag-pinned">Pinned</span>
-                      )}
-                      {row.kind === "artifact" && row.tag === "recent" && (
-                        <span className="cmdk-tag cmdk-tag-recent">Recent</span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          ))}
-        </ul>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="cmdk-footer">
           <kbd>↑</kbd>
           <kbd>↓</kbd>
@@ -573,11 +629,6 @@ export default function CommandPalette({
           letter-spacing: 0.05em;
           color: var(--color-text-secondary);
         }
-        .cmdk-group-rows {
-          list-style: none;
-          padding: 0;
-          margin: 0;
-        }
         .cmdk-row {
           display: flex;
           align-items: center;
@@ -624,7 +675,9 @@ export default function CommandPalette({
         }
         .cmdk-tag-pinned {
           background: var(--color-warning-bg, var(--color-bg-secondary));
-          color: var(--color-warning, var(--color-text-body));
+          /* warning-fg pairs with warning-bg for AA contrast; the brand
+             warning (#f59e0b) only made ~1.9:1 on the amber chip. */
+          color: var(--color-warning-fg, var(--color-text-body));
         }
         .cmdk-tag-recent {
           background: var(--color-primary-light);

@@ -252,7 +252,7 @@ export default function ExternalProviderCard() {
   if (!provider) {
     return (
       <Card>
-        <h3 style={{ marginBottom: "var(--spacing-md)" }}>External Provider</h3>
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>External Provider</h2>
         <p style={{ color: "var(--color-text-secondary)" }}>Loading…</p>
       </Card>
     );
@@ -410,7 +410,7 @@ export default function ExternalProviderCard() {
           marginBottom: "var(--spacing-md)",
         }}
       >
-        <h3 style={{ margin: 0 }}>External Provider</h3>
+        <h2 className="section-title" style={{ margin: 0 }}>External Provider</h2>
         <label
           style={{ display: "flex", alignItems: "center", gap: 8 }}
           aria-label="Enable external provider"
@@ -737,7 +737,7 @@ export default function ExternalProviderCard() {
               marginBottom: "var(--spacing-xs)",
             }}
           >
-            <h4
+            <h3
               style={{
                 margin: 0,
                 fontSize: "var(--font-size-sm)",
@@ -745,7 +745,7 @@ export default function ExternalProviderCard() {
               }}
             >
               Token usage
-            </h4>
+            </h3>
             <Button
               onClick={onResetTokenUsage}
               variant="secondary"

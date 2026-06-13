@@ -23,7 +23,11 @@
   --color-bg-sidebar: #faf9ff;
   --color-text-headline: #111827;
   --color-text-body: #4b5563;
-  --color-text-secondary: #6b7280;
+  /* gray-500 (#6b7280) only reached ~4.0–4.4:1 on the app's tinted/elevated
+     surfaces (accent-tinted page bg, selected rows, muted chips), just under
+     the 4.5:1 AA floor for the small text that uses it. Darkened so secondary
+     text clears AA everywhere while staying lighter than body. */
+  --color-text-secondary: #5d6470;
   --color-text-tertiary: #9ca3af;
   --color-text-on-primary: #ffffff;
   --color-border: #e5e7eb;
@@ -58,6 +62,14 @@
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
+  /* `md` is an alias for the base body size. A handful of components
+     (command palette / quick-switcher inputs, automation row titles,
+     concept-graph titles) reference `--font-size-md`; it was previously
+     undeclared, so those `var(--font-size-md)` reads fell back to the UA
+     default instead of the intended body size. Declared here (== base) so
+     the token resolves everywhere — matches the explicit `, 1rem` fallback
+     ConceptGraphPanel already used. */
+  --font-size-md: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.25rem;
   --font-size-2xl: 1.5rem;
@@ -267,7 +279,9 @@
   --color-bg-secondary: #374151;
   --color-text-headline: #f9fafb;
   --color-text-body: #d1d5db;
-  --color-text-secondary: #9ca3af;
+  /* gray-400 (#9ca3af) dipped to ~4.05:1 on elevated dark surfaces (#374151).
+     Lightened so secondary text clears AA on every dark surface. */
+  --color-text-secondary: #b0b7c2;
   --color-text-tertiary: #6b7280;
   --color-text-on-primary: #111827;
   --color-border: #374151;
@@ -326,7 +340,7 @@
     --color-bg-secondary: #374151;
     --color-text-headline: #f9fafb;
     --color-text-body: #d1d5db;
-    --color-text-secondary: #9ca3af;
+    --color-text-secondary: #b0b7c2;
     --color-text-tertiary: #6b7280;
     --color-text-on-primary: #111827;
     --color-border: #374151;

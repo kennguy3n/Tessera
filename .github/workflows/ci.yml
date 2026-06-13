@@ -343,6 +343,76 @@ jobs:
       - name: Cold-start gate
         run: npm run perf:cold-start
 
+  # Quality-bar gates for the in-app surfaces, beyond the Electron
+  # boot the cold-start job covers. Three checks share one job because
+  # they all drive the same showcase-enabled production bundle
+  # (`build:qa` -> renderer-dist-qa/) served by `vite preview`:
+  #
+  #   1. Accessibility — axe-core (WCAG 2.1 A/AA) over every key surface
+  #      in light + dark + an accent, in a real browser (catches the
+  #      colour-contrast + ARIA issues jsdom can't see). The jsdom axe
+  #      pass over the pages runs in the `typescript` job's test step.
+  #   2. Visual regression — Playwright screenshot snapshots of the same
+  #      surfaces against committed baselines.
+  #   3. Performance budgets — interaction/render budgets for the heavy
+  #      surfaces (the four editors + the concept-graph Canvas path at
+  #      scale), the sibling to the cold-start boot budget.
+  #
+  # Runs in the pinned Playwright container so the browser, OS libraries
+  # and fonts are byte-identical to the environment the visual baselines
+  # were captured in — the only way screenshot snapshots stay stable
+  # across machines. Same `typescript` path filter as the other JS jobs.
+  # The container image tag MUST match the @playwright/test version in
+  # package-lock.json; bump both together.
+  quality-gates:
+    name: Quality gates (a11y + visual + perf budgets)
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-22.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build the showcase-enabled bundle once; all three gates run
+      # against it (the a11y/visual Playwright projects via `vite
+      # preview`, the perf gate via its own preview spawn).
+      - name: Build QA bundle
+        working-directory: apps/desktop
+        run: npm run build:qa
+
+      - name: Accessibility audit (browser)
+        working-directory: apps/desktop
+        run: npx playwright test --config qa/playwright.config.ts --project=a11y
+
+      - name: Visual regression
+        working-directory: apps/desktop
+        run: npx playwright test --config qa/playwright.config.ts --project=visual
+
+      - name: Performance budgets
+        run: npm run perf:budgets
+
+      # On failure, surface the axe reports + screenshot diffs so a
+      # maintainer can see exactly what regressed without re-running.
+      - name: Upload QA artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gates-artifacts
+          path: |
+            apps/desktop/playwright-report/
+            apps/desktop/test-results/
+          retention-days: 7
+
   # Supply-chain audit gate. Runs whenever Rust or TypeScript inputs
   # change (the `changes` filters already include this workflow file,
   # so editing CI re-runs it). Two independent checks share one job:
@@ -437,7 +507,7 @@ jobs:
   ci-success:
     name: CI
     runs-on: ubuntu-22.04
-    needs: [changes, rust, typescript, cold-start, supply-chain]
+    needs: [changes, rust, typescript, cold-start, quality-gates, supply-chain]
     if: always()
     steps:
       - name: Verify required job outcomes
@@ -446,13 +516,15 @@ jobs:
           RUST_RESULT: ${{ needs.rust.result }}
           TS_RESULT: ${{ needs.typescript.result }}
           COLD_START_RESULT: ${{ needs.cold-start.result }}
+          QUALITY_GATES_RESULT: ${{ needs.quality-gates.result }}
           SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
         run: |
-          echo "changes:      $CHANGES_RESULT"
-          echo "rust:         $RUST_RESULT"
-          echo "typescript:   $TS_RESULT"
-          echo "cold-start:   $COLD_START_RESULT"
-          echo "supply-chain: $SUPPLY_CHAIN_RESULT"
+          echo "changes:        $CHANGES_RESULT"
+          echo "rust:           $RUST_RESULT"
+          echo "typescript:     $TS_RESULT"
+          echo "cold-start:     $COLD_START_RESULT"
+          echo "quality-gates:  $QUALITY_GATES_RESULT"
+          echo "supply-chain:   $SUPPLY_CHAIN_RESULT"
 
           fail=0
           if [ "$CHANGES_RESULT" != "success" ]; then
@@ -475,6 +547,12 @@ jobs:
           case "$COLD_START_RESULT" in
             success|skipped) ;;
             *) echo "::error::Required cold-start perf gate did not succeed (result: $COLD_START_RESULT)."; fail=1 ;;
+          esac
+          # a11y + visual-regression + interaction perf budgets. `skipped`
+          # means the typescript path filter excluded the JS subsystem.
+          case "$QUALITY_GATES_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required quality-gates job did not succeed (result: $QUALITY_GATES_RESULT)."; fail=1 ;;
           esac
           # The supply-chain job has no continue-on-error legs, so a
           # `failure` here is a hard gate (a new unvetted crate or a

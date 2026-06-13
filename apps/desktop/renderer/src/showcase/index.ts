@@ -1,4 +1,4 @@
-// Showcase mock bridge (DEV ONLY).
+// Showcase mock bridge (DEV + QA-only — never the production app bundle).
 //
 // Installs a fake `window.tessera` populated with one persona's genuine
 // LLM-generated artifacts so the live renderer can be screenshotted with real
@@ -6,7 +6,10 @@
 //
 // Activate by appending `?showcase=<persona>` to the dev URL, e.g.
 //   http://localhost:5173/?showcase=healthcare#/create
-// Guarded by `import.meta.env.DEV` in the entry point — never ships to prod.
+// Enabled by the entry point in two builds only: dev (`import.meta.env.DEV`)
+// and the dedicated QA bundle (`import.meta.env.VITE_TESSERA_QA`, produced by
+// `npm run build:qa` -> renderer-dist-qa/ for the a11y/visual/perf gates). It
+// is never included in the production `npm run build` (renderer-dist/) output.
 //
 // DESIGN-MODEL INVARIANT: the artifacts injected here are generated ONLY by a
 // Tessera design text model (the Ternary-Bonsai family in sidecars/models.json)
@@ -17,6 +20,7 @@
 // Llama/Qwen Instruct build) here or in the generator without adding it to the
 // product model registry first.
 
+import { ACCENT_COLORS } from "../types/ipc";
 import type { ShowcaseDataset, ShowcaseKnowledgePlane } from "./types";
 import { healthcareDataset } from "./generated/healthcare";
 import { legalDataset } from "./generated/legal";
@@ -55,6 +59,39 @@ export function showcasePersonaFromQuery(): string | null {
     return persona && DATASETS[persona] ? persona : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Theme/accent overrides for the showcase bridge.
+ *
+ * `useTheme` derives the `data-theme` / `data-accent` attributes from
+ * `settings.theme` / `settings.accentColor`, so to drive deterministic
+ * theming for QA captures (visual-regression + the browser a11y
+ * contrast pass) we let `?theme=` / `?accent=` seed those settings
+ * fields. Values are validated against the same allowlists the real
+ * Settings UI uses; anything unrecognised is ignored (the persona's
+ * default light/violet applies).
+ */
+const THEME_VALUES: ReadonlySet<string> = new Set(["light", "dark", "system"]);
+const ACCENT_VALUES: ReadonlySet<string> = new Set(ACCENT_COLORS);
+
+export interface ShowcaseThemeOverrides {
+  theme?: string;
+  accentColor?: string;
+}
+
+export function showcaseThemeFromQuery(): ShowcaseThemeOverrides {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const overrides: ShowcaseThemeOverrides = {};
+    const theme = params.get("theme");
+    if (theme && THEME_VALUES.has(theme)) overrides.theme = theme;
+    const accent = params.get("accent");
+    if (accent && ACCENT_VALUES.has(accent)) overrides.accentColor = accent;
+    return overrides;
+  } catch {
+    return {};
   }
 }
 
@@ -309,6 +346,105 @@ function buildConceptGraphJson(
   });
 }
 
+// Upper bound on the synthetic graph size so a stray `?graphScale=999999`
+// can't wedge the renderer. The perf budget exercises ~300 nodes.
+const MAX_GRAPH_SCALE = 2000;
+
+/**
+ * `?graphScale=<n>` — QA-only knob for the performance harness. The real
+ * personas seed only a handful of concepts, but the concept-graph Canvas
+ * renderer (the heavy path we budget) only engages at
+ * `CANVAS_RENDER_THRESHOLD` (220) nodes. This returns the requested node
+ * count (clamped) so `perf:budgets` can drive the Canvas path at scale.
+ * Returns `null` when absent/invalid so normal showcase data is used.
+ */
+export function showcaseGraphScaleFromQuery(): number | null {
+  try {
+    const raw = new URLSearchParams(window.location.search).get("graphScale");
+    if (!raw) return null;
+    const n = Number(raw);
+    // Reject anything that wouldn't yield at least one node. `< 1` (not
+    // `<= 0`) also rules out fractional values like `0.5`, which would
+    // otherwise `Math.floor` to 0 and breach the `number >= 1 | null`
+    // contract this function promises its callers.
+    if (!Number.isFinite(n) || n < 1) return null;
+    return Math.min(Math.floor(n), MAX_GRAPH_SCALE);
+  } catch {
+    return null;
+  }
+}
+
+const SCALE_STATES: readonly string[] = [
+  "canonical",
+  "candidate",
+  "superseded",
+  "contradicted",
+];
+const SCALE_RELATIONS: readonly string[] = [
+  "is_a",
+  "part_of",
+  "derived_from",
+  "supersedes",
+];
+
+/**
+ * Deterministic synthetic concept graph of `count` nodes, in the same
+ * `concept_graph::GraphView` wire shape the bridge emits. Pure function of
+ * `count` — identical nodes/edges/order every run — so visual + perf
+ * captures are reproducible. Topology links each node to a few earlier
+ * nodes (including a shared hub) to give the layout + Canvas renderer
+ * realistic edge-drawing work rather than a trivial chain.
+ */
+function buildScaledConceptGraphJson(count: number): string {
+  const scopeId = "sc-showcase-scope";
+  const incident = new Map<string, number>();
+  const id = (i: number) => `sc-cg-scale-${i}`;
+  const edges: Array<{
+    id: string;
+    from: string;
+    to: string;
+    relation_type: string;
+    scope_id: string;
+  }> = [];
+  let e = 0;
+  for (let i = 1; i < count; i++) {
+    // Deterministic neighbour set: previous node, a logarithmic "ancestor"
+    // (i/2) for hub structure, and node 0 every 7th node so the graph stays
+    // connected with a visible central hub.
+    const targets = new Set<number>(
+      [i - 1, Math.floor(i / 2), i % 7 === 0 ? 0 : -1].filter(
+        (t) => t >= 0 && t < i,
+      ),
+    );
+    for (const t of targets) {
+      edges.push({
+        id: `sc-cg-scale-edge-${e}`,
+        from: id(i),
+        to: id(t),
+        relation_type: SCALE_RELATIONS[e % SCALE_RELATIONS.length],
+        scope_id: scopeId,
+      });
+      e += 1;
+      incident.set(id(i), (incident.get(id(i)) ?? 0) + 1);
+      incident.set(id(t), (incident.get(id(t)) ?? 0) + 1);
+    }
+  }
+  const nodes = Array.from({ length: count }, (_, i) => ({
+    id: id(i),
+    label: `Concept ${i + 1}`,
+    state: SCALE_STATES[i % SCALE_STATES.length],
+    scope_id: scopeId,
+    connections_count: incident.get(id(i)) ?? 0,
+  }));
+  return JSON.stringify({
+    nodes,
+    edges,
+    scope_filter: [],
+    depth: 2,
+    truncation: "complete",
+  });
+}
+
 function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number) {
   // Deliberate fallback: when an artifact reports `count` of 0 (e.g. a sheet or
   // base where citations aren't surfaced per-cell), show citations for every
@@ -367,14 +503,23 @@ const settingsData = (artifacts: ReturnType<typeof buildArtifacts>) => ({
  * through a Proxy: `on*` subscription methods return a no-op unsubscribe, all
  * other unknown methods resolve to `undefined`.
  */
-export function buildShowcaseApi(personaId: string): unknown {
+export function buildShowcaseApi(
+  personaId: string,
+  themeOverrides: ShowcaseThemeOverrides = {},
+): unknown {
   const ds = DATASETS[personaId];
   if (!ds) throw new Error(`Unknown showcase persona: ${personaId}`);
 
   const artifacts = buildArtifacts(ds);
   const sources = buildSources(ds);
   const plane = KNOWLEDGE[personaId] ?? { entities: [], facts: [], concepts: [] };
-  let settings = settingsData(artifacts);
+  let settings = {
+    ...settingsData(artifacts),
+    ...(themeOverrides.theme ? { theme: themeOverrides.theme } : {}),
+    ...(themeOverrides.accentColor
+      ? { accentColor: themeOverrides.accentColor }
+      : {}),
+  };
 
   // Mutable backup state so Settings → Backup is fully interactive in the demo
   // (configure persists, "Back up now" prepends a new entry).
@@ -403,6 +548,60 @@ export function buildShowcaseApi(personaId: string): unknown {
   // mutated list back). Entities + facts are already `SubstrateMemoryInfo`-shaped.
   const memories = [...plane.entities, ...plane.facts].map((m) => ({ ...m }));
   const findMemory = (id: string) => memories.find((m) => m.id === id);
+
+  // Deterministic task backlog + automation rules backing the `/tasks` and
+  // `/automations` surfaces (see the `tasks` / `automations` namespaces below).
+  // Grounded in the persona's org so the board reads as that workspace's work.
+  const taskDefaults = (id: string) => ({
+    id,
+    title: "",
+    description: "",
+    status: "todo",
+    priority: "medium",
+    position: 0,
+    assignee: null as string | null,
+    dueDate: null as string | null,
+    sourceId: null as string | null,
+    extractedItemId: null as string | null,
+    dependsOn: [] as string[],
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+  const t = (n: number) => `sc-${personaId}-task-${n}`;
+  const tasks = [
+    { ...taskDefaults(t(1)), title: `Review ${ds.persona.org} source coverage`, description: "Confirm every connected source finished indexing before the next generation run.", status: "todo", priority: "high", position: 0, dueDate: "2026-05-15T00:00:00.000Z" },
+    { ...taskDefaults(t(2)), title: "Draft executive summary", description: "Summarise the latest artifact for stakeholder sign-off.", status: "in_progress", priority: "medium", position: 0 },
+    { ...taskDefaults(t(3)), title: "Resolve citation gaps", description: "Two facts are missing primary-source citations; backfill from the indexed drive.", status: "blocked", priority: "high", position: 0, dependsOn: [t(1)] },
+    { ...taskDefaults(t(4)), title: "Archive Q1 deliverables", description: "Export finalised artifacts and tuck the workspace snapshot into backups.", status: "done", priority: "low", position: 0 },
+    { ...taskDefaults(t(5)), title: "Schedule weekly reindex", description: "Stand up an automation so sources reindex every Monday.", status: "todo", priority: "medium", position: 1 },
+  ];
+
+  const automations = [
+    {
+      id: `sc-${personaId}-auto-1`,
+      name: "Weekly source reindex",
+      triggerJson: JSON.stringify({ kind: "schedule", interval_seconds: 604800 }),
+      actionJson: JSON.stringify({ kind: "reindex_source", source_id: sources[0]?.id ?? "" }),
+      enabled: true,
+      createdAt: NOW,
+      updatedAt: NOW,
+      lastRunAt: "2026-05-05T15:04:00.000Z",
+      lastRunStatus: "success",
+      nextScheduledAt: "2026-05-19T15:04:00.000Z",
+    },
+    {
+      id: `sc-${personaId}-auto-2`,
+      name: "Draft on new upload",
+      triggerJson: JSON.stringify({ kind: "on_generate", template_id: ds.artifacts[0]?.templateId ?? ds.artifacts[0]?.slug ?? "" }),
+      actionJson: JSON.stringify({ kind: "generate_from_template", template_id: ds.artifacts[0]?.templateId ?? ds.artifacts[0]?.slug ?? "", source_ids: [] }),
+      enabled: false,
+      createdAt: NOW,
+      updatedAt: NOW,
+      lastRunAt: null,
+      lastRunStatus: null,
+      nextScheduledAt: null,
+    },
+  ];
 
   const real: Record<string, Record<string, unknown>> = {
     // Bridge-readiness surface. The real app gates `<App/>` behind
@@ -513,8 +712,14 @@ export function buildShowcaseApi(personaId: string): unknown {
       },
       // Concept graph for the Memory page panel (`useConceptGraph`) + HomePage
       // top-concepts. JSON-serialized `GraphView`, bounded by `maxNodes`.
-      getConceptGraph: async (_scope: string | null = null, maxNodes: number | null = null) =>
-        buildConceptGraphJson(plane, maxNodes),
+      getConceptGraph: async (_scope: string | null = null, maxNodes: number | null = null) => {
+        // QA perf harness: `?graphScale=<n>` overrides the persona's small
+        // graph with a deterministic n-node graph so the Canvas renderer
+        // (engages at 220 nodes) can be budgeted at scale.
+        const scale = showcaseGraphScaleFromQuery();
+        if (scale) return buildScaledConceptGraphJson(scale);
+        return buildConceptGraphJson(plane, maxNodes);
+      },
       suggestRelatedSources: async (selectedSourceIds: string[] = [], maxSuggestions = 10) => {
         const selected = new Set(selectedSourceIds);
         return plane.concepts
@@ -734,6 +939,102 @@ export function buildShowcaseApi(personaId: string): unknown {
     resources: {
       getUsage: async () => null,
     },
+    // Task board (`/tasks`). The native bridge returns a `TaskInfo[]`; the
+    // Proxy fallthrough would resolve `undefined`, which `useTaskList` then
+    // hands to `setTasks` and the board crashes trying to iterate it. Seed a
+    // small deterministic backlog spanning every column so the kanban + Gantt
+    // render meaningfully for the QA gates. Mutations operate on the in-memory
+    // array so the demo board stays interactive (drag, reprioritise, delete).
+    tasks: {
+      list: async () => tasks.map((t) => ({ ...t })),
+      get: async (id: string) => {
+        const t = tasks.find((x) => x.id === id);
+        return t ? { ...t } : null;
+      },
+      create: async (req: { title: string; description?: string; priority?: string }) => {
+        const created = {
+          ...taskDefaults(`sc-${personaId}-task-${tasks.length + 1}`),
+          title: req.title,
+          description: req.description ?? "",
+          priority: req.priority ?? "medium",
+          position: tasks.length,
+        };
+        tasks.push(created);
+        return { ...created };
+      },
+      update: async (id: string, req: Record<string, unknown>) => {
+        const t = tasks.find((x) => x.id === id);
+        if (!t) throw new Error(`Unknown task: ${id}`);
+        // Never let a patch overwrite identity/creation fields: `id` keys the
+        // record and `createdAt` is owned at creation. Strip them from the
+        // patch (mirroring how the real bridge ignores them) so a stray
+        // `{ id, createdAt }` can't corrupt the in-memory task. `updatedAt`
+        // is always stamped by us.
+        const patch = { ...req };
+        delete patch.id;
+        delete patch.createdAt;
+        Object.assign(t, patch, { updatedAt: NOW });
+        return { ...t };
+      },
+      remove: async (id: string) => {
+        const i = tasks.findIndex((x) => x.id === id);
+        if (i >= 0) tasks.splice(i, 1);
+      },
+      reorder: async (status: string, ids: string[]) => {
+        ids.forEach((id, position) => {
+          const t = tasks.find((x) => x.id === id);
+          if (t) {
+            t.status = status;
+            t.position = position;
+          }
+        });
+      },
+    },
+    // Automations (`/automations`). Same rationale as `tasks`: seed a couple of
+    // enabled/disabled rules (one schedule, one on-generate) plus a running
+    // scheduler status so the page renders its populated state deterministically.
+    automations: {
+      list: async () => automations.map((a) => ({ ...a })),
+      create: async (req: { name: string; triggerJson: string; actionJson: string }) => {
+        const created = {
+          id: `sc-${personaId}-auto-${automations.length + 1}`,
+          name: req.name,
+          triggerJson: req.triggerJson,
+          actionJson: req.actionJson,
+          enabled: true,
+          createdAt: NOW,
+          updatedAt: NOW,
+          lastRunAt: null,
+          lastRunStatus: null,
+          nextScheduledAt: null,
+        };
+        automations.push(created);
+        return { ...created };
+      },
+      setEnabled: async (id: string, enabled: boolean) => {
+        const a = automations.find((x) => x.id === id);
+        if (a) {
+          a.enabled = enabled;
+          a.updatedAt = NOW;
+        }
+      },
+      remove: async (id: string) => {
+        const i = automations.findIndex((x) => x.id === id);
+        if (i >= 0) automations.splice(i, 1);
+      },
+      schedulerStatus: async () => ({
+        running: true,
+        lastTickAt: NOW,
+        lastTickError: null,
+        inFlight: false,
+      }),
+      runNow: async () => ({
+        running: true,
+        lastTickAt: NOW,
+        lastTickError: null,
+        inFlight: false,
+      }),
+    },
   };
 
   const passthrough = (namespace: string) =>
@@ -779,8 +1080,14 @@ export function buildShowcaseApi(personaId: string): unknown {
   );
 }
 
-export function installShowcaseBridge(personaId: string): void {
-  (window as unknown as { tessera: unknown }).tessera = buildShowcaseApi(personaId);
+export function installShowcaseBridge(
+  personaId: string,
+  themeOverrides: ShowcaseThemeOverrides = {},
+): void {
+  (window as unknown as { tessera: unknown }).tessera = buildShowcaseApi(
+    personaId,
+    themeOverrides,
+  );
   (window as unknown as { tesseraCspNonce: string }).tesseraCspNonce = "showcase";
   console.info(`[showcase] mock bridge installed for persona "${personaId}"`);
 }

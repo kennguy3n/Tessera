@@ -158,7 +158,10 @@ export default function IntentPicker({
   if (!intent) {
     return (
       <div data-testid="intent-picker-step1">
-        <h3 style={{ marginBottom: "var(--spacing-md)" }}>What do you need?</h3>
+        {/* Step heading sits directly under the page `<h1>` (Create) or
+            the wizard dialog title, so it is an `<h2>` — h1 → h2 with no
+            skipped level. */}
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>What do you need?</h2>
         <div
           style={{
             display: "grid",
@@ -202,7 +205,7 @@ export default function IntentPicker({
         <Button variant="secondary" onClick={() => setIntentId(null)}>
           Back
         </Button>
-        <h3 style={{ margin: 0 }}>What's it for?</h3>
+        <h2 className="section-title" style={{ margin: 0 }}>What's it for?</h2>
       </div>
       <div
         style={{

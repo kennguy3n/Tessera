@@ -393,6 +393,16 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           className="qs-list-scroll"
           onScroll={onScroll}
           data-testid="quick-switcher-scroll"
+          // The results can overflow and scroll; make the region keyboard
+          // focusable so keyboard-only users can scroll it directly (the
+          // combobox arrow-key navigation already scrolls the active option
+          // into view, but the region must be reachable on its own too).
+          // role=group + aria-label give the focusable region a meaningful
+          // name so it announces as "Search results" rather than an unnamed
+          // group; the inner <ul role=listbox> still carries the options.
+          tabIndex={0}
+          role="group"
+          aria-label="Search results"
         >
           <ul className="qs-list" role="listbox" id={listboxId}>
             {ranked.length === 0 && renderStatus()}
