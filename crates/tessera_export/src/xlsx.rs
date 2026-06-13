@@ -382,6 +382,11 @@ fn parse_rc_key(key: &str) -> Option<(usize, usize)> {
 /// `None` / non-positive entry leaves Excel's default in place. Row
 /// heights are offset by one to account for the header row the export
 /// inserts at row 0.
+///
+/// The renderer stores dimensions as floating-point pixels (CSS can
+/// produce sub-pixel values), but Excel only addresses whole pixels, so
+/// each value is rounded to the nearest integer rather than truncated —
+/// a 24.7px row becomes 25, not 24, matching what the user sees.
 fn apply_dimensions(
     worksheet: &mut Worksheet,
     column_widths: &[Option<f64>],
@@ -390,14 +395,14 @@ fn apply_dimensions(
     for (c, width) in column_widths.iter().enumerate() {
         if let Some(px) = width.filter(|w| *w > 0.0) {
             worksheet
-                .set_column_width_pixels(c as u16, px as u32)
+                .set_column_width_pixels(c as u16, px.round() as u32)
                 .expect("set column width");
         }
     }
     for (r, height) in row_heights.iter().enumerate() {
         if let Some(px) = height.filter(|h| *h > 0.0) {
             worksheet
-                .set_row_height_pixels((r + 1) as u32, px as u32)
+                .set_row_height_pixels((r + 1) as u32, px.round() as u32)
                 .expect("set row height");
         }
     }
@@ -1142,6 +1147,25 @@ mod tests {
         // A freeze pane is serialised as `<pane xSplit=.. ySplit=.. .../>`.
         assert!(xml.contains("ySplit"), "freeze pane row split missing: {xml}");
         assert!(xml.contains("xSplit"), "freeze pane column split missing: {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_rounds_fractional_row_height_to_nearest_pixel() {
+        // A sub-pixel row height (40.7px) must round to 41px, not truncate
+        // to 40px. rust_xlsxwriter stores row height in points
+        // (points = pixels * 0.75), so 41px -> 30.75pt while a truncated
+        // 40px would be 30pt. Asserting the points value pins the rounding.
+        let content = r##"{
+            "columns":["A"],
+            "rows":[["1"],["2"]],
+            "rowHeights":[null,40.7]
+        }"##;
+        let xml = read_xlsx_text(&export_xlsx(&sheet_artifact(content)));
+        assert!(xml.contains("customHeight"), "custom row height missing: {xml}");
+        assert!(
+            xml.contains("ht=\"30.75\""),
+            "fractional row height should round to 41px (30.75pt): {xml}"
+        );
     }
 
     #[test]
