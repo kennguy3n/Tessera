@@ -395,83 +395,128 @@ export default function TemplatesPage() {
           data-testid="template-gallery"
           style={{ outline: "none" }}
         >
-          {Object.entries(grouped).map(([category, items]) => (
-            <section
-              key={category}
-              style={{ marginBottom: "var(--spacing-xl)" }}
-            >
-              <h2 style={{ marginBottom: "var(--spacing-md)" }}>{category}</h2>
+          {Object.entries(grouped).map(([category, items]) => {
+            // A `role="listbox"` may only own `option` (and `group`)
+            // children — a bare `<section>`/`<h2>` directly inside the
+            // listbox trips `aria-required-children`. Each category is
+            // therefore a `role="group"` named by its visible heading
+            // via `aria-labelledby`, which is the WAI-ARIA grouped-
+            // listbox pattern and keeps the category labels exposed to
+            // assistive tech without polluting the option set.
+            const groupLabelId = `${LISTBOX_ID}-group-${category.replace(
+              /[^a-zA-Z0-9_-]/g,
+              "_",
+            )}`;
+            return (
               <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns:
-                    "repeat(auto-fill, minmax(260px, 1fr))",
-                  gap: "var(--spacing-md)",
-                }}
+                key={category}
+                role="group"
+                aria-labelledby={groupLabelId}
+                style={{ marginBottom: "var(--spacing-xl)" }}
               >
-                {items.map((tmpl) => {
-                  // Flat index across all sections — drives the
-                  // active-descendant arithmetic and Enter activation.
-                  // O(1) Map lookup; see the `flatIndex` doc-comment
-                  // on the memo above for the rationale.
-                  const flatIdx = flatIndex.get(tmpl) ?? -1;
-                  const isActive = flatIdx === activeIndex;
-                  const Icon = TYPE_ICONS[tmpl.type] ?? FileText;
-                  return (
-                    <div
-                      key={tmpl.id}
-                      id={optionDomId(tmpl.id)}
-                      role="option"
-                      aria-selected={isActive}
-                      data-template-option
-                      data-template-id={tmpl.id}
-                      data-template-index={flatIdx}
-                    >
-                      <Card
-                        onClick={() => {
-                          setActiveIndex(flatIdx);
-                          navigate(`/create?template=${tmpl.id}`);
-                        }}
-                        className={isActive ? "card-active" : undefined}
-                        style={
-                          isActive
-                            ? {
-                                outline: "2px solid var(--color-primary, #4f46e5)",
-                                outlineOffset: "2px",
-                              }
-                            : undefined
-                        }
+                {/*
+                  The category label is the visible name of the `group`,
+                  conveyed to assistive tech via the group's
+                  `aria-labelledby`. A real heading is not a permitted
+                  child of a `listbox`/`group` (it is neither `option`
+                  nor `group`), so this carries `role="presentation"`:
+                  it stays visually a styled section title and still
+                  supplies the group's accessible name through
+                  `aria-labelledby`, but is removed from the heading
+                  outline and the listbox's owned-element set
+                  (`aria-required-children`).
+                */}
+                <h2
+                  id={groupLabelId}
+                  role="presentation"
+                  className="section-title"
+                  style={{ marginBottom: "var(--spacing-md)" }}
+                >
+                  {category}
+                </h2>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fill, minmax(260px, 1fr))",
+                    gap: "var(--spacing-md)",
+                  }}
+                >
+                  {items.map((tmpl) => {
+                    // Flat index across all sections — drives the
+                    // active-descendant arithmetic and Enter activation.
+                    // O(1) Map lookup; see the `flatIndex` doc-comment
+                    // on the memo above for the rationale.
+                    const flatIdx = flatIndex.get(tmpl) ?? -1;
+                    const isActive = flatIdx === activeIndex;
+                    const Icon = TYPE_ICONS[tmpl.type] ?? FileText;
+                    // Activation (mouse) lives on the `option` itself, not
+                    // on an inner button. Putting `onClick` on a `Card`
+                    // gave it `role="button"` + `tabIndex=0`, i.e. a
+                    // focusable control nested inside the `option` —
+                    // `nested-interactive`. In the active-descendant
+                    // listbox the single tab stop is the listbox; options
+                    // are never individually focusable, so the inner Card
+                    // must stay non-interactive.
+                    const activate = () => {
+                      setActiveIndex(flatIdx);
+                      navigate(`/create?template=${tmpl.id}`);
+                    };
+                    return (
+                      <div
+                        key={tmpl.id}
+                        id={optionDomId(tmpl.id)}
+                        role="option"
+                        aria-selected={isActive}
+                        data-template-option
+                        data-template-id={tmpl.id}
+                        data-template-index={flatIdx}
+                        onClick={activate}
+                        style={{ cursor: "pointer" }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "var(--spacing-sm)",
-                            marginBottom: "var(--spacing-sm)",
-                          }}
+                        <Card
+                          className={isActive ? "card-active" : undefined}
+                          style={
+                            isActive
+                              ? {
+                                  outline:
+                                    "2px solid var(--color-primary, #4f46e5)",
+                                  outlineOffset: "2px",
+                                }
+                              : undefined
+                          }
                         >
-                          <Icon
-                            size={16}
-                            strokeWidth={1.75}
-                            aria-hidden="true"
-                          />
-                          <span
-                            className="card-title"
-                            style={{ margin: 0 }}
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "var(--spacing-sm)",
+                              marginBottom: "var(--spacing-sm)",
+                            }}
                           >
-                            {tmpl.name}
-                          </span>
-                        </div>
-                        <div className="card-description">
-                          {tmpl.description}
-                        </div>
-                      </Card>
-                    </div>
-                  );
-                })}
+                            <Icon
+                              size={16}
+                              strokeWidth={1.75}
+                              aria-hidden="true"
+                            />
+                            <span
+                              className="card-title"
+                              style={{ margin: 0 }}
+                            >
+                              {tmpl.name}
+                            </span>
+                          </div>
+                          <div className="card-description">
+                            {tmpl.description}
+                          </div>
+                        </Card>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </section>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

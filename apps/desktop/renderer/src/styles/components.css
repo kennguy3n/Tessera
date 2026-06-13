@@ -101,6 +101,18 @@
   margin-bottom: var(--spacing-sm);
 }
 
+/*
+ * Section heading whose semantic LEVEL was corrected to <h2> (the first
+ * outline level beneath a page's <h1>) for accessibility, but whose
+ * visual SIZE must stay the same as the previous design (the base <h3>
+ * size). This decouples heading level (document outline / a11y) from
+ * heading size (visual hierarchy) so fixing the outline never inflates
+ * the UI. Used by page sections that previously rendered as <h3>.
+ */
+.section-title {
+  font-size: var(--font-size-xl);
+}
+
 .card-description {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);

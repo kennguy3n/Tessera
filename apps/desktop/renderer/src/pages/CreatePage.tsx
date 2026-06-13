@@ -1228,9 +1228,10 @@ function TemplateRunner({
       />
 
       <Card>
-        <h3 style={{ marginBottom: "var(--spacing-sm)" }}>
+        {/* Top-level section of the Create page (under its `<h1>`) → `<h2>`. */}
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-sm)" }}>
           Select sources to ground this {displayName}
-        </h3>
+        </h2>
         <p
           style={{
             fontSize: "var(--font-size-sm)",
@@ -1320,7 +1321,9 @@ function TemplateRunner({
               background: "var(--color-surface-soft)",
             }}
           >
-            <h4
+            {/* Subsection nested under the “Select sources” `<h2>` above, so
+                this is an `<h3>` (h2 → h3, no skipped level). */}
+            <h3
               style={{
                 margin: 0,
                 marginBottom: "var(--spacing-xs)",
@@ -1328,7 +1331,7 @@ function TemplateRunner({
               }}
             >
               Related sources
-            </h4>
+            </h3>
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {visibleSuggestions.map((suggestion) => {
                 const count = suggestion.sourceIds.length;

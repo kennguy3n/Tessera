@@ -343,7 +343,7 @@ export default function EmbeddingModelCard() {
 
   return (
     <Card data-testid="embedding-model-card">
-      <h3 style={{ marginBottom: "var(--spacing-md)" }}>Embedding model</h3>
+      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Embedding model</h2>
       <p
         style={{
           fontSize: "var(--font-size-sm)",

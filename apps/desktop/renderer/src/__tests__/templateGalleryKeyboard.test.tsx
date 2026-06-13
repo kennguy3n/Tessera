@@ -185,15 +185,18 @@ describe("TemplatesPage — keyboard navigation", () => {
     expect(dispatched).toBe(true);
   });
 
-  it("activates via click on a Card (mouse fallback) and tracks the active index", () => {
+  it("activates via click on an option (mouse fallback) and tracks the active index", () => {
     renderPage();
     const listbox = screen.getByRole("listbox", { name: /template gallery/i });
-    // The `Card` component is the inner clickable div with
-    // role="button"; click it directly so the onClick handler fires.
+    // Mouse activation lives on the `role="option"` element itself: the
+    // inner `Card` is intentionally non-interactive (no `role="button"`,
+    // no tab stop) so the option contains no nested focusable control
+    // (`nested-interactive`). Clicking the card's content bubbles to the
+    // option's `onClick`, which is what we assert here.
     const docTwoTitle = screen.getByText("Doc Two");
-    const card = docTwoTitle.closest('[role="button"]');
-    expect(card).not.toBeNull();
-    fireEvent.click(card as Element);
+    const option = docTwoTitle.closest('[role="option"]');
+    expect(option).not.toBeNull();
+    fireEvent.click(docTwoTitle);
     expect(navigateMock).toHaveBeenCalledWith("/create?template=doc-2");
     expect(listbox).toHaveAttribute(
       "aria-activedescendant",

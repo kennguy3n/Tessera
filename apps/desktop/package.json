@@ -52,13 +52,16 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "1.49.1",
     "@testing-library/jest-dom": "^6.4.5",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "axe-core": "4.10.2",
     "electron": "^31.0.0",
     "electron-builder": "^25.1.8",
     "eslint": "^9.39.4",

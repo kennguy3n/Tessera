@@ -431,7 +431,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   if (!tessera) {
     return (
       <Card>
-        <h3 style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h3>
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h2>
         <p style={{ color: "var(--color-text-secondary)" }}>
           Tessera bridge not available in this context.
         </p>
@@ -441,7 +441,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
 
   return (
     <Card>
-      <h3 style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h3>
+      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h2>
 
       {state.loading && <p>Detecting hardware…</p>}
       {state.error && (
