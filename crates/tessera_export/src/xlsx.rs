@@ -153,7 +153,7 @@ impl CellFmt {
 /// `#RRGGBB` validator — the only colour shape the renderer emits.
 fn is_hex_color(s: &str) -> bool {
     let bytes = s.as_bytes();
-    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 #[derive(Debug, Deserialize)]
