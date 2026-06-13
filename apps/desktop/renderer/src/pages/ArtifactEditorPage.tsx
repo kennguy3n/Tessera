@@ -30,6 +30,7 @@ import {
   parseSlideContent,
   slidesToMarpMarkdown,
 } from "../editors/slideEditorHelpers";
+import { marpThemeForSlideTheme } from "../editors/slideThemes";
 import {
   parseInfographicContent,
   buildPreviewHtml as buildInfographicPreviewHtml,
@@ -361,7 +362,12 @@ export default function ArtifactEditorPage() {
           // Defaulting here (instead of inside each call site) is what
           // keeps the two pipelines in sync — if a future caller forgets
           // to default, they still get the consistent value.
-          const effectiveTheme = parsed.marpTheme ?? "default";
+          // Marp Mode owns its own explicit theme; a structured deck has
+          // no `marp` block, so its curated `themeId` selects the closest
+          // Marp built-in theme (see `slideThemes.ts`). This is what
+          // carries the user's chosen deck theme into the exported PPTX.
+          const effectiveTheme =
+            parsed.marpTheme ?? marpThemeForSlideTheme(parsed.themeId);
           // When NOT in Marp Mode, we synthesise Marp Markdown from the
           // structured slides. Pass the resolved theme through so the
           // generated front-matter matches the `--theme` flag we send to
@@ -778,6 +784,7 @@ function EditorSwitch({
           onSave={onSave}
           onDraftChange={onDraftChange}
           deckTitle={artifact.title}
+          artifactId={artifact.id}
         />
       );
       break;

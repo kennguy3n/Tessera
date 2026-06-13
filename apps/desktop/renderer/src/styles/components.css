@@ -13,8 +13,10 @@
   /* Animate only the properties that actually change on
    * hover/active so a button press can't trigger a layout-affecting
    * `all` transition. `transform` carries the tactile press. */
-  transition: background-color var(--transition-fast),
-    color var(--transition-fast), border-color var(--transition-fast),
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast),
     box-shadow var(--transition-fast),
     transform var(--duration-instant) var(--ease-standard),
     opacity var(--transition-fast);
@@ -139,7 +141,8 @@
   height: 1.75rem;
   padding: 0;
   border-radius: var(--radius-full);
-  border: 1px solid color-mix(in srgb, var(--color-text-headline) 18%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--color-text-headline) 18%, transparent);
   /* Each swatch carries its own `data-accent`, so `--accent-light` /
    * `--accent-dark` resolve to THAT ramp on this element. We can't use
    * the shared `--accent` here because it's substituted once on
@@ -148,7 +151,8 @@
    * theme so the swatch previews the exact colour the user will get. */
   background-color: var(--accent-light);
   cursor: pointer;
-  transition: transform var(--duration-fast) var(--ease-spring),
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
     box-shadow var(--transition-fast);
 }
 
@@ -172,11 +176,15 @@
 }
 
 .accent-swatch--selected {
-  box-shadow: 0 0 0 2px var(--color-bg-page), 0 0 0 4px var(--accent);
+  box-shadow:
+    0 0 0 2px var(--color-bg-page),
+    0 0 0 4px var(--accent);
 }
 
 .accent-swatch--selected:focus-visible {
-  box-shadow: 0 0 0 2px var(--color-bg-page), 0 0 0 4px var(--accent),
+  box-shadow:
+    0 0 0 2px var(--color-bg-page),
+    0 0 0 4px var(--accent),
     0 0 0 7px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
@@ -740,8 +748,9 @@
   padding: var(--spacing-md);
   overflow: auto;
   max-height: 40vh;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
@@ -785,8 +794,9 @@
   padding: var(--spacing-md);
   overflow: auto;
   max-height: 50vh;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--font-size-sm);
 }
 
@@ -877,8 +887,10 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background var(--transition-fast),
-    border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .toolbar-btn:hover {
@@ -939,7 +951,8 @@
   color: var(--color-text-body);
   cursor: pointer;
   border-left: 2px solid transparent;
-  transition: background var(--transition-fast),
+  transition:
+    background var(--transition-fast),
     border-color var(--transition-fast);
 }
 
@@ -1506,7 +1519,6 @@
   gap: var(--spacing-xs);
 }
 
-
 /* ── Sheet conditional formatting panel ───────────────────────── */
 
 .sheet-cf-panel {
@@ -1860,8 +1872,10 @@
   line-height: 1;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--transition-fast),
-    border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .btn-sm:not(.btn):hover:not(:disabled) {
@@ -1921,8 +1935,10 @@
   font-size: var(--font-size-xs);
   line-height: 1;
   cursor: pointer;
-  transition: background var(--transition-fast),
-    border-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .btn-xs:not(.btn):hover:not(:disabled) {
@@ -2130,7 +2146,9 @@
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--transition-fast), color var(--transition-fast),
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast),
     background var(--transition-fast);
 }
 
@@ -2164,7 +2182,9 @@
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--transition-fast), color var(--transition-fast),
+  transition:
+    opacity var(--transition-fast),
+    color var(--transition-fast),
     background var(--transition-fast);
 }
 
@@ -2341,7 +2361,8 @@
   border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--transition-fast),
+  transition:
+    border-color var(--transition-fast),
     box-shadow var(--transition-fast);
 }
 
@@ -2546,6 +2567,251 @@
 .slide-notes-input:focus {
   outline: none;
   border-color: var(--color-primary);
+}
+
+/* -----------------------------------------------------------------
+ * Curated deck theme application
+ *
+ * The theme switcher stamps `data-slide-theme="<id>"` on the canvas;
+ * the palette vars come from `tokens.css`. We give the canvas a themed
+ * surface wash, a themed accent rule under the title, and themed title
+ * typography so switching themes is a visible live preview. The block
+ * textareas stay on the neutral editing surface for legibility. The
+ * fallbacks (`var(--token, …)`) keep an un-themed canvas looking
+ * exactly as before, so legacy decks render unchanged.
+ * ----------------------------------------------------------------- */
+.slide-canvas[data-slide-theme] {
+  background: var(--slide-surface, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.slide-canvas[data-slide-theme] .slide-title-input {
+  color: var(--slide-headline, var(--color-text-headline));
+  font-family: var(--slide-font-headline, var(--font-family));
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--slide-accent, var(--color-primary)) 32%,
+    transparent
+  );
+}
+
+.slide-canvas[data-slide-theme] .slide-title-input:focus {
+  border-bottom-color: var(--slide-accent, var(--color-primary));
+}
+
+/* -----------------------------------------------------------------
+ * Slide theme switcher (toolbar)
+ * ----------------------------------------------------------------- */
+.slide-theme-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.slide-theme-select {
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+}
+
+.slide-theme-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--color-primary);
+}
+
+/* -----------------------------------------------------------------
+ * AI assistant — deck generator panel + per-slide action row
+ *
+ * All colour / spacing from tokens; the streamed-text region uses the
+ * mono family for a "terminal preview" feel. Motion (the panel's
+ * slide-in) is gated on `prefers-reduced-motion` at the bottom of this
+ * block. Every control inherits the shared `.btn-*` focus rings.
+ * ----------------------------------------------------------------- */
+.slide-ai-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-sm) var(--spacing-md) 0;
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-card);
+  animation: slide-ai-panel-in var(--duration-fast, 150ms) var(--ease-out, ease);
+}
+
+@keyframes slide-ai-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.slide-ai-panel-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+.slide-ai-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs, 2px);
+}
+
+.slide-ai-field-row {
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+.slide-ai-field-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.slide-ai-textarea,
+.slide-ai-input,
+.slide-ai-number,
+.slide-ai-select {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+.slide-ai-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.slide-ai-textarea:focus-visible,
+.slide-ai-input:focus-visible,
+.slide-ai-number:focus-visible,
+.slide-ai-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--color-primary);
+}
+
+.slide-ai-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.slide-ai-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.slide-ai-error {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger-fg);
+}
+
+.slide-ai-stream {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.slide-ai-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs, 2px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slide-ai-preview-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-2xs, 2px) 0;
+}
+
+.slide-ai-preview-num {
+  flex: none;
+  min-width: 1.5rem;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+}
+
+.slide-ai-preview-title {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-body);
+}
+
+.slide-ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.slide-ai-actions-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.slide-ai-image-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  flex-basis: 100%;
+  margin-top: var(--spacing-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-ai-panel {
+    animation: none;
+  }
 }
 
 /* -----------------------------------------------------------------
@@ -2810,7 +3076,8 @@
   /* A focused pane is signalled by a top accent bar (Obsidian-style)
      rather than a full border, keeping the single-pane default clean. */
   box-shadow: inset 0 2px 0 0 transparent;
-  transition: box-shadow var(--transition-fast),
+  transition:
+    box-shadow var(--transition-fast),
     background-color var(--transition-fast);
 }
 .workspace-pane.is-focused > .workspace-tabstrip {
@@ -2839,8 +3106,10 @@
   border: 1px solid transparent;
   position: relative;
   user-select: none;
-  transition: background-color var(--transition-fast),
-    color var(--transition-fast), border-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 .workspace-tab:hover {
   background-color: var(--color-surface-hover);
@@ -2896,7 +3165,8 @@
   color: var(--color-text-tertiary);
   cursor: pointer;
   flex: 0 0 auto;
-  transition: background-color var(--transition-fast),
+  transition:
+    background-color var(--transition-fast),
     color var(--transition-fast);
 }
 .workspace-tab-close:hover,

@@ -40,17 +40,19 @@
    * rings where a box-shadow would be clipped. Both re-resolve per
    * theme because `--color-primary` does. */
   --color-focus-ring: var(--color-primary);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  --focus-ring: 0 0 0 3px
+    color-mix(in srgb, var(--color-primary) 35%, transparent);
   --focus-ring-inset: inset 0 0 0 2px var(--color-primary);
 
   /* Scrim behind modals / dialogs. A near-black tint with alpha so the
    * page shows through; the dark scopes deepen it. */
   --color-overlay: color-mix(in srgb, #111827 55%, transparent);
 
-  --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, sans-serif;
-  --font-family-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
-    Consolas, "Liberation Mono", monospace;
+  --font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
   /* Typographic scale (1.125 "major second"-ish steps tuned for a dense
    * desktop tool). `3xl`/`4xl` round out the top end for page heroes. */
   --font-size-xs: 0.75rem;
@@ -90,10 +92,12 @@
    * names are kept (and now alias the scale) so existing call sites
    * don't churn; new surfaces should reach for `--shadow-xs … -xl`. */
   --shadow-xs: 0 1px 2px rgba(17, 24, 39, 0.06);
-  --shadow-sm: 0 1px 3px rgba(17, 24, 39, 0.1), 0 1px 2px rgba(17, 24, 39, 0.06);
-  --shadow-md: 0 4px 8px -2px rgba(17, 24, 39, 0.1),
-    0 2px 4px -2px rgba(17, 24, 39, 0.06);
-  --shadow-lg: 0 12px 24px -6px rgba(17, 24, 39, 0.14),
+  --shadow-sm:
+    0 1px 3px rgba(17, 24, 39, 0.1), 0 1px 2px rgba(17, 24, 39, 0.06);
+  --shadow-md:
+    0 4px 8px -2px rgba(17, 24, 39, 0.1), 0 2px 4px -2px rgba(17, 24, 39, 0.06);
+  --shadow-lg:
+    0 12px 24px -6px rgba(17, 24, 39, 0.14),
     0 4px 8px -4px rgba(17, 24, 39, 0.08);
   --shadow-xl: 0 24px 48px -12px rgba(17, 24, 39, 0.22);
   --shadow-card: var(--shadow-sm);
@@ -252,7 +256,11 @@
   --color-primary: var(--accent);
   --color-primary-hover: color-mix(in srgb, var(--accent) 80%, #ffffff);
   --color-primary-active: color-mix(in srgb, var(--accent) 64%, #ffffff);
-  --color-primary-light: color-mix(in srgb, var(--accent) 22%, var(--color-bg-page));
+  --color-primary-light: color-mix(
+    in srgb,
+    var(--accent) 22%,
+    var(--color-bg-page)
+  );
   --color-bg-page: #111827;
   --color-bg-surface: #1f2937;
   --color-bg-sidebar: #0f172a;
@@ -268,8 +276,10 @@
   --color-overlay: color-mix(in srgb, #000000 66%, transparent);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 12px 24px -6px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
+  --shadow-md:
+    0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg:
+    0 12px 24px -6px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
   --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.8);
   --color-text-link: var(--color-primary);
 
@@ -305,7 +315,11 @@
     --color-primary: var(--accent);
     --color-primary-hover: color-mix(in srgb, var(--accent) 80%, #ffffff);
     --color-primary-active: color-mix(in srgb, var(--accent) 64%, #ffffff);
-    --color-primary-light: color-mix(in srgb, var(--accent) 22%, var(--color-bg-page));
+    --color-primary-light: color-mix(
+      in srgb,
+      var(--accent) 22%,
+      var(--color-bg-page)
+    );
     --color-bg-page: #111827;
     --color-bg-surface: #1f2937;
     --color-bg-sidebar: #0f172a;
@@ -321,8 +335,10 @@
     --color-overlay: color-mix(in srgb, #000000 66%, transparent);
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.5);
-    --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
-    --shadow-lg: 0 12px 24px -6px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
+    --shadow-md:
+      0 4px 8px -2px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+    --shadow-lg:
+      0 12px 24px -6px rgba(0, 0, 0, 0.7), 0 4px 8px -4px rgba(0, 0, 0, 0.55);
     --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.8);
 
     --color-danger-bg: #7f1d1d;
@@ -343,4 +359,93 @@
     --color-priority-high: #fb923c;
     --color-text-link: var(--color-primary);
   }
+}
+
+/* ---- Curated Slide deck themes -------------------------------------
+ * The Slide editor's theme switcher (`slideThemes.ts`) selects a
+ * curated typographic + colour treatment by stamping
+ * `data-slide-theme="<id>"` on the `.slide-canvas`. TypeScript holds
+ * only the catalogue metadata + Marp-export mapping; the palettes live
+ * here so colour stays in ONE place and flips with light / dark mode.
+ *
+ * Each theme exposes the same four semantic vars consumed by the
+ * `.slide-canvas[data-slide-theme]` rules in `components.css`:
+ *   --slide-accent   — heading rule / focus tint for this deck
+ *   --slide-surface  — canvas background wash
+ *   --slide-headline — slide-title colour
+ *   --slide-font-headline — title typeface (lets Editorial go serif)
+ * Body text keeps the global `--color-text-body` for editing legibility.
+ *
+ * Light values are the default; the `[data-theme="dark"]` block below
+ * re-declares each with tints calibrated for the dark page surface, so
+ * the picked theme reads correctly in both modes (full parity). The
+ * system-preference dark scope inherits these via the explicit
+ * `[data-theme="dark"]` the renderer sets, matching how the rest of
+ * the token file resolves dark mode. */
+[data-slide-theme="aurora"] {
+  --slide-accent: #7c3aed;
+  --slide-surface: #faf8ff;
+  --slide-headline: #1e1b2e;
+  --slide-font-headline: var(--font-family);
+}
+[data-slide-theme="editorial"] {
+  --slide-accent: #1d4ed8;
+  --slide-surface: #fffdf7;
+  --slide-headline: #1a1a1a;
+  --slide-font-headline: Georgia, "Times New Roman", serif;
+}
+[data-slide-theme="noir"] {
+  --slide-accent: #111827;
+  --slide-surface: #f4f4f5;
+  --slide-headline: #09090b;
+  --slide-font-headline: var(--font-family);
+}
+[data-slide-theme="mint"] {
+  --slide-accent: #0f766e;
+  --slide-surface: #f3fbf8;
+  --slide-headline: #064e3b;
+  --slide-font-headline: var(--font-family);
+}
+[data-slide-theme="solar"] {
+  --slide-accent: #c2410c;
+  --slide-surface: #fffaf2;
+  --slide-headline: #7c2d12;
+  --slide-font-headline: var(--font-family);
+}
+[data-slide-theme="slate"] {
+  --slide-accent: #334155;
+  --slide-surface: #f8fafc;
+  --slide-headline: #0f172a;
+  --slide-font-headline: var(--font-family);
+}
+
+[data-theme="dark"] [data-slide-theme="aurora"] {
+  --slide-accent: #a78bfa;
+  --slide-surface: #1a1830;
+  --slide-headline: #f5f3ff;
+}
+[data-theme="dark"] [data-slide-theme="editorial"] {
+  --slide-accent: #93c5fd;
+  --slide-surface: #1c1c1a;
+  --slide-headline: #faf9f6;
+}
+[data-theme="dark"] [data-slide-theme="noir"] {
+  --slide-accent: #e5e7eb;
+  --slide-surface: #0b0b0d;
+  --slide-headline: #fafafa;
+}
+[data-theme="dark"] [data-slide-theme="mint"] {
+  --slide-accent: #5eead4;
+  --slide-surface: #0f1f1b;
+  --slide-headline: #d1fae5;
+}
+[data-theme="dark"] [data-slide-theme="solar"] {
+  --slide-accent: #fdba74;
+  --slide-surface: #211710;
+  --slide-headline: #ffedd5;
+}
+[data-theme="dark"] [data-slide-theme="slate"] {
+  --slide-accent: #94a3b8;
+  --slide-surface: #131a26;
+  --slide-headline: #f1f5f9;
 }

@@ -14,6 +14,7 @@
 import type { MarpRenderOptions } from "../services/marpRenderer";
 import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
+import { DEFAULT_SLIDE_THEME_ID, isKnownSlideThemeId } from "./slideThemes";
 import type {
   Slide,
   SlideBlock,
@@ -37,6 +38,24 @@ export interface ParsedSlideContent {
   marpMode: boolean;
   marpSource: string;
   marpTheme: MarpRenderOptions["theme"] | undefined;
+  /**
+   * Resolved curated deck theme id. Always a KNOWN catalogue id —
+   * `parseSlideContent` validates the persisted value and falls back
+   * to {@link DEFAULT_SLIDE_THEME_ID} for missing / unknown ids, so
+   * downstream consumers never have to re-validate.
+   */
+  themeId: string;
+}
+
+/**
+ * Coerce a persisted, possibly-unknown theme id to a known catalogue
+ * id, falling back to the default. Exported so the SlideEditor's
+ * content-sync path and the tests share one validation rule.
+ */
+export function resolveThemeId(themeId: string | undefined | null): string {
+  return isKnownSlideThemeId(themeId)
+    ? (themeId as string)
+    : DEFAULT_SLIDE_THEME_ID;
 }
 
 /**
@@ -172,6 +191,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpMode: false,
     marpSource: "",
     marpTheme: undefined,
+    themeId: DEFAULT_SLIDE_THEME_ID,
   };
   if (!content) return emptyDefault;
   try {
@@ -182,6 +202,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
         marpMode: parsed.marp?.enabled ?? false,
         marpSource: parsed.marp?.source ?? "",
         marpTheme: parsed.marp?.theme,
+        themeId: resolveThemeId(parsed.themeId),
       };
     }
   } catch {
@@ -194,6 +215,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpMode: false,
     marpSource: "",
     marpTheme: undefined,
+    themeId: DEFAULT_SLIDE_THEME_ID,
   };
 }
 

@@ -42,6 +42,9 @@ import {
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
+import { SLIDE_THEMES } from "./slideThemes";
+import { applyBulletsToSlide } from "./slideAiHelpers";
+import { SlideAiActions, SlideDeckGenerator } from "./SlideAiPanel";
 import type {
   MarpModeState,
   Slide,
@@ -71,6 +74,14 @@ interface SlideEditorProps {
    * Optional: the IPC layer falls back to "Presentation" when absent.
    */
   deckTitle?: string;
+  /**
+   * Owning artifact id, forwarded to the AI image-generation flow so
+   * generated assets are routed under `<userData>/generated-images/
+   * <artifactId>/`. Optional: when absent the per-slide "suggest
+   * image" action degrades to suggesting a prompt the user can copy
+   * rather than rendering an asset.
+   */
+  artifactId?: string;
 }
 
 /**
@@ -134,6 +145,7 @@ export default function SlideEditor({
   onDraftChange,
   autoSaveMs = 2000,
   deckTitle,
+  artifactId,
 }: SlideEditorProps) {
   // Parse the initial content exactly once. Subsequent prop-driven changes
   // are handled by the sync effect below; recomputing on every keystroke
@@ -148,10 +160,14 @@ export default function SlideEditor({
   const [activeIndex, setActiveIndex] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
   const [marpMode, setMarpMode] = useState<boolean>(() => initial.marpMode);
-  const [marpSource, setMarpSource] = useState<string>(() => initial.marpSource);
+  const [marpSource, setMarpSource] = useState<string>(
+    () => initial.marpSource,
+  );
   const [marpTheme, setMarpTheme] = useState<MarpRenderOptions["theme"]>(
     () => initial.marpTheme ?? "default",
   );
+  const [themeId, setThemeId] = useState<string>(() => initial.themeId);
+  const [deckGenOpen, setDeckGenOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [findPanelOpen, setFindPanelOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
@@ -184,6 +200,17 @@ export default function SlideEditor({
       theme: marpTheme,
     };
   }, [marpMode, marpSource, marpTheme]);
+
+  // Mirror the curated deck theme into a ref so the debounced save
+  // path can read the freshest value at flush time, exactly like
+  // `marpStateRef` above. Without this, a save scheduled from a slide
+  // mutator (which doesn't take a theme argument) would serialise the
+  // theme captured when the callback was created, dropping a
+  // theme-switch that happened between the edit and the timer firing.
+  const themeIdRef = useRef<string>(themeId);
+  useEffect(() => {
+    themeIdRef.current = themeId;
+  }, [themeId]);
 
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
@@ -268,6 +295,7 @@ export default function SlideEditor({
       const data: SlideContent = {
         slides: updatedSlides,
         marp: marpState ?? marpStateRef.current,
+        themeId: themeIdRef.current,
       };
       const json = JSON.stringify(data);
       // Publish the draft immediately (no debounce) so exporting before
@@ -323,6 +351,8 @@ export default function SlideEditor({
       setMarpMode(parsed.marpMode);
       setMarpSource(parsed.marpSource);
       setMarpTheme(parsed.marpTheme ?? "default");
+      setThemeId(parsed.themeId);
+      themeIdRef.current = parsed.themeId;
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
@@ -451,6 +481,39 @@ export default function SlideEditor({
     [debouncedSave],
   );
 
+  // Switch the curated deck theme. We update the ref synchronously
+  // (before `debouncedSave`) so the save serialises the just-chosen
+  // theme rather than the `themeIdRef` value the effect hasn't flushed
+  // yet — the same flush-time-consistency contract `marpStateRef` has.
+  const changeTheme = useCallback(
+    (nextThemeId: string) => {
+      setThemeId(nextThemeId);
+      themeIdRef.current = nextThemeId;
+      debouncedSave(slides);
+    },
+    [debouncedSave, slides],
+  );
+
+  // Replace the entire deck with an AI-generated one. We anchor the
+  // active slide to 0 and reveal the canvas at the first slide so the
+  // user immediately sees the result. The deck is saved through the
+  // normal debounced path so it round-trips like any manual edit.
+  const applyGeneratedDeck = useCallback(
+    (generated: Slide[]) => {
+      if (generated.length === 0) return;
+      setSlides(generated);
+      setActiveIndex(0);
+      setMarpMode(false);
+      setDeckGenOpen(false);
+      debouncedSave(generated, {
+        enabled: false,
+        source: marpSource,
+        theme: marpTheme,
+      });
+    },
+    [debouncedSave, marpSource, marpTheme],
+  );
+
   // Pure navigation — change which slide is active without touching
   // the deck order. introduces this as the canonical
   // "navigate by N slides" primitive, shared by:
@@ -544,9 +607,7 @@ export default function SlideEditor({
   // `null` when React detaches the element) so removed slides don't
   // leave dangling DOM references after the slide is deleted from
   // the deck.
-  const thumbRefs = useRef<Map<string, HTMLButtonElement | null>>(
-    new Map(),
-  );
+  const thumbRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
   // Per-id ref-callback cache. React's ref protocol detaches and
   // re-attaches the DOM node whenever the ref-callback's identity
@@ -674,11 +735,7 @@ export default function SlideEditor({
         // already early-return above in that case, so reaching this
         // point guarantees the helper finds the outgoing block to
         // discard.
-        discardUploadTokensForBlock(
-          uploadTokensRef.current,
-          slide,
-          blockIndex,
-        );
+        discardUploadTokensForBlock(uploadTokensRef.current, slide, blockIndex);
         const next = [...prev];
         next[slideIndex] = updatedSlide;
         debouncedSave(next);
@@ -694,6 +751,27 @@ export default function SlideEditor({
         const slide = prev[slideIndex];
         if (!slide) return prev;
         const updatedSlide = appendBlock(slide, block);
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Replace the active slide's primary text/bullets block with AI-
+  // rewritten bullets, preserving image/diagram blocks (see
+  // `applyBulletsToSlide`). Goes through the same `setSlides` +
+  // `debouncedSave` path as a manual edit so it round-trips and
+  // undo-friendly state stays consistent.
+  const applySlideBullets = useCallback(
+    (slideIndex: number, bullets: string[]) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = applyBulletsToSlide(slide, bullets);
+        if (updatedSlide === slide) return prev;
         const next = [...prev];
         next[slideIndex] = updatedSlide;
         debouncedSave(next);
@@ -812,11 +890,7 @@ export default function SlideEditor({
   const uploadTokensRef = useRef<Map<string, number>>(new Map());
 
   const onImageUpload = useCallback(
-    async (
-      slideId: string,
-      blockId: string,
-      file: File,
-    ) => {
+    async (slideId: string, blockId: string, file: File) => {
       const tokenKey = uploadTokenKey(slideId, blockId);
       const nextToken = (uploadTokensRef.current.get(tokenKey) ?? 0) + 1;
       uploadTokensRef.current.set(tokenKey, nextToken);
@@ -959,20 +1033,20 @@ export default function SlideEditor({
               onDragEnd={() => setDraggedSlideId(null)}
             >
               {/*
-                * `draggable={false}` on every interactive child of the
-                * `draggable` row mirrors the defensive pattern in
-                * `SlideBlockRow` (textarea / input). Native HTML5 drag
-                * inheritance means a `draggable` parent would otherwise
-                * make these buttons drag-able too. In Chromium-on-
-                * desktop the browser disambiguates click vs. drag on
-                * `<button>` correctly, but accessibility tools that
-                * simulate mouse events (and touch-emulation in Chrome
-                * DevTools) can interpret a tap-with-millimetre-jitter
-                * as a drag-start. Opting these children out forces the
-                * row-level drag to only fire from non-button regions
-                * (the empty padding / numbered chip), which is the
-                * intended interaction.
-                */}
+               * `draggable={false}` on every interactive child of the
+               * `draggable` row mirrors the defensive pattern in
+               * `SlideBlockRow` (textarea / input). Native HTML5 drag
+               * inheritance means a `draggable` parent would otherwise
+               * make these buttons drag-able too. In Chromium-on-
+               * desktop the browser disambiguates click vs. drag on
+               * `<button>` correctly, but accessibility tools that
+               * simulate mouse events (and touch-emulation in Chrome
+               * DevTools) can interpret a tap-with-millimetre-jitter
+               * as a drag-start. Opting these children out forces the
+               * row-level drag to only fire from non-button regions
+               * (the empty padding / numbered chip), which is the
+               * intended interaction.
+               */}
               <button
                 ref={setThumbRef(slide.id)}
                 type="button"
@@ -988,7 +1062,9 @@ export default function SlideEditor({
                 onKeyDown={(event) => handleThumbKeyDown(event, i)}
               >
                 <span className="slide-thumb-number">{i + 1}</span>
-                <span className="slide-thumb-title">{slide.title || "Untitled"}</span>
+                <span className="slide-thumb-title">
+                  {slide.title || "Untitled"}
+                </span>
               </button>
               <div className="slide-thumb-actions">
                 <button
@@ -1168,6 +1244,34 @@ export default function SlideEditor({
           >
             Marp Mode
           </button>
+          <button
+            type="button"
+            className={`btn-sm ${deckGenOpen ? "active" : ""}`}
+            onClick={() => setDeckGenOpen((open) => !open)}
+            aria-label="Generate a deck with AI"
+            aria-expanded={deckGenOpen}
+            title="Generate a deck from a prompt using the on-device model"
+          >
+            ✨ AI Deck
+          </button>
+          {!marpMode && (
+            <label className="slide-theme-switcher">
+              Theme
+              <select
+                className="slide-theme-select"
+                value={themeId}
+                onChange={(e) => changeTheme(e.target.value)}
+                aria-label="Deck theme"
+                title="Curated deck theme (typography + colour)"
+              >
+                {SLIDE_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {theme.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         {findPanelOpen && (
@@ -1236,6 +1340,12 @@ export default function SlideEditor({
           </div>
         )}
 
+        <SlideDeckGenerator
+          open={deckGenOpen}
+          onClose={() => setDeckGenOpen(false)}
+          onApply={applyGeneratedDeck}
+        />
+
         {marpMode && (
           <div className="marp-mode">
             <div className="marp-mode-toolbar">
@@ -1248,7 +1358,10 @@ export default function SlideEditor({
                     setMarpTheme(newTheme);
                     // Also rewrite the frontmatter in the raw source so the
                     // dropdown and source never desynchronize.
-                    const updatedSource = setFrontmatterTheme(marpSource, newTheme);
+                    const updatedSource = setFrontmatterTheme(
+                      marpSource,
+                      newTheme,
+                    );
                     setMarpSource(updatedSource);
                     debouncedSave(slides, {
                       enabled: marpMode,
@@ -1263,7 +1376,8 @@ export default function SlideEditor({
                 </select>
               </label>
               <span className="marp-mode-hint">
-                Use <code>---</code> to separate slides; <code>&lt;!-- notes --&gt;</code> for speaker notes.
+                Use <code>---</code> to separate slides;{" "}
+                <code>&lt;!-- notes --&gt;</code> for speaker notes.
               </span>
             </div>
             <div className="marp-mode-split">
@@ -1290,17 +1404,22 @@ export default function SlideEditor({
                 rows={20}
                 spellCheck={false}
               />
-              <MarpPreview markdown={marpSource} theme={marpTheme ?? "default"} />
+              <MarpPreview
+                markdown={marpSource}
+                theme={marpTheme ?? "default"}
+              />
             </div>
           </div>
         )}
 
         {!marpMode && activeSlide && (
-          <div className="slide-canvas">
+          <div className="slide-canvas" data-slide-theme={themeId}>
             <input
               className="slide-title-input"
               value={activeSlide.title}
-              onChange={(e) => updateSlide(activeIndex, { title: e.target.value })}
+              onChange={(e) =>
+                updateSlide(activeIndex, { title: e.target.value })
+              }
               placeholder="Slide Title"
             />
             <div className="slide-blocks">
@@ -1383,6 +1502,24 @@ export default function SlideEditor({
                 + Add Block
               </button>
             </div>
+
+            <SlideAiActions
+              slide={activeSlide}
+              artifactId={artifactId}
+              onApplyBullets={(bullets) =>
+                applySlideBullets(activeIndex, bullets)
+              }
+              onApplyNotes={(notes) => {
+                updateSlide(activeIndex, { notes });
+                setShowNotes(true);
+              }}
+              onInsertImage={(assetUrl, alt) =>
+                onBlockAppend(
+                  activeIndex,
+                  buildBlock({ type: "image", content: assetUrl, alt }),
+                )
+              }
+            />
 
             {showNotes && (
               <SpeakerNotesField

@@ -87,4 +87,13 @@ export interface MarpModeState {
 export interface SlideContent {
   slides: Slide[];
   marp?: MarpModeState;
+  /**
+   * Curated deck theme id (see `slideThemes.ts`). Optional and
+   * additive: legacy decks saved before themes shipped simply omit
+   * it and `parseSlideContent` resolves the default. The id is
+   * validated against the known catalogue on load, so an unknown /
+   * hand-edited value degrades to the default rather than stamping an
+   * unstyled theme attribute onto the canvas.
+   */
+  themeId?: string;
 }
