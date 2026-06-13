@@ -369,6 +369,26 @@ describe("resolveGeneratedSlideLayout", () => {
     ).toBe("quote");
   });
 
+  it("rejects a supported hint that the content cannot fill", () => {
+    // twoColumn needs two columns; one bullet can't fill both, so the
+    // hint is dropped in favour of the heuristic (1 bullet → titleContent).
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: ["only one"], layoutHint: "twoColumn" },
+        1,
+        5,
+      ),
+    ).toBe("titleContent");
+    // bigNumber needs a headline value; 0 bullets → sectionHeader heuristic.
+    expect(
+      resolveGeneratedSlideLayout(
+        { title: "S", bullets: [], layoutHint: "bigNumber" },
+        1,
+        5,
+      ),
+    ).toBe("sectionHeader");
+  });
+
   it("ignores an unknown or unsupported hint and falls back to the heuristic", () => {
     // "imageLeft" is a real layout but NOT in the deck-generation set,
     // so it must be rejected in favour of the content heuristic.
@@ -460,16 +480,30 @@ describe("parseLayoutSuggestion", () => {
     expect(parseLayoutSuggestion("twoColumn")).toBe("twoColumn");
   });
 
-  it("recognises the id inside prose, code fences, or with punctuation", () => {
+  it("recognises an unambiguous id inside prose or code fences", () => {
     expect(parseLayoutSuggestion("```\nbigNumber\n```")).toBe("bigNumber");
     expect(
-      parseLayoutSuggestion("The best layout is quote."),
-    ).toBe("quote");
+      parseLayoutSuggestion("The recommended layout is bigNumber."),
+    ).toBe("bigNumber");
   });
 
   it("recognises the human label and hyphenated forms", () => {
     expect(parseLayoutSuggestion("Two Columns")).toBe("twoColumn");
     expect(parseLayoutSuggestion("two-column")).toBe("twoColumn");
+  });
+
+  it("accepts an ambiguous common-word id as a bare reply or first token", () => {
+    expect(parseLayoutSuggestion("quote")).toBe("quote");
+    expect(parseLayoutSuggestion("Quote.")).toBe("quote");
+    expect(parseLayoutSuggestion("quote layout")).toBe("quote");
+    expect(parseLayoutSuggestion("title")).toBe("title");
+  });
+
+  it("does NOT match an ambiguous common word buried in prose", () => {
+    // "title"/"quote"/"blank" double as English words, so they only
+    // count as the first token — never deep inside a sentence.
+    expect(parseLayoutSuggestion("I think the title works best here")).toBeNull();
+    expect(parseLayoutSuggestion("Use a memorable quote from the CEO")).toBeNull();
   });
 
   it("returns null when no known layout is named", () => {

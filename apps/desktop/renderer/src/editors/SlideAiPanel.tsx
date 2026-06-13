@@ -377,6 +377,7 @@ export function SlideAiActions({
   const runRewrite = useCallback(
     async (mode: SlideRewriteMode) => {
       setActive(mode);
+      setLayoutNotice(null);
       const result = await gen.run({
         prompt: buildRewritePrompt(slide, mode),
         maxTokens: 1024,
@@ -392,6 +393,7 @@ export function SlideAiActions({
 
   const runNotes = useCallback(async () => {
     setActive("notes");
+    setLayoutNotice(null);
     const result = await gen.run({
       prompt: buildNotesPrompt(slide),
       maxTokens: 512,
@@ -406,6 +408,7 @@ export function SlideAiActions({
   const runImagePrompt = useCallback(async () => {
     setActive("image");
     setImageError(null);
+    setLayoutNotice(null);
     const result = await gen.run({
       prompt: buildImagePromptSuggestion(slide),
       maxTokens: 256,

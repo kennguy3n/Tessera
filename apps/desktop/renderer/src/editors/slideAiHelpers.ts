@@ -198,10 +198,34 @@ export function splitLayoutHint(heading: string): {
 }
 
 /**
+ * Whether a hinted layout can actually be materialised from the parsed
+ * slide's content. `twoColumn` needs two columns to fill and
+ * `bigNumber` needs a headline value, so honouring those hints for a
+ * slide that lacks the bullets would leave an empty region (and could
+ * feed `undefined` into a block). Every other deck-gen layout
+ * materialises safely for any bullet count (`quote` falls back to the
+ * heading, `sectionHeader`/`titleContent` handle 0 bullets).
+ */
+function hintFitsContent(
+  hint: SlideLayout,
+  parsed: ParsedOutlineSlide,
+): boolean {
+  switch (hint) {
+    case "twoColumn":
+      return parsed.bullets.length >= 2;
+    case "bigNumber":
+      return parsed.bullets.length >= 1;
+    default:
+      return true;
+  }
+}
+
+/**
  * Resolve the layout for a generated slide: prefer the model's hint
- * when it names a layout supported for generation, otherwise fall back
- * to the deterministic {@link suggestLayoutForGeneratedSlide} heuristic.
- * The first slide is always the cover (`title`). Pure — no IO.
+ * when it names a layout supported for generation AND that layout fits
+ * the slide's content, otherwise fall back to the deterministic
+ * {@link suggestLayoutForGeneratedSlide} heuristic. The first slide is
+ * always the cover (`title`). Pure — no IO.
  */
 export function resolveGeneratedSlideLayout(
   parsed: ParsedOutlineSlide,
@@ -210,7 +234,12 @@ export function resolveGeneratedSlideLayout(
 ): SlideLayout {
   if (index === 0) return "title";
   const hint = parsed.layoutHint;
-  if (hint && isKnownSlideLayout(hint) && AI_DECK_LAYOUTS.has(hint)) {
+  if (
+    hint &&
+    isKnownSlideLayout(hint) &&
+    AI_DECK_LAYOUTS.has(hint) &&
+    hintFitsContent(hint, parsed)
+  ) {
     return hint;
   }
   return suggestLayoutForGeneratedSlide(parsed, index, total);
@@ -379,7 +408,7 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
         blocks.push(
           buildBlock({
             type: "text",
-            content: parsed.bullets[0],
+            content: parsed.bullets[0] ?? "",
             slot: "number",
           }),
         );
@@ -397,7 +426,7 @@ export function outlineToSlides(outline: ParsedDeckOutline): Slide[] {
         blocks.push(
           buildBlock({
             type: "text",
-            content: parsed.bullets[0],
+            content: parsed.bullets[0] ?? "",
             slot: "left",
           }),
         );
@@ -700,24 +729,42 @@ const LAYOUT_KEY_LOOKUP: ReadonlyMap<string, SlideLayout> = (() => {
 })();
 
 /**
+ * Normalised layout keys that are also common English words. These only
+ * match as a whole line or the FIRST token of a line, never buried in
+ * prose, so a reply like "the title works best here" doesn't get
+ * mis-read as the `title` layout. Unambiguous ids (e.g. `twoColumn`,
+ * `bigNumber`) remain matchable anywhere in the response.
+ */
+const AMBIGUOUS_LAYOUT_KEYS: ReadonlySet<string> = new Set([
+  "title",
+  "quote",
+  "blank",
+]);
+
+/**
  * Parse a per-slide "suggest a layout" response into a known layout id.
  * Tolerant of a small model that wraps the id in prose, code fences, or
- * uses the human label / hyphenated form. Scans whole lines first (to
- * catch multi-word labels like "Two Columns") then individual tokens,
- * returning the FIRST recognised layout. Returns null when nothing in
- * the response names a known layout, so the caller can no-op rather
- * than apply a bogus layout. Pure — no IO.
+ * uses the human label / hyphenated form. For each line it tries an
+ * exact (normalised) whole-line match first — catching multi-word
+ * labels like "Two Columns" and bare ids — then scans individual
+ * tokens, returning the FIRST recognised layout. Layout ids that double
+ * as common English words ({@link AMBIGUOUS_LAYOUT_KEYS}) are only
+ * trusted as the first token to avoid false positives from prose.
+ * Returns null when nothing in the response names a known layout, so
+ * the caller can no-op rather than apply a bogus layout. Pure — no IO.
  */
 export function parseLayoutSuggestion(raw: string): SlideLayout | null {
   const text = stripCodeFences(raw);
   for (const rawLine of text.split(/\r?\n/)) {
-    const lineKey = normLayoutKey(rawLine);
-    const lineMatch = LAYOUT_KEY_LOOKUP.get(lineKey);
+    const lineMatch = LAYOUT_KEY_LOOKUP.get(normLayoutKey(rawLine));
     if (lineMatch) return lineMatch;
-    for (const token of rawLine.split(/[^a-zA-Z0-9]+/)) {
-      if (!token) continue;
-      const tokenMatch = LAYOUT_KEY_LOOKUP.get(normLayoutKey(token));
-      if (tokenMatch) return tokenMatch;
+    const tokens = rawLine.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i += 1) {
+      const key = normLayoutKey(tokens[i]);
+      const tokenMatch = LAYOUT_KEY_LOOKUP.get(key);
+      if (!tokenMatch) continue;
+      if (AMBIGUOUS_LAYOUT_KEYS.has(key) && i !== 0) continue;
+      return tokenMatch;
     }
   }
   return null;
