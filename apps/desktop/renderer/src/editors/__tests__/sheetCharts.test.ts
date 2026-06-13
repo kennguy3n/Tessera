@@ -439,6 +439,27 @@ describe("lineLayout — combo options", () => {
     // First of two band centres = left + 0.25 * plotW.
     expect(lines[0].points[0].x).toBeCloseTo(CHART_PAD.left + 0.25 * plotW);
   });
+
+  it("ignores a non-positive maxOverride and derives a finite axis", () => {
+    const data: ChartData = {
+      labels: ["1", "2"],
+      series: [{ name: "A", values: [10, 20] }],
+    };
+    for (const bad of [0, -5]) {
+      const line = lineLayout(data, LAYOUT, { maxOverride: bad });
+      const bar = barLayout(data, LAYOUT, bad);
+      expect(line.max).toBeGreaterThanOrEqual(1);
+      expect(bar.max).toBeGreaterThanOrEqual(1);
+      // No Infinity/NaN leaks into the rendered coordinates.
+      for (const p of line.lines[0].points) {
+        expect(Number.isFinite(p.x)).toBe(true);
+        expect(Number.isFinite(p.y)).toBe(true);
+      }
+      for (const r of bar.bars) {
+        expect(Number.isFinite(r.height)).toBe(true);
+      }
+    }
+  });
 });
 
 describe("yAxisTicks", () => {

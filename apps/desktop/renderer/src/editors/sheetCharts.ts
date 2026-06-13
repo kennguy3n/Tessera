@@ -259,7 +259,9 @@ const DEFAULT_PAD = { top: 8, right: 8, bottom: 20, left: 32 };
  * (category, series) with a numeric value.
  *
  * `maxOverride` forces the axis maximum instead of deriving it from this
- * data — used by the combo mark so its bars and line share one scale.
+ * data — used by the combo mark so its bars and line share one scale. A
+ * non-positive override is ignored (it would make every `v / max` blow up to
+ * Infinity/NaN); we fall back to the derived `niceMax`, which is always ≥ 1.
  */
 export function barLayout(
   data: ChartData,
@@ -270,7 +272,10 @@ export function barLayout(
   const plotW = layout.width - pad.left - pad.right;
   const plotH = layout.height - pad.top - pad.bottom;
   const { max: rawMax } = valueExtent(data);
-  const max = maxOverride ?? niceMax(rawMax);
+  const max =
+    maxOverride !== undefined && maxOverride > 0
+      ? maxOverride
+      : niceMax(rawMax);
   const categories = data.labels.length;
   const seriesN = data.series.length;
   const bars: BarRect[] = [];
@@ -351,7 +356,12 @@ export function lineLayout(
   const plotW = layout.width - pad.left - pad.right;
   const plotH = layout.height - pad.top - pad.bottom;
   const { max: rawMax } = valueExtent(data);
-  const max = opts.maxOverride ?? niceMax(rawMax);
+  // A non-positive override would divide every point by ≤ 0; ignore it and use
+  // the derived `niceMax` (always ≥ 1). See `barLayout` for the rationale.
+  const max =
+    opts.maxOverride !== undefined && opts.maxOverride > 0
+      ? opts.maxOverride
+      : niceMax(rawMax);
   const categories = data.labels.length;
   const lines: LinePath[] = [];
   if (categories === 0 || plotW <= 0 || plotH <= 0) {
