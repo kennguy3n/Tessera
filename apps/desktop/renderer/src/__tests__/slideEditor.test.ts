@@ -1387,7 +1387,14 @@ describe("nextBlockForTypeChange", () => {
     // spread in `nextBlockForTypeChange` and silently break React's
     // key stability across type changes (the `<textarea>` would lose
     // cursor / selection state on every type select).
-    const types: SlideBlock["type"][] = ["text", "bullets", "image", "diagram"];
+    const types: SlideBlock["type"][] = [
+      "text",
+      "bullets",
+      "image",
+      "diagram",
+      "table",
+      "chart",
+    ];
     for (const from of types) {
       for (const to of types) {
         if (from === to) continue; // same-type is the ref-stable no-op branch
@@ -1861,6 +1868,22 @@ describe("parseSlideChart", () => {
   it("pads labels to the widest series so every value has a slot", () => {
     const spec = parseSlideChart("labels: A\nX: 1, 2, 3");
     expect(spec?.data.labels).toEqual(["A", "", ""]);
+  });
+
+  it("pads short series with nulls so geometry never reads undefined", () => {
+    // More labels than values: the series must be padded to the label
+    // count with `null`, otherwise the layout helpers read `undefined`
+    // and emit NaN SVG coordinates.
+    const spec = parseSlideChart("labels: Q1, Q2, Q3, Q4\nRevenue: 10, 14");
+    expect(spec?.data.labels).toEqual(["Q1", "Q2", "Q3", "Q4"]);
+    expect(spec?.data.series[0].values).toEqual([10, 14, null, null]);
+  });
+
+  it("normalises ragged series to a common rectangular width", () => {
+    const spec = parseSlideChart("labels: A, B\nX: 1\nY: 1, 2, 3");
+    expect(spec?.data.labels).toEqual(["A", "B", ""]);
+    expect(spec?.data.series[0].values).toEqual([1, null, null]);
+    expect(spec?.data.series[1].values).toEqual([1, 2, 3]);
   });
 
   it("returns null when there is no series line", () => {

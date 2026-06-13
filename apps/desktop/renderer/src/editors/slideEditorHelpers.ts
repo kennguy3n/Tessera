@@ -1094,13 +1094,33 @@ export function parseSlideChart(content: string): SlideChartSpec | null {
     });
   }
   if (series.length === 0) return null;
-  // Pad labels to the widest series so every plotted value has a
-  // category slot (extra labels are harmless; missing ones become "").
-  const width = series.reduce((max, s) => Math.max(max, s.values.length), 0);
+  // Normalise to a single rectangular width = the longest of the label
+  // list and every series. Pad labels (missing ones become "") AND every
+  // series' values (missing ones become `null`). Padding the *values* is
+  // essential: the layout helpers iterate `0..labels.length` and read
+  // `values[ci]`, so a short series would otherwise yield `undefined`,
+  // which slips past the `=== null` / `<= 0` guards and produces NaN SVG
+  // geometry (a `<rect>` with NaN height, or a polyline point `x,NaN`
+  // that corrupts the whole line).
+  const width = series.reduce(
+    (max, s) => Math.max(max, s.values.length),
+    labels.length,
+  );
   if (labels.length < width) {
     labels = [...labels, ...Array(width - labels.length).fill("")];
   }
-  return { type, title, data: { labels, series } };
+  const padded = series.map((s) =>
+    s.values.length < width
+      ? {
+          ...s,
+          values: [
+            ...s.values,
+            ...Array<number | null>(width - s.values.length).fill(null),
+          ],
+        }
+      : s,
+  );
+  return { type, title, data: { labels, series: padded } };
 }
 
 /** Split a comma-separated cell list into trimmed, non-empty-aware cells. */
