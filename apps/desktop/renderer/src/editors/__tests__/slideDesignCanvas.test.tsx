@@ -92,6 +92,19 @@ describe("SlideDesignCanvas — bullets block", () => {
     expect(onChangeBlockContent).toHaveBeenCalledWith(0, "onetwo");
   });
 
+  it("does not split on Enter while an IME composition is active", () => {
+    // CJK / accent input: the Enter that confirms a composition candidate
+    // must NOT be hijacked as a bullet split, or the composed text is lost.
+    const slide = makeSlide([
+      { id: "b0", type: "bullets", content: "alpha\nbeta" },
+    ]);
+    const { onChangeBlockContent } = renderCanvas(slide);
+    const bullet = screen.getByLabelText("Bullet 1") as HTMLTextAreaElement;
+    bullet.setSelectionRange(2, 2);
+    fireEvent.keyDown(bullet, { key: "Enter", isComposing: true });
+    expect(onChangeBlockContent).not.toHaveBeenCalled();
+  });
+
   it("edits a single bullet line in place", () => {
     const slide = makeSlide([
       { id: "b0", type: "bullets", content: "one\ntwo" },

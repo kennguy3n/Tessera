@@ -127,24 +127,6 @@ export function mergeBulletForward(
   return { lines: next, focusIndex: index, focusCaret: current.length };
 }
 
-/**
- * Remove the bullet at `index` outright (e.g. the row's delete button).
- * Removing the only remaining bullet leaves a single empty bullet so
- * the list never collapses to zero rows. Focus moves to the previous
- * bullet (or the first one) at its end.
- */
-export function removeBulletAt(
-  lines: readonly string[],
-  index: number,
-): BulletEdit {
-  if (lines.length <= 1) {
-    return { lines: [""], focusIndex: 0, focusCaret: 0 };
-  }
-  const next = [...lines.slice(0, index), ...lines.slice(index + 1)];
-  const focusIndex = Math.max(0, index - 1);
-  return { lines: next, focusIndex, focusCaret: (next[focusIndex] ?? "").length };
-}
-
 function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
   return Math.min(max, Math.max(min, value));

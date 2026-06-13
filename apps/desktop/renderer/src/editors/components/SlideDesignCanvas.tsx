@@ -243,12 +243,21 @@ function DesignText({
   content: string;
   onChange: (content: string) => void;
 }) {
+  // Re-grow whenever `content` changes from ANY source, not just typing:
+  // AI actions (regenerate / suggest bullets) replace `content` via props,
+  // and a stable callback ref only fires on mount — so without this effect
+  // the textarea keeps its old height and `overflow: hidden` clips the new
+  // text. Mirrors `SourceArea` below.
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    autoGrow(ref.current);
+  }, [content]);
   return (
     <textarea
       className="slide-wys-text"
       aria-label="Text content"
       value={content}
-      ref={autoGrow}
+      ref={ref}
       onChange={(e) => {
         autoGrow(e.currentTarget);
         onChange(e.target.value);
@@ -302,6 +311,13 @@ function DesignBullets({
     e: ReactKeyboardEvent<HTMLTextAreaElement>,
     index: number,
   ) => {
+    // Never treat Enter/Backspace/Delete as a structural list edit while an
+    // IME composition is active (CJK / accent input): that Enter is the
+    // user confirming a candidate, not splitting a bullet, and Backspace
+    // edits the in-progress composition. Hijacking it would corrupt the
+    // composed text. Let the browser/IME handle the key; the resulting
+    // `onChange` updates the bullet normally.
+    if (e.nativeEvent.isComposing) return;
     const el = e.currentTarget;
     const { selectionStart, selectionEnd, value } = el;
     const collapsed = selectionStart === selectionEnd;

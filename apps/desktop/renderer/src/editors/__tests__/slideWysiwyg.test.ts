@@ -5,7 +5,6 @@ import {
   splitBulletAt,
   mergeBulletBackward,
   mergeBulletForward,
-  removeBulletAt,
 } from "../slideWysiwyg";
 
 describe("slideWysiwyg — content ↔ bullet lines", () => {
@@ -85,26 +84,5 @@ describe("slideWysiwyg — mergeBulletForward (Delete at end)", () => {
 
   it("returns null for the last bullet (nothing to pull up)", () => {
     expect(mergeBulletForward(["a", "b"], 1)).toBeNull();
-  });
-});
-
-describe("slideWysiwyg — removeBulletAt", () => {
-  it("removes a bullet and focuses the previous row at its end", () => {
-    const r = removeBulletAt(["alpha", "beta", "gamma"], 1);
-    expect(r.lines).toEqual(["alpha", "gamma"]);
-    expect(r.focusIndex).toBe(0);
-    expect(r.focusCaret).toBe("alpha".length);
-  });
-
-  it("removing the only bullet leaves a single empty bullet", () => {
-    const r = removeBulletAt(["solo"], 0);
-    expect(r.lines).toEqual([""]);
-    expect(r.focusIndex).toBe(0);
-  });
-
-  it("removing the first of several focuses the new first row", () => {
-    const r = removeBulletAt(["a", "b"], 0);
-    expect(r.lines).toEqual(["b"]);
-    expect(r.focusIndex).toBe(0);
   });
 });
