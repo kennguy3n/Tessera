@@ -342,6 +342,14 @@ async function main() {
       const samples = [];
       for (let i = 0; i < SAMPLES + WARMUP; i++) {
         const ms = await measureOnce(ctx, url, s.ready, s.min);
+        // A `null` means the surface never reached its ready signal within
+        // 15s — it failed to *render*, which is a harness error (exit 2),
+        // not a slow-but-valid timing (exit 1). We fail fast on it in every
+        // iteration, warmup included: warmup discards a sample's *timing*
+        // (so a cold HTTP-cache first paint or a GC pause can't skew the
+        // median), it does not tolerate a *non-render*. A surface that can't
+        // render during warmup won't render during measurement either, so
+        // surfacing it now gives the earliest, clearest failure.
         if (ms === null) {
           throw new Error(
             `surface "${s.key}" never reached ready signal "${s.ready}" (>= ${s.min})`,
