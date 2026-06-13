@@ -58,11 +58,14 @@ import {
   sanitizeBaseField,
   ensureRecordIds,
 } from "./baseEditorHelpers";
-import type {
-  BaseContent,
-  BaseField,
-  BaseRecord,
-  FieldType,
+import { linkTargetRecords, type BaseTableResolver } from "./baseDocumentHelpers";
+import {
+  RECORD_CREATED_KEY,
+  RECORD_MODIFIED_KEY,
+  type BaseContent,
+  type BaseField,
+  type BaseRecord,
+  type FieldType,
 } from "./baseEditorTypes";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -204,10 +207,13 @@ export function formatValueForCsv(
   record: BaseRecord,
   allRecords: BaseRecord[],
   allFields: BaseField[],
+  resolver?: BaseTableResolver,
 ): string {
   const value = record[field.name];
 
   switch (field.type) {
+    // `user` stores a free-text collaborator name (local-first — no
+    // central identity directory), so it serialises like any string.
     case "text":
     case "long_text":
     case "email":
@@ -215,7 +221,18 @@ export function formatValueForCsv(
     case "url":
     case "date":
     case "select":
+    case "user":
       return value == null ? "" : String(value);
+
+    // `created_time` / `modified_time` read the record's intrinsic
+    // metadata rather than a stored cell value. Emit the raw ISO
+    // string so the export round-trips and sorts chronologically (ISO
+    // 8601 is lexicographically ordered); the grid renders a
+    // locale-friendly form via `formatTimestamp`.
+    case "created_time":
+      return String(record[RECORD_CREATED_KEY] ?? "");
+    case "modified_time":
+      return String(record[RECORD_MODIFIED_KEY] ?? "");
 
     case "number":
       if (value == null || value === "") return "";
@@ -286,7 +303,13 @@ export function formatValueForCsv(
       // hostile to the human reading the export.
       if (!Array.isArray(value)) return "";
       const ids = value.filter((v): v is string => typeof v === "string");
-      const linked = resolveLinkedRecords(ids, allRecords);
+      // Cross-table links resolve against the target table's records
+      // when a resolver is supplied; same-table links (no
+      // `linkedTableId`) keep resolving against `allRecords`.
+      const linked = resolveLinkedRecords(
+        ids,
+        linkTargetRecords(field, allRecords, resolver),
+      );
       const display = field.linkedDisplayField;
       return linked
         .map((r) =>
@@ -321,7 +344,10 @@ export function formatValueForCsv(
         return "#REF!";
       }
       const ids = record[linkedFieldName];
-      const linkedRecords = resolveLinkedRecords(ids, allRecords);
+      const linkedRecords = resolveLinkedRecords(
+        ids,
+        linkTargetRecords(linkedFieldDef, allRecords, resolver),
+      );
       const values = linkedRecords.map((r) => r[targetFieldName]);
       return aggregateValues(values, aggregation);
     }
@@ -335,7 +361,10 @@ export function formatValueForCsv(
         return "#REF!";
       }
       const ids = record[linkedFieldName];
-      const linkedRecords = resolveLinkedRecords(ids, allRecords);
+      const linkedRecords = resolveLinkedRecords(
+        ids,
+        linkTargetRecords(linkedFieldDef, allRecords, resolver),
+      );
       return lookupValues(linkedRecords, targetFieldName);
     }
 
@@ -362,13 +391,18 @@ export function formatValueForCsv(
  * some downstream tools (Numbers, older versions of Outlook's CSV
  * preview) only respect CRLF.
  */
-export function exportBaseCsv(data: BaseContent): string {
+export function exportBaseCsv(
+  data: BaseContent,
+  resolver?: BaseTableResolver,
+): string {
   const { fields, records } = data;
   const header = fields.map((f) => csvEscapeCell(f.name)).join(",");
   const rows = records.map((record) =>
     fields
       .map((field) =>
-        csvEscapeCell(formatValueForCsv(field, record, records, fields)),
+        csvEscapeCell(
+          formatValueForCsv(field, record, records, fields, resolver),
+        ),
       )
       .join(","),
   );
@@ -406,6 +440,7 @@ export function coerceCsvCellToFieldValue(
   const trimmed = raw.trim();
 
   switch (type) {
+    // `user` is a free-text collaborator name — import as a string.
     case "text":
     case "long_text":
     case "email":
@@ -413,7 +448,14 @@ export function coerceCsvCellToFieldValue(
     case "url":
     case "date":
     case "select":
+    case "user":
       return trimmed === "" ? null : trimmed;
+
+    case "created_time":
+    case "modified_time":
+      // Intrinsic record metadata — never imported as a cell value
+      // (the timestamps are owned by the editor's create/update path).
+      return null;
 
     case "number":
       if (trimmed === "") return null;

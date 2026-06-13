@@ -877,6 +877,10 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
     timelineEndField: null,
     galleryCoverField: null,
     titleField: null,
+    gridRowHeight: "short",
+    gridGroupField: null,
+    gridColorField: null,
+    gridFrozenCount: 0,
     ...overrides,
   });
 
@@ -886,7 +890,14 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
     // updated in lock-step or the rename / import cleanup paths will
     // silently drift.
     const sample = viewConfigWith();
-    const expected = new Set(Object.keys(sample));
+    // Field-name pointers are exactly the `string | null` keys; the
+    // non-pointer grid knobs (gridRowHeight / gridFrozenCount) carry
+    // non-null defaults and must be excluded from this guard.
+    const expected = new Set(
+      Object.entries(sample)
+        .filter(([, v]) => v === null)
+        .map(([k]) => k),
+    );
     const actual = new Set(VIEW_CONFIG_FIELD_POINTERS as readonly string[]);
     expect(actual).toEqual(expected);
   });

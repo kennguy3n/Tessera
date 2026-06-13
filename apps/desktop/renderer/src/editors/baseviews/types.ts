@@ -55,7 +55,40 @@ export interface BaseViewConfig {
   galleryCoverField: string | null;
   /** Field shown as the card / cell title across non-grid views. */
   titleField: string | null;
+  /**
+   * Grid row density. Mirrors Airtable's row-height control; drives
+   * both the virtualization row-height estimate and the per-cell
+   * vertical padding / line clamp.
+   */
+  gridRowHeight: GridRowHeight;
+  /**
+   * Grid grouping: when set, rows are partitioned by this field's
+   * value under collapsible group headers (Airtable's "Group"). Null
+   * = flat list.
+   */
+  gridGroupField: string | null;
+  /**
+   * Grid row coloring: when set to a `select`/`multi_select` field,
+   * each row shows a colored strip from the matching option color
+   * (Airtable's "Color → by a select field").
+   */
+  gridColorField: string | null;
+  /**
+   * Number of leading columns frozen (sticky) during horizontal
+   * scroll, like Airtable's frozen fields. 0 = none.
+   */
+  gridFrozenCount: number;
 }
+
+export type GridRowHeight = "short" | "medium" | "tall";
+
+/** Pixel heights per density level — shared by the row renderer and
+ *  the virtualization estimate so windowing math stays accurate. */
+export const GRID_ROW_HEIGHTS: Record<GridRowHeight, number> = {
+  short: 36,
+  medium: 56,
+  tall: 88,
+};
 
 export function defaultViewConfig(fields: BaseField[]): BaseViewConfig {
   // Pick reasonable defaults by scanning field types so the view
@@ -102,5 +135,9 @@ export function defaultViewConfig(fields: BaseField[]): BaseViewConfig {
       firstOfType("url"),
     titleField:
       named(["title", "name", "label"]) ?? fields[0]?.name ?? null,
+    gridRowHeight: "short",
+    gridGroupField: null,
+    gridColorField: null,
+    gridFrozenCount: 0,
   };
 }

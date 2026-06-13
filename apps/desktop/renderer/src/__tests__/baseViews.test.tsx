@@ -13,7 +13,13 @@
  *    debounce timer.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  within,
+} from "@testing-library/react";
 import BaseEditor from "../editors/BaseEditor";
 
 function renderEditor(content: object, onSave = vi.fn()) {
@@ -101,8 +107,11 @@ describe("BaseEditor view switcher", () => {
   it("renders Grid by default and switches to each view by clicking the tab", () => {
     renderEditor(KANBAN_BASE);
     // Grid view shows the column-header buttons (sortable field names).
-    // We assert per-tab content by switching and checking.
-    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    // We assert per-tab content by switching and checking. Scope the
+    // count to the "Base view" tablist — the multi-table TableTabs
+    // strip is a separate tablist that also exposes role="tab".
+    const viewTablist = screen.getByRole("tablist", { name: "Base view" });
+    expect(within(viewTablist).getAllByRole("tab")).toHaveLength(6);
     expect(screen.getByRole("tab", { name: "Grid" })).toHaveAttribute(
       "aria-selected",
       "true",

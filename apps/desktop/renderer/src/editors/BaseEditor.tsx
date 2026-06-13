@@ -4,14 +4,23 @@ import CalendarView from "./baseviews/CalendarView";
 import TimelineView from "./baseviews/TimelineView";
 import GalleryView from "./baseviews/GalleryView";
 import FormView from "./baseviews/FormView";
+import BaseAiAssistant from "./BaseAiAssistant";
 import {
   defaultViewConfig,
+  GRID_ROW_HEIGHTS,
   type BaseViewConfig,
   type BaseViewKind,
   type BaseViewProps,
+  type GridRowHeight,
 } from "./baseviews/types";
 import {
-  parseBaseContent,
+  buildGroups,
+  rowColor,
+  clampFrozenCount,
+  frozenLeftOffsets,
+  FROZEN_COL_WIDTH,
+} from "./baseGridHelpers";
+import {
   makeRecordId,
   resolveLinkedRecords,
   aggregateValues,
@@ -23,6 +32,27 @@ import {
   isComputedFieldType,
   VIEW_CONFIG_FIELD_POINTERS,
 } from "./baseEditorHelpers";
+import {
+  parseBaseDocument,
+  serializeBaseDocument,
+  getActiveTable,
+  updateActiveTable,
+  setActiveTable,
+  addTable,
+  removeTable,
+  renameTable,
+  makeTableResolver,
+  linkTargetRecords,
+  type BaseTableResolver,
+} from "./baseDocumentHelpers";
+import {
+  withCreatedMeta,
+  touchModified,
+  formatTimestamp,
+  addComment,
+  removeComment,
+  getComments,
+} from "./baseRecordMeta";
 import {
   evaluateBaseFormula,
   formatFormulaResult,
@@ -38,9 +68,15 @@ import {
 import type {
   BaseField,
   BaseContent,
+  BaseDocument,
   BaseRecord,
+  BaseTable,
   FieldType,
   RollupAggregation,
+} from "./baseEditorTypes";
+import {
+  RECORD_CREATED_KEY,
+  RECORD_MODIFIED_KEY,
 } from "./baseEditorTypes";
 import { useVirtualRows } from "../hooks/useVirtualRows";
 
@@ -55,8 +91,6 @@ export type { BaseViewConfig, BaseViewKind } from "./baseviews/types";
  * so the common case keeps its exact prior full-render path.
  */
 const VIRTUALIZE_ROW_THRESHOLD = 1000;
-/** Uniform row-height estimate (px) for the grid's windowing math. */
-const ESTIMATED_BASE_ROW_HEIGHT = 36;
 
 interface BaseEditorProps {
   content: string;
@@ -83,7 +117,35 @@ export default function BaseEditor({
   // `viewConfig`'s initializer — a single shared parse, no render-
   // phase ref mutation, no double-invoke surprises under React
   // Strict Mode.
-  const [data, setData] = useState<BaseContent>(() => parseBaseContent(content));
+  // The base is a multi-table document. A single-table base parses
+  // into a one-table document and serializes back to the legacy
+  // `{ fields, records }` shape (see `baseDocumentHelpers`), so
+  // existing artifacts and the Rust export path are byte-compatible
+  // until the user adds a second table.
+  const [doc, setDoc] = useState<BaseDocument>(() =>
+    parseBaseDocument(content),
+  );
+  // `data` is the active table viewed as a plain `BaseContent`, so the
+  // entire existing single-table render path below keeps working
+  // unchanged. Its identity is stable per `doc`, matching the old
+  // `setData` cadence (so downstream `useMemo`s keyed on `data.records`
+  // / `data.fields` invalidate exactly when the active table changes).
+  const activeTable = useMemo(() => getActiveTable(doc), [doc]);
+  const data: BaseContent = activeTable;
+  // Resolver used by the cross-table-aware cells / exporters to follow
+  // `linked_record.linkedTableId` into another table.
+  const tableResolver = useMemo<BaseTableResolver>(
+    () => makeTableResolver(doc),
+    [doc],
+  );
+  // Latest-doc ref so `updateData` can fold a new active-table
+  // `BaseContent` back into the document without taking `doc` as a
+  // dependency (keeping the callback identity-stable like the old
+  // `setData`-based version).
+  const docRef = useRef(doc);
+  useEffect(() => {
+    docRef.current = doc;
+  }, [doc]);
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -100,6 +162,12 @@ export default function BaseEditor({
   // them in-place. Kept here rather than in a sibling component so a
   // future "delete" action can call back into `removeField`.
   const [showManageFields, setShowManageFields] = useState(false);
+  const [showAiAssistant, setShowAiAssistant] = useState(false);
+  // Collapsed grid groups, tracked by group key so collapse state
+  // survives re-grouping. Only consulted when `gridGroupField` is set.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   // Import dialogs surface CSV / JSON file pickers. We do NOT auto-
   // trigger from a hidden `<input type="file">` ref because tests
   // need to inject the file contents directly; instead a small modal
@@ -118,6 +186,12 @@ export default function BaseEditor({
   const [expandedCell, setExpandedCell] = useState<
     { recordId: string; fieldName: string } | null
   >(null);
+  // Stable id of the record shown in the full expand-record modal (all
+  // fields + activity/comments). Tracked by id (not index) so other
+  // rows being added / removed / reordered never drift the target.
+  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(
+    null,
+  );
   // Active view kind plus per-view config (which field drives kanban
   // columns, which date drives the calendar, etc.). Both are
   // renderer concerns: they're NOT serialized into the artifact
@@ -133,8 +207,8 @@ export default function BaseEditor({
   const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
-    (updated: BaseContent) => {
-      const json = JSON.stringify(updated);
+    (updated: BaseDocument) => {
+      const json = serializeBaseDocument(updated);
       onDraftChange?.(json);
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
@@ -174,12 +248,81 @@ export default function BaseEditor({
     }
   }, [data.records, data.fields, expandedCell]);
 
-  const updateData = useCallback(
-    (updated: BaseContent) => {
-      setData(updated);
-      debouncedSave(updated);
+  // Commit a whole-document change (table add/remove/rename/switch).
+  // Updates `docRef.current` synchronously so a follow-up call within
+  // the same tick sees the latest document.
+  const updateDoc = useCallback(
+    (nextDoc: BaseDocument) => {
+      docRef.current = nextDoc;
+      setDoc(nextDoc);
+      debouncedSave(nextDoc);
     },
     [debouncedSave],
+  );
+
+  // Commit a change to the ACTIVE table's `{ fields, records }`. Folds
+  // the new content into the document (preserving every other table)
+  // and persists. Keeping this signature identical to the old
+  // single-table `updateData` means the entire mutation surface below
+  // (addField / removeField / updateCell / import / …) is unchanged.
+  const updateData = useCallback(
+    (updated: BaseContent) => {
+      updateDoc(updateActiveTable(docRef.current, updated));
+    },
+    [updateDoc],
+  );
+
+  // Reset all field-name-keyed view state (sort / filter / selection /
+  // per-view config) to match a freshly-activated table. Used by every
+  // table-switch path: the active table's columns differ, so retaining
+  // the old sort field, filter inputs, selection ids, or viewConfig
+  // pointers would dangle against a schema that no longer has them.
+  const resetViewStateForTable = useCallback((table: BaseTable) => {
+    setSortField(null);
+    setSortDir("asc");
+    setFilters({});
+    setSelectedIds(new Set());
+    setExpandedCell(null);
+    setViewConfig(defaultViewConfig(table.fields));
+  }, []);
+
+  const handleSwitchTable = useCallback(
+    (tableId: string) => {
+      if (tableId === docRef.current.activeTableId) return;
+      const nextDoc = setActiveTable(docRef.current, tableId);
+      updateDoc(nextDoc);
+      resetViewStateForTable(getActiveTable(nextDoc));
+    },
+    [updateDoc, resetViewStateForTable],
+  );
+
+  const handleAddTable = useCallback(() => {
+    const nextDoc = addTable(docRef.current);
+    updateDoc(nextDoc);
+    resetViewStateForTable(getActiveTable(nextDoc));
+  }, [updateDoc, resetViewStateForTable]);
+
+  const handleRenameTable = useCallback(
+    (tableId: string, name: string) => {
+      updateDoc(renameTable(docRef.current, tableId, name));
+    },
+    [updateDoc],
+  );
+
+  const handleRemoveTable = useCallback(
+    (tableId: string) => {
+      const prev = docRef.current;
+      // The document model guarantees at least one table; `removeTable`
+      // no-ops on the last one. Guard here too so the UI never offers a
+      // delete that would empty the base.
+      if (prev.tables.length <= 1) return;
+      const nextDoc = removeTable(prev, tableId);
+      updateDoc(nextDoc);
+      // Removing the active table moves activeId; always re-sync view
+      // state to whatever table is active afterwards.
+      resetViewStateForTable(getActiveTable(nextDoc));
+    },
+    [updateDoc, resetViewStateForTable],
   );
 
   const addField = useCallback(
@@ -199,6 +342,87 @@ export default function BaseEditor({
       };
       updateData(updated);
       setShowAddField(false);
+    },
+    [data, updateData],
+  );
+
+  // ── AI assistant apply paths ──────────────────────────────────────
+  // All AI output is parsed + validated in baseAiHelpers BEFORE it
+  // reaches these callbacks; they perform the same reserved-name /
+  // duplicate-name guards as the manual `addField` path so a model
+  // suggestion can never shadow `id` or collide with an existing
+  // column.
+
+  // Append a batch of already-validated fields to the active table,
+  // skipping reserved or duplicate names (deduped within the batch
+  // too). Each new field is seeded across existing records with its
+  // type's default value, mirroring `addField`.
+  const addFields = useCallback(
+    (fields: BaseField[]) => {
+      const existing = new Set(data.fields.map((f) => f.name));
+      const accepted: BaseField[] = [];
+      for (const f of fields) {
+        if (isReservedFieldName(f.name)) continue;
+        if (existing.has(f.name)) continue;
+        existing.add(f.name);
+        accepted.push(f);
+      }
+      if (accepted.length === 0) return;
+      const updated: BaseContent = {
+        fields: [...data.fields, ...accepted],
+        records: data.records.map((r) => {
+          const next = { ...r };
+          for (const f of accepted) next[f.name] = getDefaultValue(f.type);
+          return next;
+        }),
+      };
+      updateData(updated);
+    },
+    [data, updateData],
+  );
+
+  // Create a brand-new table from an AI schema suggestion and switch
+  // to it. Reuses the document helpers so single→multi-table
+  // promotion + serialization stay consistent.
+  const createTableWithFields = useCallback(
+    (name: string, fields: BaseField[]) => {
+      const cleaned: BaseField[] = [];
+      const seen = new Set<string>();
+      for (const f of fields) {
+        if (isReservedFieldName(f.name) || seen.has(f.name)) continue;
+        seen.add(f.name);
+        cleaned.push(f);
+      }
+      if (cleaned.length === 0) return;
+      const withTable = addTable(docRef.current, name);
+      const newTableId = withTable.activeTableId;
+      const populated = withTable.tables.map((t) =>
+        t.id === newTableId ? { ...t, fields: cleaned, records: [] } : t,
+      );
+      const nextDoc = { ...withTable, tables: populated };
+      updateDoc(nextDoc);
+      resetViewStateForTable(getActiveTable(nextDoc));
+    },
+    [updateDoc, resetViewStateForTable],
+  );
+
+  // Apply AI column-fill results: a map of recordId → value for one
+  // field. Only records still present are touched; `touchModified`
+  // keeps `modified_time` honest. Returns silently when nothing
+  // applies (e.g. every target row was deleted mid-generation).
+  const applyCellValues = useCallback(
+    (fieldName: string, values: Map<string, unknown>) => {
+      if (values.size === 0) return;
+      if (!data.fields.some((f) => f.name === fieldName)) return;
+      const updated: BaseContent = {
+        ...data,
+        records: data.records.map((r) =>
+          values.has(r.id)
+            ? touchModified({ ...r, [fieldName]: values.get(r.id) })
+            : r,
+        ),
+      };
+      updateData(updated);
     },
     [data, updateData],
   );
@@ -268,8 +492,10 @@ export default function BaseEditor({
   // out-of-place position has no functional consequence.
   useEffect(() => {
     if (content !== lastSavedRef.current) {
-      const parsed = parseBaseContent(content);
-      setData(parsed);
+      const parsedDoc = parseBaseDocument(content);
+      const parsed = getActiveTable(parsedDoc);
+      docRef.current = parsedDoc;
+      setDoc(parsedDoc);
       lastSavedRef.current = content;
       // Clear `selectedIds` whenever the records are replaced wholesale.
       // The selection is keyed by record id, but a version restore (or
@@ -442,7 +668,9 @@ export default function BaseEditor({
     }
     const updated: BaseContent = {
       ...data,
-      records: [...data.records, record],
+      // Stamp `__created` / `__modified` so the `created_time` /
+      // `modified_time` field types have a value to render.
+      records: [...data.records, withCreatedMeta(record)],
     };
     updateData(updated);
   }, [data, updateData]);
@@ -461,7 +689,7 @@ export default function BaseEditor({
       }
       const updated: BaseContent = {
         ...data,
-        records: [...data.records, record],
+        records: [...data.records, withCreatedMeta(record)],
       };
       updateData(updated);
     },
@@ -518,6 +746,36 @@ export default function BaseEditor({
     [data, updateData],
   );
 
+  // Comment mutations for the expand-record modal. Comments live in the
+  // record's `__comments` metadata (see baseRecordMeta). Adding one
+  // counts as activity on the record, so the helper also bumps
+  // `__modified` (mirroring Airtable's "Last modified time").
+  const handleAddComment = useCallback(
+    (recordId: string, text: string, author: string) => {
+      const trimmed = text.trim();
+      if (trimmed === "") return;
+      const cur = docRef.current;
+      const table = getActiveTable(cur);
+      const records = table.records.map((r) =>
+        r.id === recordId ? addComment(r, author, trimmed) : r,
+      );
+      updateData({ ...table, records });
+    },
+    [updateData],
+  );
+
+  const handleRemoveComment = useCallback(
+    (recordId: string, commentId: string) => {
+      const cur = docRef.current;
+      const table = getActiveTable(cur);
+      const records = table.records.map((r) =>
+        r.id === recordId ? removeComment(r, commentId) : r,
+      );
+      updateData({ ...table, records });
+    },
+    [updateData],
+  );
+
   // Bulk delete every record in `selectedIds` *that is currently
   // visible* in the filtered + sorted view (the `removeSelectedRecords`
   // callback + the `visibleSelectedIds` selector are defined further
@@ -556,10 +814,12 @@ export default function BaseEditor({
   const handleExportCsv = useCallback(() => {
     triggerDownload(
       "base.csv",
-      exportBaseCsv(data),
+      // Pass the resolver so cross-table linked/rollup/lookup columns
+      // render the target table's display values, not blanks.
+      exportBaseCsv(data, tableResolver),
       "text/csv;charset=utf-8",
     );
-  }, [data, triggerDownload]);
+  }, [data, tableResolver, triggerDownload]);
 
   const handleExportJson = useCallback(() => {
     triggerDownload(
@@ -602,7 +862,12 @@ export default function BaseEditor({
       const updated: BaseContent = {
         ...data,
         records: data.records.map((r, i) =>
-          i === recordIndex ? { ...r, [fieldName]: value } : r,
+          // `touchModified` refreshes `__modified` (and backfills a
+          // missing `__created`) so the `modified_time` field type
+          // reflects the edit.
+          i === recordIndex
+            ? touchModified({ ...r, [fieldName]: value })
+            : r,
         ),
       };
       updateData(updated);
@@ -663,6 +928,7 @@ export default function BaseEditor({
         record,
         data.records,
         data.fields,
+        tableResolver,
       );
       perRecord.set(field.name, value);
       return value;
@@ -718,7 +984,7 @@ export default function BaseEditor({
     }
 
     return records;
-  }, [data.records, data.fields, filters, sortField, sortDir]);
+  }, [data.records, data.fields, filters, sortField, sortDir, tableResolver]);
 
   // See the visibility-scoping commentary higher up — this is the
   // implementation half. `visibleSelectedIds` is the intersection of
@@ -788,8 +1054,40 @@ export default function BaseEditor({
   // reports the full range with zero padding when disabled, so small
   // bases — and every existing test — keep the prior full render.
   const gridScrollRef = useRef<HTMLDivElement>(null);
+
+  // ── grid display knobs (row height / group / color / frozen) ──────
+  // All persisted in `viewConfig`. Each is re-validated against the
+  // live schema so a pointer to a deleted field degrades gracefully
+  // (dropStaleViewState also prunes these, but a defensive re-check
+  // here keeps the grid correct even mid-edit).
+  const gridRowHeightPx =
+    GRID_ROW_HEIGHTS[viewConfig.gridRowHeight] ?? GRID_ROW_HEIGHTS.short;
+  const gridGroupField =
+    viewConfig.gridGroupField &&
+    data.fields.some((f) => f.name === viewConfig.gridGroupField)
+      ? viewConfig.gridGroupField
+      : null;
+  const gridColorField =
+    viewConfig.gridColorField &&
+    data.fields.some((f) => f.name === viewConfig.gridColorField)
+      ? viewConfig.gridColorField
+      : null;
+  const frozenCount = clampFrozenCount(
+    viewConfig.gridFrozenCount,
+    data.fields.length,
+  );
+  const frozenOffsets = useMemo(
+    () => frozenLeftOffsets(frozenCount),
+    [frozenCount],
+  );
+
+  // Grouping interleaves non-uniform group-header rows, which breaks
+  // the fixed-row-height windowing math — so virtualization is only
+  // engaged for the flat (ungrouped) view. Grouped bases rely on
+  // collapsing groups to bound the rendered row count instead.
   const virtualizeRows =
-    filteredAndSorted.length >= VIRTUALIZE_ROW_THRESHOLD;
+    filteredAndSorted.length >= VIRTUALIZE_ROW_THRESHOLD &&
+    gridGroupField === null;
   const {
     startIndex: rowWindowStart,
     endIndex: rowWindowEnd,
@@ -798,7 +1096,7 @@ export default function BaseEditor({
     onScroll: onGridScroll,
   } = useVirtualRows(gridScrollRef, {
     rowCount: filteredAndSorted.length,
-    rowHeight: ESTIMATED_BASE_ROW_HEIGHT,
+    rowHeight: gridRowHeightPx,
     enabled: virtualizeRows,
   });
 
@@ -849,11 +1147,152 @@ export default function BaseEditor({
     onConfigChange: setViewConfig,
   };
 
+  // Sticky-positioning style for a frozen leading column. `colIndex`
+  // is the index into `frozenOffsets` (0 = select, 1 = row-num,
+  // 2.. = frozen data columns). Returns `undefined` when the column
+  // isn't frozen, leaving the cell with its normal flow layout.
+  const frozenCellStyle = (colIndex: number): React.CSSProperties | undefined => {
+    if (frozenCount <= 0 || colIndex >= frozenOffsets.length) return undefined;
+    const isLast = colIndex === frozenOffsets.length - 1;
+    return {
+      position: "sticky",
+      left: frozenOffsets[colIndex],
+      zIndex: 2,
+      // Fixed width on frozen DATA columns (colIndex >= 2) so the
+      // sticky offsets computed in `frozenLeftOffsets` stay accurate.
+      ...(colIndex >= 2
+        ? { width: FROZEN_COL_WIDTH, minWidth: FROZEN_COL_WIDTH }
+        : {}),
+      background: "var(--color-bg, #fff)",
+      // A subtle divider on the last frozen column hints at the seam.
+      ...(isLast
+        ? { boxShadow: "1px 0 0 var(--color-border, #e5e7eb)" }
+        : {}),
+    };
+  };
+
+  // Render one data row. Shared by the flat and grouped grid bodies so
+  // row height / color strip / frozen styling stay identical between
+  // them. `displayNumber` is the 1-based row label shown in the
+  // row-number column.
+  const renderDataRow = (record: BaseRecord, displayNumber: number) => {
+    // O(1) lookup via the pre-built `recordIndexById` map; falls back
+    // to -1 if a row somehow leaks through with no id (legacy
+    // hand-edited JSON), which `removeRecord` / `updateCell` tolerate.
+    const originalIndex = recordIndexById.get(record.id) ?? -1;
+    const isSelected = selectedIds.has(record.id);
+    const stripColor = rowColor(record, gridColorField);
+    return (
+      <tr
+        key={record.id || originalIndex}
+        className={isSelected ? "base-row-selected" : undefined}
+        style={{ height: gridRowHeightPx }}
+      >
+        <td
+          className="base-select-cell"
+          style={{ position: "relative", ...frozenCellStyle(0) }}
+        >
+          {/* Color strip sits inside the select cell's left edge so it
+              reads as a per-row accent without adding a column. */}
+          {stripColor && (
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 4,
+                background: stripColor,
+              }}
+            />
+          )}
+          <input
+            type="checkbox"
+            aria-label={`Select record ${displayNumber}`}
+            checked={isSelected}
+            onChange={(e) => {
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (e.target.checked) next.add(record.id);
+                else next.delete(record.id);
+                return next;
+              });
+            }}
+          />
+        </td>
+        <td className="base-row-num" style={frozenCellStyle(1)}>
+          {displayNumber}
+        </td>
+        {data.fields.map((field, fieldIdx) => {
+          // Match by the same (recordId, fieldName) tuple the modal
+          // uses so opening the modal on cell X locks that inline cell
+          // while every other inline cell stays editable.
+          const isExpanded =
+            expandedCell !== null &&
+            expandedCell.recordId === record.id &&
+            expandedCell.fieldName === field.name;
+          return (
+            <td
+              key={field.name}
+              className="base-cell"
+              style={frozenCellStyle(fieldIdx + 2)}
+            >
+              <CellInput
+                field={field}
+                value={record[field.name]}
+                record={record}
+                recordIndex={originalIndex}
+                allRecords={data.records}
+                allFields={data.fields}
+                resolver={tableResolver}
+                onChange={(val) => updateCell(originalIndex, field.name, val)}
+                onExpand={() =>
+                  setExpandedCell({
+                    recordId: record.id,
+                    fieldName: field.name,
+                  })
+                }
+                isExpanded={isExpanded}
+              />
+            </td>
+          );
+        })}
+        <td className="base-actions-cell">
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={() => setExpandedRecordId(record.id)}
+            title="Expand record"
+            aria-label="Expand record"
+          >
+            ⤢
+          </button>
+          <button
+            type="button"
+            className="btn-sm danger"
+            onClick={() => removeRecord(originalIndex)}
+          >
+            Del
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div
       className="base-editor"
       style={{ display: "flex", flexDirection: "column", height: "100%" }}
     >
+      <TableTabs
+        tables={doc.tables}
+        activeTableId={doc.activeTableId}
+        onSwitch={handleSwitchTable}
+        onAdd={handleAddTable}
+        onRename={handleRenameTable}
+        onRemove={handleRemoveTable}
+      />
       <div
         className="base-toolbar"
         style={{
@@ -876,6 +1315,14 @@ export default function BaseEditor({
           onClick={() => setShowManageFields(true)}
         >
           Manage Fields
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={() => setShowAiAssistant(true)}
+          title="AI assistant (on-device)"
+        >
+          ✦ AI
         </button>
         {visibleSelectedIds.size > 0 && (
           <button
@@ -969,6 +1416,8 @@ export default function BaseEditor({
       {showAddField && (
         <AddFieldDialog
           existingFields={data.fields}
+          tables={doc.tables}
+          activeTableId={doc.activeTableId}
           onAdd={addField}
           onCancel={() => setShowAddField(false)}
         />
@@ -1000,6 +1449,99 @@ export default function BaseEditor({
       {view === "form" && <FormView {...viewProps} />}
 
       {view === "grid" && (
+      <>
+      <div
+        className="base-grid-options"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          padding: "0.4rem 0.5rem",
+          borderBottom: "1px solid var(--color-border, #e5e7eb)",
+          fontSize: "0.8rem",
+        }}
+      >
+        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          Row height
+          <select
+            className="input"
+            aria-label="Row height"
+            value={viewConfig.gridRowHeight}
+            onChange={(e) =>
+              setViewConfig((prev) => ({
+                ...prev,
+                gridRowHeight: e.target.value as GridRowHeight,
+              }))
+            }
+          >
+            <option value="short">Short</option>
+            <option value="medium">Medium</option>
+            <option value="tall">Tall</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          Group by
+          <select
+            className="input"
+            aria-label="Group by"
+            value={viewConfig.gridGroupField ?? ""}
+            onChange={(e) =>
+              setViewConfig((prev) => ({
+                ...prev,
+                gridGroupField: e.target.value === "" ? null : e.target.value,
+              }))
+            }
+          >
+            <option value="">None</option>
+            {data.fields.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          Color by
+          <select
+            className="input"
+            aria-label="Color by"
+            value={viewConfig.gridColorField ?? ""}
+            onChange={(e) =>
+              setViewConfig((prev) => ({
+                ...prev,
+                gridColorField: e.target.value === "" ? null : e.target.value,
+              }))
+            }
+          >
+            <option value="">None</option>
+            {data.fields.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          Frozen
+          <select
+            className="input"
+            aria-label="Frozen columns"
+            value={String(frozenCount)}
+            onChange={(e) =>
+              setViewConfig((prev) => ({
+                ...prev,
+                gridFrozenCount: Number(e.target.value),
+              }))
+            }
+          >
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </select>
+        </label>
+      </div>
       <div
         className="base-grid-wrapper"
         ref={gridScrollRef}
@@ -1080,91 +1622,116 @@ export default function BaseEditor({
             </tr>
           </thead>
           <tbody>
-            {rowRenderPlan.map((item) => {
-              if (item.type === "spacer") {
-                return (
-                  <tr key={item.key} data-testid={item.key} aria-hidden="true">
-                    <td
-                      colSpan={data.fields.length + 3}
-                      style={{ height: item.height, padding: 0, border: "none" }}
-                    />
-                  </tr>
-                );
-              }
-              const ri = item.ri;
-              const record = filteredAndSorted[ri];
-              // O(1) lookup via the pre-built `recordIndexById` map;
-              // falls back to -1 if a row somehow leaks through with no
-              // id (legacy hand-edited JSON), which `removeRecord` /
-              // `updateCell` are robust to.
-              const originalIndex = recordIndexById.get(record.id) ?? -1;
-              const isSelected = selectedIds.has(record.id);
-              return (
-                <tr
-                  key={record.id || originalIndex}
-                  className={isSelected ? "base-row-selected" : undefined}
-                >
-                  <td className="base-select-cell">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select record ${ri + 1}`}
-                      checked={isSelected}
-                      onChange={(e) => {
-                        setSelectedIds((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(record.id);
-                          else next.delete(record.id);
-                          return next;
-                        });
-                      }}
-                    />
-                  </td>
-                  <td className="base-row-num">{ri + 1}</td>
-                  {data.fields.map((field) => {
-                    // Match by the same (recordId, fieldName) tuple
-                    // the modal itself uses — so when the user opens
-                    // the modal on cell X, the inline cell X locks
-                    // and inline cells everywhere else stay editable.
-                    const isExpanded =
-                      expandedCell !== null &&
-                      expandedCell.recordId === record.id &&
-                      expandedCell.fieldName === field.name;
+            {gridGroupField === null
+              ? // Flat (ungrouped) body — unchanged virtualized path.
+                rowRenderPlan.map((item) => {
+                  if (item.type === "spacer") {
                     return (
-                      <td key={field.name} className="base-cell">
-                        <CellInput
-                          field={field}
-                          value={record[field.name]}
-                          record={record}
-                          recordIndex={originalIndex}
-                          allRecords={data.records}
-                          allFields={data.fields}
-                          onChange={(val) => updateCell(originalIndex, field.name, val)}
-                          onExpand={() =>
-                            setExpandedCell({
-                              recordId: record.id,
-                              fieldName: field.name,
-                            })
-                          }
-                          isExpanded={isExpanded}
+                      <tr
+                        key={item.key}
+                        data-testid={item.key}
+                        aria-hidden="true"
+                      >
+                        <td
+                          colSpan={data.fields.length + 3}
+                          style={{
+                            height: item.height,
+                            padding: 0,
+                            border: "none",
+                          }}
                         />
-                      </td>
+                      </tr>
                     );
-                  })}
-                  <td className="base-actions-cell">
-                    <button
-                      type="button"
-                      className="btn-sm danger"
-                      onClick={() => removeRecord(originalIndex)}
-                    >
-                      Del
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+                  }
+                  return renderDataRow(
+                    filteredAndSorted[item.ri],
+                    item.ri + 1,
+                  );
+                })
+              : // Grouped body — collapsible group headers with a
+                // continuous 1-based row numbering across groups.
+                (() => {
+                  const groups = buildGroups(filteredAndSorted, gridGroupField);
+                  const rows: React.ReactNode[] = [];
+                  let runningNumber = 0;
+                  for (const group of groups) {
+                    const collapsed = collapsedGroups.has(group.key);
+                    const groupColor = rowColor(
+                      group.records[0] ?? { id: "" },
+                      gridColorField,
+                    );
+                    rows.push(
+                      <tr
+                        key={`group-${group.key}`}
+                        className="base-group-header"
+                        data-testid={`base-group-${group.key}`}
+                      >
+                        <td
+                          colSpan={data.fields.length + 3}
+                          style={{
+                            background: "var(--color-bg-secondary, #f3f4f6)",
+                            fontWeight: 600,
+                            padding: "0.35rem 0.5rem",
+                            borderTop: "1px solid var(--color-border, #e5e7eb)",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            aria-expanded={!collapsed}
+                            onClick={() =>
+                              setCollapsedGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(group.key)) next.delete(group.key);
+                                else next.add(group.key);
+                                return next;
+                              })
+                            }
+                            style={{ marginRight: "0.4rem" }}
+                          >
+                            {collapsed ? "▸" : "▾"}
+                          </button>
+                          {groupColor && (
+                            <span
+                              aria-hidden="true"
+                              style={{
+                                display: "inline-block",
+                                width: 8,
+                                height: 8,
+                                borderRadius: 2,
+                                background: groupColor,
+                                marginRight: "0.4rem",
+                              }}
+                            />
+                          )}
+                          {group.label || "(all)"}
+                          <span
+                            style={{
+                              marginLeft: "0.4rem",
+                              fontWeight: 400,
+                              color: "var(--color-text-secondary, #6b7280)",
+                            }}
+                          >
+                            {group.records.length}
+                          </span>
+                        </td>
+                      </tr>,
+                    );
+                    if (!collapsed) {
+                      for (const record of group.records) {
+                        runningNumber += 1;
+                        rows.push(renderDataRow(record, runningNumber));
+                      }
+                    } else {
+                      runningNumber += group.records.length;
+                    }
+                  }
+                  return rows;
+                })()}
           </tbody>
         </table>
       </div>
+      </>
       )}
 
       {expandedCell && (() => {
@@ -1193,6 +1760,438 @@ export default function BaseEditor({
           />
         );
       })()}
+
+      {expandedRecordId !== null && (() => {
+        // Resolve the record by stable id every render; if it was
+        // deleted out from under the modal, close silently.
+        const idx = data.records.findIndex((r) => r.id === expandedRecordId);
+        if (idx === -1) return null;
+        return (
+          <RecordModal
+            record={data.records[idx]}
+            recordIndex={idx}
+            fields={data.fields}
+            allRecords={data.records}
+            resolver={tableResolver}
+            onUpdateCell={updateCell}
+            onAddComment={handleAddComment}
+            onRemoveComment={handleRemoveComment}
+            onClose={() => setExpandedRecordId(null)}
+          />
+        );
+      })()}
+
+      {showAiAssistant && (
+        <BaseAiAssistant
+          fields={data.fields}
+          records={data.records}
+          selectedIds={selectedIds}
+          onCreateTable={createTableWithFields}
+          onAddFields={addFields}
+          onApplyCellValues={applyCellValues}
+          onClose={() => setShowAiAssistant(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// TableTabs — the multi-table switcher. Renders one tab per table in
+// the document, a "+" to add a table, and (when there's more than one
+// table) a double-click-to-rename + delete affordance on the active
+// tab. A single-table base still shows its one tab so the user can
+// rename it and discover the "+" — but the delete control is hidden
+// because the document model guarantees at least one table.
+// ──────────────────────────────────────────────────────────────────────
+
+function TableTabs({
+  tables,
+  activeTableId,
+  onSwitch,
+  onAdd,
+  onRename,
+  onRemove,
+}: {
+  tables: BaseTable[];
+  activeTableId: string;
+  onSwitch: (tableId: string) => void;
+  onAdd: () => void;
+  onRename: (tableId: string, name: string) => void;
+  onRemove: (tableId: string) => void;
+}) {
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+
+  const startRename = (table: BaseTable) => {
+    setRenamingId(table.id);
+    setDraftName(table.name);
+  };
+  const commitRename = () => {
+    if (renamingId) onRename(renamingId, draftName);
+    setRenamingId(null);
+  };
+
+  return (
+    <div
+      className="base-table-tabs"
+      role="tablist"
+      aria-label="Tables"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.25rem",
+        padding: "0.25rem 0.5rem",
+        borderBottom: "1px solid var(--color-border, #e5e7eb)",
+        overflowX: "auto",
+        background: "var(--color-bg-secondary, #f9fafb)",
+      }}
+    >
+      {tables.map((table) => {
+        const isActive = table.id === activeTableId;
+        const isRenaming = renamingId === table.id;
+        if (isRenaming) {
+          return (
+            <input
+              key={table.id}
+              className="input base-table-tab-rename"
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+                else if (e.key === "Escape") setRenamingId(null);
+              }}
+              aria-label={`Rename table ${table.name}`}
+              style={{ width: "8rem", fontSize: "0.8rem" }}
+            />
+          );
+        }
+        return (
+          <div
+            key={table.id}
+            className="base-table-tab"
+            style={{ display: "inline-flex", alignItems: "center" }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className="btn-sm"
+              onClick={() => onSwitch(table.id)}
+              onDoubleClick={() => startRename(table)}
+              title={isActive ? "Double-click to rename" : table.name}
+              style={{
+                fontWeight: isActive ? 600 : 400,
+                background: isActive
+                  ? "var(--color-primary-soft, #ede9fe)"
+                  : "transparent",
+                borderBottomLeftRadius: 0,
+                borderBottomRightRadius: 0,
+              }}
+            >
+              {table.name}
+            </button>
+            {isActive && tables.length > 1 && (
+              <button
+                type="button"
+                className="btn-sm base-table-tab-remove"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Delete table "${table.name}" and all its records? Links to it from other tables will be cleared.`,
+                    )
+                  ) {
+                    onRemove(table.id);
+                  }
+                }}
+                title={`Delete table ${table.name}`}
+                aria-label={`Delete table ${table.name}`}
+                style={{ padding: "0 0.3rem", color: "var(--color-danger, #b91c1c)" }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        className="btn-sm"
+        onClick={onAdd}
+        title="Add table"
+        aria-label="Add table"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// RecordModal — the full "expand record" view. Shows every field of
+// the active table for one record (inline-editable via the same
+// CellInput components as the grid, so behaviour is identical), the
+// record's created / modified timestamps, and an activity log of
+// comments. Comments are stored in record metadata (`__comments`) and
+// never sent anywhere — Tessera is local-first.
+// ──────────────────────────────────────────────────────────────────────
+
+function RecordModal({
+  record,
+  recordIndex,
+  fields,
+  allRecords,
+  resolver,
+  onUpdateCell,
+  onAddComment,
+  onRemoveComment,
+  onClose,
+}: {
+  record: BaseRecord;
+  recordIndex: number;
+  fields: BaseField[];
+  allRecords: BaseRecord[];
+  resolver: BaseTableResolver;
+  onUpdateCell: (recordIndex: number, fieldName: string, value: unknown) => void;
+  onAddComment: (recordId: string, text: string, author: string) => void;
+  onRemoveComment: (recordId: string, commentId: string) => void;
+  onClose: () => void;
+}) {
+  const [commentDraft, setCommentDraft] = useState("");
+  const comments = getComments(record);
+  const created = record[RECORD_CREATED_KEY];
+  const modified = record[RECORD_MODIFIED_KEY];
+
+  // Close on Escape, mirroring the other modals in this editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const submitComment = () => {
+    const text = commentDraft.trim();
+    if (text === "") return;
+    onAddComment(record.id, text, "You");
+    setCommentDraft("");
+  };
+
+  return (
+    <div
+      className="base-record-modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        // Only close when the backdrop itself (not a child) is pressed.
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <div
+        className="base-record-modal card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Expanded record"
+        style={{
+          background: "var(--color-bg, #fff)",
+          color: "var(--color-text, #111)",
+          borderRadius: "var(--radius-lg, 12px)",
+          border: "1px solid var(--color-border, #e5e7eb)",
+          width: "min(720px, 92vw)",
+          maxHeight: "88vh",
+          overflowY: "auto",
+          boxShadow: "0 16px 48px rgba(0,0,0,0.28)",
+          padding: "1rem 1.25rem",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "0.75rem",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Record</h2>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={onClose}
+            aria-label="Close"
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          className="base-record-modal-fields"
+          style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}
+        >
+          {fields.map((field) => (
+            <div
+              key={field.name}
+              style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}
+            >
+              <label
+                style={{
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  color: "var(--color-text-secondary, #6b7280)",
+                }}
+              >
+                {field.name}
+              </label>
+              <CellInput
+                field={field}
+                value={record[field.name]}
+                record={record}
+                recordIndex={recordIndex}
+                allRecords={allRecords}
+                allFields={fields}
+                resolver={resolver}
+                onChange={(val) => onUpdateCell(recordIndex, field.name, val)}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div
+          className="base-record-modal-activity"
+          style={{
+            marginTop: "1rem",
+            paddingTop: "0.75rem",
+            borderTop: "1px solid var(--color-border, #e5e7eb)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "0.75rem",
+              color: "var(--color-text-secondary, #6b7280)",
+              display: "flex",
+              gap: "1rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <span>
+              Created:{" "}
+              {typeof created === "string" && created !== ""
+                ? formatTimestamp(created, true)
+                : "—"}
+            </span>
+            <span>
+              Modified:{" "}
+              {typeof modified === "string" && modified !== ""
+                ? formatTimestamp(modified, true)
+                : "—"}
+            </span>
+          </div>
+
+          <h3 style={{ fontSize: "0.9rem", margin: "0.75rem 0 0.4rem" }}>
+            Comments
+          </h3>
+          <ul
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.4rem",
+            }}
+          >
+            {comments.length === 0 && (
+              <li
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--color-text-secondary, #6b7280)",
+                }}
+              >
+                No comments yet.
+              </li>
+            )}
+            {comments.map((c) => (
+              <li
+                key={c.id}
+                className="base-record-comment"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.15rem",
+                  background: "var(--color-bg-secondary, #f9fafb)",
+                  borderRadius: "var(--radius-md, 8px)",
+                  padding: "0.4rem 0.5rem",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: "0.72rem",
+                    color: "var(--color-text-secondary, #6b7280)",
+                  }}
+                >
+                  <span>
+                    <strong>{c.author}</strong> ·{" "}
+                    {formatTimestamp(c.createdAt, true)}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={() => onRemoveComment(record.id, c.id)}
+                    aria-label="Delete comment"
+                    title="Delete comment"
+                    style={{ padding: "0 0.3rem" }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <span style={{ fontSize: "0.85rem", whiteSpace: "pre-wrap" }}>
+                  {c.body}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.5rem" }}>
+            <textarea
+              className="input"
+              placeholder="Add a comment…"
+              value={commentDraft}
+              onChange={(e) => setCommentDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // Cmd/Ctrl+Enter submits, matching common comment UIs.
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  submitComment();
+                }
+              }}
+              rows={2}
+              style={{ flex: 1, resize: "vertical" }}
+            />
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={submitComment}
+              disabled={commentDraft.trim() === ""}
+            >
+              Comment
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1248,6 +2247,10 @@ interface CellInputProps {
   recordIndex: number;
   allRecords: BaseRecord[];
   allFields: BaseField[];
+  // Resolver used by linked_record / rollup / lookup cells to follow a
+  // cross-table link (`field.linkedTableId`) into the target table.
+  // Absent for same-table links, which resolve against `allRecords`.
+  resolver?: BaseTableResolver;
   onChange: (val: unknown) => void;
   onExpand?: () => void;
   // True when the LongTextModal is currently mounted over THIS cell's
@@ -1301,6 +2304,12 @@ function CellInput(props: CellInputProps) {
       return <DurationCell {...props} />;
     case "auto_number":
       return <AutoNumberCell {...props} />;
+    case "user":
+      return <UserCell {...props} />;
+    case "created_time":
+      return <TimestampCell {...props} which="created" />;
+    case "modified_time":
+      return <TimestampCell {...props} which="modified" />;
     case "text":
     default:
       return <TextCell {...props} />;
@@ -1339,14 +2348,81 @@ function NumberCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function DateCell({ value, onChange }: CellInputProps) {
+function DateCell({ field, value, onChange }: CellInputProps) {
+  // `dateIncludeTime` switches the native picker to `datetime-local`.
+  // The two input types use different value formats — `YYYY-MM-DD` vs
+  // `YYYY-MM-DDTHH:mm` — so we normalise the stored string to the
+  // shape the active input expects (a date-only value still shows in
+  // a datetime input by appending `T00:00`, and a datetime value still
+  // shows in a date input by slicing the date half). This keeps a
+  // field that toggles `includeTime` from rendering blank.
+  const includeTime = field.dateIncludeTime === true;
+  const raw = value != null ? String(value) : "";
+  if (includeTime) {
+    const local =
+      raw === ""
+        ? ""
+        : raw.includes("T")
+          ? raw.slice(0, 16)
+          : `${raw}T00:00`;
+    return (
+      <input
+        type="datetime-local"
+        className="base-cell-input"
+        value={local}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
   return (
     <input
       type="date"
       className="base-cell-input"
-      value={value != null ? String(value) : ""}
+      value={raw.includes("T") ? raw.slice(0, 10) : raw}
       onChange={(e) => onChange(e.target.value)}
     />
+  );
+}
+
+// `user` is a free-text collaborator name. Tessera is local-first with
+// no central identity directory, so we store the name the user types
+// rather than resolving against a remote roster — keeping the field
+// fully usable offline and in the packaged app.
+function UserCell({ value, onChange }: CellInputProps) {
+  return (
+    <input
+      type="text"
+      className="base-cell-input"
+      value={value != null ? String(value) : ""}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="Collaborator"
+    />
+  );
+}
+
+// Read-only intrinsic timestamps. `created_time` / `modified_time`
+// read the record's `__created` / `__modified` metadata (stamped by
+// addRecord / updateCell) rather than a stored cell value, mirroring
+// Airtable's "Created time" / "Last modified time" fields. The field's
+// `dateIncludeTime` flag controls whether the time-of-day is shown.
+function TimestampCell({
+  field,
+  record,
+  which,
+}: CellInputProps & { which: "created" | "modified" }) {
+  const iso = record[which === "created" ? RECORD_CREATED_KEY : RECORD_MODIFIED_KEY];
+  const text =
+    typeof iso === "string" && iso !== ""
+      ? formatTimestamp(iso, field.dateIncludeTime === true)
+      : "—";
+  return (
+    <span
+      className="base-cell-readonly"
+      style={{ color: "var(--color-text-secondary, #6b7280)" }}
+      title={typeof iso === "string" ? iso : undefined}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -1685,12 +2761,19 @@ function LinkedRecordCell({
   value,
   record,
   allRecords,
+  resolver,
   onChange,
 }: CellInputProps) {
   const links: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
-  const linkedRecords = resolveLinkedRecords(links, allRecords);
+  // Cross-table link: resolve / pick against the TARGET table's
+  // records. Same-table link: `linkTargetRecords` returns `allRecords`
+  // unchanged, preserving the existing behaviour.
+  const targetRecords = linkTargetRecords(field, allRecords, resolver);
+  const isCrossTable =
+    typeof field.linkedTableId === "string" && field.linkedTableId !== "";
+  const linkedRecords = resolveLinkedRecords(links, targetRecords);
   const display = field.linkedDisplayField;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -1773,12 +2856,18 @@ function LinkedRecordCell({
             boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
           }}
         >
-          {allRecords
-            // Exclude already-linked records and the current record
-            // itself — a record linking to itself causes rollup /
-            // lookup to include its own field values, which is
-            // almost never what the user wants.
-            .filter((r) => r.id !== record.id && !links.includes(r.id))
+          {targetRecords
+            // Exclude already-linked records. For a SAME-table link we
+            // also exclude the current record itself — a record linking
+            // to itself causes rollup / lookup to include its own field
+            // values, which is almost never what the user wants. For a
+            // cross-table link there is no self to exclude (the target
+            // population is a different table).
+            .filter(
+              (r) =>
+                (isCrossTable || r.id !== record.id) &&
+                !links.includes(r.id),
+            )
             .map((r) => (
               <button
                 type="button"
@@ -1807,7 +2896,13 @@ function LinkedRecordCell({
   );
 }
 
-function RollupCell({ field, record, allFields, allRecords }: CellInputProps) {
+function RollupCell({
+  field,
+  record,
+  allFields,
+  allRecords,
+  resolver,
+}: CellInputProps) {
   // rollup follows the `linkedField` link from THIS record, then
   // aggregates `targetField` across the linked records.
   const linkedFieldName = field.linkedField;
@@ -1828,7 +2923,12 @@ function RollupCell({ field, record, allFields, allRecords }: CellInputProps) {
     );
   }
   const ids = record[linkedFieldName];
-  const linkedRecords = resolveLinkedRecords(ids, allRecords);
+  // Resolve the link's targets in the linked field's table (which may
+  // be a different table when the link is cross-table).
+  const linkedRecords = resolveLinkedRecords(
+    ids,
+    linkTargetRecords(linkedFieldDef, allRecords, resolver),
+  );
   const values = linkedRecords.map((r) => r[targetFieldName]);
   return (
     <span className="base-cell-readonly">
@@ -1837,7 +2937,13 @@ function RollupCell({ field, record, allFields, allRecords }: CellInputProps) {
   );
 }
 
-function LookupCell({ field, record, allFields, allRecords }: CellInputProps) {
+function LookupCell({
+  field,
+  record,
+  allFields,
+  allRecords,
+  resolver,
+}: CellInputProps) {
   const linkedFieldName = field.linkedField;
   const targetFieldName = field.targetField;
   if (!linkedFieldName || !targetFieldName) {
@@ -1855,7 +2961,10 @@ function LookupCell({ field, record, allFields, allRecords }: CellInputProps) {
     );
   }
   const ids = record[linkedFieldName];
-  const linkedRecords = resolveLinkedRecords(ids, allRecords);
+  const linkedRecords = resolveLinkedRecords(
+    ids,
+    linkTargetRecords(linkedFieldDef, allRecords, resolver),
+  );
   return (
     <span className="base-cell-readonly">
       {lookupValues(linkedRecords, targetFieldName)}
@@ -2170,10 +3279,14 @@ function renderInline(text: string): React.ReactNode {
 
 function AddFieldDialog({
   existingFields,
+  tables,
+  activeTableId,
   onAdd,
   onCancel,
 }: {
   existingFields: BaseField[];
+  tables: BaseTable[];
+  activeTableId: string;
   onAdd: (field: BaseField) => void;
   onCancel: () => void;
 }) {
@@ -2185,12 +3298,39 @@ function AddFieldDialog({
   const [targetField, setTargetField] = useState("");
   const [aggregation, setAggregation] = useState<RollupAggregation>("SUM");
   const [linkedDisplayField, setLinkedDisplayField] = useState("");
+  // Empty string ⇒ link within the active table (same-table link, the
+  // legacy behaviour — no `linkedTableId` is written).
+  const [linkedTableId, setLinkedTableId] = useState("");
+  const [dateIncludeTime, setDateIncludeTime] = useState(false);
   const [currencySymbol, setCurrencySymbol] = useState("$");
   const [percentPrecision, setPercentPrecision] = useState("0");
   const [nameError, setNameError] = useState<string | null>(null);
 
   const linkFieldChoices = existingFields.filter(
     (f) => f.type === "linked_record",
+  );
+
+  // For a `linked_record`, the fields available as a display field come
+  // from the chosen target table (the active table for a same-table
+  // link). For a `rollup` / `lookup`, the target field comes from the
+  // table that the selected `linkedField` points at.
+  const tableById = (id: string): BaseTable | undefined =>
+    tables.find((t) => t.id === id);
+  const linkTargetTable =
+    linkedTableId === "" ? tableById(activeTableId) : tableById(linkedTableId);
+  const linkDisplayChoices = (linkTargetTable?.fields ?? []).filter(
+    (f) => f.name !== name.trim(),
+  );
+  const selectedLinkField = existingFields.find(
+    (f) => f.name === linkedField && f.type === "linked_record",
+  );
+  const rollupTargetTable = selectedLinkField
+    ? selectedLinkField.linkedTableId
+      ? tableById(selectedLinkField.linkedTableId)
+      : tableById(activeTableId)
+    : undefined;
+  const rollupTargetChoices = (rollupTargetTable?.fields ?? []).map(
+    (f) => f.name,
   );
 
   const submit = () => {
@@ -2224,11 +3364,20 @@ function AddFieldDialog({
     if (type === "formula") field.formula = formulaSrc;
     if (type === "linked_record") {
       if (linkedDisplayField.trim()) field.linkedDisplayField = linkedDisplayField.trim();
+      // Only persist `linkedTableId` for a genuine cross-table link.
+      // A same-table link omits it so single-table bases serialize
+      // byte-for-byte as before.
+      if (linkedTableId !== "" && linkedTableId !== activeTableId) {
+        field.linkedTableId = linkedTableId;
+      }
     }
     if (type === "rollup" || type === "lookup") {
       if (linkedField) field.linkedField = linkedField;
       if (targetField.trim()) field.targetField = targetField.trim();
       if (type === "rollup") field.aggregation = aggregation;
+    }
+    if ((type === "date" || type === "created_time" || type === "modified_time") && dateIncludeTime) {
+      field.dateIncludeTime = true;
     }
     if (type === "currency") field.currencySymbol = currencySymbol || "$";
     if (type === "percent") {
@@ -2275,12 +3424,15 @@ function AddFieldDialog({
             <option value="long_text">Long text</option>
             <option value="attachment">Attachment</option>
             <option value="auto_number">Auto-number</option>
+            <option value="user">User</option>
           </optgroup>
           <optgroup label="Computed">
             <option value="formula">Formula</option>
             <option value="linked_record">Linked record</option>
             <option value="rollup">Rollup</option>
             <option value="lookup">Lookup</option>
+            <option value="created_time">Created time</option>
+            <option value="modified_time">Modified time</option>
           </optgroup>
         </select>
       </div>
@@ -2304,12 +3456,41 @@ function AddFieldDialog({
       )}
 
       {type === "linked_record" && (
-        <input
-          className="input"
-          placeholder="Display field on linked records (e.g. Name)"
-          value={linkedDisplayField}
-          onChange={(e) => setLinkedDisplayField(e.target.value)}
-        />
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+          <select
+            className="input"
+            value={linkedTableId}
+            aria-label="Links to table"
+            onChange={(e) => {
+              setLinkedTableId(e.target.value);
+              // The display-field choices come from the target table;
+              // clear a stale pick when the target changes.
+              setLinkedDisplayField("");
+            }}
+          >
+            <option value="">This table (self-link)</option>
+            {tables
+              .filter((t) => t.id !== activeTableId)
+              .map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+          </select>
+          <select
+            className="input"
+            value={linkedDisplayField}
+            aria-label="Display field on linked records"
+            onChange={(e) => setLinkedDisplayField(e.target.value)}
+          >
+            <option value="">Display field… (defaults to id)</option>
+            {linkDisplayChoices.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </div>
       )}
 
       {(type === "rollup" || type === "lookup") && (
@@ -2317,7 +3498,10 @@ function AddFieldDialog({
           <select
             className="input"
             value={linkedField}
-            onChange={(e) => setLinkedField(e.target.value)}
+            onChange={(e) => {
+              setLinkedField(e.target.value);
+              setTargetField("");
+            }}
           >
             <option value="">Linked record field…</option>
             {linkFieldChoices.map((f) => (
@@ -2326,12 +3510,20 @@ function AddFieldDialog({
               </option>
             ))}
           </select>
-          <input
+          <select
             className="input"
-            placeholder="Target field on linked records"
             value={targetField}
+            aria-label="Target field on linked records"
             onChange={(e) => setTargetField(e.target.value)}
-          />
+            disabled={rollupTargetChoices.length === 0}
+          >
+            <option value="">Target field…</option>
+            {rollupTargetChoices.map((fname) => (
+              <option key={fname} value={fname}>
+                {fname}
+              </option>
+            ))}
+          </select>
           {type === "rollup" && (
             <select
               className="input"
@@ -2368,6 +3560,19 @@ function AddFieldDialog({
           value={percentPrecision}
           onChange={(e) => setPercentPrecision(e.target.value)}
         />
+      )}
+
+      {(type === "date" || type === "created_time" || type === "modified_time") && (
+        <label
+          style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}
+        >
+          <input
+            type="checkbox"
+            checked={dateIncludeTime}
+            onChange={(e) => setDateIncludeTime(e.target.checked)}
+          />
+          Include time of day
+        </label>
       )}
 
       {nameError && (
@@ -2821,14 +4026,19 @@ function getDefaultValue(type: FieldType): unknown {
     case "linked_record":
     case "attachment":
       return [];
-    // Computed types: stored value is never read (the cell recomputes
-    // at render time), but we initialise to null so the JSON shape is
-    // predictable for migrations.
+    // Computed types initialise to null: their stored value is never
+    // read (the cell recomputes at render time), but a predictable
+    // JSON shape helps migrations. `created_time` / `modified_time`
+    // read the record's `__created` / `__modified` metadata at render
+    // time, so they belong in the same null-initialised group.
     case "formula":
     case "rollup":
     case "lookup":
     case "auto_number":
+    case "created_time":
+    case "modified_time":
       return null;
+    // `user` is free text, so empty string (the default) is correct.
     default:
       return "";
   }
