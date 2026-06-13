@@ -213,6 +213,15 @@ export default function SlideEditor({
     themeIdRef.current = themeId;
   }, [themeId]);
 
+  // Mirror activeIndex into a ref so callbacks that run inside
+  // `setSlides` updaters can read the freshest committed value
+  // rather than a potentially stale closure capture. Used by
+  // `insertPreset` to determine the insertion position.
+  const activeIndexRef = useRef(activeIndex);
+  useEffect(() => {
+    activeIndexRef.current = activeIndex;
+  }, [activeIndex]);
+
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
   // "click inside the menu / on the toggle button" (which it must
@@ -598,15 +607,15 @@ export default function SlideEditor({
   );
 
   // Insert a single slide from an insert-card preset after the
-  // current active slide. Both the splice position and the active
-  // index update happen inside the `setSlides` updater to guarantee
-  // they derive from the committed `prev` array — matching the
-  // pattern used by `addSlide` and `duplicateSlide`.
+  // current active slide. Reads `activeIndexRef` (not the closure-
+  // captured `activeIndex`) inside the `setSlides` updater so the
+  // insertion position reflects the latest committed value even if
+  // a queued state update changed it before React re-rendered.
   const insertPreset = useCallback(
     (preset: (typeof INSERT_CARD_PRESETS)[number]) => {
       const newSlide = buildSlideFromPreset(preset);
       setSlides((prev) => {
-        const idx = Math.min(activeIndex + 1, prev.length);
+        const idx = Math.min(activeIndexRef.current + 1, prev.length);
         const next = [...prev.slice(0, idx), newSlide, ...prev.slice(idx)];
         setActiveIndex(idx);
         debouncedSave(next);
@@ -614,7 +623,7 @@ export default function SlideEditor({
       });
       setInsertPresetOpen(false);
     },
-    [activeIndex, debouncedSave],
+    [debouncedSave],
   );
 
   // Replace the entire deck with an AI-generated one. We anchor the

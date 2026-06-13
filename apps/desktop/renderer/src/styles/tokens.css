@@ -393,12 +393,15 @@
   --slide-surface: #fffdf7;
   --slide-headline: #1a1a1a;
   --slide-font-headline: Georgia, "Times New Roman", serif;
+  --slide-font-body: Georgia, "Times New Roman", serif;
+  --slide-heading-weight: 600;
 }
 [data-slide-theme="noir"] {
   --slide-accent: #111827;
   --slide-surface: #f4f4f5;
   --slide-headline: #09090b;
   --slide-font-headline: var(--font-family);
+  --slide-heading-weight: 800;
 }
 [data-slide-theme="mint"] {
   --slide-accent: #0f766e;
@@ -411,6 +414,7 @@
   --slide-surface: #fffaf2;
   --slide-headline: #7c2d12;
   --slide-font-headline: var(--font-family);
+  --slide-heading-weight: 800;
 }
 [data-slide-theme="slate"] {
   --slide-accent: #334155;
