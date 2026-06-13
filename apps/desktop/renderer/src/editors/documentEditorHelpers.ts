@@ -193,12 +193,19 @@ export interface SlashCommand {
   id: string;
   label: string;
   description: string;
-  category: "blocks" | "lists" | "media" | "inline";
+  category: "ai" | "blocks" | "lists" | "media" | "inline";
   keywords: string[];
 }
 
 /** The full catalog rendered by the slash menu. Order = display order. */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
+  {
+    id: "ai",
+    label: "Ask AI",
+    description: "Write or edit with the on-device assistant",
+    category: "ai",
+    keywords: ["ai", "assistant", "write", "generate", "help"],
+  },
   {
     id: "heading-1",
     label: "Heading 1",
@@ -289,6 +296,27 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     description: "Mermaid diagram block",
     category: "media",
     keywords: ["mermaid", "diagram", "chart", "flow"],
+  },
+  {
+    id: "callout",
+    label: "Callout",
+    description: "Highlighted note with an icon",
+    category: "blocks",
+    keywords: ["callout", "note", "info", "warning", "tip", "aside"],
+  },
+  {
+    id: "toggle",
+    label: "Toggle",
+    description: "Collapsible section",
+    category: "blocks",
+    keywords: ["toggle", "collapse", "accordion", "details", "expand"],
+  },
+  {
+    id: "table-of-contents",
+    label: "Table of contents",
+    description: "Auto-generated outline of headings",
+    category: "blocks",
+    keywords: ["toc", "contents", "outline", "index"],
   },
 ];
 
@@ -472,6 +500,63 @@ export function replaceAll(
     out = replaceOne(out, matches[i], replacement);
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Link href normalisation
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Normalise a user-typed link target into a safe, openable href.
+ *
+ * Rules (security-first — these links are rendered into the document
+ * and can be clicked):
+ *   - Trim surrounding whitespace.
+ *   - Empty input → `null` (caller should treat as "remove link").
+ *   - `javascript:` / `data:` / `vbscript:` schemes are rejected
+ *     (`null`) so a crafted link can't execute script when clicked.
+ *   - `mailto:` / `tel:` and explicit http(s) schemes pass through.
+ *   - A bare domain or path with no scheme gets `https://` prepended
+ *     (matches the Google-Docs / Notion convention).
+ *   - Anchor (`#id`) and root-relative (`/path`) links pass through.
+ *
+ * Returns the normalised href, or `null` if the input is empty or
+ * unsafe.
+ */
+export function normalizeLinkHref(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+
+  // Reject dangerous schemes regardless of casing / leading control
+  // characters (browsers tolerate "java\tscript:"); strip control
+  // chars (code point ≤ 0x1f) before testing the scheme. A regex
+  // character class can't express this without `no-control-regex`, so
+  // we filter by char code instead.
+  const stripped = Array.from(trimmed)
+    .filter((ch) => ch.charCodeAt(0) > 0x1f)
+    .join("")
+    .toLowerCase();
+  if (/^(javascript|data|vbscript|file):/i.test(stripped)) return null;
+
+  // Already-qualified or intentionally relative targets pass through.
+  if (
+    /^https?:\/\//i.test(trimmed) ||
+    /^mailto:/i.test(trimmed) ||
+    /^tel:/i.test(trimmed) ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("/")
+  ) {
+    return trimmed;
+  }
+
+  // An "@"-containing token with no scheme/space is almost certainly an
+  // email address → mailto:.
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return `mailto:${trimmed}`;
+  }
+
+  // Bare domain / path → assume https.
+  return `https://${trimmed}`;
 }
 
 // (Inline-image helpers are re-exported from `./inlineImage` at the

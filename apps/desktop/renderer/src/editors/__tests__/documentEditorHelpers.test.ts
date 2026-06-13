@@ -24,6 +24,7 @@ import {
   MAX_IMAGE_BYTES,
   fileToDataUrl,
   TRUSTED_LEADING_TAGS,
+  normalizeLinkHref,
 } from "../documentEditorHelpers";
 
 describe("parseDocumentContent — artifact text → TipTap-friendly HTML", () => {
@@ -119,6 +120,7 @@ describe("SLASH_COMMANDS catalog", () => {
     // and tests must move together — this assertion makes that
     // dependency explicit.
     expect(ids).toEqual([
+      "ai",
       "heading-1",
       "heading-2",
       "heading-3",
@@ -132,6 +134,9 @@ describe("SLASH_COMMANDS catalog", () => {
       "table",
       "image",
       "mermaid",
+      "callout",
+      "toggle",
+      "table-of-contents",
     ]);
   });
 });
@@ -140,7 +145,7 @@ describe("filterSlashCommands — slash menu fuzzy filter", () => {
   it("returns the full catalog (in display order) for an empty query", () => {
     const out = filterSlashCommands("");
     expect(out.length).toBe(SLASH_COMMANDS.length);
-    expect(out[0].id).toBe("heading-1");
+    expect(out[0].id).toBe("ai");
   });
 
   it("prefers label-prefix matches over substring matches (h → heading-1, NOT horizontal-rule)", () => {
@@ -500,5 +505,53 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
         ).toContain(tag);
       }
     }
+  });
+});
+
+describe("normalizeLinkHref — link sanitisation", () => {
+  it("returns null for empty / whitespace input", () => {
+    expect(normalizeLinkHref("")).toBeNull();
+    expect(normalizeLinkHref("   ")).toBeNull();
+  });
+
+  it("passes through explicit http(s) URLs unchanged", () => {
+    expect(normalizeLinkHref("https://example.com/x")).toBe(
+      "https://example.com/x",
+    );
+    expect(normalizeLinkHref("http://example.com")).toBe(
+      "http://example.com",
+    );
+  });
+
+  it("prepends https:// to a bare domain", () => {
+    expect(normalizeLinkHref("example.com")).toBe("https://example.com");
+    expect(normalizeLinkHref("www.example.com/path")).toBe(
+      "https://www.example.com/path",
+    );
+  });
+
+  it("turns a bare email into a mailto: link", () => {
+    expect(normalizeLinkHref("a@b.com")).toBe("mailto:a@b.com");
+  });
+
+  it("preserves mailto:, tel:, anchors, and root-relative paths", () => {
+    expect(normalizeLinkHref("mailto:a@b.com")).toBe("mailto:a@b.com");
+    expect(normalizeLinkHref("tel:+15550100")).toBe("tel:+15550100");
+    expect(normalizeLinkHref("#section")).toBe("#section");
+    expect(normalizeLinkHref("/local/path")).toBe("/local/path");
+  });
+
+  it("rejects javascript: and other script-bearing schemes", () => {
+    expect(normalizeLinkHref("javascript:alert(1)")).toBeNull();
+    expect(normalizeLinkHref("  JavaScript:alert(1)")).toBeNull();
+    expect(normalizeLinkHref("data:text/html,<script>")).toBeNull();
+    expect(normalizeLinkHref("vbscript:msgbox")).toBeNull();
+    expect(normalizeLinkHref("file:///etc/passwd")).toBeNull();
+  });
+
+  it("rejects javascript: obfuscated with embedded control characters", () => {
+    // Browsers tolerate "java\tscript:"; we strip control chars before
+    // the scheme test so this can't slip through.
+    expect(normalizeLinkHref("java\tscript:alert(1)")).toBeNull();
   });
 });

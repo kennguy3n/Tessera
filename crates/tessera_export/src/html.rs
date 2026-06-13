@@ -51,6 +51,33 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     output.push_str("    .citation-meta { font-size: 0.875rem; color: #6B7280; }\n");
     output.push_str("    .footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #E5E7EB; font-size: 0.875rem; color: #9CA3AF; }\n");
     output.push_str("    .mermaid { background: #FAFAFA; border-radius: 8px; padding: 1rem; margin: 1rem 0; }\n");
+    // Rich document blocks (callout / toggle / table-of-contents) exported
+    // from the TipTap editor. The renderer persists `editor.getHTML()`, so the
+    // exported HTML carries the real block markup; these rules mirror the
+    // in-app token palette so a standalone `.html` file renders them legibly
+    // without the application stylesheet. The callout icon is stored only as
+    // the `data-icon` attribute (the in-app button is a node-view affordance,
+    // not serialised content), so we surface it via a `::before` pseudo.
+    output.push_str("    [data-type=\"callout\"] { display: flex; gap: 0.75rem; padding: 0.875rem 1rem; margin: 1rem 0; border-radius: 8px; border-left: 4px solid #6B7280; background: #F3F4F6; }\n");
+    output.push_str("    [data-type=\"callout\"]::before { content: attr(data-icon); flex: 0 0 auto; line-height: 1.5; }\n");
+    output.push_str("    [data-type=\"callout\"] > :first-child { margin-top: 0; }\n");
+    output.push_str("    [data-type=\"callout\"] > :last-child { margin-bottom: 0; }\n");
+    output.push_str("    [data-type=\"callout\"][data-variant=\"info\"] { border-left-color: #2563EB; background: #EFF6FF; }\n");
+    output.push_str("    [data-type=\"callout\"][data-variant=\"success\"] { border-left-color: #16A34A; background: #F0FDF4; }\n");
+    output.push_str("    [data-type=\"callout\"][data-variant=\"warning\"] { border-left-color: #D97706; background: #FFFBEB; }\n");
+    output.push_str("    [data-type=\"callout\"][data-variant=\"danger\"] { border-left-color: #DC2626; background: #FEF2F2; }\n");
+    output.push_str("    [data-type=\"callout\"][data-variant=\"note\"] { border-left-color: #7C3AED; background: #F5F3FF; }\n");
+    output.push_str("    details[data-type=\"toggle\"] { margin: 1rem 0; padding: 0.5rem 0.75rem; border: 1px solid #E5E7EB; border-radius: 8px; }\n");
+    output.push_str("    details[data-type=\"toggle\"] > summary { cursor: pointer; font-weight: 600; color: #111827; }\n");
+    output.push_str("    details[data-type=\"toggle\"] > div[data-type=\"toggle-body\"] { margin-top: 0.5rem; padding-left: 0.75rem; border-left: 2px solid #E5E7EB; }\n");
+    output.push_str("    nav.doc-toc { margin: 1rem 0; padding: 0.875rem 1rem; border: 1px solid #E5E7EB; border-radius: 8px; background: #FAFAFA; }\n");
+    output.push_str("    nav.doc-toc .doc-toc-title { font-weight: 600; color: #111827; margin: 0 0 0.5rem; }\n");
+    output.push_str("    nav.doc-toc ul { list-style: none; margin: 0; padding: 0; }\n");
+    output.push_str("    nav.doc-toc li { margin: 0.125rem 0; }\n");
+    output.push_str("    nav.doc-toc li.doc-toc-l2 { padding-left: 1rem; }\n");
+    output.push_str("    nav.doc-toc li.doc-toc-l3 { padding-left: 2rem; }\n");
+    output.push_str("    nav.doc-toc a { color: #4B5563; text-decoration: none; }\n");
+    output.push_str("    nav.doc-toc a:hover { text-decoration: underline; }\n");
     output.push_str("  </style>\n</head>\n<body>\n");
 
     let _ = writeln!(output, "  <h1>{}</h1>", escape_html(&artifact.title));
@@ -58,6 +85,16 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     if !artifact.content.is_empty() {
         let html_content = if is_visual_artifact_type(artifact.artifact_type) {
             render_visual_artifact_content(&artifact.content)
+        } else if looks_like_html(&artifact.content) {
+            // An edited Document persists `editor.getHTML()`, so its content is
+            // already an HTML fragment carrying rich blocks (callout, toggle,
+            // tables, the table-of-contents marker, …). The line-oriented
+            // `content_to_html` converter would HTML-escape every tag and
+            // flatten that structure to plain text. Inline it verbatim instead
+            // (mirroring `render_visual_artifact_content`) after regenerating
+            // the TOC and assigning heading anchors, so the new blocks survive
+            // HTML export with full fidelity.
+            render_document_html(&artifact.content)
         } else {
             content_to_html(&artifact.content)
         };
@@ -184,6 +221,228 @@ fn render_visual_artifact_content(content: &str) -> String {
     }
 }
 
+/// Exact serialised form of the table-of-contents block (`TableOfContentsNode`
+/// emits a bare marker `<div>`; the live heading list is a node-view-only
+/// affordance and is therefore absent from `getHTML()`). We expand this marker
+/// into a real `<nav>` at export time so a static HTML file carries a usable,
+/// linked outline rather than an empty div.
+const TOC_MARKER: &str = "<div data-type=\"table-of-contents\"></div>";
+
+/// A heading discovered while scanning a document's HTML, used both to build
+/// the regenerated TOC and to anchor it via injected `id`s.
+struct TocEntry {
+    level: u8,
+    /// HTML-escaped, tag-stripped heading text (safe to drop into the nav).
+    label: String,
+    /// URL-fragment slug, unique within the document.
+    slug: String,
+}
+
+/// True when `content` already looks like an HTML fragment — the normal shape
+/// for an edited Document, since the renderer persists `editor.getHTML()`. We
+/// require a leading `<tag`/`</`/`<!` so markdown-shaped content (`## Heading`,
+/// prose, `- item`) still flows through the line-oriented `content_to_html`
+/// converter and the existing markdown-document exports keep their behaviour.
+fn looks_like_html(content: &str) -> bool {
+    let trimmed = content.trim_start();
+    let bytes = trimmed.as_bytes();
+    bytes.first() == Some(&b'<')
+        && bytes
+            .get(1)
+            .is_some_and(|&b| b.is_ascii_alphabetic() || b == b'!' || b == b'/')
+}
+
+/// Strip every HTML tag from `html`, returning only the text nodes. Used to
+/// derive a heading's plain-text label from its (possibly mark-wrapped) inner
+/// HTML, e.g. `Plan <strong>B</strong>` → `Plan B`.
+fn strip_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Decode the small set of HTML entities the editor emits, so slugs and TOC
+/// labels read naturally. `&amp;` is decoded last so an input like
+/// `&amp;lt;` round-trips to `&lt;` rather than being double-decoded to `<`.
+fn decode_entities(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Build a URL-fragment slug from heading text. Mirrors the renderer-side
+/// `slugifyHeading` heuristic (lowercase, alphanumerics kept, every other run
+/// collapsed to a single `-`, no leading/trailing `-`).
+fn slugify(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending_dash = false;
+    for ch in text.trim().to_lowercase().chars() {
+        if ch.is_alphanumeric() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.push(ch);
+        } else {
+            pending_dash = true;
+        }
+    }
+    out
+}
+
+/// If `content[start..]` opens an `<h1>`–`<h3>` tag, return its level and the
+/// byte index of the closing `>` of the open tag. Heading levels h4–h6 are
+/// intentionally excluded to match the in-app outline (which tracks h1–h3).
+fn match_heading_open(content: &str, start: usize) -> Option<(u8, usize)> {
+    let bytes = content.as_bytes();
+    if bytes.get(start) != Some(&b'<') {
+        return None;
+    }
+    let tag = *bytes.get(start + 1)?;
+    if tag != b'h' && tag != b'H' {
+        return None;
+    }
+    let level = *bytes.get(start + 2)?;
+    if !(b'1'..=b'3').contains(&level) {
+        return None;
+    }
+    let after = *bytes.get(start + 3)?;
+    if after != b'>' && !after.is_ascii_whitespace() {
+        return None;
+    }
+    let gt = content[start..].find('>')? + start;
+    Some((level - b'0', gt))
+}
+
+/// Walk a document's HTML once, copying it through while (a) collecting h1–h3
+/// headings for the TOC and (b) injecting a unique `id` anchor into each
+/// heading that lacks one. Returns the rewritten HTML and the heading list.
+///
+/// The scan is linear: non-`<` runs are copied wholesale, and headings are
+/// matched against `<hN`. All slicing happens on byte offsets of ASCII `<`/`>`
+/// characters, so UTF-8 content (e.g. accented headings) is preserved intact.
+fn collect_and_anchor_headings(content: &str) -> (String, Vec<TocEntry>) {
+    let mut out = String::with_capacity(content.len() + 64);
+    let mut entries: Vec<TocEntry> = Vec::new();
+    let mut used: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut i = 0usize;
+
+    while i < content.len() {
+        if content.as_bytes()[i] != b'<' {
+            let next = content[i..].find('<').map_or(content.len(), |p| i + p);
+            out.push_str(&content[i..next]);
+            i = next;
+            continue;
+        }
+
+        if let Some((level, open_end)) = match_heading_open(content, i) {
+            let close_tag = format!("</h{level}>");
+            if let Some(close_rel) = content[open_end + 1..].find(&close_tag) {
+                let inner_start = open_end + 1;
+                let inner_end = inner_start + close_rel;
+                let inner = &content[inner_start..inner_end];
+                let text = decode_entities(&strip_tags(inner));
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    let base = {
+                        let s = slugify(trimmed);
+                        if s.is_empty() {
+                            "section".to_string()
+                        } else {
+                            s
+                        }
+                    };
+                    let count = used.entry(base.clone()).or_insert(0);
+                    *count += 1;
+                    let slug = if *count == 1 {
+                        base.clone()
+                    } else {
+                        format!("{base}-{count}")
+                    };
+
+                    let open_tag = &content[i..=open_end];
+                    if open_tag.contains(" id=\"") || open_tag.contains(" id='") {
+                        out.push_str(open_tag);
+                    } else {
+                        // Insert the id immediately after `<hN`.
+                        out.push_str(&content[i..i + 3]);
+                        let _ = write!(out, " id=\"{slug}\"");
+                        out.push_str(&content[i + 3..=open_end]);
+                    }
+                    out.push_str(inner);
+                    out.push_str(&close_tag);
+
+                    entries.push(TocEntry {
+                        level,
+                        label: escape_html(trimmed),
+                        slug,
+                    });
+                    i = inner_end + close_tag.len();
+                    continue;
+                }
+            }
+        }
+
+        // Not a heading we expand: copy the single `<` and advance (ASCII, so
+        // a 1-byte step stays on a char boundary) — the next iteration's
+        // non-`<` fast path copies the rest of the tag in one shot.
+        out.push('<');
+        i += 1;
+    }
+
+    (out, entries)
+}
+
+/// Render an HTML `<nav>` outline from collected headings. Always emits the
+/// titled container (even when empty) so the marker never leaves a dangling
+/// empty `<div>` in the export.
+fn build_toc_nav(entries: &[TocEntry]) -> String {
+    let mut nav = String::from(
+        "<nav class=\"doc-toc\" aria-label=\"Table of contents\">\
+<p class=\"doc-toc-title\">Table of contents</p>",
+    );
+    if !entries.is_empty() {
+        nav.push_str("<ul>");
+        for entry in entries {
+            let _ = write!(
+                nav,
+                "<li class=\"doc-toc-l{}\"><a href=\"#{}\">{}</a></li>",
+                entry.level, entry.slug, entry.label
+            );
+        }
+        nav.push_str("</ul>");
+    }
+    nav.push_str("</nav>");
+    nav
+}
+
+/// Render an edited Document (HTML content) for HTML export. Inlines the
+/// fragment verbatim after anchoring headings and expanding the
+/// table-of-contents marker into a generated `<nav>`.
+fn render_document_html(content: &str) -> String {
+    let (anchored, entries) = collect_and_anchor_headings(content);
+    let nav = build_toc_nav(&entries);
+    let body = anchored.replace(TOC_MARKER, &nav);
+
+    let mut out = String::with_capacity(body.len() + 8);
+    out.push_str("    ");
+    out.push_str(&body);
+    if !body.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 fn content_to_html(content: &str) -> String {
     // Process content as a sequence of (text_segment, optional_mermaid_block)
     // pairs. The line-oriented converter only sees real prose; mermaid blocks
@@ -266,6 +525,116 @@ mod tests {
     use tessera_artifacts::Artifact;
     use tessera_citations::citation::Citation;
     use tessera_core::{ArtifactType, SourceId, SourceType};
+
+    #[test]
+    fn looks_like_html_detects_fragments_not_markdown() {
+        assert!(looks_like_html("<p>hi</p>"));
+        assert!(looks_like_html("  \n<h1>Title</h1>"));
+        assert!(looks_like_html("<!-- comment --><div></div>"));
+        assert!(looks_like_html("</p>"));
+        assert!(!looks_like_html("## Heading"));
+        assert!(!looks_like_html("- bullet"));
+        assert!(!looks_like_html("plain prose < not a tag"));
+        assert!(!looks_like_html(""));
+    }
+
+    #[test]
+    fn slugify_matches_outline_heuristic() {
+        assert_eq!(slugify("Hello World"), "hello-world");
+        assert_eq!(slugify("  Trim — Me!  "), "trim-me");
+        assert_eq!(slugify("Multiple   spaces"), "multiple-spaces");
+        assert_eq!(slugify("!!!"), "");
+        assert_eq!(slugify("Café Crème"), "café-crème");
+    }
+
+    #[test]
+    fn strip_tags_and_decode_entities() {
+        assert_eq!(strip_tags("Plan <strong>B</strong>"), "Plan B");
+        assert_eq!(decode_entities("a &amp;lt; b"), "a &lt; b");
+        assert_eq!(decode_entities("&lt;tag&gt; &quot;x&quot; &#39;y&#39;"), "<tag> \"x\" 'y'");
+    }
+
+    #[test]
+    fn export_document_html_inlines_callout_verbatim() {
+        // A callout serialises to `<div data-type="callout" ...>` with a content
+        // hole. The HTML exporter must inline it verbatim (not escape it) so the
+        // block survives, and the export stylesheet must target it.
+        let mut artifact = Artifact::new("Notes".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<div data-variant=\"warning\" data-icon=\"⚠️\" data-type=\"callout\"><p>Heads up</p></div>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // Verbatim block markup (not HTML-escaped).
+        assert!(html.contains("<div data-variant=\"warning\" data-icon=\"⚠️\" data-type=\"callout\">"));
+        assert!(html.contains("<p>Heads up</p>"));
+        assert!(!html.contains("&lt;div data-variant"));
+        // Stylesheet carries the callout rules + icon pseudo.
+        assert!(html.contains("[data-type=\"callout\"][data-variant=\"warning\"]"));
+        assert!(html.contains("content: attr(data-icon)"));
+    }
+
+    #[test]
+    fn export_document_html_preserves_toggle_disclosure() {
+        let mut artifact = Artifact::new("FAQ".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<details data-type=\"toggle\" open><summary>Q?</summary><div data-type=\"toggle-body\"><p>A.</p></div></details>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<details data-type=\"toggle\" open>"));
+        assert!(html.contains("<summary>Q?</summary>"));
+        assert!(html.contains("<div data-type=\"toggle-body\">"));
+        assert!(html.contains("details[data-type=\"toggle\"] > summary"));
+    }
+
+    #[test]
+    fn export_document_html_regenerates_toc_and_anchors_headings() {
+        let mut artifact = Artifact::new("Guide".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "<div data-type=\"table-of-contents\"></div>\
+<h1>Getting Started</h1><p>x</p>\
+<h2>Install &amp; Setup</h2><p>y</p>\
+<h2>Getting Started</h2>"
+                .to_string(),
+        );
+
+        let html = export_html(&artifact, &[]);
+        // The empty marker is gone; a real nav replaces it.
+        assert!(!html.contains(TOC_MARKER));
+        assert!(html.contains("<nav class=\"doc-toc\" aria-label=\"Table of contents\">"));
+        // Headings get unique slug ids; the duplicate gets a numeric suffix.
+        assert!(html.contains("<h1 id=\"getting-started\">Getting Started</h1>"));
+        assert!(html.contains("<h2 id=\"getting-started-2\">Getting Started</h2>"));
+        // TOC links resolve to those anchors; the entity label is preserved.
+        assert!(html.contains("<a href=\"#getting-started\">Getting Started</a>"));
+        assert!(html.contains("<a href=\"#install-setup\">Install &amp; Setup</a>"));
+        assert!(html.contains("class=\"doc-toc-l2\""));
+    }
+
+    #[test]
+    fn export_document_html_does_not_double_anchor_existing_ids() {
+        let mut artifact = Artifact::new("Doc".to_string(), ArtifactType::Document, None);
+        artifact.update_content("<h1 id=\"intro\">Intro</h1><p>body</p>".to_string());
+
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<h1 id=\"intro\">Intro</h1>"));
+        // No second id attribute injected.
+        assert!(!html.contains("id=\"intro\" id="));
+    }
+
+    #[test]
+    fn export_markdown_content_still_uses_line_converter() {
+        // Regression guard: legacy markdown-shaped documents must NOT be treated
+        // as HTML — they keep flowing through `content_to_html`.
+        let mut artifact = Artifact::new("Legacy".to_string(), ArtifactType::Document, None);
+        artifact.update_content("## Problem\n\nThe problem is X.".to_string());
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<h2>Problem</h2>"));
+        assert!(html.contains("<p>The problem is X.</p>"));
+    }
 
     #[test]
     fn export_basic_html() {

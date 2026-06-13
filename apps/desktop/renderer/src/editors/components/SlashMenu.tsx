@@ -139,6 +139,7 @@ export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
   // Group by category for visual structure but keep a flat index for
   // keyboard nav.
   const groupedOrder: SlashCommand["category"][] = [
+    "ai",
     "blocks",
     "lists",
     "media",

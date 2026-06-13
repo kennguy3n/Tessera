@@ -86,6 +86,25 @@ mod tests {
     }
 
     #[test]
+    fn export_preserves_rich_block_html_verbatim() {
+        // An edited Document persists HTML. The markdown exporter passes content
+        // through verbatim (only normalising mermaid fences), so callout /
+        // toggle / table-of-contents blocks round-trip losslessly: re-importing
+        // the `.md` re-parses the same HTML the editor emitted.
+        let mut artifact = Artifact::new("Blocks".to_string(), ArtifactType::Document, None);
+        let body = "<div data-variant=\"info\" data-icon=\"💡\" data-type=\"callout\"><p>Tip</p></div>\
+<details data-type=\"toggle\" open><summary>More</summary><div data-type=\"toggle-body\"><p>Detail</p></div></details>\
+<div data-type=\"table-of-contents\"></div>";
+        artifact.update_content(body.to_string());
+
+        let md = export_markdown(&artifact, &[]);
+        assert!(md.contains("data-type=\"callout\""));
+        assert!(md.contains("data-variant=\"info\""));
+        assert!(md.contains("<details data-type=\"toggle\" open>"));
+        assert!(md.contains("data-type=\"table-of-contents\""));
+    }
+
+    #[test]
     fn export_with_citations() {
         let artifact = Artifact::new("Report".to_string(), ArtifactType::Document, None);
         let citations = vec![Citation::new(
