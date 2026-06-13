@@ -637,6 +637,12 @@ export default function SlideEditor({
       setActiveIndex(0);
       setMarpMode(false);
       setDeckGenOpen(false);
+      // Clear stale drag/upload state — the entire deck is being
+      // replaced, matching applyTemplate and the version-restore
+      // sync effect.
+      setDraggedSlideId(null);
+      setDraggedBlockId(null);
+      uploadTokensRef.current.clear();
       debouncedSave(generated, {
         enabled: false,
         source: marpSource,
