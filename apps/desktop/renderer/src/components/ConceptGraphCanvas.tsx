@@ -62,8 +62,12 @@ import {
  * adds no animation of its own.
  */
 
-/** Multiplier applied to nodes/edges outside the focused neighborhood. */
-const DIM_ALPHA = 0.16;
+/**
+ * Alpha multiplier applied to nodes/edges outside the focused neighborhood.
+ * Matches the SVG path's `.cg-dim { opacity: 0.12 }` rule so the two
+ * renderers fade non-focused elements by the same factor.
+ */
+const DIM_ALPHA = 0.12;
 
 /** Per-node visual style resolved by the panel (state color or decay ramp). */
 export interface CanvasNodeStyle {
@@ -168,22 +172,25 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
   // is sensible before the ResizeObserver fires.
   const [cssSize, setCssSize] = useState({ width, height });
 
+  // O(1) id→node index, shared by the position fallback and the radius lookup
+  // so neither degrades to a linear scan on the large graphs this surface
+  // exists to render.
+  const nodeById = useMemo(() => {
+    const map = new Map<string, PositionedNode>();
+    for (const n of nodes) map.set(n.id, n);
+    return map;
+  }, [nodes]);
+
   // Live position lookup with a base-layout fallback, stable per render.
   const posOf = useCallback(
     (id: string): Point => {
       const live = renderPos.get(id);
       if (live) return live;
-      const node = nodes.find((n) => n.id === id);
+      const node = nodeById.get(id);
       return node ? { x: node.x, y: node.y } : { x: 0, y: 0 };
     },
-    [renderPos, nodes],
+    [renderPos, nodeById],
   );
-
-  const radiusById = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const n of nodes) map.set(n.id, n.radius);
-    return map;
-  }, [nodes]);
 
   const maxDegree = useMemo(() => {
     const deg = new Map<string, number>();
@@ -219,7 +226,7 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
       nodeStroke: cssVar(canvas, "--color-surface", "#ffffff"),
       selectedStroke: cssVar(canvas, "--color-text", "#111827"),
       labelFill: cssVar(canvas, "--color-text-secondary", "#4b5563"),
-      focusRing: cssVar(canvas, "--focus-ring", "#7c3aed"),
+      focusRing: cssVar(canvas, "--color-focus-ring", "#7c3aed"),
     };
 
     const t = computeViewTransform(viewBox, cssW, cssH);
@@ -249,7 +256,7 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
     const controls = buildEdgeControlPoints(
       visibleEdges,
       posOf,
-      (id) => radiusById.get(id) ?? 12,
+      (id) => nodeById.get(id)?.radius ?? 12,
       edgeCurves,
     );
     const sceneEdges: SceneEdge[] = [];

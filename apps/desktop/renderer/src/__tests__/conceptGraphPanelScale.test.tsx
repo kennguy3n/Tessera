@@ -269,6 +269,60 @@ describe("ConceptGraphPanel — scale features", () => {
       expect(tabStops).toHaveLength(1);
       expect(tabStops[0].getAttribute("aria-label")).not.toMatch(/^Atlas/);
     });
+
+    it("snaps the scrubber back to now when a preset is applied", async () => {
+      // Two decay-on presets; the scrubber instant is ephemeral and must not
+      // survive switching between them (it's tied to the live time bounds).
+      const base = {
+        disabledRelations: [],
+        disabledStates: [],
+        scopeFilter: "all" as const,
+        localMode: false,
+        localHops: 1,
+        decayMode: true,
+      };
+      const p1 = makePreset("Decay A", { ...base, labelsAll: false });
+      const p2 = makePreset("Decay B", { ...base, labelsAll: true });
+      window.localStorage.setItem(
+        presetStorageKey("scope-a"),
+        serializePresetStore({ presets: [p1, p2], defaultPresetId: null }),
+      );
+
+      render(<ConceptGraphPanel memories={MEMORIES} scope="scope-a" />);
+      await waitFor(() =>
+        expect(screen.getByTestId("concept-graph-svg")).toBeInTheDocument(),
+      );
+
+      const select = screen.getByTestId(
+        "concept-graph-preset-select",
+      ) as HTMLSelectElement;
+      // Apply the first decay-on preset, then scrub back to an earlier instant.
+      fireEvent.change(select, { target: { value: p1.id } });
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("concept-graph-decay-controls"),
+        ).toBeInTheDocument(),
+      );
+      const scrubber = screen.getByTestId(
+        "concept-graph-decay-scrubber",
+      ) as HTMLInputElement;
+      fireEvent.change(scrubber, { target: { value: String(50 * DAY) } });
+      expect(
+        screen.getByTestId("concept-graph-decay-now"),
+      ).toBeInTheDocument();
+
+      // Applying another preset keeps decay on but resets the scrubber to now.
+      fireEvent.change(select, { target: { value: p2.id } });
+      expect(
+        screen.getByTestId("concept-graph-decay-controls"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("concept-graph-decay-asof"),
+      ).toHaveTextContent("now");
+      expect(
+        screen.queryByTestId("concept-graph-decay-now"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   describe("scope changes", () => {

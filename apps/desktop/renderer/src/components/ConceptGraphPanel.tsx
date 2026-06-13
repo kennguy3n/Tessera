@@ -1378,6 +1378,10 @@ export default function ConceptGraphPanel({
     setLocalHops(preset.localHops);
     setLabelsAll(preset.labelsAll);
     setDecayMode(preset.decayMode);
+    // The scrubber instant is ephemeral (tied to the live time bounds) and is
+    // not captured by presets, so snap back to "now" — otherwise applying a
+    // preset while scrubbed would re-enter decay at the stale instant.
+    setAsOf(null);
   }, []);
 
   // Scope *changes* on an already-mounted panel reload that scope's saved
