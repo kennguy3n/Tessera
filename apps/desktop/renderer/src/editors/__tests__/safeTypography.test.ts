@@ -76,6 +76,12 @@ describe("isSafeFontSize", () => {
     }
   });
 
+  it("accepts leading-dot decimals pasted from other editors", () => {
+    for (const v of [".5em", ".75rem", ".25px"]) {
+      expect(isSafeFontSize(v)).toBe(true);
+    }
+  });
+
   it("rejects unit-less, structural or oversized values", () => {
     for (const v of [
       "16", // no unit
@@ -97,6 +103,16 @@ describe("isSafeFontFamily", () => {
       "Georgia, 'Times New Roman', serif",
       "'JetBrains Mono', 'Courier New', monospace",
       "Arial, Helvetica, sans-serif",
+    ]) {
+      expect(isSafeFontFamily(v)).toBe(true);
+    }
+  });
+
+  it("accepts non-ASCII (CJK / Arabic) family names", () => {
+    for (const v of [
+      "ヒラギノ角ゴ Pro, sans-serif",
+      "'微软雅黑', sans-serif",
+      "'الخط العربي', serif",
     ]) {
       expect(isSafeFontFamily(v)).toBe(true);
     }

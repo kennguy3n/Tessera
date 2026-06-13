@@ -81,8 +81,10 @@ export function isSafeCssColor(value: unknown): value is string {
   return HEX.test(s) || COLOR_FN.test(s) || COLOR_KEYWORDS.has(s.toLowerCase());
 }
 
-// A number with an allow-listed unit, e.g. `16px`, `1.5em`, `120%`.
-const FONT_SIZE = /^\d+(?:\.\d+)?(?:px|em|rem|pt|%)$/;
+// A number with an allow-listed unit, e.g. `16px`, `1.5em`, `120%`, `.5em`.
+// The mantissa accepts a leading-dot form (`.5`) as well as the usual
+// `16` / `1.5`, so values pasted from other editors aren't silently dropped.
+const FONT_SIZE = /^(?:\d+(?:\.\d+)?|\.\d+)(?:px|em|rem|pt|%)$/;
 
 /** A safe `font-size`: a non-negative number with an allow-listed unit. */
 export function isSafeFontSize(value: unknown): value is string {
@@ -91,10 +93,13 @@ export function isSafeFontSize(value: unknown): value is string {
   return s.length <= 16 && FONT_SIZE.test(s);
 }
 
-// A font-family list: names, quotes, commas, spaces, hyphens. No structural CSS
-// characters (`;`, `:`, `(`, `)`, `{`, `}`) so it can neither break out of the
-// declaration nor invoke `url(...)`.
-const FONT_FAMILY = /^[\w\s,'"-]+$/;
+// A font-family list: Unicode letters/marks/digits (so CJK, Arabic, etc.
+// names round-trip), underscore, quotes, commas, spaces and hyphens. The
+// hyphen is placed first to read unambiguously as a literal. No structural
+// CSS characters (`;`, `:`, `(`, `)`, `{`, `}`, `/`) so it can neither break
+// out of the declaration nor invoke `url(...)`. The `u` flag is required for
+// the `\p{...}` property escapes.
+const FONT_FAMILY = /^[-\p{L}\p{M}\p{N}_\s,'"]+$/u;
 
 /** A safe `font-family` list: name tokens, quotes, commas and spaces only. */
 export function isSafeFontFamily(value: unknown): value is string {

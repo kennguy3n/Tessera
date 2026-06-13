@@ -42,11 +42,13 @@ declare module "@tiptap/core" {
 
 /**
  * A unit-less multiplier (`1.5`) or a length with an allow-listed unit
- * (`24px`, `1.5em`, `150%`, `2rem`). Deliberately strict: the value is
- * interpolated into a `style` attribute, so anything outside this grammar
- * is treated as untrusted and ignored.
+ * (`24px`, `1.5em`, `150%`, `2rem`). The mantissa also accepts a leading-dot
+ * form (`.5`, `.75em`) so values pasted from other editors aren't dropped.
+ * Deliberately strict otherwise: the value is interpolated into a `style`
+ * attribute, so anything outside this grammar is treated as untrusted and
+ * ignored.
  */
-const SAFE_LINE_HEIGHT = /^\d+(?:\.\d+)?(?:px|em|rem|%)?$/;
+const SAFE_LINE_HEIGHT = /^(?:\d+(?:\.\d+)?|\.\d+)(?:px|em|rem|%)?$/;
 
 function isSafeLineHeight(value: unknown): value is string {
   return typeof value === "string" && SAFE_LINE_HEIGHT.test(value.trim());

@@ -76,6 +76,15 @@ describe("BlockLineHeight — block-level line spacing", () => {
     }
   });
 
+  it("accepts leading-dot decimals pasted from other editors", () => {
+    const editor = makeEditor("<p>Hello</p>");
+    editor.commands.selectAll();
+    for (const value of [".5", ".75em"]) {
+      expect(editor.commands.setLineHeight(value)).toBe(true);
+      expect(editor.getAttributes("paragraph").lineHeight).toBe(value);
+    }
+  });
+
   it("stores the trimmed value so it matches the validated/preset form", () => {
     const editor = makeEditor("<p>Hello</p>");
     editor.commands.selectAll();
