@@ -72,6 +72,21 @@ import {
 } from "./sheetCopyPaste";
 import { type FillDirection, fillSeries } from "./sheetAutoFill";
 import { useVirtualRows } from "../hooks/useVirtualRows";
+import {
+  Plus,
+  Upload,
+  Paintbrush,
+  Tags,
+  Sparkles,
+  ShieldCheck,
+  BarChart3,
+  Bold as BoldIcon,
+  Italic as ItalicIcon,
+  Underline as UnderlineIcon,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+} from "lucide-react";
 
 export type { SheetContent } from "./sheetEditorTypes";
 
@@ -1303,10 +1318,10 @@ export default function SheetEditor({
     >
       <div className="sheet-toolbar">
         <button type="button" className="btn-sm" onClick={addColumn}>
-          + Column
+          <Plus size={15} aria-hidden="true" /> Column
         </button>
         <button type="button" className="btn-sm" onClick={addRow}>
-          + Row
+          <Plus size={15} aria-hidden="true" /> Row
         </button>
         <button
           type="button"
@@ -1316,7 +1331,7 @@ export default function SheetEditor({
             if (csv) importCSV(csv);
           }}
         >
-          Import CSV
+          <Upload size={15} aria-hidden="true" /> Import CSV
         </button>
         <button
           type="button"
@@ -1325,7 +1340,7 @@ export default function SheetEditor({
           data-testid="sheet-conditional-format-toggle"
           onClick={() => setCfOpen((open) => !open)}
         >
-          Conditional formatting
+          <Paintbrush size={15} aria-hidden="true" /> Conditional formatting
           {sheet.conditionalRules && sheet.conditionalRules.length > 0
             ? ` (${sheet.conditionalRules.length})`
             : ""}
@@ -1337,7 +1352,7 @@ export default function SheetEditor({
           data-testid="sheet-named-ranges-toggle"
           onClick={() => setNrOpen((open) => !open)}
         >
-          Named ranges
+          <Tags size={15} aria-hidden="true" /> Named ranges
           {sheet.namedRanges && sheet.namedRanges.length > 0
             ? ` (${sheet.namedRanges.length})`
             : ""}
@@ -1349,7 +1364,7 @@ export default function SheetEditor({
           data-testid="sheet-ai-toggle"
           onClick={() => setAiOpen((open) => !open)}
         >
-          AI assistant
+          <Sparkles size={15} aria-hidden="true" /> AI assistant
         </button>
         <button
           type="button"
@@ -1358,7 +1373,7 @@ export default function SheetEditor({
           data-testid="sheet-data-validation-toggle"
           onClick={() => setDvOpen((open) => !open)}
         >
-          Data validation
+          <ShieldCheck size={15} aria-hidden="true" /> Data validation
           {sheet.validations && Object.keys(sheet.validations).length > 0
             ? ` (${Object.keys(sheet.validations).length})`
             : ""}
@@ -1370,7 +1385,7 @@ export default function SheetEditor({
           data-testid="sheet-charts-toggle"
           onClick={() => setChartsOpen((open) => !open)}
         >
-          Charts
+          <BarChart3 size={15} aria-hidden="true" /> Charts
           {sheet.charts && sheet.charts.length > 0
             ? ` (${sheet.charts.length})`
             : ""}
@@ -1392,7 +1407,7 @@ export default function SheetEditor({
           disabled={!activeCell}
           onClick={() => toggleSelectionFormat("bold")}
         >
-          <strong>B</strong>
+          <BoldIcon size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -1404,7 +1419,7 @@ export default function SheetEditor({
           disabled={!activeCell}
           onClick={() => toggleSelectionFormat("italic")}
         >
-          <em>I</em>
+          <ItalicIcon size={15} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -1416,31 +1431,47 @@ export default function SheetEditor({
           disabled={!activeCell}
           onClick={() => toggleSelectionFormat("underline")}
         >
-          <span style={{ textDecoration: "underline" }}>U</span>
+          <UnderlineIcon size={15} aria-hidden="true" />
         </button>
         <span className="sheet-toolbar-sep" aria-hidden="true" />
-        <label className="sheet-format-field">
-          <select
-            aria-label="Horizontal alignment"
-            data-testid="sheet-format-align"
-            disabled={!activeCell}
-            value={
-              activeCell
-                ? getCellFormat(sheet.formats, activeCell.row, activeCell.col)
-                    ?.align ?? "left"
-                : "left"
-            }
-            onChange={(e) =>
-              applySelectionFormat({
-                align: e.target.value as CellFormat["align"],
-              })
-            }
-          >
-            <option value="left">Left</option>
-            <option value="center">Center</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
+        <div
+          className="sheet-align-group"
+          role="group"
+          aria-label="Horizontal alignment"
+          data-testid="sheet-format-align"
+        >
+          {(
+            [
+              ["left", AlignLeft, "Align left"],
+              ["center", AlignCenter, "Align center"],
+              ["right", AlignRight, "Align right"],
+            ] as const
+          ).map(([value, Icon, label]) => {
+            const current = activeCell
+              ? (getCellFormat(sheet.formats, activeCell.row, activeCell.col)
+                  ?.align ?? "left")
+              : "left";
+            return (
+              <button
+                key={value}
+                type="button"
+                className={current === value ? "btn-sm active" : "btn-sm"}
+                aria-label={label}
+                title={label}
+                aria-pressed={current === value}
+                data-testid={`sheet-format-align-${value}`}
+                disabled={!activeCell}
+                onClick={() =>
+                  applySelectionFormat({
+                    align: value as CellFormat["align"],
+                  })
+                }
+              >
+                <Icon size={15} aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
         <label className="sheet-format-field">
           <select
             aria-label="Number format"

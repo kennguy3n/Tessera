@@ -7,6 +7,32 @@ import {
   type ChangeEvent,
 } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import {
+  Sparkles,
+  Bold as BoldIcon,
+  Italic as ItalicIcon,
+  Heading1,
+  Heading2,
+  Heading3,
+  List,
+  ListOrdered,
+  ListChecks,
+  Quote,
+  Code2,
+  Link as LinkIcon,
+  Table as TableIcon,
+  Image as ImageIcon,
+  Minus,
+  Workflow,
+  Search,
+  MessageSquarePlus,
+  MessageSquare,
+  BetweenHorizontalEnd,
+  BetweenVerticalEnd,
+  Heading,
+  TableCellsMerge,
+  Trash2,
+} from "lucide-react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
@@ -177,6 +203,13 @@ export default function DocumentEditor({
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
+    // Defer the first render until after mount. Without this, React
+    // StrictMode's mount→unmount→remount probe destroys the editor
+    // created during the throwaway mount, and the effects below then
+    // run `setContent` / read `view.dom` against a destroyed instance
+    // (TypeError: reading 'commands' / 'view' of null). Deferring the
+    // initial render keeps the editor instance valid across the probe.
+    immediatelyRender: false,
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
@@ -260,13 +293,14 @@ export default function DocumentEditor({
   }, []);
 
   useEffect(() => {
-    if (editor) {
-      const parsed = parseDocumentContent(content);
-      // Only update editor if content came from an external source (not our own save)
-      if (parsed !== lastSavedRef.current) {
-        editor.commands.setContent(parsed);
-        lastSavedRef.current = editor.getHTML();
-      }
+    // Guard against a destroyed editor: under StrictMode the effect can
+    // fire after TipTap has torn down the instance from the probe mount.
+    if (!editor || editor.isDestroyed) return;
+    const parsed = parseDocumentContent(content);
+    // Only update editor if content came from an external source (not our own save)
+    if (parsed !== lastSavedRef.current) {
+      editor.commands.setContent(parsed);
+      lastSavedRef.current = editor.getHTML();
     }
   }, [content, editor]);
 
@@ -275,7 +309,7 @@ export default function DocumentEditor({
   // capture would steal the browser's own Ctrl+F when the user is on
   // a different panel.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const dom = editor.view.dom as HTMLElement;
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
@@ -659,24 +693,28 @@ function Toolbar({
         title="Ask AI (Ctrl+J)"
         aria-label="Ask AI"
       >
-        ✨ AI
+        <Sparkles size={15} aria-hidden="true" /> AI
       </button>
       <span className="toolbar-separator" />
       <button
         type="button"
         className={editor.isActive("bold") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleBold().run()}
-        title="Bold"
+        title="Bold (Ctrl+B)"
+        aria-label="Bold"
+        aria-pressed={editor.isActive("bold")}
       >
-        B
+        <BoldIcon size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("italic") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleItalic().run()}
-        title="Italic"
+        title="Italic (Ctrl+I)"
+        aria-label="Italic"
+        aria-pressed={editor.isActive("italic")}
       >
-        I
+        <ItalicIcon size={16} aria-hidden="true" />
       </button>
       <span className="toolbar-separator" />
       <button
@@ -684,24 +722,30 @@ function Toolbar({
         className={editor.isActive("heading", { level: 1 }) ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
         title="Heading 1"
+        aria-label="Heading 1"
+        aria-pressed={editor.isActive("heading", { level: 1 })}
       >
-        H1
+        <Heading1 size={17} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("heading", { level: 2 }) ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         title="Heading 2"
+        aria-label="Heading 2"
+        aria-pressed={editor.isActive("heading", { level: 2 })}
       >
-        H2
+        <Heading2 size={17} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("heading", { level: 3 }) ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
         title="Heading 3"
+        aria-label="Heading 3"
+        aria-pressed={editor.isActive("heading", { level: 3 })}
       >
-        H3
+        <Heading3 size={17} aria-hidden="true" />
       </button>
       <span className="toolbar-separator" />
       <button
@@ -709,48 +753,60 @@ function Toolbar({
         className={editor.isActive("bulletList") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         title="Bullet List"
+        aria-label="Bullet list"
+        aria-pressed={editor.isActive("bulletList")}
       >
-        UL
+        <List size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("orderedList") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         title="Ordered List"
+        aria-label="Ordered list"
+        aria-pressed={editor.isActive("orderedList")}
       >
-        OL
+        <ListOrdered size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("taskList") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleTaskList().run()}
         title="Task List"
+        aria-label="Task list"
+        aria-pressed={editor.isActive("taskList")}
       >
-        ☑
+        <ListChecks size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("blockquote") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         title="Blockquote"
+        aria-label="Blockquote"
+        aria-pressed={editor.isActive("blockquote")}
       >
-        BQ
+        <Quote size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("codeBlock") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleCodeBlock().run()}
         title="Code Block"
+        aria-label="Code block"
+        aria-pressed={editor.isActive("codeBlock")}
       >
-        {"</>"}
+        <Code2 size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={editor.isActive("link") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={onSetLink}
-        title="Link"
+        title="Link (Ctrl+K)"
+        aria-label="Insert link"
+        aria-pressed={editor.isActive("link")}
       >
-        LK
+        <LinkIcon size={16} aria-hidden="true" />
       </button>
       <span className="toolbar-separator" />
       <button
@@ -764,32 +820,36 @@ function Toolbar({
             .run()
         }
         title="Insert Table"
+        aria-label="Insert table"
       >
-        ⊞
+        <TableIcon size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className="toolbar-btn"
         onClick={onInsertImage}
         title="Insert Image"
+        aria-label="Insert image"
       >
-        IMG
+        <ImageIcon size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className="toolbar-btn"
         onClick={() => editor.chain().focus().setHorizontalRule().run()}
         title="Horizontal Rule"
+        aria-label="Horizontal rule"
       >
-        —
+        <Minus size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
         className="toolbar-btn"
         onClick={() => editor.chain().focus().insertMermaid().run()}
         title="Insert Mermaid diagram"
+        aria-label="Insert diagram"
       >
-        Diagram
+        <Workflow size={16} aria-hidden="true" />
       </button>
       <span className="toolbar-separator" />
       {inTable && (
@@ -798,57 +858,71 @@ function Toolbar({
             type="button"
             className="toolbar-btn"
             onClick={() => editor.chain().focus().addRowAfter().run()}
-            title="Add row"
+            title="Add row below"
+            aria-label="Add row below"
           >
-            +R
+            <BetweenHorizontalEnd size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Row</span>
           </button>
           <button
             type="button"
             className="toolbar-btn"
             onClick={() => editor.chain().focus().addColumnAfter().run()}
-            title="Add column"
+            title="Add column right"
+            aria-label="Add column right"
           >
-            +C
+            <BetweenVerticalEnd size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Column</span>
           </button>
           <button
             type="button"
             className="toolbar-btn"
             onClick={() => editor.chain().focus().deleteRow().run()}
             title="Delete row"
+            aria-label="Delete row"
           >
-            -R
+            <Trash2 size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Row</span>
           </button>
           <button
             type="button"
             className="toolbar-btn"
             onClick={() => editor.chain().focus().deleteColumn().run()}
             title="Delete column"
+            aria-label="Delete column"
           >
-            -C
+            <Trash2 size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Column</span>
           </button>
           <button
             type="button"
             className="toolbar-btn"
             onClick={() => editor.chain().focus().toggleHeaderRow().run()}
             title="Toggle header row"
+            aria-label="Toggle header row"
           >
-            H-row
+            <Heading size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Header</span>
           </button>
           <button
             type="button"
             className="toolbar-btn"
             onClick={() => editor.chain().focus().mergeOrSplit().run()}
             title="Merge or split cells"
+            aria-label="Merge or split cells"
           >
-            Merge
+            <TableCellsMerge size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Merge</span>
           </button>
           <button
             type="button"
-            className="toolbar-btn"
+            className="toolbar-btn toolbar-btn-danger"
             onClick={() => editor.chain().focus().deleteTable().run()}
             title="Delete table"
+            aria-label="Delete table"
           >
-            ✕
+            <Trash2 size={16} aria-hidden="true" />
+            <span className="toolbar-btn-label">Table</span>
           </button>
           <span className="toolbar-separator" />
         </>
@@ -858,8 +932,9 @@ function Toolbar({
         className="toolbar-btn"
         onClick={onOpenFind}
         title="Find & replace (Ctrl+F)"
+        aria-label="Find and replace"
       >
-        🔍
+        <Search size={16} aria-hidden="true" />
       </button>
       <span className="toolbar-separator" />
       <button
@@ -871,7 +946,7 @@ function Toolbar({
         title="Comment on selection"
         aria-label="Comment on selection"
       >
-        💬+
+        <MessageSquarePlus size={16} aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -881,7 +956,10 @@ function Toolbar({
         aria-label="Toggle comments panel"
         aria-pressed={commentsOpen}
       >
-        Comments{openCommentCount > 0 ? ` (${openCommentCount})` : ""}
+        <MessageSquare size={16} aria-hidden="true" />
+        <span className="toolbar-btn-label">
+          Comments{openCommentCount > 0 ? ` (${openCommentCount})` : ""}
+        </span>
       </button>
     </div>
   );
