@@ -54,6 +54,15 @@ describe("applyCellFormat — number formats", () => {
     expect(applyCellFormat(-0.5, { numberFormat: "0.00" })).toBe("-0.50");
   });
 
+  it("does not emit a spurious minus when a negative rounds to zero", () => {
+    // -0.0001 under "0.00" rounds to zero; Excel shows "0.00", never "-0.00".
+    expect(applyCellFormat(-0.0001, { numberFormat: "0.00" })).toBe("0.00");
+    expect(applyCellFormat(-0.4, { numberFormat: "0" })).toBe("0");
+    expect(applyCellFormat(-0.001, { numberFormat: "#,##0.00" })).toBe("0.00");
+    // A magnitude that survives rounding still keeps its sign.
+    expect(applyCellFormat(-0.006, { numberFormat: "0.00" })).toBe("-0.01");
+  });
+
   it("coerces numeric strings when the pattern wants a number", () => {
     expect(applyCellFormat("123.4", { numberFormat: "0.00" })).toBe("123.40");
   });
@@ -82,6 +91,21 @@ describe("applyCellFormat — multi-section custom formats", () => {
   it("treats zero as positive when there is no zero section", () => {
     const fmt = { numberFormat: "#,##0.00;(#,##0.00)" };
     expect(applyCellFormat(0, fmt)).toBe("0.00");
+  });
+
+  it("routes a negative that rounds to zero away from the negative section", () => {
+    // -0.0001 under "…;(…)" must render "0.00", never "(0.00)".
+    const paren = { numberFormat: "#,##0.00;(#,##0.00)" };
+    expect(applyCellFormat(-0.0001, paren)).toBe("0.00");
+    // A magnitude that survives rounding still uses the negative section.
+    expect(applyCellFormat(-1.5, paren)).toBe("(1.50)");
+    // With a dedicated zero section, the rounds-to-zero negative lands there.
+    const withZero = { numberFormat: '#,##0.00;(#,##0.00);"zero"' };
+    expect(applyCellFormat(-0.0001, withZero)).toBe("zero");
+    // Percent + scale sections honour their own display precision.
+    expect(applyCellFormat(-0.0001, { numberFormat: "0.0%;(0.0%)" })).toBe(
+      "0.0%",
+    );
   });
 
   it("hides values with an empty section", () => {
@@ -194,6 +218,47 @@ describe("applyCellFormat — date formats", () => {
     expect(applyCellFormat(newMillennium, { numberFormat: "mmmm" })).toBe(
       "January",
     );
+  });
+
+  it("renders hours on a 12-hour clock when an AM/PM token is present", () => {
+    const at = (h: number, m = 0) =>
+      dateToSerial(new Date(Date.UTC(2024, 5, 15, h, m, 0)));
+    // Afternoon hour wraps 13 → 1, with the PM marker.
+    expect(applyCellFormat(at(13, 30), { numberFormat: "h:mm AM/PM" })).toBe(
+      "1:30 PM",
+    );
+    // Midnight is 12 AM (not 0), noon is 12 PM.
+    expect(applyCellFormat(at(0, 0), { numberFormat: "h:mm AM/PM" })).toBe(
+      "12:00 AM",
+    );
+    expect(applyCellFormat(at(12, 0), { numberFormat: "h:mm AM/PM" })).toBe(
+      "12:00 PM",
+    );
+    // `hh` zero-pads the 12-hour value.
+    expect(applyCellFormat(at(9, 0), { numberFormat: "hh:mm AM/PM" })).toBe(
+      "09:00 AM",
+    );
+  });
+
+  it("keeps 24-hour rendering when no AM/PM token is present", () => {
+    const ts = dateToSerial(new Date(Date.UTC(2024, 5, 15, 13, 30, 0)));
+    expect(applyCellFormat(ts, { numberFormat: "hh:mm" })).toBe("13:30");
+  });
+
+  it("matches AM/PM case-insensitively and the short A/P form", () => {
+    const at = (h: number, m = 0) =>
+      dateToSerial(new Date(Date.UTC(2024, 5, 15, h, m, 0)));
+    // Lowercase marker -> lowercase output, still 12-hour.
+    expect(applyCellFormat(at(13, 30), { numberFormat: "h:mm am/pm" })).toBe(
+      "1:30 pm",
+    );
+    // Mixed case is treated as uppercase (Excel behaviour).
+    expect(applyCellFormat(at(9, 0), { numberFormat: "h:mm Am/Pm" })).toBe(
+      "9:00 AM",
+    );
+    // Short A/P form, case-preserving.
+    expect(applyCellFormat(at(13, 0), { numberFormat: "h A/P" })).toBe("1 P");
+    expect(applyCellFormat(at(9, 0), { numberFormat: "h a/p" })).toBe("9 a");
   });
 });
 
