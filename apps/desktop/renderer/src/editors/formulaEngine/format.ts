@@ -139,6 +139,27 @@ function splitFormatSections(pattern: string): string[] {
 }
 
 /**
+ * True when `n`, rendered through `section`'s numeric template, rounds to a
+ * displayed zero. Mirrors the render pipeline (percent ×100, scale commas,
+ * fractional-digit count) so section selection agrees with what the user
+ * actually sees. Date/time sections never participate.
+ */
+function sectionRoundsToZero(n: number, section: string): boolean {
+  const cleaned = stripBracketDirectives(section);
+  if (looksLikeDateFormat(cleaned)) return false;
+  let v = n;
+  if (containsUnquoted(cleaned, "%")) v *= 100;
+  const { body } = splitNumericTemplate(cleaned);
+  if (!body) return false;
+  const { template, scale } = extractScaleCommas(body);
+  v /= scale;
+  const dotIdx = template.indexOf(".");
+  const fracPart = dotIdx === -1 ? "" : template.slice(dotIdx + 1);
+  const fracDigits = fracPart.replace(/[^0#?]/g, "").length;
+  return Number(Math.abs(v).toFixed(fracDigits)) === 0;
+}
+
+/**
  * Choose the section for a numeric value following Excel's rules:
  * - 1 section: used for everything (negatives keep a leading minus).
  * - 2 sections: `positive-or-zero ; negative` (magnitude formatted).
@@ -153,8 +174,15 @@ function pickNumericSection(
   if (sections.length <= 1) {
     return { pattern: sections[0] ?? "", useAbs: false };
   }
-  if (n < 0) return { pattern: sections[1], useAbs: true };
-  if (n === 0 && sections.length >= 3) {
+  // A negative routes to the dedicated negative section — unless it rounds to a
+  // displayed zero at that section's precision, in which case Excel shows it
+  // through the zero/positive section (e.g. -0.0001 under "0.00;(0.00)" renders
+  // "0.00", never "(0.00)"). The single-section minus guard then keeps the sign
+  // off the rendered zero.
+  if (n < 0 && !sectionRoundsToZero(n, sections[1])) {
+    return { pattern: sections[1], useAbs: true };
+  }
+  if ((n === 0 || n < 0) && sections.length >= 3) {
     return { pattern: sections[2], useAbs: false };
   }
   return { pattern: sections[0], useAbs: false };
@@ -313,6 +341,15 @@ function looksLikeDateFormat(pattern: string): boolean {
       hasMonthToken = true;
     } else if (ch === "#" || ch === "0") {
       hasNumericPlaceholder = true;
+    } else {
+      // An AM/PM (or A/P) marker is itself a time token; treat it as strong so
+      // a lone marker still classifies as a time format, and skip its letters
+      // so the `M` inside `AM/PM` isn't miscounted as a month token.
+      const marker = matchClockMarker(pattern, i);
+      if (marker) {
+        hasStrongDateToken = true;
+        i += marker.len - 1;
+      }
     }
   }
   if (hasStrongDateToken) return true;
@@ -534,9 +571,39 @@ const MONTH_NAMES = [
 ];
 
 /**
- * True when `pattern` carries an `AM/PM` (or `am/pm`) clock token outside a
- * quoted literal or `\`-escape. Hours render in 12-hour form only then, so
- * this is computed up front (the token sits *after* the hour placeholder).
+ * Match an Excel AM/PM clock marker at `pattern[i]`, case-insensitively and in
+ * both the long (`AM/PM`) and short (`A/P`) spellings. Returns the token length
+ * and a renderer that preserves the token's case: an all-lowercase token emits
+ * lowercase ("pm"/"p"), anything else emits uppercase ("PM"/"P") — matching
+ * Excel. Returns null when no marker starts at `i`.
+ */
+function matchClockMarker(
+  pattern: string,
+  i: number,
+): { len: number; render: (isPm: boolean) => string } | null {
+  const long = pattern.slice(i, i + 5);
+  if (long.toUpperCase() === "AM/PM") {
+    const lower = long === long.toLowerCase();
+    return {
+      len: 5,
+      render: (isPm) => (isPm ? (lower ? "pm" : "PM") : lower ? "am" : "AM"),
+    };
+  }
+  const short = pattern.slice(i, i + 3);
+  if (short.toUpperCase() === "A/P") {
+    const lower = short === short.toLowerCase();
+    return {
+      len: 3,
+      render: (isPm) => (isPm ? (lower ? "p" : "P") : lower ? "a" : "A"),
+    };
+  }
+  return null;
+}
+
+/**
+ * True when `pattern` carries an `AM/PM` / `A/P` clock marker (any case)
+ * outside a quoted literal or `\`-escape. Hours render in 12-hour form only
+ * then, so this is computed up front (the marker sits *after* the hour token).
  */
 function patternUsesAmPm(pattern: string): boolean {
   let inQuote = false;
@@ -551,9 +618,7 @@ function patternUsesAmPm(pattern: string): boolean {
       i++;
       continue;
     }
-    if (pattern.startsWith("AM/PM", i) || pattern.startsWith("am/pm", i)) {
-      return true;
-    }
+    if (matchClockMarker(pattern, i)) return true;
   }
   return false;
 }
@@ -682,9 +747,10 @@ function formatDate(date: Date, pattern: string): string {
       i += 1;
       continue;
     }
-    if (pattern.startsWith("AM/PM", i) || pattern.startsWith("am/pm", i)) {
-      out += H >= 12 ? "PM" : "AM";
-      i += 5;
+    const marker = matchClockMarker(pattern, i);
+    if (marker) {
+      out += marker.render(H >= 12);
+      i += marker.len;
       continue;
     }
     out += ch;

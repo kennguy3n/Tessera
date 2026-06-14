@@ -93,6 +93,21 @@ describe("applyCellFormat — multi-section custom formats", () => {
     expect(applyCellFormat(0, fmt)).toBe("0.00");
   });
 
+  it("routes a negative that rounds to zero away from the negative section", () => {
+    // -0.0001 under "…;(…)" must render "0.00", never "(0.00)".
+    const paren = { numberFormat: "#,##0.00;(#,##0.00)" };
+    expect(applyCellFormat(-0.0001, paren)).toBe("0.00");
+    // A magnitude that survives rounding still uses the negative section.
+    expect(applyCellFormat(-1.5, paren)).toBe("(1.50)");
+    // With a dedicated zero section, the rounds-to-zero negative lands there.
+    const withZero = { numberFormat: '#,##0.00;(#,##0.00);"zero"' };
+    expect(applyCellFormat(-0.0001, withZero)).toBe("zero");
+    // Percent + scale sections honour their own display precision.
+    expect(applyCellFormat(-0.0001, { numberFormat: "0.0%;(0.0%)" })).toBe(
+      "0.0%",
+    );
+  });
+
   it("hides values with an empty section", () => {
     // `0;-0;` → zeros render as nothing.
     expect(applyCellFormat(0, { numberFormat: "0;-0;" })).toBe("");
@@ -228,6 +243,22 @@ describe("applyCellFormat — date formats", () => {
   it("keeps 24-hour rendering when no AM/PM token is present", () => {
     const ts = dateToSerial(new Date(Date.UTC(2024, 5, 15, 13, 30, 0)));
     expect(applyCellFormat(ts, { numberFormat: "hh:mm" })).toBe("13:30");
+  });
+
+  it("matches AM/PM case-insensitively and the short A/P form", () => {
+    const at = (h: number, m = 0) =>
+      dateToSerial(new Date(Date.UTC(2024, 5, 15, h, m, 0)));
+    // Lowercase marker -> lowercase output, still 12-hour.
+    expect(applyCellFormat(at(13, 30), { numberFormat: "h:mm am/pm" })).toBe(
+      "1:30 pm",
+    );
+    // Mixed case is treated as uppercase (Excel behaviour).
+    expect(applyCellFormat(at(9, 0), { numberFormat: "h:mm Am/Pm" })).toBe(
+      "9:00 AM",
+    );
+    // Short A/P form, case-preserving.
+    expect(applyCellFormat(at(13, 0), { numberFormat: "h A/P" })).toBe("1 P");
+    expect(applyCellFormat(at(9, 0), { numberFormat: "h a/p" })).toBe("9 a");
   });
 });
 
