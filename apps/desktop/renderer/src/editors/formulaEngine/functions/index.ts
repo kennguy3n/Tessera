@@ -18,6 +18,7 @@ import { TEXT_FUNCTIONS } from "./text";
 import { LOOKUP_FUNCTIONS } from "./lookup";
 import { DATE_FUNCTIONS } from "./date";
 import { STATS_FUNCTIONS } from "./stats";
+import { FINANCIAL_FUNCTIONS } from "./financial";
 
 // Re-export so callers (functions/*, evaluator consumers) have a
 // single import location for the function-signature type.
@@ -32,6 +33,7 @@ function buildRegistry(): ReadonlyMap<string, FunctionImpl> {
     ...LOOKUP_FUNCTIONS,
     ...DATE_FUNCTIONS,
     ...STATS_FUNCTIONS,
+    ...FINANCIAL_FUNCTIONS,
   };
   const map = new Map<string, FunctionImpl>();
   for (const [name, impl] of Object.entries(all)) {
