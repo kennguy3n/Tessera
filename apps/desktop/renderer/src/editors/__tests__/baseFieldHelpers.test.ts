@@ -903,31 +903,38 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
     expect(actual).toEqual(expected);
   });
 
-  it("drops sortField when its target no longer exists", () => {
-    const out = pruneViewStateAgainstFields(fields("A", "B"), {
-      sortField: "Removed",
-      filters: {},
-      viewConfig: viewConfigWith(),
-    });
-    expect(out.sortField).toBe(null);
-  });
-
-  it("keeps sortField when its target still exists (referential equality)", () => {
+  it("drops sort levels whose target no longer exists, keeps survivors", () => {
     const prev = {
-      sortField: "A",
+      sorts: [
+        { field: "Removed", dir: "asc" as const },
+        { field: "A", dir: "desc" as const },
+      ],
       filters: {},
       viewConfig: viewConfigWith(),
     };
     const out = pruneViewStateAgainstFields(fields("A", "B"), prev);
-    expect(out.sortField).toBe("A");
+    expect(out.sorts).toEqual([{ field: "A", dir: "desc" }]);
+  });
+
+  it("keeps the sorts array by-reference when every level still exists", () => {
+    const prev = {
+      sorts: [
+        { field: "A", dir: "asc" as const },
+        { field: "B", dir: "desc" as const },
+      ],
+      filters: {},
+      viewConfig: viewConfigWith(),
+    };
+    const out = pruneViewStateAgainstFields(fields("A", "B"), prev);
     // Object reused when nothing changed.
+    expect(out.sorts).toBe(prev.sorts);
     expect(out.filters).toBe(prev.filters);
     expect(out.viewConfig).toBe(prev.viewConfig);
   });
 
   it("removes filter entries whose key was dropped, keeps survivors", () => {
     const out = pruneViewStateAgainstFields(fields("A", "C"), {
-      sortField: null,
+      sorts: [],
       filters: { A: "foo", B: "bar", C: "baz" },
       viewConfig: viewConfigWith(),
     });
@@ -936,7 +943,7 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
 
   it("nulls out kanban / calendar / timeline / gallery / title pointers when their target is gone", () => {
     const out = pruneViewStateAgainstFields(fields("Title"), {
-      sortField: null,
+      sorts: [],
       filters: {},
       viewConfig: viewConfigWith({
         kanbanGroupField: "Status",
@@ -958,7 +965,7 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
 
   it("returns the input viewConfig by-reference when nothing needs nulling", () => {
     const prev = {
-      sortField: null,
+      sorts: [],
       filters: {},
       viewConfig: viewConfigWith({
         kanbanGroupField: "Status",
@@ -977,14 +984,17 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
 
   it("handles all three domains in one pass when the schema changed completely", () => {
     const out = pruneViewStateAgainstFields(fields("New1", "New2"), {
-      sortField: "OldSort",
+      sorts: [
+        { field: "OldSort", dir: "asc" as const },
+        { field: "New1", dir: "desc" as const },
+      ],
       filters: { OldFilter: "x", New1: "keep" },
       viewConfig: viewConfigWith({
         kanbanGroupField: "OldStatus",
         titleField: "OldTitle",
       }),
     });
-    expect(out.sortField).toBe(null);
+    expect(out.sorts).toEqual([{ field: "New1", dir: "desc" }]);
     expect(out.filters).toEqual({ New1: "keep" });
     expect(out.viewConfig.kanbanGroupField).toBe(null);
     expect(out.viewConfig.titleField).toBe(null);
@@ -992,7 +1002,7 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
 
   it("drops column-summary entries whose field was removed, keeps survivors", () => {
     const out = pruneViewStateAgainstFields(fields("A", "C"), {
-      sortField: null,
+      sorts: [],
       filters: {},
       viewConfig: viewConfigWith({
         gridColumnSummaries: { A: "SUM", B: "COUNT", C: "AVG" },
@@ -1003,7 +1013,7 @@ describe("pruneViewStateAgainstFields — drop stale references after import", (
 
   it("preserves the viewConfig reference when no summary needs pruning", () => {
     const prev = {
-      sortField: null,
+      sorts: [],
       filters: {},
       viewConfig: viewConfigWith({
         gridColumnSummaries: { A: "SUM" },

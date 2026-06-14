@@ -18,6 +18,7 @@ import {
   renameSortField,
   summaryKindsForFieldType,
   formatSummaryValue,
+  formatDurationMinutes,
   pruneColumnSummaries,
   renameColumnSummaryKey,
   type SortRule,
@@ -374,6 +375,67 @@ describe("formatSummaryValue", () => {
 
   it("passes non-finite raw values through unchanged", () => {
     expect(formatSummaryValue("SUM", "NaN")).toBe("NaN");
+  });
+
+  // Type-aware display: a numeric aggregation must read the same as the
+  // column's cells (Devin Review #179 — a SUM of "50%" + "30%" cells
+  // should show "80%", not the raw fraction "0.8").
+  it("formats a currency aggregation with the field symbol", () => {
+    expect(
+      formatSummaryValue("SUM", "1234.5", { type: "currency" }),
+    ).toBe("$1,234.50");
+    expect(
+      formatSummaryValue("SUM", "1234.5", {
+        type: "currency",
+        currencySymbol: "€",
+      }),
+    ).toBe("€1,234.50");
+  });
+
+  it("formats a percent aggregation as a percentage with the configured precision", () => {
+    expect(formatSummaryValue("SUM", "0.8", { type: "percent" })).toBe("80%");
+    expect(
+      formatSummaryValue("AVG", "0.1234", {
+        type: "percent",
+        percentPrecision: 2,
+      }),
+    ).toBe("12.34%");
+  });
+
+  it("formats a duration aggregation as h:mm", () => {
+    expect(formatSummaryValue("SUM", "150", { type: "duration" })).toBe("2:30");
+    // A fractional AVG floors to whole minutes.
+    expect(formatSummaryValue("AVG", "90.5", { type: "duration" })).toBe("1:30");
+  });
+
+  it("never type-formats COUNT — a filled-cell count stays a bare integer", () => {
+    expect(formatSummaryValue("COUNT", "6", { type: "currency" })).toBe("6");
+    expect(formatSummaryValue("COUNT", "6", { type: "percent" })).toBe("6");
+  });
+
+  it("falls back to grouped numeric formatting for plain number columns", () => {
+    expect(formatSummaryValue("SUM", "1000", { type: "number" })).toBe(
+      (1000).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    );
+  });
+});
+
+describe("formatDurationMinutes", () => {
+  it("renders whole minutes as h:mm with a zero-padded minute", () => {
+    expect(formatDurationMinutes(0)).toBe("0:00");
+    expect(formatDurationMinutes(5)).toBe("0:05");
+    expect(formatDurationMinutes(150)).toBe("2:30");
+  });
+
+  it("clamps negatives to 0 and floors fractional minutes", () => {
+    expect(formatDurationMinutes(-30)).toBe("0:00");
+    expect(formatDurationMinutes(90.9)).toBe("1:30");
+  });
+
+  it("returns empty for nullish / non-finite input", () => {
+    expect(formatDurationMinutes(null)).toBe("");
+    expect(formatDurationMinutes(undefined)).toBe("");
+    expect(formatDurationMinutes(NaN)).toBe("");
   });
 });
 

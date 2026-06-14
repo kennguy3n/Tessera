@@ -8,6 +8,7 @@
  * stays a thin shell that calls these.
  */
 import type {
+  BaseField,
   BaseRecord,
   FieldType,
   RollupAggregation,
@@ -353,22 +354,66 @@ export const SUMMARY_LABELS: Record<RollupAggregation, string> = {
 };
 
 /**
+ * Format a non-negative integer count of minutes as `h:mm`. Mirrors the
+ * `duration` cell renderer so the summary footer reads the same as the
+ * column it sums. Clamps negatives to 0 (a JSON-loaded stray negative
+ * would otherwise print `-2:-30`, since JS `%` keeps the dividend sign)
+ * and floors fractional minutes (an AVG can land on `90.5`).
+ */
+export function formatDurationMinutes(value: unknown): string {
+  if (value == null) return "";
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return "";
+  const safe = Math.max(0, Math.floor(n));
+  const hh = Math.floor(safe / 60);
+  const mm = safe % 60;
+  return `${hh}:${String(mm).padStart(2, "0")}`;
+}
+
+/**
  * Render a raw `aggregateValues` result for the footer. COUNT / CONCAT
- * pass through verbatim (an integer count, a joined list). Numeric
- * aggregations come back as a full-precision `String(number)` (e.g.
- * "0.30000000000000004"), so round to ≤2 fraction digits and add
- * locale grouping for readability. An empty numeric result (MIN/MAX of
- * a column with no numbers) renders as an em dash.
+ * pass through verbatim (an integer count of filled cells, a joined
+ * list) regardless of field type — a "Filled: 6" must never be dressed
+ * up as `$6` or `600%`. Numeric aggregations come back as a
+ * full-precision `String(number)` (e.g. "0.30000000000000004"); these
+ * are formatted to match how the column's *cells* display, so a SUM of
+ * cells reading "50%" + "30%" shows "80%" rather than the raw "0.8":
+ *   - `currency` → `${symbol}` + grouped, 2 fraction digits
+ *   - `percent`  → value ×100, `percentPrecision` digits, `%` suffix
+ *   - `duration` → minutes as `h:mm`
+ *   - everything else → grouped, ≤2 fraction digits
+ * An empty numeric result (MIN/MAX over a column with no numbers)
+ * renders as an em dash.
  */
 export function formatSummaryValue(
   kind: RollupAggregation,
   raw: string,
+  field?: Pick<BaseField, "type" | "currencySymbol" | "percentPrecision">,
 ): string {
   if (kind === "COUNT" || kind === "CONCAT") return raw;
   if (raw === "") return "—";
   const n = Number(raw);
   if (!Number.isFinite(n)) return raw;
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  switch (field?.type) {
+    case "currency": {
+      const symbol = field.currencySymbol ?? "$";
+      return `${symbol}${n.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    }
+    case "percent": {
+      // Re-clamp to `toFixed`'s [0,100] domain (defence in depth — the
+      // parser already clamps `percentPrecision` to [0,20]) so an
+      // in-memory mutation can't throw a RangeError mid-render.
+      const digits = Math.min(20, Math.max(0, Math.floor(field.percentPrecision ?? 0)));
+      return `${(n * 100).toFixed(digits)}%`;
+    }
+    case "duration":
+      return formatDurationMinutes(n);
+    default:
+      return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
 }
 
 /** Drop summaries for columns that no longer exist. Returns the same

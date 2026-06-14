@@ -27,6 +27,7 @@ import {
   pruneColumnSummaries,
   renameColumnSummaryKey,
   formatSummaryValue,
+  formatDurationMinutes,
   SUMMARY_LABELS,
   type SortRule,
 } from "./baseGridHelpers";
@@ -1113,7 +1114,11 @@ export default function BaseEditor({
         }
         return r[fieldName];
       });
-      out[fieldName] = formatSummaryValue(kind, aggregateValues(values, kind));
+      out[fieldName] = formatSummaryValue(
+        kind,
+        aggregateValues(values, kind),
+        def,
+      );
     }
     return out;
   }, [
@@ -1962,7 +1967,10 @@ export default function BaseEditor({
                   </td>
                 );
               })}
-              <td className="base-grid-summary-cell base-actions-cell" />
+              <td
+                className="base-grid-summary-cell base-actions-cell"
+                style={footerCellStyle(data.fields.length + 2)}
+              />
             </tr>
           </tfoot>
         </table>
@@ -2796,21 +2804,6 @@ function RatingCell({ value, onChange }: CellInputProps) {
       ))}
     </div>
   );
-}
-
-/**
- * Format integer minutes as `h:mm`. Clamps negative values to 0 so a
- * record loaded from JSON with a stray negative number renders as
- * `0:00` instead of `"-2:-30"` (JS `%` preserves dividend sign).
- */
-function formatDurationMinutes(value: unknown): string {
-  if (value == null) return "";
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return "";
-  const safe = Math.max(0, Math.floor(n));
-  const hh = Math.floor(safe / 60);
-  const mm = safe % 60;
-  return `${hh}:${String(mm).padStart(2, "0")}`;
 }
 
 function DurationCell({ value, onChange }: CellInputProps) {
