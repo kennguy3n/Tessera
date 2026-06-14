@@ -21,9 +21,25 @@ build/
 # Electron
 apps/desktop/dist/
 apps/desktop/renderer-dist/
+apps/desktop/renderer-dist-qa/
 apps/desktop/dist-electron/
 apps/desktop/out/
 apps/desktop/release/
+
+# Playwright (QA a11y / visual-regression harness) run artifacts.
+# Baseline snapshots live under qa/visual.spec.ts-snapshots/ and ARE
+# committed; only the transient run output (diffs, traces, last-run
+# metadata) is ignored.
+apps/desktop/test-results/
+apps/desktop/playwright-report/
+apps/desktop/blob-report/
+apps/desktop/.playwright/
+
+# Emitted by `tsc -p tsconfig.node.json` (composite build of vite.config.ts)
+# during `npm run build` — transient, never committed.
+apps/desktop/vite.config.js
+apps/desktop/vite.config.d.ts
+apps/desktop/*.tsbuildinfo
 
 # IDE
 .idea/

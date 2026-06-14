@@ -477,6 +477,7 @@ export default function TasksPage() {
                         className="task-card-priority"
                         style={{ background: priorityColor(task.priority) }}
                         title={`Priority: ${task.priority}`}
+                        role="img"
                         aria-label={`Priority ${task.priority}`}
                       />
                       <h3 className="task-card-title">{task.title}</h3>

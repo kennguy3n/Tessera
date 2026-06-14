@@ -50,7 +50,7 @@ import type { NativeBridge } from "../../appState";
 import type { StoredTokens } from "../../tokenVault";
 import { authConfigFields, connectorTokenType } from "../../../shared/connectorConfig";
 import {
-  getProviderOAuthConfig,
+  resolveProviderOAuthConfig,
   type ProviderId,
 } from "./providerOAuth";
 import { getRequestedScopes } from "../../oauthScope";
@@ -271,7 +271,14 @@ export function buildAuthConfig(
   provider: ProviderId,
   tokens: StoredTokens | null,
 ): Record<string, unknown> {
-  const oauth = getProviderOAuthConfig(provider);
+  // Resolve the OAuth config so per-instance (per-subdomain) providers
+  // (Zendesk, ServiceNow) carry the authorize/token URLs derived from
+  // the connection's stored instance value. Fixed-URL providers resolve
+  // to their constants unchanged. `connectorConfig` may be absent for
+  // whole-account providers — the resolver only requires it for
+  // per-instance ones.
+  const oauth = resolveProviderOAuthConfig(provider, tokens?.connectorConfig ?? null);
+  const instanceField = oauth.instanceUrls?.instanceField;
   const bag: Record<string, unknown> = {
     provider,
     token_url: oauth.tokenUrl,
@@ -290,6 +297,11 @@ export function buildAuthConfig(
   const config = tokens?.connectorConfig;
   if (config) {
     for (const field of authConfigFields(provider)) {
+      // The per-instance value (e.g. Zendesk's `subdomain`) is consumed
+      // into the derived OAuth URLs and the `api_base_url` origin below;
+      // it is never injected verbatim, so the connector reads the pinned
+      // origin rather than a raw subdomain.
+      if (field.key === instanceField) continue;
       const value = config[field.key];
       if (typeof value !== "string" || value.length === 0) continue;
       if (field.valueType === "integer") {
@@ -306,6 +318,16 @@ export function buildAuthConfig(
         bag[field.key] = value;
       }
     }
+  }
+  // For per-instance providers, single-source the connector's API base
+  // URL from the SAME validated instance value the OAuth URLs were
+  // derived from (e.g. Zendesk/ServiceNow read `api_base_url`). The
+  // derived origin is host-pinned to the template's `baseDomain`, so the
+  // connector cannot be pointed at an arbitrary host even if the raw
+  // subdomain field were ever tampered with downstream.
+  const apiBaseUrlField = oauth.instanceUrls?.apiBaseUrlField;
+  if (apiBaseUrlField && oauth.instanceOrigin) {
+    bag[apiBaseUrlField] = oauth.instanceOrigin;
   }
   return bag;
 }

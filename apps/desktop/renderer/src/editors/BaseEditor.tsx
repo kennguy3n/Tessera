@@ -2086,11 +2086,16 @@ function TableTabs({
     setRenamingId(null);
   };
 
+  const activeTable = tables.find((t) => t.id === activeTableId);
+
   return (
+    // Outer toolbar. The `role="tablist"` is a *separate* inner element
+    // so it owns ONLY its `role="tab"` children: a tablist that also
+    // contained the "+" / delete buttons trips `aria-required-children`
+    // (those buttons are not `tab`s). The auxiliary controls therefore
+    // live in the toolbar alongside — not inside — the tablist.
     <div
       className="base-table-tabs"
-      role="tablist"
-      aria-label="Tables"
       style={{
         display: "flex",
         alignItems: "center",
@@ -2101,38 +2106,44 @@ function TableTabs({
         background: "var(--color-bg-secondary, #f9fafb)",
       }}
     >
-      {tables.map((table) => {
-        const isActive = table.id === activeTableId;
-        const isRenaming = renamingId === table.id;
-        if (isRenaming) {
+      <div
+        className="base-table-tablist"
+        role="tablist"
+        aria-label="Tables"
+        style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+      >
+        {tables.map((table) => {
+          const isActive = table.id === activeTableId;
+          const isRenaming = renamingId === table.id;
+          if (isRenaming) {
+            // Transient inline-rename of the active tab: the tab is
+            // momentarily swapped for a text field while the user edits
+            // its name (committed on Enter/blur). This editing state is
+            // never the steady-state DOM the audit inspects.
+            return (
+              <input
+                key={table.id}
+                className="input base-table-tab-rename"
+                autoFocus
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  else if (e.key === "Escape") setRenamingId(null);
+                }}
+                aria-label={`Rename table ${table.name}`}
+                style={{ width: "8rem", fontSize: "0.8rem" }}
+              />
+            );
+          }
           return (
-            <input
-              key={table.id}
-              className="input base-table-tab-rename"
-              autoFocus
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-                else if (e.key === "Escape") setRenamingId(null);
-              }}
-              aria-label={`Rename table ${table.name}`}
-              style={{ width: "8rem", fontSize: "0.8rem" }}
-            />
-          );
-        }
-        return (
-          <div
-            key={table.id}
-            className="base-table-tab"
-            style={{ display: "inline-flex", alignItems: "center" }}
-          >
             <button
+              key={table.id}
               type="button"
               role="tab"
               aria-selected={isActive}
-              className="btn-sm"
+              className="btn-sm base-table-tab"
               onClick={() => onSwitch(table.id)}
               onDoubleClick={() => startRename(table)}
               title={isActive ? "Double-click to rename" : table.name}
@@ -2147,29 +2158,29 @@ function TableTabs({
             >
               {table.name}
             </button>
-            {isActive && tables.length > 1 && (
-              <button
-                type="button"
-                className="btn-sm base-table-tab-remove"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Delete table "${table.name}" and all its records? Links to it from other tables will be cleared.`,
-                    )
-                  ) {
-                    onRemove(table.id);
-                  }
-                }}
-                title={`Delete table ${table.name}`}
-                aria-label={`Delete table ${table.name}`}
-                style={{ padding: "0 0.3rem", color: "var(--color-danger, #b91c1c)" }}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {activeTable && tables.length > 1 && (
+        <button
+          type="button"
+          className="btn-sm base-table-tab-remove"
+          onClick={() => {
+            if (
+              window.confirm(
+                `Delete table "${activeTable.name}" and all its records? Links to it from other tables will be cleared.`,
+              )
+            ) {
+              onRemove(activeTable.id);
+            }
+          }}
+          title={`Delete table ${activeTable.name}`}
+          aria-label={`Delete table ${activeTable.name}`}
+          style={{ padding: "0 0.3rem", color: "var(--color-danger, #b91c1c)" }}
+        >
+          ×
+        </button>
+      )}
       <button
         type="button"
         className="btn-sm"
@@ -2515,94 +2526,107 @@ interface CellInputProps {
   // sole edit surface and can't be overwritten by an inline edit
   // committed while the user types in the modal).
   isExpanded?: boolean;
+  // Accessible name for the cell's form control. The grid's column header
+  // does not name a native control, so each editable cell needs its own
+  // label; computed once in `CellInput` (field name + row) and threaded down.
+  ariaLabel?: string;
 }
 
 function CellInput(props: CellInputProps) {
   const { field } = props;
+  // Each editable cell needs its own accessible name (the column header
+  // doesn't name the native control). Compute it once here and thread a
+  // derived props object down — we intentionally do NOT mutate the
+  // `props` parameter so the input shape stays read-only.
+  const ariaLabel = `${field.name}, row ${props.recordIndex + 1}`;
+  const cellProps = { ...props, ariaLabel };
   switch (field.type) {
     case "checkbox":
-      return <CheckboxCell {...props} />;
+      return <CheckboxCell {...cellProps} />;
     case "number":
-      return <NumberCell {...props} />;
+      return <NumberCell {...cellProps} />;
     case "date":
-      return <DateCell {...props} />;
+      return <DateCell {...cellProps} />;
     case "select":
-      return <SelectCell {...props} />;
+      return <SelectCell {...cellProps} />;
     case "url":
-      return <UrlCell {...props} />;
+      return <UrlCell {...cellProps} />;
     case "multi_select":
-      return <MultiSelectCell {...props} />;
+      return <MultiSelectCell {...cellProps} />;
     case "formula":
-      return <FormulaCell {...props} />;
+      return <FormulaCell {...cellProps} />;
     case "linked_record":
-      return <LinkedRecordCell {...props} />;
+      return <LinkedRecordCell {...cellProps} />;
     case "rollup":
-      return <RollupCell {...props} />;
+      return <RollupCell {...cellProps} />;
     case "lookup":
-      return <LookupCell {...props} />;
+      return <LookupCell {...cellProps} />;
     case "attachment":
-      return <AttachmentCell {...props} />;
+      return <AttachmentCell {...cellProps} />;
     case "long_text":
-      return <LongTextCell {...props} />;
+      return <LongTextCell {...cellProps} />;
     case "email":
-      return <EmailCell {...props} />;
+      return <EmailCell {...cellProps} />;
     case "phone":
-      return <PhoneCell {...props} />;
+      return <PhoneCell {...cellProps} />;
     case "currency":
-      return <CurrencyCell {...props} />;
+      return <CurrencyCell {...cellProps} />;
     case "percent":
-      return <PercentCell {...props} />;
+      return <PercentCell {...cellProps} />;
     case "rating":
-      return <RatingCell {...props} />;
+      return <RatingCell {...cellProps} />;
     case "duration":
-      return <DurationCell {...props} />;
+      return <DurationCell {...cellProps} />;
     case "auto_number":
-      return <AutoNumberCell {...props} />;
+      return <AutoNumberCell {...cellProps} />;
     case "user":
-      return <UserCell {...props} />;
+      return <UserCell {...cellProps} />;
     case "created_time":
-      return <TimestampCell {...props} which="created" />;
+      return <TimestampCell {...cellProps} which="created" />;
     case "modified_time":
-      return <TimestampCell {...props} which="modified" />;
+      return <TimestampCell {...cellProps} which="modified" />;
     case "text":
     default:
-      return <TextCell {...props} />;
+      return <TextCell {...cellProps} />;
   }
 }
 
-function TextCell({ value, onChange }: CellInputProps) {
+function TextCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="text"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-function CheckboxCell({ value, onChange }: CellInputProps) {
+function CheckboxCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="checkbox"
+      aria-label={ariaLabel}
       checked={Boolean(value)}
       onChange={(e) => onChange(e.target.checked)}
     />
   );
 }
 
-function NumberCell({ value, onChange }: CellInputProps) {
+function NumberCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="number"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
     />
   );
 }
 
-function DateCell({ field, value, onChange }: CellInputProps) {
+function DateCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   // `dateIncludeTime` switches the native picker to `datetime-local`.
   // The two input types use different value formats — `YYYY-MM-DD` vs
   // `YYYY-MM-DDTHH:mm` — so we normalise the stored string to the
@@ -2623,6 +2647,7 @@ function DateCell({ field, value, onChange }: CellInputProps) {
       <input
         type="datetime-local"
         className="base-cell-input"
+        aria-label={ariaLabel}
         value={local}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -2632,6 +2657,7 @@ function DateCell({ field, value, onChange }: CellInputProps) {
     <input
       type="date"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={raw.includes("T") ? raw.slice(0, 10) : raw}
       onChange={(e) => onChange(e.target.value)}
     />
@@ -2642,11 +2668,12 @@ function DateCell({ field, value, onChange }: CellInputProps) {
 // no central identity directory, so we store the name the user types
 // rather than resolving against a remote roster — keeping the field
 // fully usable offline and in the packaged app.
-function UserCell({ value, onChange }: CellInputProps) {
+function UserCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="text"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="Collaborator"
@@ -2680,10 +2707,11 @@ function TimestampCell({
   );
 }
 
-function SelectCell({ field, value, onChange }: CellInputProps) {
+function SelectCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   return (
     <select
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
     >
@@ -2697,11 +2725,12 @@ function SelectCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
-function UrlCell({ value, onChange }: CellInputProps) {
+function UrlCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="url"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="https://..."
@@ -2709,11 +2738,12 @@ function UrlCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function EmailCell({ value, onChange }: CellInputProps) {
+function EmailCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="email"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="name@example.com"
@@ -2721,11 +2751,12 @@ function EmailCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function PhoneCell({ value, onChange }: CellInputProps) {
+function PhoneCell({ value, onChange, ariaLabel }: CellInputProps) {
   return (
     <input
       type="tel"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={value != null ? String(value) : ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="+1 555-0123"
@@ -2733,7 +2764,7 @@ function PhoneCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function CurrencyCell({ field, value, onChange }: CellInputProps) {
+function CurrencyCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   const symbol = field.currencySymbol ?? "$";
   return (
     <div className="base-cell-currency" style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
@@ -2742,6 +2773,7 @@ function CurrencyCell({ field, value, onChange }: CellInputProps) {
         type="number"
         step="0.01"
         className="base-cell-input"
+        aria-label={ariaLabel}
         value={value != null ? String(value) : ""}
         onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
       />
@@ -2749,7 +2781,7 @@ function CurrencyCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
-function PercentCell({ field, value, onChange }: CellInputProps) {
+function PercentCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   // Defense in depth: `parseBaseContent` runs every field through
   // `sanitizeBaseField`, which already clamps `percentPrecision` to
   // [0,20]. We re-clamp here so an in-memory mutation (e.g. a future
@@ -2772,6 +2804,7 @@ function PercentCell({ field, value, onChange }: CellInputProps) {
         type="number"
         step={1 / Math.pow(10, precision)}
         className="base-cell-input"
+        aria-label={ariaLabel}
         value={displayed}
         onChange={(e) =>
           onChange(e.target.value === "" ? null : Number(e.target.value) / 100)
@@ -2782,14 +2815,14 @@ function PercentCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
-function RatingCell({ value, onChange }: CellInputProps) {
+function RatingCell({ value, onChange, ariaLabel }: CellInputProps) {
   const rating = typeof value === "number" ? Math.max(0, Math.min(5, value)) : 0;
   return (
     <div
       className="base-cell-rating"
       style={{ display: "flex", gap: "2px", cursor: "pointer" }}
       role="radiogroup"
-      aria-label="Rating"
+      aria-label={ariaLabel ?? "Rating"}
     >
       {[1, 2, 3, 4, 5].map((n) => (
         <button
@@ -2797,6 +2830,7 @@ function RatingCell({ value, onChange }: CellInputProps) {
           type="button"
           role="radio"
           aria-checked={n === rating}
+          aria-label={`${n} star${n === 1 ? "" : "s"}`}
           className="base-cell-rating-star"
           onClick={() => onChange(n === rating ? 0 : n)}
           style={{
@@ -2816,7 +2850,7 @@ function RatingCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function DurationCell({ value, onChange }: CellInputProps) {
+function DurationCell({ value, onChange, ariaLabel }: CellInputProps) {
   // Stored as integer minutes; rendered as h:mm. We keep a local
   // `draft` string so users can type freely (intermediate keystrokes
   // like `"2"` or `"2:"` are not valid h:mm but must be allowed) —
@@ -2853,6 +2887,7 @@ function DurationCell({ value, onChange }: CellInputProps) {
     <input
       type="text"
       className="base-cell-input"
+      aria-label={ariaLabel}
       value={text}
       placeholder="h:mm"
       onChange={(e) => setDraft(e.target.value)}
@@ -2877,7 +2912,7 @@ function AutoNumberCell({ recordIndex }: CellInputProps) {
   );
 }
 
-function MultiSelectCell({ field, value, onChange }: CellInputProps) {
+function MultiSelectCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   const selected: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
@@ -2905,6 +2940,9 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
       <button
         type="button"
         className="base-cell-input"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         style={{ textAlign: "left", minHeight: "1.5rem" }}
       >
@@ -2933,6 +2971,7 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
         <div
           className="base-cell-multiselect-menu"
           role="listbox"
+          aria-label={ariaLabel}
           aria-multiselectable
           style={{
             position: "absolute",
@@ -3002,6 +3041,7 @@ function LinkedRecordCell({
   allRecords,
   resolver,
   onChange,
+  ariaLabel,
 }: CellInputProps) {
   const links: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
@@ -3032,6 +3072,11 @@ function LinkedRecordCell({
       ref={rootRef}
       className="base-cell-linkedrecord"
       style={{ position: "relative" }}
+      // Group the chips + add control under the cell's accessible name so a
+      // screen reader announces e.g. "Owner, row 3, group" instead of an
+      // unnamed cluster of chip/remove buttons. Threaded from CellInput.
+      role="group"
+      aria-label={ariaLabel}
     >
       <div style={{ display: "inline-flex", gap: "0.25rem", flexWrap: "wrap" }}>
         {linkedRecords.map((r) => (
@@ -3072,6 +3117,11 @@ function LinkedRecordCell({
           onClick={() => setOpen((o) => !o)}
           className="btn-sm"
           style={{ fontSize: "0.75rem", padding: "0 0.4rem" }}
+          // The visible "+" glyph is not a meaningful name; the group's
+          // aria-label already scopes us to the field, so name the action.
+          aria-label="Add link"
+          aria-haspopup="listbox"
+          aria-expanded={open}
         >
           +
         </button>
@@ -3211,7 +3261,7 @@ function LookupCell({
   );
 }
 
-function AttachmentCell({ value, onChange }: CellInputProps) {
+function AttachmentCell({ value, onChange, ariaLabel }: CellInputProps) {
   const paths: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
@@ -3235,6 +3285,8 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
   return (
     <div
       className="base-cell-attachment"
+      role="group"
+      aria-label={ariaLabel}
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
@@ -3287,6 +3339,7 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
       <button
         type="button"
         className="btn-sm"
+        aria-label={ariaLabel ? `Add file to ${ariaLabel}` : "Add file"}
         onClick={() => inputRef.current?.click()}
         style={{ fontSize: "0.75rem" }}
       >
@@ -3296,6 +3349,7 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
         ref={inputRef}
         type="file"
         multiple
+        aria-label={ariaLabel ? `Add file to ${ariaLabel}` : "Add file"}
         onChange={(e) => handleFiles(e.target.files)}
         style={{ display: "none" }}
       />
@@ -3303,7 +3357,7 @@ function AttachmentCell({ value, onChange }: CellInputProps) {
   );
 }
 
-function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps) {
+function LongTextCell({ value, onChange, onExpand, isExpanded, ariaLabel }: CellInputProps) {
   // When the LongTextModal is open over this cell, lock the inline
   // surface. The modal's `draft` state is initialized once from
   // `value` on mount and only flushes to the record on Save — so if
@@ -3320,6 +3374,7 @@ function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps)
     >
       <textarea
         className="base-cell-input base-cell-longtext"
+        aria-label={ariaLabel}
         value={value != null ? String(value) : ""}
         onChange={(e) => onChange(e.target.value)}
         rows={2}
@@ -3336,6 +3391,7 @@ function LongTextCell({ value, onChange, onExpand, isExpanded }: CellInputProps)
         type="button"
         className="btn-sm"
         title={isExpanded ? "Already open" : "Expand"}
+        aria-label={isExpanded ? "Already expanded" : `Expand ${ariaLabel ?? "cell"}`}
         onClick={onExpand}
         disabled={isExpanded}
         style={{ fontSize: "0.75rem", padding: "0 0.3rem" }}

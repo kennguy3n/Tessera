@@ -637,6 +637,41 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
       ...READ_ONLY_GUARANTEES,
     ],
   },
+  {
+    provider: "zendesk",
+    label: "Zendesk",
+    category: "CRM",
+    keywords: ["zendesk", "support", "tickets", "helpdesk", "service"],
+    consoleUrl: "https://support.zendesk.com/hc/en-us/articles/4408845965210",
+    help: "In Zendesk Admin Center → Apps and integrations → APIs → OAuth Clients, create a client with the redirect URI below and the read-only 'read' scope. Copy the Client ID (the 'Unique identifier') and Secret, then enter your Zendesk subdomain.",
+    secretRequired: true,
+    reads: [
+      "Support ticket subjects, descriptions, comments, and timestamps from your Zendesk (read-only)",
+    ],
+    neverTouches: [
+      "Creating, replying to, updating, or deleting tickets",
+      "Users, organizations, or account configuration",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
+  {
+    provider: "servicenow",
+    label: "ServiceNow",
+    category: "CRM",
+    keywords: ["servicenow", "snow", "incidents", "itsm", "service", "now"],
+    consoleUrl:
+      "https://docs.servicenow.com/bundle/utah-platform-security/page/administer/security/task/t_CreateEndpointforExternalClients.html",
+    help: "In ServiceNow → System OAuth → Application Registry, create an endpoint for external clients with the redirect URI below. Copy the Client ID and Client Secret, then enter your instance name. Authenticate with a read-only account — the token inherits that account's ACLs.",
+    secretRequired: true,
+    reads: [
+      "Incident short descriptions, details, state, and timestamps from your instance (read-only)",
+    ],
+    neverTouches: [
+      "Creating, updating, resolving, or deleting incidents or any record",
+      "CMDB, users, or instance configuration",
+      ...READ_ONLY_GUARANTEES,
+    ],
+  },
 ];
 
 /**

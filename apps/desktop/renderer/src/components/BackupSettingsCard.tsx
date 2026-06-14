@@ -274,7 +274,7 @@ export default function BackupSettingsCard({
   if (!backup) {
     return (
       <Card>
-        <h3 style={{ marginBottom: "var(--spacing-md)" }}>Backup &amp; Recovery</h3>
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Backup &amp; Recovery</h2>
         <p style={{ color: "var(--color-text-secondary)" }}>
           Backup is unavailable in this environment.
         </p>
@@ -286,7 +286,7 @@ export default function BackupSettingsCard({
 
   return (
     <Card>
-      <h3 style={{ marginBottom: "var(--spacing-md)" }}>Backup &amp; Recovery</h3>
+      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Backup &amp; Recovery</h2>
 
       {error && (
         <p role="alert" style={{ color: "var(--color-danger)" }}>

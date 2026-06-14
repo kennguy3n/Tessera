@@ -545,9 +545,16 @@ export default function ConnectorsList({
               aria-labelledby={headingId}
             >
               <div className="connector-category-header">
-                <h3 id={headingId} className="connector-category-title">
+                {/*
+                  Connector categories are the top-level sections of the
+                  Sources page, sitting directly under its `<h1>`. They
+                  are `<h2>` so the heading outline reads h1 → h2 rather
+                  than skipping to h3 (the `<section aria-labelledby>`
+                  wrapper makes each one a named region for AT users).
+                */}
+                <h2 id={headingId} className="connector-category-title">
                   {group.category}
-                </h3>
+                </h2>
                 <span className="connector-category-count">
                   {group.descriptors.length}
                 </span>

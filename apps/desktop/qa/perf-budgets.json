@@ -1,0 +1,14 @@
+{
+  "$comment": "Single source of truth for Tessera's enforced performance budgets. Both perf gates read this file: scripts/coldStartGate.cjs (coldStartMs) and scripts/perfBudgets.mjs (interaction.*). All values are milliseconds. Budgets are boot/render-to-ready ceilings, set with headroom over the observed median on the CI reference runner so normal jitter never flakes the gate but a real regression (roughly >1.8x) trips it. To re-baseline after an intentional change, run `npm run perf:budgets` locally, read the reported medians, and bump the relevant ceiling here in the same PR with a one-line rationale in the commit.",
+  "coldStartMs": 2000,
+  "graphScale": 300,
+  "samples": 5,
+  "warmup": 1,
+  "interaction": {
+    "editor-document": 1200,
+    "editor-sheet": 1050,
+    "editor-base": 950,
+    "editor-slides": 1100,
+    "graph-canvas": 950
+  }
+}

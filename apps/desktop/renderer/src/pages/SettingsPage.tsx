@@ -184,7 +184,7 @@ export default function SettingsPage() {
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-lg)" }}>
         <div id="appearance" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>General</h3>
+          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>General</h2>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
               htmlFor={themeId}
@@ -250,9 +250,9 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>
+          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>
             Navigation &amp; setup
-          </h3>
+          </h2>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
               style={{
@@ -374,7 +374,7 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>Sources</h3>
+          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Sources</h2>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
               htmlFor={watchPatternsId}
@@ -421,7 +421,7 @@ export default function SettingsPage() {
 
         <div id="performance" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>Performance</h3>
+          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Performance</h2>
           <div style={{ marginBottom: "var(--spacing-lg)" }}>
             <label
               htmlFor={resourceModeId}
@@ -585,7 +585,7 @@ export default function SettingsPage() {
         <BackupSettingsCard />
 
         <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>
+          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Export</h2>
           <div>
             <label
               htmlFor={exportFormatId}
@@ -617,7 +617,7 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>About</h3>
+          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>About</h2>
           <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)" }}>
             <p>
               <strong>Tessera</strong> v0.1.0

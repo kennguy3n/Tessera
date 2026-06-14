@@ -345,7 +345,7 @@ export default function ModelSlotPanel({
     // SSR), render a neutral placeholder rather than throwing.
     return (
       <Card>
-        <h3 style={{ marginBottom: "var(--spacing-md)" }}>{title}</h3>
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>{title}</h2>
         <p>Bridge unavailable.</p>
       </Card>
     );
@@ -353,12 +353,12 @@ export default function ModelSlotPanel({
 
   return (
     <Card>
-      <h3
+      <h2 className="section-title"
         style={{ marginBottom: "var(--spacing-md)" }}
         data-testid={`${testIdPrefix}-title`}
       >
         {title}
-      </h3>
+      </h2>
 
       {description && (
         <p

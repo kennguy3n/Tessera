@@ -20,6 +20,8 @@
     "test:smoke:rust": "cargo test -p tessera_templates --test smoke_templates && cargo test -p tessera_connectors --test smoke_connectors && cargo test -p tessera_export --test smoke_export",
     "test:smoke:linux": "bash scripts/smoke-test-linux.sh",
     "perf:cold-start": "node scripts/coldStartGate.cjs",
+    "perf:budgets": "node scripts/perfBudgets.mjs",
+    "perf": "npm run perf:cold-start && npm run perf:budgets",
     "verify:package:windows": "pwsh -File scripts/verify-windows-package.ps1",
     "verify:package:macos": "bash scripts/verify-macos-package.sh",
     "lint": "npm run lint --workspace=apps/desktop",
@@ -28,6 +30,7 @@
     "format:check": "prettier --check '**/*.{ts,tsx,json,css,md}'"
   },
   "devDependencies": {
+    "@playwright/test": "1.60.0",
     "prettier": "^3.3.0"
   },
   "engines": {

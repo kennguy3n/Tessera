@@ -48,6 +48,10 @@ export default tseslint.config(
       // spurious errors. CI never hits this because it lints before
       // building, but the local workflow does.
       "renderer-dist/**",
+      // Parallel showcase-enabled renderer bundle (`build:qa`, used by the
+      // a11y / visual-regression harness). Same reasoning as renderer-dist/**:
+      // never lint the minified bundle.
+      "renderer-dist-qa/**",
       "node_modules/**",
       // Build outputs from sub-workspaces (e.g. the extension's tsc emit)
       // happen to live inside `apps/desktop/node_modules/...` so they're

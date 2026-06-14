@@ -108,7 +108,7 @@ export default function HybridSearchCard() {
   if (!config) {
     return (
       <Card>
-        <h3 style={{ marginBottom: "var(--spacing-md)" }}>Search</h3>
+        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Search</h2>
         <p style={{ color: "var(--color-text-secondary)" }}>
           Loading search config…
         </p>
@@ -122,7 +122,7 @@ export default function HybridSearchCard() {
 
   return (
     <Card>
-      <h3 style={{ marginBottom: "var(--spacing-md)" }}>Search</h3>
+      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Search</h2>
       <p
         style={{
           fontSize: "var(--font-size-sm)",

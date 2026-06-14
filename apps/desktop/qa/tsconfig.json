@@ -1,0 +1,21 @@
+{
+  // Dedicated type-check pass for the browser-driven quality gates
+  // (visual + a11y + their shared harness). These run under
+  // @playwright/test in a Node context, so they need Node + Playwright
+  // globals rather than the renderer's jsdom/Vitest libs — kept separate
+  // from tsconfig.json for that reason. Wired into `npm run type-check`.
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["node"]
+  },
+  "include": ["."]
+}

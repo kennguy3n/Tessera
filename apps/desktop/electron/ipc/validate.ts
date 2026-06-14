@@ -93,12 +93,20 @@ export const KNOWN_PROVIDERS = [
   // browser grant. ClickUp is per-workspace (collects a Workspace/Team
   // ID); Intercom syncs the whole workspace's conversations (optional
   // regional API host); Salesforce reads Cases from a single org and
-  // requires the My Domain instance URL. Zendesk is audited but NOT
-  // wired — its OAuth endpoints are per-subdomain, which the
-  // fixed-endpoint OAuth config model does not express.
+  // requires the My Domain instance URL.
   "clickup",
   "intercom",
   "salesforce",
+  // Tranche 6: per-instance (per-subdomain) OAuth providers wired on the
+  // `instanceUrls` seam (see shared/connectorConfig.ts and
+  // electron/ipc/connectors/providerOAuth.ts). Their authorize/token
+  // endpoints live on the tenant's own subdomain and are derived per
+  // connection from a validated subdomain collected in the connect
+  // modal (host-pinned for SSRF safety). Zendesk reads tickets via the
+  // global read-only `read` scope; ServiceNow reads incidents from the
+  // Table API with a role-scoped (scope-less) OAuth token.
+  "zendesk",
+  "servicenow",
 ] as const;
 export type KnownProvider = (typeof KNOWN_PROVIDERS)[number];
 

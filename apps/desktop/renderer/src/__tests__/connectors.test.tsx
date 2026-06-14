@@ -660,6 +660,8 @@ describe("connectorDescriptors", () => {
       "clickup",
       "intercom",
       "salesforce",
+      "zendesk",
+      "servicenow",
     ]);
     // Every descriptor must carry a known category plus
     // scope-transparency copy so no card renders without its

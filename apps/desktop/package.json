@@ -8,6 +8,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.node.json && vite build && tsc -p tsconfig.electron.json",
+    "build:qa": "vite build --mode qa",
+    "preview:qa": "vite preview --mode qa --port 5180 --strictPort",
+    "qa:a11y": "npm run build:qa && playwright test --config qa/playwright.config.ts --project=a11y",
+    "qa:visual": "npm run build:qa && playwright test --config qa/playwright.config.ts --project=visual",
+    "qa:visual:update": "npm run build:qa && playwright test --config qa/playwright.config.ts --project=visual --update-snapshots",
     "build:native": "cargo build --release -p tessera_bridge",
     "preview": "vite preview",
     "test": "vitest run",
@@ -16,7 +21,7 @@
     "generate:ipc-types": "node scripts/generate-ipc-types.mjs",
     "check:ipc-types": "node scripts/generate-ipc-types.mjs --check",
     "lint": "eslint .",
-    "type-check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json"
+    "type-check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json && tsc --noEmit -p qa/tsconfig.json"
   },
   "dependencies": {
     "@marp-team/marp-cli": "^4.4.0",
@@ -55,13 +60,17 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "1.60.0",
     "@testing-library/jest-dom": "^6.4.5",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "axe-core": "4.10.2",
     "electron": "^31.0.0",
     "electron-builder": "^25.1.8",
     "eslint": "^9.39.4",

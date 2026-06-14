@@ -24,14 +24,16 @@
  *       electron crash). Distinct from a genuine perf regression so
  *       CI logs disambiguate "too slow" from "didn't boot".
  *
+ * Budget source of truth: `apps/desktop/qa/perf-budgets.json` →
+ * `coldStartMs` (shared with the interaction/render gate
+ * `scripts/perfBudgets.mjs`). Was tightened 3000 -> 2000 in LW-8 once the
+ * heavy bridge init (open_store + tombstone replay + FTS purge) moved OFF
+ * the boot critical path: the gate now measures boot-to-skeleton-paint,
+ * not boot-to-store-open.
+ *
  * Environment overrides:
- *   TESSERA_COLD_START_BUDGET_MS  budget in ms (default 2000).
- *                                 Tightened 3000 -> 2000 in LW-8 once
- *                                 the heavy bridge init (open_store +
- *                                 tombstone replay + FTS purge) moved
- *                                 OFF the boot critical path: the gate
- *                                 now measures boot-to-skeleton-paint,
- *                                 not boot-to-store-open.
+ *   TESSERA_COLD_START_BUDGET_MS  budget in ms; overrides the config value
+ *                                 for a one-off local run.
  *   TESSERA_COLD_START_TIMEOUT_MS hard boot timeout in ms (default
  *                                 60000) before declaring a harness
  *                                 failure.
@@ -46,7 +48,28 @@ const path = require("path");
 const REPO_ROOT = path.resolve(__dirname, "..");
 const DESKTOP_DIR = path.join(REPO_ROOT, "apps", "desktop");
 
-const BUDGET_MS = Number(process.env.TESSERA_COLD_START_BUDGET_MS || 2000);
+// Single source of truth for every perf budget (shared with the
+// interaction/render gate in scripts/perfBudgets.mjs). The env override
+// still wins so a one-off local run can probe a tighter/looser ceiling
+// without editing the committed config.
+function coldStartBudgetFromConfig() {
+  try {
+    const cfg = JSON.parse(
+      fs.readFileSync(
+        path.join(DESKTOP_DIR, "qa", "perf-budgets.json"),
+        "utf8",
+      ),
+    );
+    const n = Number(cfg.coldStartMs);
+    return Number.isFinite(n) && n > 0 ? n : 2000;
+  } catch {
+    return 2000;
+  }
+}
+
+const BUDGET_MS = Number(
+  process.env.TESSERA_COLD_START_BUDGET_MS || coldStartBudgetFromConfig(),
+);
 const TIMEOUT_MS = Number(process.env.TESSERA_COLD_START_TIMEOUT_MS || 60000);
 const MARKER = "TESSERA_COLD_START_MS=";
 

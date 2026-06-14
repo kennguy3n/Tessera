@@ -698,7 +698,9 @@ export default function AutomationsPage() {
         }
         .scheduler-pill-on {
           background: var(--color-success-subtle, #ecfdf5);
-          color: var(--color-success, #047857);
+          /* success-fg (not the brand success) so the label clears AA on the
+             subtle green pill in both themes; brand #10b981 only made ~2.4:1. */
+          color: var(--color-success-fg, #065f46);
         }
         .scheduler-pill-off {
           background: var(--color-bg-muted, #e2e8f0);

@@ -142,11 +142,24 @@ describe("workspace shell — tabs", () => {
     );
   });
 
-  it("closes a tab via its close button", () => {
+  it("closes a tab by clicking its close glyph", () => {
     renderWorkspace();
     fireBus("tessera:new-tab");
     expect(screen.getByTestId("focused-tabs").textContent).toBe("2");
-    fireEvent.click(screen.getAllByRole("button", { name: /Close .* tab/ })[0]);
+    // The close affordance is a presentational glyph inside the tab (a
+    // closable tab cannot own a nested interactive button under ARIA), so
+    // close is driven by clicking the glyph — the tab's onClick detects it.
+    const tab = screen.getAllByRole("tab")[0];
+    const closeGlyph = tab.querySelector(".workspace-tab-close")!;
+    fireEvent.click(closeGlyph);
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("1");
+  });
+
+  it("closes the focused tab with the Delete key", () => {
+    renderWorkspace();
+    fireBus("tessera:new-tab");
+    expect(screen.getByTestId("focused-tabs").textContent).toBe("2");
+    fireEvent.keyDown(screen.getAllByRole("tab")[0], { key: "Delete" });
     expect(screen.getByTestId("focused-tabs").textContent).toBe("1");
   });
 

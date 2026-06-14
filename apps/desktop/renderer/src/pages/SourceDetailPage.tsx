@@ -310,7 +310,7 @@ export default function SourceDetailPage() {
       <div style={{ display: "grid", gap: "var(--spacing-md)" }}>
         {reindexing && progress && progress.status === "running" && (
           <Card>
-            <h3 className="card-title">Indexing</h3>
+            <h2 className="card-title">Indexing</h2>
             <p
               role="status"
               aria-live="polite"
@@ -360,11 +360,11 @@ export default function SourceDetailPage() {
             // The progress card only makes sense when the most
             // recent click actually reached the bridge.
             <Card data-testid="embedding-progress-card">
-              <h3 className="card-title">
+              <h2 className="card-title">
                 {embeddingProgress.status === "done"
                   ? "Re-embed complete"
                   : "Re-embedding…"}
-              </h3>
+              </h2>
               <p
                 role="status"
                 aria-live="polite"
@@ -471,7 +471,7 @@ export default function SourceDetailPage() {
         )}
         {kchatChannelId && kchatBackfill && (
           <Card data-testid="kchat-backfill-card">
-            <h3 className="card-title">
+            <h2 className="card-title">
               {kchatBackfill.status === "complete"
                 ? "KChat backfill complete"
                 : kchatBackfill.status === "active"
@@ -479,7 +479,7 @@ export default function SourceDetailPage() {
                   : kchatBackfill.status === "error"
                     ? "KChat backfill error"
                     : "KChat post backfill"}
-            </h3>
+            </h2>
             <p
               role="status"
               aria-live="polite"
@@ -529,7 +529,7 @@ export default function SourceDetailPage() {
         )}
         {(extractError || extracted) && (
           <Card>
-            <h3 className="card-title">Extracted Tasks &amp; Decisions</h3>
+            <h2 className="card-title">Extracted Tasks &amp; Decisions</h2>
             {extractError && (
               <p style={{ color: "var(--color-danger, #ef4444)" }} data-testid="extract-error">
                 {extractError}
@@ -563,7 +563,7 @@ export default function SourceDetailPage() {
           />
         )}
         <Card>
-          <h3 className="card-title">Source Information</h3>
+          <h2 className="card-title">Source Information</h2>
           <div
             style={{
               display: "grid",
@@ -617,9 +617,9 @@ export default function SourceDetailPage() {
         </Card>
 
         <Card>
-          <h3 className="card-title">
+          <h2 className="card-title">
             Indexed Files ({files.length})
-          </h3>
+          </h2>
           {files.length === 0 ? (
             <p className="card-description">
               No files indexed yet. Click Reindex to start.
@@ -716,10 +716,10 @@ function SourceKnowledgeCard({
 }) {
   return (
     <Card data-testid="source-knowledge-card">
-      <h3 className="card-title">
+      <h2 className="card-title">
         Knowledge from this source
         {!loading && !error && memories.length > 0 ? ` (${memories.length})` : ""}
-      </h3>
+      </h2>
       {loading && (
         <p
           className="card-description"

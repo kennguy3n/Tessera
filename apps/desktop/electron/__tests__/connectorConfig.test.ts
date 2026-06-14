@@ -256,6 +256,44 @@ describe("validateConnectorField", () => {
     expect(authConfigFields("salesforce").map((f) => f.key)).toContain("api_base_url");
   });
 
+  it("anchors the per-instance subdomain field to a single DNS label (Zendesk/ServiceNow)", () => {
+    for (const provider of ["zendesk", "servicenow"] as const) {
+      const sub = field(provider, "subdomain");
+      expect(sub.required).toBe(true);
+      // Valid single labels (>= 2 chars).
+      expect(validateConnectorField(sub, "ab").valid).toBe(true);
+      expect(validateConnectorField(sub, "acme").valid).toBe(true);
+      expect(validateConnectorField(sub, "dev-12345").valid).toBe(true);
+      expect(validateConnectorField(sub, "ACME").valid).toBe(true);
+      // A single-character label is a valid RFC-1035 label but never a
+      // real instance; the `minLength: 2` rule rejects it inline, in
+      // lockstep with the seam's INSTANCE_LABEL_RE.
+      expect(validateConnectorField(sub, "a").valid).toBe(false);
+      // SSRF / open-redirect shapes the inline validator must reject so
+      // the host can only ever be `<label>.<baseDomain>`.
+      expect(validateConnectorField(sub, "acme.zendesk.com").valid).toBe(false);
+      expect(validateConnectorField(sub, "evil.com").valid).toBe(false);
+      expect(validateConnectorField(sub, "https://acme.zendesk.com").valid).toBe(
+        false,
+      );
+      expect(validateConnectorField(sub, "acme/path").valid).toBe(false);
+      expect(validateConnectorField(sub, "-acme").valid).toBe(false);
+      expect(validateConnectorField(sub, "   ").valid).toBe(false);
+    }
+  });
+
+  it("keeps Zendesk/ServiceNow on the OAuth2 browser grant with the subdomain field", () => {
+    for (const provider of ["zendesk", "servicenow"] as const) {
+      expect(getConnectSpec(provider).connectMethod).toBe("oauth2");
+      expect(getConnectSpec(provider).tokenField).toBeUndefined();
+      // The subdomain field is the only connect-time input; it is the
+      // per-instance value the OAuth seam derives URLs from.
+      expect(authConfigFields(provider).map((f) => f.key)).toEqual([
+        "subdomain",
+      ]);
+    }
+  });
+
   it("threads the Discord `Bot` auth scheme and defaults everything else to Bearer", () => {
     // Discord bot tokens must be sent as `Authorization: Bot <token>`.
     expect(connectorTokenType("discord")).toBe("Bot");

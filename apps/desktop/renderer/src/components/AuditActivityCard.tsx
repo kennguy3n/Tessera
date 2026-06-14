@@ -117,7 +117,7 @@ export default function AuditActivityCard({ api }: AuditActivityCardProps = {}) 
           marginBottom: "var(--spacing-md)",
         }}
       >
-        <h3 style={{ margin: 0 }}>Recent activity</h3>
+        <h2 className="section-title" style={{ margin: 0 }}>Recent activity</h2>
         <Button variant="secondary" onClick={refresh} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh"}
         </Button>
