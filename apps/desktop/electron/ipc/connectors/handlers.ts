@@ -51,6 +51,7 @@ import {
   generatePkcePair,
   getProviderOAuthConfig,
   resolveProviderOAuthConfig,
+  InstanceUrlError,
   getRedirectUri,
   getRedirectUriMap,
   refreshProviderToken,
@@ -432,6 +433,15 @@ export function classifyConnectorError(err: unknown): FailureKind {
     if (err instanceof MissingScopeError) {
       return "permanent";
     }
+    // InstanceUrlError is permanent — a per-instance provider's stored
+    // instance value is missing or fails the host-allowlist guard, so
+    // every derived OAuth URL (and thus every refresh/sync) will keep
+    // failing identically. Retrying through the transient backoff can
+    // never resolve it; the only fix is to reconnect with a valid
+    // subdomain, so flip the source-health badge to permanent at once.
+    if (err instanceof InstanceUrlError) {
+      return "permanent";
+    }
   }
   // Pattern-match plain `Error` messages thrown by per-connector
   // HTTP wrappers. The shape is stable across connectors:
@@ -641,13 +651,6 @@ async function getValidAccessToken(
       `${provider} is not connected — authenticate first`,
     );
   }
-  // Resolve per-instance (per-subdomain) OAuth URLs from the value
-  // persisted with the connection so the token refresh hits the
-  // tenant's own token endpoint — this is what makes refresh work after
-  // a restart for Zendesk/ServiceNow. Fixed-URL providers resolve to
-  // their constants unchanged.
-  const config = resolveProviderOAuthConfig(provider, stored.connectorConfig);
-
   // If we have no refresh token stored — for ANY reason, regardless
   // of whether the provider config advertises `supportsRefresh: true`
   // — there is no point checking `expiresAt` and proactively
@@ -673,6 +676,16 @@ async function getValidAccessToken(
   if (!stored.refreshToken) {
     return stored.accessToken;
   }
+
+  // Only now that a refresh is actually possible do we resolve the
+  // per-instance (per-subdomain) OAuth URLs from the value persisted
+  // with the connection, so the refresh hits the tenant's own token
+  // endpoint — this is what makes refresh work after a restart for
+  // Zendesk/ServiceNow. Fixed-URL providers resolve to their constants
+  // unchanged. Deferring past the no-refresh early-return means a
+  // provider that never refreshes (e.g. Zendesk) is never blocked by
+  // instance resolution on a token that is otherwise usable.
+  const config = resolveProviderOAuthConfig(provider, stored.connectorConfig);
 
   if (Date.now() < stored.expiresAt - 60_000) return stored.accessToken;
 
