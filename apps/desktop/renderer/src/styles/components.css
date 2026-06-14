@@ -2176,9 +2176,11 @@
 .sheet-format-field {
   display: inline-flex;
   align-items: center;
+  gap: var(--spacing-xs);
 }
 
-.sheet-format-field select {
+.sheet-format-field select,
+.sheet-format-custom {
   height: 30px;
   padding: 0 var(--spacing-sm);
   background: var(--color-bg-page);
@@ -2189,9 +2191,26 @@
   font-size: var(--font-size-sm);
 }
 
-.sheet-format-field select:focus-visible {
+.sheet-format-custom {
+  width: 15ch;
+  /* A format pattern is structured punctuation — a monospace face keeps
+     `#,##0.00;(#,##0.00)` legible while typing. */
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+}
+
+.sheet-format-custom::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.sheet-format-field select:focus-visible,
+.sheet-format-custom:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
+}
+
+.sheet-format-custom:disabled {
+  opacity: 0.5;
 }
 
 .sheet-grid-wrapper,
