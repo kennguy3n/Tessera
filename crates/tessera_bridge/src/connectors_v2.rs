@@ -139,6 +139,10 @@ pub mod provider_ids {
     pub const INTERCOM: &str = "intercom";
     /// Salesforce support records / Cases (per org instance, read-only).
     pub const SALESFORCE: &str = "salesforce";
+    /// Zendesk support tickets (per subdomain instance, read-only).
+    pub const ZENDESK: &str = "zendesk";
+    /// ServiceNow incidents (per instance, read-only via the Table API).
+    pub const SERVICENOW: &str = "servicenow";
 }
 
 /// Errors surfaced by the connector v2 bridge. Kept deliberately small
@@ -263,6 +267,10 @@ pub fn provider_to_kind(provider: &str) -> Option<ConnectorKind> {
         provider_ids::INTERCOM => Some(ConnectorKind::Intercom),
         #[cfg(feature = "connector-salesforce")]
         provider_ids::SALESFORCE => Some(ConnectorKind::Salesforce),
+        #[cfg(feature = "connector-zendesk")]
+        provider_ids::ZENDESK => Some(ConnectorKind::Zendesk),
+        #[cfg(feature = "connector-servicenow")]
+        provider_ids::SERVICENOW => Some(ConnectorKind::ServiceNow),
         _ => None,
     }
 }
@@ -304,6 +312,8 @@ pub fn enabled_providers() -> Vec<ConnectorKind> {
         provider_ids::CLICKUP,
         provider_ids::INTERCOM,
         provider_ids::SALESFORCE,
+        provider_ids::ZENDESK,
+        provider_ids::SERVICENOW,
     ]
     .into_iter()
     .filter_map(provider_to_kind)
@@ -607,6 +617,18 @@ pub fn build_connector(
         ConnectorKind::Salesforce => Some(Box::new(connectors::SalesforceConnector::new(
             instance, transport, oauth,
         ))),
+        // Zendesk/ServiceNow are per-instance: the connector reads its
+        // `api_base_url` (the tenant's host-pinned origin) from the
+        // `auth_config_json` bag at sync time, so no `with_api_base_url`
+        // is needed here — `build_connector` stays uniform.
+        #[cfg(feature = "connector-zendesk")]
+        ConnectorKind::Zendesk => Some(Box::new(connectors::ZendeskConnector::new(
+            instance, transport, oauth,
+        ))),
+        #[cfg(feature = "connector-servicenow")]
+        ConnectorKind::ServiceNow => Some(Box::new(connectors::ServiceNowConnector::new(
+            instance, transport, oauth,
+        ))),
         #[allow(unreachable_patterns)]
         _ => None,
     }
@@ -749,6 +771,8 @@ fn display_name(kind: ConnectorKind) -> &'static str {
         ConnectorKind::ClickUp => "ClickUp",
         ConnectorKind::Intercom => "Intercom",
         ConnectorKind::Salesforce => "Salesforce",
+        ConnectorKind::Zendesk => "Zendesk",
+        ConnectorKind::ServiceNow => "ServiceNow",
         // The upstream `ConnectorKind` enum carries 130+ providers; we
         // only ship the stable subset, so fall back to the canonical
         // id string for any provider not in the stable set.
@@ -1697,6 +1721,12 @@ mod tests {
         "clickup",
         "intercom",
         "salesforce",
+        // Tranche 6: per-instance (per-subdomain) OAuth providers wired
+        // on the host-side `instanceUrls` seam. Zendesk (per-subdomain
+        // tickets) and ServiceNow (per-instance incidents), both
+        // read-only.
+        "zendesk",
+        "servicenow",
     ];
 
     #[test]
@@ -1783,6 +1813,13 @@ mod tests {
         let salesforce = infos.iter().find(|i| i.provider == "salesforce").unwrap();
         assert_eq!(salesforce.display_name, "Salesforce");
         assert_eq!(salesforce.auth_kind, "oauth2");
+        // Tranche 6: per-instance OAuth2 providers (Zendesk, ServiceNow).
+        let zendesk = infos.iter().find(|i| i.provider == "zendesk").unwrap();
+        assert_eq!(zendesk.display_name, "Zendesk");
+        assert_eq!(zendesk.auth_kind, "oauth2");
+        let servicenow = infos.iter().find(|i| i.provider == "servicenow").unwrap();
+        assert_eq!(servicenow.display_name, "ServiceNow");
+        assert_eq!(servicenow.auth_kind, "oauth2");
     }
 
     #[test]
@@ -1808,12 +1845,17 @@ mod tests {
         assert!(is_supported("clickup"));
         assert!(is_supported("intercom"));
         assert!(is_supported("salesforce"));
-        // Zendesk is audited but intentionally NOT wired: its OAuth
-        // authorize/token endpoints are per-subdomain
-        // (https://<subdomain>.zendesk.com/oauth/...), which the
-        // fixed-endpoint OAuth config model does not express. See
-        // docs/CONNECTORS.md (tranche 5 "audited but skipped").
-        assert!(!is_supported("zendesk"));
+        // Tranche 6: per-instance (per-subdomain) OAuth providers wired
+        // on the host-side `instanceUrls` seam — their authorize/token
+        // endpoints are derived per connection from the user-supplied
+        // instance value (https://<subdomain>.zendesk.com/oauth/...,
+        // https://<instance>.service-now.com/oauth_*.do). See
+        // docs/CONNECTORS.md ("The per-instance OAuth URL seam").
+        assert!(is_supported("zendesk"));
+        assert!(is_supported("servicenow"));
+        // Freshdesk stays audited-but-skipped: it has no verified
+        // per-subdomain OAuth authorize/token URL pair (see docs).
+        assert!(!is_supported("freshdesk"));
         // Tranche 4: per-target / per-resource providers are now
         // surfaced. Discord ingests a single channel (bot token),
         // Bitbucket a single workspace+repo's pull requests, Airtable a

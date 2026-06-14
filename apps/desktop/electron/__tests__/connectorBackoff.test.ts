@@ -45,6 +45,7 @@ import {
 import type { TesseraBridge } from "../appState";
 import { classifyConnectorError } from "../ipc/connectors/handlers";
 import { MissingScopeError } from "../oauthScope";
+import { InstanceUrlError } from "../ipc/connectors/providerOAuth";
 
 function bridgeMock(initial?: {
   lastErrorJson?: string | null;
@@ -356,6 +357,15 @@ describe("classifyConnectorError (mirrors tessera_connectors failure_kind)", () 
     // re-authentication widens the grant — so it MUST surface
     // the "re-auth needed" CTA on the first failed sync.
     const err = new MissingScopeError("github", ["repo"], []);
+    expect(classifyConnectorError(err)).toBe("permanent");
+  });
+  it("classifies InstanceUrlError as permanent (reconnect required, do not retry)", () => {
+    // A per-instance provider whose stored subdomain is missing or
+    // fails the host-allowlist guard can never succeed on retry: every
+    // derived OAuth URL is identically invalid. Like MissingScopeError
+    // it must surface as permanent on the first failed sync rather than
+    // burning the 8-attempt transient backoff before flipping.
+    const err = new InstanceUrlError("zendesk", "missing subdomain");
     expect(classifyConnectorError(err)).toBe("permanent");
   });
   it.each([

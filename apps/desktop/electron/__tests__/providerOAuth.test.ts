@@ -8,13 +8,21 @@ vi.mock("electron", () => ({
 import {
   PROVIDER_OAUTH_CONFIGS,
   buildAuthorizeUrl,
+  deriveInstanceUrls,
   exchangeAuthorizationCode,
   generatePkcePair,
   getProviderOAuthConfig,
   getRedirectUri,
+  InstanceUrlError,
   refreshProviderToken,
+  resolveProviderOAuthConfig,
+  revokeProviderToken,
 } from "../ipc/connectors/providerOAuth";
 import { KNOWN_PROVIDERS } from "../ipc/validate";
+import {
+  getConnectSpec,
+  validateConnectorField,
+} from "../../shared/connectorConfig";
 
 describe("PROVIDER_OAUTH_CONFIGS", () => {
   it("exposes a config for every known provider with a unique port", () => {
@@ -27,8 +35,20 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
       const cfg = PROVIDER_OAUTH_CONFIGS[id];
       expect(cfg).toBeDefined();
       expect(cfg.provider).toBe(id);
-      expect(cfg.authUrl).toMatch(/^https:\/\//);
-      expect(cfg.tokenUrl).toMatch(/^https:\/\//);
+      // Each provider declares EITHER fixed https authorize/token URLs
+      // (the historical model) OR a per-instance `instanceUrls` template
+      // whose URLs are derived from the connection's instance value —
+      // never both, never neither.
+      if (cfg.instanceUrls) {
+        expect(cfg.authUrl).toBeUndefined();
+        expect(cfg.tokenUrl).toBeUndefined();
+        expect(cfg.instanceUrls.authorizePath).toMatch(/^\//);
+        expect(cfg.instanceUrls.tokenPath).toMatch(/^\//);
+        expect(cfg.instanceUrls.baseDomain.length).toBeGreaterThan(0);
+      } else {
+        expect(cfg.authUrl).toMatch(/^https:\/\//);
+        expect(cfg.tokenUrl).toMatch(/^https:\/\//);
+      }
       expect(ports.has(cfg.redirectPort)).toBe(false);
       ports.add(cfg.redirectPort);
     }
@@ -201,6 +221,65 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     expect(PROVIDER_OAUTH_CONFIGS.intercom.usePkce).toBe(false);
     expect(PROVIDER_OAUTH_CONFIGS.salesforce.supportsRefresh).toBe(true);
     expect(PROVIDER_OAUTH_CONFIGS.salesforce.usePkce).toBe(true);
+  });
+
+  it("requests least-privilege read-only scopes for the per-instance tranche 6", () => {
+    // Zendesk requests the global read-only `read` scope; ServiceNow
+    // takes no `scope` parameter (a token inherits the authorizing
+    // user's role-based ACLs — least-privilege is enforced by
+    // connecting a read-only account, see SCOPELESS_PROVIDERS). A future
+    // widening to a write/manage grant breaks this test.
+    expect(PROVIDER_OAUTH_CONFIGS.zendesk.scope).toBe("read");
+    expect(PROVIDER_OAUTH_CONFIGS.servicenow.scope).toBe("");
+    for (const id of ["zendesk", "servicenow"] as const) {
+      expect(PROVIDER_OAUTH_CONFIGS[id].scope).not.toMatch(
+        /write|manage|admin|delete|full/,
+      );
+    }
+  });
+
+  it("reserves the 9907-9908 loopback ports for tranche 6", () => {
+    expect(PROVIDER_OAUTH_CONFIGS.zendesk.redirectPort).toBe(9907);
+    expect(PROVIDER_OAUTH_CONFIGS.servicenow.redirectPort).toBe(9908);
+  });
+
+  it("declares per-instance URL templates for tranche 6 (and no fixed URLs)", () => {
+    const zd = PROVIDER_OAUTH_CONFIGS.zendesk;
+    expect(zd.authUrl).toBeUndefined();
+    expect(zd.tokenUrl).toBeUndefined();
+    expect(zd.instanceUrls).toEqual({
+      instanceField: "subdomain",
+      baseDomain: "zendesk.com",
+      authorizePath: "/oauth/authorizations/new",
+      tokenPath: "/oauth/tokens",
+      apiBaseUrlField: "api_base_url",
+    });
+    const sn = PROVIDER_OAUTH_CONFIGS.servicenow;
+    expect(sn.authUrl).toBeUndefined();
+    expect(sn.tokenUrl).toBeUndefined();
+    expect(sn.instanceUrls?.baseDomain).toBe("service-now.com");
+    expect(sn.instanceUrls?.revokePath).toBe("/oauth_revoke_token.do");
+  });
+
+  it("flags tranche-6 refresh per provider", () => {
+    // Zendesk OAuth access tokens do not expire and the grant issues no
+    // refresh token; ServiceNow issues refresh tokens.
+    expect(PROVIDER_OAUTH_CONFIGS.zendesk.supportsRefresh).toBe(false);
+    expect(PROVIDER_OAUTH_CONFIGS.servicenow.supportsRefresh).toBe(true);
+  });
+
+  it("keeps every fixed-URL provider's authorize/token URLs unchanged (backward-compat)", () => {
+    // The per-instance seam must not perturb any pre-existing provider:
+    // every provider WITHOUT an `instanceUrls` template still declares
+    // concrete https authorize/token URLs verbatim.
+    for (const id of KNOWN_PROVIDERS) {
+      const cfg = PROVIDER_OAUTH_CONFIGS[id];
+      if (cfg.instanceUrls) continue;
+      expect(typeof cfg.authUrl).toBe("string");
+      expect(typeof cfg.tokenUrl).toBe("string");
+      expect(cfg.authUrl).toMatch(/^https:\/\//);
+      expect(cfg.tokenUrl).toMatch(/^https:\/\//);
+    }
   });
 
   it("declares Intercom's non-standard access-token field, and only Intercom's", () => {
@@ -717,5 +796,333 @@ describe("refreshProviderToken", () => {
     expect(tokens.refreshToken).toBe("NEW_RT");
     expect(tokens.extra).not.toHaveProperty("token");
     expect(tokens.extra).not.toHaveProperty("access_token");
+  });
+});
+
+describe("deriveInstanceUrls (per-instance OAuth URL seam)", () => {
+  const zd = PROVIDER_OAUTH_CONFIGS.zendesk.instanceUrls!;
+  const sn = PROVIDER_OAUTH_CONFIGS.servicenow.instanceUrls!;
+
+  it("derives host-pinned authorize/token URLs for a valid subdomain", () => {
+    const urls = deriveInstanceUrls(zd, "acme");
+    expect(urls.origin).toBe("https://acme.zendesk.com");
+    expect(urls.authUrl).toBe(
+      "https://acme.zendesk.com/oauth/authorizations/new",
+    );
+    expect(urls.tokenUrl).toBe("https://acme.zendesk.com/oauth/tokens");
+    expect(urls.revokeUrl).toBeUndefined();
+  });
+
+  it("derives the optional revoke URL when the template declares one", () => {
+    const urls = deriveInstanceUrls(sn, "dev12345");
+    expect(urls.origin).toBe("https://dev12345.service-now.com");
+    expect(urls.authUrl).toBe("https://dev12345.service-now.com/oauth_auth.do");
+    expect(urls.tokenUrl).toBe(
+      "https://dev12345.service-now.com/oauth_token.do",
+    );
+    expect(urls.revokeUrl).toBe(
+      "https://dev12345.service-now.com/oauth_revoke_token.do",
+    );
+  });
+
+  it("trims and lowercases the instance value before deriving", () => {
+    const urls = deriveInstanceUrls(zd, "  ACME-Corp  ");
+    expect(urls.origin).toBe("https://acme-corp.zendesk.com");
+  });
+
+  it("rejects SSRF / open-redirect instance values (host-allowlist)", () => {
+    // None of these may ever produce a host outside `<label>.zendesk.com`.
+    const hostile = [
+      "evil.com", // contains a dot → not a single label
+      "acme.evil.com", // multi-label
+      "acme.zendesk.com.evil.com", // suffix-confusion
+      "evil.com#", // fragment smuggling
+      "evil.com/path", // path/slash
+      "evil.com?x=1", // query smuggling
+      "user@evil.com", // userinfo authority smuggling
+      "acme:443", // explicit port
+      "10.0.0.1", // raw IP (contains dots)
+      "localhost", // would resolve to localhost.zendesk.com only — but
+      // "localhost" itself is a valid single label, so guard via the
+      // host-pin: it can NEVER drop the `.zendesk.com` suffix.
+      "-acme", // leading hyphen
+      "acme-", // trailing hyphen
+      "ac me", // whitespace
+      "", // empty
+      "АÇМЕ", // non-ASCII
+    ];
+    for (const value of hostile) {
+      let threw = false;
+      let derivedHost: string | null = null;
+      try {
+        const urls = deriveInstanceUrls(zd, value);
+        derivedHost = new URL(urls.authUrl).host;
+      } catch (err) {
+        threw = true;
+        expect(err).toBeInstanceOf(InstanceUrlError);
+      }
+      if (!threw) {
+        // The only non-throwing hostile entry ("localhost") must STILL
+        // be pinned under zendesk.com — never a bare/foreign host.
+        expect(derivedHost).toBe("localhost.zendesk.com");
+      }
+    }
+  });
+
+  it("never derives a host outside the template baseDomain (property)", () => {
+    // Lower bound is two chars (a single-char label is rejected, below);
+    // upper bound is the 63-char RFC-1035 maximum.
+    for (const label of ["ab", "acme", "dev-1", "x".repeat(63)]) {
+      expect(new URL(deriveInstanceUrls(zd, label).authUrl).host).toBe(
+        `${label}.zendesk.com`,
+      );
+    }
+  });
+
+  it("keeps the connect-spec pattern and the seam regex in functional lockstep", () => {
+    // Programmatic guard against the two layers drifting: for every
+    // provider that derives URLs from a `subdomain`, the connect-modal
+    // inline validator and `deriveInstanceUrls` MUST agree on accept vs.
+    // reject for every input (after the seam's trim+lowercase). If either
+    // the connect-spec `pattern`/`minLength` or `INSTANCE_LABEL_RE` is
+    // edited independently, this fails — there is no other coupling.
+    const cases = [
+      "ab", // shortest valid
+      "acme",
+      "ACME", // connect allows A-Z; seam lowercases first
+      "Dev-12345",
+      "x".repeat(63), // longest valid
+      "a", // too short (single label)
+      "x".repeat(64), // too long
+      "acme.zendesk.com", // dot → multi-label
+      "evil.com",
+      "https://acme.zendesk.com",
+      "acme/path",
+      "-acme", // leading hyphen
+      "acme-", // trailing hyphen
+      "ac me", // whitespace
+      "", // empty
+      "АÇМЕ", // non-ASCII
+    ];
+    for (const provider of ["zendesk", "servicenow"] as const) {
+      const field = getConnectSpec(provider).configFields[0];
+      const template = PROVIDER_OAUTH_CONFIGS[provider].instanceUrls!;
+      for (const value of cases) {
+        const connectAccepts = validateConnectorField(field, value).valid;
+        let seamAccepts = true;
+        try {
+          deriveInstanceUrls(template, value);
+        } catch {
+          seamAccepts = false;
+        }
+        expect(
+          { value, connectAccepts },
+          `connect-spec and seam disagree on "${value}" for ${provider}`,
+        ).toEqual({ value, connectAccepts: seamAccepts });
+      }
+    }
+  });
+
+  it("rejects a single-character label (min two chars, in lockstep with the connect rule)", () => {
+    // A one-char label is a valid RFC-1035 DNS label but never a real
+    // Zendesk/ServiceNow instance; the seam deliberately requires >=2
+    // chars so it can never derive e.g. `https://a.zendesk.com`. This
+    // mirrors the connect-modal `minLength: 2` rule.
+    for (const label of ["a", "1", "z"]) {
+      expect(() => deriveInstanceUrls(zd, label)).toThrow(InstanceUrlError);
+      expect(() => deriveInstanceUrls(sn, label)).toThrow(InstanceUrlError);
+    }
+    // The two-char boundary is accepted.
+    expect(deriveInstanceUrls(zd, "ab").origin).toBe("https://ab.zendesk.com");
+  });
+});
+
+describe("resolveProviderOAuthConfig", () => {
+  it("returns fixed-URL providers unchanged (backward-compat)", () => {
+    for (const id of KNOWN_PROVIDERS) {
+      const base = PROVIDER_OAUTH_CONFIGS[id];
+      if (base.instanceUrls) continue;
+      const resolved = resolveProviderOAuthConfig(id, null);
+      expect(resolved.authUrl).toBe(base.authUrl);
+      expect(resolved.tokenUrl).toBe(base.tokenUrl);
+      expect(resolved.instanceOrigin).toBeUndefined();
+    }
+  });
+
+  it("derives concrete URLs for a per-instance provider from its config", () => {
+    const resolved = resolveProviderOAuthConfig("zendesk", {
+      subdomain: "acme",
+    });
+    expect(resolved.authUrl).toBe(
+      "https://acme.zendesk.com/oauth/authorizations/new",
+    );
+    expect(resolved.tokenUrl).toBe("https://acme.zendesk.com/oauth/tokens");
+    expect(resolved.instanceOrigin).toBe("https://acme.zendesk.com");
+  });
+
+  it("throws InstanceUrlError when the instance value is missing", () => {
+    expect(() => resolveProviderOAuthConfig("zendesk", {})).toThrow(
+      InstanceUrlError,
+    );
+    expect(() => resolveProviderOAuthConfig("servicenow", null)).toThrow(
+      InstanceUrlError,
+    );
+  });
+
+  it("throws InstanceUrlError stamped with the provider on a hostile value", () => {
+    try {
+      resolveProviderOAuthConfig("zendesk", { subdomain: "evil.com" });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(InstanceUrlError);
+      expect((err as InstanceUrlError).provider).toBe("zendesk");
+    }
+  });
+});
+
+describe("revokeProviderToken", () => {
+  const originalFetch = globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("sends the token in the POST body (RFC 7009) for a per-instance provider", async () => {
+    // Regression: ServiceNow's oauth_revoke_token.do reads `token` from
+    // the request body and ignores a bare query parameter, so revocation
+    // must carry the token in the form-encoded body — not only the query
+    // string — or server-side revoke silently no-ops.
+    const cfg = resolveProviderOAuthConfig("servicenow", {
+      subdomain: "dev12345",
+    });
+    await revokeProviderToken(cfg, "RT");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://dev12345.service-now.com/oauth_revoke_token.do?token=RT",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe(
+      "application/x-www-form-urlencoded",
+    );
+    // Body MUST carry the token per RFC 7009 §2.1.
+    expect(new URLSearchParams(init.body as string).get("token")).toBe("RT");
+  });
+
+  it("still carries the token in both body and query for a fixed-URL provider (Google)", async () => {
+    // The query parameter is preserved so Google's documented revoke
+    // form keeps working unchanged; the body is additive.
+    const cfg = getProviderOAuthConfig("google_drive");
+    await revokeProviderToken(cfg, "AT");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`${cfg.revokeUrl}?token=AT`);
+    expect(new URLSearchParams(init.body as string).get("token")).toBe("AT");
+  });
+
+  it("no-ops without a network call when the provider has no revoke endpoint", async () => {
+    const cfg = getProviderOAuthConfig("notion");
+    expect(cfg.revokeUrl).toBeUndefined();
+    await revokeProviderToken(cfg, "AT");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows network errors (best-effort revoke)", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const cfg = getProviderOAuthConfig("google_drive");
+    await expect(revokeProviderToken(cfg, "AT")).resolves.toBeUndefined();
+  });
+});
+
+describe("per-instance OAuth flow threads derived URLs end-to-end", () => {
+  const originalFetch = globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("builds the authorize URL on the resolved per-subdomain host", () => {
+    const cfg = resolveProviderOAuthConfig("zendesk", { subdomain: "acme" });
+    const url = new URL(
+      buildAuthorizeUrl(cfg, {
+        clientId: "abc",
+        state: "xyz",
+        redirectUri: getRedirectUri(cfg),
+      }),
+    );
+    expect(url.origin).toBe("https://acme.zendesk.com");
+    expect(url.pathname).toBe("/oauth/authorizations/new");
+    expect(url.searchParams.get("scope")).toBe("read");
+    expect(url.searchParams.get("redirect_uri")).toContain("127.0.0.1:9907");
+  });
+
+  it("exchanges the code against the resolved per-subdomain token URL", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: "AT",
+        token_type: "Bearer",
+        scope: "read",
+      }),
+    });
+    const cfg = resolveProviderOAuthConfig("zendesk", { subdomain: "acme" });
+    await exchangeAuthorizationCode(cfg, {
+      code: "CODE",
+      clientId: "ID",
+      clientSecret: "SECRET",
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://acme.zendesk.com/oauth/tokens",
+    );
+  });
+
+  it("refreshes against the resolved per-instance token URL (ServiceNow)", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: "NEW_AT",
+        refresh_token: "NEW_RT",
+        expires_in: 1800,
+        token_type: "Bearer",
+      }),
+    });
+    const cfg = resolveProviderOAuthConfig("servicenow", {
+      subdomain: "dev12345",
+    });
+    const tokens = await refreshProviderToken(cfg, {
+      refreshToken: "ORIG_RT",
+      clientId: "ID",
+      clientSecret: "SECRET",
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://dev12345.service-now.com/oauth_token.do",
+    );
+    expect(tokens.accessToken).toBe("NEW_AT");
+    expect(tokens.refreshToken).toBe("NEW_RT");
+  });
+
+  it("refuses to run the flow against an UNRESOLVED per-instance config", () => {
+    // Passing the raw (template-only) config straight to the flow is a
+    // programmer error — the guard must throw rather than crash on an
+    // undefined URL.
+    const raw = getProviderOAuthConfig("zendesk");
+    expect(() =>
+      buildAuthorizeUrl(raw, {
+        clientId: "abc",
+        state: "xyz",
+        redirectUri: "http://127.0.0.1:9907/callback",
+      }),
+    ).toThrow(/unresolved/);
   });
 });

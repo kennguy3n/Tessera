@@ -50,6 +50,8 @@ import {
   exchangeAuthorizationCode,
   generatePkcePair,
   getProviderOAuthConfig,
+  resolveProviderOAuthConfig,
+  InstanceUrlError,
   getRedirectUri,
   getRedirectUriMap,
   refreshProviderToken,
@@ -227,10 +229,17 @@ export interface ConnectorStatusInfo {
 // Providers whose OAuth flow legitimately issues a scope-less token,
 // so the empty-scope sync guard must not warn for them. Notion's
 // integration token is workspace-bound at install time; ClickUp and
-// Intercom take no `scope` parameter at all (access is governed by the
-// authorizing user's workspace permissions / the app's configured
-// data access), and both connectors only ever issue read-only GETs.
-const SCOPELESS_PROVIDERS = new Set<ProviderId>(["notion", "clickup", "intercom"]);
+// Intercom take no `scope` parameter at all; ServiceNow's OAuth
+// authorize request takes no `scope` either — a token inherits the
+// authenticating user's role-based ACLs (least-privilege is enforced by
+// connecting a read-only ServiceNow account). All of these connectors
+// only ever issue read-only GETs.
+const SCOPELESS_PROVIDERS = new Set<ProviderId>([
+  "notion",
+  "clickup",
+  "intercom",
+  "servicenow",
+]);
 
 interface BridgeHooks {
   addLocalFile(localPath: string): { id: string; path: string };
@@ -332,6 +341,8 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
   clickup: "clickup",
   intercom: "intercom",
   salesforce: "salesforce",
+  zendesk: "zendesk",
+  servicenow: "servicenow",
 };
 
 /**
@@ -420,6 +431,15 @@ export function classifyConnectorError(err: unknown): FailureKind {
     // flip the source-health badge to permanent so the renderer
     // can prompt re-auth on the spot.
     if (err instanceof MissingScopeError) {
+      return "permanent";
+    }
+    // InstanceUrlError is permanent — a per-instance provider's stored
+    // instance value is missing or fails the host-allowlist guard, so
+    // every derived OAuth URL (and thus every refresh/sync) will keep
+    // failing identically. Retrying through the transient backoff can
+    // never resolve it; the only fix is to reconnect with a valid
+    // subdomain, so flip the source-health badge to permanent at once.
+    if (err instanceof InstanceUrlError) {
       return "permanent";
     }
   }
@@ -631,8 +651,6 @@ async function getValidAccessToken(
       `${provider} is not connected — authenticate first`,
     );
   }
-  const config = getProviderOAuthConfig(provider);
-
   // If we have no refresh token stored — for ANY reason, regardless
   // of whether the provider config advertises `supportsRefresh: true`
   // — there is no point checking `expiresAt` and proactively
@@ -658,6 +676,16 @@ async function getValidAccessToken(
   if (!stored.refreshToken) {
     return stored.accessToken;
   }
+
+  // Only now that a refresh is actually possible do we resolve the
+  // per-instance (per-subdomain) OAuth URLs from the value persisted
+  // with the connection, so the refresh hits the tenant's own token
+  // endpoint — this is what makes refresh work after a restart for
+  // Zendesk/ServiceNow. Fixed-URL providers resolve to their constants
+  // unchanged. Deferring past the no-refresh early-return means a
+  // provider that never refreshes (e.g. Zendesk) is never blocked by
+  // instance resolution on a token that is otherwise usable.
+  const config = resolveProviderOAuthConfig(provider, stored.connectorConfig);
 
   if (Date.now() < stored.expiresAt - 60_000) return stored.accessToken;
 
@@ -913,6 +941,8 @@ async function runSync(
     case "clickup":
     case "intercom":
     case "salesforce":
+    case "zendesk":
+    case "servicenow":
       // Substrate-only providers: reachable here only when the v2
       // path was unavailable; surfaced as a clear config error above,
       // but the explicit cases keep the exhaustiveness check honest.
@@ -1275,6 +1305,8 @@ export async function runDisconnect(
     case "clickup":
     case "intercom":
     case "salesforce":
+    case "zendesk":
+    case "servicenow":
       // Substrate-only providers: no legacy disconnect impl exists, so
       // reuse the generic v2 cleanup (unhook sources + purge sync dir
       // + delete manifest/cursor). Token revocation + vault deletion
@@ -1431,7 +1463,10 @@ async function acquireProbeTokens(
   connectorConfig: Record<string, string>,
 ): Promise<StoredTokens> {
   const spec = getConnectSpec(provider);
-  const config = getProviderOAuthConfig(provider);
+  // Derive per-instance authorize/token URLs from the just-entered
+  // connect config so the probe's OAuth flow targets the tenant's own
+  // subdomain (Zendesk/ServiceNow). Fixed-URL providers are unaffected.
+  const config = resolveProviderOAuthConfig(provider, connectorConfig);
   if (spec.connectMethod === "token") {
     const tokenField = spec.tokenField;
     if (tokenField == null) {
@@ -1612,7 +1647,12 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         allowEmpty: false,
       });
 
-      const config = getProviderOAuthConfig(provider);
+      // Derive per-instance authorize/token URLs from the validated
+      // connect config (e.g. Zendesk/ServiceNow subdomain) so the
+      // browser authorize step and the code exchange both target the
+      // tenant's own host. The instance value is persisted in
+      // `connectorConfig` below so refresh works after restart.
+      const config = resolveProviderOAuthConfig(provider, connectorConfig);
       const pkce = config.usePkce ? generatePkcePair() : null;
       const result = await runRedirectServer(config, {
         clientId,
@@ -1753,11 +1793,23 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         // vault may be corrupted — proceed with cleanup
       }
       if (stored) {
-        const config = getProviderOAuthConfig(provider);
-        await revokeProviderToken(
-          config,
-          stored.refreshToken ?? stored.accessToken,
-        ).catch(() => undefined);
+        // Resolve so a per-instance provider's revoke endpoint is the
+        // tenant's own host (derived from the persisted instance value).
+        // Revocation is best-effort; if the stored config can no longer
+        // derive a URL we still proceed to delete the local token below.
+        try {
+          const config = resolveProviderOAuthConfig(
+            provider,
+            stored.connectorConfig,
+          );
+          await revokeProviderToken(
+            config,
+            stored.refreshToken ?? stored.accessToken,
+          ).catch(() => undefined);
+        } catch {
+          // Unresolvable instance value (corrupted/missing) — skip the
+          // network revoke and fall through to local token deletion.
+        }
       }
       try {
         ctx.tokenVault.deleteTokens(provider);

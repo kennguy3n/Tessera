@@ -295,19 +295,116 @@ Notes on this tranche:
   not validated as an API permission. Salesforce supports PKCE and issues a
   refresh token.
 
-**Audited but skipped — Zendesk.** Zendesk *is* implemented upstream and
-is read-only, but its OAuth authorize/token endpoints are
-**per-subdomain** (`https://<subdomain>.zendesk.com/oauth/...`). Tessera's
-OAuth config model uses **fixed** `authUrl`/`tokenUrl` constants (never
-runtime-interpolated per tenant), so wiring Zendesk correctly would
-require a per-instance authorize/token URL seam that does not yet exist.
-Rather than ship a stub or a wrong fixed endpoint, Zendesk is deferred
-until that seam lands. No additional Google/Microsoft surfaces were wired
-this tranche: the remaining upstream Google/MS `ConnectorKind`s are either
-already surfaced (Drive, Calendar, Docs, Sheets, Meet, OneDrive,
-SharePoint, Teams) or not read-only/least-privilege candidates.
+The 2026 per-instance tranche (**Zendesk, ServiceNow**) surfaces two
+more upstream `connectors`-crate impls whose OAuth authorize/token
+endpoints are **not fixed constants** — they live on the customer's own
+instance host (`https://<subdomain>.zendesk.com/oauth/...`,
+`https://<instance>.service-now.com/oauth_*.do`). They are wired on the
+**per-instance OAuth URL seam** described below (loopback ports
+9907–9908):
 
-This tranche brings `STABLE_PROVIDER_IDS` to **31** providers.
+| Provider | Connect method | Inputs (`auth_config_json` key) | Scope | Port |
+| --- | --- | --- | --- | --- |
+| Zendesk | `oauth2` | `subdomain` (single 2–63 char DNS label, e.g. `acme`) | `read` | 9907 |
+| ServiceNow | `oauth2` | `subdomain` (instance id, e.g. `dev12345`) | *(scope-less — role-based ACLs)* | 9908 |
+
+Notes on this tranche:
+
+- **Zendesk** reads Support **tickets** via the read-only Support API.
+  The connect modal collects only the **subdomain** (never a full URL);
+  the seam derives `https://<subdomain>.zendesk.com/oauth/authorizations/new`
+  (authorize) and `/oauth/tokens` (token), and pins the connector's
+  `api_base_url` to the same origin. It requests Zendesk's global
+  read-only **`read`** scope. Zendesk OAuth access tokens do not expire
+  and the grant issues no refresh token, so it is reconnect-on-expiry.
+- **ServiceNow** reads **incidents** via the Table API
+  (`/api/now/table/incident`). It is **scope-less** — a ServiceNow OAuth
+  token inherits the authenticating user's role-based ACLs, so
+  least-privilege is enforced by connecting a read-only account (it is
+  added to `SCOPELESS_PROVIDERS`). The seam derives `oauth_auth.do`
+  (authorize), `oauth_token.do` (token) and `oauth_revoke_token.do`
+  (revoke on disconnect) on the per-instance host. ServiceNow issues
+  refresh tokens, and the persisted `subdomain` lets refresh re-derive
+  the token URL after an app restart. Disconnect-time revocation sends
+  the token in the form-encoded **request body** (RFC 7009 §2.1) —
+  required by ServiceNow/Salesforce, which ignore a bare `?token=` query
+  parameter — while still keeping the query parameter for Google's
+  documented revoke form (`revokeProviderToken`).
+
+**Audited but skipped — Freshdesk.** Freshdesk *is* implemented upstream
+and is per-domain (`https://<domain>.freshdesk.com`), but unlike Zendesk
+/ServiceNow it has **no verified, stable per-subdomain OAuth
+authorize/token URL pair** (its app auth goes through the Freshworks
+marketplace OAuth flow / API-key auth, not a simple
+`https://<domain>.freshdesk.com/oauth/...` endpoint shape). Rather than
+guess a wrong fixed endpoint, Freshdesk stays deferred until its real
+OAuth endpoint shape is confirmed — at which point the seam below makes
+wiring it a config-only change.
+
+This tranche brings `STABLE_PROVIDER_IDS` to **33** providers.
+
+### The per-instance OAuth URL seam
+
+Most providers declare **fixed** `authUrl`/`tokenUrl` compile-time
+constants on `ProviderOAuthConfig`. A per-instance provider instead
+declares an `instanceUrls` template and leaves `authUrl`/`tokenUrl`
+**undefined** (the two are mutually exclusive — enforced at module load
+by `assertOAuthConfigInvariant`, and asserted unchanged for every fixed
+provider by the backward-compat tests):
+
+```ts
+zendesk: {
+  provider: "zendesk",
+  instanceUrls: {
+    instanceField: "subdomain",          // connect-time field that supplies the instance value
+    baseDomain: "zendesk.com",            // host is pinned to EXACTLY <label>.<baseDomain>
+    authorizePath: "/oauth/authorizations/new",
+    tokenPath: "/oauth/tokens",
+    apiBaseUrlField: "api_base_url",      // derived origin injected here for the connector
+    // revokePath?: ...                    // optional (ServiceNow declares oauth_revoke_token.do)
+  },
+  scope: "read",
+  redirectPort: 9907,
+  supportsRefresh: false,
+  usePkce: false,
+},
+```
+
+`resolveProviderOAuthConfig(provider, connectorConfig)` turns a raw
+config into a `ResolvedProviderOAuthConfig` with **concrete** string
+URLs, reading the instance value from the persisted `connectorConfig`.
+Fixed-URL providers pass through unchanged. The whole OAuth flow —
+`buildAuthorizeUrl`, `exchangeAuthorizationCode`, `refreshProviderToken`,
+and disconnect-time revoke — runs on the **resolved** config; passing a
+raw (template-only) config to the flow throws (`requireResolvedUrl`), so
+an unresolved URL can never silently become `undefined`.
+
+**SSRF / open-redirect safety.** The instance value is validated by
+`deriveInstanceUrls` with defence-in-depth:
+
+1. It must match a single RFC-1035 DNS label
+   (`[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])`, case-insensitive, trimmed +
+   lowercased) — so a value containing a dot, slash, `@`, `:`, scheme,
+   whitespace or any other authority/path/query/fragment character is
+   rejected before any URL is built. The trailing group is mandatory, so
+   the label is **2–63 chars** (a deliberate subset of RFC-1035: no real
+   Zendesk/ServiceNow instance is a single character).
+2. The host is constructed as **exactly** `<label>.<baseDomain>` — the
+   user value can only ever be the left-most label; it can never drop or
+   replace the pinned `baseDomain` suffix.
+3. Each derived URL is **re-parsed** and its `host` re-checked against
+   the pinned host, so even a malformed template path cannot smuggle a
+   foreign authority through.
+
+The same DNS-label pattern (plus a `minLength: 2` rule that mirrors the
+regex's mandatory trailing group and yields a clearer length error) is
+mirrored on the connect-time field (`CONNECTOR_CONNECT_SPECS`) so the
+user sees an **anchored inline error** in the connect modal before the
+flow starts. Failures inside the OAuth
+flow throw `InstanceUrlError` (stamped with the provider id). Wiring the
+next self-hosted / per-subdomain provider is therefore a config-only
+change: declare its `instanceUrls` template + a `subdomain` connect
+field, with no flow code to touch.
 
 The seam is the single source of truth in
 `apps/desktop/shared/connectorConfig.ts` — a dependency-free module

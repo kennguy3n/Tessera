@@ -100,10 +100,12 @@ describe("assertProvider", () => {
   });
 
   it("rejects unknown providers", () => {
-    // Zendesk is audited but intentionally NOT wired (its OAuth
-    // endpoints are per-subdomain), so it stays a useful "unknown"
-    // example. Salesforce, by contrast, ships in tranche 5.
-    expect(() => assertProvider("zendesk")).toThrow(/Unknown provider/);
+    // Freshdesk is audited but intentionally NOT wired (its OAuth
+    // endpoint shape is not a verified per-subdomain authorize/token
+    // pair), so it stays a useful "unknown" example. Zendesk and
+    // ServiceNow, by contrast, ship in tranche 6 on the per-instance
+    // URL seam and are asserted as known above.
+    expect(() => assertProvider("freshdesk")).toThrow(/Unknown provider/);
     expect(() => assertProvider("google")).toThrow(/Unknown provider/);
   });
 
