@@ -50,10 +50,11 @@ Every input, prompt, and output is inspectable in [`docs/showcase`](../README.md
 - **Defensibility.** Inline citations and template-enforced structure mean every artifact is
   traceable and complete — not a plausible-sounding draft you have to fact-check from scratch.
 - **Real artifacts, not chat.** Output lands in four parity-level editors — a Notion-style
-  document editor (callout/toggle/TOC blocks + AI writing assistant), a Sheets-class
-  spreadsheet (140+ formula functions, named ranges, charts), an Airtable-style multi-table
-  base (linked records + lookup/rollup), and a Slides-class deck builder (layouts, themes,
-  present mode) — and exports to Markdown, PDF, DOCX, CSV, XLSX, and PPTX.
+  document editor (callout/toggle/TOC blocks + inline comments + AI writing assistant), a
+  Sheets-class spreadsheet (160+ formula functions, named ranges, conditional formatting,
+  charts, pivot tables), an Airtable-style multi-table base (linked records + lookup/rollup +
+  fillable form view), and a Slides-class deck builder (layouts, themes, presenter mode) — and
+  exports to Markdown, PDF, DOCX, CSV, XLSX, and PPTX.
 - **Zero-friction onboarding.** A simplified four-item sidebar, an intent-based Create wizard,
   and automatic background model setup get a non-technical user to their first artifact fast.
 
@@ -62,7 +63,7 @@ Every input, prompt, and output is inspectable in [`docs/showcase`](../README.md
 - Open-source, MIT-licensed, local-first desktop app (Electron + Rust).
 - 173 production templates across all four artifact types.
 - Four parity-level on-device editors (Docs/Sheets/Slides/Airtable-class) and a catalog of
-  31 read-only, least-privilege connectors.
+  33 read-only, least-privilege connectors.
 - Security posture includes FIDO2/WebAuthn app-lock, secure-delete on all deletion paths,
   tightened CSP, and supply-chain CI gates (`cargo vet`, `npm audit`).
 

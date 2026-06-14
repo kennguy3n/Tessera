@@ -16,10 +16,10 @@ Two ground rules for this post, in keeping with the rest of the showcase:
    [`apps/desktop/renderer/src/showcase/generated/*.knowledge.ts`](../../apps/desktop/renderer/src/showcase/generated).
    Nothing here is hand-authored — including the occasional rough sentence fragment, which is
    what real extraction over real prose actually looks like.
-2. **We're explicit about what ships.** The extraction engines, their data plane, *and* the
-   browsing UI on top of them all ship on `main` — the dedicated Memory page, the concept-graph
-   panel, and the enriched "Knowledge" citation tab are now wired into the shipping renderer.
-   The "What ships today" section at the end lists every surface and how to reach it.
+2. **Every surface here is in the product.** The extraction engines, their data plane, and the
+   browsing UI on top of them are all part of the app you install — the dedicated Memory page,
+   the concept-graph panel, and the enriched "Knowledge" citation tab included. The "Where to
+   find it" section at the end lists every surface and how to reach it.
 
 ---
 
@@ -150,7 +150,7 @@ triggers a background re-embed; the schema is unchanged.
 ## Step 5 — durability: signed export and zero-config backup
 
 A knowledge plane is only trustworthy if the artifacts built on it are verifiable and the store
-is recoverable. Two shipping surfaces close that loop:
+is recoverable. Two surfaces close that loop:
 
 - **Export Evidence Pack** (document/base editors): a ZIP of the artifact + its cited sources +
   an **ML-DSA-65 (FIPS 204) provenance signature**, so a recipient can confirm the package
@@ -161,12 +161,10 @@ is recoverable. Two shipping surfaces close that loop:
 
 ![Settings — Source Health and Backup & Recovery](../assets/screenshots/flow-06-settings-backup.png)
 
-## What ships today
+## Where to find it
 
-In the spirit of the rest of this showcase, here's the honest accounting of what's in the
-build you'd install today. The substrate engines, their data plane, *and* the browsing UI on
-top of them all ship on this `main` — there is no longer a "staged in a follow-up branch"
-line to draw.
+Here's the map of where every part of the knowledge plane lives in the app — the substrate
+engines, their data plane, and the browsing UI on top of them.
 
 **The substrate and its data plane:**
 
@@ -205,9 +203,9 @@ touches.
   Health**, **Backup & Recovery**, the home-screen backup indicator, and **Export Evidence
   Pack** with PQC signatures.
 
-The tables earlier in this post are still generated straight from the substrate — the data is
-genuine — but you can now also open the Memory page and the Knowledge tab in the shipping build
-and see the same engine's output over your own sources.
+The tables earlier in this post are generated straight from the substrate — the data is
+genuine — and you can open the Memory page and the Knowledge tab in the app to see the same
+engine's output over your own sources.
 
 ---
 

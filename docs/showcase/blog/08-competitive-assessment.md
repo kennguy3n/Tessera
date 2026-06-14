@@ -36,7 +36,7 @@ because that's where the buyer's budget and habits already are.
 | Inline per-claim citations | Rare | Limited | Sometimes | **Built-in, per-section** |
 | Structure enforcement | None | Some | None | **Template sections enforce completeness** |
 | Real-time multi-user collaboration | N/A | **Excellent** | No | **No (KChat for async)** |
-| Ecosystem / integrations breadth | **Large** | **Large** | Small | 31 read-only connectors (still smaller) |
+| Ecosystem / integrations breadth | **Large** | **Large** | Small | 33 read-only connectors (still smaller) |
 | Verifiable export provenance | No | No | Rare | **PQC-signed evidence pack** |
 | Cost model | Per-seat + usage | Per-seat | Free/OSS | **OSS, no per-token cost** |
 | Auditability | Closed | Closed | Varies | **MIT-licensed, inspectable** |
@@ -81,12 +81,14 @@ job, and Tessera answers it by construction.
 
 **The editors are real editing surfaces, not just generation targets.** What the model drafts
 lands in four parity-level editors you actually keep working in: a Notion-style document editor
-(callout/toggle/table-of-contents blocks, a scroll-tracked outline with reading-time, an
-on-device rewrite/shorten/expand/tone/translate AI assistant), a Sheets-class spreadsheet (140+
-formula functions, named ranges, dropdown/checkbox validation, bar/line/pie charts), an
-Airtable-style multi-table base (cross-table linked records with lookup/rollup, an expand-record
-modal with comments, group-by), and a Slides-class deck builder (layout engine, themes, speaker
-notes, present mode) — all on-device. The artifacts in posts 1–5 exercise exactly these.
+(callout/toggle/table-of-contents blocks, a scroll-tracked outline with reading-time, inline
+comments, and an on-device rewrite/shorten/expand/tone/translate AI assistant), a
+Sheets-class spreadsheet (160+ formula functions, named ranges, dropdown/checkbox validation,
+rule-based conditional formatting, bar/line/pie charts, and pivot tables), an Airtable-style
+multi-table base (cross-table linked records with lookup/rollup, an expand-record modal with
+comments, six views including a fillable form, group-by), and a Slides-class deck builder
+(layout engine, themes, a WYSIWYG Design view, speaker notes, presenter mode) — all on-device.
+The artifacts in posts 1–5 exercise exactly these.
 
 **Verifiable, post-quantum-ready provenance on export.** The Evidence Pack bundles the artifact,
 its cited sources, and an ML-DSA-65 (FIPS 204) signature. No mainstream cloud workspace ships
@@ -103,17 +105,11 @@ and generation work.
   narrow the gap for *deliverables*, but they don't erase it for open-ended writing.
 - **No real-time collaboration.** No live co-editing or presence. Teams that need that will keep
   a cloud workspace alongside Tessera.
-- **Ecosystem breadth.** The connector catalog is now **31 read-only, least-privilege
+- **Ecosystem breadth.** The connector catalog spans **33 read-only, least-privilege
   providers** (storage, docs/wikis, issue trackers, CRM/support, design, and comms/calendar) —
   a real catalog, but still smaller and read-only-by-design versus the read/write integration
   ecosystems of Notion/Google/Microsoft.
 - **No first-party mobile app.** It's a desktop-first Electron + Rust application.
-
-The knowledge-browser UI used to be on this list — the dedicated Memory page, concept-graph
-panel, and enriched "Knowledge" citation tab were "built and tested but not yet wired into the
-renderer." They now ship (see [post 7](07-knowledge-plane.md)), and CI builds the private
-`kennguy3n/knowledge` substrate dependency over a read-only deploy key, so neither is a gap
-anymore.
 
 ## Who should (and shouldn't) choose Tessera
 

@@ -21,11 +21,11 @@ three very different things that all claim the same benefit:
 | Where inference runs | Vendor cloud | Vendor cloud | **Your device** |
 | Usable with PHI / privileged / NPI data | Rarely (policy blocks) | Rarely (policy blocks) | **Yes — that's the point** |
 | Output format | Chat text | Docs/DB, but AI is an add-on | **Document / slides / sheet / base, first-class** |
-| Editor depth | None | Strong | **Parity-level: Docs blocks + AI assist, Sheets 140+ formulas + charts, Airtable-style multi-table bases, Slides layouts/themes/present mode** |
+| Editor depth | None | Strong | **Parity-level: Docs blocks + comments + AI assist, Sheets 160+ formulas + conditional formatting + charts + pivots, Airtable-style multi-table bases, Slides layouts/themes/presenter mode** |
 | Source grounding | You paste context in | Limited, workspace-scoped | **You select sources; output cites them** |
 | Provenance / citations | None by default | Limited | **Inline per-section citations** |
 | Structure enforcement | None (freeform) | Some | **Template sections enforce completeness** |
-| Integrations | N/A | Large | **31 read-only, least-privilege connectors** |
+| Integrations | N/A | Large | **33 read-only, least-privilege connectors** |
 | Cost model | Per-seat subscription + usage | Per-seat subscription | **Open source, local model (no per-token cost)** |
 | Auditability | Closed | Closed | **MIT-licensed, inspectable** |
 
@@ -52,9 +52,10 @@ than a feature you have to wire up.
 A technical user can run a local model and prompt it by hand. Tessera turns that into a
 product: 173 ready templates that enforce the structure of real deliverables, automatic
 source indexing and selection, inline citations, four parity-level editors (a Notion-style
-document editor, a Sheets-class spreadsheet with 140+ formula functions and charts, an
-Airtable-style multi-table base, and a Slides-class deck builder with a present mode), 31
-read-only connectors, and exports to the formats teams actually use — plus zero-setup
+document editor, a Sheets-class spreadsheet with 160+ formula functions, conditional
+formatting, charts, and pivot tables, an Airtable-style multi-table base, and a Slides-class
+deck builder with a presenter mode), 33 read-only connectors, and exports to the formats teams
+actually use — plus zero-setup
 onboarding for non-technical users. The local model is the engine; the workspace is the value.
 
 ## Where Tessera is *not* the answer
