@@ -151,12 +151,16 @@ export function SlideDeckGenerator({
 
   // Switching modes cancels an in-flight quick generation (so it can't
   // keep streaming invisibly once the Stop button is hidden in skills
-  // mode) and clears any stale quick preview / skill error. The skill
-  // chain (skills -> quick) is torn down by SkillRunnerPanel's unmount.
+  // mode) and clears any stale quick preview / streamed text / error /
+  // skill notice. `gen.reset()` drops the hook's `text` + `error` so a
+  // prior run's stream or failure can't ghost back on a return to quick
+  // mode. The skill chain (skills -> quick) is torn down by
+  // SkillRunnerPanel's own unmount.
   const switchDeckMode = useCallback(
     (next: DeckPanelMode) => {
       if (next === panelMode) return;
       if (next === "skills" && gen.isStreaming) gen.cancel();
+      gen.reset();
       setPreview(null);
       setNoUsableDeck(false);
       setSkillNoUsableDeck(false);

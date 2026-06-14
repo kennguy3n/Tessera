@@ -90,6 +90,40 @@ function installPendingModel(): {
   return { cancelJob, resolve: () => resolveGenerate?.() };
 }
 
+/**
+ * Installs a fake model whose quick generation streams a partial token
+ * and then a terminal error chunk, so `useModelGeneration` settles with
+ * non-empty `text` AND an `error`. The chunks are delivered synchronously
+ * inside `generate` (before it resolves) so the error is observed by the
+ * `await generate` check rather than racing a later macrotask.
+ */
+function installErrorModel(message: string): void {
+  let subscriber: ((chunk: GenerateChunk) => void) | null = null;
+
+  const onToken = vi.fn((cb: (chunk: GenerateChunk) => void) => {
+    subscriber = cb;
+    return () => {
+      if (subscriber === cb) subscriber = null;
+    };
+  });
+
+  const generate = vi.fn(async () => {
+    subscriber?.({ token: "partial outline", done: false });
+    subscriber?.({ token: "", done: true, error: message });
+    return undefined;
+  });
+
+  const api = window.tessera as unknown as { model: unknown };
+  api.model = {
+    status: vi.fn().mockResolvedValue({ available: true }),
+    start: vi.fn(),
+    stop: vi.fn(),
+    generate,
+    cancelJob: vi.fn().mockResolvedValue(undefined),
+    onToken,
+  };
+}
+
 describe("SlideDeckGenerator skills mode", () => {
   let originalModel: unknown;
 
@@ -188,5 +222,31 @@ describe("SlideDeckGenerator skills mode", () => {
     await user.click(screen.getByTestId("slide-ai-mode-skills"));
     await user.click(screen.getByTestId("slide-ai-mode-quick"));
     expect(screen.queryByText(/return a usable outline/i)).toBeNull();
+  });
+
+  it("clears a stale quick error and streamed preview when toggling modes", async () => {
+    // A failed quick generation leaves both `gen.error` (the alert) and
+    // `gen.text` (the streaming <pre>, shown while there's no preview).
+    // `switchDeckMode` must reset the hook so neither ghosts back when the
+    // user returns to quick mode.
+    installErrorModel("The model ran out of memory.");
+    const user = userEvent.setup();
+    render(<SlideDeckGenerator open onApply={vi.fn()} onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText(/Topic or brief/i), "Q3 GTM plan");
+    await user.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(
+      await screen.findByText("The model ran out of memory."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Generation preview")).toHaveTextContent(
+      "partial outline",
+    );
+
+    await user.click(screen.getByTestId("slide-ai-mode-skills"));
+    await user.click(screen.getByTestId("slide-ai-mode-quick"));
+
+    expect(screen.queryByText("The model ran out of memory.")).toBeNull();
+    expect(screen.queryByLabelText("Generation preview")).toBeNull();
   });
 });
