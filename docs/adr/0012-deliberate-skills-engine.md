@@ -117,4 +117,3 @@ or Rust gate is affected.
   `parseFormula`-backed tool step for the Sheet skill's self-check; loading
   user- and connector-authored skills from disk; and surfacing the panel
   in the Slide/Sheet/Base assistants.
-```
