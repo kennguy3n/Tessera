@@ -2598,7 +2598,10 @@
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text-tertiary);
+  /* secondary (not tertiary): tertiary is the decorative non-AA tier and
+     dips below the 4.5:1 floor for this 11px control on the footer surface;
+     secondary is the muted tone the design system darkened to clear AA. */
+  color: var(--color-text-secondary);
   font-family: var(--font-family);
   font-size: 0.6875rem;
   font-weight: var(--font-weight-medium);
