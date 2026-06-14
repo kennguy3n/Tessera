@@ -2293,7 +2293,7 @@
 }
 
 .sheet-format-custom::placeholder {
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
   opacity: 0.7;
 }
 
