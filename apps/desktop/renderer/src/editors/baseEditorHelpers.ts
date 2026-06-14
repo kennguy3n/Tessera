@@ -28,6 +28,7 @@ import type {
   RollupAggregation,
 } from "./baseEditorTypes";
 import type { BaseViewConfig } from "./baseviews/types";
+import { pruneColumnSummaries, pruneSorts, type SortRule } from "./baseGridHelpers";
 
 /**
  * Names the user must not assign to a field. `id` is the stable
@@ -766,10 +767,16 @@ export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<ViewConfigFieldPointer> =
  * schema-changing operation), drop sort / filter / view-config state
  * that points at fields that no longer exist.
  *
- * Returns a tuple of `[nextSortField, nextFilters, nextViewConfig]`.
- * Each entry preserves referential equality with its input when
- * nothing changed, so React `setX(prev => helperReturn[i])` calls
- * don't trigger unnecessary re-renders.
+ * Returns `{ sorts, filters, viewConfig }`. Each entry preserves
+ * referential equality with its input when nothing changed, so React
+ * `setX(prev => helperReturn.x)` calls don't trigger unnecessary
+ * re-renders.
+ *
+ * The sort model is the ordered, multi-level `SortRule[]` the grid
+ * actually uses (`dropStaleViewState` → `pruneSorts`); this helper
+ * mirrors that exact pruning so it stays the faithful, unit-tested
+ * single source of truth for view-state cleanup rather than drifting
+ * back to the long-gone single-`sortField` model.
  *
  * Without this:
  *   - the grid header would still show a typed-in filter on a column
@@ -789,22 +796,20 @@ export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<ViewConfigFieldPointer> =
 export function pruneViewStateAgainstFields(
   fields: BaseField[],
   prev: {
-    sortField: string | null;
+    sorts: readonly SortRule[];
     filters: Record<string, string>;
     viewConfig: BaseViewConfig;
   },
 ): {
-  sortField: string | null;
+  sorts: SortRule[];
   filters: Record<string, string>;
   viewConfig: BaseViewConfig;
 } {
   const names = new Set(fields.map((f) => f.name));
 
-  // Sort pointer.
-  const nextSort =
-    prev.sortField !== null && !names.has(prev.sortField)
-      ? null
-      : prev.sortField;
+  // Multi-level sort: drop every level whose field is gone, preserving
+  // referential equality when all levels survive (same as `pruneSorts`).
+  const nextSorts = pruneSorts(prev.sorts, names);
 
   // Filter map: keep entries whose key still exists.
   let filtersDirty = false;
@@ -827,9 +832,20 @@ export function pruneViewStateAgainstFields(
       viewDirty = true;
     }
   }
+  // The column-summary map is keyed by field name (like `filters`),
+  // not a nullable pointer, so prune it separately to keep this helper
+  // the faithful single source of truth for view-state cleanup.
+  const prunedSummaries = pruneColumnSummaries(
+    prev.viewConfig.gridColumnSummaries,
+    names,
+  );
+  if (prunedSummaries !== prev.viewConfig.gridColumnSummaries) {
+    nextView.gridColumnSummaries = prunedSummaries;
+    viewDirty = true;
+  }
 
   return {
-    sortField: nextSort,
+    sorts: nextSorts,
     filters: filtersDirty ? nextFilters : prev.filters,
     viewConfig: viewDirty ? nextView : prev.viewConfig,
   };

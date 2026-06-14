@@ -9,11 +9,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
-  renderMermaid,
-  MermaidEnvironmentError,
-  MermaidRenderError,
-} from "../services/mermaidRenderer";
-import {
   renderMarp,
   MarpRenderError,
   type MarpRenderOptions,
@@ -41,12 +36,15 @@ import {
   nextBlockForTypeChange,
   buildDeckFromTemplate,
   buildSlideFromPreset,
-  parseSlideTable,
-  parseSlideChart,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
-import { SlideChart } from "./components/SlideChart";
+import {
+  SlideTablePreview,
+  SlideChartPreview,
+  MermaidPreview,
+} from "./components/SlideBlockPreviews";
+import { SlideDesignCanvas } from "./components/SlideDesignCanvas";
 import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
 import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
@@ -166,6 +164,11 @@ export default function SlideEditor({
   const [slides, setSlides] = useState<Slide[]>(() => initial.slides);
   const [activeIndex, setActiveIndex] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
+  // Outline (form-field) vs. Design (WYSIWYG) editing surface. Both edit
+  // the same `slides` state through the same callbacks, so toggling is a
+  // pure view switch with no data conversion. Marp mode is exclusive of
+  // both (it edits raw Markdown), so it takes precedence when enabled.
+  const [designView, setDesignView] = useState(false);
   const [marpMode, setMarpMode] = useState<boolean>(() => initial.marpMode);
   const [marpSource, setMarpSource] = useState<string>(
     () => initial.marpSource,
@@ -1461,6 +1464,17 @@ export default function SlideEditor({
           >
             Marp Mode
           </button>
+          {!marpMode && (
+            <button
+              type="button"
+              className={`btn-sm ${designView ? "active" : ""}`}
+              onClick={() => setDesignView((prev) => !prev)}
+              aria-pressed={designView}
+              title="Toggle Design view (edit directly on the themed slide)"
+            >
+              {designView ? "Outline" : "Design"}
+            </button>
+          )}
           <button
             type="button"
             className={`btn-sm ${deckGenOpen ? "active" : ""}`}
@@ -1773,7 +1787,7 @@ export default function SlideEditor({
 
         {!marpMode && activeSlide && (
           <div
-            className="slide-canvas"
+            className={`slide-canvas${designView ? " slide-canvas-design" : ""}`}
             data-slide-theme={themeId}
             data-slide-layout={resolveSlideLayout(activeSlide)}
             data-slide-bg={getSlideTheme(themeId).bgStyle ?? undefined}
@@ -1786,6 +1800,34 @@ export default function SlideEditor({
               }
               placeholder="Slide Title"
             />
+            {designView ? (
+              <SlideDesignCanvas
+                slide={activeSlide}
+                onChangeBlockContent={(bi, content) =>
+                  onBlockReplace(activeIndex, bi, {
+                    ...activeSlide.blocks[bi],
+                    content,
+                  })
+                }
+                onChangeBlockAlt={(bi, alt) =>
+                  onBlockReplace(activeIndex, bi, {
+                    ...activeSlide.blocks[bi],
+                    alt,
+                  })
+                }
+                onImageFile={(bi, file) =>
+                  onImageUpload(activeSlide.id, activeSlide.blocks[bi].id, file)
+                }
+                onMoveBlock={(from, to) => onBlockMove(activeIndex, from, to)}
+                onRemoveBlock={(bi) => onBlockRemove(activeIndex, bi)}
+                onAppendBlock={() =>
+                  onBlockAppend(
+                    activeIndex,
+                    buildBlock({ type: "text", content: "" }),
+                  )
+                }
+              />
+            ) : (
             <div className="slide-blocks">
               {activeSlide.blocks.map((block, bi) => (
                 <SlideBlockRow
@@ -1866,6 +1908,7 @@ export default function SlideEditor({
                 + Add Block
               </button>
             </div>
+            )}
 
             <SlideAiActions
               slide={activeSlide}
@@ -2183,112 +2226,6 @@ const BLOCK_PLACEHOLDERS: Partial<Record<SlideBlockType, string>> = {
  */
 const MONOSPACE_BLOCK_TYPES: ReadonlySet<SlideBlockType> =
   new Set<SlideBlockType>(["diagram", "table", "chart"]);
-
-/**
- * Live preview of a `table` block. Parses the GitHub-flavoured Markdown
- * source into a header + rows and renders a real `<table>`; every cell
- * goes through React's text interpolation (never `innerHTML`), so the
- * preview is injection-safe. Falls back to a placeholder while the
- * source is empty / unparseable.
- */
-function SlideTablePreview({ source }: { source: string }) {
-  const table = useMemo(() => parseSlideTable(source), [source]);
-  if (!table) {
-    return (
-      <div className="slide-table-placeholder">
-        Add a row like <code>| A | B |</code> to preview a table.
-      </div>
-    );
-  }
-  return (
-    <div className="slide-table-preview">
-      <table className="slide-table">
-        <thead>
-          <tr>
-            {table.header.map((cell, i) => (
-              <th key={i} scope="col">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {table.rows.map((row, ri) => (
-            <tr key={ri}>
-              {row.map((cell, ci) => (
-                <td key={ci}>{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/**
- * Live preview of a `chart` block. Parses the data DSL and renders it
- * through {@link SlideChart} (shared SVG geometry); shows a placeholder
- * while the source has no plottable series.
- */
-function SlideChartPreview({ source }: { source: string }) {
-  const spec = useMemo(() => parseSlideChart(source), [source]);
-  if (!spec) {
-    return (
-      <div className="slide-chart-placeholder">
-        Add a <code>labels:</code> line and a data series to preview a chart.
-      </div>
-    );
-  }
-  return (
-    <div className="slide-chart-preview">
-      <SlideChart type={spec.type} data={spec.data} title={spec.title} />
-    </div>
-  );
-}
-
-function MermaidPreview({ dsl }: { dsl: string }) {
-  const [svg, setSvg] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const tokenRef = useRef(0);
-  useEffect(() => {
-    const handle = setTimeout(() => {
-      const token = ++tokenRef.current;
-      renderMermaid(dsl)
-        .then((result) => {
-          if (token !== tokenRef.current) return;
-          setSvg(result.svg);
-          setError(null);
-        })
-        .catch((err) => {
-          if (token !== tokenRef.current) return;
-          if (err instanceof MermaidEnvironmentError) {
-            setError("Preview unavailable in this context");
-          } else if (err instanceof MermaidRenderError) {
-            setError(err.message);
-          } else {
-            setError(String(err));
-          }
-          setSvg("");
-        });
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [dsl]);
-  if (error) {
-    return (
-      <div className="slide-diagram-error" role="alert">
-        {error}
-      </div>
-    );
-  }
-  if (!svg) return <div className="slide-diagram-placeholder">Rendering…</div>;
-  return (
-    <div
-      className="slide-diagram-preview"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
-  );
-}
 
 function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
   const [html, setHtml] = useState("");

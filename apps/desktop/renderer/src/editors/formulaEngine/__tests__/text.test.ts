@@ -135,7 +135,7 @@ describe("TEXT", () => {
       "9 AM",
     );
     expect(evalFormula(`=TEXT(DATE(2024,1,1)+${evening}, "h AM/PM")`)).toBe(
-      "21 PM",
+      "9 PM",
     );
   });
 });

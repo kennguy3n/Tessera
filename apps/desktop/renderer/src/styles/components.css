@@ -2313,7 +2313,7 @@
 }
 
 .sheet-format-custom::placeholder {
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
   opacity: 0.7;
 }
 
@@ -2562,6 +2562,66 @@
 
 .base-col-sort:hover {
   color: var(--color-primary);
+}
+
+/* Sort direction + multi-level priority badge in a column header. */
+.base-col-sort-ind {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  color: var(--color-primary);
+  font-size: 0.6875rem;
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+/* ── Column-summary footer (Airtable-style summary bar) ───────────── */
+.base-grid-summary-row {
+  background: var(--color-bg-subtle, var(--color-bg-page));
+}
+
+.base-grid-summary-cell {
+  /* Sticky-bottom positioning + a fallback background come from the
+     inline `footerCellStyle`; this provides the chrome (top divider,
+     padding, layout) shared by every footer cell. */
+  background: var(--color-bg-subtle, var(--color-bg-page));
+  border-top: 2px solid var(--color-border);
+  padding: 3px var(--spacing-sm);
+  vertical-align: middle;
+  z-index: 1;
+}
+
+.base-grid-summary-select {
+  width: auto;
+  max-width: 100%;
+  padding: 1px 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family);
+  font-size: 0.6875rem;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.base-grid-summary-select:hover,
+.base-grid-summary-select:focus {
+  outline: none;
+  border-color: var(--color-border);
+  color: var(--color-text-body);
+}
+
+.base-grid-summary-value {
+  display: block;
+  margin-top: 1px;
+  color: var(--color-text-headline);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .base-col-type {
@@ -3080,6 +3140,218 @@
   .slide-canvas[data-slide-bg="mesh"] {
     background: var(--slide-surface, transparent);
   }
+}
+
+/* -----------------------------------------------------------------
+ * WYSIWYG "Design view"
+ *
+ * The Design canvas reuses the same themed `.slide-canvas` surface as
+ * the Outline view (so theme palette / fonts / background all apply
+ * live) but renders blocks chromelessly so the prose you type already
+ * looks like the final slide. The block "chrome" (move / delete) only
+ * appears on hover/focus so it never competes with the slide content.
+ * ----------------------------------------------------------------- */
+.slide-canvas-design {
+  /* Read as a real 16:9 slide; tall content still scrolls via the
+     inherited `overflow-y: auto` on `.slide-canvas`. */
+  aspect-ratio: 16 / 9;
+  height: auto;
+  max-width: 960px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 12%));
+}
+
+.slide-blocks-design {
+  gap: var(--spacing-md);
+}
+
+.slide-design-block {
+  position: relative;
+  padding: 2px 0;
+  border-radius: var(--radius-sm);
+}
+
+.slide-design-block:focus-within {
+  outline: 1px dashed
+    color-mix(in srgb, var(--slide-accent, var(--color-primary)) 40%, transparent);
+  outline-offset: 4px;
+}
+
+.slide-design-block-controls {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast, 120ms) ease;
+  z-index: 2;
+}
+
+.slide-design-block:hover .slide-design-block-controls,
+.slide-design-block:focus-within .slide-design-block-controls {
+  opacity: 1;
+}
+
+.slide-design-ctl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated, var(--color-bg-page));
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slide-design-ctl:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+.slide-design-ctl:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.slide-design-ctl-danger:hover:not(:disabled) {
+  border-color: var(--color-danger, #dc2626);
+  color: var(--color-danger, #dc2626);
+}
+
+.slide-design-add {
+  align-self: flex-start;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.slide-design-add:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Chromeless prose fields — inherit the themed slide typography so what
+   you type matches the rendered slide. */
+.slide-wys-text,
+.slide-wys-bullet-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  margin: 0;
+  color: var(--color-text-body);
+  font-family: var(--slide-font-body, var(--font-family));
+  font-size: var(--font-size-lg);
+  line-height: 1.5;
+  resize: none;
+  overflow: hidden;
+}
+
+.slide-wys-text:focus,
+.slide-wys-bullet-input:focus {
+  outline: none;
+}
+
+.slide-wys-bullets {
+  margin: 0;
+  padding-left: 1.4em;
+  list-style: disc;
+}
+
+.slide-wys-bullets .slide-wys-bullet {
+  margin: 0;
+}
+
+.slide-wys-bullets .slide-wys-bullet::marker {
+  color: var(--slide-accent, var(--color-primary));
+}
+
+/* DSL blocks (table / chart / diagram): live preview + collapsible
+   source editor. */
+.slide-wys-source-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.slide-wys-source-controls {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.slide-wys-source {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.slide-wys-source:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* Image block: click-to-pick dropzone + alt text. */
+.slide-wys-image {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.slide-wys-image-drop {
+  display: block;
+  width: 100%;
+  padding: var(--spacing-sm);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.slide-wys-image-drop:hover {
+  border-color: var(--color-primary);
+}
+
+.slide-wys-image-preview {
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
+.slide-wys-image-placeholder {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.slide-wys-image-file {
+  display: none;
+}
+
+.slide-wys-image-alt {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
 }
 
 /* -----------------------------------------------------------------

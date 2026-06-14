@@ -1871,7 +1871,16 @@ describe("parseSlideChart", () => {
 
   it("defaults to a bar chart when type is absent or unknown", () => {
     expect(parseSlideChart("labels: A\nX: 1")?.type).toBe("bar");
-    expect(parseSlideChart("type: donut\nlabels: A\nX: 1")?.type).toBe("bar");
+    // An unrecognised type falls back to bar. `donut` used to be the
+    // example here, but it is now a supported slide chart type, so use a
+    // genuinely unknown keyword to keep exercising the fallback path.
+    expect(parseSlideChart("type: bogus\nlabels: A\nX: 1")?.type).toBe("bar");
+  });
+
+  it("honours every supported chart type, including the richer ones", () => {
+    for (const t of ["bar", "line", "area", "scatter", "combo", "pie", "donut"]) {
+      expect(parseSlideChart(`type: ${t}\nlabels: A\nX: 1`)?.type).toBe(t);
+    }
   });
 
   it("coerces blanks and tolerates a currency/percent suffix", () => {

@@ -161,16 +161,80 @@ const MENTION_TRIGGER_INITIAL: MentionTriggerState = {
 
 // Curated typography options. Font families ship real CSS stacks (with web-safe
 // fallbacks) so the chosen face renders the same on export as in the editor; an
-// empty value means "unset" (fall back to the document's base style).
-const FONT_FAMILY_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
-  { label: "Default", value: "" },
-  { label: "Sans serif", value: "Inter, system-ui, sans-serif" },
-  { label: "Serif", value: "Georgia, 'Times New Roman', serif" },
-  { label: "Monospace", value: "'JetBrains Mono', 'Courier New', monospace" },
-  { label: "Arial", value: "Arial, Helvetica, sans-serif" },
-  { label: "Georgia", value: "Georgia, serif" },
-  { label: "Times New Roman", value: "'Times New Roman', Times, serif" },
+// empty value means "unset" (fall back to the document's base style). Non-Latin
+// faces are grouped by script (rendered as <optgroup>s) so a user can pick a
+// CJK / Arabic family directly rather than only by pasting one; every stack ends
+// in a generic family (`sans-serif` / `serif`) so it degrades gracefully on a
+// machine that lacks the named font. Each stack lists both the romanised and the
+// native font name so it resolves whether the OS registers the font under its
+// English or localized name. All values stay within the `isSafeFontFamily`
+// grammar (letters/marks/digits, spaces, commas, quotes, hyphen) — no structural
+// CSS characters — so they round-trip through the sanitised serializer unchanged.
+const FONT_FAMILY_GROUPS: ReadonlyArray<{
+  label: string | null;
+  options: ReadonlyArray<{ label: string; value: string }>;
+}> = [
+  {
+    label: null,
+    options: [
+      { label: "Default", value: "" },
+      { label: "Sans serif", value: "Inter, system-ui, sans-serif" },
+      { label: "Serif", value: "Georgia, 'Times New Roman', serif" },
+      { label: "Monospace", value: "'JetBrains Mono', 'Courier New', monospace" },
+      { label: "Arial", value: "Arial, Helvetica, sans-serif" },
+      { label: "Georgia", value: "Georgia, serif" },
+      { label: "Times New Roman", value: "'Times New Roman', Times, serif" },
+    ],
+  },
+  {
+    label: "CJK",
+    options: [
+      {
+        label: "PingFang / 苹方 (SC)",
+        value: "'PingFang SC', 'Microsoft YaHei', '微软雅黑', sans-serif",
+      },
+      {
+        label: "Microsoft YaHei / 微软雅黑",
+        value: "'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif",
+      },
+      {
+        label: "SimSun / 宋体",
+        value: "SimSun, '宋体', 'Songti SC', serif",
+      },
+      {
+        label: "Hiragino / ヒラギノ (JP)",
+        value: "'Hiragino Sans', 'ヒラギノ角ゴ Pro', 'Yu Gothic', Meiryo, sans-serif",
+      },
+      {
+        label: "Yu Gothic / 游ゴシック (JP)",
+        value: "'Yu Gothic', '游ゴシック', Meiryo, sans-serif",
+      },
+      {
+        label: "Malgun Gothic / 맑은 고딕 (KR)",
+        value: "'Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', sans-serif",
+      },
+    ],
+  },
+  {
+    label: "Arabic",
+    options: [
+      {
+        label: "Noto Naskh Arabic",
+        value: "'Noto Naskh Arabic', 'Geeza Pro', 'Traditional Arabic', serif",
+      },
+      {
+        label: "Geeza Pro",
+        value: "'Geeza Pro', 'Noto Naskh Arabic', serif",
+      },
+      { label: "Dubai", value: "Dubai, Tahoma, sans-serif" },
+    ],
+  },
 ];
+
+// Flattened presets, used to decide whether the live selection is a known preset
+// or a pasted "custom" value that needs its own display-only <option>.
+const FONT_FAMILY_OPTIONS: ReadonlyArray<{ label: string; value: string }> =
+  FONT_FAMILY_GROUPS.flatMap((group) => group.options);
 
 const FONT_SIZE_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
   { label: "Default", value: "" },
@@ -811,11 +875,23 @@ function TypographyControls({ editor }: { editor: Editor }) {
           else chain.unsetFontFamily().run();
         }}
       >
-        {FONT_FAMILY_OPTIONS.map((o) => (
-          <option key={o.label} value={o.value}>
-            {o.label}
-          </option>
-        ))}
+        {FONT_FAMILY_GROUPS.map((group) =>
+          group.label === null ? (
+            group.options.map((o) => (
+              <option key={o.label} value={o.value}>
+                {o.label}
+              </option>
+            ))
+          ) : (
+            <optgroup key={group.label} label={group.label}>
+              {group.options.map((o) => (
+                <option key={o.label} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
+          ),
+        )}
         {customTypographyOption(FONT_FAMILY_OPTIONS, currentFont, () => "Custom")}
       </select>
       <select
