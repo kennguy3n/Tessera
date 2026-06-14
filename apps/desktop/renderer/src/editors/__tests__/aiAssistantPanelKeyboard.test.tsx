@@ -100,6 +100,32 @@ describe("AiAssistantPanel — skills-mode keyboard handling", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("cancels an in-flight quick action when switching to skills mode", async () => {
+    const { generate, cancelJob } = installPendingModel();
+    const user = userEvent.setup();
+    render(
+      <AiAssistantPanel
+        editor={makeEditor()}
+        context={{ selection: "", precedingText: "", range: null }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Quick mode is the default; start a custom quick action that streams.
+    await user.type(
+      screen.getByLabelText("AI instruction"),
+      "Summarise the meeting notes",
+    );
+    await user.click(screen.getByTestId("ai-run"));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect(cancelJob).not.toHaveBeenCalled();
+
+    // Switching to the Skills tab must cancel the still-streaming quick
+    // action rather than leaving the model generating in the background.
+    await user.click(screen.getByTestId("ai-mode-skills"));
+    expect(cancelJob).toHaveBeenCalled();
+  });
+
   it("ignores Cmd/Ctrl+Enter while a skill is already running", async () => {
     const { generate } = installPendingModel();
     const user = userEvent.setup();

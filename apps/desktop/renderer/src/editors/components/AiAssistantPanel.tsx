@@ -188,6 +188,11 @@ export function AiAssistantPanel({
         if (inSkillsMode) {
           if (skillRunnerRef.current?.isRunning) {
             skillRunnerRef.current.cancel();
+          } else if (ai.isStreaming) {
+            // A quick action started before the user switched tabs is still
+            // streaming through `useDocumentAi`; cancel it before closing so
+            // Escape never silently leaves the model running.
+            cancelGeneration();
           } else {
             onClose();
           }
@@ -213,6 +218,23 @@ export function AiAssistantPanel({
       }
     },
     [panelMode, ai.isStreaming, cancelGeneration, onClose, run],
+  );
+
+  // Switching tabs must not leave the mode we are leaving streaming
+  // invisibly in the background: cancel its in-flight generation first. A
+  // quick action streams through `useDocumentAi` (`cancelGeneration`); a
+  // skill chain streams through `useSkillRunner` (the panel's handle).
+  const switchMode = useCallback(
+    (next: AiPanelMode) => {
+      if (next === panelMode) return;
+      if (next === "skills") {
+        if (ai.isStreaming) cancelGeneration();
+      } else {
+        skillRunnerRef.current?.cancel();
+      }
+      setPanelMode(next);
+    },
+    [panelMode, ai.isStreaming, cancelGeneration],
   );
 
   const showResult = ai.output.length > 0 || ai.status === "streaming";
@@ -253,7 +275,7 @@ export function AiAssistantPanel({
               panelMode === "quick" ? "ai-action-chip active" : "ai-action-chip"
             }
             aria-pressed={panelMode === "quick"}
-            onClick={() => setPanelMode("quick")}
+            onClick={() => switchMode("quick")}
             data-testid="ai-mode-quick"
           >
             Quick actions
@@ -264,7 +286,7 @@ export function AiAssistantPanel({
               panelMode === "skills" ? "ai-action-chip active" : "ai-action-chip"
             }
             aria-pressed={panelMode === "skills"}
-            onClick={() => setPanelMode("skills")}
+            onClick={() => switchMode("skills")}
             data-testid="ai-mode-skills"
           >
             Skills
