@@ -14,7 +14,13 @@
  * decides what "apply" means for its surface.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 import { useSkillRunner } from "../../skills/useSkillRunner";
 import type { Skill } from "../../skills/skillTypes";
 
@@ -27,17 +33,30 @@ export interface SkillRunnerPanelProps {
   applyLabel?: string;
 }
 
+/**
+ * Imperative handle a host (e.g. {@link AiAssistantPanel}) uses to make its
+ * keyboard shortcuts skill-aware: Escape cancels a running skill rather than
+ * closing, and Cmd/Ctrl+Enter runs the skill with the panel's current inputs.
+ */
+export interface SkillRunnerHandle {
+  /** True while a skill step is in flight. */
+  isRunning: boolean;
+  /** Cancel the in-flight chain (no-op when idle). */
+  cancel: () => void;
+  /** Run the skill with the panel's current inputs. */
+  submit: () => void;
+}
+
 function blankInputs(skill: Skill): Record<string, string> {
   const seed: Record<string, string> = {};
   for (const input of skill.inputs) seed[input.id] = "";
   return seed;
 }
 
-export function SkillRunnerPanel({
-  skill,
-  onApply,
-  applyLabel = "Insert",
-}: SkillRunnerPanelProps) {
+export const SkillRunnerPanel = forwardRef<
+  SkillRunnerHandle,
+  SkillRunnerPanelProps
+>(function SkillRunnerPanel({ skill, onApply, applyLabel = "Insert" }, ref) {
   const runner = useSkillRunner(skill);
   const [inputs, setInputs] = useState<Record<string, string>>(() =>
     blankInputs(skill),
@@ -59,6 +78,16 @@ export function SkillRunnerPanel({
   const run = useCallback(() => {
     runner.run(inputs);
   }, [runner, inputs]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      isRunning: runner.isRunning,
+      cancel: runner.cancel,
+      submit: run,
+    }),
+    [runner.isRunning, runner.cancel, run],
+  );
 
   const missing = new Set(runner.missingInputs);
 
@@ -222,4 +251,4 @@ export function SkillRunnerPanel({
       )}
     </div>
   );
-}
+});

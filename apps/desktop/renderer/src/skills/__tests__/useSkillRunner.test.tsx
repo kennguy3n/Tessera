@@ -176,6 +176,28 @@ describe("useSkillRunner", () => {
     expect(harness.cancelJob).toHaveBeenCalled();
   });
 
+  it("cancels the backend model job when unmounted mid-run", async () => {
+    // autoComplete=false keeps the first step in flight, so unmount happens
+    // while the on-device model is still "generating".
+    const harness = installModel(() => "x", { autoComplete: false });
+    const { result, unmount } = renderHook(() =>
+      useSkillRunner(DOCUMENT_DELIBERATE_DRAFT),
+    );
+
+    act(() => {
+      result.current.run({ topic: "anything" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("running"));
+
+    act(() => {
+      unmount();
+    });
+
+    // The cleanup must abort the in-flight generation rather than orphaning
+    // it (otherwise the model keeps producing tokens no listener consumes).
+    expect(harness.cancelJob).toHaveBeenCalled();
+  });
+
   it("reports an error when the model surface is unavailable", async () => {
     (window.tessera as unknown as { model: unknown }).model = {
       status: vi.fn(),

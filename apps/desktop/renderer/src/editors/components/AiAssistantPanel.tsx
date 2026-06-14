@@ -44,7 +44,7 @@ import type {
   DocumentAiTone,
 } from "../ai/documentAiTypes";
 import { useDocumentAi } from "../../hooks/useDocumentAi";
-import { SkillRunnerPanel } from "./SkillRunnerPanel";
+import { SkillRunnerPanel, type SkillRunnerHandle } from "./SkillRunnerPanel";
 import { getSkillsForSurface } from "../../skills/skillLibrary";
 
 type AiPanelMode = "quick" | "skills";
@@ -88,6 +88,7 @@ export function AiAssistantPanel({
   const [applyMode, setApplyMode] = useState<DocumentAiApplyMode>("replace");
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const skillRunnerRef = useRef<SkillRunnerHandle>(null);
 
   const hasSelection = context.selection.trim().length > 0;
   const cleaned = useMemo(() => cleanModelOutput(ai.output), [ai.output]);
@@ -178,9 +179,19 @@ export function AiAssistantPanel({
 
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
+      // In skills mode the active generation is driven by `useSkillRunner`
+      // (not `useDocumentAi`), so `ai.isStreaming` is always false here —
+      // route cancel/run through the skill panel's imperative handle.
+      const inSkillsMode = panelMode === "skills";
       if (e.key === "Escape") {
         e.preventDefault();
-        if (ai.isStreaming) {
+        if (inSkillsMode) {
+          if (skillRunnerRef.current?.isRunning) {
+            skillRunnerRef.current.cancel();
+          } else {
+            onClose();
+          }
+        } else if (ai.isStreaming) {
           cancelGeneration();
         } else {
           onClose();
@@ -190,10 +201,14 @@ export function AiAssistantPanel({
       // Cmd/Ctrl+Enter runs the action from anywhere in the panel.
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        run();
+        if (inSkillsMode) {
+          skillRunnerRef.current?.submit();
+        } else {
+          run();
+        }
       }
     },
-    [ai.isStreaming, cancelGeneration, onClose, run],
+    [panelMode, ai.isStreaming, cancelGeneration, onClose, run],
   );
 
   const showResult = ai.output.length > 0 || ai.status === "streaming";
@@ -273,6 +288,7 @@ export function AiAssistantPanel({
           )}
           <SkillRunnerPanel
             key={selectedSkill.id}
+            ref={skillRunnerRef}
             skill={selectedSkill}
             onApply={applySkillText}
             applyLabel={hasSelection ? "Replace" : "Insert below"}

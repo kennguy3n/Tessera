@@ -98,15 +98,30 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
   const runIdRef = useRef(0);
   // Lets `cancel()` settle the promise of the step currently streaming.
   const rejectCurrentRef = useRef<((reason: unknown) => void) | null>(null);
+  // Mirror the latest `cancelGeneration` so the []-deps unmount effect can
+  // abort the backend job without re-subscribing on every render.
+  const cancelGenerationRef = useRef(cancelGeneration);
+  cancelGenerationRef.current = cancelGeneration;
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      // Invalidate the chain so any late async callbacks no-op.
+      runIdRef.current += 1;
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
         unsubscribeRef.current = null;
       }
+      // Settle the in-flight step's promise so its `runChain` stops awaiting.
+      if (rejectCurrentRef.current) {
+        const reject = rejectCurrentRef.current;
+        rejectCurrentRef.current = null;
+        reject(CANCELLED);
+      }
+      // Abort the backend generation so the on-device model does not keep
+      // producing tokens for an orphaned step after the panel unmounts.
+      void cancelGenerationRef.current();
     };
   }, []);
 
@@ -142,6 +157,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
           if (runId !== runIdRef.current || !mountedRef.current) return;
           if (chunk.error) {
             teardownSubscription();
+            rejectCurrentRef.current = null;
             reject(new Error(chunk.error));
             return;
           }
@@ -151,6 +167,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
           }
           if (chunk.done) {
             teardownSubscription();
+            rejectCurrentRef.current = null;
             resolve({ kind: "done", text: buffer });
           }
         };
@@ -166,12 +183,14 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
             // when the device battery is low.
             if (result && typeof result === "object" && "status" in result) {
               teardownSubscription();
+              rejectCurrentRef.current = null;
               resolve({ kind: "battery_low", text: buffer });
             }
           })
           .catch((err: unknown) => {
             if (runId !== runIdRef.current || !mountedRef.current) return;
             teardownSubscription();
+            rejectCurrentRef.current = null;
             reject(err instanceof Error ? err : new Error(String(err)));
           });
       });

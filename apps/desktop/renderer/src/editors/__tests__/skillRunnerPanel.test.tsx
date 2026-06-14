@@ -1,10 +1,33 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SkillRunnerPanel } from "../components/SkillRunnerPanel";
+import {
+  SkillRunnerPanel,
+  type SkillRunnerHandle,
+} from "../components/SkillRunnerPanel";
 import { DOCUMENT_DELIBERATE_DRAFT } from "../../skills/skillLibrary";
 import type { GenerateChunk } from "../../types/ipc";
 import { _resetActiveGenerationForTests } from "../../hooks/useActiveGeneration";
+
+/**
+ * Installs a model whose `generate` never streams a `done` chunk, so a
+ * started skill stays in the running state until explicitly cancelled.
+ */
+function installPendingModel(): { cancelJob: ReturnType<typeof vi.fn> } {
+  let subscriber: ((chunk: GenerateChunk) => void) | null = null;
+  const onToken = vi.fn((cb: (chunk: GenerateChunk) => void) => {
+    subscriber = cb;
+    return () => {
+      if (subscriber === cb) subscriber = null;
+    };
+  });
+  const generate = vi.fn(async () => undefined);
+  const cancelJob = vi.fn().mockResolvedValue(undefined);
+  const api = window.tessera as unknown as { model: unknown };
+  api.model = { status: vi.fn(), start: vi.fn(), stop: vi.fn(), generate, cancelJob, onToken };
+  return { cancelJob };
+}
 
 /**
  * Installs a fake on-device model that streams one scripted token + a done
@@ -120,5 +143,38 @@ describe("SkillRunnerPanel", () => {
 
     await user.click(screen.getByTestId("skill-apply"));
     expect(onApply).toHaveBeenCalledWith("The polished final passage.");
+  });
+
+  it("exposes an imperative handle that runs and cancels the skill", async () => {
+    const { cancelJob } = installPendingModel();
+    const user = userEvent.setup();
+    const ref = createRef<SkillRunnerHandle>();
+    const { container } = render(
+      <SkillRunnerPanel ref={ref} skill={DOCUMENT_DELIBERATE_DRAFT} />,
+    );
+
+    const topic = container.querySelector(
+      "#skill-input-topic",
+    ) as HTMLTextAreaElement;
+    await user.type(topic, "Quarterly customer-support summary");
+
+    // `submit()` runs the skill with the panel's current inputs.
+    act(() => {
+      ref.current?.submit();
+    });
+    const generate = (
+      window.tessera as unknown as {
+        model: { generate: ReturnType<typeof vi.fn> };
+      }
+    ).model.generate;
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(ref.current?.isRunning).toBe(true));
+
+    // `cancel()` aborts the backend job and returns to a non-running state.
+    act(() => {
+      ref.current?.cancel();
+    });
+    expect(cancelJob).toHaveBeenCalled();
+    await waitFor(() => expect(ref.current?.isRunning).toBe(false));
   });
 });
