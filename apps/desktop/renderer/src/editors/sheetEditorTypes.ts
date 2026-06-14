@@ -70,8 +70,18 @@ export type DataValidation =
  */
 export type ValidationMap = Record<string, DataValidation>;
 
-/** Supported chart marks. */
-export type ChartType = "bar" | "line" | "pie";
+/**
+ * Supported chart marks. `combo` overlays the first series as bars and the
+ * remaining series as a line (a shared y-axis); `donut` is a pie with a hole.
+ */
+export type ChartType =
+  | "bar"
+  | "line"
+  | "area"
+  | "scatter"
+  | "combo"
+  | "pie"
+  | "donut";
 
 /**
  * A chart bound to a range on the active sheet, re-derived from live

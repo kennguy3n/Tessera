@@ -1880,6 +1880,15 @@
   stroke-width: 1;
 }
 
+/* Faint horizontal gridlines at intermediate y-axis ticks; lighter than
+   the baseline axis so they guide the eye without competing with marks. */
+.sheet-chart-grid {
+  stroke: var(--color-border);
+  stroke-width: 1;
+  opacity: 0.4;
+  stroke-dasharray: 2 3;
+}
+
 .sheet-chart-tick {
   fill: var(--color-text-secondary);
   font-size: 9px;

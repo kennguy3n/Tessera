@@ -33,7 +33,8 @@ export function SlideChart({ type, data, title }: SlideChartProps) {
       </div>
     );
   }
-  const showLegend = data.series.length > 1 || type === "pie";
+  const categoryLegend = type === "pie" || type === "donut";
+  const showLegend = data.series.length > 1 || categoryLegend;
   return (
     <figure className="slide-chart" aria-label={`${heading} (${type})`}>
       {title?.trim() ? (
@@ -50,7 +51,7 @@ export function SlideChart({ type, data, title }: SlideChartProps) {
       </svg>
       {showLegend ? (
         <ul className="sheet-chart-legend" aria-hidden="true">
-          {type === "pie"
+          {categoryLegend
             ? data.labels.map((label, i) => (
                 <li key={i}>
                   <span

@@ -1052,7 +1052,14 @@ export function tableToMarkdown(table: SlideTable): string {
 }
 
 /** Chart kinds a slide `chart` block can render (mirrors `ChartMarks`). */
-export type SlideChartType = "bar" | "line" | "pie";
+export type SlideChartType =
+  | "bar"
+  | "line"
+  | "area"
+  | "scatter"
+  | "combo"
+  | "pie"
+  | "donut";
 
 /** A parsed slide chart: render type, optional title, and plot data. */
 export interface SlideChartSpec {
@@ -1061,14 +1068,23 @@ export interface SlideChartSpec {
   data: ChartData;
 }
 
-const SLIDE_CHART_TYPES: readonly SlideChartType[] = ["bar", "line", "pie"];
+const SLIDE_CHART_TYPES: readonly SlideChartType[] = [
+  "bar",
+  "line",
+  "area",
+  "scatter",
+  "combo",
+  "pie",
+  "donut",
+];
 
 /**
  * Parse a `chart` block's data DSL into a {@link SlideChartSpec}.
  *
  * Grammar (one directive per line, order-independent for the directives
  * but series are plotted in source order):
- *   - `type: bar|line|pie`  — defaults to `bar` when absent/unknown
+ *   - `type: bar|line|area|scatter|combo|pie|donut`  — defaults to `bar`
+ *     when absent/unknown
  *   - `title: <text>`       — optional figure caption
  *   - `labels: a, b, c`     — the category axis (comma-separated)
  *   - `<name>: v, v, v`     — one numeric series; blank / non-numeric

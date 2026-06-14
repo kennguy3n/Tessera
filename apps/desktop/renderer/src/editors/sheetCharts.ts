@@ -257,16 +257,25 @@ const DEFAULT_PAD = { top: 8, right: 8, bottom: 20, left: 32 };
  * zero baseline (the chart targets non-negative business data; a fuller
  * negative-axis treatment is deferred). Returns one rect per
  * (category, series) with a numeric value.
+ *
+ * `maxOverride` forces the axis maximum instead of deriving it from this
+ * data — used by the combo mark so its bars and line share one scale. A
+ * non-positive override is ignored (it would make every `v / max` blow up to
+ * Infinity/NaN); we fall back to the derived `niceMax`, which is always ≥ 1.
  */
 export function barLayout(
   data: ChartData,
   layout: ChartLayout,
+  maxOverride?: number,
 ): { bars: BarRect[]; max: number } {
   const pad = layout.pad;
   const plotW = layout.width - pad.left - pad.right;
   const plotH = layout.height - pad.top - pad.bottom;
   const { max: rawMax } = valueExtent(data);
-  const max = niceMax(rawMax);
+  const max =
+    maxOverride !== undefined && maxOverride > 0
+      ? maxOverride
+      : niceMax(rawMax);
   const categories = data.labels.length;
   const seriesN = data.series.length;
   const bars: BarRect[] = [];
@@ -303,6 +312,36 @@ export interface LinePath {
   points: { x: number; y: number }[];
 }
 
+export interface LineLayoutOptions {
+  /** Force the axis maximum (combo charts share one scale across marks). */
+  maxOverride?: number;
+  /**
+   * Horizontal placement of category points:
+   *   - `"edge"` (default): first point at the left axis, last at the right
+   *     edge — the natural look for a standalone line/area chart.
+   *   - `"band"`: points centred in each category band, so a line overlaid
+   *     on bars (combo) lines up with the middle of each bar group.
+   */
+  align?: "edge" | "band";
+}
+
+/**
+ * X coordinate of category `ci` for the chosen alignment. Shared by the
+ * line / area / scatter marks so they all sit on the same grid.
+ */
+export function categoryX(
+  ci: number,
+  categories: number,
+  plotLeft: number,
+  plotW: number,
+  align: "edge" | "band" = "edge",
+): number {
+  if (categories <= 0) return plotLeft;
+  if (align === "band") return plotLeft + ((ci + 0.5) / categories) * plotW;
+  if (categories === 1) return plotLeft + plotW / 2;
+  return plotLeft + (ci / (categories - 1)) * plotW;
+}
+
 /**
  * Lay out one polyline per series. Blank values split the series into
  * multiple `segments` (a gap rather than a misleading straight line
@@ -311,18 +350,23 @@ export interface LinePath {
 export function lineLayout(
   data: ChartData,
   layout: ChartLayout,
+  opts: LineLayoutOptions = {},
 ): { lines: LinePath[]; max: number } {
   const pad = layout.pad;
   const plotW = layout.width - pad.left - pad.right;
   const plotH = layout.height - pad.top - pad.bottom;
   const { max: rawMax } = valueExtent(data);
-  const max = niceMax(rawMax);
+  // A non-positive override would divide every point by ≤ 0; ignore it and use
+  // the derived `niceMax` (always ≥ 1). See `barLayout` for the rationale.
+  const max =
+    opts.maxOverride !== undefined && opts.maxOverride > 0
+      ? opts.maxOverride
+      : niceMax(rawMax);
   const categories = data.labels.length;
   const lines: LinePath[] = [];
   if (categories === 0 || plotW <= 0 || plotH <= 0) {
     return { lines, max };
   }
-  const step = categories === 1 ? 0 : plotW / (categories - 1);
   data.series.forEach((s, si) => {
     const points: { x: number; y: number }[] = [];
     const segments: string[] = [];
@@ -336,7 +380,7 @@ export function lineLayout(
         }
         continue;
       }
-      const x = pad.left + (categories === 1 ? plotW / 2 : ci * step);
+      const x = categoryX(ci, categories, pad.left, plotW, opts.align);
       const y = pad.top + (plotH - (v / max) * plotH);
       points.push({ x, y });
       current.push(`${x},${y}`);
@@ -345,6 +389,137 @@ export function lineLayout(
     lines.push({ seriesIndex: si, segments, points });
   });
   return { lines, max };
+}
+
+export interface AreaPath {
+  seriesIndex: number;
+  /** One filled `<path>` `d` per contiguous run of values (blanks split). */
+  fills: string[];
+  /** The line drawn on top of each fill (a `<polyline>` `points` string). */
+  segments: string[];
+  points: { x: number; y: number }[];
+}
+
+/**
+ * Lay out a filled area per series: the same polyline as {@link lineLayout}
+ * but each contiguous run is closed down to the zero baseline so it can be
+ * painted as a translucent region. Blanks break the fill (no bridge across
+ * missing data), matching the line mark.
+ */
+export function areaLayout(
+  data: ChartData,
+  layout: ChartLayout,
+  opts: LineLayoutOptions = {},
+): { areas: AreaPath[]; max: number } {
+  const pad = layout.pad;
+  const plotW = layout.width - pad.left - pad.right;
+  const plotH = layout.height - pad.top - pad.bottom;
+  const { max: rawMax } = valueExtent(data);
+  // Ignore a non-positive override (same guard as `barLayout`/`lineLayout`):
+  // it would make `v / max` blow up to Infinity/NaN or invert the scale.
+  const max =
+    opts.maxOverride !== undefined && opts.maxOverride > 0
+      ? opts.maxOverride
+      : niceMax(rawMax);
+  const baselineY = pad.top + plotH;
+  const categories = data.labels.length;
+  const areas: AreaPath[] = [];
+  if (categories === 0 || plotW <= 0 || plotH <= 0) {
+    return { areas, max };
+  }
+  data.series.forEach((s, si) => {
+    const points: { x: number; y: number }[] = [];
+    const segments: string[] = [];
+    const fills: string[] = [];
+    let run: { x: number; y: number }[] = [];
+    const flush = () => {
+      if (run.length === 0) return;
+      segments.push(run.map((p) => `${p.x},${p.y}`).join(" "));
+      const first = run[0];
+      const last = run[run.length - 1];
+      const d =
+        `M ${first.x} ${baselineY} ` +
+        run.map((p) => `L ${p.x} ${p.y}`).join(" ") +
+        ` L ${last.x} ${baselineY} Z`;
+      fills.push(d);
+      run = [];
+    };
+    for (let ci = 0; ci < categories; ci++) {
+      const v = s.values[ci];
+      if (v === null) {
+        flush();
+        continue;
+      }
+      const x = categoryX(ci, categories, pad.left, plotW, opts.align);
+      const y = pad.top + (plotH - (v / max) * plotH);
+      points.push({ x, y });
+      run.push({ x, y });
+    }
+    flush();
+    areas.push({ seriesIndex: si, fills, segments, points });
+  });
+  return { areas, max };
+}
+
+export interface ScatterDot {
+  seriesIndex: number;
+  categoryIndex: number;
+  /** The plotted value (kept so the renderer can label the dot). */
+  value: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * Lay out one dot per non-blank value, mirroring {@link lineLayout}'s
+ * coordinate maths but without connecting the points. Kept here (rather than
+ * inline in the React mark) so every chart's geometry lives in this pure,
+ * unit-tested module and the renderer stays a thin shell. Blank values are
+ * skipped — a scatter has nothing to draw for a missing point and must not
+ * bridge across it.
+ */
+export function scatterLayout(
+  data: ChartData,
+  layout: ChartLayout,
+  opts: LineLayoutOptions = {},
+): { dots: ScatterDot[]; max: number } {
+  const pad = layout.pad;
+  const plotW = layout.width - pad.left - pad.right;
+  const plotH = layout.height - pad.top - pad.bottom;
+  const { max: rawMax } = valueExtent(data);
+  // Same non-positive-override guard as the line/area/bar layouts: a ≤ 0 max
+  // would send every `v / max` to Infinity/NaN or invert the scale.
+  const max =
+    opts.maxOverride !== undefined && opts.maxOverride > 0
+      ? opts.maxOverride
+      : niceMax(rawMax);
+  const categories = data.labels.length;
+  const dots: ScatterDot[] = [];
+  if (categories === 0 || plotW <= 0 || plotH <= 0) {
+    return { dots, max };
+  }
+  data.series.forEach((s, si) => {
+    for (let ci = 0; ci < categories; ci++) {
+      const v = s.values[ci];
+      if (v === null) continue;
+      const x = categoryX(ci, categories, pad.left, plotW, opts.align);
+      const y = pad.top + (plotH - (v / max) * plotH);
+      dots.push({ seriesIndex: si, categoryIndex: ci, value: v, x, y });
+    }
+  });
+  return { dots, max };
+}
+
+/**
+ * Evenly spaced y-axis tick values from 0 to `max` (inclusive), used to
+ * draw gridlines + labels. Returns `count + 1` values; falls back to a
+ * single `[0]` tick for a non-positive axis.
+ */
+export function yAxisTicks(max: number, count = 4): number[] {
+  if (!(max > 0) || count < 1) return [0];
+  const ticks: number[] = [];
+  for (let i = 0; i <= count; i++) ticks.push((max / count) * i);
+  return ticks;
 }
 
 export interface PieSlice {
@@ -366,15 +541,60 @@ function polar(cx: number, cy: number, r: number, angle: number) {
 }
 
 /**
+ * SVG path for one slice of a pie (`innerRadius === 0`) or donut
+ * (`innerRadius > 0`). A donut slice is an annulus wedge: out along the
+ * outer arc, in across to the inner arc, back along the inner arc (drawn
+ * in the opposite sweep so the ring carves out cleanly). The single
+ * full-circle case can't be drawn with one arc (start === end), so it is
+ * emitted as a near-complete circle (pie) or two concentric near-circles
+ * with `fill-rule: evenodd` punching the hole (donut).
+ */
+function slicePath(
+  cx: number,
+  cy: number,
+  r: number,
+  innerRadius: number,
+  start: number,
+  end: number,
+  fraction: number,
+): string {
+  const largeArc = end - start > Math.PI ? 1 : 0;
+  const o1 = polar(cx, cy, r, start);
+  const o2 = polar(cx, cy, r, end);
+  if (innerRadius > 0) {
+    if (fraction >= 1) {
+      return (
+        `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.001} ${cy - r} Z ` +
+        `M ${cx} ${cy - innerRadius} A ${innerRadius} ${innerRadius} 0 1 1 ${cx - 0.001} ${cy - innerRadius} Z`
+      );
+    }
+    const i1 = polar(cx, cy, innerRadius, start);
+    const i2 = polar(cx, cy, innerRadius, end);
+    return (
+      `M ${o1.x} ${o1.y} A ${r} ${r} 0 ${largeArc} 1 ${o2.x} ${o2.y} ` +
+      `L ${i2.x} ${i2.y} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${i1.x} ${i1.y} Z`
+    );
+  }
+  if (fraction >= 1) {
+    return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.001} ${cy - r} Z`;
+  }
+  return `M ${cx} ${cy} L ${o1.x} ${o1.y} A ${r} ${r} 0 ${largeArc} 1 ${o2.x} ${o2.y} Z`;
+}
+
+/**
  * Lay out a pie from the FIRST series' values (blanks / non-positive
  * values are dropped). Slices start at 12 o'clock and proceed
  * clockwise. Returns an empty array when nothing sums above zero.
+ *
+ * `innerRadius > 0` produces donut slices (an annulus of that inner
+ * radius); the default of `0` keeps the solid-pie geometry unchanged.
  */
 export function pieLayout(
   data: ChartData,
   cx: number,
   cy: number,
   r: number,
+  innerRadius = 0,
 ): PieSlice[] {
   const series = data.series[0];
   if (!series) return [];
@@ -389,22 +609,13 @@ export function pieLayout(
     const start = angle;
     const end = angle + fraction * Math.PI * 2;
     angle = end;
-    const p1 = polar(cx, cy, r, start);
-    const p2 = polar(cx, cy, r, end);
-    const largeArc = end - start > Math.PI ? 1 : 0;
-    // A single full-circle slice can't be drawn with one arc (start ==
-    // end); emit a near-complete circle via two half-arcs.
-    const path =
-      fraction >= 1
-        ? `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.001} ${cy - r} Z`
-        : `M ${cx} ${cy} L ${p1.x} ${p1.y} A ${r} ${r} 0 ${largeArc} 1 ${p2.x} ${p2.y} Z`;
     slices.push({
       categoryIndex: ci,
       value: v,
       fraction,
       startAngle: start,
       endAngle: end,
-      path,
+      path: slicePath(cx, cy, r, innerRadius, start, end, fraction),
     });
   });
   return slices;
