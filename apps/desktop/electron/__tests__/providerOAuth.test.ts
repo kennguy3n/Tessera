@@ -865,11 +865,26 @@ describe("deriveInstanceUrls (per-instance OAuth URL seam)", () => {
   });
 
   it("never derives a host outside the template baseDomain (property)", () => {
-    for (const label of ["a", "acme", "dev-1", "x".repeat(63)]) {
+    // Lower bound is two chars (a single-char label is rejected, below);
+    // upper bound is the 63-char RFC-1035 maximum.
+    for (const label of ["ab", "acme", "dev-1", "x".repeat(63)]) {
       expect(new URL(deriveInstanceUrls(zd, label).authUrl).host).toBe(
         `${label}.zendesk.com`,
       );
     }
+  });
+
+  it("rejects a single-character label (min two chars, in lockstep with the connect rule)", () => {
+    // A one-char label is a valid RFC-1035 DNS label but never a real
+    // Zendesk/ServiceNow instance; the seam deliberately requires >=2
+    // chars so it can never derive e.g. `https://a.zendesk.com`. This
+    // mirrors the connect-modal `minLength: 2` rule.
+    for (const label of ["a", "1", "z"]) {
+      expect(() => deriveInstanceUrls(zd, label)).toThrow(InstanceUrlError);
+      expect(() => deriveInstanceUrls(sn, label)).toThrow(InstanceUrlError);
+    }
+    // The two-char boundary is accepted.
+    expect(deriveInstanceUrls(zd, "ab").origin).toBe("https://ab.zendesk.com");
   });
 });
 

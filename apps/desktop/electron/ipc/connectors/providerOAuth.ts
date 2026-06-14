@@ -969,14 +969,20 @@ export class InstanceUrlError extends Error {
 
 /**
  * A single RFC-1035 DNS label: lowercase letters/digits/hyphen, no
- * leading or trailing hyphen, 1–63 chars. This is the ONLY shape a
+ * leading or trailing hyphen, 2–63 chars. This is the ONLY shape a
  * per-instance value may take — it cannot contain a dot, slash, `@`,
  * port, or any other authority-smuggling character, so
  * `https://<label>.<baseDomain>` always resolves to a host under the
- * trusted `baseDomain`. The connect-modal inline validator uses the
- * case-insensitive form (values are lowercased here before matching).
+ * trusted `baseDomain`. The minimum of two characters (the trailing
+ * group is mandatory, not optional) is a deliberate subset of RFC-1035:
+ * no real Zendesk/ServiceNow instance is a single character, so we
+ * reject one-char labels here AND at connect time (a `minLength: 2`
+ * rule) rather than deriving a host like `https://a.zendesk.com`. The
+ * connect-modal inline validator keeps its `pattern` byte-for-byte in
+ * lockstep with this regex (case-insensitively — values are lowercased
+ * here before matching) so the two layers can never diverge.
  */
-const INSTANCE_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const INSTANCE_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/;
 
 /** Concrete URLs derived from an {@link InstanceUrlTemplate}. */
 export interface DerivedInstanceUrls {
@@ -994,9 +1000,9 @@ export interface DerivedInstanceUrls {
  *
  * Security (the SSRF / open-redirect boundary):
  *   1. The instance value is trimmed, lowercased, and must match a
- *      single DNS label ({@link INSTANCE_LABEL_RE}) — no dots, slashes,
- *      `@`, ports, or whitespace, so it cannot encode a different
- *      authority.
+ *      single 2–63 char DNS label ({@link INSTANCE_LABEL_RE}) — no dots,
+ *      slashes, `@`, ports, or whitespace, so it cannot encode a
+ *      different authority.
  *   2. Each derived URL is re-parsed and its host re-checked to equal
  *      exactly `<label>.<baseDomain>` over `https:` (defence in depth).
  * Any deviation throws {@link InstanceUrlError}.
@@ -1009,7 +1015,7 @@ export function deriveInstanceUrls(
   if (!INSTANCE_LABEL_RE.test(label)) {
     throw new InstanceUrlError(
       "",
-      `Invalid instance value "${rawInstanceValue}": expected a single ${template.baseDomain} subdomain label (letters, digits, hyphens; no dots).`,
+      `Invalid instance value "${rawInstanceValue}": expected a single ${template.baseDomain} subdomain label of at least two characters (letters, digits, hyphens; no dots).`,
     );
   }
   const host = `${label}.${template.baseDomain}`;

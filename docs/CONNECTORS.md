@@ -305,7 +305,7 @@ instance host (`https://<subdomain>.zendesk.com/oauth/...`,
 
 | Provider | Connect method | Inputs (`auth_config_json` key) | Scope | Port |
 | --- | --- | --- | --- | --- |
-| Zendesk | `oauth2` | `subdomain` (single DNS label, e.g. `acme`) | `read` | 9907 |
+| Zendesk | `oauth2` | `subdomain` (single 2–63 char DNS label, e.g. `acme`) | `read` | 9907 |
 | ServiceNow | `oauth2` | `subdomain` (instance id, e.g. `dev12345`) | *(scope-less — role-based ACLs)* | 9908 |
 
 Notes on this tranche:
@@ -379,10 +379,12 @@ an unresolved URL can never silently become `undefined`.
 `deriveInstanceUrls` with defence-in-depth:
 
 1. It must match a single RFC-1035 DNS label
-   (`[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?`, case-insensitive, trimmed +
+   (`[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])`, case-insensitive, trimmed +
    lowercased) — so a value containing a dot, slash, `@`, `:`, scheme,
    whitespace or any other authority/path/query/fragment character is
-   rejected before any URL is built.
+   rejected before any URL is built. The trailing group is mandatory, so
+   the label is **2–63 chars** (a deliberate subset of RFC-1035: no real
+   Zendesk/ServiceNow instance is a single character).
 2. The host is constructed as **exactly** `<label>.<baseDomain>` — the
    user value can only ever be the left-most label; it can never drop or
    replace the pinned `baseDomain` suffix.
@@ -390,9 +392,11 @@ an unresolved URL can never silently become `undefined`.
    the pinned host, so even a malformed template path cannot smuggle a
    foreign authority through.
 
-The same DNS-label pattern is mirrored on the connect-time field
-(`CONNECTOR_CONNECT_SPECS`) so the user sees an **anchored inline error**
-in the connect modal before the flow starts. Failures inside the OAuth
+The same DNS-label pattern (plus a `minLength: 2` rule that mirrors the
+regex's mandatory trailing group and yields a clearer length error) is
+mirrored on the connect-time field (`CONNECTOR_CONNECT_SPECS`) so the
+user sees an **anchored inline error** in the connect modal before the
+flow starts. Failures inside the OAuth
 flow throw `InstanceUrlError` (stamped with the provider id). Wiring the
 next self-hosted / per-subdomain provider is therefore a config-only
 change: declare its `instanceUrls` template + a `subdomain` connect

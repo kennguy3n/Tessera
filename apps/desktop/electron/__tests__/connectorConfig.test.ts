@@ -260,10 +260,15 @@ describe("validateConnectorField", () => {
     for (const provider of ["zendesk", "servicenow"] as const) {
       const sub = field(provider, "subdomain");
       expect(sub.required).toBe(true);
-      // Valid single labels.
+      // Valid single labels (>= 2 chars).
+      expect(validateConnectorField(sub, "ab").valid).toBe(true);
       expect(validateConnectorField(sub, "acme").valid).toBe(true);
       expect(validateConnectorField(sub, "dev-12345").valid).toBe(true);
       expect(validateConnectorField(sub, "ACME").valid).toBe(true);
+      // A single-character label is a valid RFC-1035 label but never a
+      // real instance; the `minLength: 2` rule rejects it inline, in
+      // lockstep with the seam's INSTANCE_LABEL_RE.
+      expect(validateConnectorField(sub, "a").valid).toBe(false);
       // SSRF / open-redirect shapes the inline validator must reject so
       // the host can only ever be `<label>.<baseDomain>`.
       expect(validateConnectorField(sub, "acme.zendesk.com").valid).toBe(false);
