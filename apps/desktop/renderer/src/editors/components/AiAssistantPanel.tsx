@@ -202,7 +202,11 @@ export function AiAssistantPanel({
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         if (inSkillsMode) {
-          skillRunnerRef.current?.submit();
+          // Guard against starting a second chain over a running one, which
+          // would orphan the first step's promise and mix generations.
+          if (!skillRunnerRef.current?.isRunning) {
+            skillRunnerRef.current?.submit();
+          }
         } else {
           run();
         }

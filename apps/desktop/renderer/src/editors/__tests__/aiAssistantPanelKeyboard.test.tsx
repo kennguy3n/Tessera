@@ -99,4 +99,32 @@ describe("AiAssistantPanel — skills-mode keyboard handling", () => {
     fireEvent.keyDown(panel, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores Cmd/Ctrl+Enter while a skill is already running", async () => {
+    const { generate } = installPendingModel();
+    const user = userEvent.setup();
+    const { container } = render(
+      <AiAssistantPanel
+        editor={makeEditor()}
+        context={{ selection: "", precedingText: "", range: null }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId("ai-mode-skills"));
+    const topic = container.querySelector(
+      "#skill-input-topic",
+    ) as HTMLTextAreaElement;
+    await user.type(topic, "Quarterly customer-support summary");
+
+    const panel = screen.getByTestId("ai-assistant-panel");
+    fireEvent.keyDown(panel, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await screen.findByTestId("skill-stop");
+
+    // A second shortcut while running must NOT start a concurrent chain.
+    fireEvent.keyDown(panel, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(panel, { key: "Enter", ctrlKey: true });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
 });

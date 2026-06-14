@@ -295,7 +295,15 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
   const reset = useCallback(() => {
     runIdRef.current++;
     teardownSubscription();
-    rejectCurrentRef.current = null;
+    // Settle any in-flight step's promise so its `runChain` stops awaiting,
+    // and abort the backend job — mirroring `cancel()` — so resetting mid-run
+    // never leaves an orphaned generation or a hung chain.
+    if (rejectCurrentRef.current) {
+      const reject = rejectCurrentRef.current;
+      rejectCurrentRef.current = null;
+      reject(CANCELLED);
+    }
+    void cancelGeneration();
     setStatus("idle");
     setSteps([]);
     setCurrentStepIndex(-1);
@@ -305,7 +313,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
     setContextVars({});
     setError(null);
     setMissingInputs([]);
-  }, [teardownSubscription]);
+  }, [cancelGeneration, teardownSubscription]);
 
   return useMemo(
     () => ({

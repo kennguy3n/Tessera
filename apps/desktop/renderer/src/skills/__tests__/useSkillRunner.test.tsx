@@ -198,6 +198,28 @@ describe("useSkillRunner", () => {
     expect(harness.cancelJob).toHaveBeenCalled();
   });
 
+  it("cancels the backend model job when reset mid-run", async () => {
+    // autoComplete=false keeps the first step in flight while we reset.
+    const harness = installModel(() => "x", { autoComplete: false });
+    const { result } = renderHook(() =>
+      useSkillRunner(DOCUMENT_DELIBERATE_DRAFT),
+    );
+
+    act(() => {
+      result.current.run({ topic: "anything" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("running"));
+
+    act(() => {
+      result.current.reset();
+    });
+
+    // reset() must abort the in-flight generation (like cancel) rather than
+    // discarding the reject ref and orphaning the backend job.
+    expect(harness.cancelJob).toHaveBeenCalled();
+    expect(result.current.status).toBe("idle");
+  });
+
   it("reports an error when the model surface is unavailable", async () => {
     (window.tessera as unknown as { model: unknown }).model = {
       status: vi.fn(),
