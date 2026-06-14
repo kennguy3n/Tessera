@@ -67,7 +67,7 @@ export function SheetAiPanel({
   const [action, setAction] = useState<SheetAiAction>("generate");
   const [request, setRequest] = useState("");
   const [candidate, setCandidate] = useState<FormulaValidation | null>(null);
-  const { output, isStreaming, error, available, run, reset } =
+  const { output, isStreaming, error, available, run, reset, cancel } =
     useModelStream();
 
   const [panelMode, setPanelMode] = useState<SheetPanelMode>("quick");
@@ -97,6 +97,25 @@ export function SheetAiPanel({
       }
     },
     [onInsertFormula, onClose],
+  );
+
+  // Switching modes cancels an in-flight quick generation (so it can't
+  // keep streaming invisibly once the Stop button is hidden in skills
+  // mode) and clears stale quick state (candidate/output/error) and the
+  // skill error. The skill chain is torn down by SkillRunnerPanel's
+  // unmount when leaving skills mode.
+  const switchSheetMode = useCallback(
+    (next: SheetPanelMode) => {
+      if (next === panelMode) return;
+      // Cancel settles the in-flight quick stream (issues model:cancelJob
+      // AND resolves the local hook) so `reset` below can clear it.
+      if (next === "skills" && isStreaming) cancel();
+      setCandidate(null);
+      reset();
+      setSkillError(null);
+      setPanelMode(next);
+    },
+    [panelMode, isStreaming, cancel, reset],
   );
 
   const hasFormula = !!activeFormula && activeFormula.trim().startsWith("=");
@@ -186,8 +205,9 @@ export function SheetAiPanel({
             type="button"
             className={panelMode === "quick" ? "btn-sm active" : "btn-sm"}
             aria-pressed={panelMode === "quick"}
+            disabled={isStreaming}
             data-testid="sheet-ai-mode-quick"
-            onClick={() => setPanelMode("quick")}
+            onClick={() => switchSheetMode("quick")}
           >
             Quick actions
           </button>
@@ -195,8 +215,9 @@ export function SheetAiPanel({
             type="button"
             className={panelMode === "skills" ? "btn-sm active" : "btn-sm"}
             aria-pressed={panelMode === "skills"}
+            disabled={isStreaming}
             data-testid="sheet-ai-mode-skills"
-            onClick={() => setPanelMode("skills")}
+            onClick={() => switchSheetMode("skills")}
           >
             Skill
           </button>

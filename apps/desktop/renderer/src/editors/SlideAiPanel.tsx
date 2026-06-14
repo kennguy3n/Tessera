@@ -149,6 +149,22 @@ export function SlideDeckGenerator({
     [onApply, onClose],
   );
 
+  // Switching modes cancels an in-flight quick generation (so it can't
+  // keep streaming invisibly once the Stop button is hidden in skills
+  // mode) and clears any stale quick preview / skill error. The skill
+  // chain (skills -> quick) is torn down by SkillRunnerPanel's unmount.
+  const switchDeckMode = useCallback(
+    (next: DeckPanelMode) => {
+      if (next === panelMode) return;
+      if (next === "skills" && gen.isStreaming) gen.cancel();
+      setPreview(null);
+      setNoUsableDeck(false);
+      setSkillNoUsableDeck(false);
+      setPanelMode(next);
+    },
+    [panelMode, gen],
+  );
+
   const onGenerate = useCallback(async () => {
     const trimmed = topic.trim();
     if (!trimmed) return;
@@ -218,8 +234,9 @@ export function SlideDeckGenerator({
             type="button"
             className={panelMode === "quick" ? "btn-sm active" : "btn-sm"}
             aria-pressed={panelMode === "quick"}
+            disabled={gen.isStreaming}
             data-testid="slide-ai-mode-quick"
-            onClick={() => setPanelMode("quick")}
+            onClick={() => switchDeckMode("quick")}
           >
             Quick
           </button>
@@ -227,8 +244,9 @@ export function SlideDeckGenerator({
             type="button"
             className={panelMode === "skills" ? "btn-sm active" : "btn-sm"}
             aria-pressed={panelMode === "skills"}
+            disabled={gen.isStreaming}
             data-testid="slide-ai-mode-skills"
-            onClick={() => setPanelMode("skills")}
+            onClick={() => switchDeckMode("skills")}
           >
             Skill
           </button>

@@ -4,7 +4,7 @@
  * its final deck markdown flows through the SAME parse → slides path as
  * the quick generator before calling `onApply` and closing the panel.
  */
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,6 +48,46 @@ function installModel(responses: string[]): void {
     cancelJob: vi.fn().mockResolvedValue(undefined),
     onToken,
   };
+}
+
+/**
+ * Installs a fake model whose `generate` returns a promise that stays
+ * pending until the test resolves it, so a quick deck generation stays
+ * in the streaming state (the `useModelGeneration` hook ties
+ * `isStreaming` to the generate promise). Exposes the `cancelJob` spy
+ * and a resolver to settle the run.
+ */
+function installPendingModel(): {
+  cancelJob: ReturnType<typeof vi.fn>;
+  resolve: () => void;
+} {
+  let subscriber: ((chunk: GenerateChunk) => void) | null = null;
+  let resolveGenerate: (() => void) | null = null;
+
+  const onToken = vi.fn((cb: (chunk: GenerateChunk) => void) => {
+    subscriber = cb;
+    return () => {
+      if (subscriber === cb) subscriber = null;
+    };
+  });
+  const cancelJob = vi.fn().mockResolvedValue(undefined);
+  const generate = vi.fn(
+    () =>
+      new Promise<undefined>((res) => {
+        resolveGenerate = () => res(undefined);
+      }),
+  );
+
+  const api = window.tessera as unknown as { model: unknown };
+  api.model = {
+    status: vi.fn().mockResolvedValue({ available: true }),
+    start: vi.fn(),
+    stop: vi.fn(),
+    generate,
+    cancelJob,
+    onToken,
+  };
+  return { cancelJob, resolve: () => resolveGenerate?.() };
 }
 
 describe("SlideDeckGenerator skills mode", () => {
@@ -110,5 +150,43 @@ describe("SlideDeckGenerator skills mode", () => {
 
     await user.click(screen.getByTestId("slide-ai-mode-skills"));
     expect(screen.getByTestId("skill-runner-panel")).toBeInTheDocument();
+  });
+
+  it("disables the mode-switch buttons while a quick generation streams", async () => {
+    const { resolve } = installPendingModel();
+    const user = userEvent.setup();
+    render(<SlideDeckGenerator open onApply={vi.fn()} onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText(/Topic or brief/i), "Q3 GTM plan");
+    await user.click(screen.getByRole("button", { name: "Generate" }));
+
+    // Streaming hides the Stop button behind the disabled mode buttons so
+    // the user can't silently abandon a stream by switching tabs.
+    await waitFor(() =>
+      expect(screen.getByTestId("slide-ai-mode-skills")).toBeDisabled(),
+    );
+    expect(screen.getByTestId("slide-ai-mode-quick")).toBeDisabled();
+
+    await act(async () => {
+      resolve();
+    });
+  });
+
+  it("clears a stale quick 'no usable deck' notice when toggling modes", async () => {
+    // An empty completion yields zero parseable slides -> the quick
+    // "no usable outline" notice. It must not linger after a mode toggle.
+    installModel([""]);
+    const user = userEvent.setup();
+    render(<SlideDeckGenerator open onApply={vi.fn()} onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText(/Topic or brief/i), "vague topic");
+    await user.click(screen.getByRole("button", { name: "Generate" }));
+    expect(
+      await screen.findByText(/return a usable outline/i),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("slide-ai-mode-skills"));
+    await user.click(screen.getByTestId("slide-ai-mode-quick"));
+    expect(screen.queryByText(/return a usable outline/i)).toBeNull();
   });
 });

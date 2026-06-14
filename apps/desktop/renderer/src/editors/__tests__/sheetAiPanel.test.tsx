@@ -190,6 +190,77 @@ describe("SheetAiPanel", () => {
     expect(onInsert).not.toHaveBeenCalled();
     expect(screen.getByTestId("sheet-ai-skill-error")).toBeInTheDocument();
   });
+
+  it("disables the mode-switch buttons while a quick generation streams", async () => {
+    _resetActiveGenerationForTests();
+    const { emit } = installModel();
+    render(
+      <SheetAiPanel
+        columns={["Item", "Status", "Amount"]}
+        rows={[["a", "paid", "10"]]}
+        activeCellRef="D2"
+        selectionRef="D2"
+        onInsertFormula={vi.fn()}
+        onClose={() => undefined}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("sheet-ai-request"), {
+      target: { value: "sum amount where status is paid" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("sheet-ai-run"));
+    });
+    // A token WITHOUT a terminating `done` keeps the stream open.
+    await act(async () => emit({ token: "=SUM(", done: false }));
+
+    expect(screen.getByTestId("sheet-ai-mode-quick")).toBeDisabled();
+    expect(screen.getByTestId("sheet-ai-mode-skills")).toBeDisabled();
+
+    // Settle so the unmount-cancel doesn't act on a live run.
+    await act(async () => emit({ token: "", done: true }));
+  });
+
+  it("clears a stale quick result when toggling modes", async () => {
+    _resetActiveGenerationForTests();
+    const { emit } = installModel();
+    render(
+      <SheetAiPanel
+        columns={["A"]}
+        rows={[["1"]]}
+        activeCellRef="B1"
+        onInsertFormula={vi.fn()}
+        onClose={() => undefined}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("sheet-ai-request"), {
+      target: { value: "broken" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("sheet-ai-run"));
+    });
+    await act(async () => {
+      emit({ token: "=SUM(A1:", done: false });
+      emit({ token: "", done: true });
+    });
+
+    // A completed quick run leaves a streamed output + an invalid-formula
+    // alert on screen.
+    expect(screen.getByTestId("sheet-ai-output")).toBeInTheDocument();
+    expect(screen.queryAllByRole("alert").length).toBeGreaterThan(0);
+
+    // Toggling to skills and back clears the stale quick result.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("sheet-ai-mode-skills"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("sheet-ai-mode-quick"));
+    });
+
+    expect(screen.queryByTestId("sheet-ai-output")).toBeNull();
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
+  });
 });
 
 describe("NamedRangePanel", () => {
