@@ -54,6 +54,16 @@ export function applyCellFormat(
  * disambiguation (`mm` after `hh` = minutes), AM/PM, currency,
  * percent, thousands separators, etc.
  *
+ * Supports the full Excel section grammar: up to four `;`-separated
+ * sections `positive;negative;zero;text`. With one section, negatives
+ * get a leading minus (back-compat). With a dedicated negative section
+ * the magnitude is formatted and the section supplies its own sign
+ * (e.g. `#,##0;(#,##0)` → `(1234)`). A bare `@` in the text section
+ * echoes the string value. Bracketed directives (`[Red]`, `[$-409]`,
+ * conditions) are recognised and stripped so a pasted Excel format
+ * renders the number instead of leaking the directive as a literal;
+ * colour application itself is intentionally left to the cell style.
+ *
  * Empty pattern → default "General" rendering.
  * Errors propagate (`#VALUE!` on unparseable strings).
  */
@@ -63,9 +73,151 @@ export function formatValueWithPattern(
 ): string | FormulaError {
   if (isFormulaError(value)) return value;
   if (pattern === "") return defaultRender(value);
+  const sections = splitFormatSections(pattern);
+
+  // Non-numeric strings route to the text section (`@`) when present;
+  // otherwise we keep TEXT()'s strict `#VALUE!` (the cell renderer
+  // catches that error and falls back to the raw string).
+  if (typeof value === "string" && !isNumericString(value)) {
+    const textSection = sections.length >= 4 ? sections[3] : undefined;
+    if (textSection !== undefined) return applyTextSection(value, textSection);
+    return makeError("#VALUE!", `cannot format "${value}" as a number`);
+  }
+
   const n = coerceToNumberForPattern(value);
   if (isFormulaError(n)) return n;
-  return renderNumberOrDate(n, pattern);
+
+  const picked = pickNumericSection(sections, n);
+  // An explicitly empty section (e.g. the `;;` in `0;-0;;@` to hide
+  // zeros) renders nothing — matching Excel.
+  if (picked.pattern.trim() === "") return "";
+  const cleaned = stripBracketDirectives(picked.pattern);
+  const magnitude = picked.useAbs ? Math.abs(n) : n;
+  return renderNumberOrDate(magnitude, cleaned);
+}
+
+/** True when a string parses as a finite number (blank counts as 0). */
+function isNumericString(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === "") return true;
+  return Number.isFinite(Number(trimmed));
+}
+
+/**
+ * Split a format string into its `;`-delimited sections, ignoring
+ * separators inside quoted literals, `\`-escapes, or `[...]` directive
+ * brackets. Excel allows at most four sections; extras are ignored.
+ */
+function splitFormatSections(pattern: string): string[] {
+  const sections: string[] = [];
+  let current = "";
+  let inQuote = false;
+  let inBracket = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      current += ch;
+      continue;
+    }
+    if (!inQuote && ch === "\\") {
+      current += ch;
+      if (i + 1 < pattern.length) current += pattern[++i];
+      continue;
+    }
+    if (!inQuote && ch === "[") inBracket = true;
+    if (!inQuote && ch === "]") inBracket = false;
+    if (!inQuote && !inBracket && ch === ";") {
+      sections.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  sections.push(current);
+  return sections.slice(0, 4);
+}
+
+/**
+ * Choose the section for a numeric value following Excel's rules:
+ * - 1 section: used for everything (negatives keep a leading minus).
+ * - 2 sections: `positive-or-zero ; negative` (magnitude formatted).
+ * - 3+ sections: `positive ; negative ; zero`.
+ * `useAbs` is true only when a dedicated negative section is used, so
+ * that section owns the sign (parens / explicit `-`).
+ */
+function pickNumericSection(
+  sections: string[],
+  n: number,
+): { pattern: string; useAbs: boolean } {
+  if (sections.length <= 1) {
+    return { pattern: sections[0] ?? "", useAbs: false };
+  }
+  if (n < 0) return { pattern: sections[1], useAbs: true };
+  if (n === 0 && sections.length >= 3) {
+    return { pattern: sections[2], useAbs: false };
+  }
+  return { pattern: sections[0], useAbs: false };
+}
+
+/**
+ * Remove `[...]` directive brackets (colour names, locale/currency
+ * codes like `[$-409]`, condition clauses like `[>=100]`) from a
+ * section, respecting quotes so a literal `"[x]"` is preserved. We
+ * don't evaluate conditions — this keeps an arbitrary pasted format
+ * from emitting the bracket text verbatim.
+ */
+function stripBracketDirectives(section: string): string {
+  let out = "";
+  let inQuote = false;
+  for (let i = 0; i < section.length; i++) {
+    const ch = section[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      out += ch;
+      continue;
+    }
+    if (!inQuote && ch === "\\") {
+      out += ch;
+      if (i + 1 < section.length) out += section[++i];
+      continue;
+    }
+    if (!inQuote && ch === "[") {
+      while (i < section.length && section[i] !== "]") i++;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * Render the text section of a format. `@` is replaced by the string
+ * value; quoted literals and `\`-escapes pass through; bracket
+ * directives are stripped. A section with no `@` emits its literal
+ * text (Excel behaviour).
+ */
+function applyTextSection(text: string, section: string): string {
+  const cleaned = stripBracketDirectives(section);
+  let out = "";
+  let inQuote = false;
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (!inQuote && ch === "\\") {
+      if (i + 1 < cleaned.length) out += cleaned[++i];
+      continue;
+    }
+    if (!inQuote && ch === "@") {
+      out += text;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 /**
@@ -82,7 +234,15 @@ function coerceToNumberForPattern(
   value: Exclude<FormulaValue, FormulaError>,
 ): number | FormulaError {
   if (value === null) return 0;
-  if (typeof value === "number") return value;
+  if (typeof value === "number") {
+    // A non-finite number (NaN / ±Infinity, e.g. from a result that slipped
+    // past error handling) must not render as the literal "NaN"/"Infinity";
+    // surface it as an error instead — matching the string path below.
+    if (!Number.isFinite(value)) {
+      return makeError("#NUM!", "cannot format a non-finite number");
+    }
+    return value;
+  }
   if (typeof value === "boolean") return value ? 1 : 0;
   // String
   const trimmed = value.trim();
@@ -110,12 +270,23 @@ function renderNumberOrDate(value: number, pattern: string): string {
 }
 
 /**
- * Heuristic: a pattern is a date format if it contains any
- * date-token character outside of a quoted segment. Numeric
- * patterns use `#`/`0`/`,`/`.`/`%`/literal chars.
+ * Heuristic: is `pattern` a date/time format (vs. a numeric one)?
+ *
+ * Date tokens live outside quoted (`"..."`) and escaped (`\x`) segments.
+ * `y`/`d`/`h`/`s` are *unambiguous* date/time codes — any of them flips the
+ * pattern to date. `m`/`M` is **ambiguous**: it's the month/minute code, but
+ * users also write it as a literal magnitude suffix (e.g. `#,##0,,"M"` for
+ * millions — common in finance). A real date/time format that uses month or
+ * minutes always also carries a `y`/`d` (month) or `h`/`s` (minutes) token, so
+ * a lone `m`/`M` sitting next to numeric placeholders (`#`/`0`) is treated as a
+ * literal, not a date. Month-name-only patterns (`mmm`, `mmmm`) have no numeric
+ * placeholder, so they're still correctly recognised as dates.
  */
 function looksLikeDateFormat(pattern: string): boolean {
   let inQuote = false;
+  let hasStrongDateToken = false; // y / d / h / s — unambiguous
+  let hasMonthToken = false; // m / M — ambiguous (month/minute vs. literal)
+  let hasNumericPlaceholder = false; // # / 0
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
     if (ch === '"') {
@@ -135,16 +306,19 @@ function looksLikeDateFormat(pattern: string): boolean {
       ch === "h" ||
       ch === "H" ||
       ch === "s" ||
-      ch === "S" ||
-      ch === "m" ||
-      ch === "M"
+      ch === "S"
     ) {
-      // `m`/`M` is ambiguous with numeric "thousands marker"? No —
-      // numeric uses `,` not `m`. So any of these wins.
-      return true;
+      hasStrongDateToken = true;
+    } else if (ch === "m" || ch === "M") {
+      hasMonthToken = true;
+    } else if (ch === "#" || ch === "0") {
+      hasNumericPlaceholder = true;
     }
   }
-  return false;
+  if (hasStrongDateToken) return true;
+  // A bare `m`/`M` is only a date token when it isn't acting as a literal
+  // alongside numeric placeholders (so `#,##0M` stays a number; `mmm` stays a date).
+  return hasMonthToken && !hasNumericPlaceholder;
 }
 
 /** Format `value` as a number using an Excel-style pattern. */
@@ -155,11 +329,65 @@ function formatNumberPattern(value: number, pattern: string): string {
   // Currency / literal prefix/suffix: keep everything in pattern,
   // splicing the numeric body into the digit-template region.
   const { prefix, body, suffix } = splitNumericTemplate(pattern);
-  const numericText = renderNumericBody(scaledValue, body);
+  // Trailing commas after the last digit placeholder scale the value
+  // down by 1000 each (`#,##0,` → thousands, `0.0,,` → millions).
+  const { template, scale } = extractScaleCommas(body);
+  scaledValue /= scale;
+  const numericText = renderNumericBody(scaledValue, template);
   return prefix + numericText + suffix;
 }
 
-function containsUnquoted(pattern: string, ch: string): boolean {
+/**
+ * Split "scale" commas off a digit template. A comma divides the value by
+ * 1000 apiece when it sits in one of the two positions Excel treats as
+ * scaling rather than grouping:
+ *   1. after the last digit placeholder of the whole template (trailing:
+ *      `#,##0,` → thousands, `0.0,,` → millions), or
+ *   2. immediately to the left of the decimal point, with no digit
+ *      placeholder between the comma run and the dot (`#,##0,.00` → the
+ *      integer is shown in thousands with two decimals).
+ * Commas anywhere else (`#,##0`) are thousands grouping separators and are
+ * left in place. Indices are collected in a set so a degenerate pattern like
+ * `#,##0,.` (a comma that is simultaneously pre-dot and trailing) counts the
+ * comma once, not twice.
+ */
+function extractScaleCommas(body: string): { template: string; scale: number } {
+  /** Last index of any digit placeholder strictly before `end`. */
+  const lastDigitBefore = (end: number): number =>
+    Math.max(
+      body.lastIndexOf("0", end - 1),
+      body.lastIndexOf("#", end - 1),
+      body.lastIndexOf("?", end - 1),
+    );
+
+  const scaling = new Set<number>();
+
+  // (1) Trailing commas after the overall last digit placeholder.
+  const lastDigit = lastDigitBefore(body.length);
+  if (lastDigit === -1) return { template: body, scale: 1 };
+  for (let i = lastDigit + 1; i < body.length; i++) {
+    if (body[i] === ",") scaling.add(i);
+  }
+
+  // (2) The run of commas sitting immediately left of the decimal point.
+  const dot = indexOfUnquoted(body, ".");
+  if (dot !== -1) {
+    const lastIntDigit = lastDigitBefore(dot);
+    for (let i = dot - 1; i > lastIntDigit; i--) {
+      if (body[i] === ",") scaling.add(i);
+      else break;
+    }
+  }
+
+  if (scaling.size === 0) return { template: body, scale: 1 };
+  const template = Array.from(body)
+    .filter((_, i) => !scaling.has(i))
+    .join("");
+  return { template, scale: 1000 ** scaling.size };
+}
+
+/** First index of `ch` in `pattern` that is not inside a `"…"` literal. */
+function indexOfUnquoted(pattern: string, ch: string): number {
   let inQuote = false;
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
@@ -167,9 +395,13 @@ function containsUnquoted(pattern: string, ch: string): boolean {
       inQuote = !inQuote;
       continue;
     }
-    if (!inQuote && c === ch) return true;
+    if (!inQuote && c === ch) return i;
   }
-  return false;
+  return -1;
+}
+
+function containsUnquoted(pattern: string, ch: string): boolean {
+  return indexOfUnquoted(pattern, ch) !== -1;
 }
 
 /**

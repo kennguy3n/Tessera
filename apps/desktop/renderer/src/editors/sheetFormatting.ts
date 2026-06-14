@@ -24,14 +24,50 @@ export interface NumberFormatPreset {
   pattern: string | undefined;
 }
 
+// Curated presets covering the common Excel/Sheets formats. Patterns are
+// expressed in the same grammar the engine (`formulaEngine/format.ts`)
+// understands, so anything here is also a valid custom pattern. Negative
+// sections (`…;(…)`) render negatives in parentheses; trailing commas scale
+// by 1000 (thousands / millions); `@` is the text placeholder.
 export const NUMBER_FORMAT_PRESETS: NumberFormatPreset[] = [
   { id: "general", label: "General", pattern: undefined },
   { id: "number", label: "Number (1,234.56)", pattern: "#,##0.00" },
   { id: "integer", label: "Integer (1,235)", pattern: "#,##0" },
+  { id: "thousands", label: "Thousands (1,235K)", pattern: '#,##0,"K"' },
+  { id: "millions", label: "Millions (1.2M)", pattern: '#,##0.0,,"M"' },
   { id: "percent", label: "Percent (12.34%)", pattern: "0.00%" },
+  { id: "percent-int", label: "Percent (12%)", pattern: "0%" },
   { id: "currency", label: "Currency ($1,234.56)", pattern: "$#,##0.00" },
+  { id: "currency-int", label: "Currency ($1,235)", pattern: "$#,##0" },
+  {
+    id: "accounting",
+    label: "Accounting (1,234.56)",
+    pattern: "#,##0.00;(#,##0.00)",
+  },
   { id: "date", label: "Date (2024-01-31)", pattern: "yyyy-mm-dd" },
+  { id: "date-us", label: "Date (1/31/2024)", pattern: "m/d/yyyy" },
+  { id: "datetime", label: "Date time (2024-01-31 14:30)", pattern: "yyyy-mm-dd hh:mm" },
+  { id: "time", label: "Time (14:30:00)", pattern: "hh:mm:ss" },
 ];
+
+/**
+ * The pattern of a known preset, or `undefined` for General / unknown.
+ * Used by the toolbar to keep the preset `<select>` and the custom-pattern
+ * input in sync without duplicating the lookup.
+ */
+export function presetPattern(id: string): string | undefined {
+  return NUMBER_FORMAT_PRESETS.find((p) => p.id === id)?.pattern;
+}
+
+/**
+ * Resolve a number-format string to the matching preset id, or `"custom"`
+ * when the cell carries a hand-entered pattern (and `"general"` when unset).
+ */
+export function presetIdForPattern(pattern: string | undefined): string {
+  if (pattern === undefined || pattern === "") return "general";
+  const hit = NUMBER_FORMAT_PRESETS.find((p) => p.pattern === pattern);
+  return hit ? hit.id : "custom";
+}
 
 /** `"row,col"` key for the per-cell format map. */
 export function formatKey(row: number, col: number): string {

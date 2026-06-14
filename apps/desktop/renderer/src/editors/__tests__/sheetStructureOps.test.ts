@@ -212,3 +212,81 @@ describe("insertRowAt", () => {
     expect(next.formats).toEqual(c.formats);
   });
 });
+
+/**
+ * A content fixture carrying a pivot bound to A1:E3. A spare leading
+ * column (index 0) sits before the pivot's fields so a removal of an
+ * *earlier* column can be exercised without deleting a field itself.
+ */
+function pivotFixture(): SheetContent {
+  return {
+    columns: ["Spare", "Region", "Quarter", "Rep", "Amount"],
+    rows: [
+      ["x", "Region", "Quarter", "Rep", "Amount"],
+      ["x", "West", "Q1", "Lee", "100"],
+      ["x", "East", "Q1", "Kim", "200"],
+    ],
+    pivots: [
+      {
+        id: "p1",
+        range: "A1:E3",
+        rowField: 1,
+        colField: 2,
+        valueField: 4,
+        agg: "sum",
+      },
+    ],
+  };
+}
+
+describe("structural edits remap pivot fields", () => {
+  it("shifts the range and every field right when a column is inserted", () => {
+    const next = insertColumnAt(pivotFixture(), 0, "Z");
+    expect(next.pivots?.[0]).toEqual({
+      id: "p1",
+      range: "B1:F3",
+      rowField: 2,
+      colField: 3,
+      valueField: 5,
+      agg: "sum",
+    });
+  });
+
+  it("shifts fields left when an earlier column is removed", () => {
+    const next = removeColumnAt(pivotFixture(), 0);
+    expect(next.pivots?.[0]).toEqual({
+      id: "p1",
+      range: "A1:D3",
+      rowField: 0,
+      colField: 1,
+      valueField: 3,
+      agg: "sum",
+    });
+  });
+
+  it("drops the optional column field when its column is removed", () => {
+    // Remove column C (index 2) — the pivot's colField. It should fall away
+    // while the row/value fields shift to stay aligned.
+    const next = removeColumnAt(pivotFixture(), 2);
+    expect(next.pivots?.[0]).toEqual({
+      id: "p1",
+      range: "A1:D3",
+      rowField: 1,
+      valueField: 3,
+      agg: "sum",
+    });
+    expect(next.pivots?.[0]).not.toHaveProperty("colField");
+  });
+
+  it("only shifts the range (not column fields) on a row edit", () => {
+    const next = insertRowAt(pivotFixture(), 0);
+    expect(next.pivots?.[0]).toEqual({
+      id: "p1",
+      range: "A2:E4",
+      rowField: 1,
+      colField: 2,
+      valueField: 4,
+      agg: "sum",
+    });
+  });
+});

@@ -21,6 +21,7 @@ import type {
   CellFormat,
   ChartSpec,
   ConditionalFormatRule,
+  PivotSpec,
   SheetContent,
   SheetNamedRange,
   ValidationMap,
@@ -30,6 +31,7 @@ import {
   allCellsHave,
   applyFormatPatch,
   getCellFormat,
+  presetIdForPattern,
   toggleBoolFormat,
   type BoolFormatKey,
 } from "./sheetFormatting";
@@ -47,13 +49,16 @@ import {
   removeColumnAt,
   removeRowAt,
 } from "./sheetStructureOps";
-import { extractChartData } from "./sheetCharts";
+import { columnLetter, extractChartData } from "./sheetCharts";
+import { computePivot } from "./sheetPivot";
 import { ConditionalFormatPanel } from "./components/ConditionalFormatPanel";
 import { DataValidationPanel } from "./components/DataValidationPanel";
 import { NamedRangePanel } from "./components/NamedRangePanel";
 import { SheetAiPanel } from "./components/SheetAiPanel";
 import { ChartsPanel } from "./components/ChartsPanel";
 import { SheetChart } from "./components/SheetChart";
+import { PivotPanel } from "./components/PivotPanel";
+import { SheetPivot } from "./components/SheetPivot";
 import {
   type CellCoord,
   type Selection,
@@ -80,6 +85,7 @@ import {
   Sparkles,
   ShieldCheck,
   BarChart3,
+  Table2,
   Bold as BoldIcon,
   Italic as ItalicIcon,
   Underline as UnderlineIcon,
@@ -91,20 +97,11 @@ import {
 export type { SheetContent } from "./sheetEditorTypes";
 
 /**
- * Convert a zero-based column index to the A1-style column label
- * shown in the header (and in the formula bar's cell-address
- * box). Pure function with no React deps — exported solely for the
- * formula-bar code path; not used outside this file.
+ * A1-style column label for the header, formula bar, and selection
+ * reference. Aliases the canonical {@link columnLetter} (imported from
+ * `./sheetCharts`) so the A→Z→AA algorithm lives in exactly one place.
  */
-function columnLabel(index: number): string {
-  let label = "";
-  let n = index;
-  while (n >= 0) {
-    label = String.fromCharCode(65 + (n % 26)) + label;
-    n = Math.floor(n / 26) - 1;
-  }
-  return label;
-}
+const columnLabel = columnLetter;
 
 interface SheetEditorProps {
   content: string;
@@ -169,6 +166,8 @@ export default function SheetEditor({
   const [dvOpen, setDvOpen] = useState(false);
   // Charts manager visibility.
   const [chartsOpen, setChartsOpen] = useState(false);
+  // Pivot-table manager visibility.
+  const [pivotsOpen, setPivotsOpen] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -705,6 +704,50 @@ export default function SheetEditor({
     [sheet.charts, chartValueAt, chartTextAt],
   );
 
+  // Replace the sheet's pivots and persist. Mirrors `setCharts`: an empty
+  // list drops the field so a pivot-free sheet stays byte-identical to its
+  // pre-feature JSON, and an updater form avoids stale-closure lost updates.
+  const setPivots = useCallback(
+    (pivots: PivotSpec[] | ((prev: PivotSpec[]) => PivotSpec[])) => {
+      setSheet((prev) => {
+        const nextPivots =
+          typeof pivots === "function" ? pivots(prev.pivots ?? []) : pivots;
+        const next: SheetContent = { ...prev };
+        if (nextPivots.length === 0) delete next.pivots;
+        else next.pivots = nextPivots;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // Label a grid column for the pivot field pickers, e.g. `"A · Region"`:
+  // the column letter plus its header text. `headerRow` defaults to the grid's
+  // first row but the caller passes the pivot's *own* source-range header row
+  // so the picker labels match the headers the pivot actually computes from
+  // (e.g. a range starting at A5 reads its names from row 5, not row 1).
+  const columnLabelAt = useCallback(
+    (col: number, headerRow = 0): string => {
+      const header = chartTextAt(headerRow, col).trim();
+      const letter = columnLetter(col);
+      return header !== "" ? `${letter} · ${header}` : letter;
+    },
+    [chartTextAt],
+  );
+
+  // Each pivot's computed cross-tab, re-derived whenever the sheet changes.
+  // `computePivot` never throws on a bad range/field — it yields null or an
+  // empty result, which `SheetPivot` renders as a friendly "no data" state.
+  const renderedPivots = useMemo(
+    () =>
+      (sheet.pivots ?? []).map((spec) => ({
+        spec,
+        result: computePivot(spec, chartValueAt, chartTextAt),
+      })),
+    [sheet.pivots, chartValueAt, chartTextAt],
+  );
+
   // Apply a manual-format patch to every cell in the current selection
   // (falls back to the active cell). Used by the format toolbar.
   const applySelectionFormat = useCallback(
@@ -769,6 +812,21 @@ export default function SheetEditor({
     return getCellFormat(sheet.formats, activeCell.row, activeCell.col)
       ?.numberFormat;
   }, [activeCell, sheet.formats]);
+
+  // Editable draft for the custom-pattern input. Kept in sync with the active
+  // cell so the field always reflects the selection, but locally editable so a
+  // user can type a pattern (committed on Enter / blur) without it being
+  // clobbered mid-keystroke by re-renders.
+  const [numberFormatDraft, setNumberFormatDraft] = useState("");
+  useEffect(() => {
+    setNumberFormatDraft(activeNumberFormat ?? "");
+  }, [activeNumberFormat]);
+
+  const commitNumberFormatDraft = useCallback(() => {
+    const next = numberFormatDraft.trim();
+    if (next === (activeNumberFormat ?? "")) return;
+    applySelectionFormat({ numberFormat: next === "" ? undefined : next });
+  }, [numberFormatDraft, activeNumberFormat, applySelectionFormat]);
 
   // Insert an (already-validated) formula into the active cell. Used by
   // the AI assistant — the formula has passed `validateGeneratedFormula`
@@ -1390,6 +1448,18 @@ export default function SheetEditor({
             ? ` (${sheet.charts.length})`
             : ""}
         </button>
+        <button
+          type="button"
+          className={pivotsOpen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={pivotsOpen}
+          data-testid="sheet-pivots-toggle"
+          onClick={() => setPivotsOpen((open) => !open)}
+        >
+          <Table2 size={15} aria-hidden="true" /> Pivot
+          {sheet.pivots && sheet.pivots.length > 0
+            ? ` (${sheet.pivots.length})`
+            : ""}
+        </button>
       </div>
 
       <div
@@ -1477,12 +1547,9 @@ export default function SheetEditor({
             aria-label="Number format"
             data-testid="sheet-format-number"
             disabled={!activeCell}
-            value={
-              NUMBER_FORMAT_PRESETS.find(
-                (p) => p.pattern === activeNumberFormat,
-              )?.id ?? "general"
-            }
+            value={presetIdForPattern(activeNumberFormat)}
             onChange={(e) => {
+              if (e.target.value === "custom") return;
               const preset = NUMBER_FORMAT_PRESETS.find(
                 (p) => p.id === e.target.value,
               );
@@ -1494,7 +1561,32 @@ export default function SheetEditor({
                 {p.label}
               </option>
             ))}
+            {/* Shown only while a hand-entered pattern is active; selecting it
+                is a no-op — the adjacent input owns custom entry. */}
+            {presetIdForPattern(activeNumberFormat) === "custom" && (
+              <option value="custom">Custom…</option>
+            )}
           </select>
+          <input
+            type="text"
+            className="sheet-format-custom"
+            aria-label="Custom number format"
+            data-testid="sheet-format-custom"
+            placeholder="Custom (e.g. #,##0.00;(#,##0.00))"
+            spellCheck={false}
+            disabled={!activeCell}
+            value={numberFormatDraft}
+            onChange={(e) => setNumberFormatDraft(e.target.value)}
+            onBlur={commitNumberFormatDraft}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitNumberFormatDraft();
+              } else if (e.key === "Escape") {
+                setNumberFormatDraft(activeNumberFormat ?? "");
+              }
+            }}
+          />
         </label>
       </div>
 
@@ -1531,6 +1623,16 @@ export default function SheetEditor({
           selectionRef={selectionRef}
           onChange={setCharts}
           onClose={() => setChartsOpen(false)}
+        />
+      )}
+
+      {pivotsOpen && (
+        <PivotPanel
+          pivots={sheet.pivots ?? []}
+          selectionRef={selectionRef}
+          columnLabelAt={columnLabelAt}
+          onChange={setPivots}
+          onClose={() => setPivotsOpen(false)}
         />
       )}
 
@@ -1979,6 +2081,25 @@ export default function SheetEditor({
               data={data}
               onRemove={() =>
                 setCharts((prev) => prev.filter((c) => c.id !== spec.id))
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {renderedPivots.length > 0 && (
+        <div
+          className="sheet-pivots-strip"
+          data-testid="sheet-pivots-strip"
+          aria-label="Pivot tables"
+        >
+          {renderedPivots.map(({ spec, result }) => (
+            <SheetPivot
+              key={spec.id}
+              spec={spec}
+              result={result}
+              onRemove={() =>
+                setPivots((prev) => prev.filter((p) => p.id !== spec.id))
               }
             />
           ))}

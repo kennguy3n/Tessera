@@ -1927,6 +1927,100 @@
   border-radius: 2px;
 }
 
+/* ── Sheet pivot tables ───────────────────────────────────────── */
+
+.sheet-pivots-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-subtle, var(--color-bg-page));
+  overflow-x: auto;
+}
+
+.sheet-pivot {
+  margin: 0;
+  padding: var(--spacing-sm);
+  min-width: 280px;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
+.sheet-pivot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.sheet-pivot-title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-pivot-empty {
+  margin: 0;
+  padding: var(--spacing-lg) var(--spacing-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.sheet-pivot-table {
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Screen-reader-only table summary: removed from the visual flow but kept
+   in the accessibility tree so the pivot reads coherently. */
+.sheet-pivot-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sheet-pivot-table th,
+.sheet-pivot-table td {
+  border: 1px solid var(--color-border);
+  padding: 2px 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sheet-pivot-corner,
+.sheet-pivot-rowhead {
+  text-align: left;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+  background: var(--color-bg-subtle, var(--color-bg-page));
+}
+
+.sheet-pivot-colhead {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+  background: var(--color-bg-subtle, var(--color-bg-page));
+}
+
+.sheet-pivot-total {
+  font-weight: var(--font-weight-semibold);
+  background: var(--color-bg-subtle, var(--color-bg-page));
+}
+
 /* ── Sheet AI assistant panel ─────────────────────────────────── */
 
 .sheet-ai-actions {
@@ -2196,9 +2290,11 @@
 .sheet-format-field {
   display: inline-flex;
   align-items: center;
+  gap: var(--spacing-xs);
 }
 
-.sheet-format-field select {
+.sheet-format-field select,
+.sheet-format-custom {
   height: 30px;
   padding: 0 var(--spacing-sm);
   background: var(--color-bg-page);
@@ -2209,9 +2305,26 @@
   font-size: var(--font-size-sm);
 }
 
-.sheet-format-field select:focus-visible {
+.sheet-format-custom {
+  width: 15ch;
+  /* A format pattern is structured punctuation — a monospace face keeps
+     `#,##0.00;(#,##0.00)` legible while typing. */
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+}
+
+.sheet-format-custom::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.sheet-format-field select:focus-visible,
+.sheet-format-custom:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
+}
+
+.sheet-format-custom:disabled {
+  opacity: 0.5;
 }
 
 .sheet-grid-wrapper,
