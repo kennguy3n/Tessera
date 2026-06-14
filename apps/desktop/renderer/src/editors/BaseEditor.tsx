@@ -1057,8 +1057,14 @@ export default function BaseEditor({
     // Resolve the comparison key for ANY field by name — the same
     // resolution the single-sort path used, now reusable across every
     // level of a multi-column sort. Unknown field names compare as "".
+    //
+    // The field definitions are resolved into a name→def map ONCE here
+    // rather than re-scanning `data.fields` inside the comparator: the
+    // comparator runs O(levels × N log N) times, so a per-call linear
+    // `find` would multiply the sort cost by the field count.
+    const fieldByName = new Map(data.fields.map((f) => [f.name, f]));
     const sortKeyFor = (r: BaseRecord, fieldName: string): string => {
-      const def = data.fields.find((f) => f.name === fieldName);
+      const def = fieldByName.get(fieldName);
       if (def === undefined) return "";
       if (def.type === "created_time" || def.type === "modified_time") {
         const iso =
