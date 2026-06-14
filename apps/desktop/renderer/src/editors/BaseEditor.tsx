@@ -28,7 +28,8 @@ import {
   renameColumnSummaryKey,
   formatSummaryValue,
   formatDurationMinutes,
-  SUMMARY_LABELS,
+  summaryLabel,
+  checkboxSummaryInput,
   type SortRule,
 } from "./baseGridHelpers";
 import {
@@ -1118,6 +1119,9 @@ export default function BaseEditor({
             tableResolver,
           );
         }
+        if (def.type === "checkbox") {
+          return checkboxSummaryInput(r[fieldName]);
+        }
         return r[fieldName];
       });
       out[fieldName] = formatSummaryValue(
@@ -1961,7 +1965,7 @@ export default function BaseEditor({
                       <option value="">Summary…</option>
                       {kinds.map((k) => (
                         <option key={k} value={k}>
-                          {SUMMARY_LABELS[k]}
+                          {summaryLabel(k, field.type)}
                         </option>
                       ))}
                     </select>
