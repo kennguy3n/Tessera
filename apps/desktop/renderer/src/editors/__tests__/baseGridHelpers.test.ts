@@ -17,12 +17,15 @@ import {
   pruneSorts,
   renameSortField,
   summaryKindsForFieldType,
+  summaryLabel,
+  checkboxSummaryInput,
   formatSummaryValue,
   formatDurationMinutes,
   pruneColumnSummaries,
   renameColumnSummaryKey,
   type SortRule,
 } from "../baseGridHelpers";
+import { aggregateValues } from "../baseEditorHelpers";
 import type { BaseRecord } from "../baseEditorTypes";
 
 describe("groupValueLabel", () => {
@@ -347,6 +350,42 @@ describe("summaryKindsForFieldType", () => {
     expect(summaryKindsForFieldType("text")).toEqual(["COUNT"]);
     expect(summaryKindsForFieldType("select")).toEqual(["COUNT"]);
     expect(summaryKindsForFieldType("date")).toEqual(["COUNT"]);
+    expect(summaryKindsForFieldType("checkbox")).toEqual(["COUNT"]);
+  });
+});
+
+describe("summaryLabel", () => {
+  it("labels a checkbox COUNT as \"Checked\", not the generic \"Filled\"", () => {
+    expect(summaryLabel("COUNT", "checkbox")).toBe("Checked");
+  });
+
+  it("keeps the generic label for COUNT on every other type", () => {
+    expect(summaryLabel("COUNT", "text")).toBe("Filled");
+    expect(summaryLabel("COUNT", "number")).toBe("Filled");
+  });
+
+  it("passes numeric aggregations through unchanged for any type", () => {
+    expect(summaryLabel("SUM", "checkbox")).toBe("Sum");
+    expect(summaryLabel("AVG", "number")).toBe("Avg");
+  });
+});
+
+describe("checkboxSummaryInput", () => {
+  it("counts only checked cells when fed through aggregateValues COUNT", () => {
+    // A checkbox column with 2 checked of 4 rows. The default `false`
+    // value must NOT inflate COUNT to the row count.
+    const cells = [true, false, true, false];
+    const mapped = cells.map(checkboxSummaryInput);
+    expect(aggregateValues(mapped, "COUNT")).toBe("2");
+  });
+
+  it("treats false / undefined / legacy values as unchecked (empty)", () => {
+    expect(checkboxSummaryInput(true)).toBe(true);
+    expect(checkboxSummaryInput(false)).toBe("");
+    expect(checkboxSummaryInput(undefined)).toBe("");
+    expect(checkboxSummaryInput(null)).toBe("");
+    expect(checkboxSummaryInput("true")).toBe("");
+    expect(checkboxSummaryInput(0)).toBe("");
   });
 });
 

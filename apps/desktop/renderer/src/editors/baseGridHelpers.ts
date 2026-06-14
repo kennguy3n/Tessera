@@ -354,6 +354,33 @@ export const SUMMARY_LABELS: Record<RollupAggregation, string> = {
 };
 
 /**
+ * Footer label for a summary aggregation, specialised per field type. A
+ * checkbox's COUNT counts only CHECKED cells (see {@link checkboxSummaryInput}),
+ * so it reads "Checked" rather than the generic "Filled" — which would be
+ * misleading since every checkbox row, checked or not, holds a value.
+ */
+export function summaryLabel(
+  kind: RollupAggregation,
+  type: FieldType,
+): string {
+  if (kind === "COUNT" && type === "checkbox") return "Checked";
+  return SUMMARY_LABELS[kind];
+}
+
+/**
+ * Map a raw checkbox cell to the value the summary footer feeds into
+ * `aggregateValues`. A checkbox defaults to `false` — a non-empty value —
+ * so a plain `COUNT` of non-empty cells would always equal the visible row
+ * count rather than the number of *checked* rows. Collapsing unchecked
+ * cells to `""` (empty) makes `COUNT` count only checked cells, matching
+ * Airtable's checkbox summary. Only `true` counts; `false`, `undefined`,
+ * and any legacy value are treated as unchecked.
+ */
+export function checkboxSummaryInput(value: unknown): true | "" {
+  return value === true ? true : "";
+}
+
+/**
  * Format a non-negative integer count of minutes as `h:mm`. Mirrors the
  * `duration` cell renderer so the summary footer reads the same as the
  * column it sums. Clamps negatives to 0 (a JSON-loaded stray negative
