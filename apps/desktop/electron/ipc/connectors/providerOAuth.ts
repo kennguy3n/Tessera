@@ -83,15 +83,82 @@ import type { KnownProvider } from "../validate";
  */
 export type ProviderId = KnownProvider;
 
+/**
+ * Per-instance (per-subdomain) OAuth URL derivation seam.
+ *
+ * Most providers expose a single, fixed OAuth surface (`authUrl` /
+ * `tokenUrl` are compile-time constants). A handful are **per-instance**:
+ * the authorize/token endpoints live on the tenant's own subdomain
+ * (Zendesk: `https://<subdomain>.zendesk.com/oauth/...`; ServiceNow:
+ * `https://<instance>.service-now.com/oauth_*.do`). For those, the URL is
+ * not knowable at compile time — it is derived per connection from a
+ * user-supplied instance value collected in the connect modal.
+ *
+ * A provider declares `instanceUrls` INSTEAD of `authUrl`/`tokenUrl`
+ * (the two are mutually exclusive — see the module-load invariant in
+ * `assertOAuthConfigInvariant`). `resolveProviderOAuthConfig` then turns
+ * the stored instance value into concrete `authUrl`/`tokenUrl` (and an
+ * optional `revokeUrl`) by interpolating it into a host that is **pinned
+ * to `baseDomain`** — so a hostile instance value can never point the
+ * OAuth flow (or the connector's API base URL) at an arbitrary host
+ * (SSRF / open-redirect). Fixed-URL providers leave this `undefined` and
+ * behave exactly as before.
+ */
+export interface InstanceUrlTemplate {
+  /**
+   * The connect-spec `ConnectorConfigField` key whose validated value
+   * supplies the instance subdomain label (e.g. Zendesk's `subdomain`).
+   * MUST be a required field on the provider's `ConnectorConnectSpec`.
+   * The value is consumed into the derived URLs (and `apiBaseUrlField`)
+   * and is therefore NOT injected verbatim into `auth_config_json`.
+   */
+  instanceField: string;
+  /**
+   * Parent domain the instance is a subdomain of (e.g. `zendesk.com`,
+   * `service-now.com`). The derived origin is
+   * `https://<instanceValue>.<baseDomain>` and the host is pinned to
+   * exactly this domain — the SSRF/open-redirect allowlist boundary.
+   */
+  baseDomain: string;
+  /** Absolute path (begins with `/`) of the authorize endpoint. */
+  authorizePath: string;
+  /** Absolute path (begins with `/`) of the token endpoint. */
+  tokenPath: string;
+  /** Optional absolute path of the token-revocation endpoint. */
+  revokePath?: string;
+  /**
+   * Optional `auth_config_json` field to populate with the derived
+   * origin (`https://<instance>.<baseDomain>`), so the connector's
+   * per-instance API base URL is single-sourced from the SAME validated
+   * value the OAuth URLs were derived from (Zendesk/ServiceNow read
+   * `api_base_url`). Injected by `buildAuthConfig`.
+   */
+  apiBaseUrlField?: string;
+}
+
 export interface ProviderOAuthConfig {
   /** Stable provider id used by tokenVault and the connector registry. */
   provider: ProviderId;
-  /** Authorization endpoint. */
-  authUrl: string;
-  /** Token exchange endpoint. */
-  tokenUrl: string;
-  /** Optional token revocation endpoint. */
+  /**
+   * Authorization endpoint. Fixed-URL providers set this; per-instance
+   * providers omit it and declare {@link ProviderOAuthConfig.instanceUrls}
+   * instead (the two are mutually exclusive).
+   */
+  authUrl?: string;
+  /**
+   * Token exchange endpoint. Fixed-URL providers set this; per-instance
+   * providers derive it from {@link ProviderOAuthConfig.instanceUrls}.
+   */
+  tokenUrl?: string;
+  /** Optional token revocation endpoint (fixed-URL providers). */
   revokeUrl?: string;
+  /**
+   * Per-instance authorize/token URL derivation. When set, `authUrl`/
+   * `tokenUrl` MUST be omitted; call `resolveProviderOAuthConfig` with
+   * the connection's stored config to obtain the concrete URLs before
+   * running any OAuth flow. See {@link InstanceUrlTemplate}.
+   */
+  instanceUrls?: InstanceUrlTemplate;
   /** Space-delimited scope string. */
   scope: string;
   /** Loopback port the redirect URI will listen on. Must be unique per provider. */
@@ -748,12 +815,302 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     // Salesforce's OAuth2 web-server flow supports PKCE.
     usePkce: true,
   },
+  // Tranche 6: per-instance (per-subdomain) OAuth providers. These are
+  // the first connectors whose authorize/token endpoints are NOT fixed
+  // constants — they live on the tenant's own subdomain and are derived
+  // per connection via the `instanceUrls` seam from the validated
+  // instance value collected in the connect modal (see
+  // shared/connectorConfig.ts). Ports continue the unique sequence from
+  // 9907.
+  zendesk: {
+    provider: "zendesk",
+    // Per-subdomain OAuth surface: authorize at
+    // `https://<subdomain>.zendesk.com/oauth/authorizations/new`, token
+    // exchange at `https://<subdomain>.zendesk.com/oauth/tokens`. The
+    // `<subdomain>` is the validated `subdomain` connect field; the host
+    // is pinned to `zendesk.com` (SSRF/open-redirect allowlist).
+    instanceUrls: {
+      instanceField: "subdomain",
+      baseDomain: "zendesk.com",
+      authorizePath: "/oauth/authorizations/new",
+      tokenPath: "/oauth/tokens",
+      apiBaseUrlField: "api_base_url",
+    },
+    // Least-privilege: Zendesk's global `read` scope grants read-only
+    // access across the Support API the connector reads (incremental
+    // ticket export). No `write` scope is requested.
+    scope: "read",
+    redirectPort: 9907,
+    extraAuthorizeParams: {},
+    // Zendesk OAuth access tokens do not expire and the
+    // authorization-code grant issues no refresh token, so surface a
+    // "reconnect" UX on revocation rather than attempting a refresh.
+    supportsRefresh: false,
+    // Zendesk's confidential OAuth client authenticates with the
+    // client secret on token exchange; its authorize surface does not
+    // require PKCE.
+    usePkce: false,
+  },
+  servicenow: {
+    provider: "servicenow",
+    // Per-instance OAuth surface: authorize at
+    // `https://<instance>.service-now.com/oauth_auth.do`, token exchange
+    // at `https://<instance>.service-now.com/oauth_token.do`, revoke at
+    // `.../oauth_revoke_token.do`. The `<instance>` is the validated
+    // `subdomain` connect field; the host is pinned to `service-now.com`.
+    instanceUrls: {
+      instanceField: "subdomain",
+      baseDomain: "service-now.com",
+      authorizePath: "/oauth_auth.do",
+      tokenPath: "/oauth_token.do",
+      revokePath: "/oauth_revoke_token.do",
+      apiBaseUrlField: "api_base_url",
+    },
+    // ServiceNow's OAuth authorize request takes no `scope` parameter —
+    // a token inherits the authorizing user's role-based ACLs, and the
+    // connector only ever issues read-only GETs against the Table API.
+    // Least-privilege is enforced by authenticating with a read-only
+    // ServiceNow account. Empty scope is intentional (see
+    // SCOPELESS_PROVIDERS in handlers.ts).
+    scope: "",
+    redirectPort: 9908,
+    extraAuthorizeParams: {},
+    // ServiceNow issues refresh tokens (access tokens are short-lived,
+    // refresh tokens long-lived), so refresh after restart is supported
+    // by re-deriving the token URL from the persisted instance value.
+    supportsRefresh: true,
+    // ServiceNow's default OAuth provider authenticates the confidential
+    // client with its secret on token exchange; PKCE is not required.
+    usePkce: false,
+  },
 };
+
+/**
+ * Invariant: every provider config declares EITHER a fixed
+ * `authUrl` + `tokenUrl` pair OR a per-instance `instanceUrls`
+ * template — never both, never neither. Enforced at module load so a
+ * malformed config fails fast at startup (and in tests) rather than at
+ * the first connect attempt. The corresponding strict-data test asserts
+ * the same contract for the whole roster.
+ */
+function assertOAuthConfigInvariant(config: ProviderOAuthConfig): void {
+  const hasFixed = config.authUrl !== undefined || config.tokenUrl !== undefined;
+  const hasInstance = config.instanceUrls !== undefined;
+  if (hasFixed && hasInstance) {
+    throw new Error(
+      `OAuth config for ${config.provider} declares both fixed URLs and a per-instance template; they are mutually exclusive.`,
+    );
+  }
+  if (!hasInstance && (!config.authUrl || !config.tokenUrl)) {
+    throw new Error(
+      `OAuth config for ${config.provider} must declare both authUrl and tokenUrl, or a per-instance instanceUrls template.`,
+    );
+  }
+  if (hasInstance) {
+    const t = config.instanceUrls!;
+    for (const p of [t.authorizePath, t.tokenPath, ...(t.revokePath ? [t.revokePath] : [])]) {
+      if (!p.startsWith("/")) {
+        throw new Error(
+          `OAuth config for ${config.provider} has a non-absolute instance path "${p}" (must begin with "/").`,
+        );
+      }
+    }
+  }
+}
+
+for (const cfg of Object.values(PROVIDER_OAUTH_CONFIGS)) {
+  assertOAuthConfigInvariant(cfg);
+}
 
 export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {
   const cfg = PROVIDER_OAUTH_CONFIGS[provider];
   if (!cfg) throw new Error(`Unknown OAuth provider: ${provider}`);
   return cfg;
+}
+
+/**
+ * A {@link ProviderOAuthConfig} with its authorize/token URLs resolved
+ * to concrete strings — fixed-URL providers carry their constants
+ * verbatim; per-instance providers carry the URLs derived from the
+ * connection's instance value. The OAuth flow functions
+ * (`buildAuthorizeUrl`, `exchangeAuthorizationCode`,
+ * `refreshProviderToken`, `revokeProviderToken`) and `buildAuthConfig`
+ * consume this rather than the raw config so neither the authorize step,
+ * the token exchange, nor the refresh can run against an unresolved URL.
+ */
+export interface ResolvedProviderOAuthConfig extends ProviderOAuthConfig {
+  authUrl: string;
+  tokenUrl: string;
+  /**
+   * For per-instance providers, the validated `https://<instance>.<baseDomain>`
+   * origin the URLs were derived from (no path). `undefined` for
+   * fixed-URL providers.
+   */
+  instanceOrigin?: string;
+}
+
+/**
+ * Error thrown when a per-instance OAuth provider's instance value is
+ * missing or fails the strict host-allowlist validation. Carries the
+ * provider id so callers can surface a precise, non-secret message.
+ */
+export class InstanceUrlError extends Error {
+  readonly provider: string;
+
+  constructor(provider: string, message: string) {
+    super(message);
+    this.name = "InstanceUrlError";
+    this.provider = provider;
+    // Restore the prototype chain so `instanceof` works across the
+    // TS-down-target compile (same rationale as `MissingScopeError`).
+    Object.setPrototypeOf(this, InstanceUrlError.prototype);
+  }
+}
+
+/**
+ * A single RFC-1035 DNS label: lowercase letters/digits/hyphen, no
+ * leading or trailing hyphen, 1–63 chars. This is the ONLY shape a
+ * per-instance value may take — it cannot contain a dot, slash, `@`,
+ * port, or any other authority-smuggling character, so
+ * `https://<label>.<baseDomain>` always resolves to a host under the
+ * trusted `baseDomain`. The connect-modal inline validator uses the
+ * case-insensitive form (values are lowercased here before matching).
+ */
+const INSTANCE_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Concrete URLs derived from an {@link InstanceUrlTemplate}. */
+export interface DerivedInstanceUrls {
+  /** `https://<label>.<baseDomain>` (no path). */
+  origin: string;
+  authUrl: string;
+  tokenUrl: string;
+  revokeUrl?: string;
+}
+
+/**
+ * Derive the concrete authorize/token (and optional revoke) URLs for a
+ * per-instance provider from a user-supplied instance value, pinning the
+ * host to the template's `baseDomain`.
+ *
+ * Security (the SSRF / open-redirect boundary):
+ *   1. The instance value is trimmed, lowercased, and must match a
+ *      single DNS label ({@link INSTANCE_LABEL_RE}) — no dots, slashes,
+ *      `@`, ports, or whitespace, so it cannot encode a different
+ *      authority.
+ *   2. Each derived URL is re-parsed and its host re-checked to equal
+ *      exactly `<label>.<baseDomain>` over `https:` (defence in depth).
+ * Any deviation throws {@link InstanceUrlError}.
+ */
+export function deriveInstanceUrls(
+  template: InstanceUrlTemplate,
+  rawInstanceValue: string,
+): DerivedInstanceUrls {
+  const label = rawInstanceValue.trim().toLowerCase();
+  if (!INSTANCE_LABEL_RE.test(label)) {
+    throw new InstanceUrlError(
+      "",
+      `Invalid instance value "${rawInstanceValue}": expected a single ${template.baseDomain} subdomain label (letters, digits, hyphens; no dots).`,
+    );
+  }
+  const host = `${label}.${template.baseDomain}`;
+  const origin = `https://${host}`;
+  const build = (path: string): string => {
+    const url = new URL(path, `${origin}/`);
+    if (url.protocol !== "https:" || url.host !== host) {
+      throw new InstanceUrlError(
+        "",
+        `Refusing to derive a non-${template.baseDomain} OAuth URL for instance "${rawInstanceValue}".`,
+      );
+    }
+    return url.toString();
+  };
+  return {
+    origin,
+    authUrl: build(template.authorizePath),
+    tokenUrl: build(template.tokenPath),
+    revokeUrl: template.revokePath ? build(template.revokePath) : undefined,
+  };
+}
+
+/**
+ * Resolve a provider's OAuth config into one whose authorize/token URLs
+ * are concrete strings.
+ *
+ *   - Fixed-URL providers: returned unchanged (the constants are already
+ *     concrete). `connectorConfig` is ignored.
+ *   - Per-instance providers: the instance value is read from
+ *     `connectorConfig[instanceField]`, validated, and interpolated into
+ *     the authorize/token/revoke URLs (and the derived origin is exposed
+ *     as `instanceOrigin`). A missing or malformed value throws
+ *     {@link InstanceUrlError}.
+ *
+ * Callers MUST resolve before running any OAuth flow or building the
+ * Rust `auth_config`, so the per-instance value persisted with the
+ * connection drives the authorize step, the token exchange, AND the
+ * token refresh (after restart) from a single validated source.
+ */
+export function resolveProviderOAuthConfig(
+  provider: ProviderId,
+  connectorConfig?: Record<string, string> | null,
+): ResolvedProviderOAuthConfig {
+  const base = getProviderOAuthConfig(provider);
+  const template = base.instanceUrls;
+  if (!template) {
+    // Fixed-URL provider. The module-load invariant guarantees both
+    // URLs are present; assert here so the narrowing is type-safe.
+    if (!base.authUrl || !base.tokenUrl) {
+      throw new Error(
+        `OAuth config for ${provider} is missing authUrl/tokenUrl and declares no per-instance template.`,
+      );
+    }
+    return { ...base, authUrl: base.authUrl, tokenUrl: base.tokenUrl };
+  }
+  const instanceValue = connectorConfig?.[template.instanceField];
+  if (!instanceValue || instanceValue.trim().length === 0) {
+    throw new InstanceUrlError(
+      provider,
+      `${provider} requires a "${template.instanceField}" value to derive its OAuth URLs.`,
+    );
+  }
+  let derived: DerivedInstanceUrls;
+  try {
+    derived = deriveInstanceUrls(template, instanceValue);
+  } catch (err) {
+    // Re-stamp the provider id onto the (provider-less) derivation error.
+    if (err instanceof InstanceUrlError) {
+      throw new InstanceUrlError(provider, err.message);
+    }
+    throw err;
+  }
+  return {
+    ...base,
+    authUrl: derived.authUrl,
+    tokenUrl: derived.tokenUrl,
+    revokeUrl: derived.revokeUrl ?? base.revokeUrl,
+    instanceOrigin: derived.origin,
+  };
+}
+
+/**
+ * Read a resolved authorize/token URL off a config, throwing a clear
+ * error if it is still unresolved. The OAuth flow functions accept a
+ * `ProviderOAuthConfig` (so fixed-URL providers can be passed directly),
+ * but a per-instance config that was not run through
+ * `resolveProviderOAuthConfig` has no URL — this guard converts that
+ * programmer error into an explicit, non-silent failure instead of a
+ * `fetch(undefined)` / `new URL(undefined)` crash.
+ */
+function requireResolvedUrl(
+  config: ProviderOAuthConfig,
+  field: "authUrl" | "tokenUrl",
+): string {
+  const url = config[field];
+  if (!url) {
+    throw new Error(
+      `${config.provider}: ${field} is unresolved — call resolveProviderOAuthConfig() with the connection's instance value before running the OAuth flow.`,
+    );
+  }
+  return url;
 }
 
 export function getRedirectUri(config: ProviderOAuthConfig): string {
@@ -791,7 +1148,7 @@ export function buildAuthorizeUrl(
     redirectUri: string;
   },
 ): string {
-  const url = new URL(config.authUrl);
+  const url = new URL(requireResolvedUrl(config, "authUrl"));
   url.searchParams.set("client_id", params.clientId);
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set("response_type", "code");
@@ -1055,7 +1412,7 @@ export async function exchangeAuthorizationCode(
     body.set("code_verifier", params.codeVerifier);
   }
 
-  const resp = await fetch(config.tokenUrl, {
+  const resp = await fetch(requireResolvedUrl(config, "tokenUrl"), {
     method: "POST",
     headers,
     body: body.toString(),
@@ -1179,7 +1536,7 @@ export async function refreshProviderToken(
     body.set("client_secret", params.clientSecret);
   }
 
-  const resp = await fetch(config.tokenUrl, {
+  const resp = await fetch(requireResolvedUrl(config, "tokenUrl"), {
     method: "POST",
     headers,
     body: body.toString(),

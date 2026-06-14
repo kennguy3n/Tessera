@@ -581,6 +581,56 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
       },
     ],
   },
+  // Tranche 6: per-instance (per-subdomain) OAuth providers. The
+  // `subdomain` field is the per-instance value the OAuth `instanceUrls`
+  // seam derives the authorize/token URLs from (see providerOAuth.ts).
+  // Its `validation.pattern` MUST stay in lockstep with the seam's
+  // `INSTANCE_LABEL_RE` host-allowlist guard: a single DNS label
+  // (letters, digits, hyphens; no dots) so the derived host can only be
+  // `<subdomain>.<baseDomain>` and never an attacker-chosen host
+  // (SSRF/open-redirect). The connector reads the derived `api_base_url`
+  // origin, not this raw value, so `subdomain` is intentionally NOT a
+  // field the upstream connector reads directly.
+  zendesk: {
+    connectMethod: "oauth2",
+    configFields: [
+      {
+        key: "subdomain",
+        label: "Zendesk subdomain",
+        required: true,
+        secret: false,
+        placeholder: "acme",
+        help:
+          "Just your Zendesk subdomain — the first label of your Zendesk URL (https://<subdomain>.zendesk.com). Enter 'acme' for acme.zendesk.com, not the full URL.",
+        validation: {
+          // A single DNS label (matches the seam's INSTANCE_LABEL_RE,
+          // case-insensitively — the host derivation lowercases it).
+          pattern: "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
+          message:
+            "Enter just your Zendesk subdomain (letters, digits, hyphens) — e.g. 'acme' for acme.zendesk.com.",
+        },
+      },
+    ],
+  },
+  servicenow: {
+    connectMethod: "oauth2",
+    configFields: [
+      {
+        key: "subdomain",
+        label: "ServiceNow instance",
+        required: true,
+        secret: false,
+        placeholder: "dev12345",
+        help:
+          "Just your ServiceNow instance name — the first label of your instance URL (https://<instance>.service-now.com). Enter 'dev12345' for dev12345.service-now.com, not the full URL.",
+        validation: {
+          pattern: "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
+          message:
+            "Enter just your ServiceNow instance name (letters, digits, hyphens) — e.g. 'dev12345' for dev12345.service-now.com.",
+        },
+      },
+    ],
+  },
 };
 
 /**

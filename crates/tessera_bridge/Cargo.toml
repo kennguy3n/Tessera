@@ -76,6 +76,8 @@ connectors-v2-stable = [
     "connector-clickup",
     "connector-intercom",
     "connector-salesforce",
+    "connector-zendesk",
+    "connector-servicenow",
 ]
 connector-google-drive = ["connectors-v2"]
 connector-onedrive = ["connectors-v2"]
@@ -108,6 +110,11 @@ connector-monday = ["connectors-v2"]
 connector-clickup = ["connectors-v2"]
 connector-intercom = ["connectors-v2"]
 connector-salesforce = ["connectors-v2"]
+# Per-instance (per-subdomain) OAuth providers wired on the host-side
+# `instanceUrls` seam: Zendesk (per-subdomain Support tickets) and
+# ServiceNow (per-instance incidents via the Table API), both read-only.
+connector-zendesk = ["connectors-v2"]
+connector-servicenow = ["connectors-v2"]
 
 [dependencies]
 # Knowledge substrate connector layer, pinned by rev for reproducible
