@@ -76,6 +76,7 @@ export const TRUSTED_LEADING_TAGS: readonly string[] = [
   "div",
   "details", // ToggleNode (collapsible) serialises to <details data-type="toggle">
   "span",
+  "mark", // Highlight extension serialises to <mark data-color="…">
   "img",
   "a",
   "strong",
@@ -149,6 +150,31 @@ export function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Typography controls
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Decide what a typography `<select>` (font family / size / line height)
+ * should surface for the value read off the current selection.
+ *
+ * A controlled `<select>` whose bound value matches no `<option>` renders
+ * blank — which misrepresents the live formatting when the user has, say,
+ * pasted text carrying `15px` or `'Helvetica Neue', sans-serif` that isn't
+ * one of our presets. Returns:
+ *   - `null` when `current` is empty or already a preset (the matching
+ *     `<option>` is selected — nothing extra to render), or
+ *   - the raw `current` string when it's an off-preset value, so the caller
+ *     can append a display-only "custom" `<option>` that mirrors reality.
+ */
+export function customTypographyValue(
+  presetValues: readonly string[],
+  current: string,
+): string | null {
+  if (current === "" || presetValues.includes(current)) return null;
+  return current;
 }
 
 // ─────────────────────────────────────────────────────────────────────

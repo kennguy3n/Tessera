@@ -11,6 +11,13 @@ import {
   Sparkles,
   Bold as BoldIcon,
   Italic as ItalicIcon,
+  Underline as UnderlineIcon,
+  Highlighter,
+  Baseline,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
   Heading1,
   Heading2,
   Heading3,
@@ -51,10 +58,29 @@ import CharacterCount from "@tiptap/extension-character-count";
 import Image from "@tiptap/extension-image";
 import HorizontalRule from "@tiptap/extension-horizontal-rule";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+// `@tiptap/extension-text-style` is the umbrella mark package: TextStyle is
+// the base inline mark, and Color / FontFamily / FontSize are thin extensions
+// that write their attribute onto it. All first-party and tree-shakeable — no
+// new vendor. (Line height is block-level, so it comes from BlockLineHeight
+// below rather than this mark-oriented package.)
+//
+// The stock Color/FontFamily/FontSize/Highlight extensions interpolate their
+// stored value straight into an inline `style`, so we swap in sanitised
+// variants (see `extensions/safeTypography`) that allow-list the value before
+// it is serialised — a crafted document cannot inject extra CSS declarations.
+import { TextStyle } from "@tiptap/extension-text-style";
+import {
+  SafeColor,
+  SafeFontFamily,
+  SafeFontSize,
+  SafeHighlight,
+} from "./extensions/safeTypography";
+import TextAlign from "@tiptap/extension-text-align";
 import { common, createLowlight } from "lowlight";
 import { MermaidNode } from "./extensions/MermaidExtension";
 import { CalloutNode } from "./extensions/CalloutExtension";
 import { ToggleNode } from "./extensions/ToggleExtension";
+import { BlockLineHeight } from "./extensions/BlockLineHeight";
 import { TableOfContentsNode } from "./extensions/TableOfContentsExtension";
 import {
   FindReplaceExtension,
@@ -74,6 +100,7 @@ import {
 import {
   parseDocumentContent,
   countDocText,
+  customTypographyValue,
   fileToDataUrl,
   type SlashCommand,
 } from "./documentEditorHelpers";
@@ -131,6 +158,51 @@ const MENTION_TRIGGER_INITIAL: MentionTriggerState = {
   clientRect: null,
   visible: false,
 };
+
+// Curated typography options. Font families ship real CSS stacks (with web-safe
+// fallbacks) so the chosen face renders the same on export as in the editor; an
+// empty value means "unset" (fall back to the document's base style).
+const FONT_FAMILY_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  { label: "Default", value: "" },
+  { label: "Sans serif", value: "Inter, system-ui, sans-serif" },
+  { label: "Serif", value: "Georgia, 'Times New Roman', serif" },
+  { label: "Monospace", value: "'JetBrains Mono', 'Courier New', monospace" },
+  { label: "Arial", value: "Arial, Helvetica, sans-serif" },
+  { label: "Georgia", value: "Georgia, serif" },
+  { label: "Times New Roman", value: "'Times New Roman', Times, serif" },
+];
+
+const FONT_SIZE_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  { label: "Default", value: "" },
+  { label: "12", value: "12px" },
+  { label: "14", value: "14px" },
+  { label: "16", value: "16px" },
+  { label: "18", value: "18px" },
+  { label: "20", value: "20px" },
+  { label: "24", value: "24px" },
+  { label: "30", value: "30px" },
+  { label: "36", value: "36px" },
+];
+
+const LINE_HEIGHT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  { label: "Default", value: "" },
+  { label: "1.0", value: "1" },
+  { label: "1.15", value: "1.15" },
+  { label: "1.5", value: "1.5" },
+  { label: "2.0", value: "2" },
+];
+
+// Sensible starting swatch for the native colour picker when the selection has
+// no explicit colour yet (the picker can't represent "inherit").
+const DEFAULT_TEXT_COLOR = "#111827";
+const DEFAULT_HIGHLIGHT_COLOR = "#fde68a";
+
+const TEXT_ALIGNMENTS = [
+  ["left", AlignLeft, "Align left"],
+  ["center", AlignCenter, "Align center"],
+  ["right", AlignRight, "Align right"],
+  ["justify", AlignJustify, "Justify"],
+] as const;
 
 export default function DocumentEditor({
   content,
@@ -221,11 +293,28 @@ export default function DocumentEditor({
         // configure the standalone one separately so the slash menu
         // can call `setHorizontalRule()` without ambiguity.
         horizontalRule: false,
+        // StarterKit v3 bundles Link (with openOnClick: true). We register
+        // our own Link.configure({ openOnClick: false, autolink: true })
+        // below, so disable StarterKit's copy to avoid a duplicate
+        // registration whose defaults would otherwise shadow ours.
+        link: false,
       }),
       CodeBlockLowlight.configure({
         lowlight,
         defaultLanguage: "plaintext",
       }),
+      // Inline typography. TextStyle must precede the extensions that write
+      // onto it. FontSize/Color/FontFamily stay inline (default `textStyle`
+      // target). Line height and alignment are block-level attributes set on
+      // whole paragraphs/headings via updateAttributes (BlockLineHeight /
+      // TextAlign), not on the inline mark.
+      TextStyle,
+      SafeColor,
+      SafeFontFamily,
+      SafeFontSize,
+      BlockLineHeight.configure({ types: ["paragraph", "heading"] }),
+      SafeHighlight.configure({ multicolor: true }),
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
       HorizontalRule,
       Placeholder.configure({
         placeholder: "Start writing your document...",
@@ -673,6 +762,160 @@ export default function DocumentEditor({
   );
 }
 
+// A live mark value (font family / size / line height read off the selection)
+// can be something the user pasted from another app — e.g. `15px` or
+// `'Helvetica Neue', sans-serif` — that isn't one of our presets. A controlled
+// <select> with no matching <option> renders blank, misrepresenting the current
+// formatting, so we append a display-only "custom" option that mirrors the live
+// value. Picking a preset afterwards still applies cleanly.
+function customTypographyOption(
+  options: ReadonlyArray<{ value: string }>,
+  current: string,
+  label?: (value: string) => string,
+) {
+  const custom = customTypographyValue(
+    options.map((o) => o.value),
+    current,
+  );
+  if (custom === null) return null;
+  return <option value={custom}>{label ? label(custom) : custom}</option>;
+}
+
+// Typography cluster: font family / size, text + highlight colour, horizontal
+// alignment, and line height. Reads live marks off the current selection so the
+// controls reflect the caret position; all writes go through editor commands so
+// they participate in undo/redo and serialize into the saved HTML.
+function TypographyControls({ editor }: { editor: Editor }) {
+  const textStyle = editor.getAttributes("textStyle");
+  const currentFont: string = textStyle.fontFamily ?? "";
+  const currentSize: string = textStyle.fontSize ?? "";
+  const currentColor: string = textStyle.color ?? "";
+  // LineHeight is stored on the active block node (paragraph or heading).
+  const currentLineHeight: string =
+    editor.getAttributes("paragraph").lineHeight ??
+    editor.getAttributes("heading").lineHeight ??
+    "";
+  const currentHighlight: string = editor.getAttributes("highlight").color ?? "";
+
+  return (
+    <div className="toolbar-typography" role="group" aria-label="Typography">
+      <select
+        className="toolbar-select"
+        aria-label="Font family"
+        title="Font family"
+        value={currentFont}
+        onChange={(e) => {
+          const v = e.target.value;
+          const chain = editor.chain().focus();
+          if (v) chain.setFontFamily(v).run();
+          else chain.unsetFontFamily().run();
+        }}
+      >
+        {FONT_FAMILY_OPTIONS.map((o) => (
+          <option key={o.label} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+        {customTypographyOption(FONT_FAMILY_OPTIONS, currentFont, () => "Custom")}
+      </select>
+      <select
+        className="toolbar-select toolbar-select-narrow"
+        aria-label="Font size"
+        title="Font size"
+        value={currentSize}
+        onChange={(e) => {
+          const v = e.target.value;
+          const chain = editor.chain().focus();
+          if (v) chain.setFontSize(v).run();
+          else chain.unsetFontSize().run();
+        }}
+      >
+        {FONT_SIZE_OPTIONS.map((o) => (
+          <option key={o.label} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+        {customTypographyOption(FONT_SIZE_OPTIONS, currentSize)}
+      </select>
+      <label
+        className={currentColor ? "toolbar-color active" : "toolbar-color"}
+        title="Text color"
+      >
+        <Baseline size={16} aria-hidden="true" />
+        <span
+          className="toolbar-color-bar"
+          style={{ background: currentColor || "currentColor" }}
+          aria-hidden="true"
+        />
+        <input
+          type="color"
+          aria-label="Text color"
+          value={currentColor || DEFAULT_TEXT_COLOR}
+          onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
+        />
+      </label>
+      <button
+        type="button"
+        className={editor.isActive("highlight") ? "toolbar-btn active" : "toolbar-btn"}
+        title="Highlight"
+        aria-label="Highlight"
+        aria-pressed={editor.isActive("highlight")}
+        onClick={() =>
+          editor
+            .chain()
+            .focus()
+            .toggleHighlight({ color: currentHighlight || DEFAULT_HIGHLIGHT_COLOR })
+            .run()
+        }
+      >
+        <Highlighter size={16} aria-hidden="true" />
+      </button>
+      <span className="toolbar-separator" />
+      <div className="toolbar-align-group" role="group" aria-label="Text alignment">
+        {TEXT_ALIGNMENTS.map(([value, Icon, label]) => {
+          const active = editor.isActive({ textAlign: value });
+          return (
+            <button
+              key={value}
+              type="button"
+              className={active ? "toolbar-btn active" : "toolbar-btn"}
+              aria-label={label}
+              title={label}
+              aria-pressed={active}
+              onClick={() => editor.chain().focus().setTextAlign(value).run()}
+            >
+              <Icon size={16} aria-hidden="true" />
+            </button>
+          );
+        })}
+      </div>
+      <select
+        className="toolbar-select toolbar-select-narrow"
+        aria-label="Line height"
+        title="Line height"
+        value={currentLineHeight}
+        onChange={(e) => {
+          const v = e.target.value;
+          const chain = editor.chain().focus();
+          if (v) chain.setLineHeight(v).run();
+          else chain.unsetLineHeight().run();
+        }}
+      >
+        {LINE_HEIGHT_OPTIONS.map((o) => (
+          <option key={o.label} value={o.value}>
+            {o.label === "Default" ? "↕ Default" : `↕ ${o.label}`}
+          </option>
+        ))}
+        {customTypographyOption(
+          LINE_HEIGHT_OPTIONS,
+          currentLineHeight,
+          (v) => `↕ ${v}`,
+        )}
+      </select>
+    </div>
+  );
+}
+
 function Toolbar({
   editor,
   onSetLink,
@@ -727,6 +970,21 @@ function Toolbar({
       >
         <ItalicIcon size={16} aria-hidden="true" />
       </button>
+      {/* Underline isn't imported explicitly: TipTap v3's StarterKit bundles
+          and registers @tiptap/extension-underline by default (unlike v2), so
+          toggleUnderline()/isActive("underline") are available without it. */}
+      <button
+        type="button"
+        className={editor.isActive("underline") ? "toolbar-btn active" : "toolbar-btn"}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+        title="Underline (Ctrl+U)"
+        aria-label="Underline"
+        aria-pressed={editor.isActive("underline")}
+      >
+        <UnderlineIcon size={16} aria-hidden="true" />
+      </button>
+      <span className="toolbar-separator" />
+      <TypographyControls editor={editor} />
       <span className="toolbar-separator" />
       <button
         type="button"
