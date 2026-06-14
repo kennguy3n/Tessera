@@ -145,19 +145,24 @@ const JOBS = [
 ];
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-await page.emulateMedia({ reducedMotion: "reduce" });
 
 let ok = 0, fail = 0;
 for (const job of JOBS) {
   if (FILTER && !job.name.includes(FILTER)) continue;
+  // Fresh page per job so no job can inherit mutated state (open dialogs,
+  // split panes, etc.) from a previous job that failed mid-run.
+  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   try {
     await job.run(page);
     ok++;
   } catch (e) {
     fail++;
     console.error("FAILED", job.name, "->", e.message);
+  } finally {
+    await page.close();
   }
 }
 await browser.close();
 console.log(`\nDONE ok=${ok} fail=${fail}`);
+if (fail > 0) process.exitCode = 1;
