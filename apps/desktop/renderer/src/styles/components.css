@@ -4713,6 +4713,68 @@
   gap: var(--spacing-xs);
 }
 
+/* ── Skill runner (deliberate multi-step AI) ─────────────────────── */
+.skill-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+.skill-panel-desc {
+  margin: 0;
+}
+.skill-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+.skill-step {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.skill-step-active {
+  border-left-color: var(--color-primary);
+}
+.skill-step-done {
+  border-left-color: var(--color-success-fg);
+}
+.skill-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+.skill-step-title {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-headline);
+}
+.skill-step-state {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.skill-step-done .skill-step-state {
+  color: var(--color-success-fg);
+}
+.skill-step-output {
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+}
+.skill-step-output summary {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+.skill-step-live {
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
 /* ── Link popover ────────────────────────────────────────────────── */
 .link-popover {
   z-index: 30;
