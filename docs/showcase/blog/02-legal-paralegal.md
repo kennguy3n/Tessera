@@ -63,8 +63,8 @@ dropdowns; **conditional formatting** paints High-priority clauses red and *Unde
 rows amber; a **named range** (`Obligations`) anchors the column; and a **formula** column
 (`=IF(Status="Under Review","REVIEW","")`) auto-flags anything still in negotiation — the
 §5.1 liability-cap rows light up exactly as you'd want. The toolbar exposes the full
-spreadsheet surface (140+ formula functions, named ranges, validation, charts, on-device AI
-assistant) over the model's own values. The non-renewal notice deadline (2027-12-31), the
+spreadsheet surface (160+ formula functions, named ranges, validation, conditional formatting,
+charts, pivot tables, on-device AI assistant) over the model's own values. The non-renewal notice deadline (2027-12-31), the
 breach-notification window, and the liability-cap negotiation all become trackable line
 items. Source JSON:
 [`outputs/obligation-tracker.json`](../artifacts/legal/outputs/obligation-tracker.json).
