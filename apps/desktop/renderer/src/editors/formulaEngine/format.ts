@@ -492,7 +492,11 @@ function renderNumericBody(value: number, body: string): string {
   if (fracDigits > 0) {
     out += "." + fracText.padEnd(fracDigits, "0");
   }
-  if (isNegative) out = "-" + out;
+  // Only sign a magnitude that actually renders as non-zero. A tiny negative
+  // such as -0.0001 under "0.00" rounds to "0.00"; Excel shows that without a
+  // sign rather than "-0.00", so suppress the minus when the rounded value is
+  // zero (covers "-0", "-0.00", "-0.000", …).
+  if (isNegative && Number(rounded) !== 0) out = "-" + out;
   return out;
 }
 
@@ -530,11 +534,37 @@ const MONTH_NAMES = [
 ];
 
 /**
+ * True when `pattern` carries an `AM/PM` (or `am/pm`) clock token outside a
+ * quoted literal or `\`-escape. Hours render in 12-hour form only then, so
+ * this is computed up front (the token sits *after* the hour placeholder).
+ */
+function patternUsesAmPm(pattern: string): boolean {
+  let inQuote = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote) continue;
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (pattern.startsWith("AM/PM", i) || pattern.startsWith("am/pm", i)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Format `date` (UTC) using an Excel-style pattern. Supported
  * tokens: `yyyy`, `yy`, `mmmm`, `mmm`, `mm`, `m`, `dd`, `d`,
  * `dddd`, `ddd`, `hh`, `h`, `mm` (when inside hh:mm:ss segment we
  * disambiguate to minutes), `ss`, `s`, `AM/PM`, plus `"literal"`
- * and `\x` escapes.
+ * and `\x` escapes. With an `AM/PM` token present, `h`/`hh` render
+ * on a 12-hour clock (0→12, 13→1, …) to match Excel.
  */
 function formatDate(date: Date, pattern: string): string {
   const Y = date.getUTCFullYear();
@@ -547,6 +577,14 @@ function formatDate(date: Date, pattern: string): string {
   let out = "";
   let i = 0;
   let sawHour = false;
+  // 12-hour clock when an AM/PM token is present: 0 and 12 both show as 12,
+  // 13-23 wrap to 1-11. Pure 24-hour formats (`hh:mm`) keep the raw hour.
+  const twelveHour = patternUsesAmPm(pattern);
+  const clockHour = (h: number): number => {
+    if (!twelveHour) return h;
+    const wrapped = h % 12;
+    return wrapped === 0 ? 12 : wrapped;
+  };
   while (i < pattern.length) {
     const ch = pattern[i];
     if (ch === '"') {
@@ -606,13 +644,13 @@ function formatDate(date: Date, pattern: string): string {
       continue;
     }
     if (pattern.startsWith("hh", i)) {
-      out += String(H).padStart(2, "0");
+      out += String(clockHour(H)).padStart(2, "0");
       sawHour = true;
       i += 2;
       continue;
     }
     if (pattern.startsWith("h", i)) {
-      out += String(H);
+      out += String(clockHour(H));
       sawHour = true;
       i += 1;
       continue;
