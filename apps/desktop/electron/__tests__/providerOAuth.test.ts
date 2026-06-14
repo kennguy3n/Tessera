@@ -19,6 +19,10 @@ import {
   revokeProviderToken,
 } from "../ipc/connectors/providerOAuth";
 import { KNOWN_PROVIDERS } from "../ipc/validate";
+import {
+  getConnectSpec,
+  validateConnectorField,
+} from "../../shared/connectorConfig";
 
 describe("PROVIDER_OAUTH_CONFIGS", () => {
   it("exposes a config for every known provider with a unique port", () => {
@@ -872,6 +876,50 @@ describe("deriveInstanceUrls (per-instance OAuth URL seam)", () => {
       expect(new URL(deriveInstanceUrls(zd, label).authUrl).host).toBe(
         `${label}.zendesk.com`,
       );
+    }
+  });
+
+  it("keeps the connect-spec pattern and the seam regex in functional lockstep", () => {
+    // Programmatic guard against the two layers drifting: for every
+    // provider that derives URLs from a `subdomain`, the connect-modal
+    // inline validator and `deriveInstanceUrls` MUST agree on accept vs.
+    // reject for every input (after the seam's trim+lowercase). If either
+    // the connect-spec `pattern`/`minLength` or `INSTANCE_LABEL_RE` is
+    // edited independently, this fails — there is no other coupling.
+    const cases = [
+      "ab", // shortest valid
+      "acme",
+      "ACME", // connect allows A-Z; seam lowercases first
+      "Dev-12345",
+      "x".repeat(63), // longest valid
+      "a", // too short (single label)
+      "x".repeat(64), // too long
+      "acme.zendesk.com", // dot → multi-label
+      "evil.com",
+      "https://acme.zendesk.com",
+      "acme/path",
+      "-acme", // leading hyphen
+      "acme-", // trailing hyphen
+      "ac me", // whitespace
+      "", // empty
+      "АÇМЕ", // non-ASCII
+    ];
+    for (const provider of ["zendesk", "servicenow"] as const) {
+      const field = getConnectSpec(provider).configFields[0];
+      const template = PROVIDER_OAUTH_CONFIGS[provider].instanceUrls!;
+      for (const value of cases) {
+        const connectAccepts = validateConnectorField(field, value).valid;
+        let seamAccepts = true;
+        try {
+          deriveInstanceUrls(template, value);
+        } catch {
+          seamAccepts = false;
+        }
+        expect(
+          { value, connectAccepts },
+          `connect-spec and seam disagree on "${value}" for ${provider}`,
+        ).toEqual({ value, connectAccepts: seamAccepts });
+      }
     }
   });
 
