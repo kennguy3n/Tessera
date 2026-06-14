@@ -267,6 +267,41 @@ describe("connectorsV2 buildAuthConfig", () => {
     expect(String(teams.scope).split(" ")).toContain("offline_access");
     expect(String(teams.scope).split(" ")).toContain("ChannelMessage.Read.All");
   });
+
+  it("derives per-instance OAuth + api_base_url URLs from the stored subdomain (Zendesk)", () => {
+    // Per-instance providers carry NO fixed authUrl/tokenUrl; the bag's
+    // URLs must be derived from the stored `subdomain`, host-pinned to
+    // zendesk.com. The `subdomain` field itself is consumed into those
+    // URLs (and `api_base_url`) and must NOT leak into the bag verbatim.
+    const cfg = buildAuthConfig("zendesk", {
+      ...TOKENS,
+      connectorConfig: { subdomain: "acme" },
+    });
+    expect(cfg.auth_url).toBe(
+      "https://acme.zendesk.com/oauth/authorizations/new",
+    );
+    expect(cfg.token_url).toBe("https://acme.zendesk.com/oauth/tokens");
+    expect(cfg.api_base_url).toBe("https://acme.zendesk.com");
+    // The raw instance field never travels in the bag.
+    expect(cfg.subdomain).toBeUndefined();
+    // Least-privilege read-only scope, single-sourced from the config.
+    expect(cfg.scope).toBe("read");
+  });
+
+  it("derives per-instance OAuth + api_base_url URLs from the stored instance (ServiceNow)", () => {
+    const cfg = buildAuthConfig("servicenow", {
+      ...TOKENS,
+      connectorConfig: { subdomain: "dev12345" },
+    });
+    expect(cfg.auth_url).toBe("https://dev12345.service-now.com/oauth_auth.do");
+    expect(cfg.token_url).toBe(
+      "https://dev12345.service-now.com/oauth_token.do",
+    );
+    expect(cfg.api_base_url).toBe("https://dev12345.service-now.com");
+    expect(cfg.subdomain).toBeUndefined();
+    // ServiceNow is scope-less — a token inherits the user's ACLs.
+    expect(cfg.scope).toBe("");
+  });
 });
 
 describe("v2BridgeAvailable", () => {
