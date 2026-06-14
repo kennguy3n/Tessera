@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  act,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import BaseAiAssistant from "../BaseAiAssistant";
@@ -34,7 +40,13 @@ beforeEach(() => {
   Object.defineProperty(window.tessera, "model", {
     configurable: true,
     value: {
-      status: vi.fn().mockResolvedValue({ available: true, modelName: "local", status: "ready" }),
+      status: vi
+        .fn()
+        .mockResolvedValue({
+          available: true,
+          modelName: "local",
+          status: "ready",
+        }),
       start: vi.fn(),
       stop: vi.fn(),
       generate: generateMock,
@@ -58,7 +70,9 @@ const records = [
   { id: "r2", Name: "Beta", Notes: "" },
 ];
 
-function setup(overrides: Partial<React.ComponentProps<typeof BaseAiAssistant>> = {}) {
+function setup(
+  overrides: Partial<React.ComponentProps<typeof BaseAiAssistant>> = {},
+) {
   const props = {
     fields,
     records,
@@ -76,7 +90,9 @@ function setup(overrides: Partial<React.ComponentProps<typeof BaseAiAssistant>> 
 describe("BaseAiAssistant", () => {
   it("renders a local-first privacy note and mode tabs", () => {
     setup();
-    expect(screen.getByText(/Runs entirely on your device/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Runs entirely on your device/i),
+    ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "New table" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Summarize" })).toBeInTheDocument();
   });
@@ -132,7 +148,9 @@ describe("BaseAiAssistant", () => {
     await waitFor(() =>
       expect(screen.getByText("UPPER({Name})")).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByRole("button", { name: /Add as formula field/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Add as formula field/i }),
+    );
     expect(props.onAddFields).toHaveBeenCalledWith([
       expect.objectContaining({ type: "formula", formula: "UPPER({Name})" }),
     ]);
@@ -217,9 +235,7 @@ describe("BaseAiAssistant", () => {
     streamResponse("note one");
     // Only one row was processed, so the indicator must read "1/3" — not
     // the misleading "3/3" the post-loop line used to force.
-    await waitFor(() =>
-      expect(screen.getByText("1/3")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("1/3")).toBeInTheDocument());
     expect(screen.queryByText("3/3")).toBeNull();
     // The processed row is still offered as a preview.
     expect(screen.getByText(/Preview \(1 value\)/)).toBeInTheDocument();
@@ -267,6 +283,67 @@ describe("BaseAiAssistant", () => {
     await act(async () => {
       await Promise.resolve();
     });
+  });
+
+  it("runs the schema skill and creates one table per parsed table on apply", async () => {
+    const props = setup();
+    fireEvent.click(screen.getByTestId("base-ai-mode-skills"));
+    fireEvent.change(screen.getByLabelText(/What is the base for/i), {
+      target: { value: "Track a sales pipeline" },
+    });
+    fireEvent.click(screen.getByTestId("skill-run"));
+
+    // Step 1 (propose) → step 2 (critique) → step 3 (finalize): drive each
+    // step by streaming its completion once its generate() call lands.
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(1));
+    streamResponse("## Companies\n- name: text");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(2));
+    streamResponse("NONE");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(3));
+    streamResponse(
+      [
+        "## Companies",
+        "- name: text",
+        "- revenue: currency",
+        "## Deals",
+        "- title: text",
+        "- amount: currency",
+      ].join("\n"),
+    );
+
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+
+    expect(props.onCreateTable).toHaveBeenCalledTimes(2);
+    expect(props.onCreateTable).toHaveBeenNthCalledWith(1, "Companies", [
+      { name: "name", type: "text" },
+      { name: "revenue", type: "currency" },
+    ]);
+    expect(props.onCreateTable).toHaveBeenNthCalledWith(2, "Deals", [
+      { name: "title", type: "text" },
+      { name: "amount", type: "currency" },
+    ]);
+    expect(props.onClose).toHaveBeenCalled();
+  });
+
+  it("surfaces a skill-apply parse error and creates nothing", async () => {
+    const props = setup();
+    fireEvent.click(screen.getByTestId("base-ai-mode-skills"));
+    fireEvent.change(screen.getByLabelText(/What is the base for/i), {
+      target: { value: "Track a sales pipeline" },
+    });
+    fireEvent.click(screen.getByTestId("skill-run"));
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(1));
+    streamResponse("## Draft\n- a: text");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(2));
+    streamResponse("NONE");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(3));
+    // Final step yields prose with no parseable table.
+    streamResponse("Sorry, I could not design a schema.");
+
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(screen.getByTestId("base-ai-skill-error")).toBeInTheDocument();
+    expect(props.onCreateTable).not.toHaveBeenCalled();
+    expect(props.onClose).not.toHaveBeenCalled();
   });
 
   it("invokes cancelJob when Stop is clicked mid-generation", async () => {

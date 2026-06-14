@@ -3,13 +3,24 @@
  * the generate → validate → insert flow only offers Insert for a
  * parseable formula, and the named-range manager validates rows.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NamedRangePanel } from "../components/NamedRangePanel";
 import { SheetAiPanel } from "../components/SheetAiPanel";
+import { _resetActiveGenerationForTests } from "../../hooks/useActiveGeneration";
 
-type TokenCb = (chunk: { token: string; done: boolean; error?: string }) => void;
+type TokenCb = (chunk: {
+  token: string;
+  done: boolean;
+  error?: string;
+}) => void;
 
 const originalModel = { ...window.tessera.model };
 
@@ -17,7 +28,9 @@ function installModel() {
   const cbs: TokenCb[] = [];
   window.tessera.model.generate = vi
     .fn()
-    .mockResolvedValue(undefined) as unknown as typeof window.tessera.model.generate;
+    .mockResolvedValue(
+      undefined,
+    ) as unknown as typeof window.tessera.model.generate;
   window.tessera.model.onToken = vi.fn((cb: TokenCb) => {
     cbs.push(cb);
     return () => {
@@ -92,7 +105,90 @@ describe("SheetAiPanel", () => {
       emit({ token: "", done: true });
     });
     expect(screen.queryByTestId("sheet-ai-insert")).toBeNull();
-    expect(screen.getByRole("alert").textContent).toMatch(/#ERR!|did not return/);
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /#ERR!|did not return/,
+    );
+  });
+
+  it("runs the formula skill and inserts the validated final formula", async () => {
+    _resetActiveGenerationForTests();
+    const { emit } = installModel();
+    const generate = window.tessera.model.generate as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const onInsert = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <SheetAiPanel
+        columns={["Item", "Status", "Amount"]}
+        rows={[["a", "paid", "10"]]}
+        activeCellRef="D2"
+        selectionRef="D2"
+        onInsertFormula={onInsert}
+        onClose={onClose}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("sheet-ai-mode-skills"));
+    fireEvent.change(screen.getByLabelText(/What should the formula do/i), {
+      target: { value: "sum amount where status is paid" },
+    });
+    fireEvent.click(screen.getByTestId("skill-run"));
+
+    // propose → self-check → repair: drive each of the skill's three steps.
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await act(async () => emit({ token: "=SUM(", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    await act(async () => emit({ token: "needs a range", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+    await act(async () =>
+      emit({ token: '=SUMIF(B2:B100,"paid",C2:C100)', done: false }),
+    );
+    await act(async () => emit({ token: "", done: true }));
+
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(onInsert).toHaveBeenCalledWith('=SUMIF(B2:B100,"paid",C2:C100)');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("surfaces a skill error when the final formula is unparseable", async () => {
+    _resetActiveGenerationForTests();
+    const { emit } = installModel();
+    const generate = window.tessera.model.generate as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const onInsert = vi.fn();
+    render(
+      <SheetAiPanel
+        columns={["A"]}
+        rows={[["1"]]}
+        activeCellRef="B1"
+        onInsertFormula={onInsert}
+        onClose={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("sheet-ai-mode-skills"));
+    fireEvent.change(screen.getByLabelText(/What should the formula do/i), {
+      target: { value: "broken" },
+    });
+    fireEvent.click(screen.getByTestId("skill-run"));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await act(async () => emit({ token: "=SUM(A1:", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    await act(async () => emit({ token: "unbalanced parens", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+    await act(async () => emit({ token: "=SUM(A1:", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(onInsert).not.toHaveBeenCalled();
+    expect(screen.getByTestId("sheet-ai-skill-error")).toBeInTheDocument();
   });
 });
 
@@ -100,7 +196,11 @@ describe("NamedRangePanel", () => {
   it("adds a valid named range and rejects an invalid one", () => {
     const onChange = vi.fn();
     const { rerender } = render(
-      <NamedRangePanel ranges={[]} onChange={onChange} onClose={() => undefined} />,
+      <NamedRangePanel
+        ranges={[]}
+        onChange={onChange}
+        onClose={() => undefined}
+      />,
     );
 
     // A cell-shaped name is rejected: the Add button stays disabled.
