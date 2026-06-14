@@ -6,7 +6,12 @@
  * so the underlying JSON shape is identical regardless of which view
  * the user is currently looking at.
  */
-import type { BaseContent, BaseField, FieldType } from "../baseEditorTypes";
+import type {
+  BaseContent,
+  BaseField,
+  FieldType,
+  RollupAggregation,
+} from "../baseEditorTypes";
 
 export type BaseViewKind =
   | "grid"
@@ -78,6 +83,14 @@ export interface BaseViewConfig {
    * scroll, like Airtable's frozen fields. 0 = none.
    */
   gridFrozenCount: number;
+  /**
+   * Per-column summary footer (Airtable's summary bar): maps a field
+   * name to the aggregation shown beneath that column. Only columns the
+   * user has opted into appear here; absent = no summary. Keyed by
+   * field name (pruned / rewritten alongside `filters` when a field is
+   * removed / renamed).
+   */
+  gridColumnSummaries: Record<string, RollupAggregation>;
 }
 
 export type GridRowHeight = "short" | "medium" | "tall";
@@ -139,5 +152,6 @@ export function defaultViewConfig(fields: BaseField[]): BaseViewConfig {
     gridGroupField: null,
     gridColorField: null,
     gridFrozenCount: 0,
+    gridColumnSummaries: {},
   };
 }
