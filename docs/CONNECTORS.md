@@ -325,7 +325,11 @@ Notes on this tranche:
   (authorize), `oauth_token.do` (token) and `oauth_revoke_token.do`
   (revoke on disconnect) on the per-instance host. ServiceNow issues
   refresh tokens, and the persisted `subdomain` lets refresh re-derive
-  the token URL after an app restart.
+  the token URL after an app restart. Disconnect-time revocation sends
+  the token in the form-encoded **request body** (RFC 7009 §2.1) —
+  required by ServiceNow/Salesforce, which ignore a bare `?token=` query
+  parameter — while still keeping the query parameter for Google's
+  documented revoke form (`revokeProviderToken`).
 
 **Audited but skipped — Freshdesk.** Freshdesk *is* implemented upstream
 and is per-domain (`https://<domain>.freshdesk.com`), but unlike Zendesk

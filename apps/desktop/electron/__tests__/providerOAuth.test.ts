@@ -16,6 +16,7 @@ import {
   InstanceUrlError,
   refreshProviderToken,
   resolveProviderOAuthConfig,
+  revokeProviderToken,
 } from "../ipc/connectors/providerOAuth";
 import { KNOWN_PROVIDERS } from "../ipc/validate";
 
@@ -928,6 +929,65 @@ describe("resolveProviderOAuthConfig", () => {
       expect(err).toBeInstanceOf(InstanceUrlError);
       expect((err as InstanceUrlError).provider).toBe("zendesk");
     }
+  });
+});
+
+describe("revokeProviderToken", () => {
+  const originalFetch = globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("sends the token in the POST body (RFC 7009) for a per-instance provider", async () => {
+    // Regression: ServiceNow's oauth_revoke_token.do reads `token` from
+    // the request body and ignores a bare query parameter, so revocation
+    // must carry the token in the form-encoded body — not only the query
+    // string — or server-side revoke silently no-ops.
+    const cfg = resolveProviderOAuthConfig("servicenow", {
+      subdomain: "dev12345",
+    });
+    await revokeProviderToken(cfg, "RT");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://dev12345.service-now.com/oauth_revoke_token.do?token=RT",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe(
+      "application/x-www-form-urlencoded",
+    );
+    // Body MUST carry the token per RFC 7009 §2.1.
+    expect(new URLSearchParams(init.body as string).get("token")).toBe("RT");
+  });
+
+  it("still carries the token in both body and query for a fixed-URL provider (Google)", async () => {
+    // The query parameter is preserved so Google's documented revoke
+    // form keeps working unchanged; the body is additive.
+    const cfg = getProviderOAuthConfig("google_drive");
+    await revokeProviderToken(cfg, "AT");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`${cfg.revokeUrl}?token=AT`);
+    expect(new URLSearchParams(init.body as string).get("token")).toBe("AT");
+  });
+
+  it("no-ops without a network call when the provider has no revoke endpoint", async () => {
+    const cfg = getProviderOAuthConfig("notion");
+    expect(cfg.revokeUrl).toBeUndefined();
+    await revokeProviderToken(cfg, "AT");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows network errors (best-effort revoke)", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const cfg = getProviderOAuthConfig("google_drive");
+    await expect(revokeProviderToken(cfg, "AT")).resolves.toBeUndefined();
   });
 });
 

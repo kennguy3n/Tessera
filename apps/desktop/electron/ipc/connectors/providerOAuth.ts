@@ -1615,13 +1615,21 @@ export async function revokeProviderToken(
     return;
   }
   try {
-    await fetch(
-      `${config.revokeUrl}?token=${encodeURIComponent(token)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      },
-    );
+    // RFC 7009 §2.1 requires the token in the request body
+    // (`application/x-www-form-urlencoded`): ServiceNow's
+    // `oauth_revoke_token.do` (and Salesforce's `/revoke`) read it from
+    // the body and ignore a bare query parameter, so a body-less POST
+    // silently no-ops their server-side revocation. Google's documented
+    // revoke form, conversely, takes the token as a `?token=` query
+    // parameter. Sending it in BOTH places is the maximally-compatible
+    // best-effort revoke — each endpoint reads the location it supports
+    // and the duplicated value is harmless — rather than branching on a
+    // per-provider body-vs-query flag for what is a fire-and-forget call.
+    await fetch(`${config.revokeUrl}?token=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }).toString(),
+    });
   } catch {
     // best effort
   }
