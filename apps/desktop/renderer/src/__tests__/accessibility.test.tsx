@@ -36,7 +36,9 @@ import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 // ---------------------------------------------------------------------------
 
 describe("Modal accessibility", () => {
-  function renderModal(props: Partial<React.ComponentProps<typeof Modal>> = {}) {
+  function renderModal(
+    props: Partial<React.ComponentProps<typeof Modal>> = {},
+  ) {
     const onClose = props.onClose ?? vi.fn();
     return {
       onClose,
@@ -128,7 +130,11 @@ describe("SlideEditor accessibility", () => {
     const slides = {
       slides: [
         { title: "First", blocks: [{ type: "text", content: "a" }], notes: "" },
-        { title: "Second", blocks: [{ type: "text", content: "b" }], notes: "" },
+        {
+          title: "Second",
+          blocks: [{ type: "text", content: "b" }],
+          notes: "",
+        },
         { title: "Third", blocks: [{ type: "text", content: "c" }], notes: "" },
       ],
     };
@@ -207,12 +213,14 @@ describe("SlideEditor accessibility", () => {
       const dialog = screen.getByRole("dialog", {
         name: "Choose a deck template",
       });
-      // Deferred initial focus lands on the first template card.
+      // Deferred initial focus lands on the gallery's search field —
+      // the first focusable control — so the user can type to filter
+      // straight away (the standard searchable-gallery pattern).
       act(() => {
         vi.runAllTimers();
       });
-      const firstCard = within(dialog).getAllByRole("button")[0];
-      expect(document.activeElement).toBe(firstCard);
+      const search = within(dialog).getByRole("searchbox");
+      expect(document.activeElement).toBe(search);
 
       // Escape closes the modal and restores focus to the trigger.
       fireEvent.keyDown(document, { key: "Escape" });
@@ -339,7 +347,11 @@ describe("SlideEditor accessibility", () => {
       act(() => {
         vi.runAllTimers();
       });
-      fireEvent.click(within(dialog).getAllByRole("button")[0]);
+      // Click the first actual template card; the leading buttons are
+      // the category-filter chips, so target the card by its name.
+      fireEvent.click(
+        within(dialog).getAllByRole("button", { name: /^Use the / })[0],
+      );
 
       expect(screen.queryByLabelText("Find query")).not.toBeInTheDocument();
     } finally {
@@ -482,9 +494,7 @@ describe("Sidebar accessibility", () => {
     expect(sourcesLink.getAttribute("aria-current")).toBe("page");
     // Expand the "More tools" section so a secondary link is present
     // to assert the negative case against.
-    fireEvent.click(
-      within(nav).getByRole("button", { name: /more tools/i }),
-    );
+    fireEvent.click(within(nav).getByRole("button", { name: /more tools/i }));
     const tasksLink = within(nav).getByRole("link", { name: /Tasks/ });
     expect(tasksLink.getAttribute("aria-current")).toBeNull();
   });
