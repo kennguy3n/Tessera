@@ -463,7 +463,7 @@ const EXPENSE_REPORT = buildTemplate({
     ["Total", "", "", "=SUM(D1:D4)", ""],
   ],
   columnFormats: { 0: "yyyy-mm-dd", 3: CURRENCY },
-  cellFormats: { ...boldRow(4, 5), "4,0": { bold: true } },
+  cellFormats: { ...boldRow(4, 5) },
   validations: {
     "1": {
       kind: "list",

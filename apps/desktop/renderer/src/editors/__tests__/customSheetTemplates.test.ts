@@ -146,6 +146,17 @@ describe("normalizeSheetContent", () => {
     });
   });
 
+  it("drops array-shaped format / validation maps instead of reading their indices", () => {
+    const normalized = normalizeSheetContent({
+      columns: ["A"],
+      rows: [["1"]],
+      formats: [{ bold: true }],
+      validations: [{ kind: "checkbox" }],
+    });
+    expect(normalized.formats).toBeUndefined();
+    expect(normalized.validations).toBeUndefined();
+  });
+
   it("keeps a valid chart and drops charts with a bad type or range", () => {
     const normalized = normalizeSheetContent({
       columns: ["A", "B"],
