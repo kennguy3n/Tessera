@@ -6,6 +6,7 @@ import {
   useId,
   useMemo,
   type ChangeEvent,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
@@ -36,6 +37,7 @@ import {
   nextBlockForTypeChange,
   buildDeckFromTemplate,
   buildSlideFromPreset,
+  resolveThemeId,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
@@ -45,7 +47,10 @@ import {
   MermaidPreview,
 } from "./components/SlideBlockPreviews";
 import { SlideDesignCanvas } from "./components/SlideDesignCanvas";
+import { BrandKitBuilderModal } from "./components/BrandKitBuilderModal";
 import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
+import { brandKitCssVars, type BrandKit } from "./slideBrandKit";
+import { useBrandKits } from "./useBrandKits";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
 import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
 
@@ -177,6 +182,14 @@ export default function SlideEditor({
     () => initial.marpTheme ?? "default",
   );
   const [themeId, setThemeId] = useState<string>(() => initial.themeId);
+  // Active brand-kit id (re-skins the curated theme). `undefined` ⇒ no
+  // brand kit, the legacy/default case. Validity against the live store
+  // is resolved below via `useBrandKits`, so a stale/foreign id here
+  // simply degrades to "no brand kit" at render.
+  const [brandKitId, setBrandKitId] = useState<string | undefined>(
+    () => initial.brandKitId,
+  );
+  const [brandBuilderOpen, setBrandBuilderOpen] = useState(false);
   const [deckGenOpen, setDeckGenOpen] = useState(false);
   const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
@@ -225,6 +238,36 @@ export default function SlideEditor({
   useEffect(() => {
     themeIdRef.current = themeId;
   }, [themeId]);
+
+  // Mirror the active brand-kit id into a ref for the same flush-time
+  // consistency the theme + marp refs guarantee: a save scheduled from a
+  // slide mutator must serialise the freshest brand id, not a stale
+  // closure capture from when the mutator was created.
+  const brandKitIdRef = useRef<string | undefined>(brandKitId);
+  useEffect(() => {
+    brandKitIdRef.current = brandKitId;
+  }, [brandKitId]);
+
+  // Resolve the deck's persisted brand-kit id against the live store.
+  // An unknown id (kit deleted on this or another machine, or a hand-
+  // edited deck) resolves to `null`, so the canvas silently renders with
+  // its curated theme — no brand overrides — exactly like a legacy deck.
+  const { brandKitById } = useBrandKits();
+  const activeBrandKit = useMemo(
+    () => brandKitById(brandKitId),
+    [brandKitById, brandKitId],
+  );
+  // The brand kit's `--slide-*` overrides, stamped INLINE on the canvas
+  // so they win over the stylesheet's `[data-slide-theme]` declarations
+  // (same element ⇒ inline beats selector) without touching the curated
+  // theme CSS or any slide content.
+  const brandStyle = useMemo<CSSProperties | undefined>(
+    () =>
+      activeBrandKit
+        ? (brandKitCssVars(activeBrandKit) as CSSProperties)
+        : undefined,
+    [activeBrandKit],
+  );
 
   // Mirror activeIndex into a ref so callbacks that run inside
   // `setSlides` updaters can read the freshest committed value
@@ -404,6 +447,10 @@ export default function SlideEditor({
         slides: updatedSlides,
         marp: marpState ?? marpStateRef.current,
         themeId: themeIdRef.current,
+        // `JSON.stringify` drops `undefined`, so a deck that never set a
+        // brand kit serialises exactly as before (no `brandKitId` key) —
+        // keeping legacy decks byte-identical and the field truly additive.
+        brandKitId: brandKitIdRef.current,
       };
       const json = JSON.stringify(data);
       // Publish the draft immediately (no debounce) so exporting before
@@ -467,6 +514,8 @@ export default function SlideEditor({
       setMarpTheme(parsed.marpTheme ?? "default");
       setThemeId(parsed.themeId);
       themeIdRef.current = parsed.themeId;
+      setBrandKitId(parsed.brandKitId);
+      brandKitIdRef.current = parsed.brandKitId;
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
@@ -627,6 +676,33 @@ export default function SlideEditor({
     },
     [debouncedSave, slides],
   );
+
+  // Apply a brand kit to the deck. A kit re-skins a curated base theme,
+  // so we also switch the deck to the kit's `baseThemeId` (validated via
+  // `resolveThemeId`, which degrades an unknown id to the default) — that
+  // way the brand overrides layer over the theme they were authored
+  // against. Refs are updated synchronously for the same flush-time
+  // consistency `changeTheme` relies on.
+  const applyBrandKit = useCallback(
+    (kit: BrandKit) => {
+      const baseTheme = resolveThemeId(kit.baseThemeId);
+      setThemeId(baseTheme);
+      themeIdRef.current = baseTheme;
+      setBrandKitId(kit.id);
+      brandKitIdRef.current = kit.id;
+      debouncedSave(slides);
+    },
+    [debouncedSave, slides],
+  );
+
+  // Detach the brand kit, returning the deck to its plain curated theme.
+  // The curated `themeId` is intentionally left untouched (the kit only
+  // re-skinned it) so removal is a clean, content-preserving toggle.
+  const clearBrandKit = useCallback(() => {
+    setBrandKitId(undefined);
+    brandKitIdRef.current = undefined;
+    debouncedSave(slides);
+  }, [debouncedSave, slides]);
 
   // Apply a pre-built deck template. Replaces the entire deck with
   // the template's slides and optionally switches to the suggested
@@ -1488,7 +1564,9 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckRestyleOpen ? "active" : ""}`}
-            onClick={() => openExclusiveMenu(deckRestyleOpen ? null : "restyle")}
+            onClick={() =>
+              openExclusiveMenu(deckRestyleOpen ? null : "restyle")
+            }
             aria-label="Restyle the deck with AI"
             aria-expanded={deckRestyleOpen}
             title="Restyle the current deck with the on-device model"
@@ -1577,6 +1655,29 @@ export default function SlideEditor({
                 </div>
               )}
             </div>
+          )}
+          {!marpMode && (
+            <button
+              type="button"
+              className="slide-brand-trigger"
+              onClick={() => setBrandBuilderOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={brandBuilderOpen}
+              title="Copy a theme and re-skin it with your brand colours, fonts and logo"
+              data-testid="slide-brand-trigger"
+            >
+              {activeBrandKit ? (
+                <>
+                  <span
+                    className="slide-brand-swatch"
+                    style={{ background: activeBrandKit.colors.accent }}
+                  />
+                  {activeBrandKit.name}
+                </>
+              ) : (
+                "Customize brand"
+              )}
+            </button>
           )}
           {!marpMode && (
             <div style={{ position: "relative", display: "inline-flex" }}>
@@ -1790,8 +1891,27 @@ export default function SlideEditor({
             className={`slide-canvas${designView ? " slide-canvas-design" : ""}`}
             data-slide-theme={themeId}
             data-slide-layout={resolveSlideLayout(activeSlide)}
-            data-slide-bg={getSlideTheme(themeId).bgStyle ?? undefined}
+            // A brand kit may override the theme's background style; fall
+            // back to the curated theme's when it doesn't declare one.
+            data-slide-bg={
+              activeBrandKit?.bgStyle ??
+              getSlideTheme(themeId).bgStyle ??
+              undefined
+            }
+            // Presence of `data-slide-brand` is the hook the appended
+            // brand CSS keys on (e.g. brand body-text colour in Design
+            // view); `style` stamps the actual `--slide-*` overrides.
+            data-slide-brand={activeBrandKit?.id}
+            data-slide-logo={activeBrandKit?.logo?.placement}
+            style={brandStyle}
           >
+            {activeBrandKit?.logo && (
+              <img
+                className="slide-brand-logo"
+                src={activeBrandKit.logo.dataUrl}
+                alt={activeBrandKit.logo.alt}
+              />
+            )}
             <input
               className="slide-title-input"
               value={activeSlide.title}
@@ -1828,86 +1948,86 @@ export default function SlideEditor({
                 }
               />
             ) : (
-            <div className="slide-blocks">
-              {activeSlide.blocks.map((block, bi) => (
-                <SlideBlockRow
-                  // Stable key driven off `block.id` (not `bi`) so a
-                  // drag-reorder preserves component identity — the
-                  // `<textarea>` keeps its cursor / selection state
-                  // across the reorder, instead of being unmounted
-                  // and re-created with a fresh DOM node.
-                  key={block.id}
-                  block={block}
-                  blockIndex={bi}
-                  totalBlocks={activeSlide.blocks.length}
-                  onTypeChange={(nextType) => {
-                    onBlockReplace(
-                      activeIndex,
-                      bi,
-                      nextBlockForTypeChange(block, nextType),
-                    );
-                  }}
-                  onContentChange={(nextContent) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      content: nextContent,
-                    });
-                  }}
-                  onAltChange={(nextAlt) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      alt: nextAlt,
-                    });
-                  }}
-                  onImageFile={(file) => {
-                    // Pass `activeSlide.id` and `block.id` (not
-                    // `activeIndex` / `bi`) so that an in-flight upload
-                    // still lands on the right block after a drag-
-                    // reorder shifts positions at either the slide or
-                    // block level.
-                    onImageUpload(activeSlide.id, block.id, file);
-                  }}
-                  onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
-                  onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
-                  onRemove={() => onBlockRemove(activeIndex, bi)}
-                  draggedBlockId={draggedBlockId}
-                  onDragStartBlock={setDraggedBlockId}
-                  onDragEndBlock={() => setDraggedBlockId(null)}
-                  onDropBlock={(targetIdx) => {
-                    if (!draggedBlockId) return;
-                    const fromIdx = activeSlide.blocks.findIndex(
-                      (b) => b.id === draggedBlockId,
-                    );
-                    // Clear on every termination path (success AND
-                    // lookup-miss) so the `is-dragging` class can't
-                    // stick if the source block is removed mid-drag
-                    // (e.g. the active slide changes via find-panel
-                    // jump or version restore between dragstart and
-                    // drop). `onDragEnd` is a defence in depth but
-                    // doesn't always fire reliably in Chromium's
-                    // touch-emulation path.
-                    if (fromIdx < 0) {
+              <div className="slide-blocks">
+                {activeSlide.blocks.map((block, bi) => (
+                  <SlideBlockRow
+                    // Stable key driven off `block.id` (not `bi`) so a
+                    // drag-reorder preserves component identity — the
+                    // `<textarea>` keeps its cursor / selection state
+                    // across the reorder, instead of being unmounted
+                    // and re-created with a fresh DOM node.
+                    key={block.id}
+                    block={block}
+                    blockIndex={bi}
+                    totalBlocks={activeSlide.blocks.length}
+                    onTypeChange={(nextType) => {
+                      onBlockReplace(
+                        activeIndex,
+                        bi,
+                        nextBlockForTypeChange(block, nextType),
+                      );
+                    }}
+                    onContentChange={(nextContent) => {
+                      onBlockReplace(activeIndex, bi, {
+                        ...block,
+                        content: nextContent,
+                      });
+                    }}
+                    onAltChange={(nextAlt) => {
+                      onBlockReplace(activeIndex, bi, {
+                        ...block,
+                        alt: nextAlt,
+                      });
+                    }}
+                    onImageFile={(file) => {
+                      // Pass `activeSlide.id` and `block.id` (not
+                      // `activeIndex` / `bi`) so that an in-flight upload
+                      // still lands on the right block after a drag-
+                      // reorder shifts positions at either the slide or
+                      // block level.
+                      onImageUpload(activeSlide.id, block.id, file);
+                    }}
+                    onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
+                    onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
+                    onRemove={() => onBlockRemove(activeIndex, bi)}
+                    draggedBlockId={draggedBlockId}
+                    onDragStartBlock={setDraggedBlockId}
+                    onDragEndBlock={() => setDraggedBlockId(null)}
+                    onDropBlock={(targetIdx) => {
+                      if (!draggedBlockId) return;
+                      const fromIdx = activeSlide.blocks.findIndex(
+                        (b) => b.id === draggedBlockId,
+                      );
+                      // Clear on every termination path (success AND
+                      // lookup-miss) so the `is-dragging` class can't
+                      // stick if the source block is removed mid-drag
+                      // (e.g. the active slide changes via find-panel
+                      // jump or version restore between dragstart and
+                      // drop). `onDragEnd` is a defence in depth but
+                      // doesn't always fire reliably in Chromium's
+                      // touch-emulation path.
+                      if (fromIdx < 0) {
+                        setDraggedBlockId(null);
+                        return;
+                      }
+                      onBlockMove(activeIndex, fromIdx, targetIdx);
                       setDraggedBlockId(null);
-                      return;
-                    }
-                    onBlockMove(activeIndex, fromIdx, targetIdx);
-                    setDraggedBlockId(null);
-                  }}
-                />
-              ))}
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() =>
-                  onBlockAppend(
-                    activeIndex,
-                    buildBlock({ type: "text", content: "" }),
-                  )
-                }
-              >
-                + Add Block
-              </button>
-            </div>
+                    }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() =>
+                    onBlockAppend(
+                      activeIndex,
+                      buildBlock({ type: "text", content: "" }),
+                    )
+                  }
+                >
+                  + Add Block
+                </button>
+              </div>
             )}
 
             <SlideAiActions
@@ -1942,6 +2062,16 @@ export default function SlideEditor({
           </div>
         )}
       </div>
+      {brandBuilderOpen && (
+        <BrandKitBuilderModal
+          isOpen
+          deckThemeId={themeId}
+          activeKitId={brandKitId}
+          onApply={applyBrandKit}
+          onClear={clearBrandKit}
+          onClose={() => setBrandBuilderOpen(false)}
+        />
+      )}
       {templatePickerOpen && (
         <div
           className="slide-template-picker-overlay"
