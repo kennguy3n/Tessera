@@ -256,7 +256,11 @@ export function addTable(doc: BaseDocument, name?: string): BaseDocument {
     fields: [{ name: "Name", type: "text" }],
     records: [],
   };
-  return { tables: [...doc.tables, table], activeTableId: id };
+  // Spread `doc` so the optional `app` config (forms, widgets, app name,
+  // default mode) survives the add. Appending a table can never orphan an
+  // existing form/widget reference — every prior table still exists — so
+  // no reconciliation is needed here, only preservation.
+  return { ...doc, tables: [...doc.tables, table], activeTableId: id };
 }
 
 /** Rename a table. No-op (same reference) when the name is unchanged,
@@ -313,7 +317,23 @@ export function removeTable(doc: BaseDocument, tableId: string): BaseDocument {
   const safeActive = scrubbed.some((t) => t.id === activeTableId)
     ? activeTableId
     : scrubbed[0].id;
-  return { tables: scrubbed, activeTableId: safeActive };
+  const stripped: BaseDocument = {
+    ...doc,
+    tables: scrubbed,
+    activeTableId: safeActive,
+  };
+  // Deleting a table can orphan an app form/widget that referenced it.
+  // Reconcile the (preserved) app config against the surviving tables
+  // here so the helper is self-contained and EVERY caller is safe — not
+  // just one that remembers to compensate. When the reconcile leaves
+  // nothing meaningful, drop the block so the legacy byte-compatibility
+  // invariant (no `app` key ⇒ serialize as `{ fields, records }`) holds.
+  if (!doc.app) return stripped;
+  const reconciled = reconcileAppConfig(doc.app, stripped);
+  return {
+    ...stripped,
+    app: isMeaningfulAppConfig(reconciled) ? reconciled : undefined,
+  };
 }
 
 /** Switch the active table. No-op when already active or unknown. */

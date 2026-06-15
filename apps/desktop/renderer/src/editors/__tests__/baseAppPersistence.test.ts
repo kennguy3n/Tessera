@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  addTable,
   parseBaseDocument,
+  removeTable,
   serializeBaseDocument,
   singleTableDocument,
 } from "../baseDocumentHelpers";
@@ -111,5 +113,82 @@ describe("app config persistence — round trip", () => {
     const doc = parseBaseDocument(stored);
     expect(doc.app).toBeUndefined();
     expect(doc.tables).toHaveLength(1);
+  });
+});
+
+describe("addTable / removeTable — app config preservation", () => {
+  it("addTable preserves the app config verbatim (no orphaning possible)", () => {
+    const base = singleTableDocument(legacy);
+    const t0 = base.tables[0].id;
+    const app: BaseAppConfig = {
+      name: "Deals app",
+      defaultMode: "app",
+      forms: [{ id: "f1", name: "Intake", tableId: t0, fieldNames: ["Name"] }],
+      dashboard: {
+        title: "Overview",
+        widgets: [{ id: "w1", kind: "count", tableId: t0 }],
+      },
+    };
+    const next = addTable({ ...base, app }, "Reps");
+    expect(next.tables).toHaveLength(2);
+    expect(next.activeTableId).not.toBe(t0); // the new table is active
+    // The app block survives the add untouched — adding a table can never
+    // orphan an existing reference, so nothing is reconciled away.
+    expect(next.app).toEqual(app);
+  });
+
+  it("removeTable preserves the app config and prunes refs to the removed table", () => {
+    const base = singleTableDocument(legacy);
+    const t0 = base.tables[0].id;
+    const d1 = addTable(base, "Reps");
+    const t1 = d1.activeTableId;
+    const d2 = addTable(d1, "Deals");
+    const t2 = d2.activeTableId;
+    const app: BaseAppConfig = {
+      name: "CRM",
+      forms: [
+        { id: "f0", name: "Deal intake", tableId: t0, fieldNames: ["Name"] },
+        { id: "f1", name: "Rep intake", tableId: t1, fieldNames: [] },
+        { id: "f2", name: "Pipe intake", tableId: t2, fieldNames: [] },
+      ],
+      dashboard: {
+        widgets: [
+          { id: "w0", kind: "count", tableId: t0 },
+          { id: "w1", kind: "count", tableId: t1 },
+        ],
+      },
+    };
+    // Three tables survive down to two, so refs to the removed table are
+    // genuinely dropped (no single-table healing in play).
+    const next = removeTable({ ...d2, app }, t1);
+    expect(next.tables.map((t) => t.id).sort()).toEqual([t0, t2].sort());
+    expect(next.app).toBeDefined();
+    expect(next.app?.name).toBe("CRM");
+    expect(next.app?.forms.map((f) => f.id)).toEqual(["f0", "f2"]);
+    expect(next.app?.dashboard.widgets.map((w) => w.id)).toEqual(["w0"]);
+  });
+
+  it("removeTable drops the app entirely when reconcile leaves nothing meaningful", () => {
+    const base = singleTableDocument(legacy);
+    const d1 = addTable(base, "Reps");
+    const t1 = d1.activeTableId;
+    const d2 = addTable(d1, "Deals");
+    // The only app content points at the table we remove, and there is no
+    // name / title / defaultMode — so after pruning the config is empty
+    // and must be dropped (keeps the no-`app` serialization invariant).
+    const app: BaseAppConfig = {
+      forms: [{ id: "f1", name: "Rep intake", tableId: t1, fieldNames: [] }],
+      dashboard: { widgets: [{ id: "w1", kind: "count", tableId: t1 }] },
+    };
+    const next = removeTable({ ...d2, app }, t1);
+    expect(next.app).toBeUndefined();
+  });
+
+  it("removeTable on an app-less doc stays app-less and does not throw", () => {
+    const base = singleTableDocument(legacy);
+    const d1 = addTable(base, "Reps");
+    const next = removeTable(d1, d1.activeTableId);
+    expect(next.app).toBeUndefined();
+    expect(next.tables).toHaveLength(1);
   });
 });

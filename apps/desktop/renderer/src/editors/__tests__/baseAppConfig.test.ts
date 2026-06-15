@@ -9,6 +9,7 @@ import {
   formFields,
   titleFieldName,
   recordTitle,
+  listFieldPreview,
   derivePages,
   createForm,
   createWidget,
@@ -17,10 +18,12 @@ import {
   dataPageId,
   formPageId,
 } from "../baseviews/appmode/appConfig";
+import { makeTableResolver } from "../baseDocumentHelpers";
 import type {
   BaseAppConfig,
   BaseDocument,
   BaseField,
+  BaseRecord,
   BaseTable,
 } from "../baseEditorTypes";
 
@@ -293,6 +296,142 @@ describe("titleFieldName / recordTitle", () => {
     expect(recordTitle(fields, { Name: "  Alice  " })).toBe("Alice");
     expect(recordTitle(fields, { Name: "" })).toBe("Untitled");
     expect(recordTitle(fields, {})).toBe("Untitled");
+  });
+});
+
+describe("listFieldPreview", () => {
+  const reps: BaseRecord[] = [
+    { id: "rec-rep-0", Name: "A. Okafor" },
+    { id: "rec-rep-1", Name: "B. Lee" },
+    { id: "rec-rep-2" }, // no display value
+  ];
+  const repsTable = table("t2", "Reps", [{ name: "Name", type: "text" }], reps);
+  const doc: BaseDocument = {
+    tables: [table("t1", "Accounts", peopleFields), repsTable],
+    activeTableId: "t1",
+  };
+  const resolver = makeTableResolver(doc);
+
+  const ownerField: BaseField = {
+    name: "Owner",
+    type: "linked_record",
+    linkedTableId: "t2",
+    linkedDisplayField: "Name",
+  };
+
+  it("resolves a cross-table linked_record to its display labels", () => {
+    const preview = listFieldPreview(
+      ownerField,
+      { id: "a1", Owner: ["rec-rep-0", "rec-rep-1"] },
+      [],
+      resolver,
+    );
+    expect(preview).toBe("A. Okafor, B. Lee");
+  });
+
+  it("falls back to a short id slice when the display value is missing", () => {
+    const noDisplay: BaseField = {
+      ...ownerField,
+      linkedDisplayField: undefined,
+    };
+    expect(
+      listFieldPreview(
+        noDisplay,
+        { id: "a1", Owner: ["rec-rep-0"] },
+        [],
+        resolver,
+      ),
+    ).toBe("rec-re");
+    // Display field declared but the linked record lacks it.
+    expect(
+      listFieldPreview(
+        ownerField,
+        { id: "a1", Owner: ["rec-rep-2"] },
+        [],
+        resolver,
+      ),
+    ).toBe("rec-re");
+  });
+
+  it("resolves a same-table link against the passed records", () => {
+    const selfLink: BaseField = {
+      name: "Related",
+      type: "linked_record",
+      linkedDisplayField: "Name",
+    };
+    const sameTable: BaseRecord[] = [{ id: "x1", Name: "Self Ref" }];
+    expect(
+      listFieldPreview(
+        selfLink,
+        { id: "x2", Related: ["x1"] },
+        sameTable,
+        resolver,
+      ),
+    ).toBe("Self Ref");
+  });
+
+  it("degrades to empty for an unresolvable cross-table link", () => {
+    const ghost: BaseField = { ...ownerField, linkedTableId: "ghost" };
+    expect(
+      listFieldPreview(ghost, { id: "a1", Owner: ["rec-rep-0"] }, [], resolver),
+    ).toBe("");
+  });
+
+  it("formats booleans, arrays, blanks and clamps long strings", () => {
+    expect(
+      listFieldPreview(
+        { name: "Active", type: "checkbox" },
+        { id: "a", Active: true },
+        [],
+        resolver,
+      ),
+    ).toBe("Yes");
+    expect(
+      listFieldPreview(
+        { name: "Active", type: "checkbox" },
+        { id: "a", Active: false },
+        [],
+        resolver,
+      ),
+    ).toBe("No");
+    expect(
+      listFieldPreview(
+        { name: "Tags", type: "multi_select" },
+        { id: "a", Tags: ["x", "y"] },
+        [],
+        resolver,
+      ),
+    ).toBe("x, y");
+    expect(
+      listFieldPreview(
+        { name: "Value", type: "currency" },
+        { id: "a" },
+        [],
+        resolver,
+      ),
+    ).toBe("");
+    const long = "x".repeat(60);
+    const clamped = listFieldPreview(
+      { name: "Notes", type: "text" },
+      { id: "a", Notes: long },
+      [],
+      resolver,
+    );
+    expect(clamped).toHaveLength(40);
+    expect(clamped.endsWith("…")).toBe(true);
+  });
+
+  it("previews computed (unstored) fields as empty", () => {
+    // Formula values aren't stored on the record, so the list shows them
+    // empty (the detail page computes them in full).
+    expect(
+      listFieldPreview(
+        { name: "Computed", type: "formula", formula: "1" },
+        { id: "a" },
+        [],
+        resolver,
+      ),
+    ).toBe("");
   });
 });
 

@@ -19,7 +19,8 @@
  *     the document itself (a data page per table + the dashboard + each
  *     authored form), so an empty `app` block is still usable.
  */
-import { makeRecordId } from "../../baseEditorHelpers";
+import { makeRecordId, resolveLinkedRecords } from "../../baseEditorHelpers";
+import type { BaseTableResolver } from "../../baseDocumentHelpers";
 import { fillableFields, isFormEditableField } from "../formViewHelpers";
 import type {
   BaseAppConfig,
@@ -30,6 +31,7 @@ import type {
   BaseAppWidgetKind,
   BaseDocument,
   BaseField,
+  BaseRecord,
   BaseTable,
   RollupAggregation,
 } from "../../baseEditorTypes";
@@ -307,6 +309,55 @@ export function recordTitle(
     if (raw != null && String(raw).trim() !== "") return String(raw).trim();
   }
   return "Untitled";
+}
+
+const PREVIEW_MAX = 40;
+
+function clampPreview(s: string): string {
+  return s.length > PREVIEW_MAX ? `${s.slice(0, PREVIEW_MAX - 1)}…` : s;
+}
+
+/**
+ * Compact, read-only preview of one field's value for the app-mode record
+ * list's secondary line. A `linked_record` cell resolves to the linked
+ * records' display label (or a short id slice) exactly as the grid chip
+ * does — NOT the raw stored ids — following the link cross-table via
+ * `resolver` when `linkedTableId` is set, else against the current table's
+ * records. Other stored types fall back to a trimmed string (booleans as
+ * Yes/No, arrays comma-joined). Computed fields (lookup / rollup / formula
+ * / auto-number) aren't stored on the record, so they preview as empty
+ * here and are shown in full on the detail page.
+ */
+export function listFieldPreview(
+  field: BaseField,
+  record: Record<string, unknown>,
+  sameTableRecords: BaseRecord[],
+  resolver: BaseTableResolver,
+): string {
+  const value = record[field.name];
+  if (field.type === "linked_record") {
+    // Same target resolution as `linkTargetRecords`: a cross-table link
+    // (`linkedTableId` set) resolves against the target table; a same-table
+    // link reads the current table's records. An unresolvable cross-table
+    // link degrades to an empty target list rather than the wrong table.
+    const targets = field.linkedTableId
+      ? (resolver(field.linkedTableId)?.records ?? [])
+      : sameTableRecords;
+    const linked = resolveLinkedRecords(value, targets);
+    const display = field.linkedDisplayField;
+    const text = linked
+      .map((r) =>
+        display && r[display] != null ? String(r[display]) : r.id.slice(0, 6),
+      )
+      .join(", ");
+    return clampPreview(text);
+  }
+  if (value == null) return "";
+  if (Array.isArray(value)) {
+    return clampPreview(value.map((v) => String(v)).join(", "));
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return clampPreview(String(value).trim());
 }
 
 /** A navigable page in the app shell's left nav. */

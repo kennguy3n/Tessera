@@ -404,19 +404,11 @@ export default function BaseEditor({
       // no-ops on the last one. Guard here too so the UI never offers a
       // delete that would empty the base.
       if (prev.tables.length <= 1) return;
-      const removed = removeTable(prev, tableId);
-      // Drop any forms / widgets that pointed at the deleted table so we
-      // never persist dangling references (reconcile-on-load would heal
-      // them, but scrubbing here keeps the saved artifact clean).
-      const nextDoc = prev.app
-        ? (() => {
-            const reconciled = reconcileAppConfig(prev.app, removed);
-            return {
-              ...removed,
-              app: isMeaningfulAppConfig(reconciled) ? reconciled : undefined,
-            };
-          })()
-        : removed;
+      // `removeTable` is self-contained: it preserves the app config and
+      // reconciles it against the surviving tables (dropping forms/widgets
+      // that pointed at the deleted table), so no compensation is needed
+      // here.
+      const nextDoc = removeTable(prev, tableId);
       updateDoc(nextDoc);
       // Removing the active table moves activeId; always re-sync view
       // state to whatever table is active afterwards.

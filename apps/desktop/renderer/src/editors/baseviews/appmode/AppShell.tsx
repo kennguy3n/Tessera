@@ -31,6 +31,7 @@ import {
   derivePages,
   DASHBOARD_PAGE_ID,
   formPageId,
+  listFieldPreview,
   recordTitle,
   titleFieldName,
   type AppPage,
@@ -92,19 +93,30 @@ export default function AppShell({
     }
   }, [page, activeTableId, onSwitchTable]);
 
-  // Open the freshly-created record after a form / list "new record"
-  // submit. `onAddRecordWith` appends to the active table but returns
-  // nothing, so we watch the record count and open the last row.
+  // Open the freshly-created record after a list "new record" click.
+  // `onAddRecordWith` appends to the active table but returns nothing, so
+  // we watch the record count and open the last row. We capture the table
+  // id the add was requested ON (not a bare boolean): if the user switches
+  // tables before the append lands, `data`/`activeTableId` now describe a
+  // DIFFERENT table, so opening "the last row" would surface an unrelated
+  // record. Gating on the captured id makes the open fire only on the
+  // originating table and cancel otherwise.
   const prevCount = useRef(data.records.length);
-  const pendingOpen = useRef(false);
+  const pendingOpenTableId = useRef<string | null>(null);
   useEffect(() => {
-    if (pendingOpen.current && data.records.length > prevCount.current) {
-      const last = data.records[data.records.length - 1];
-      if (last) {
-        setSelectedPageId(dataPageId(activeTableId));
-        setDetailRecordId(last.id);
+    if (pendingOpenTableId.current !== null) {
+      if (pendingOpenTableId.current !== activeTableId) {
+        // Active table changed before the new record arrived — abandon.
+        pendingOpenTableId.current = null;
+      } else if (data.records.length > prevCount.current) {
+        const last = data.records[data.records.length - 1];
+        if (last) {
+          setSelectedPageId(dataPageId(activeTableId));
+          setDetailRecordId(last.id);
+        }
+        pendingOpenTableId.current = null;
       }
-      pendingOpen.current = false;
+      // else: still on the right table, waiting for the append to land.
     }
     prevCount.current = data.records.length;
   }, [data.records, activeTableId]);
@@ -242,7 +254,7 @@ export default function AppShell({
           onOpenRecord={(id) => setDetailRecordId(id)}
           onCloseDetail={() => setDetailRecordId(null)}
           onRequestNewRecord={() => {
-            pendingOpen.current = true;
+            pendingOpenTableId.current = activeTableId;
             onAddRecordWith({});
           }}
           onUpdateCell={onUpdateCell}
@@ -354,6 +366,7 @@ function AppContent({
     <DataList
       fields={table.fields}
       records={data.records}
+      resolver={resolver}
       onOpen={onOpenRecord}
       onNew={onRequestNewRecord}
     />
@@ -363,11 +376,12 @@ function AppContent({
 interface DataListProps {
   fields: BaseField[];
   records: BaseRecord[];
+  resolver: BaseTableResolver;
   onOpen: (id: string) => void;
   onNew: () => void;
 }
 
-function DataList({ fields, records, onOpen, onNew }: DataListProps) {
+function DataList({ fields, records, resolver, onOpen, onNew }: DataListProps) {
   const titleName = titleFieldName(fields);
   // Up to three non-title fields make the secondary preview line.
   const secondary = fields.filter((f) => f.name !== titleName).slice(0, 3);
@@ -405,7 +419,12 @@ function DataList({ fields, records, onOpen, onNew }: DataListProps) {
                 {secondary.length > 0 && (
                   <span className="base-app-list-sub">
                     {secondary.map((f) => {
-                      const preview = cellPreview(record[f.name]);
+                      const preview = listFieldPreview(
+                        f,
+                        record,
+                        records,
+                        resolver,
+                      );
                       if (!preview) return null;
                       return (
                         <span key={f.name} className="base-app-list-chip">
@@ -425,17 +444,6 @@ function DataList({ fields, records, onOpen, onNew }: DataListProps) {
       )}
     </div>
   );
-}
-
-/** Compact, read-only preview of a cell value for the list secondary line. */
-function cellPreview(value: unknown): string {
-  if (value == null) return "";
-  if (Array.isArray(value)) {
-    return value.map((v) => String(v)).join(", ");
-  }
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  const s = String(value).trim();
-  return s.length > 40 ? `${s.slice(0, 39)}…` : s;
 }
 
 interface AppAuthoringProps {
