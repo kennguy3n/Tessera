@@ -136,4 +136,15 @@ export interface SlideContent {
    * unstyled theme attribute onto the canvas.
    */
   themeId?: string;
+  /**
+   * Active brand kit id (see `slideBrandKit.ts`). Optional and
+   * additive: a deck with no brand kit renders exactly as today. The
+   * content parser only confirms the value is brand-namespaced — the
+   * id is resolved against the live `localStorage` brand-kit store at
+   * render time, so an unknown id (a kit deleted elsewhere, or a
+   * hand-edited deck) degrades to "no brand kit" rather than throwing.
+   * A brand kit re-skins the deck's curated `themeId` without altering
+   * any slide content.
+   */
+  brandKitId?: string;
 }

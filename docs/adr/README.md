@@ -30,4 +30,5 @@ the record stays verifiable).
 | [0016](0016-custom-skill-sampling-authoring.md)        | Per-step sampling authoring in the custom-skill editor         |
 | [0017](0017-custom-skill-output-contract-authoring.md) | Per-step output-contract authoring in the custom-skill editor  |
 | [0018](0018-skill-export-import.md)                    | Export / import a skill as a portable, shareable file          |
+| [0019](0019-slide-brand-kit.md)                        | Slide Brand Kit data model + brand-aware theming               |
 | [0020](0020-slide-template-library.md)                 | Slide template library: breadth, taxonomy, and gallery         |
