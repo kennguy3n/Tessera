@@ -29,3 +29,4 @@ the record stays verifiable).
 | [0015](0015-custom-skill-check-authoring.md)           | Acceptance-check authoring in the custom-skill editor          |
 | [0016](0016-custom-skill-sampling-authoring.md)        | Per-step sampling authoring in the custom-skill editor         |
 | [0017](0017-custom-skill-output-contract-authoring.md) | Per-step output-contract authoring in the custom-skill editor  |
+| [0018](0018-skill-export-import.md)                    | Export / import a skill as a portable, shareable file          |

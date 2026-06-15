@@ -14,22 +14,27 @@ import {
   MAX_SKILL_NAME,
   MAX_SKILL_STEPS,
   MAX_STEP_OUTPUT_CONTRACT,
+  SKILL_EXPORT_FORMAT,
+  SKILL_EXPORT_VERSION,
   availableVarsBeforeStep,
   buildCustomSkill,
   buildStepCheck,
   checkToDraft,
   emptyCheckDraft,
   emptyDraft,
+  exportSkillFilename,
   isCustomSkillId,
   loadCustomSkills,
   newCustomSkillId,
   normalizeStepKind,
   normalizeSurfaces,
   parseCustomSkillStore,
+  parseSkillImport,
   parseStoredSkill,
   removeCustomSkill,
   saveCustomSkills,
   serializeCustomSkillStore,
+  serializeSkillExport,
   skillToDraft,
   slugifyVar,
   upsertCustomSkill,
@@ -969,5 +974,203 @@ describe("step output contract authoring", () => {
     expect(skillToDraft(loaded).steps[0].outputContract).toBe(
       "FORMAT: JSON object only.",
     );
+  });
+});
+
+describe("skill export / import", () => {
+  it("serializeSkillExport wraps a skill in a tagged, versioned envelope", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    expect(doc).toBeDefined();
+    if (!doc) return;
+    const parsed = JSON.parse(serializeSkillExport(doc)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed.format).toBe(SKILL_EXPORT_FORMAT);
+    expect(parsed.version).toBe(SKILL_EXPORT_VERSION);
+    expect((parsed.skill as Skill).id).toBe(doc.id);
+    // Pretty-printed (human-shareable), not minified onto one line.
+    expect(serializeSkillExport(doc)).toContain("\n");
+  });
+
+  it("does not mutate the skill it serialises", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    if (!doc) return;
+    const before = JSON.stringify(doc);
+    serializeSkillExport(doc);
+    expect(JSON.stringify(doc)).toBe(before);
+  });
+
+  it("exportSkillFilename slugifies the name with a .json extension", () => {
+    expect(
+      exportSkillFilename({ name: "My Cool Skill" } as unknown as Skill),
+    ).toBe("tessera-skill-my-cool-skill.json");
+    // Falls back to a stable stem when nothing usable remains.
+    expect(exportSkillFilename({ name: "!!!" } as unknown as Skill)).toBe(
+      "tessera-skill-skill.json",
+    );
+  });
+
+  it("imports a built-in export as a fresh, id-less custom draft", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    if (!doc) return;
+    const result = parseSkillImport(serializeSkillExport(doc));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // No id ⇒ saving mints a new custom id; an import never overwrites.
+    expect(result.draft.id).toBeUndefined();
+    expect(result.draft.name).toBe(doc.name);
+    expect(result.draft.steps).toHaveLength(doc.steps.length);
+
+    const built = buildCustomSkill(result.draft, fixedId);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(isCustomSkillId(built.skill.id)).toBe(true);
+    expect(built.skill.id).not.toBe(doc.id);
+    // Per-step authored fields survive the export → import → build trip.
+    doc.steps.forEach((step, i) => {
+      expect(built.skill.steps[i].instruction).toBe(step.instruction);
+      expect(built.skill.steps[i].outputContract).toBe(step.outputContract);
+    });
+  });
+
+  it("preserves checks, sampling, contracts, and inputsFrom on a round-trip", () => {
+    const rich = buildCustomSkill(
+      draft({
+        steps: [
+          {
+            title: "Plan",
+            kind: "plan",
+            instruction: "Outline {{topic}}.",
+            output: "outline",
+            inputsFrom: [],
+            outputContract: "FORMAT: a bulleted list.",
+            check: {
+              ...emptyCheckDraft(),
+              nonEmpty: true,
+              minLines: "3",
+              mustInclude: "- ",
+            },
+            temperature: "0.2",
+            maxTokens: "256",
+          },
+          {
+            title: "Draft",
+            kind: "draft",
+            instruction: "Expand {{outline}} into prose about {{topic}}.",
+            output: "result",
+            inputsFrom: ["outline"],
+            outputContract: "",
+            check: emptyCheckDraft(),
+            temperature: "0.8",
+            maxTokens: "1024",
+          },
+        ],
+      }),
+      fixedId,
+    );
+    expect(rich.ok).toBe(true);
+    if (!rich.ok) return;
+
+    const result = parseSkillImport(serializeSkillExport(rich.skill));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const rebuilt = buildCustomSkill(result.draft, fixedId);
+    expect(rebuilt.ok).toBe(true);
+    if (!rebuilt.ok) return;
+
+    expect(rebuilt.skill.steps[0].check).toEqual(rich.skill.steps[0].check);
+    expect(rebuilt.skill.steps[0].outputContract).toBe(
+      "FORMAT: a bulleted list.",
+    );
+    expect(rebuilt.skill.steps[0].temperature).toBe(0.2);
+    expect(rebuilt.skill.steps[0].maxTokens).toBe(256);
+    expect(rebuilt.skill.steps[1].inputsFrom).toEqual(["outline"]);
+    expect(rebuilt.skill.steps[1].temperature).toBe(0.8);
+  });
+
+  it("rejects invalid JSON", () => {
+    const result = parseSkillImport("not json{");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/JSON/i);
+  });
+
+  it("rejects a file without the skill-export format tag", () => {
+    // The localStorage store envelope ({version, skills}) has no `format`.
+    const storeBlob = serializeCustomSkillStore([]);
+    const result = parseSkillImport(storeBlob);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/Tessera skill file/i);
+  });
+
+  it("rejects an envelope from a newer export version", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    if (!doc) return;
+    const blob = JSON.stringify({
+      format: SKILL_EXPORT_FORMAT,
+      version: SKILL_EXPORT_VERSION + 1,
+      skill: doc,
+    });
+    const result = parseSkillImport(blob);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/newer version/i);
+  });
+
+  it("rejects an envelope whose version is not a number", () => {
+    const blob = JSON.stringify({
+      format: SKILL_EXPORT_FORMAT,
+      version: "1",
+      skill: { name: "X" },
+    });
+    const result = parseSkillImport(blob);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a file that contains no skill", () => {
+    const blob = JSON.stringify({
+      format: SKILL_EXPORT_FORMAT,
+      version: SKILL_EXPORT_VERSION,
+      skill: 123,
+    });
+    const result = parseSkillImport(blob);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/doesn’t contain a skill/i);
+  });
+
+  it("rejects a well-formed envelope whose skill fails to build", () => {
+    // A skill with no steps is structurally invalid (buildCustomSkill errors).
+    const blob = JSON.stringify({
+      format: SKILL_EXPORT_FORMAT,
+      version: SKILL_EXPORT_VERSION,
+      skill: { name: "Empty", surfaces: ["document"], inputs: [], steps: [] },
+    });
+    const result = parseSkillImport(blob);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.length).toBeGreaterThan(0);
+  });
+
+  it("round-trips a custom skill through serialize → import → save → load", () => {
+    const built = buildCustomSkill(draft({ name: "Shareable" }), fixedId);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+
+    const result = parseSkillImport(serializeSkillExport(built.skill));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const imported = buildCustomSkill(result.draft, fixedId);
+    expect(imported.ok).toBe(true);
+    if (!imported.ok) return;
+
+    // The imported copy is a distinct skill (own id), not the original.
+    expect(imported.skill.id).not.toBe(built.skill.id);
+    saveCustomSkills([imported.skill]);
+    const [loaded] = loadCustomSkills();
+    expect(loaded.name).toBe("Shareable");
+    expect(loaded.steps[0].instruction).toBe("Write about {{topic}}.");
   });
 });

@@ -935,3 +935,106 @@ export function saveCustomSkills(skills: ReadonlyArray<Skill>): void {
 function dedupe<T>(values: ReadonlyArray<T>): T[] {
   return Array.from(new Set(values));
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Share: export / import a single skill as a portable file
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Tag stamped on an exported skill file so an arbitrary `.json` can be
+ * told apart from a Tessera skill before it is parsed. Distinct from the
+ * `localStorage` store envelope (which has no `format` and carries a list).
+ */
+export const SKILL_EXPORT_FORMAT = "tessera.skill";
+
+/**
+ * Version of the *export envelope* (independent of the persistence
+ * {@link SCHEMA_VERSION}). A file whose `version` is newer than this is
+ * refused rather than silently half-read.
+ */
+export const SKILL_EXPORT_VERSION = 1;
+
+/** Result of {@link parseSkillImport}: a ready-to-edit draft, or a reason. */
+export type SkillImportResult =
+  | { ok: true; draft: CustomSkillDraft }
+  | { ok: false; error: string };
+
+/**
+ * Serialise one skill (built-in OR custom) to a portable, pretty-printed
+ * JSON file the user can share. Exporting a built-in yields its canonical
+ * template as a starting point; exporting a custom skill round-trips every
+ * authored field (steps, inputs, contracts, checks, sampling). Pure: never
+ * mutates `skill` and performs no IO.
+ */
+export function serializeSkillExport(skill: Skill): string {
+  return JSON.stringify(
+    { format: SKILL_EXPORT_FORMAT, version: SKILL_EXPORT_VERSION, skill },
+    null,
+    2,
+  );
+}
+
+/** Suggested download filename for an exported skill, e.g. `tessera-skill-my-skill.json`. */
+export function exportSkillFilename(skill: Skill): string {
+  const slug = slugifyVar(skill.name).replace(/_/g, "-") || "skill";
+  return `tessera-skill-${slug}.json`;
+}
+
+/**
+ * Parse a shared skill file into a {@link CustomSkillDraft} ready to open in
+ * the editor. Always produces a draft WITHOUT an id, so saving mints a fresh
+ * custom id and an import can never overwrite (or shadow) an existing skill —
+ * even when the file came from `serializeSkillExport` of a built-in.
+ *
+ * Routes the raw skill through the same `parseStored*` coercion +
+ * {@link buildCustomSkill} validation as the persistence layer, so an
+ * imported template can never be less well-formed than one authored in the
+ * editor. Never throws: malformed input degrades to a friendly `error`.
+ */
+export function parseSkillImport(raw: string): SkillImportResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "This file isn’t valid JSON." };
+  }
+
+  const rec = asRecord(parsed);
+  if (!rec || rec.format !== SKILL_EXPORT_FORMAT) {
+    return { ok: false, error: "This isn’t a Tessera skill file." };
+  }
+  if (typeof rec.version !== "number" || rec.version > SKILL_EXPORT_VERSION) {
+    return {
+      ok: false,
+      error: "This skill was exported by a newer version of Tessera.",
+    };
+  }
+
+  const skillRec = asRecord(rec.skill);
+  if (!skillRec || typeof skillRec.name !== "string") {
+    return { ok: false, error: "This file doesn’t contain a skill." };
+  }
+
+  // Build a fresh draft (no id ⇒ a new custom id on save), reusing the exact
+  // coercion the persistence layer uses so an import can never diverge from
+  // what the editor would accept. Any stored id is intentionally ignored.
+  const draft: CustomSkillDraft = {
+    name: skillRec.name,
+    description:
+      typeof skillRec.description === "string" ? skillRec.description : "",
+    surfaces: normalizeSurfaces(skillRec.surfaces),
+    inputs: parseStoredInputs(skillRec.inputs),
+    steps: parseStoredSteps(skillRec.steps),
+  };
+
+  // Confirm the imported template actually builds (well-formed inputs/steps,
+  // no dangling {{var}} references) before handing it to the editor.
+  const built = buildCustomSkill(draft);
+  if (!built.ok) {
+    return {
+      ok: false,
+      error: built.errors[0] ?? "This skill couldn’t be imported.",
+    };
+  }
+  return { ok: true, draft };
+}
