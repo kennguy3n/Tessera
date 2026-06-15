@@ -22,9 +22,10 @@ import { MemoryRouter } from "react-router-dom";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual<typeof import("react-router-dom")>(
-    "react-router-dom",
-  );
+  const actual =
+    await vi.importActual<typeof import("react-router-dom")>(
+      "react-router-dom",
+    );
   return {
     ...actual,
     useNavigate: () => navigateMock,
@@ -42,24 +43,36 @@ vi.mock("../hooks/useTemplates", () => ({
         name: "Doc One",
         description: "first",
         artifactType: "document",
+        industry: [],
+        locale: "en",
+        category: "documents",
       },
       {
         id: "doc-2",
         name: "Doc Two",
         description: "second",
         artifactType: "document",
+        industry: [],
+        locale: "en",
+        category: "documents",
       },
       {
         id: "doc-3",
         name: "Doc Three",
         description: "third",
         artifactType: "document",
+        industry: [],
+        locale: "en",
+        category: "documents",
       },
       {
         id: "deck-1",
         name: "Deck One",
         description: "fourth",
         artifactType: "slides",
+        industry: [],
+        locale: "en",
+        category: "slides",
       },
     ],
     loading: false,
