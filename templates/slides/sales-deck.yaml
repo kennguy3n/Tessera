@@ -5,8 +5,6 @@ description: Outbound/closing sales deck — buyer pain, point of view, solution
 format: marp
 theme: gaia
 paginate: true
-industry:
-  - retail
 profile:
   - sales
   - account-executive
