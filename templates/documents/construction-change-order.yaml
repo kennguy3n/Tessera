@@ -1,0 +1,56 @@
+id: construction-change-order-v1
+name: Construction Change Order
+type: document
+description: Construction change order documenting a scope change with cost breakdown, schedule impact, and required approvals
+industry:
+  - construction
+profile:
+  - project-manager
+  - contracts-manager
+  - estimator
+sections:
+  - title: Change Order Identification
+    prompt: >
+      Record the change order number, project name and number, contract
+      reference, originating RFI or directive, date, and the parties
+      (owner, contractor, architect/engineer).
+  - title: Description of Change
+    prompt: >
+      Describe the change in scope precisely: what work is added, deleted,
+      or modified, and the drawings or specifications affected.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Reason and Origin
+    prompt: >
+      Explain why the change is required (design change, unforeseen
+      condition, owner request, error/omission) and who originated it, as
+      this affects entitlement.
+  - title: Scope Impact
+    prompt: >
+      Detail how the change affects the work: trades involved, sequencing,
+      interfaces with other work, and any rework required.
+  - title: Cost Breakdown
+    prompt: >
+      Provide the cost breakdown in a table: line item, quantity, unit
+      rate, labor, material, equipment, subcontractor, overhead and profit,
+      with a total. State whether it is an add or a credit.
+    output_format: table
+  - title: Schedule Impact
+    prompt: >
+      State the time impact: added or recovered days, effect on milestones
+      and the critical path, and any request for an extension of time.
+  - title: Revised Contract Value
+    prompt: >
+      Show the original contract value, the sum of previous change orders,
+      this change, and the new adjusted contract value and completion date.
+    output_format: table
+  - title: Approvals
+    prompt: >
+      Capture the required approval signatures in order (contractor, owner,
+      architect/engineer) with names, titles, and dates, and note that work
+      shall not proceed until approved.
+export:
+  - markdown
+  - pdf
+  - docx

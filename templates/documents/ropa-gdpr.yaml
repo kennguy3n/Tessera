@@ -1,0 +1,57 @@
+id: ropa-gdpr-v1
+name: Records of Processing Activities (EU GDPR)
+type: document
+description: Article 30 record of processing activities documenting purposes, data categories, recipients, transfers, and security measures
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Controller and Processor Identification
+    prompt: >
+      Record the identity and contact details of the controller (and where
+      relevant the joint controller, the controller's representative, and
+      the Data Protection Officer), as required by Article 30(1)(a).
+  - title: Purposes of Processing
+    prompt: >
+      State the purpose of each processing activity. List one row per
+      distinct processing activity so the record stays granular.
+    output_format: table
+  - title: Categories of Data Subjects and Data
+    prompt: >
+      Describe the categories of data subjects and the categories of
+      personal data for each processing activity, flagging any
+      special-category data.
+    output_format: table
+  - title: Categories of Recipients
+    prompt: >
+      Identify the categories of recipients to whom the data has been or
+      will be disclosed, including recipients in third countries or
+      international organisations.
+  - title: International Transfers
+    prompt: >
+      Document transfers of personal data to third countries, the countries
+      involved, and the documentation of the appropriate safeguards under
+      Article 30(1)(e).
+  - title: Retention Schedule
+    prompt: >
+      Record the envisaged time limits for erasure of the different
+      categories of data, or the criteria used to set them.
+    output_format: table
+  - title: Security Measures
+    prompt: >
+      Provide a general description of the technical and organisational
+      security measures referred to in Article 32(1) for each processing
+      activity.
+  - title: Lawful Basis Mapping
+    prompt: >
+      Map each processing activity to its lawful basis under Article 6 (and
+      Article 9 for special categories) to support accountability.
+    output_format: table
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

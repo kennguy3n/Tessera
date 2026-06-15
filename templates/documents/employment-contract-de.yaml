@@ -1,0 +1,53 @@
+id: employment-contract-de-v1
+name: Employment Contract (Germany / Arbeitsvertrag)
+type: document
+description: German employment contract aligned to the Nachweisgesetz, covering role, pay, working time, vacation, probation, and notice
+industry:
+  - legal
+profile:
+  - hr-manager
+  - attorney
+sections:
+  - title: Contracting Parties
+    prompt: >
+      Identify the employer (Arbeitgeber) and employee (Arbeitnehmer) with
+      full legal names and addresses.
+  - title: Role and Start Date
+    prompt: >
+      State the position and duties (Taetigkeit), the start date (Beginn des
+      Arbeitsverhaeltnisses), and whether the contract is fixed-term
+      (befristet) or permanent (unbefristet), noting that fixed terms must
+      meet the requirements of the Teilzeit- und Befristungsgesetz.
+  - title: Remuneration
+    prompt: >
+      State the gross salary (Bruttoverguetung), the payment interval, and
+      any bonuses, allowances, or in-kind benefits, including any applicable
+      collective agreement (Tarifvertrag).
+  - title: Working Time
+    prompt: >
+      State the regular weekly working hours (Arbeitszeit) and any overtime
+      arrangements, consistent with the limits of the Arbeitszeitgesetz.
+  - title: Vacation
+    prompt: >
+      State the annual vacation entitlement (Urlaub), meeting at least the
+      statutory minimum under the Bundesurlaubsgesetz.
+  - title: Probation and Notice
+    prompt: >
+      State any probationary period (Probezeit) and the notice periods
+      (Kuendigungsfristen) for ordinary termination, consistent with
+      Section 622 BGB and the protections of the Kuendigungsschutzgesetz
+      where applicable.
+  - title: Confidentiality
+    prompt: >
+      Set out the confidentiality obligations (Verschwiegenheitspflicht)
+      and, where used, any post-contractual non-compete with the
+      compensation (Karenzentschaedigung) the law requires.
+  - title: Ancillary Agreements
+    prompt: >
+      Capture ancillary terms (Nebenabreden), the requirement that changes
+      be in writing, a severability clause, and references to applicable
+      works agreements (Betriebsvereinbarungen).
+export:
+  - markdown
+  - pdf
+  - docx

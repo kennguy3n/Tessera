@@ -1,0 +1,55 @@
+id: brief-v1-pt
+name: Briefing
+type: document
+description: Briefing conciso de projeto ou campanha com objetivo, público, entregáveis e cronograma (versão em português)
+locale: pt
+sections:
+  - title: Título e contexto do briefing
+    prompt: >
+      Título, solicitante, responsável, data-alvo de conclusão e um resumo
+      de contexto de um parágrafo. Responda em português.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Objetivo
+    prompt: >
+      Um único objetivo claro que o briefing busca alcançar. Evite
+      briefings com múltiplos objetivos: divida-os se necessário.
+      Responda em português.
+  - title: Antecedentes
+    prompt: >
+      Antecedentes relevantes e trabalhos anteriores, citando material de
+      origem. Inclua links para pesquisas, briefings anteriores ou
+      artefatos relacionados. Responda em português.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Público
+    prompt: >
+      Para quem o entregável se destina. Inclua os públicos primário,
+      secundário e qualquer um explicitamente fora do escopo.
+      Responda em português.
+  - title: Mensagens-chave
+    prompt: >
+      As 3 a 5 mensagens principais que devem transparecer no entregável.
+      Cada uma deve ser uma única frase. Responda em português.
+  - title: Entregáveis
+    prompt: >
+      Liste os entregáveis concretos esperados, com formato, extensão e
+      canal. Responda em português.
+  - title: Métricas de sucesso
+    prompt: >
+      Como o sucesso será medido. De forma quantitativa quando possível.
+      Responda em português.
+  - title: Cronograma e marcos
+    prompt: >
+      Marcos principais com datas-alvo e responsáveis.
+      Responda em português.
+  - title: Restrições
+    prompt: >
+      Restrições de orçamento, escopo, marca, jurídicas ou outras que o
+      entregável deve respeitar. Responda em português.
+export:
+  - markdown
+  - html
+  - pdf

@@ -1,0 +1,62 @@
+id: patient-intake-summary-v1
+name: Patient Intake Summary
+type: document
+description: Clinical intake summary capturing presenting complaint, history, medications, review of systems, and triage disposition
+industry:
+  - healthcare
+profile:
+  - nurse
+  - intake-coordinator
+  - physician
+sections:
+  - title: Patient Identification
+    prompt: >
+      Record patient identifiers (name, date of birth, medical record
+      number), date and time of intake, and the person completing the
+      intake. Note the source of the history (patient, family, records).
+  - title: Chief Complaint
+    prompt: >
+      State the chief complaint in the patient's own words where possible,
+      with onset and duration.
+  - title: History of Present Illness
+    prompt: >
+      Document the history of present illness: onset, location, duration,
+      character, aggravating and relieving factors, radiation, timing, and
+      severity. Keep it factual and chronological.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Past Medical and Surgical History
+    prompt: >
+      Summarise relevant past medical and surgical history, hospitalisations,
+      and chronic conditions.
+    output_format: bullets
+  - title: Medications and Allergies
+    prompt: >
+      List current medications with dose and frequency, and document
+      allergies with the reaction. Flag any anticoagulants or high-risk
+      medications prominently.
+    output_format: table
+  - title: Social and Family History
+    prompt: >
+      Capture relevant social history (tobacco, alcohol, occupation,
+      living situation) and pertinent family history.
+  - title: Review of Systems
+    prompt: >
+      Conduct a focused review of systems, documenting pertinent positives
+      and negatives by system.
+    output_format: bullets
+  - title: Vital Signs and Initial Assessment
+    prompt: >
+      Record vital signs and the initial clinical assessment, including
+      any standardised screening or pain scores collected at intake.
+    output_format: table
+  - title: Triage Disposition
+    prompt: >
+      State the triage level, the disposition (e.g. routine, urgent,
+      immediate), and the recommended next step or clinician to whom the
+      patient is being routed.
+export:
+  - markdown
+  - pdf
+  - docx

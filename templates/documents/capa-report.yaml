@@ -1,0 +1,57 @@
+id: capa-report-v1
+name: CAPA Report
+type: document
+description: Corrective and Preventive Action report documenting root cause, corrective and preventive actions, and effectiveness verification
+industry:
+  - manufacturing
+profile:
+  - quality-engineer
+  - quality-manager
+sections:
+  - title: CAPA Identification
+    prompt: >
+      Record the CAPA number, the date opened, the originator, the source
+      (audit, complaint, nonconformance, deviation), and the priority or
+      risk classification.
+  - title: Problem Description
+    prompt: >
+      Describe the problem objectively: what was observed, where, when, the
+      magnitude, and the affected product, process, or batch. Reference the
+      triggering record.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Immediate Containment
+    prompt: >
+      Document the containment and correction actions taken to limit
+      impact (quarantine, recall assessment, stop-ship), with dates and
+      responsible parties.
+  - title: Root Cause Analysis
+    prompt: >
+      Determine the root cause using a structured method (Five Whys,
+      fishbone, fault tree). Distinguish the true root cause from symptoms
+      and explain why detection controls did not catch it earlier.
+  - title: Corrective Action Plan
+    prompt: >
+      Define the corrective actions that eliminate the identified root
+      cause, each with an owner and due date, in a table.
+    output_format: table
+  - title: Preventive Action Plan
+    prompt: >
+      Define the preventive actions that stop recurrence elsewhere (read
+      across to similar products, processes, or sites), each with an owner
+      and due date.
+    output_format: table
+  - title: Effectiveness Verification
+    prompt: >
+      State how and when the effectiveness of the actions will be verified,
+      the acceptance criteria, and the evidence required to confirm the
+      root cause is eliminated.
+  - title: Approval and Closure
+    prompt: >
+      Record the review and approval to close, the approvers and dates, and
+      confirmation that effectiveness criteria were met before closure.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,62 @@
+id: business-case-v1
+name: Business Case
+type: document
+description: Decision-ready business case comparing options with costs, benefits, financial analysis, and a recommendation
+industry:
+  - finance
+profile:
+  - executive
+  - analyst
+  - program-manager
+sections:
+  - title: Executive Summary
+    prompt: >
+      Summarise the decision being requested, the recommended option, the
+      expected return, and the funding ask in under one page. Lead with the
+      recommendation so a sponsor can decide quickly.
+  - title: Problem or Opportunity
+    prompt: >
+      Define the business problem or opportunity, its drivers, and the
+      cost or risk of doing nothing. Quantify the baseline where possible,
+      citing source material.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Options Considered
+    prompt: >
+      Describe the realistic options evaluated (including the do-nothing
+      baseline). For each, summarise the approach, indicative cost, and
+      headline pros and cons.
+  - title: Recommended Option
+    prompt: >
+      State the recommended option and justify why it is preferred over
+      the alternatives against the decision criteria.
+  - title: Costs and Benefits
+    prompt: >
+      Lay out the quantified costs (one-off and recurring) and the
+      tangible and intangible benefits in a table. Note assumptions behind
+      each figure.
+    output_format: table
+  - title: Financial Analysis
+    prompt: >
+      Provide the financial appraisal: payback period, net present value
+      (NPV), and return on investment (ROI) over the appraisal horizon.
+      State the discount rate and the modelling assumptions used.
+  - title: Risks and Mitigations
+    prompt: >
+      Catalogue the principal risks to delivery and to the benefits, each
+      with likelihood, impact, owner, and mitigation.
+  - title: Implementation Plan
+    prompt: >
+      Outline the high-level plan: phases, milestones, key dependencies,
+      and the resourcing required to realise the benefits.
+  - title: Decision and Approval
+    prompt: >
+      State the specific decision and funding being requested, the
+      approvers required, and the conditions or stage gates attached to
+      approval.
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

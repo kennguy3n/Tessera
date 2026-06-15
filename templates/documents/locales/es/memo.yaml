@@ -1,0 +1,31 @@
+id: memo-v1-es
+name: Memorando
+type: document
+description: Memorando de comunicación interna con contexto, decisión y elementos de acción (versión en español)
+locale: es
+sections:
+  - title: Asunto
+    prompt: >
+      Indique el asunto de este memorando de forma clara y concisa.
+      Responda en español.
+  - title: Contexto
+    prompt: >
+      Proporcione el contexto de fondo que los destinatarios necesitan
+      para comprender la decisión o la información que se comunica.
+      Responda en español.
+  - title: Decisión o información
+    prompt: >
+      Indique la decisión, el cambio de política o la información que se
+      comunica. Sea específico sobre qué cambia y por qué.
+      Responda en español.
+  - title: Impacto
+    prompt: >
+      Describa a quién afecta y cómo. Incluya el cronograma de los
+      cambios. Responda en español.
+  - title: Elementos de acción
+    prompt: >
+      Enumere elementos de acción específicos con responsables y plazos.
+      Responda en español.
+export:
+  - markdown
+  - html

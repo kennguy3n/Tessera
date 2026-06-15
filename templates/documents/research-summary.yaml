@@ -1,0 +1,63 @@
+id: research-summary-v1
+name: Research Summary
+type: document
+description: Structured synthesis of a research question with methodology, findings, limitations, and cited evidence
+industry:
+  - education
+profile:
+  - researcher
+  - analyst
+  - professor
+sections:
+  - title: Title and Abstract
+    prompt: >
+      State the title of the research summary and write a 150-250 word
+      abstract covering the question, approach, key findings, and the
+      headline implication. The abstract must stand alone.
+  - title: Research Question and Scope
+    prompt: >
+      State the precise research question or hypothesis, define the
+      scope and boundaries, and explain why the question matters. Note
+      any sub-questions the summary addresses.
+  - title: Methodology
+    prompt: >
+      Describe how the evidence was gathered and analysed: study design,
+      data sources, sample, inclusion/exclusion criteria, and analytical
+      methods. Be specific enough that a reader could assess rigour.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Key Findings
+    prompt: >
+      Present the principal findings as a concise list, each stated as a
+      claim followed by the supporting evidence and effect size or
+      magnitude where available. Distinguish strong from tentative findings.
+    output_format: bullets
+  - title: Evidence and Data
+    prompt: >
+      Summarise the underlying data in a table where appropriate
+      (study, sample, measure, result, confidence). Cite the source for
+      every row so claims are traceable.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 1
+  - title: Limitations
+    prompt: >
+      Enumerate the limitations and threats to validity (selection bias,
+      confounders, generalisability, data quality) and how they constrain
+      the conclusions.
+  - title: Implications and Recommendations
+    prompt: >
+      Translate the findings into implications for practice, policy, or
+      future research. Make recommendations actionable and proportionate
+      to the strength of the evidence.
+  - title: References
+    prompt: >
+      Provide a numbered reference list keyed to the in-text citations,
+      using a consistent citation style.
+    output_format: numbered_list
+export:
+  - markdown
+  - pdf
+  - docx

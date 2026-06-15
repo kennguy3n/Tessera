@@ -1,0 +1,50 @@
+id: project-plan-v1-fr
+name: Plan de projet
+type: document
+description: Plan de projet complet avec calendrier, jalons, responsables et risques (version française)
+locale: fr
+sections:
+  - title: Résumé du projet
+    prompt: >
+      Résumé exécutif d'un paragraphe incluant l'objectif, le périmètre,
+      le responsable, la date cible d'achèvement et l'état actuel.
+      Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Objectifs et critères de réussite
+    prompt: >
+      Listez les objectifs (à quoi ressemble la réussite) et les critères
+      mesurables sur lesquels le projet sera évalué. Répondez en français.
+  - title: Périmètre
+    prompt: >
+      Précisez ce qui est inclus, exclu et explicitement reporté. Citez le
+      matériel source le cas échéant. Répondez en français.
+  - title: Jalons et calendrier
+    prompt: >
+      Tableau des jalons avec date cible, livrable, responsable et
+      critères d'acceptation. Incluez des notes sur le chemin critique.
+      Répondez en français.
+  - title: Ressources et équipe
+    prompt: >
+      Listez les membres de l'équipe, leurs rôles et leurs allocations,
+      ainsi que toute dépendance transversale. Répondez en français.
+  - title: Risques et mesures d'atténuation
+    prompt: >
+      Recensez les principaux risques avec leur probabilité, leur impact,
+      leur responsable et la mesure d'atténuation prévue.
+      Répondez en français.
+  - title: Dépendances
+    prompt: >
+      Documentez les dépendances externes et internes avec leur
+      responsable et leur état. Signalez les points de blocage.
+      Répondez en français.
+  - title: Plan de communication
+    prompt: >
+      Décrivez la cadence des réunions, la fréquence des rapports d'état et
+      les voies d'escalade. Répondez en français.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

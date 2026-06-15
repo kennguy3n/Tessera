@@ -1,0 +1,50 @@
+id: employee-handbook-section-v1
+name: Employee Handbook Section
+type: document
+description: A single, self-contained employee handbook policy section with purpose, scope, policy statement, and acknowledgement
+profile:
+  - hr-manager
+  - administrator
+sections:
+  - title: Policy Title and Purpose
+    prompt: >
+      State the policy title and a clear statement of purpose: what
+      behaviour or outcome the policy exists to ensure and why it matters
+      to the organisation and its people.
+  - title: Scope and Applicability
+    prompt: >
+      Define who the policy applies to (employees, contractors,
+      locations), when it applies, and any roles or situations that are
+      excluded.
+  - title: Policy Statement
+    prompt: >
+      State the policy itself in plain, unambiguous language. Use defined
+      terms consistently and avoid legalese where a plain phrasing works.
+  - title: Employee Responsibilities
+    prompt: >
+      Describe what employees must do to comply, including any required
+      training, reporting, or acknowledgements.
+    output_format: bullets
+  - title: Procedures
+    prompt: >
+      Lay out the step-by-step procedures associated with the policy
+      (e.g. how to request, report, or escalate), including timelines and
+      the responsible roles.
+    output_format: numbered_list
+  - title: Exceptions and Approvals
+    prompt: >
+      Explain how exceptions are requested and who can approve them, and
+      note the consequences of non-compliance.
+  - title: Related Policies and References
+    prompt: >
+      Cross-reference related handbook sections, applicable laws or
+      standards, and any forms or systems employees will need.
+  - title: Acknowledgement
+    prompt: >
+      Provide the acknowledgement language confirming the employee has
+      read and understood the policy, with space for name, signature, and
+      date.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,51 @@
+id: construction-rfi-v1
+name: Construction RFI
+type: document
+description: Construction Request for Information seeking clarification on drawings or specifications, with cost and schedule impact
+industry:
+  - construction
+profile:
+  - project-manager
+  - site-manager
+  - engineer
+sections:
+  - title: RFI Identification
+    prompt: >
+      Record the RFI number, project name and number, date submitted, the
+      party raising it, the party it is directed to, and the date a
+      response is required.
+  - title: Project and Reference
+    prompt: >
+      Identify the relevant contract, drawing numbers, specification
+      sections, and any prior RFIs or submittals this question relates to.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Question or Clarification Requested
+    prompt: >
+      State the question or conflict clearly and specifically. Describe the
+      discrepancy, ambiguity, or missing information and exactly what
+      clarification is needed to proceed.
+  - title: Background and References
+    prompt: >
+      Provide the background a reviewer needs: what was found in the field
+      or documents, the conflicting references, and any photographs or
+      sketches attached.
+  - title: Proposed Solution or Suggestion
+    prompt: >
+      Where the requester has a recommended resolution, state it so the
+      design team can confirm or redirect, which speeds the response.
+  - title: Schedule and Cost Impact
+    prompt: >
+      Assess whether the issue affects the schedule (and the critical path)
+      and whether it carries a cost impact or potential change order. State
+      the time-sensitivity.
+  - title: Response and Disposition
+    prompt: >
+      Provide space for the response: the answer, the responder and date,
+      any revised documents issued, and whether a change order or further
+      action is required.
+export:
+  - markdown
+  - pdf
+  - docx

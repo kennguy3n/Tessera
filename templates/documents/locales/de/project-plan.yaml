@@ -1,0 +1,53 @@
+id: project-plan-v1-de
+name: Projektplan
+type: document
+description: Umfassender Projektplan mit Zeitplan, Meilensteinen, Verantwortlichen und Risiken (deutsche Version)
+locale: de
+sections:
+  - title: Projektübersicht
+    prompt: >
+      Eine Zusammenfassung in einem Absatz mit Ziel, Umfang,
+      Verantwortlichem, geplantem Fertigstellungstermin und aktuellem
+      Status. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Ziele und Erfolgskriterien
+    prompt: >
+      Listen Sie die Ziele (wie Erfolg aussieht) und die messbaren
+      Kriterien auf, anhand derer das Projekt bewertet wird.
+      Antworten Sie auf Deutsch.
+  - title: Umfang
+    prompt: >
+      Legen Sie fest, was im Umfang, außerhalb des Umfangs und
+      ausdrücklich zurückgestellt ist. Zitieren Sie gegebenenfalls
+      Quellenmaterial. Antworten Sie auf Deutsch.
+  - title: Meilensteine und Zeitplan
+    prompt: >
+      Tabelle der Meilensteine mit Zieltermin, Liefergegenstand,
+      Verantwortlichem und Abnahmekriterien. Fügen Sie Hinweise zum
+      kritischen Pfad hinzu. Antworten Sie auf Deutsch.
+  - title: Ressourcen und Team
+    prompt: >
+      Listen Sie die Teammitglieder, ihre Rollen und Zuteilungen sowie
+      alle bereichsübergreifenden Abhängigkeiten auf.
+      Antworten Sie auf Deutsch.
+  - title: Risiken und Gegenmaßnahmen
+    prompt: >
+      Erfassen Sie die wichtigsten Risiken mit Eintrittswahrscheinlichkeit,
+      Auswirkung, Verantwortlichem und der geplanten Gegenmaßnahme.
+      Antworten Sie auf Deutsch.
+  - title: Abhängigkeiten
+    prompt: >
+      Dokumentieren Sie externe und interne Abhängigkeiten mit
+      Verantwortlichem und Status. Kennzeichnen Sie Blocker.
+      Antworten Sie auf Deutsch.
+  - title: Kommunikationsplan
+    prompt: >
+      Beschreiben Sie den Besprechungsrhythmus, die Häufigkeit der
+      Statusberichte und die Eskalationswege. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

@@ -1,0 +1,49 @@
+id: brief-v1-zh
+name: 简报
+type: document
+description: 包含目标、受众、交付物和时间表的简明项目或活动简报（中文版）
+locale: zh
+sections:
+  - title: 简报标题与背景
+    prompt: >
+      标题、请求人、负责人、目标完成日期，以及一段话的背景概述。
+      请用中文回答。
+    required_sources:
+      - type: local
+        min: 0
+  - title: 目标
+    prompt: >
+      简报要求实现的单一明确目标。避免多目标简报——如有需要请拆分。
+      请用中文回答。
+  - title: 背景
+    prompt: >
+      相关背景与既有工作，并引用来源材料。包含指向研究、既往简报或
+      相关产物的链接。请用中文回答。
+    required_sources:
+      - type: local
+        min: 0
+  - title: 受众
+    prompt: >
+      交付物面向谁。包含主要受众、次要受众以及任何明确排除在外的受众。
+      请用中文回答。
+  - title: 关键信息
+    prompt: >
+      交付物中必须传达的3至5条核心信息。每条应为一句话。
+      请用中文回答。
+  - title: 交付物
+    prompt: >
+      列出预期的具体交付物，包含格式、篇幅和渠道。请用中文回答。
+  - title: 成功指标
+    prompt: >
+      如何衡量成功。尽可能量化。请用中文回答。
+  - title: 时间表与里程碑
+    prompt: >
+      包含目标日期和负责人的关键里程碑。请用中文回答。
+  - title: 约束条件
+    prompt: >
+      交付物必须遵守的预算、范围、品牌、法律或其他约束条件。
+      请用中文回答。
+export:
+  - markdown
+  - html
+  - pdf

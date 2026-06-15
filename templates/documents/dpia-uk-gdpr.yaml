@@ -1,0 +1,62 @@
+id: dpia-uk-gdpr-v1
+name: DPIA (UK GDPR / DPA 2018)
+type: document
+description: Data Protection Impact Assessment under UK GDPR and the Data Protection Act 2018, aligned to ICO guidance
+industry:
+  - legal
+  - government
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Processing Overview
+    prompt: >
+      Describe the processing, its purpose, the controller and processors,
+      and why a DPIA is required under UK GDPR Article 35, referencing the
+      ICO's screening criteria and list of high-risk processing.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Necessity and Proportionality
+    prompt: >
+      Assess necessity and proportionality against the purpose, applying
+      the UK GDPR principles and the ICO's expectations on data
+      minimisation and less-intrusive alternatives.
+  - title: Data Flows and Categories
+    prompt: >
+      Map the personal data: categories of data and data subjects, sources,
+      data flows, recipients, and retention. Use a table where helpful.
+    output_format: table
+  - title: Lawful Basis
+    prompt: >
+      Identify the lawful basis under Article 6 (and Article 9 / DPA 2018
+      Schedule 1 conditions for special-category and criminal-offence
+      data), and how transparency obligations are met.
+  - title: Consultation
+    prompt: >
+      Record consultation with the Data Protection Officer and, where
+      appropriate, data subjects, and summarise the advice received.
+  - title: Risk Assessment to Individuals
+    prompt: >
+      Assess the risks to individuals' rights and freedoms, scoring
+      likelihood and severity, in line with the ICO's risk methodology.
+    output_format: table
+  - title: Mitigating Measures
+    prompt: >
+      Describe the technical and organisational measures that reduce each
+      risk, with owners and the residual risk after mitigation.
+    output_format: table
+  - title: Residual Risk and ICO Consultation
+    prompt: >
+      State the residual risk. Where a high residual risk cannot be
+      mitigated, document the requirement to consult the ICO under
+      Article 36 before processing begins.
+  - title: Outcome and Sign-off
+    prompt: >
+      Record the outcome, the DPO's advice, the approver and date, and the
+      scheduled review date.
+export:
+  - markdown
+  - pdf
+  - docx

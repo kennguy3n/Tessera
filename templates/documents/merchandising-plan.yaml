@@ -1,0 +1,58 @@
+id: merchandising-plan-v1
+name: Merchandising Plan
+type: document
+description: Retail merchandising plan covering assortment, pricing, promotions, inventory, and visual layout with a sales forecast
+industry:
+  - retail
+profile:
+  - merchandiser
+  - category-manager
+  - retail-manager
+sections:
+  - title: Overview and Objectives
+    prompt: >
+      State the planning period, the channels and store clusters in scope,
+      and the merchandising objectives (sales, margin, sell-through, market
+      share). Summarise the strategy in a few sentences.
+  - title: Category and Assortment Strategy
+    prompt: >
+      Define the category role and the assortment plan: core vs. seasonal
+      lines, good-better-best tiers, breadth and depth, and any planned
+      additions or rationalisations. Cite sales and trend data.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Pricing and Margin Plan
+    prompt: >
+      Set the pricing architecture, target margins by tier, competitive
+      positioning, and the rules for price changes. Show the expected blended
+      margin.
+  - title: Promotions and Markdowns
+    prompt: >
+      Lay out the promotional calendar and markdown cadence in a table
+      (period, mechanic, products, expected lift, margin impact), aligned to
+      key trading dates.
+    output_format: table
+  - title: Inventory and Replenishment
+    prompt: >
+      Define the buy plan, opening stock, weeks of cover, replenishment
+      logic, and safety stock. Identify the risk of overstock or stockouts
+      and how it is managed.
+  - title: Visual Merchandising and Planogram
+    prompt: >
+      Describe the space and layout plan: adjacencies, fixtures, planogram
+      principles, and the in-store presentation standards by cluster.
+  - title: Sales Forecast
+    prompt: >
+      Provide the forecast in a table by period (units, revenue, margin,
+      sell-through), with the assumptions behind it.
+    output_format: table
+  - title: KPIs and Review
+    prompt: >
+      Define the KPIs that will be tracked, the review cadence, and the
+      triggers for in-season corrective action.
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

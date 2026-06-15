@@ -1,0 +1,60 @@
+id: breach-notification-gdpr-v1
+name: Personal Data Breach Notification (EU GDPR)
+type: document
+description: Personal data breach notification under EU GDPR Articles 33-34, covering supervisory-authority and data-subject communication
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - security-officer
+sections:
+  - title: Breach Identification and Detection
+    prompt: >
+      Record how and when the breach was detected, the reference number,
+      the reporter, and the time the controller became aware, which starts
+      the 72-hour clock under Article 33(1).
+  - title: Nature of the Breach
+    prompt: >
+      Describe the nature of the personal data breach: confidentiality,
+      integrity, or availability; what happened; the cause; and whether it
+      is contained.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Categories and Numbers Affected
+    prompt: >
+      State the categories and approximate number of data subjects affected
+      and the categories and approximate number of personal data records
+      concerned, as required by Article 33(3)(a).
+    output_format: table
+  - title: Likely Consequences
+    prompt: >
+      Describe the likely consequences of the breach for the affected
+      individuals (Article 33(3)(c)), assessing the risk to their rights
+      and freedoms.
+  - title: Measures Taken or Proposed
+    prompt: >
+      Describe the measures taken or proposed to address the breach and to
+      mitigate its possible adverse effects (Article 33(3)(d)).
+  - title: DPO Contact
+    prompt: >
+      Provide the name and contact details of the Data Protection Officer
+      or other contact point from whom more information can be obtained.
+  - title: Supervisory Authority Notification
+    prompt: >
+      Document the notification to the supervisory authority within 72
+      hours, or, if later, the reasons for the delay (Article 33(1)).
+  - title: Communication to Data Subjects
+    prompt: >
+      Where the breach is likely to result in a high risk, document the
+      clear, plain-language communication to affected data subjects under
+      Article 34, or justify any exemption relied on.
+  - title: Breach Register Entry
+    prompt: >
+      Record the entry in the breach register required by Article 33(5):
+      the facts, effects, and remedial action, to demonstrate accountability.
+export:
+  - markdown
+  - pdf
+  - docx
