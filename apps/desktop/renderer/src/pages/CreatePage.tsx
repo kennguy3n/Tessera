@@ -373,10 +373,11 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
     // Workflows surface at the top so they're the first thing users
     // see when they open the Analyze tab. They reference the underlying
     // `report-v1` template, which ships localized variants under
-    // `templates/documents/locales/<locale>/`. Mirroring `availableLocales`
-    // here ensures clicking a workflow under a non-English locale
-    // resolves to the localized template id (e.g. `report-v1-es`),
-    // matching the behavior of the canonical "Report" card below.
+    // `templates/documents/locales/<locale>/`. Because they share that
+    // base id, buildDerivedCategories overlays the registry-derived
+    // `availableLocales` onto them too, so clicking a workflow under a
+    // non-English locale resolves to the localized id (e.g. `report-v1-es`),
+    // matching the canonical "Report" card below.
     {
       id: "report-v1",
       name: "Summarize sources",
