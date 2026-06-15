@@ -394,7 +394,13 @@ export function availableVarsBeforeStep(
 
 /** Result of building one step's acceptance check. */
 export interface CheckBuildResult {
-  /** The built check, or `undefined` when no field is set. */
+  /**
+   * The built check from the fields that parsed cleanly, or `undefined` when
+   * no field is set. Note this may be defined *alongside* `errors` when some
+   * fields are valid and others are not (e.g. `nonEmpty` set but `minLines`
+   * non-numeric); callers must treat a non-empty `errors` as authoritative
+   * and ignore `check` (as `buildCustomSkill` does — it aborts on any error).
+   */
   check?: SkillStepCheck;
   /** Human-readable problems (e.g. a non-numeric `minLines`). */
   errors: string[];
@@ -444,6 +450,10 @@ function parseTermList(raw: string): string[] {
  * but non-numeric / out of range produce an error rather than being silently
  * dropped. Mirrors the engine's regex-free primitives — never builds a
  * dynamic regular expression. Inverse of {@link checkToDraft}.
+ *
+ * When some fields are valid and others error, the returned `check` reflects
+ * only the valid fields; callers must treat a non-empty `errors` as a build
+ * failure and discard `check` (see {@link CheckBuildResult}).
  */
 export function buildStepCheck(
   draft: CustomCheckDraft | undefined,
