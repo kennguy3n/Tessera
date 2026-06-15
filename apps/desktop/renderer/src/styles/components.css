@@ -3561,8 +3561,14 @@
 /* -----------------------------------------------------------------
  * Template gallery — searchable, category-filtered card grid with
  * live rendered thumbnails. Extends the base picker dialog above.
+ *
+ * The two rules that override base-picker properties (the dialog
+ * width/max-width here and the grid columns below) are scoped to the
+ * compound `.slide-template-picker.slide-template-gallery[-grid]`
+ * selector so they win by specificity (0-2-0 > 0-1-0), not source
+ * order — robust to reordering or splitting this file.
  * ----------------------------------------------------------------- */
-.slide-template-gallery {
+.slide-template-picker.slide-template-gallery {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
@@ -3632,7 +3638,7 @@
   font-weight: var(--font-weight-medium, 500);
 }
 
-.slide-template-gallery-grid {
+.slide-template-picker-grid.slide-template-gallery-grid {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--spacing-md);
 }
