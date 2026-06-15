@@ -6042,3 +6042,23 @@
   background: var(--slide-accent, var(--color-primary));
   flex-shrink: 0;
 }
+
+/* 9. Share controls — Export / Import a Brand Pack, beside the toolbar
+ *    trigger. Mirrors `.skill-manage`: a wrapping inline row of compact
+ *    buttons, with a rejection message dropping onto its own line so it
+ *    never crowds the buttons. */
+.brand-share {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+.brand-share-btn {
+  padding: var(--spacing-2xs, 2px) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+}
+.brand-share-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-error);
+}
