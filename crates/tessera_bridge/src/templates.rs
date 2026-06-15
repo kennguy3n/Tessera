@@ -4,6 +4,7 @@ use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tessera_audit::AuditLogger;
+use tessera_core::ArtifactType;
 use tessera_core::Error as CoreError;
 use tessera_templates::parser::load_template_by_id;
 use tessera_templates::template::Template;
@@ -30,6 +31,45 @@ pub struct TemplateInfo {
     /// Export formats the template supports (e.g. `"pdf"`,
     /// `"docx"`).
     pub export_formats: Vec<String>,
+    /// Industry domains this template is tailored for (mirrors the
+    /// YAML `industry:` list). Empty means industry-agnostic
+    /// ("General"). Lets the renderer derive its industry filter
+    /// straight from the registry instead of a hand-maintained list.
+    #[serde(default)]
+    pub industry: Vec<String>,
+    /// BCP-47 locale tag for this template variant. Base templates
+    /// default to `"en"`; localized variants shipped as
+    /// `<base-id>-<locale>` carry their own tag (e.g. `"es"`), which
+    /// the renderer groups to derive each card's available languages.
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    /// On-disk category (directory) the template belongs to, derived
+    /// from its artifact type (`document` → `"documents"`,
+    /// `slides` → `"slides"`, …). Lets the renderer group templates
+    /// without re-implementing the artifact→directory mapping.
+    #[serde(default)]
+    pub category: String,
+}
+
+/// Serde default for [`TemplateInfo::locale`]: mirrors the template
+/// schema's `en` default so a deserialized record with no `locale`
+/// field reflects the same base-language assumption as the loader.
+fn default_locale() -> String {
+    "en".to_string()
+}
+
+/// Maps an [`ArtifactType`] to the plural on-disk category directory
+/// the template ships under. Kept in lock-step with
+/// `tessera_templates::TEMPLATE_CATEGORIES`.
+fn category_for(artifact_type: ArtifactType) -> &'static str {
+    match artifact_type {
+        ArtifactType::Document => "documents",
+        ArtifactType::Slides => "slides",
+        ArtifactType::Sheet => "sheets",
+        ArtifactType::Base => "bases",
+        ArtifactType::Infographic => "infographics",
+        ArtifactType::LandingPage => "landing_pages",
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -215,6 +255,9 @@ fn template_to_info(t: &Template) -> TemplateInfo {
             .iter()
             .map(std::string::ToString::to_string)
             .collect(),
+        industry: t.industry.clone(),
+        locale: t.locale.clone(),
+        category: category_for(t.artifact_type).to_string(),
     }
 }
 
@@ -246,6 +289,102 @@ export:
         let templates = list_templates(dir.path().to_str().unwrap()).unwrap();
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].id, "prd-v1");
+    }
+
+    /// A base template that omits `industry`/`locale` must surface the
+    /// schema defaults (empty industry list, `"en"` locale) and a
+    /// `category` derived from its artifact type. The renderer relies
+    /// on these to derive its industry filter and a card's "General"
+    /// (industry-agnostic) bucket, so the defaults are part of the
+    /// IPC contract.
+    #[test]
+    fn list_templates_surfaces_default_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
+        std::fs::write(
+            dir.path().join("documents/prd.yaml"),
+            r#"
+id: prd-v1
+name: PRD
+type: document
+description: Product Requirements Document
+sections:
+  - title: Problem
+    prompt: Describe the problem.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        let templates = list_templates(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(templates.len(), 1);
+        let info = &templates[0];
+        assert!(
+            info.industry.is_empty(),
+            "industry-agnostic template must surface an empty industry list"
+        );
+        assert_eq!(info.locale, "en", "base templates default to the en locale");
+        assert_eq!(
+            info.category, "documents",
+            "category must be derived from the document artifact type"
+        );
+    }
+
+    /// Explicit `industry`/`locale` metadata and the artifact→category
+    /// mapping must round-trip through `template_to_info` unchanged so
+    /// the renderer can build its filters and locale grouping from the
+    /// registry alone. A `slides` template with a non-`en` locale and a
+    /// multi-industry list exercises every additive field at once.
+    #[test]
+    fn list_templates_surfaces_explicit_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("slides")).unwrap();
+        std::fs::write(
+            dir.path().join("slides/pitch-es.yaml"),
+            r#"
+id: pitch-v1-es
+name: Presentación
+type: slides
+description: Plataforma de presentación localizada
+locale: es
+industry:
+  - finance
+  - legal
+sections:
+  - title: Resumen
+    prompt: Describe el resumen.
+export:
+  - pdf
+  - pptx
+"#,
+        )
+        .unwrap();
+
+        let templates = list_templates(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(templates.len(), 1);
+        let info = &templates[0];
+        assert_eq!(info.id, "pitch-v1-es");
+        assert_eq!(info.locale, "es");
+        assert_eq!(info.industry, vec!["finance".to_string(), "legal".to_string()]);
+        assert_eq!(
+            info.category, "slides",
+            "category must be derived from the slides artifact type"
+        );
+    }
+
+    /// `category_for` must cover every [`ArtifactType`] with the
+    /// matching plural directory from
+    /// `tessera_templates::TEMPLATE_CATEGORIES`. Pins the mapping so a
+    /// new artifact type cannot silently surface an empty category.
+    #[test]
+    fn category_for_maps_every_artifact_type() {
+        assert_eq!(category_for(ArtifactType::Document), "documents");
+        assert_eq!(category_for(ArtifactType::Slides), "slides");
+        assert_eq!(category_for(ArtifactType::Sheet), "sheets");
+        assert_eq!(category_for(ArtifactType::Base), "bases");
+        assert_eq!(category_for(ArtifactType::Infographic), "infographics");
+        assert_eq!(category_for(ArtifactType::LandingPage), "landing_pages");
     }
 
     #[test]

@@ -12,6 +12,7 @@ import SettingsPage from "../pages/SettingsPage";
 import CreatePage from "../pages/CreatePage";
 import SourcesPage from "../pages/SourcesPage";
 import { __resetSettingsStoreForTests } from "../hooks/useSettings";
+import type { TemplateInfo } from "../types/ipc";
 
 /**
  * Switch the Create page from its default guided wizard into the full
@@ -20,9 +21,27 @@ import { __resetSettingsStoreForTests } from "../hooks/useSettings";
  * exercise the same gallery the wizard now hides behind a click.
  */
 function showFullGallery() {
-  fireEvent.click(
-    screen.getByRole("button", { name: /show all templates/i }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: /show all templates/i }));
+}
+
+/**
+ * Build a fully-typed {@link TemplateInfo} fixture (mirrors the N-API
+ * bridge surface) so registry-driven CreatePage tests can stub
+ * `window.tessera.templates.list()` without `any`.
+ */
+function templateInfo(
+  overrides: Partial<TemplateInfo> & Pick<TemplateInfo, "id" | "name">,
+): TemplateInfo {
+  return {
+    artifactType: "document",
+    description: "",
+    sectionCount: 1,
+    exportFormats: ["pdf"],
+    industry: [],
+    locale: "en",
+    category: "documents",
+    ...overrides,
+  };
 }
 
 describe("HomePage", () => {
@@ -136,7 +155,9 @@ describe("HomePage", () => {
     // the buckets must still render so the user can confirm at a
     // glance that those states are empty rather than wonder if the
     // UI is filtering them out.
-    expect(screen.getByTestId("source-status-connected")).toHaveTextContent("0");
+    expect(screen.getByTestId("source-status-connected")).toHaveTextContent(
+      "0",
+    );
     expect(screen.getByTestId("source-status-disconnected")).toHaveTextContent(
       "0",
     );
@@ -183,10 +204,7 @@ describe("HomePage", () => {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route
-            path="/artifacts/:id/edit"
-            element={<CurrentPath />}
-          />
+          <Route path="/artifacts/:id/edit" element={<CurrentPath />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -326,6 +344,11 @@ describe("CreatePage", () => {
       installedAt: new Date().toISOString(),
       sizeBytes: 1,
     });
+    // The gallery derives its cards from the registry; reset the list
+    // each case so a prior test's fixtures don't leak (the bridge mock
+    // is a shared singleton — see setup.ts).
+    window.tessera.templates.list = vi.fn().mockResolvedValue([]);
+    window.tessera.templates.get = vi.fn().mockResolvedValue(null);
   });
 
   it("defaults to the guided intent wizard at /create", () => {
@@ -338,7 +361,9 @@ describe("CreatePage", () => {
     expect(screen.getByText("Write a document")).toBeInTheDocument();
     expect(screen.getByText("Make a presentation")).toBeInTheDocument();
     // The full gallery is hidden until the user opts in.
-    expect(screen.queryByRole("tab", { name: "Analyze" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Analyze" }),
+    ).not.toBeInTheDocument();
   });
 
   it("walks intent → curated templates → runner", async () => {
@@ -362,16 +387,24 @@ describe("CreatePage", () => {
     });
   });
 
-  it("shows the full gallery after clicking 'Show all templates'", () => {
+  it("shows the full gallery after clicking 'Show all templates'", async () => {
     render(
       <MemoryRouter initialEntries={["/create"]}>
         <CreatePage />
       </MemoryRouter>,
     );
     showFullGallery();
+    // Curated cards render synchronously from the (empty) registry…
     expect(screen.getByText("PRD")).toBeInTheDocument();
-    expect(screen.getByText("Product Requirements Document")).toBeInTheDocument();
+    expect(
+      screen.getByText("Product Requirements Document"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Phase 3/i)).not.toBeInTheDocument();
+    // …then let the registry fetch settle so its state update lands
+    // inside act() (the empty mock leaves the curated cards unchanged).
+    await waitFor(() =>
+      expect(window.tessera.templates.list).toHaveBeenCalled(),
+    );
   });
 
   it("does not show the legacy placeholder copy when a template is selected", async () => {
@@ -398,9 +431,7 @@ describe("CreatePage", () => {
       lastIndexed: null,
       fileCount: 3,
     };
-    window.tessera.sources.listSources = vi
-      .fn()
-      .mockResolvedValue([source]);
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([source]);
     const generated = {
       id: "art-new",
       title: "Generated PRD",
@@ -438,10 +469,9 @@ describe("CreatePage", () => {
     fireEvent.click(generateBtn);
 
     await waitFor(() => {
-      expect(window.tessera.artifacts.generateFromTemplate).toHaveBeenCalledWith(
-        "prd-v1",
-        ["src-test"],
-      );
+      expect(
+        window.tessera.artifacts.generateFromTemplate,
+      ).toHaveBeenCalledWith("prd-v1", ["src-test"]);
     });
     // /artifacts/:id is not a registered route — the app routes generated
     // artifacts straight to the editor (/artifacts/:id/edit), matching
@@ -465,9 +495,7 @@ describe("CreatePage", () => {
       lastIndexed: null,
       fileCount: 3,
     };
-    window.tessera.sources.listSources = vi
-      .fn()
-      .mockResolvedValue([source]);
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([source]);
 
     render(
       <MemoryRouter initialEntries={["/create?template=prd-v1"]}>
@@ -510,9 +538,11 @@ describe("CreatePage", () => {
     // The substrate suggests source B (co-occurs with A under "Acme
     // Corp"). Once B is selected the suggestion's only id is selected
     // and the panel must disappear.
-    window.tessera.substrate.suggestRelatedSources = vi.fn().mockResolvedValue([
-      { entity: "Acme Corp", sourceIds: [sourceB.id], score: 0.9 },
-    ]);
+    window.tessera.substrate.suggestRelatedSources = vi
+      .fn()
+      .mockResolvedValue([
+        { entity: "Acme Corp", sourceIds: [sourceB.id], score: 0.9 },
+      ]);
 
     render(
       <MemoryRouter initialEntries={["/create?template=prd-v1"]}>
@@ -566,7 +596,7 @@ describe("CreatePage", () => {
       .mockResolvedValue([]);
   });
 
-  it("renders all four category tabs with the documented descriptions", () => {
+  it("renders all four category tabs with the documented descriptions", async () => {
     render(
       <MemoryRouter initialEntries={["/create"]}>
         <CreatePage />
@@ -584,9 +614,12 @@ describe("CreatePage", () => {
     expect(
       screen.getByText(/Generate documents, slides, infographics/),
     ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.tessera.templates.list).toHaveBeenCalled(),
+    );
   });
 
-  it("Analyze tab surfaces the three workflow shortcuts at the top", () => {
+  it("Analyze tab surfaces the three workflow shortcuts at the top", async () => {
     render(
       <MemoryRouter initialEntries={["/create"]}>
         <CreatePage />
@@ -600,6 +633,9 @@ describe("CreatePage", () => {
     expect(screen.getByText("Analyze spreadsheet")).toBeInTheDocument();
     // …and is tagged with the "Workflow" pill.
     expect(screen.getAllByText("Workflow")).toHaveLength(3);
+    await waitFor(() =>
+      expect(window.tessera.templates.list).toHaveBeenCalled(),
+    );
   });
 
   it("clicking a workflow card opens the runner with the workflow's friendly name", async () => {
@@ -664,6 +700,127 @@ describe("CreatePage", () => {
       ).toBeInTheDocument();
     });
     expect(screen.queryByText("Analytical report")).not.toBeInTheDocument();
+  });
+
+  it("auto-surfaces an uncurated registry template as a gallery card", async () => {
+    // `field-journal-v1` is NOT in the curated CATEGORIES overlay — it
+    // appears purely because the registry returned it, proving a new
+    // YAML surfaces with no CreatePage edit. Documents default to the
+    // Create tab.
+    window.tessera.templates.list = vi.fn().mockResolvedValue([
+      templateInfo({
+        id: "field-journal-v1",
+        name: "Field Journal",
+        description: "Structured field observation log",
+        category: "documents",
+      }),
+    ]);
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <CreatePage />
+      </MemoryRouter>,
+    );
+    showFullGallery();
+    expect(await screen.findByText("Field Journal")).toBeInTheDocument();
+    expect(
+      screen.getByText("Structured field observation log"),
+    ).toBeInTheDocument();
+  });
+
+  it("routes an uncurated sheet template to the Plan tab, not Create", async () => {
+    window.tessera.templates.list = vi.fn().mockResolvedValue([
+      templateInfo({
+        id: "telemetry-grid-v1",
+        name: "Telemetry Grid",
+        description: "Sensor telemetry sheet",
+        artifactType: "sheet",
+        category: "sheets",
+      }),
+    ]);
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <CreatePage />
+      </MemoryRouter>,
+    );
+    showFullGallery();
+    // Sheets/bases auto-surface under Plan…
+    fireEvent.click(screen.getByRole("tab", { name: "Plan" }));
+    expect(await screen.findByText("Telemetry Grid")).toBeInTheDocument();
+    // …and are absent from the default Create tab.
+    fireEvent.click(screen.getByRole("tab", { name: "Create" }));
+    expect(screen.queryByText("Telemetry Grid")).not.toBeInTheDocument();
+  });
+
+  it("overlays registry industry tags onto curated cards and filters by them", async () => {
+    window.tessera.templates.list = vi.fn().mockResolvedValue([
+      templateInfo({
+        id: "prd-v1",
+        name: "PRD",
+        industry: ["healthcare"],
+        category: "documents",
+      }),
+    ]);
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <CreatePage />
+      </MemoryRouter>,
+    );
+    showFullGallery();
+    // The industry tag is rendered from the registry overlay, not the
+    // curated literal (which no longer carries industry values).
+    expect(await screen.findByText("healthcare")).toBeInTheDocument();
+    // Filtering to a non-matching industry hides the now-tagged PRD card
+    // and the industry-agnostic curated cards alike.
+    fireEvent.change(screen.getByTestId("industry-filter"), {
+      target: { value: "legal" },
+    });
+    expect(screen.queryByText("PRD")).not.toBeInTheDocument();
+    expect(screen.queryByText("Proposal")).not.toBeInTheDocument();
+    // Selecting the matching industry brings PRD back.
+    fireEvent.change(screen.getByTestId("industry-filter"), {
+      target: { value: "healthcare" },
+    });
+    expect(screen.getByText("PRD")).toBeInTheDocument();
+  });
+
+  it("derives available locales and resolves the localized id on click", async () => {
+    const getSpy = vi.fn().mockResolvedValue(null);
+    window.tessera.templates.get = getSpy;
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+    window.tessera.templates.list = vi.fn().mockResolvedValue([
+      templateInfo({ id: "prd-v1", name: "PRD", category: "documents" }),
+      templateInfo({
+        id: "prd-v1-es",
+        name: "PRD (Spanish)",
+        locale: "es",
+        category: "documents",
+      }),
+      // Uncurated English doc used purely as a "registry has resolved"
+      // signal so the locale-filter assertion is not racy.
+      templateInfo({
+        id: "ledger-note-v1",
+        name: "Ledger Note",
+        category: "documents",
+      }),
+    ]);
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <Routes>
+          <Route path="/create" element={<CreatePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    showFullGallery();
+    // Wait until the async list lands (the uncurated card proves it),
+    // so the `prd-v1-es` variant has been grouped into PRD's locales.
+    await screen.findByText("Ledger Note");
+    fireEvent.change(screen.getByTestId("locale-filter"), {
+      target: { value: "es" },
+    });
+    fireEvent.click(screen.getByText("PRD"));
+    // The localized variant id is resolved from the derived locales and
+    // handed to the runner's template fetch.
+    await waitFor(() => expect(getSpy).toHaveBeenCalledWith("prd-v1-es"));
   });
 
   it("falls back to an extraction-only runner when no text model is installed", async () => {
@@ -870,9 +1027,9 @@ describe("SourcesPage", () => {
     expect(
       screen.getByTestId("comparison-modal-common-item-indexing pipeline"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByTestId("comparison-modal-similarity"),
-    ).toHaveTextContent("62%");
+    expect(screen.getByTestId("comparison-modal-similarity")).toHaveTextContent(
+      "62%",
+    );
   });
 
   it("renders a source-type glyph on every row", async () => {
