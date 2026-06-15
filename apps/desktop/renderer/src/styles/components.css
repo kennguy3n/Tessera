@@ -5344,7 +5344,7 @@
   color: var(--color-warning-fg);
 }
 
-/* ── Skill manage controls (New / Edit / Duplicate / Delete) ─────── */
+/* ── Skill manage controls (New / Edit / Duplicate / Export / Import / Delete) ── */
 .skill-manage {
   display: flex;
   flex-wrap: wrap;
@@ -5360,6 +5360,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-xs);
+}
+/* An import-rejection message drops onto its own line within the wrapping
+ * row (so it never crowds the buttons) and uses the error accent. */
+.skill-manage-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-error);
 }
 
 /* A low-emphasis text button (no fill/border) for inline "Remove" links
