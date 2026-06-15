@@ -1,4 +1,11 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import {
+  Fragment,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useMemo,
+} from "react";
 import {
   activeSheetName,
   evaluateFormula,
@@ -27,11 +34,12 @@ import type {
   ValidationMap,
 } from "./sheetEditorTypes";
 import {
-  NUMBER_FORMAT_PRESETS,
   allCellsHave,
   applyFormatPatch,
   getCellFormat,
+  groupedNumberFormatPresets,
   presetIdForPattern,
+  presetPattern,
   toggleBoolFormat,
   type BoolFormatKey,
 } from "./sheetFormatting";
@@ -59,6 +67,12 @@ import { ChartsPanel } from "./components/ChartsPanel";
 import { SheetChart } from "./components/SheetChart";
 import { PivotPanel } from "./components/PivotPanel";
 import { SheetPivot } from "./components/SheetPivot";
+import { SheetTemplateGallery } from "./components/SheetTemplateGallery";
+import { SheetTemplateSaveModal } from "./components/SheetTemplateSaveModal";
+import {
+  emptySheetTemplateDraft,
+  type CustomSheetTemplateDraft,
+} from "./customSheetTemplates";
 import {
   type CellCoord,
   type Selection,
@@ -92,6 +106,10 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  LayoutTemplate,
+  BookmarkPlus,
+  Snowflake,
+  BarChartBig,
 } from "lucide-react";
 
 export type { SheetContent } from "./sheetEditorTypes";
@@ -102,6 +120,23 @@ export type { SheetContent } from "./sheetEditorTypes";
  * `./sheetCharts`) so the A→Z→AA algorithm lives in exactly one place.
  */
 const columnLabel = columnLetter;
+
+/**
+ * Number-format presets clustered into `<optgroup>`s for the toolbar's
+ * format <select>: the common formats first, then the locale currency /
+ * date groups. Computed once — the preset list is static.
+ */
+const GROUPED_NUMBER_FORMAT_PRESETS = groupedNumberFormatPresets();
+
+/** Best-effort unique id for a chart created from the toolbar. */
+function newSheetChartId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return `chart-${crypto.randomUUID()}`;
+  }
+  return `chart-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
 
 interface SheetEditorProps {
   content: string;
@@ -168,6 +203,18 @@ export default function SheetEditor({
   const [chartsOpen, setChartsOpen] = useState(false);
   // Pivot-table manager visibility.
   const [pivotsOpen, setPivotsOpen] = useState(false);
+  // Template gallery visibility + the save / edit / import metadata
+  // modal it defers to (Deliverable 1).
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [templateEditor, setTemplateEditor] = useState<{
+    draft: CustomSheetTemplateDraft;
+    title: string;
+  } | null>(null);
+  // When the modal was launched from inside the gallery (edit /
+  // import-review), reopen the gallery once it closes so only one focus
+  // trap is ever active.
+  const [reopenPickerOnEditorClose, setReopenPickerOnEditorClose] =
+    useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
@@ -1038,6 +1085,122 @@ export default function SheetEditor({
   }, [debouncedSave]);
 
   // ----------------------------------------------------------------
+  // template gallery: apply / save / edit / import (Deliverable 1).
+  // Mirrors the Slide editor's deck-template flow.
+  // ----------------------------------------------------------------
+
+  // Replace the grid with a template's content. Round-trips through the
+  // same defensive `parseSheetContent` the content-sync path uses, so
+  // the applied sheet never aliases the stored template's arrays, then
+  // resets transient UI (selection, in-cell edit, context menu) so
+  // nothing points at a now-stale coordinate. A template carries a
+  // single sheet, so applying it replaces the whole workbook (see ADR
+  // 0027).
+  const applyTemplateContent = useCallback(
+    (content: SheetContent) => {
+      const parsed = parseSheetContent(JSON.stringify(content));
+      setSheet(parsed);
+      setSelection(null);
+      setEditingCell(null);
+      setEditValue("");
+      setContextMenu(null);
+      debouncedSave(parsed);
+      setTemplatePickerOpen(false);
+    },
+    [debouncedSave],
+  );
+
+  // Open the gallery from the toolbar. The gallery installs a focus trap,
+  // so close the other side panels first — only one focus-trapping surface
+  // should compete for keyboard focus at a time (the panels don't otherwise
+  // close one another, but none of the others trap focus).
+  const openTemplatePicker = useCallback(() => {
+    setCfOpen(false);
+    setNrOpen(false);
+    setAiOpen(false);
+    setDvOpen(false);
+    setChartsOpen(false);
+    setPivotsOpen(false);
+    setTemplatePickerOpen(true);
+  }, []);
+
+  // Open the metadata modal seeded with the *current* sheet so "Save as
+  // template" stores exactly what the editor persists; build-time
+  // normalisation canonicalises it on save. Launched from the toolbar
+  // (the gallery is closed), so there's no gallery to reopen on close.
+  const openSaveAsTemplate = useCallback(() => {
+    setReopenPickerOnEditorClose(false);
+    setTemplateEditor({
+      draft: emptySheetTemplateDraft(sheet),
+      title: "Save sheet as template",
+    });
+  }, [sheet]);
+
+  // Edit + import-review both originate from inside the gallery: close
+  // it (single-trap invariant) and reopen once the modal is dismissed.
+  const openEditTemplate = useCallback(
+    (draft: CustomSheetTemplateDraft, title: string) => {
+      setReopenPickerOnEditorClose(true);
+      setTemplatePickerOpen(false);
+      setTemplateEditor({ draft, title });
+    },
+    [],
+  );
+
+  const openImportDraft = useCallback((draft: CustomSheetTemplateDraft) => {
+    setReopenPickerOnEditorClose(true);
+    setTemplatePickerOpen(false);
+    setTemplateEditor({ draft, title: "Import template" });
+  }, []);
+
+  // ----------------------------------------------------------------
+  // toolbar discoverability (Deliverable 2): a one-click freeze toggle
+  // and a "chart from selection" quick action — both previously
+  // reachable only via the right-click menu / charts panel.
+  // ----------------------------------------------------------------
+
+  const isFrozen = (sheet.frozenRows ?? 0) > 0 || (sheet.frozenCols ?? 0) > 0;
+
+  // Freeze every row above and column left of the active cell (Google
+  // Sheets' "freeze up to current"), so it becomes the first scrollable
+  // cell. A no-op at A1 since nothing precedes it.
+  const freezeToSelection = useCallback(() => {
+    if (!activeCell) return;
+    const { row, col } = activeCell;
+    setSheet((prev) => {
+      const updated: SheetContent = {
+        ...prev,
+        frozenRows: row,
+        frozenCols: col,
+      };
+      debouncedSave(updated);
+      return updated;
+    });
+  }, [activeCell, debouncedSave]);
+
+  // Build a bar chart from the primary selection and reveal the charts
+  // panel. A multi-column selection treats its first column as category
+  // labels and the rest as the value series, so a `[label, value]`
+  // selection charts cleanly; a single column charts on its own.
+  const chartFromSelection = useCallback(() => {
+    if (!selection) return;
+    const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+    const a1 = (col: number, row: number) => `${columnLabel(col)}${row + 1}`;
+    let range: string;
+    let labelRange: string | undefined;
+    if (c2 > c1) {
+      labelRange = `${a1(c1, r1)}:${a1(c1, r2)}`;
+      range = `${a1(c1 + 1, r1)}:${a1(c2, r2)}`;
+    } else {
+      range = `${a1(c1, r1)}:${a1(c2, r2)}`;
+    }
+    const spec: ChartSpec = { id: newSheetChartId(), type: "bar", range };
+    if (labelRange) spec.labelRange = labelRange;
+    setCharts((prev) => [...prev, spec]);
+    setChartsOpen(true);
+  }, [selection, setCharts]);
+
+  // ----------------------------------------------------------------
   // sort all data rows by a column (Sheets' "Sort sheet A→Z / Z→A").
   // ----------------------------------------------------------------
 
@@ -1375,6 +1538,27 @@ export default function SheetEditor({
       style={{ display: "flex", flexDirection: "column", height: "100%" }}
     >
       <div className="sheet-toolbar">
+        <button
+          type="button"
+          className={templatePickerOpen ? "btn-sm active" : "btn-sm"}
+          aria-haspopup="dialog"
+          aria-expanded={templatePickerOpen}
+          data-testid="sheet-templates-toggle"
+          title="Start from a curated or saved template"
+          onClick={openTemplatePicker}
+        >
+          <LayoutTemplate size={15} aria-hidden="true" /> Templates
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
+          data-testid="sheet-save-as-template"
+          title="Save the current sheet as a reusable template"
+          onClick={openSaveAsTemplate}
+        >
+          <BookmarkPlus size={15} aria-hidden="true" /> Save as template
+        </button>
+        <span className="sheet-toolbar-sep" aria-hidden="true" />
         <button type="button" className="btn-sm" onClick={addColumn}>
           <Plus size={15} aria-hidden="true" /> Column
         </button>
@@ -1450,6 +1634,16 @@ export default function SheetEditor({
         </button>
         <button
           type="button"
+          className="btn-sm"
+          data-testid="sheet-chart-from-selection"
+          title="Create a bar chart from the selected range"
+          disabled={!selection}
+          onClick={chartFromSelection}
+        >
+          <BarChartBig size={15} aria-hidden="true" /> Chart from selection
+        </button>
+        <button
+          type="button"
           className={pivotsOpen ? "btn-sm active" : "btn-sm"}
           aria-pressed={pivotsOpen}
           data-testid="sheet-pivots-toggle"
@@ -1459,6 +1653,22 @@ export default function SheetEditor({
           {sheet.pivots && sheet.pivots.length > 0
             ? ` (${sheet.pivots.length})`
             : ""}
+        </button>
+        <button
+          type="button"
+          className={isFrozen ? "btn-sm active" : "btn-sm"}
+          aria-pressed={isFrozen}
+          data-testid="sheet-freeze-toggle"
+          title={
+            isFrozen
+              ? "Unfreeze all panes"
+              : "Freeze rows and columns up to the selection"
+          }
+          disabled={!activeCell && !isFrozen}
+          onClick={() => (isFrozen ? unfreeze() : freezeToSelection())}
+        >
+          <Snowflake size={15} aria-hidden="true" />{" "}
+          {isFrozen ? "Unfreeze" : "Freeze"}
         </button>
       </div>
 
@@ -1550,17 +1760,30 @@ export default function SheetEditor({
             value={presetIdForPattern(activeNumberFormat)}
             onChange={(e) => {
               if (e.target.value === "custom") return;
-              const preset = NUMBER_FORMAT_PRESETS.find(
-                (p) => p.id === e.target.value,
-              );
-              applySelectionFormat({ numberFormat: preset?.pattern });
+              applySelectionFormat({
+                numberFormat: presetPattern(e.target.value),
+              });
             }}
           >
-            {NUMBER_FORMAT_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
+            {GROUPED_NUMBER_FORMAT_PRESETS.map((group) =>
+              group.label === undefined ? (
+                <Fragment key="__common">
+                  {group.presets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </Fragment>
+              ) : (
+                <optgroup key={group.label} label={group.label}>
+                  {group.presets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ),
+            )}
             {/* Shown only while a hand-entered pattern is active; selecting it
                 is a no-op — the adjacent input owns custom entry. */}
             {presetIdForPattern(activeNumberFormat) === "custom" && (
@@ -1645,6 +1868,33 @@ export default function SheetEditor({
           selectionRef={selectionRef}
           onInsertFormula={insertFormulaIntoActiveCell}
           onClose={() => setAiOpen(false)}
+        />
+      )}
+
+      {templatePickerOpen && (
+        <SheetTemplateGallery
+          onApply={applyTemplateContent}
+          onEditTemplate={openEditTemplate}
+          onImportDraft={openImportDraft}
+          onClose={() => setTemplatePickerOpen(false)}
+        />
+      )}
+
+      {templateEditor && (
+        <SheetTemplateSaveModal
+          isOpen
+          initialDraft={templateEditor.draft}
+          title={templateEditor.title}
+          onSaved={() => {
+            /* The shared store updates the gallery; nothing else to do. */
+          }}
+          onClose={() => {
+            setTemplateEditor(null);
+            if (reopenPickerOnEditorClose) {
+              setReopenPickerOnEditorClose(false);
+              setTemplatePickerOpen(true);
+            }
+          }}
         />
       )}
 
