@@ -1,0 +1,48 @@
+id: property-listings-uk-base-v1
+name: Property Listings (UK)
+type: base
+description: UK property listings base with tenure, EPC rating, council tax band, and material-information disclosures
+industry:
+  - real-estate
+profile:
+  - estate-agent
+  - letting-agent
+  - property-manager
+sections:
+  - title: Listings
+    prompt: >
+      Per listing: listing reference, full address with postcode,
+      property type (detached / semi / terraced / flat /
+      maisonette / bungalow), listing type (sale / let), status
+      (available / under offer / sold STC / let agreed /
+      withdrawn), and listing date.
+  - title: Tenure and Legal
+    prompt: >
+      Tenure (freehold / leasehold / share of freehold /
+      commonhold); for leasehold, the lease length remaining,
+      ground rent, and service charge; plus any restrictive
+      covenants or rights of way. These are material-information
+      disclosures.
+  - title: Pricing and Council Tax
+    prompt: >
+      Asking price or monthly rent, price history, the council
+      tax band (A–H), stamp duty considerations for buyers, and
+      for lettings the deposit (within the Tenant Fees Act cap)
+      and holding deposit.
+    output_format: table
+  - title: EPC and Specification
+    prompt: >
+      The EPC rating (A–G) and expiry, number of bedrooms,
+      bathrooms and receptions, floor area, heating type, parking,
+      garden, and notable features. Flag rentals below the minimum
+      EPC standard.
+  - title: Viewings and Offers
+    prompt: >
+      Viewings with applicant, date, and feedback; offers with
+      amount, position (chain / first-time buyer / cash),
+      mortgage status, and negotiation state through to exchange
+      and completion.
+    output_format: table
+export:
+  - markdown
+  - csv

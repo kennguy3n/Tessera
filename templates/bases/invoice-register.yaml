@@ -1,0 +1,46 @@
+id: invoice-register-base-v1
+name: Invoice and Accounts Receivable Register
+type: base
+description: Accounts receivable base tracking customer invoices, line items, payments, aging, and collections
+industry:
+  - finance
+profile:
+  - finance-manager
+  - accountant
+  - operations
+sections:
+  - title: Invoices
+    prompt: >
+      Per invoice: invoice number, customer, issue date, due
+      date, payment terms (Net 15 / 30 / 60), currency,
+      subtotal, tax, total, the related order or contract, and
+      status (draft / sent / partially paid / paid / overdue /
+      written off).
+  - title: Line Items
+    prompt: >
+      Per line: description, quantity, unit price, discount, tax
+      rate, line total, and the revenue account / cost center.
+      Distinguish one-off charges from recurring subscription
+      lines.
+    output_format: table
+  - title: Payments and Allocation
+    prompt: >
+      Per payment: date received, method (bank transfer / card /
+      ACH / cheque), amount, the invoice(s) it is allocated to,
+      remaining balance, and any short-payment or overpayment
+      handling.
+  - title: Aging and Collections
+    prompt: >
+      Aging buckets (current / 1–30 / 31–60 / 61–90 / 90+ days
+      past due), days-sales-outstanding, dunning step and last
+      contact per overdue invoice, promised-to-pay dates, and
+      escalation to collections.
+    output_format: table
+  - title: Disputes and Adjustments
+    prompt: >
+      Disputed invoices with reason, owner, and status; credit
+      notes and write-offs with approval; and the audit trail
+      linking each adjustment back to the original invoice.
+export:
+  - markdown
+  - csv

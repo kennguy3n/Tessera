@@ -1,0 +1,42 @@
+id: bill-of-materials-base-v1
+name: Bill of Materials
+type: base
+description: Manufacturing BOM base tracking products, components, quantities, sourcing, and revisions
+industry:
+  - manufacturing
+profile:
+  - manufacturing-engineer
+  - operations
+  - procurement-manager
+sections:
+  - title: Products and Assemblies
+    prompt: >
+      Per finished product or assembly: part number, name,
+      revision, unit of measure, the BOM type (manufacturing /
+      engineering), and lifecycle status (in design / active /
+      phase-out / obsolete).
+  - title: Components and Quantities
+    prompt: >
+      Per BOM line: child part number, description, quantity per
+      parent, unit of measure, reference designator, the level in
+      the multi-level BOM, and whether it is make or buy.
+    output_format: table
+  - title: Sourcing and Cost
+    prompt: >
+      Per component: approved manufacturer / supplier part
+      numbers, unit cost, lead time, minimum order quantity, and
+      the rolled-up material cost of each assembly.
+  - title: Substitutes and Alternates
+    prompt: >
+      Approved alternate and substitute parts per line, the
+      conditions under which each may be used, and any
+      qualification or approval required before substitution.
+  - title: Revisions and Change Control
+    prompt: >
+      Engineering-change records affecting the BOM: ECO / ECN
+      number, description, affected parts, effectivity date,
+      disposition of existing stock, and approval status.
+    output_format: table
+export:
+  - markdown
+  - csv

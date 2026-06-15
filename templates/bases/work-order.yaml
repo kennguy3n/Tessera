@@ -1,0 +1,44 @@
+id: work-order-base-v1
+name: Production Work Orders
+type: base
+description: Manufacturing work-order base tracking jobs, routing, materials, labor, and completion
+industry:
+  - manufacturing
+profile:
+  - production-planner
+  - operations
+  - shop-floor-supervisor
+sections:
+  - title: Work Orders
+    prompt: >
+      Per work order: WO number, product / part to build,
+      quantity ordered, the source demand (sales order / forecast
+      / stock), priority, scheduled start and due dates, and
+      status (planned / released / in progress / completed /
+      closed).
+  - title: Routing and Operations
+    prompt: >
+      Per operation: sequence, work center / machine,
+      description, setup and run time (standard), the
+      predecessor operation, and any required tooling or
+      fixtures.
+    output_format: table
+  - title: Material Issue
+    prompt: >
+      Components issued to the work order from the BOM: required
+      vs. issued quantity, lot / serial numbers, backflush vs.
+      manual issue, and shortages blocking the build.
+  - title: Labor and Machine Time
+    prompt: >
+      Actual labor and machine time booked per operation,
+      operator, the standard vs. actual variance, and downtime
+      reasons. Capture efficiency and utilization.
+  - title: Completion and Yield
+    prompt: >
+      Quantity completed, scrapped, and reworked; yield percent;
+      the receipt to finished-goods stock; actual vs. standard
+      cost; and the closure / variance review.
+    output_format: table
+export:
+  - markdown
+  - csv

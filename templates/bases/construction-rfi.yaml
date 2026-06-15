@@ -1,0 +1,43 @@
+id: construction-rfi-base-v1
+name: Construction RFI Log
+type: base
+description: Construction base tracking requests for information, questions, responses, and schedule impact
+industry:
+  - construction
+profile:
+  - project-manager
+  - site-superintendent
+  - architect
+sections:
+  - title: RFIs
+    prompt: >
+      Per RFI: RFI number, project, subject, the discipline
+      (architectural / structural / MEP / civil), the question or
+      clarification requested, and the originating
+      subcontractor / party.
+  - title: References and Attachments
+    prompt: >
+      The related drawings, specification sections, and submittal
+      or detail references; sketches or photos attached; and the
+      location on site the RFI concerns.
+  - title: Routing and Response
+    prompt: >
+      The ball-in-court party, date submitted, date response
+      required, the response / answer, the responder (architect /
+      engineer / owner), and status (open / answered / closed /
+      void).
+    output_format: table
+  - title: Impact Assessment
+    prompt: >
+      Whether the RFI carries a cost or schedule impact, the
+      potential change-order or change-directive linkage, the
+      estimated days of delay, and the affected activities.
+    output_format: table
+  - title: Aging and Trends
+    prompt: >
+      Open RFIs by age and discipline, average turnaround time,
+      overdue responses, and recurring documentation gaps driving
+      RFI volume.
+export:
+  - markdown
+  - csv

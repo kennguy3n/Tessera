@@ -1,0 +1,45 @@
+id: donor-management-uk-base-v1
+name: Donor Management (UK / Gift Aid)
+type: base
+description: UK charity donor base aligned to HMRC Gift Aid, with declarations, eligibility, and claim tracking
+industry:
+  - nonprofit
+profile:
+  - fundraiser
+  - charity-administrator
+  - finance-manager
+sections:
+  - title: Donors and Supporters
+    prompt: >
+      Per donor: supporter ID, name, home address (required for
+      Gift Aid), contact details, type (individual / corporate /
+      trust), communication and consent preferences under UK
+      GDPR and PECR.
+  - title: Donations
+    prompt: >
+      Per donation: date, amount, fund / appeal, method (cash /
+      card / direct debit / cheque / online), whether it is
+      eligible for Gift Aid, and any benefit received by the
+      donor that affects eligibility.
+    output_format: table
+  - title: Gift Aid Declarations
+    prompt: >
+      Per donor: a valid Gift Aid declaration covering the
+      donation(s), declaration date and scope (single /
+      enduring / past four years), the confirmation the donor
+      pays sufficient UK tax, and cancellation / expiry status.
+  - title: Gift Aid Claims
+    prompt: >
+      Claimable donations grouped by claim period, the
+      25% reclaim calculation, GASDS small-donations claims,
+      submission status to HMRC, claim reference, and amounts
+      received. Flag donations missing a valid declaration.
+    output_format: table
+  - title: Campaigns and Stewardship
+    prompt: >
+      Appeal performance, regular-giving (direct debit) retention,
+      major-donor cultivation stages, and stewardship and
+      thank-you touches completed.
+export:
+  - markdown
+  - csv

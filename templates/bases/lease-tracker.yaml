@@ -1,0 +1,43 @@
+id: lease-tracker-base-v1
+name: Lease and Tenancy Tracker
+type: base
+description: Property management base tracking units, tenants, leases, rent, deposits, and renewals
+industry:
+  - real-estate
+profile:
+  - property-manager
+  - landlord
+  - operations
+sections:
+  - title: Units and Properties
+    prompt: >
+      Per unit: property and unit identifier, address, type, size
+      / bedrooms, the owner / landlord, and occupancy status
+      (occupied / vacant / notice given / under renovation).
+  - title: Tenants
+    prompt: >
+      Per tenant: name, contact details, emergency contact, the
+      unit occupied, the lease they are party to, screening /
+      reference status, and consent preferences.
+  - title: Leases and Terms
+    prompt: >
+      Per lease: start and end dates, term length, rent amount
+      and frequency, payment day, escalation clauses, break
+      clauses, and status (active / expiring / holdover /
+      terminated).
+    output_format: table
+  - title: Rent and Deposits
+    prompt: >
+      Rent charges and payments per period, arrears and aging,
+      late-fee policy, the deposit amount and where it is
+      protected / held, and deposit-return deductions at move-out.
+    output_format: table
+  - title: Renewals and Notices
+    prompt: >
+      Renewal options and rent-review dates, notices served (with
+      type and date), move-in / move-out inspections, and the
+      turnover checklist for vacated units. Flag leases expiring
+      within 90 days.
+export:
+  - markdown
+  - csv

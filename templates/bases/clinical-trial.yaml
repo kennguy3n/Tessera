@@ -1,0 +1,46 @@
+id: clinical-trial-base-v1
+name: Clinical Trial Subject Tracker
+type: base
+description: Clinical trial base tracking subjects, enrollment, visits, adverse events, and protocol deviations
+industry:
+  - healthcare
+profile:
+  - clinical-research-coordinator
+  - clinician
+  - regulatory-affairs
+sections:
+  - title: Subjects and Enrollment
+    prompt: >
+      Per subject: study ID and subject number, the study arm /
+      cohort, screening date, eligibility (inclusion / exclusion
+      met), informed-consent version and date, randomization
+      assignment, and enrollment status (screening / enrolled /
+      completed / withdrawn / screen-failed).
+  - title: Visit Schedule
+    prompt: >
+      Per protocol visit: visit name and window, scheduled and
+      actual date, procedures performed, the assessments due, and
+      completion status. Flag out-of-window and missed visits.
+    output_format: table
+  - title: Study Drug and Compliance
+    prompt: >
+      Investigational product accountability: dispensed and
+      returned quantities, dosing, lot / kit numbers, and
+      compliance percentage. Capture temperature-excursion and
+      reconciliation notes.
+  - title: Adverse Events
+    prompt: >
+      Per adverse event: description, onset and resolution dates,
+      severity grade, seriousness (SAE flag), causality
+      assessment, action taken, outcome, and reporting status to
+      the sponsor / IRB / regulator.
+  - title: Protocol Deviations and Queries
+    prompt: >
+      Deviations with category, description, date, root cause,
+      corrective action, and reportability; plus open data
+      queries, the responsible site staff, and resolution
+      status.
+    output_format: table
+export:
+  - markdown
+  - csv

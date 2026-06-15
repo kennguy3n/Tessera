@@ -1,0 +1,65 @@
+id: crm-base-v1-es
+name: CRM (Contactos, Empresas, Negocios)
+type: base
+description: Base CRM ligera con contactos, empresas, negocios, actividades y etapas del embudo
+locale: es
+profile:
+  - sales-ops
+  - account-executive
+  - founder
+sections:
+  - title: Empresas
+    prompt: >
+      Registros de empresas con: razón social, dominio, sector,
+      número de empleados, banda de ingresos anuales, región,
+      nivel de cuenta (estratégica / corporativa / mediana
+      empresa / pyme), responsable de la cuenta y la etapa del
+      ciclo de vida (objetivo / en contacto / cliente / perdido).
+      Responda en español.
+  - title: Contactos
+    prompt: >
+      Registros de contactos con: nombre completo, cargo, correo
+      electrónico, teléfono, URL de LinkedIn, la empresa a la que
+      pertenecen, su rol en el comité de compra (comprador
+      económico / promotor / usuario / bloqueador) y la fecha del
+      último contacto. Responda en español.
+  - title: Negocios y Etapas del Embudo
+    prompt: >
+      Registros de negocios con: nombre del negocio, empresa,
+      contacto principal, importe, moneda, fecha prevista de
+      cierre, probabilidad, etapa actual del embudo (Prospecto /
+      Calificado / Propuesta / Negociación / Cerrado-Ganado /
+      Cerrado-Perdido), origen y competidor (si se conoce).
+      Responda en español.
+    output_format: table
+  - title: Actividades y Notas
+    prompt: >
+      Registro de actividades: fecha, tipo (llamada / correo /
+      reunión / demostración / propuesta enviada / contrato
+      enviado / firma), resultado, responsable, el contacto y
+      negocio relacionados, y notas libres que resuman lo
+      esencial. Responda en español.
+  - title: Consolidación del Pronóstico
+    prompt: >
+      Consolidación del embudo por etapa con pronóstico ponderado
+      (importe × probabilidad), resumen por representante, resumen
+      por trimestre y una comparación frente a la cuota o el plan.
+      Responda en español.
+    output_format: table
+  - title: Asignación de Prospectos y SLA
+    prompt: >
+      Defina las reglas de asignación de prospectos (rotación, por
+      territorio, por sector, por cuenta nombrada), el SLA para la
+      primera respuesta (p. ej., MQL → primer contacto en un plazo
+      de 5 horas hábiles) y la escalada cuando se incumple el SLA.
+      Responda en español.
+  - title: Higiene y Gobernanza
+    prompt: >
+      Reglas de higiene de datos: campos obligatorios por etapa,
+      detección de duplicados, política de transferencia de
+      titularidad, retención / archivo y la cadencia de auditoría
+      para verificar la integridad y la exactitud. Responda en
+      español.
+export:
+  - markdown
+  - csv

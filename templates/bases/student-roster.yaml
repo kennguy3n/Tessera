@@ -1,0 +1,45 @@
+id: student-roster-base-v1
+name: Course and Student Roster
+type: base
+description: Education base tracking students, enrollments, attendance, guardians, and accommodations
+industry:
+  - education
+profile:
+  - teacher
+  - registrar
+  - school-administrator
+sections:
+  - title: Students
+    prompt: >
+      Per student: student ID, name, date of birth, grade /
+      year level, homeroom or advisor, enrollment status
+      (active / withdrawn / graduated), and entry date. Treat
+      records as confidential student data.
+  - title: Enrollments
+    prompt: >
+      Per enrollment: the course / section, term, teacher,
+      schedule (days and periods), credits, and status
+      (enrolled / dropped / waitlisted / completed). Flag
+      schedule conflicts and prerequisite gaps.
+    output_format: table
+  - title: Attendance
+    prompt: >
+      Per session: date, attendance code (present / absent /
+      tardy / excused), the reason, and the cumulative
+      attendance rate per student. Surface chronic-absence
+      thresholds for intervention.
+  - title: Guardians and Contacts
+    prompt: >
+      Per student: guardian name(s), relationship, contact
+      details, custody / pickup permissions, communication
+      preferences and language, and emergency contacts.
+  - title: Accommodations and Support
+    prompt: >
+      IEP / 504 or equivalent support plans, accommodations,
+      services and providers, review dates, and the access
+      controls limiting these sensitive records to authorized
+      staff.
+    output_format: table
+export:
+  - markdown
+  - csv

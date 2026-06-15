@@ -1,0 +1,43 @@
+id: construction-punch-list-base-v1
+name: Construction Punch List
+type: base
+description: Construction base tracking punch-list items, locations, trades, status, and closeout sign-off
+industry:
+  - construction
+profile:
+  - project-manager
+  - site-superintendent
+  - general-contractor
+sections:
+  - title: Punch Items
+    prompt: >
+      Per item: item number, the project / phase, a clear
+      description of the deficiency, category (architectural /
+      mechanical / electrical / plumbing / finishes), and how it
+      was identified (walkthrough / inspection / owner).
+  - title: Location and Reference
+    prompt: >
+      The building, floor, room / area, and grid reference; the
+      related drawing or specification section; and photo
+      references documenting the deficiency.
+  - title: Responsibility and Trade
+    prompt: >
+      The responsible subcontractor / trade, the assigned
+      individual, the cost responsibility, and any back-charge if
+      rework is required.
+    output_format: table
+  - title: Status and Schedule
+    prompt: >
+      Status (open / in progress / ready for review / verified /
+      closed / disputed), date raised, due date, date completed,
+      and verification by the architect or owner. Flag overdue
+      and blocking items.
+    output_format: table
+  - title: Closeout and Sign-off
+    prompt: >
+      Substantial-completion linkage, the final walk-through
+      results, outstanding items preventing handover, and the
+      owner / architect sign-off with date.
+export:
+  - markdown
+  - csv

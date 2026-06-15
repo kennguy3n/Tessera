@@ -1,0 +1,45 @@
+id: property-listings-base-v1
+name: Property Listings
+type: base
+description: Real estate base tracking property listings, pricing, features, viewings, and offers
+industry:
+  - real-estate
+profile:
+  - real-estate-agent
+  - broker
+  - property-manager
+sections:
+  - title: Listings
+    prompt: >
+      Per listing: listing ID, address, property type (house /
+      apartment / condo / commercial / land), listing type (sale
+      / rent), status (coming soon / active / under offer / sold
+      / withdrawn), and the listing and expiry dates.
+  - title: Pricing and Terms
+    prompt: >
+      Asking price or rent, price history and reductions, deposit
+      / earnest money, service charges or HOA fees, the
+      commission structure, and any price-per-area benchmark
+      against comparables.
+    output_format: table
+  - title: Features and Specification
+    prompt: >
+      Bedrooms, bathrooms, floor area, lot / plot size, year
+      built, parking, condition, energy rating, and notable
+      features (garden, view, renovations). Include media and
+      floor-plan links.
+  - title: Viewings and Interest
+    prompt: >
+      Scheduled and completed viewings with prospect, agent,
+      date, and feedback; enquiry volume; and the interest level
+      to inform price or marketing adjustments.
+  - title: Offers and Pipeline
+    prompt: >
+      Per offer: prospect, amount, conditions, financing status,
+      submitted date, and negotiation status (received /
+      countered / accepted / rejected / fell through). Track the
+      chain to completion.
+    output_format: table
+export:
+  - markdown
+  - csv

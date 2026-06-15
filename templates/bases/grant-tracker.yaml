@@ -1,0 +1,45 @@
+id: grant-tracker-base-v1
+name: Grant Tracker
+type: base
+description: Nonprofit grants base tracking opportunities, applications, awards, reporting, and compliance
+industry:
+  - nonprofit
+profile:
+  - grants-manager
+  - development-director
+  - program-manager
+sections:
+  - title: Grant Opportunities
+    prompt: >
+      Per opportunity: funder, program name, focus area, award
+      range, match requirement, eligibility, the
+      letter-of-intent and full-application deadlines, and the
+      go / no-go decision with rationale.
+  - title: Applications
+    prompt: >
+      Per application: requested amount, project / program,
+      assigned writer, internal review status, submission date,
+      and outcome (pending / awarded / declined). Track required
+      attachments and sign-offs.
+    output_format: table
+  - title: Awards and Budget
+    prompt: >
+      Per award: amount awarded, grant period, restricted budget
+      by line, indirect-cost rate, the payment / drawdown
+      schedule, and spend to date against the approved budget.
+  - title: Reporting and Deliverables
+    prompt: >
+      Required interim and final reports with due dates, the
+      program outcomes and metrics to report, narrative and
+      financial report status, and the responsible owner for each
+      deliverable.
+  - title: Compliance and Closeout
+    prompt: >
+      Compliance requirements and restrictions per grant,
+      allowable-cost rules, audit / monitoring visits, the
+      closeout checklist, and document retention. Flag at-risk
+      compliance items.
+    output_format: table
+export:
+  - markdown
+  - csv

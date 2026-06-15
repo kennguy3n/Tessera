@@ -1,0 +1,53 @@
+id: patient-registry-us-base-v1
+name: Patient Registry (US / HIPAA)
+type: base
+description: US patient registry aligned to HIPAA, with MRN, NPI providers, payer/insurance, and PHI safeguards
+industry:
+  - healthcare
+profile:
+  - nurse
+  - clinician
+  - practice-manager
+sections:
+  - title: Patient Demographics
+    prompt: >
+      Per patient: medical record number (MRN), legal name, date
+      of birth, sex assigned at birth and gender identity,
+      race / ethnicity (per ONC US Core), preferred language,
+      contact details, and emergency contact. All fields are
+      protected health information (PHI) under HIPAA.
+  - title: Insurance and Payer
+    prompt: >
+      Coverage records: payer name, plan, member ID, group
+      number, subscriber relationship, coverage effective /
+      termination dates, eligibility status, and coordination of
+      benefits (primary / secondary). Capture Medicare /
+      Medicaid IDs where applicable.
+  - title: Conditions and Diagnoses
+    prompt: >
+      Active and resolved diagnoses using ICD-10-CM and
+      SNOMED CT, onset date, status, and the diagnosing
+      provider. Maintain a de-duplicated problem list.
+    output_format: table
+  - title: Encounters and Providers
+    prompt: >
+      Per encounter: date, type (office / telehealth /
+      inpatient / ED), the rendering provider with NPI, place of
+      service, reason for visit, and disposition. Link to the
+      relevant diagnoses and CPT / HCPCS procedures.
+    output_format: table
+  - title: Medications and Allergies
+    prompt: >
+      Current medications (RxNorm) with dose, route, frequency,
+      and prescriber; the allergy list with reaction and
+      severity; and reconciliation at each transition of care.
+  - title: HIPAA Privacy and Security
+    prompt: >
+      Notice of Privacy Practices acknowledgment, authorizations
+      and consent, the minimum-necessary access tiers by role,
+      break-the-glass handling, breach-assessment notes, and the
+      audit log of every access and disclosure of PHI.
+    output_format: table
+export:
+  - markdown
+  - csv

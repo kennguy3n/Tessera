@@ -1,0 +1,64 @@
+id: crm-base-v1-fr
+name: CRM (Contacts, Entreprises, Affaires)
+type: base
+description: Base CRM légère avec contacts, entreprises, affaires, activités et étapes du pipeline
+locale: fr
+profile:
+  - sales-ops
+  - account-executive
+  - founder
+sections:
+  - title: Entreprises
+    prompt: >
+      Fiches d'entreprise avec : raison sociale, domaine, secteur
+      d'activité, effectif, tranche de chiffre d'affaires annuel,
+      région, niveau de compte (stratégique / grand compte /
+      moyennes entreprises / PME), responsable du compte et étape
+      du cycle de vie (cible / engagé / client / perdu).
+      Répondez en français.
+  - title: Contacts
+    prompt: >
+      Fiches de contact avec : nom complet, fonction, e-mail,
+      téléphone, URL LinkedIn, l'entreprise à laquelle ils
+      appartiennent, leur rôle dans le comité d'achat (acheteur
+      économique / champion / utilisateur / bloqueur) et la date
+      du dernier échange. Répondez en français.
+  - title: Affaires et Étapes du Pipeline
+    prompt: >
+      Fiches d'affaire avec : nom de l'affaire, entreprise,
+      contact principal, montant, devise, date de clôture prévue,
+      probabilité, étape actuelle du pipeline (Piste / Qualifié /
+      Proposition / Négociation / Gagnée / Perdue), source et
+      concurrent (si connu). Répondez en français.
+    output_format: table
+  - title: Activités et Notes
+    prompt: >
+      Journal d'activités : date, type (appel / e-mail / réunion /
+      démonstration / proposition envoyée / contrat envoyé /
+      signature), résultat, responsable, le contact et l'affaire
+      associés, et des notes libres résumant l'essentiel.
+      Répondez en français.
+  - title: Consolidation des Prévisions
+    prompt: >
+      Consolidation du pipeline par étape avec prévision pondérée
+      (montant × probabilité), synthèse par commercial, synthèse
+      par trimestre et une comparaison par rapport au quota ou au
+      plan. Répondez en français.
+    output_format: table
+  - title: Affectation des Pistes et SLA
+    prompt: >
+      Définissez les règles d'affectation des pistes (tourniquet,
+      par territoire, par secteur, par compte nommé), le SLA de
+      première réponse (p. ex. MQL → premier contact sous
+      5 heures ouvrées) et l'escalade en cas de non-respect du
+      SLA. Répondez en français.
+  - title: Hygiène et Gouvernance
+    prompt: >
+      Règles d'hygiène des données : champs obligatoires par
+      étape, détection des doublons, politique de transfert de
+      propriété, conservation / archivage et la cadence d'audit
+      pour vérifier l'exhaustivité et l'exactitude. Répondez en
+      français.
+export:
+  - markdown
+  - csv

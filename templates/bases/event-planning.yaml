@@ -1,0 +1,52 @@
+id: event-planning-base-v1
+name: Event Planning
+type: base
+description: Event planning base tracking sessions, speakers, venues, vendors, registrations, budget, and run-of-show
+profile:
+  - event-manager
+  - marketing-manager
+  - operations
+sections:
+  - title: Event Overview
+    prompt: >
+      Per event: name, format (in-person / virtual / hybrid),
+      objective, target audience, expected attendance, date(s),
+      timezone, primary venue or platform, and the owner. Note
+      the success metrics (registrations, attendance rate, NPS,
+      pipeline).
+  - title: Sessions and Agenda
+    prompt: >
+      Per session: title, abstract, track, start / end time,
+      room or stream, session type (keynote / breakout /
+      workshop / panel), capacity, and the assigned speaker(s)
+      and moderator.
+  - title: Speakers and Stakeholders
+    prompt: >
+      Speaker records: name, organization, bio, headshot, talk
+      title, AV / accessibility needs, travel and honorarium
+      status, and confirmation state (invited / confirmed /
+      declined). Include internal owners for each speaker.
+  - title: Vendors and Logistics
+    prompt: >
+      Per vendor: service (venue / catering / AV / printing /
+      security / streaming), contact, contract value, deposit
+      and balance due dates, load-in / load-out times, and
+      delivery status. Capture permits and insurance where
+      required.
+  - title: Registrations and Attendance
+    prompt: >
+      Registration records: attendee name, ticket type, price,
+      payment status, dietary / accessibility needs, check-in
+      status, and session sign-ups. Track registered vs.
+      attended and waitlist movement.
+    output_format: table
+  - title: Budget and Run-of-Show
+    prompt: >
+      Line-item budget (estimated vs. actual) across venue, F&B,
+      AV, marketing, and staffing; the minute-by-minute
+      run-of-show with owners and cues; and the post-event
+      reconciliation and lessons learned.
+    output_format: table
+export:
+  - markdown
+  - csv

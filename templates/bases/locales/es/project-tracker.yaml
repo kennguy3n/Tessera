@@ -1,0 +1,57 @@
+id: project-tracker-base-v1-es
+name: Seguimiento de Proyectos e Incidencias
+type: base
+description: Base de seguimiento de proyectos e incidencias con tareas, flujo de estados, responsables, dependencias, hitos y velocidad
+locale: es
+profile:
+  - product-manager
+  - project-manager
+  - engineer
+sections:
+  - title: Proyectos
+    prompt: >
+      Por proyecto: clave / código del proyecto, nombre, objetivo,
+      el área de producto o equipo, responsable del proyecto,
+      fecha de inicio, fecha objetivo de entrega y estado de salud
+      (en curso / en riesgo / desviado). Vincúlelo a la iniciativa
+      estratégica que respalda. Responda en español.
+  - title: Tareas e Incidencias
+    prompt: >
+      Por elemento de trabajo: ID, título, tipo (funcionalidad /
+      error / tarea / investigación), descripción, el proyecto al
+      que pertenece, prioridad (P0 / P1 / P2 / P3), estimación
+      (puntos de historia o días-persona) y los criterios de
+      aceptación que definen lo "terminado". Responda en español.
+  - title: Estado y Flujo de Trabajo
+    prompt: >
+      Estado del flujo por elemento (Backlog / Por hacer / En
+      curso / En revisión / Bloqueado / Hecho), la fecha de
+      entrada al estado actual, el motivo y responsable de lo
+      bloqueado, y el sprint o iteración comprometido. Responda en
+      español.
+    output_format: table
+  - title: Asignaciones y Capacidad
+    prompt: >
+      El responsable y revisor por elemento, el número de trabajos
+      en curso de cada persona y la capacidad comprometida frente
+      a la disponible del equipo para la iteración. Señale a las
+      personas sobrecargadas y los elementos de alta prioridad sin
+      asignar. Responda en español.
+  - title: Dependencias e Hitos
+    prompt: >
+      Dependencias ascendentes / descendentes entre elementos y
+      equipos, dependencias externas y los hitos a los que cada
+      proyecto contribuye con sus fechas objetivo. Resalte
+      cualquier dependencia en la ruta crítica. Responda en
+      español.
+  - title: Informes y Velocidad
+    prompt: >
+      Rendimiento (throughput) y velocidad por iteración, tiempo
+      de ciclo y de entrega, burndown / burnup frente al alcance
+      comprometido, antigüedad de los elementos en curso y las
+      principales causas recurrentes de retraso. Responda en
+      español.
+    output_format: table
+export:
+  - markdown
+  - csv

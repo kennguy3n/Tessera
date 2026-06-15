@@ -1,0 +1,47 @@
+id: expense-tracker-base-v1
+name: Expense Tracker
+type: base
+description: Employee expense base tracking claims, receipts, categories, approvals, reimbursement, and policy compliance
+industry:
+  - finance
+profile:
+  - finance-manager
+  - operations
+  - employee
+sections:
+  - title: Expense Claims
+    prompt: >
+      Per claim line: date, employee, merchant, description,
+      category (travel / lodging / meals / software / supplies /
+      mileage), amount, currency, payment method (personal card /
+      corporate card / cash), and the project or cost center to
+      charge.
+  - title: Receipts and Evidence
+    prompt: >
+      The receipt or invoice attached per line, whether it meets
+      the substantiation threshold, tax / VAT amount and
+      reclaimability, and any missing-receipt declaration. Flag
+      lines lacking required evidence.
+  - title: Policy Compliance
+    prompt: >
+      Check each line against policy: per-diem and category
+      limits, out-of-policy flags, required pre-approval for
+      large or unusual spend, and duplicate detection across
+      claims.
+    output_format: table
+  - title: Approval and Reimbursement
+    prompt: >
+      Approval status and approver per report, the reimbursement
+      method and pay run, status (submitted / approved /
+      rejected / reimbursed), and the date paid. Capture
+      rejection reasons and resubmissions.
+  - title: Reporting and Analytics
+    prompt: >
+      Spend by category, department, project, and employee;
+      trend over time; top merchants; corporate-card vs.
+      out-of-pocket mix; and the average reimbursement cycle
+      time.
+    output_format: table
+export:
+  - markdown
+  - csv

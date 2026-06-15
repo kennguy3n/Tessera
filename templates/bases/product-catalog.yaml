@@ -1,0 +1,45 @@
+id: product-catalog-base-v1
+name: Retail Product Catalog
+type: base
+description: Retail product catalog base tracking SKUs, variants, pricing, suppliers, and merchandising attributes
+industry:
+  - retail
+profile:
+  - merchandiser
+  - ecommerce-manager
+  - operations
+sections:
+  - title: Products
+    prompt: >
+      Per product: SKU, product name, brand, category and
+      subcategory, short and long description, status (active /
+      draft / discontinued), and the launch date. Use a
+      consistent, de-duplicated SKU scheme.
+  - title: Variants and Attributes
+    prompt: >
+      Variant matrix per product: size, color, material, and
+      other options, each with its own SKU / barcode (UPC / EAN),
+      weight and dimensions, and the variant-level image set.
+    output_format: table
+  - title: Pricing and Margin
+    prompt: >
+      Per SKU: cost, MSRP, current selling price, promotional
+      price and window, tax class, currency, and the resulting
+      gross margin. Flag below-margin and price-inconsistent
+      SKUs.
+  - title: Suppliers and Sourcing
+    prompt: >
+      The supplier(s) per product, supplier SKU, lead time,
+      minimum order quantity, country of origin, and the
+      preferred vs. backup source. Capture landed-cost
+      components.
+  - title: Merchandising and Channels
+    prompt: >
+      Channel availability (store / web / marketplace), category
+      and collection placement, SEO title and tags, cross-sell /
+      upsell relationships, and seasonality. Track content
+      completeness per channel.
+    output_format: table
+export:
+  - markdown
+  - csv

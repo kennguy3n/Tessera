@@ -1,0 +1,46 @@
+id: okr-tracker-base-v1
+name: OKR Tracker
+type: base
+description: Objectives and Key Results base tracking objectives, measurable key results, alignment, check-ins, and scoring
+profile:
+  - executive
+  - product-manager
+  - team-lead
+sections:
+  - title: Objectives
+    prompt: >
+      Per objective: a qualitative, inspiring statement of what
+      to achieve, the owner, the level (company / team /
+      individual), the cycle (e.g. Q3 FY25), and the parent
+      objective it ladders up to. Objectives are directional,
+      not metrics.
+  - title: Key Results
+    prompt: >
+      Per key result: a measurable outcome with a baseline, a
+      target, and a unit; the metric source; the owner; and the
+      type (metric / milestone). Each objective should have 2–5
+      key results that together prove the objective is met.
+    output_format: table
+  - title: Initiatives and Alignment
+    prompt: >
+      The initiatives, projects, or bets funded to move each key
+      result, the teams accountable, and how each objective
+      aligns horizontally with peer teams and vertically with
+      company goals. Flag key results with no supporting
+      initiative.
+  - title: Check-ins and Confidence
+    prompt: >
+      Per check-in (weekly or biweekly): current value, percent
+      to target, a confidence score (e.g. 0.0–1.0 or red /
+      amber / green), the trend since last check-in, and a short
+      narrative on blockers and next steps.
+  - title: Scoring and Retrospective
+    prompt: >
+      End-of-cycle grade per key result and objective (e.g.
+      0.0–1.0), whether it was committed or aspirational, the
+      reasons for over- or under-performance, and the learnings
+      carried into the next cycle.
+    output_format: table
+export:
+  - markdown
+  - csv

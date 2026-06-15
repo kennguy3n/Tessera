@@ -1,0 +1,44 @@
+id: medical-equipment-base-v1
+name: Medical Equipment Register
+type: base
+description: Biomedical equipment base tracking devices, calibration, maintenance, risk class, and recalls
+industry:
+  - healthcare
+profile:
+  - biomedical-engineer
+  - facilities-manager
+  - clinician
+sections:
+  - title: Device Inventory
+    prompt: >
+      Per device: asset tag, device name and model,
+      manufacturer, serial number, the clinical department and
+      room, ownership (owned / leased / loaned), and in-service
+      date.
+  - title: Risk Classification
+    prompt: >
+      The device risk class (e.g. Class I / II / III), whether it
+      is life-support or critical-care, the applicable standards,
+      and the inspection frequency driven by the risk
+      classification.
+  - title: Calibration and Maintenance
+    prompt: >
+      Per device: preventive-maintenance schedule, last and next
+      calibration / PM date, the responsible technician or
+      vendor, pass / fail results, and downtime history.
+    output_format: table
+  - title: Service Events and Faults
+    prompt: >
+      Corrective maintenance records: fault reported, date,
+      diagnosis, parts replaced, cost, vendor work order, and
+      time-to-repair. Link recurring faults to the same device.
+  - title: Recalls and Safety Alerts
+    prompt: >
+      Manufacturer recalls and field-safety notices affecting
+      devices in the register: notice reference, affected serial
+      numbers, required action, completion status, and the
+      regulator reporting obligation.
+    output_format: table
+export:
+  - markdown
+  - csv

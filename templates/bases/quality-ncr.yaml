@@ -1,0 +1,45 @@
+id: quality-ncr-base-v1
+name: Quality Non-Conformance Register
+type: base
+description: Quality management base tracking non-conformances, root cause, CAPA, disposition, and verification
+industry:
+  - manufacturing
+  - healthcare
+profile:
+  - quality-manager
+  - quality-engineer
+  - operations
+sections:
+  - title: Non-Conformances
+    prompt: >
+      Per NCR: NCR number, date raised, source (incoming /
+      in-process / final / customer / audit), the affected part
+      or process, quantity affected, a clear description of the
+      defect, and the severity / classification.
+  - title: Containment and Disposition
+    prompt: >
+      Immediate containment actions, the disposition (use-as-is /
+      rework / repair / scrap / return to supplier), the
+      authority approving the disposition, and the cost of
+      non-quality.
+    output_format: table
+  - title: Root Cause Analysis
+    prompt: >
+      The investigation method (5 Whys / fishbone / 8D), the
+      identified root cause(s), contributing factors, and the
+      evidence supporting the conclusion. Distinguish occurrence
+      from detection causes.
+  - title: Corrective and Preventive Action
+    prompt: >
+      CAPA actions with owner, due date, and status; the change
+      to process / training / design; and how recurrence across
+      similar parts or lines is prevented.
+  - title: Verification and Closure
+    prompt: >
+      Effectiveness-verification method and result, the date
+      closed, residual risk, and the link to updated control
+      plans, FMEA, or work instructions.
+    output_format: table
+export:
+  - markdown
+  - csv
