@@ -1,0 +1,49 @@
+id: landing-product-launch-v1-ja
+name: 製品ローンチ・ランディングページ
+type: landing_page
+description: ヒーロー、課題／解決策、機能、社会的証明、価格、そして強力な主要CTAを備えたローンチ当日のランディングページ（日本語版）
+locale: ja
+default_icon_set: lucide
+color_scheme:
+  primary: '#4F46E5'
+  secondary: '#0EA5E9'
+  accent: '#F97316'
+profile:
+- product-marketing
+- marketing
+sections:
+- title: ヒーロー
+  prompt: |-
+    何が新しく、誰のためかを示すベネフィット主導の見出し、15～25語のサブ見出し、そして主要CTA（「始める」／「無料で試す」）。デモや動画への二次CTAも加える。 日本語で回答してください。
+  icon_suggestion: rocket
+- title: 課題
+  prompt: ローンチが解決する課題を、訪問者自身の言葉で表現する。売り込みの前に「理解されている」と感じさせる2～3文。 日本語で回答してください。
+  icon_suggestion: alert-circle
+- title: 解決策
+  prompt: 製品がその課題をどう解決するか、それを際立たせる唯一の「なるほど」と思わせる機能とともに示す。仕様書ではなく成果に絞る。 日本語で回答してください。
+  icon_suggestion: sparkles
+- title: 主要機能
+  prompt: |-
+    3～6枚の機能カード。カードごとに、アイコン、ベネフィット優先のタイトル、何をするかを示す1文。ターゲット訪問者が最も重視するものの順に並べる。 日本語で回答してください。
+  icon_suggestion: layout-grid
+- title: 社会的証明
+  prompt: ロゴ、氏名／役職／会社名つきの際立った推薦の声、そして1つの主要指標。接続されたソースから取得し、すべての引用に出典を明記する。 日本語で回答してください。
+  icon_suggestion: quote
+  required_sources:
+  - type: local
+    min: 1
+- title: 仕組み
+  prompt: 登録から価値実現までの3つの簡単なステップ。それぞれに短いラベルと1行を添え、訪問者が成果にどれほど早く到達できるかを示す。 日本語で回答してください。
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: 価格
+  prompt: 価格プラン、または明確な単一価格、含まれる内容、そして有効期限つきのローンチ特典があればそれ。試用または保証の一文でリスクを下げる。 日本語で回答してください。
+  icon_suggestion: tag
+  output_format: table
+- title: 最終CTAとFAQ
+  prompt: 中核のベネフィットを改めて述べる締めのCTAと、反論に対応する4～6個のFAQ（セキュリティ、価格、移行、サポート）。 日本語で回答してください。
+  icon_suggestion: check-circle
+export:
+- markdown
+- html
+- pdf

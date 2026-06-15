@@ -1,0 +1,48 @@
+id: infographic-roadmap-v1-de
+name: Roadmap-Infografik
+type: infographic
+description: |-
+  Eine Produkt- oder Strategie-Roadmap nach dem Schema Jetzt / Als Nächstes / Später, dargestellt als horizontale Swimlanes mit jeweils thematischen Initiativen und Ergebnissen. (deutsche Version)
+locale: de
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: Titel und Horizont
+  prompt: |-
+    Der Titel der Roadmap, das verantwortliche Team und der Zeithorizont, den jede Lane darstellt (z. B. Jetzt = dieses Quartal, Als Nächstes = nächstes Quartal, Später = darüber hinaus). Weisen Sie darauf hin, dass die Termine richtungsweisend und keine Zusagen sind. Antworten Sie auf Deutsch.
+  icon_suggestion: map
+- title: Strategische Themen
+  prompt: |-
+    Die zwei bis vier Themen, um die herum die Roadmap organisiert ist. Je Thema: ein kurzes Label und das Ergebnis, das es vorantreibt, damit Initiativen auf die Strategie einzahlen und nicht wie eine Funktionsliste wirken. Antworten Sie auf Deutsch.
+  icon_suggestion: target
+- title: Jetzt
+  prompt: |-
+    Zugesagte, laufende Initiativen für den aktuellen Horizont. Je Eintrag: die Initiative, das Thema, dem sie dient, das erwartete Ergebnis und ein Konfidenzindikator. Nennen Sie den zugrunde liegenden Plan. Antworten Sie auf Deutsch.
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: Als Nächstes
+  prompt: |-
+    Für den folgenden Horizont geplante Initiativen, geordnet nach Priorität und Abhängigkeit. Vermerken Sie, was in „Jetzt“ abgeschlossen sein muss, bevor jede beginnen kann. Antworten Sie auf Deutsch.
+  icon_suggestion: arrow-right-circle
+- title: Später
+  prompt: |-
+    Richtungsweisende Wetten und Erkundungen jenseits der nahen Zukunft. Formulieren Sie sie als zu lösende Probleme, nicht als zugesagte Funktionen, um Flexibilität zu wahren. Antworten Sie auf Deutsch.
+  icon_suggestion: telescope
+- title: Abhängigkeiten und Risiken
+  prompt: |-
+    Teamübergreifende Abhängigkeiten und die größten Risiken der Roadmap, jeweils mit einer verantwortlichen Person und einer einzeiligen Gegenmaßnahme. Antworten Sie auf Deutsch.
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown

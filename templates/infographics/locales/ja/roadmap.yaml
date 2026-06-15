@@ -1,0 +1,44 @@
+id: infographic-roadmap-v1-ja
+name: ロードマップ・インフォグラフィック
+type: infographic
+description: 「現在／次／将来」のプロダクトまたは戦略のロードマップを、テーマ別の施策と成果を持つ水平のスイムレーンとして可視化する。（日本語版）
+locale: ja
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: タイトルと時間軸
+  prompt: |-
+    ロードマップのタイトル、担当チーム、各レーンが表す時間軸（例：現在＝今四半期、次＝来四半期、将来＝それ以降）。日付は方向性を示すものであり、確約ではないことを明記する。 日本語で回答してください。
+  icon_suggestion: map
+- title: 戦略テーマ
+  prompt: |-
+    ロードマップを構成する2～4個のテーマ。各テーマについて、短いラベルとそれが推進する成果を示し、施策が機能の羅列ではなく戦略に積み上がるようにする。 日本語で回答してください。
+  icon_suggestion: target
+- title: 現在
+  prompt: |-
+    現在の時間軸における確約済みかつ進行中の施策。項目ごとに、施策、対応するテーマ、期待される成果、確度の指標を示す。出典となる計画を明記する。 日本語で回答してください。
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: 次
+  prompt: 次の時間軸に向けて計画された施策を、優先度と依存関係で並べる。各施策を開始する前に「現在」で完了している必要があるものを記す。 日本語で回答してください。
+  icon_suggestion: arrow-right-circle
+- title: 将来
+  prompt: 近い将来を超えた方向性のある賭けと探索。柔軟性を保つため、確約された機能ではなく、解決すべき課題として位置づける。 日本語で回答してください。
+  icon_suggestion: telescope
+- title: 依存関係とリスク
+  prompt: チーム横断の依存関係と、ロードマップに対する主要なリスク。それぞれに担当者と一行の緩和策を添える。 日本語で回答してください。
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown

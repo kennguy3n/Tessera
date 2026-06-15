@@ -1,0 +1,38 @@
+id: product-launch-deck-v1-zh
+name: 产品发布 / 进入市场
+type: slides
+description: 产品发布演示 — 定位、目标细分、信息传递、发布计划、赋能与成功指标（中文版）
+locale: zh
+format: marp
+theme: gaia
+paginate: true
+profile:
+- product-manager
+- product-marketing
+sections:
+- title: 发布标题
+  prompt: 标题幻灯片，包含产品或功能名称、发布级别（重大／次要／静默）、目标发布日期，以及一句话承诺，说明这对客户为何重要。 请用中文回答。
+- title: 为何此时
+  prompt: 使现在成为发布最佳时机的市场变化、客户需求或竞争空白。请用所连接来源的研究或销售管道数据加以佐证。 请用中文回答。
+  required_sources:
+  - type: local
+    min: 1
+- title: 定位与信息传递
+  prompt: 定位陈述（面向谁、品类、核心收益、差异化点），以及销售与市场将处处重复的三大信息支柱。 请用中文回答。
+- title: 目标细分与ICP
+  prompt: 主要与次要细分市场、理想客户画像，以及购买者／使用者画像。针对每一类：本次发布解决的痛点，以及促使其行动的触发因素。 请用中文回答。
+- title: 打包与定价
+  prompt: 产品如何打包与定价、对现有客户有何变化，以及任何迁移或老用户保留方案。标明仍未确定的定价决策。 请用中文回答。
+- title: 发布计划与时间表
+  prompt: 分阶段计划：内测、公测、正式发布与发布后。每个阶段的日期、渠道（公关、内容、邮件、活动、应用内）以及进入下一阶段的门槛标准。 请用中文回答。
+  output_format: table
+- title: 销售与支持赋能
+  prompt: 销售、客户成功与支持需要准备的内容：演示脚本、竞品对比卡、定价指引、常见问题与培训日期。为每项资产指定负责人。 请用中文回答。
+- title: 成功指标
+  prompt: 发布记分卡：采用率、受影响的销售管道、收入，以及前30／60／90天的一个先行指标。定义每项的衡量方式与目标。 请用中文回答。
+  output_format: bullets
+export:
+- markdown
+- html
+- pptx
+- pdf

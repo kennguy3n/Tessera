@@ -1,0 +1,50 @@
+id: landing-webinar-v1-ko
+name: 웨비나 등록
+type: landing_page
+description: 주제 후크, 아젠다, 연사, 배울 내용, 등록 양식을 갖춘 웨비나 등록 페이지 (한국어 버전)
+locale: ko
+default_icon_set: lucide
+color_scheme:
+  primary: '#1D4ED8'
+  secondary: '#7C3AED'
+  accent: '#F59E0B'
+profile:
+- marketing
+- events
+sections:
+- title: 히어로 — 주제와 일시
+  prompt: |-
+    웨비나 제목, 시간대가 포함된 날짜/시간, 형식(라이브 / 온디맨드), 그리고 등록 CTA(‘자리 예약하기’). 누가 참여해야 하는지 한 줄로. 한국어로 작성하세요.
+  icon_suggestion: calendar-clock
+- title: 참여해야 하는 이유
+  prompt: '이 세션이 다루는 문제와 한 시간의 약속: 참석자가 끝난 뒤 무엇을 할 수 있게 되는지. 두세 문장으로. 한국어로 작성하세요.'
+  icon_suggestion: target
+- title: 배우게 될 내용
+  prompt: 구체적인 학습 성과 세 개에서 다섯 개를 불릿으로. 각 항목은 방문자의 한 시간을 정당화할 만큼 구체적이어야 합니다. 한국어로 작성하세요.
+  icon_suggestion: graduation-cap
+  output_format: bullets
+- title: 아젠다
+  prompt: '시간 블록이 있는 진행 순서: 소개, 주요 세그먼트, 데모, Q&A. 가치 밀도가 분명히 드러나도록 간결하게 유지하세요. 한국어로 작성하세요.'
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: 연사
+  prompt: |-
+    연사마다 사진, 이름, 직책, 회사, 그리고 이 주제에 대해 신뢰를 얻는 한 줄짜리 이력. 약력은 연결된 소스에서 가져오세요. 한국어로 작성하세요.
+  icon_suggestion: mic
+  required_sources:
+  - type: local
+    min: 1
+- title: 사회적 증거
+  prompt: 지난 세션의 참석자 수, 추천사 또는 파트너 로고 — 이 시리즈가 시간을 들일 가치가 있다는 증거. 한국어로 작성하세요.
+  icon_suggestion: star
+- title: 등록과 안내
+  prompt: 등록 양식 항목, 등록 후 일어나는 일(캘린더 초대, 리마인더, 녹화), 그리고 이메일 사용 방식에 관한 개인정보 안내. 한국어로 작성하세요.
+  icon_suggestion: ticket
+- title: 자주 묻는 질문
+  prompt: |-
+    네 개의 FAQ: 녹화되는지, 무료인지, 라이브로 참여하지 못하면 어떻게 되는지, 질문하는 방법. 마지막 CTA로 마무리하세요. 한국어로 작성하세요.
+  icon_suggestion: help-circle
+export:
+- markdown
+- html
+- pdf

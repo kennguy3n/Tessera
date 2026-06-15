@@ -1,0 +1,56 @@
+id: landing-webinar-v1-de
+name: Webinar-Anmeldung
+type: landing_page
+description: |-
+  Webinar-Anmeldeseite mit Themen-Aufhänger, Agenda, Referenten, Lerninhalten und einem Anmeldeformular (deutsche Version)
+locale: de
+default_icon_set: lucide
+color_scheme:
+  primary: '#1D4ED8'
+  secondary: '#7C3AED'
+  accent: '#F59E0B'
+profile:
+- marketing
+- events
+sections:
+- title: Hero — Thema und Termin
+  prompt: |-
+    Der Webinar-Titel, Datum und Uhrzeit mit Zeitzone, das Format (live / on demand) und ein Anmelde-CTA („Platz sichern“). Eine Zeile dazu, wer teilnehmen sollte. Antworten Sie auf Deutsch.
+  icon_suggestion: calendar-clock
+- title: Warum teilnehmen
+  prompt: |-
+    Das Problem, das die Session adressiert, und das Versprechen der Stunde: was die Teilnehmenden danach können werden. Zwei oder drei Sätze. Antworten Sie auf Deutsch.
+  icon_suggestion: target
+- title: Was Sie lernen
+  prompt: |-
+    Drei bis fünf konkrete Lernergebnisse als Aufzählungspunkte, jedes spezifisch genug, um eine Stunde der Zeit des Besuchers zu rechtfertigen. Antworten Sie auf Deutsch.
+  icon_suggestion: graduation-cap
+  output_format: bullets
+- title: Agenda
+  prompt: |-
+    Der Ablauf mit Zeitblöcken: Einführung, Hauptsegmente, Demo und Q&A. Halten Sie es straff, damit die Wertdichte offensichtlich ist. Antworten Sie auf Deutsch.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Referenten
+  prompt: |-
+    Jeder Referent mit Foto, Name, Funktion, Unternehmen und einer einzeiligen Qualifikation, die zu diesem Thema Vertrauen schafft. Übernehmen Sie die Biografien aus der verbundenen Quelle. Antworten Sie auf Deutsch.
+  icon_suggestion: mic
+  required_sources:
+  - type: local
+    min: 1
+- title: Social Proof
+  prompt: |-
+    Teilnehmerzahlen vergangener Sessions, ein Testimonial oder Partnerlogos – Belege dafür, dass diese Reihe die Zeit wert ist. Antworten Sie auf Deutsch.
+  icon_suggestion: star
+- title: Anmeldung und Organisatorisches
+  prompt: |-
+    Die Felder des Anmeldeformulars, was nach der Anmeldung passiert (Kalendereinladung, Erinnerungen, Aufzeichnung) und der Datenschutzhinweis zur Verwendung der E-Mail-Adresse. Antworten Sie auf Deutsch.
+  icon_suggestion: ticket
+- title: FAQ
+  prompt: |-
+    Vier FAQ: Wird es aufgezeichnet, ist es kostenlos, was, wenn ich nicht live teilnehmen kann, und wie stelle ich Fragen. Schließen Sie mit einem abschließenden CTA. Antworten Sie auf Deutsch.
+  icon_suggestion: help-circle
+export:
+- markdown
+- html
+- pdf

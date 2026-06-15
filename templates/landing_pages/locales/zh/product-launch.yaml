@@ -1,0 +1,48 @@
+id: landing-product-launch-v1-zh
+name: 产品发布落地页
+type: landing_page
+description: 发布当天的落地页，包含主视觉、问题/解决方案、功能、社会证明、定价以及强有力的主要行动号召（中文版）
+locale: zh
+default_icon_set: lucide
+color_scheme:
+  primary: '#4F46E5'
+  secondary: '#0EA5E9'
+  accent: '#F97316'
+profile:
+- product-marketing
+- marketing
+sections:
+- title: 主视觉
+  prompt: |-
+    一个以收益为导向的标题，点明有何新内容以及面向谁，一段 15 至 25 字的副标题，以及一个主要行动号召（“开始使用”／“免费试用”）。再添加一个用于演示或视频的次要行动号召。 请用中文回答。
+  icon_suggestion: rocket
+- title: 问题
+  prompt: 用访客自己的话表述本次发布所解决的问题。用两三句话让他们在任何推销之前就感到被理解。 请用中文回答。
+  icon_suggestion: alert-circle
+- title: 解决方案
+  prompt: 产品如何解决该问题，并点出使其与众不同的那一个“顿悟”式能力。聚焦于成果，而非规格清单。 请用中文回答。
+  icon_suggestion: sparkles
+- title: 核心功能
+  prompt: 三到六张功能卡片。每张卡片：一个图标、一个以收益为先的标题，以及一句说明其功能的话。按目标访客最在意的内容排序。 请用中文回答。
+  icon_suggestion: layout-grid
+- title: 社会证明
+  prompt: 标识、一条带姓名/职务/公司的亮眼证言，以及一个关键指标。从所连接的来源中提取，并为每条引言注明出处。 请用中文回答。
+  icon_suggestion: quote
+  required_sources:
+  - type: local
+    min: 1
+- title: 工作原理
+  prompt: 从注册到获得价值的三个简单步骤，每步配一个简短标签和一行说明，让访客看到自己多快就能达成结果。 请用中文回答。
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: 定价
+  prompt: 定价层级或单一明确价格、所含内容，以及任何带到期时间的发布优惠。用试用或保证的一句话降低风险。 请用中文回答。
+  icon_suggestion: tag
+  output_format: table
+- title: 结尾行动号召与常见问题
+  prompt: 一个重申核心收益的结尾行动号召，以及四到六条应对顾虑的常见问题（安全、定价、迁移、支持）。 请用中文回答。
+  icon_suggestion: check-circle
+export:
+- markdown
+- html
+- pdf

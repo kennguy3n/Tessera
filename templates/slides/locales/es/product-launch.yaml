@@ -1,0 +1,47 @@
+id: product-launch-deck-v1-es
+name: Lanzamiento de producto / Go-to-Market
+type: slides
+description: |-
+  Presentación de lanzamiento de producto — posicionamiento, segmentos objetivo, mensajes, plan de lanzamiento, capacitación y métricas de éxito (versión en español)
+locale: es
+format: marp
+theme: gaia
+paginate: true
+profile:
+- product-manager
+- product-marketing
+sections:
+- title: Titular del lanzamiento
+  prompt: |-
+    Diapositiva de título con el nombre del producto o función, el nivel de lanzamiento (mayor / menor / silencioso), la fecha objetivo de lanzamiento y una promesa de una línea que capture por qué esto le importa a los clientes. Responda en español.
+- title: Por qué ahora
+  prompt: |-
+    El cambio de mercado, la demanda de los clientes o la brecha competitiva que hace que este sea el momento adecuado para lanzar. Fundaméntelo en investigación o datos de pipeline de las fuentes conectadas. Responda en español.
+  required_sources:
+  - type: local
+    min: 1
+- title: Posicionamiento y mensajes
+  prompt: |-
+    La declaración de posicionamiento (para quién, la categoría, el beneficio clave, el diferenciador) y los tres pilares de mensaje que ventas y marketing repetirán en todas partes. Responda en español.
+- title: Segmentos objetivo e ICP
+  prompt: |-
+    Los segmentos primario y secundario, el perfil de cliente ideal y los perfiles de comprador/usuario. Para cada uno: el dolor que resuelve este lanzamiento y el detonante que los hace actuar. Responda en español.
+- title: Empaquetado y precios
+  prompt: |-
+    Cómo se empaqueta y se fija el precio del producto, qué cambia para los clientes existentes y cualquier plan de migración o de mantenimiento de condiciones. Señale las decisiones de precio aún abiertas. Responda en español.
+- title: Plan y cronograma de lanzamiento
+  prompt: |-
+    El plan por fases: alfa, beta, disponibilidad general y poslanzamiento. Por fase: las fechas, los canales (relaciones públicas, contenido, correo, eventos, in-app) y los criterios de avance. Responda en español.
+  output_format: table
+- title: Capacitación de ventas y soporte
+  prompt: |-
+    Lo que ventas, éxito del cliente y soporte necesitan tener listo: guion de demostración, battlecard, guía de precios, preguntas frecuentes y la fecha de capacitación. Nombre al responsable de cada recurso. Responda en español.
+- title: Métricas de éxito
+  prompt: |-
+    El cuadro de mando del lanzamiento: adopción, pipeline influido, ingresos y un indicador adelantado para los primeros 30/60/90 días. Defina cómo se mide cada uno y la meta. Responda en español.
+  output_format: bullets
+export:
+- markdown
+- html
+- pptx
+- pdf

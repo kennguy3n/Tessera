@@ -1,0 +1,33 @@
+id: infographic-process-flow-v1-ar
+name: تدفّق العملية
+type: infographic
+description: |-
+  إنفوجرافيك أفقي يصوّر عملية من 3 إلى 5 خطوات كتدفّق: المدخل → الخطوات الوسطى → النتيجة. كل خطوة قسم واحد بأيقونة ووصف قصير. (النسخة العربية)
+locale: ar
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: الخطوة 1 — المدخل
+  prompt: |-
+    صف نقطة دخول العملية: من أو ما الذي يبدؤها، وما البيانات أو المدخلات المطلوبة. أجب باللغة العربية.
+  icon_suggestion: log-in
+- title: الخطوة 2 — المعالجة
+  prompt: 'صف خطوة المعالجة الأساسية: ما الذي يحوّل المدخل. أجب باللغة العربية.'
+  icon_suggestion: settings
+- title: الخطوة 3 — القرار
+  prompt: صف خطوة القرار أو التوجيه التي تحدّد نتيجة التفرّع. أجب باللغة العربية.
+  icon_suggestion: git-branch
+- title: الخطوة 4 — الإجراء
+  prompt: صف الإجراء المتخذ بعد اتخاذ القرار. أجب باللغة العربية.
+  icon_suggestion: zap
+- title: الخطوة 5 — النتيجة
+  prompt: صف النتيجة النهائية المقدَّمة إلى المستخدم النهائي. أجب باللغة العربية.
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

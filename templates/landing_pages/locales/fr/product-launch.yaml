@@ -1,0 +1,56 @@
+id: landing-product-launch-v1-fr
+name: Page de lancement de produit
+type: landing_page
+description: |-
+  Page d'atterrissage pour le jour du lancement, avec hero, problème/solution, fonctionnalités, preuve sociale, tarification et un appel à l'action principal fort (version française)
+locale: fr
+default_icon_set: lucide
+color_scheme:
+  primary: '#4F46E5'
+  secondary: '#0EA5E9'
+  accent: '#F97316'
+profile:
+- product-marketing
+- marketing
+sections:
+- title: Hero
+  prompt: |-
+    Un titre axé sur le bénéfice qui nomme la nouveauté et son public, un sous-titre de 15 à 25 mots et une CTA principale (« Commencer » / « Essayer gratuitement »). Ajoutez une CTA secondaire pour une démo ou une vidéo. Répondez en français.
+  icon_suggestion: rocket
+- title: Problème
+  prompt: |-
+    Le problème que résout le lancement, formulé avec les mots du visiteur. Deux ou trois phrases qui lui donnent le sentiment d'être compris avant tout argumentaire. Répondez en français.
+  icon_suggestion: alert-circle
+- title: Solution
+  prompt: |-
+    Comment le produit résout ce problème, avec l'unique capacité révélatrice qui le distingue. Tenez-vous-en au résultat, pas à une fiche technique. Répondez en français.
+  icon_suggestion: sparkles
+- title: Fonctionnalités clés
+  prompt: |-
+    De trois à six cartes de fonctionnalités. Par carte : une icône, un titre axé sur le bénéfice et une phrase sur ce qu'elle fait. Classez-les selon ce qui importe le plus au visiteur cible. Répondez en français.
+  icon_suggestion: layout-grid
+- title: Preuve sociale
+  prompt: |-
+    Des logos, un témoignage marquant avec nom/fonction/entreprise et une métrique phare. Tirez-les des sources connectées et attribuez chaque citation. Répondez en français.
+  icon_suggestion: quote
+  required_sources:
+  - type: local
+    min: 1
+- title: Comment ça marche
+  prompt: |-
+    Trois étapes simples de l'inscription à la valeur, chacune avec un libellé court et une ligne, pour que le visiteur voie à quelle vitesse il atteint le résultat. Répondez en français.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Tarification
+  prompt: |-
+    Les paliers tarifaires ou un prix unique et clair, ce qui est inclus et toute offre de lancement avec sa date d'expiration. Réduisez le risque par une ligne d'essai ou de garantie. Répondez en français.
+  icon_suggestion: tag
+  output_format: table
+- title: CTA finale et FAQ
+  prompt: |-
+    Une CTA de clôture qui réaffirme le bénéfice central, plus quatre à six FAQ traitant les objections (sécurité, tarification, migration, support). Répondez en français.
+  icon_suggestion: check-circle
+export:
+- markdown
+- html
+- pdf
