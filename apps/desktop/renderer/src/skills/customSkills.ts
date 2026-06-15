@@ -1003,7 +1003,18 @@ export function parseSkillImport(raw: string): SkillImportResult {
   if (!rec || rec.format !== SKILL_EXPORT_FORMAT) {
     return { ok: false, error: "This isn’t a Tessera skill file." };
   }
-  if (typeof rec.version !== "number" || rec.version > SKILL_EXPORT_VERSION) {
+  // Reject clearly-invalid envelopes (non-numeric, non-integer, or below the
+  // first-ever version) before the "newer than supported" check, so the
+  // untrusted import boundary fails fast with a specific reason. Number.isInteger
+  // also rejects any non-finite value that slips through.
+  if (
+    typeof rec.version !== "number" ||
+    !Number.isInteger(rec.version) ||
+    rec.version < 1
+  ) {
+    return { ok: false, error: "This isn’t a valid Tessera skill file." };
+  }
+  if (rec.version > SKILL_EXPORT_VERSION) {
     return {
       ok: false,
       error: "This skill was exported by a newer version of Tessera.",

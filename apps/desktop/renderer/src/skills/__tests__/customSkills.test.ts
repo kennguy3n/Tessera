@@ -1119,6 +1119,25 @@ describe("skill export / import", () => {
     expect(result.error).toMatch(/newer version/i);
   });
 
+  it("rejects an envelope whose version is below the first version", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    if (!doc) return;
+    // 0, negative, non-integer, and non-finite versions were never produced by
+    // any release; reject them as malformed, NOT as "newer than supported".
+    for (const version of [0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const blob = JSON.stringify({
+        format: SKILL_EXPORT_FORMAT,
+        version,
+        skill: doc,
+      });
+      const result = parseSkillImport(blob);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatch(/valid Tessera skill file/i);
+      expect(result.error).not.toMatch(/newer version/i);
+    }
+  });
+
   it("rejects an envelope whose version is not a number", () => {
     const blob = JSON.stringify({
       format: SKILL_EXPORT_FORMAT,
