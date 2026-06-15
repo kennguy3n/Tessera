@@ -247,6 +247,7 @@ export function SheetAiPanel({
             key={selectedSkill.id}
             skill={selectedSkill}
             onApply={applyFormulaFromSkill}
+            onRunStart={() => setSkillError(null)}
             applyLabel={`Insert into ${activeCellRef ?? "cell"}`}
           />
           {skillError && (

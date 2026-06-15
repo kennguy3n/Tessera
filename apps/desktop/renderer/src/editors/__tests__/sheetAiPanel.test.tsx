@@ -191,6 +191,64 @@ describe("SheetAiPanel", () => {
     expect(screen.getByTestId("sheet-ai-skill-error")).toBeInTheDocument();
   });
 
+  it("clears a stale skill-apply error when the skill is re-run", async () => {
+    _resetActiveGenerationForTests();
+    const { emit } = installModel();
+    const generate = window.tessera.model.generate as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    const onInsert = vi.fn();
+    render(
+      <SheetAiPanel
+        columns={["A"]}
+        rows={[["1"]]}
+        activeCellRef="B1"
+        onInsertFormula={onInsert}
+        onClose={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("sheet-ai-mode-skills"));
+    fireEvent.change(screen.getByLabelText(/What should the formula do/i), {
+      target: { value: "broken" },
+    });
+    fireEvent.click(screen.getByTestId("skill-run"));
+
+    // Drive the three steps to a final UNparseable formula so Apply fails.
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await act(async () => emit({ token: "=SUM(A1:", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    await act(async () => emit({ token: "unbalanced parens", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+    await act(async () => emit({ token: "=SUM(A1:", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(screen.getByTestId("sheet-ai-skill-error")).toBeInTheDocument();
+
+    // Retry re-runs the skill; the new `onRunStart` -> setSkillError(null)
+    // wiring must clear the stale apply error immediately.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByTestId("sheet-ai-skill-error")).toBeNull();
+
+    // Settle the re-run with a valid formula so no async update escapes act.
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(4));
+    await act(async () => emit({ token: "=SUM(A1:A3)", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(5));
+    await act(async () => emit({ token: "ok", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(6));
+    await act(async () => emit({ token: "=SUM(A1:A3)", done: false }));
+    await act(async () => emit({ token: "", done: true }));
+
+    expect(screen.queryByTestId("sheet-ai-skill-error")).toBeNull();
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(onInsert).toHaveBeenCalledWith("=SUM(A1:A3)");
+  });
+
   it("disables the mode-switch buttons while a quick generation streams", async () => {
     _resetActiveGenerationForTests();
     const { emit } = installModel();

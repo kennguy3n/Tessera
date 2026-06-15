@@ -597,6 +597,7 @@ export default function BaseAiAssistant({
               key={selectedSkill.id}
               skill={selectedSkill}
               onApply={applySchemaFromSkill}
+              onRunStart={() => setSkillError(null)}
               applyLabel="Create tables"
             />
             {skillError && (

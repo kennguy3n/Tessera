@@ -40,13 +40,11 @@ beforeEach(() => {
   Object.defineProperty(window.tessera, "model", {
     configurable: true,
     value: {
-      status: vi
-        .fn()
-        .mockResolvedValue({
-          available: true,
-          modelName: "local",
-          status: "ready",
-        }),
+      status: vi.fn().mockResolvedValue({
+        available: true,
+        modelName: "local",
+        status: "ready",
+      }),
       start: vi.fn(),
       stop: vi.fn(),
       generate: generateMock,
@@ -344,6 +342,45 @@ describe("BaseAiAssistant", () => {
     expect(screen.getByTestId("base-ai-skill-error")).toBeInTheDocument();
     expect(props.onCreateTable).not.toHaveBeenCalled();
     expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("clears a stale skill-apply error when the skill is re-run", async () => {
+    const props = setup();
+    fireEvent.click(screen.getByTestId("base-ai-mode-skills"));
+    fireEvent.change(screen.getByLabelText(/What is the base for/i), {
+      target: { value: "Track a sales pipeline" },
+    });
+    fireEvent.click(screen.getByTestId("skill-run"));
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(1));
+    streamResponse("## Draft\n- a: text");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(2));
+    streamResponse("NONE");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(3));
+    // Final step yields prose with no parseable table -> apply fails.
+    streamResponse("Sorry, I could not design a schema.");
+
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(screen.getByTestId("base-ai-skill-error")).toBeInTheDocument();
+
+    // Retry re-runs the skill; the new `onRunStart` -> setSkillError(null)
+    // wiring clears the stale apply error rather than letting it linger
+    // while the new run streams.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByTestId("base-ai-skill-error")).toBeNull();
+
+    // Settle the re-run with a valid schema so it parses + creates a table.
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(4));
+    streamResponse("## Draft\n- a: text");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(5));
+    streamResponse("NONE");
+    await waitFor(() => expect(generateMock).toHaveBeenCalledTimes(6));
+    streamResponse("## Companies\n- name: text");
+
+    expect(screen.queryByTestId("base-ai-skill-error")).toBeNull();
+    fireEvent.click(await screen.findByTestId("skill-apply"));
+    expect(props.onCreateTable).toHaveBeenCalledWith("Companies", [
+      { name: "name", type: "text" },
+    ]);
   });
 
   it("invokes cancelJob when Stop is clicked mid-generation", async () => {

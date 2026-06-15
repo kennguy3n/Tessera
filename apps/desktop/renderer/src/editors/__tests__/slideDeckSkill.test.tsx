@@ -171,6 +171,48 @@ describe("SlideDeckGenerator skills mode", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("clears a stale skill 'no usable deck' notice when the skill is re-run", async () => {
+    // Run 1's final output is a bare TITLE line: it parses to a deck title
+    // but ZERO slides, so Apply surfaces the skill "no usable outline"
+    // notice. Run 2 (Retry) returns a real two-slide deck.
+    installModel([
+      "## Draft\n- a",
+      "## Draft\n- a\n- b",
+      "TITLE: only a title, no slides",
+      "## Recovered\n- ok\n- good",
+      "## Recovered\n- ok\n- good",
+      "## Recovered deck\n- ok\n- good\n## Second\n- x\n- y",
+    ]);
+    const onApply = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<SlideDeckGenerator open onApply={onApply} onClose={onClose} />);
+
+    await user.click(screen.getByTestId("slide-ai-mode-skills"));
+    await user.type(screen.getByLabelText(/Deck topic/i), "Q3 GTM plan");
+    await user.click(screen.getByTestId("skill-run"));
+
+    // Applying the (parseable-to-zero-slides) output raises the notice.
+    await user.click(await screen.findByTestId("skill-apply"));
+    expect(
+      await screen.findByText(/return a usable outline/i),
+    ).toBeInTheDocument();
+    expect(onApply).not.toHaveBeenCalled();
+
+    // Retry re-runs the skill; the new `onRunStart` -> setSkillNoUsableDeck
+    // wiring must drop the stale notice rather than let it linger.
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByText(/return a usable outline/i)).toBeNull();
+
+    // The re-run yields a real deck, so Apply now parses slides + closes.
+    await user.click(await screen.findByTestId("skill-apply"));
+    expect(onApply).toHaveBeenCalledTimes(1);
+    const slides = onApply.mock.calls[0][0] as Array<{ title: string }>;
+    expect(slides).toHaveLength(2);
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByText(/return a usable outline/i)).toBeNull();
+  });
+
   it("starts in quick mode and only shows the skill runner after switching", async () => {
     installModel([]);
     const user = userEvent.setup();

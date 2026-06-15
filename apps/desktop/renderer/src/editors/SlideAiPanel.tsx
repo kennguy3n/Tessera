@@ -149,24 +149,31 @@ export function SlideDeckGenerator({
     [onApply, onClose],
   );
 
+  // `useModelGeneration` returns a fresh object literal every render, but
+  // its `cancel`/`reset` callbacks are stable (memoised in the hook).
+  // Depend on those stable refs (plus the `isStreaming` value) instead of
+  // the whole `gen` object so `switchDeckMode` isn't needlessly recreated
+  // every render — mirroring SheetAiPanel's `switchSheetMode`.
+  const { isStreaming: genStreaming, cancel: cancelGen, reset: resetGen } = gen;
+
   // Switching modes cancels an in-flight quick generation (so it can't
   // keep streaming invisibly once the Stop button is hidden in skills
   // mode) and clears any stale quick preview / streamed text / error /
-  // skill notice. `gen.reset()` drops the hook's `text` + `error` so a
-  // prior run's stream or failure can't ghost back on a return to quick
-  // mode. The skill chain (skills -> quick) is torn down by
-  // SkillRunnerPanel's own unmount.
+  // skill notice. `reset()` drops the hook's `text` + `error` so a prior
+  // run's stream or failure can't ghost back on a return to quick mode.
+  // The skill chain (skills -> quick) is torn down by SkillRunnerPanel's
+  // own unmount.
   const switchDeckMode = useCallback(
     (next: DeckPanelMode) => {
       if (next === panelMode) return;
-      if (next === "skills" && gen.isStreaming) gen.cancel();
-      gen.reset();
+      if (next === "skills" && genStreaming) cancelGen();
+      resetGen();
       setPreview(null);
       setNoUsableDeck(false);
       setSkillNoUsableDeck(false);
       setPanelMode(next);
     },
-    [panelMode, gen],
+    [panelMode, genStreaming, cancelGen, resetGen],
   );
 
   const onGenerate = useCallback(async () => {
@@ -280,6 +287,7 @@ export function SlideDeckGenerator({
             key={selectedSkill.id}
             skill={selectedSkill}
             onApply={applyDeckFromSkill}
+            onRunStart={() => setSkillNoUsableDeck(false)}
             applyLabel="Apply deck"
           />
           {skillNoUsableDeck && (
