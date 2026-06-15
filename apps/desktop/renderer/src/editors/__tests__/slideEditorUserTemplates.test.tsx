@@ -94,6 +94,14 @@ function openGallery() {
   return screen.getByRole("dialog", { name: "Choose a deck template" });
 }
 
+// Dismiss the gallery via its overlay (the primary click-outside path):
+// clicking the overlay itself — not a child — closes the dialog.
+function closeGallery(dialog: HTMLElement) {
+  const overlay = dialog.parentElement;
+  if (!overlay) throw new Error("gallery overlay not found");
+  fireEvent.click(overlay);
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   __resetCustomSlideTemplatesStoreForTests();
@@ -370,6 +378,63 @@ describe("SlideEditor — user-authored templates", () => {
     expect(error.textContent).toMatch(/JSON/i);
     expect(
       screen.queryByTestId("slide-template-save-modal"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("drops a pending delete confirmation when the gallery is closed + reopened", () => {
+    seedTemplate("Doomed", deck("X"));
+    render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+
+    let dialog = openGallery();
+    // Arm the two-step delete, then leave without confirming.
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Delete the Doomed template",
+      }),
+    );
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Confirm deleting the Doomed template",
+      }),
+    ).toBeInTheDocument();
+    closeGallery(dialog);
+
+    // Reopening shows the normal Delete button again — the armed confirm
+    // did not survive — and nothing was deleted.
+    dialog = openGallery();
+    expect(
+      within(dialog).queryByRole("button", {
+        name: "Confirm deleting the Doomed template",
+      }),
+    ).toBeNull();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Delete the Doomed template",
+      }),
+    ).toBeInTheDocument();
+    expect(loadCustomSlideTemplates()).toHaveLength(1);
+  });
+
+  it("drops a stale import error when the gallery is closed + reopened", async () => {
+    render(<SlideEditor content={twoSlideDeck()} onSave={vi.fn()} />);
+    let dialog = openGallery();
+
+    fireEvent.change(screen.getByTestId("slide-template-import-input"), {
+      target: {
+        files: [
+          new File(["not json{"], "bad.json", { type: "application/json" }),
+        ],
+      },
+    });
+    expect(
+      await screen.findByTestId("slide-template-import-error"),
+    ).toBeInTheDocument();
+    closeGallery(dialog);
+
+    // The role="alert" banner must not linger into the next open.
+    dialog = openGallery();
+    expect(
+      within(dialog).queryByTestId("slide-template-import-error"),
     ).not.toBeInTheDocument();
   });
 });

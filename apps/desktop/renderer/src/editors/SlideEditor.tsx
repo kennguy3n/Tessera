@@ -445,6 +445,20 @@ export default function SlideEditor({
     [],
   );
 
+  // Reset the gallery's transient UI state whenever it closes so a pending
+  // two-step delete confirmation or an inline import error can never survive
+  // to a later open. This mirrors the version-restore cleanup (which clears
+  // the same fields on a hard deck swap) and covers every close path —
+  // overlay click, Escape (focus trap), Apply, and the Edit/Import hand-off —
+  // without threading a reset through each one. Clearing to an already-`null`
+  // value bails out of re-rendering, so this never costs an extra render.
+  useEffect(() => {
+    if (!templatePickerOpen) {
+      setConfirmingTemplateDeleteId(null);
+      setTemplateImportError(null);
+    }
+  }, [templatePickerOpen]);
+
   // Close the layout picker when the user clicks anywhere outside it.
   // We listen on `mousedown` (not `click`) so the dismiss happens
   // before any focused control inside the popover loses focus on
