@@ -1,0 +1,63 @@
+id: landing-careers-v1
+name: Careers / Hiring
+type: landing_page
+description: Careers landing page — employer brand, culture, benefits, open roles, hiring process, and apply CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#1D4ED8"
+  secondary: "#0D9488"
+  accent: "#F59E0B"
+profile:
+  - recruiting
+  - people-ops
+sections:
+  - title: Hero — Why Work Here
+    prompt: >
+      A headline capturing the mission and the kind of people who
+      thrive here, a one-line invitation, and a "See open roles" CTA
+      over a team image.
+    icon_suggestion: users
+  - title: Mission and Impact
+    prompt: >
+      What the company is building and the impact an employee's work
+      has. Connect the day-to-day to the bigger why.
+    icon_suggestion: target
+  - title: Culture and Values
+    prompt: >
+      The values in practice — not posters, but how decisions get made
+      and how people treat each other. Use concrete examples.
+    icon_suggestion: heart-handshake
+    output_format: bullets
+  - title: Benefits and Perks
+    prompt: >
+      Compensation philosophy, health and time-off, remote/flexibility,
+      learning budget, parental leave, and equity. Be specific where
+      possible.
+    icon_suggestion: gift
+    output_format: table
+  - title: Open Roles
+    prompt: >
+      The current openings grouped by team, each with title, location,
+      and type. Pull from the connected roles source and link to each
+      job.
+    icon_suggestion: briefcase
+    required_sources:
+      - type: local
+        min: 1
+  - title: Hiring Process
+    prompt: >
+      The steps from application to offer, the typical timeline, and
+      what candidates can expect at each stage, including any take-home
+      or interview format.
+    icon_suggestion: list-ordered
+    output_format: numbered_list
+  - title: Apply and EEO
+    prompt: >
+      How to apply, the contact for accommodations, and an equal-
+      opportunity statement. Reassure candidates how their data is
+      used.
+    icon_suggestion: send
+export:
+  - markdown
+  - html
+  - pdf

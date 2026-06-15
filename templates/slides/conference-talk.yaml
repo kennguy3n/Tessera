@@ -1,0 +1,56 @@
+id: conference-talk-deck-v1
+name: Conference Talk / Keynote
+type: slides
+description: Narrative keynote deck — hook, big idea, evidence, turning point, takeaways, and a memorable close
+format: marp
+theme: uncover
+paginate: true
+profile:
+  - speaker
+  - evangelist
+sections:
+  - title: Title and Promise
+    prompt: >
+      A bold talk title and a one-sentence promise of what the audience
+      will be able to do or believe by the end. Add the speaker name,
+      handle, and the event/track.
+  - title: The Hook
+    prompt: >
+      Open with a story, a surprising statistic, or a provocative
+      question that earns attention in the first 60 seconds. No agenda
+      slide — start with tension.
+  - title: The Big Idea
+    prompt: >
+      State the single idea the whole talk defends, in one sentence the
+      audience could repeat to a colleague afterwards.
+  - title: Why It Matters
+    prompt: >
+      Establish the stakes: who is affected, what it costs today, and
+      why the conventional wisdom is incomplete or wrong.
+  - title: Evidence
+    prompt: >
+      Two or three pieces of evidence that build the argument: data, a
+      demo, or a case. Cite sources. Each builds on the previous rather
+      than repeating it.
+    required_sources:
+      - type: local
+        min: 1
+  - title: The Turn
+    prompt: >
+      The turning point — the reframe, counter-intuitive insight, or
+      lesson learned that shifts how the audience sees the problem.
+  - title: Takeaways
+    prompt: >
+      Three concrete, do-it-tomorrow takeaways. Keep them specific
+      enough to act on without the speaker in the room.
+    output_format: numbered_list
+  - title: Close
+    prompt: >
+      A memorable closing line that lands the big idea, plus where to
+      go next (resources, repo, contact). End on the promise made at
+      the start.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

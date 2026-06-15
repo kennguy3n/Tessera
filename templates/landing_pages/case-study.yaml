@@ -1,0 +1,67 @@
+id: landing-case-study-v1
+name: Case Study Landing
+type: landing_page
+description: Customer story landing page — challenge, solution, quantified results, quote, and a conversion CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#0F766E"
+  secondary: "#2563EB"
+  accent: "#F97316"
+profile:
+  - product-marketing
+  - customer-success
+sections:
+  - title: Hero — Headline Result
+    prompt: >
+      The customer name and logo with the headline outcome as the
+      hero ("How Acme cut churn 30%"). A one-line summary and a CTA to
+      read on or talk to sales.
+    icon_suggestion: trophy
+  - title: At a Glance
+    prompt: >
+      A quick-facts strip: industry, company size, products used, and
+      the two or three headline metrics, so skimmers get the story in
+      five seconds.
+    icon_suggestion: gauge
+    output_format: table
+  - title: About the Customer
+    prompt: >
+      Who the customer is and why their context matters to the reader.
+      Pull details from the connected source and keep it to a short
+      paragraph.
+    icon_suggestion: building
+    required_sources:
+      - type: local
+        min: 1
+  - title: The Challenge
+    prompt: >
+      The situation before: the problem, what they tried, and the cost
+      of inaction. Use the customer's own framing where possible.
+    icon_suggestion: alert-triangle
+  - title: The Solution
+    prompt: >
+      What was implemented, how the rollout went, the timeline, and who
+      was involved — enough that a similar buyer pictures themselves in
+      it.
+    icon_suggestion: settings
+  - title: The Results
+    prompt: >
+      Quantified before/after outcomes, ROI or payback, and qualitative
+      wins. Note the measurement method and period so the numbers are
+      credible.
+    icon_suggestion: bar-chart-3
+  - title: In Their Words
+    prompt: >
+      A strong pull quote with the speaker's name, title, and company,
+      plus what they plan to do next with the product.
+    icon_suggestion: quote
+  - title: CTA
+    prompt: >
+      A closing call to action — talk to sales, start a trial, or read
+      a related story — with one line connecting the visitor's
+      situation to the customer's success.
+    icon_suggestion: arrow-right
+export:
+  - markdown
+  - html
+  - pdf

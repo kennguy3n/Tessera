@@ -1,0 +1,50 @@
+id: okr-tracker-base-v1-es
+name: Seguimiento de OKR
+type: base
+description: Base de Objetivos y Resultados Clave para objetivos, resultados clave medibles, alineación, revisiones y puntuación
+locale: es
+profile:
+  - executive
+  - product-manager
+  - team-lead
+sections:
+  - title: Objetivos
+    prompt: >
+      Por objetivo: una declaración cualitativa e inspiradora de
+      lo que se quiere lograr, el responsable, el nivel (empresa /
+      equipo / individual), el ciclo (p. ej., T3 EF25) y el
+      objetivo superior con el que se alinea. Los objetivos son
+      direccionales, no métricas. Responda en español.
+  - title: Resultados Clave
+    prompt: >
+      Por resultado clave: un resultado medible con una línea
+      base, una meta y una unidad; la fuente de la métrica; el
+      responsable; y el tipo (métrica / hito). Cada objetivo debe
+      tener de 2 a 5 resultados clave que, juntos, demuestren su
+      cumplimiento. Responda en español.
+    output_format: table
+  - title: Iniciativas y Alineación
+    prompt: >
+      Las iniciativas, proyectos o apuestas financiadas para
+      mover cada resultado clave, los equipos responsables, y cómo
+      cada objetivo se alinea horizontalmente con equipos pares y
+      verticalmente con las metas de la empresa. Señale los
+      resultados clave sin iniciativa de apoyo. Responda en
+      español.
+  - title: Revisiones y Confianza
+    prompt: >
+      Por revisión (semanal o quincenal): valor actual, porcentaje
+      hacia la meta, una puntuación de confianza (p. ej., 0,0–1,0
+      o rojo / ámbar / verde), la tendencia desde la última
+      revisión y una breve narrativa sobre obstáculos y próximos
+      pasos. Responda en español.
+  - title: Puntuación y Retrospectiva
+    prompt: >
+      Calificación de fin de ciclo por resultado clave y objetivo
+      (p. ej., 0,0–1,0), si era comprometido o aspiracional, las
+      razones del sobre o bajo rendimiento, y los aprendizajes que
+      se trasladan al siguiente ciclo. Responda en español.
+    output_format: table
+export:
+  - markdown
+  - csv

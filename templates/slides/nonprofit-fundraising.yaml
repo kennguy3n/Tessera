@@ -1,0 +1,59 @@
+id: nonprofit-fundraising-deck-v1
+name: Nonprofit Fundraising Deck
+type: slides
+description: Major-gift / campaign fundraising deck — mission, need, model, impact, the ask, and stewardship
+format: marp
+theme: gaia
+paginate: true
+industry:
+  - nonprofit
+profile:
+  - development-director
+  - executive-director
+sections:
+  - title: Mission Promise
+    prompt: >
+      Open on the change the organization exists to create, in one
+      emotionally true sentence, with the organization name and the
+      campaign or fiscal context.
+  - title: The Need
+    prompt: >
+      The problem the organization addresses, grounded in data and a
+      single concrete story. Pair every statistic with a human example.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Our Approach
+    prompt: >
+      The theory of change and what makes the model effective: the core
+      programs, the evidence base, and why this approach beats
+      alternatives.
+  - title: Impact to Date
+    prompt: >
+      Headline outcomes — beneficiaries served, results achieved, and
+      cost per outcome — versus prior year and a multi-year cumulative
+      total. Link the methodology.
+    output_format: table
+  - title: The Opportunity
+    prompt: >
+      What new or expanded impact this gift unlocks: the specific
+      program, the people it reaches, and the milestones it funds.
+  - title: The Ask
+    prompt: >
+      The specific funding goal and the giving levels, with what each
+      level makes possible. For a named prospect, the specific gift
+      being requested and its restriction/term.
+  - title: Stewardship and Trust
+    prompt: >
+      Financial stewardship (program/admin/fundraising ratios,
+      third-party ratings), how the gift will be reported on, and the
+      recognition and engagement the donor can expect.
+  - title: Next Step
+    prompt: >
+      The concrete next step — a site visit, a follow-up meeting, or a
+      pledge form — with a date and the relationship owner.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

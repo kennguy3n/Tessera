@@ -1,0 +1,65 @@
+id: landing-law-firm-v1
+name: Law Firm / Legal Services
+type: landing_page
+description: Law-firm practice page — practice areas, attorneys, case results, approach, and a confidential consult CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#1E293B"
+  secondary: "#7C2D12"
+  accent: "#B45309"
+industry:
+  - legal
+profile:
+  - attorney
+  - firm-marketing
+sections:
+  - title: Hero — Practice and Consult
+    prompt: >
+      The firm name, the focus and who it serves ("Employment law for
+      California workers"), a trust line, and a "Request a confidential
+      consultation" CTA. Avoid outcome guarantees.
+    icon_suggestion: scale
+  - title: Practice Areas
+    prompt: >
+      The practice areas, each with a one-line description of the
+      matters handled, so a prospective client recognizes their
+      situation.
+    icon_suggestion: gavel
+    output_format: bullets
+  - title: How We Help
+    prompt: >
+      The firm's approach and what working with them is like — process,
+      communication, fee structure (hourly, flat, contingency) — set
+      honestly.
+    icon_suggestion: handshake
+  - title: Attorneys
+    prompt: >
+      Each attorney with photo, name, bar admissions, education, and
+      focus areas. Pull bios from the connected source; keep claims
+      accurate and compliant.
+    icon_suggestion: user-round
+    required_sources:
+      - type: local
+        min: 1
+  - title: Results and Recognition
+    prompt: >
+      Representative matters and recognitions, framed compliantly (no
+      promises of similar outcomes) with any required disclaimers.
+    icon_suggestion: award
+  - title: FAQ
+    prompt: >
+      Common questions: cost and fees, what to bring to a consult, how
+      long matters take, and confidentiality. Plain, reassuring
+      answers.
+    icon_suggestion: help-circle
+    output_format: table
+  - title: Consultation and Disclaimer
+    prompt: >
+      The contact form and office details, a note that contacting the
+      firm does not create an attorney-client relationship, and how the
+      submitted information is protected.
+    icon_suggestion: shield-check
+export:
+  - markdown
+  - html
+  - pdf

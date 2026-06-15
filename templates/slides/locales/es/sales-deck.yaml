@@ -1,0 +1,47 @@
+id: sales-deck-v1-es
+name: Presentación de ventas B2B
+type: slides
+description: |-
+  Presentación de ventas para prospección/cierre — dolor del comprador, punto de vista, solución, pruebas, precios y un siguiente paso claro (versión en español)
+locale: es
+format: marp
+theme: gaia
+paginate: true
+profile:
+- sales
+- account-executive
+sections:
+- title: Título y agenda
+  prompt: |-
+    Diapositiva de título con el nombre de la empresa del prospecto, la empresa del vendedor, la fecha de la reunión y los nombres/cargos de los asistentes de ambas partes. A continuación, una agenda de tres líneas para que el comprador sepa qué esperar y cuánto durará. Responda en español.
+- title: Su realidad actual
+  prompt: |-
+    Refleje la situación actual del comprador en sus propias palabras: el detonante que inició esta conversación, el flujo de trabajo que usa hoy y el costo del statu quo (tiempo, dinero, riesgo). Fundamente cada afirmación en las notas de descubrimiento o en las fuentes conectadas. Responda en español.
+  required_sources:
+  - type: local
+    min: 1
+- title: Punto de vista
+  prompt: |-
+    Exponga el punto de vista contrario y defendible del vendedor sobre hacia dónde se dirige el mercado del comprador y por qué el statu quo no se sostendrá. Este es el «por qué cambiar» antes del «por qué nosotros». Responda en español.
+- title: Resumen de la solución
+  prompt: |-
+    Relacione la solución con los dos o tres dolores mencionados arriba. Para cada dolor: la capacidad que lo resuelve y el resultado que obtiene el comprador. Evite enumerar funciones: empiece por el resultado. Responda en español.
+- title: Pruebas
+  prompt: |-
+    Los argumentos de prueba más sólidos: un cliente con nombre en el segmento del comprador, un resultado cuantificado (porcentaje o absoluto) y una cita de una línea. Cite el caso de estudio o la llamada de referencia de donde proviene. Responda en español.
+  output_format: table
+- title: Precios y empaquetado
+  prompt: |-
+    Presente el paquete recomendado, qué incluye, la inversión y el período de retorno o ROI esperado. Muestre los supuestos para que el comprador pueda defender la cifra internamente. Responda en español.
+- title: Plan de acción conjunto
+  prompt: |-
+    Trace el camino hacia la decisión como una lista de verificación con fechas: validación técnica, revisión de seguridad, aprobaciones de las partes interesadas, contratación y puesta en marcha objetivo. Nombre al responsable de cada lado para cada paso. Responda en español.
+  output_format: numbered_list
+- title: Siguiente paso
+  prompt: |-
+    Cierre con un siguiente paso específico y de baja fricción (p. ej., un taller de alcance o un piloto), con una fecha propuesta y la única decisión que el comprador debe tomar para llegar a él. Responda en español.
+export:
+- markdown
+- html
+- pptx
+- pdf

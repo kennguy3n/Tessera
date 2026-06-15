@@ -1,0 +1,52 @@
+id: kyc-cdd-us-base-v1
+name: KYC / CIP Register (US / FinCEN)
+type: base
+description: US KYC base aligned to FinCEN CIP and CDD rules, with beneficial ownership, OFAC screening, and SAR triggers
+industry:
+  - finance
+  - legal
+profile:
+  - compliance-officer
+  - bsa-officer
+  - risk-manager
+sections:
+  - title: Customer Identification Program
+    prompt: >
+      Per customer: name, date of birth (individuals), physical
+      address, and identification number (SSN / ITIN / EIN, or
+      passport for non-US persons) collected under the FinCEN
+      CIP rule, plus the verification method (documentary /
+      non-documentary) and result.
+  - title: Beneficial Ownership (CDD Rule)
+    prompt: >
+      For legal-entity customers: each beneficial owner owning
+      25% or more, the single control person, their identifying
+      information, and the certification collected per the FinCEN
+      CDD rule. Flag complex or nominee structures.
+  - title: Customer Risk Rating
+    prompt: >
+      Risk rating (low / medium / high) driven by customer type,
+      geography, product, and channel; PEP status; the rationale;
+      and whether enhanced due diligence (EDD) applies.
+    output_format: table
+  - title: OFAC and Watchlist Screening
+    prompt: >
+      OFAC SDN and consolidated-list screening, 314(a) and PEP /
+      adverse-media checks, match dispositions, and rescreening
+      cadence. Document true-match escalation and blocking /
+      rejecting actions.
+  - title: Monitoring and SAR
+    prompt: >
+      Ongoing transaction-monitoring alerts, CTR thresholds,
+      suspicious-activity review notes, the SAR decision and
+      filing reference where applicable, and strict need-to-know
+      confidentiality.
+    output_format: table
+  - title: Review and Audit Trail
+    prompt: >
+      Last and next periodic review by risk tier, the reviewer
+      and approver, remediation items, and the immutable audit
+      trail of every rating and status change.
+export:
+  - markdown
+  - csv

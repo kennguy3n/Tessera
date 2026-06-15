@@ -1,0 +1,45 @@
+id: donor-management-base-v1
+name: Donor Management
+type: base
+description: Nonprofit fundraising base tracking donors, gifts, campaigns, pledges, and stewardship
+industry:
+  - nonprofit
+profile:
+  - development-director
+  - fundraiser
+  - nonprofit-administrator
+sections:
+  - title: Donors and Constituents
+    prompt: >
+      Per donor: constituent ID, name, type (individual /
+      household / corporation / foundation), contact details,
+      relationship / segment (major donor / recurring / lapsed),
+      communication preferences, and consent status.
+  - title: Gifts and Donations
+    prompt: >
+      Per gift: date, amount, currency, fund / designation, gift
+      type (cash / in-kind / stock / grant), payment method,
+      whether it is restricted or unrestricted, and the
+      acknowledgment / receipt status.
+    output_format: table
+  - title: Campaigns and Appeals
+    prompt: >
+      Per campaign / appeal: goal, channel, start / end dates,
+      total raised vs. target, number of gifts and average gift,
+      cost to raise a dollar, and the attributed source for each
+      gift.
+  - title: Pledges and Recurring Giving
+    prompt: >
+      Pledge schedules with committed amount, installments,
+      amount fulfilled vs. outstanding, recurring-gift status and
+      failures, and the follow-up actions for overdue pledges.
+  - title: Stewardship and Moves Management
+    prompt: >
+      The cultivation stage per major-gift prospect, the assigned
+      gift officer, next action and date, wealth / capacity
+      rating, and the stewardship touches (thank-you, impact
+      report) completed.
+    output_format: table
+export:
+  - markdown
+  - csv

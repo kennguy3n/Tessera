@@ -1,0 +1,69 @@
+id: grant-report-v1
+name: Grant Report
+type: document
+description: Progress or final report to a funder covering objectives, outcomes, beneficiaries served, and budget versus actual
+industry:
+  - nonprofit
+  - government
+  - education
+profile:
+  - grant-writer
+  - program-manager
+  - development-director
+sections:
+  - title: Grant and Reporting Period
+    prompt: >
+      Record the grant name and number, the funder, the award amount, the
+      grant period, and the reporting period and type (interim or final).
+  - title: Executive Summary
+    prompt: >
+      Summarise progress against the funded goals, the headline results,
+      and any significant changes, in a form the funder can read on its own.
+  - title: Goals and Objectives Progress
+    prompt: >
+      Report progress against each funded objective in a table: objective,
+      target, result to date, and status, with a brief explanation for any
+      variance.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 1
+  - title: Activities and Outputs
+    prompt: >
+      Describe the activities delivered during the period and the outputs
+      produced, tied to the workplan in the grant agreement.
+  - title: Outcomes and Impact
+    prompt: >
+      Present the outcomes and impact achieved, supported by data against
+      the agreed indicators. Distinguish outputs (what was done) from
+      outcomes (what changed).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Beneficiaries Served
+    prompt: >
+      Report who was served and how many, with any demographic breakdown
+      the funder requires, and a short illustrative story or case where
+      appropriate.
+  - title: Budget versus Actual
+    prompt: >
+      Provide a budget-versus-actual table by line item (budgeted, spent,
+      variance, percent used) and explain material variances and any
+      requested reallocations.
+    output_format: table
+  - title: Challenges and Adaptations
+    prompt: >
+      Describe the challenges encountered and how the program adapted,
+      including any changes to scope, timeline, or approach and their effect.
+  - title: Sustainability and Next Steps
+    prompt: >
+      Explain how the work will be sustained, the plans for the next period
+      or after the grant ends, and any continued funding needs.
+  - title: Attachments
+    prompt: >
+      List the supporting attachments provided (financial statements,
+      receipts, evaluation data, photos) as required by the grant agreement.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,47 @@
+id: infographic-roadmap-v1-ko
+name: 로드맵 인포그래픽
+type: infographic
+description: |-
+  ‘지금 / 다음 / 나중’ 형식의 제품 또는 전략 로드맵을 수평 스윔레인으로 시각화하며, 각 레인에는 테마별 이니셔티브와 성과가 담깁니다. (한국어 버전)
+locale: ko
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: 제목과 기간
+  prompt: |-
+    로드맵 제목, 담당 팀, 각 레인이 나타내는 기간(예: 지금 = 이번 분기, 다음 = 다음 분기, 나중 = 그 이후). 날짜는 방향성을 나타낼 뿐 약속이 아님을 명시하세요. 한국어로 작성하세요.
+  icon_suggestion: map
+- title: 전략 테마
+  prompt: |-
+    로드맵이 중심으로 삼는 두세 개에서 네 개의 테마. 각 테마마다 짧은 라벨과 그것이 이끄는 성과를 제시해, 이니셔티브가 기능 목록이 아니라 전략으로 수렴하도록 하세요. 한국어로 작성하세요.
+  icon_suggestion: target
+- title: 지금
+  prompt: |-
+    현재 기간에 대해 확정되어 진행 중인 이니셔티브. 항목별로 이니셔티브, 그것이 기여하는 테마, 기대 성과, 신뢰도 지표를 제시하세요. 근거가 된 계획을 밝히세요. 한국어로 작성하세요.
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: 다음
+  prompt: |-
+    다음 기간을 위해 계획된 이니셔티브를 우선순위와 의존성에 따라 배열하세요. 각 항목이 시작되기 전에 ‘지금’ 단계에서 완료되어야 하는 것을 표시하세요. 한국어로 작성하세요.
+  icon_suggestion: arrow-right-circle
+- title: 나중
+  prompt: |-
+    가까운 미래를 넘어서는 방향성 있는 베팅과 탐색. 유연성을 유지하기 위해 확정된 기능이 아니라 해결해야 할 문제로 표현하세요. 한국어로 작성하세요.
+  icon_suggestion: telescope
+- title: 의존성과 위험
+  prompt: 팀 간 의존성과 로드맵의 주요 위험을 각각 담당자와 한 줄짜리 완화책과 함께 제시하세요. 한국어로 작성하세요.
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown

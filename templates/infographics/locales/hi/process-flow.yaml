@@ -1,0 +1,35 @@
+id: infographic-process-flow-v1-hi
+name: प्रक्रिया प्रवाह
+type: infographic
+description: |-
+  एक क्षैतिज इन्फोग्राफिक जो 3 से 5 चरणों की प्रक्रिया को एक प्रवाह के रूप में दर्शाता है: इनपुट → मध्यवर्ती चरण → परिणाम। प्रत्येक चरण एक आइकन और संक्षिप्त विवरण वाला एक खंड है। (हिंदी संस्करण)
+locale: hi
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: चरण 1 — इनपुट
+  prompt: |-
+    प्रक्रिया का प्रवेश-बिंदु बताएँ: इसे कौन या क्या शुरू करता है, और कौन-सा डेटा या इनपुट आवश्यक है। हिंदी में उत्तर दें।
+  icon_suggestion: log-in
+- title: चरण 2 — प्रसंस्करण
+  prompt: |-
+    मुख्य प्रसंस्करण चरण बताएँ: इनपुट को क्या रूपांतरित करता है। हिंदी में उत्तर दें।
+  icon_suggestion: settings
+- title: चरण 3 — निर्णय
+  prompt: |-
+    वह निर्णय या रूटिंग चरण बताएँ जो शाखाकरण के परिणाम को निर्धारित करता है। हिंदी में उत्तर दें।
+  icon_suggestion: git-branch
+- title: चरण 4 — कार्रवाई
+  prompt: निर्णय हो जाने के बाद की गई कार्रवाई बताएँ। हिंदी में उत्तर दें।
+  icon_suggestion: zap
+- title: चरण 5 — परिणाम
+  prompt: अंतिम उपयोगकर्ता को दिया गया अंतिम परिणाम बताएँ। हिंदी में उत्तर दें।
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

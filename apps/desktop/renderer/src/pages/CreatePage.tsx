@@ -8,6 +8,7 @@ import {
   useSourceList,
   useRelatedSourceSuggestions,
 } from "../hooks/useSources";
+import { useTemplateList } from "../hooks/useTemplates";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import type { CreatePageMode } from "../../../shared/types";
 import type { TemplateInfo } from "../types/ipc";
@@ -28,9 +29,12 @@ interface CategoryItem {
   sourceHint?: string;
   /**
    * Industry domains this template is tailored for. Empty / missing
-   * means the template is industry-agnostic ("General"). The
-   * CreatePage industry-filter dropdown reads this field. Mirrors
-   * the YAML `industry:` field defined in `schemas/template.schema.json`.
+   * means the template is industry-agnostic ("General"); the
+   * industry-filter dropdown reads this field. NOT authored in the
+   * curated {@link CATEGORIES} list — it is overlaid at runtime from
+   * the registry (`TemplateInfo.industry`) by
+   * {@link buildDerivedCategories}, so the YAML's `industry:` field is
+   * the single source of truth.
    */
   industry?: string[];
   /**
@@ -38,10 +42,11 @@ interface CategoryItem {
    * `templates/<category>/locales/<locale>/<slug>.yaml` with id
    * `<base-id>-<locale>` (e.g. `prd-v1-es`). When the user selects a
    * non-English locale from the locale-filter dropdown, the card
-   * navigates to the localized id instead of the base id. Listed
-   * locales must be present on disk — see
-   * `crates/tessera_templates/tests/bundled_templates.rs` for the
-   * registry mirror that enforces this.
+   * navigates to the localized id instead of the base id. NOT authored
+   * in the curated {@link CATEGORIES} list — it is derived at runtime
+   * by grouping the registry's `<base-id>-<locale>` entries in
+   * {@link buildDerivedCategories}, so dropping a localized YAML is all
+   * that is needed to surface a new language.
    */
   availableLocales?: string[];
 }
@@ -81,17 +86,6 @@ const LOCALE_OPTIONS: { value: string; label: string }[] = [
   { value: "ar", label: "Arabic" },
   { value: "hi", label: "Hindi" },
 ];
-
-/**
- * The set of non-English locales for which the top-10 "core"
- * templates ship a translated variant. Sourced from
- * `templates/<category>/locales/<locale>/<slug>.yaml`. If you add a
- * new locale you must (1) drop the YAML files for all 10 core
- * templates under the new `<locale>/` directory, (2) extend
- * `LOCALE_OPTIONS` above, and (3) extend the `bundled_templates.rs`
- * registry test.
- */
-const CORE_LOCALES = ["es", "fr", "de", "ja", "zh", "pt", "ko", "ar", "hi"];
 
 /**
  * Resolve the template id to navigate to when the user clicks a card.
@@ -147,18 +141,31 @@ function matchesLocale(item: CategoryItem, sel: string): boolean {
 }
 
 /**
- * The four PROPOSAL.md categories. Each lists every shipping
- * template — pulled by id from `templates/{documents,slides,sheets,
- * bases,infographics,landing_pages}/` — plus a small set of named
- * quick-start workflows at the top of the relevant category. The
- * workflows are NOT separate template files; they're a UX shortcut
- * onto an existing template with extra hint copy so the user knows
- * what to grab before hitting Generate.
+ * Curated overlay for the four PROPOSAL.md workflow tabs (Create /
+ * Analyze / Plan / Approve). This list captures only what CANNOT be
+ * derived from the registry:
  *
- * If you add a new template under `templates/`, append it to the
- * appropriate category below — and add a row to the
- * `bundled_templates.rs` test in `crates/tessera_templates/tests/`
- * so the registry stays in sync.
+ *   1. The semantic tab a template belongs to. The tab is a workflow
+ *      taxonomy, not an artifact type — the same `artifactType` can
+ *      live under different tabs — so it has no registry field.
+ *   2. Curated short names / descriptions (e.g. "PRD" instead of the
+ *      YAML's "Product Requirements Document").
+ *   3. The named quick-start workflows (`badge: "workflow"`), which are
+ *      NOT separate template files but UX shortcuts onto an existing
+ *      template with extra hint copy.
+ *
+ * Everything else — a template's existence as a card, its `industry`
+ * tags, and its available locales — is DERIVED from
+ * `window.tessera.templates.list()` at runtime by
+ * {@link buildDerivedCategories}. A template that is NOT curated here
+ * is auto-surfaced into a default tab from its registry `category`, so
+ * dropping a new YAML under `templates/` makes it appear as a
+ * filterable card with no edit to this file.
+ *
+ * Because this is now a curation overlay (not the source of truth for
+ * which templates exist), you only need to add an entry here to give a
+ * template a custom tab/name/description or to attach a workflow
+ * shortcut.
  */
 const CATEGORIES: Record<string, CategoryItem[]> = {
   Create: [
@@ -167,13 +174,11 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "prd-v1",
       name: "PRD",
       description: "Product Requirements Document",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "proposal-v1",
       name: "Proposal",
       description: "Business proposal",
-      availableLocales: CORE_LOCALES,
     },
     { id: "brief-v1", name: "Brief", description: "One-pager brief" },
     { id: "memo-v1", name: "Memo", description: "Internal memo" },
@@ -181,13 +186,12 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "sop-v1",
       name: "SOP",
       description: "Standard Operating Procedure",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "form-v1",
       name: "Form",
-      description: "Fillable form with fields, validation, and submission notes",
-      availableLocales: CORE_LOCALES,
+      description:
+        "Fillable form with fields, validation, and submission notes",
     },
     // Documents — Healthcare
     {
@@ -195,105 +199,96 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       name: "Clinical Protocol",
       description:
         "Evidence-based protocol with eligibility, intervention, monitoring, safety stops",
-      industry: ["healthcare"],
     },
     {
       id: "patient-care-plan-v1",
       name: "Patient Care Plan",
-      description: "Nursing care plan (ADPIE) with assessment, diagnoses, goals",
-      industry: ["healthcare"],
+      description:
+        "Nursing care plan (ADPIE) with assessment, diagnoses, goals",
     },
     {
       id: "discharge-summary-v1",
       name: "Discharge Summary",
       description: "Hospital discharge summary with course, meds, follow-up",
-      industry: ["healthcare"],
     },
     // Documents — Legal
     {
       id: "legal-brief-v1",
       name: "Legal Brief (IRAC)",
       description: "IRAC-format brief with standard of review and authorities",
-      industry: ["legal"],
     },
     {
       id: "case-intake-v1",
       name: "Case Intake",
       description: "Client intake with matter, conflicts, fee structure",
-      industry: ["legal"],
     },
     // Documents — Education
     {
       id: "lesson-plan-v1",
       name: "Lesson Plan",
-      description: "Standards-aligned lesson plan with objectives and assessment",
-      industry: ["education"],
+      description:
+        "Standards-aligned lesson plan with objectives and assessment",
     },
     {
       id: "course-syllabus-v1",
       name: "Course Syllabus",
       description: "Course syllabus with outcomes, schedule, grading, policies",
-      industry: ["education"],
     },
     // Documents — Government
     {
       id: "policy-brief-v1",
       name: "Policy Brief",
       description: "Policy brief with options, recommendation, equity impact",
-      industry: ["government", "nonprofit"],
     },
     {
       id: "grant-proposal-v1",
       name: "Grant Proposal",
       description: "Grant application with need, methods, budget, evaluation",
-      industry: ["government", "nonprofit", "education"],
     },
     // Documents — Nonprofit
     {
       id: "donor-report-v1",
       name: "Donor Report",
       description: "Donor impact report with outcomes, stories, stewardship",
-      industry: ["nonprofit"],
     },
     {
       id: "volunteer-handbook-v1",
       name: "Volunteer Handbook",
       description: "Volunteer onboarding with roles, policies, contacts",
-      industry: ["nonprofit"],
     },
     // Documents — Creative / Marketing
     {
       id: "brand-guidelines-v1",
       name: "Brand Guidelines",
       description: "Brand identity guide with voice, visual identity, usage",
-      industry: ["creative"],
     },
     {
       id: "content-calendar-v1",
       name: "Content Calendar",
-      description: "Editorial calendar with channels, topics, owners, deadlines",
-      industry: ["creative"],
+      description:
+        "Editorial calendar with channels, topics, owners, deadlines",
     },
     {
       id: "campaign-brief-v1",
       name: "Campaign Brief",
       description:
         "Marketing campaign brief with audience, channels, KPIs, timeline",
-      industry: ["creative"],
     },
     // Slides — General
     {
       id: "pitch-v1",
       name: "Pitch Deck",
       description: "Investor / sales pitch",
-      availableLocales: CORE_LOCALES,
     },
-    { id: "training-v1", name: "Training Deck", description: "Slide-based training" },
+    {
+      id: "training-v1",
+      name: "Training Deck",
+      description: "Slide-based training",
+    },
     {
       id: "onboarding-deck-v1",
       name: "Employee Onboarding Deck",
-      description:
-        "New-hire onboarding with company, role, 30/60/90 plan",
+      description: "New-hire onboarding with company, role, 30/60/90 plan",
     },
     {
       id: "sales-enablement-deck-v1",
@@ -360,35 +355,35 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "landing-nonprofit-v1",
       name: "Nonprofit Landing",
       description: "Mission landing with stories, impact, donate CTAs",
-      industry: ["nonprofit"],
     },
     {
       id: "landing-event-v1",
       name: "Event Landing",
-      description: "Conference / event registration with speakers, agenda, tickets",
+      description:
+        "Conference / event registration with speakers, agenda, tickets",
     },
     {
       id: "landing-portfolio-v1",
       name: "Portfolio Landing",
-      description: "Designer / agency portfolio with bio, services, case studies",
-      industry: ["creative"],
+      description:
+        "Designer / agency portfolio with bio, services, case studies",
     },
   ],
   Analyze: [
     // Workflows surface at the top so they're the first thing users
     // see when they open the Analyze tab. They reference the underlying
     // `report-v1` template, which ships localized variants under
-    // `templates/documents/locales/<locale>/`. Mirroring `availableLocales`
-    // here ensures clicking a workflow under a non-English locale
-    // resolves to the localized template id (e.g. `report-v1-es`),
-    // matching the behavior of the canonical "Report" card below.
+    // `templates/documents/locales/<locale>/`. Because they share that
+    // base id, buildDerivedCategories overlays the registry-derived
+    // `availableLocales` onto them too, so clicking a workflow under a
+    // non-English locale resolves to the localized id (e.g. `report-v1-es`),
+    // matching the canonical "Report" card below.
     {
       id: "report-v1",
       name: "Summarize sources",
       description:
         "Pick one or more sources and Tessera will draft a grounded summary report.",
       badge: "workflow",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "report-v1",
@@ -396,14 +391,12 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       description:
         "Use the Report template with your selected sources for an analytical write-up.",
       badge: "workflow",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "report-v1",
       name: "Analyze spreadsheet",
       description: "Generate insights from a Sheet artifact.",
       badge: "workflow",
-      availableLocales: CORE_LOCALES,
       sourceHint:
         "Pick a Sheet you've already imported as a source — the report will cite its rows.",
     },
@@ -411,11 +404,18 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "report-v1",
       name: "Report",
       description: "Analytical report",
-      availableLocales: CORE_LOCALES,
     },
     { id: "qbr-v1", name: "QBR", description: "Quarterly Business Review" },
-    { id: "scorecard-v1", name: "Scorecard", description: "Performance scorecard" },
-    { id: "review-v1", name: "Review Deck", description: "Post-mortem / review deck" },
+    {
+      id: "scorecard-v1",
+      name: "Scorecard",
+      description: "Performance scorecard",
+    },
+    {
+      id: "review-v1",
+      name: "Review Deck",
+      description: "Post-mortem / review deck",
+    },
     {
       id: "review-checklist-v1",
       name: "Review Checklist",
@@ -431,86 +431,80 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "financial-analysis-v1",
       name: "Financial Analysis",
       description: "Ratio analysis, trend analysis, peer comparison, scenarios",
-      industry: ["finance"],
     },
     {
       id: "investment-memo-v1",
       name: "Investment Memo",
       description: "Deal thesis with market, traction, valuation, risks",
-      industry: ["finance"],
     },
     {
       id: "audit-findings-v1",
       name: "Audit Findings",
       description: "Internal audit findings with root cause and remediation",
-      industry: ["finance", "legal"],
     },
     {
       id: "compliance-audit-v1",
       name: "Compliance Audit",
       description: "Compliance audit with findings, evidence, remediation plan",
-      industry: ["legal", "finance"],
     },
     // Analyze — Government / Policy
     {
       id: "impact-assessment-v1",
       name: "Impact Assessment",
       description: "Regulatory impact assessment with cost-benefit, equity",
-      industry: ["government"],
     },
     {
       id: "public-consultation-report-v1",
       name: "Public Consultation Report",
-      description: "Public consultation summary with themes and agency response",
-      industry: ["government"],
+      description:
+        "Public consultation summary with themes and agency response",
     },
     // Analyze — Education
     {
       id: "student-progress-report-v1",
       name: "Student Progress Report",
       description: "Student academic, behavioral, and SEL progress",
-      industry: ["education"],
     },
     // Analyze — Healthcare / Safety
     {
       id: "hipaa-incident-report-v1",
       name: "HIPAA Incident Report",
       description: "HIPAA breach / incident with timeline, risk assessment",
-      industry: ["healthcare", "legal"],
     },
     {
       id: "safety-incident-report-v1",
       name: "Safety Incident Report",
       description: "Workplace safety incident with root cause, OSHA reporting",
-      industry: ["manufacturing", "healthcare", "construction"],
     },
     // Analyze — Manufacturing / Real Estate
     {
       id: "quality-control-report-v1",
       name: "QC Report",
       description: "Quality control with sampling, defect Pareto, capability",
-      industry: ["manufacturing"],
     },
     {
       id: "property-analysis-v1",
       name: "Property Investment Analysis",
       description: "Property analysis with comps, pro forma, returns, exit",
-      industry: ["real-estate"],
     },
   ],
   Plan: [
     { id: "strategy-v1", name: "Strategy Deck", description: "Strategy deck" },
-    { id: "roadmap-v1", name: "Roadmap", description: "Project roadmap (Sheet)" },
+    {
+      id: "roadmap-v1",
+      name: "Roadmap",
+      description: "Project roadmap (Sheet)",
+    },
     {
       id: "roadmap-base-v1",
       name: "Roadmap (Base)",
-      description: "Roadmap as a structured Base with initiatives, themes, owners",
+      description:
+        "Roadmap as a structured Base with initiatives, themes, owners",
     },
     {
       id: "budget-v1",
       name: "Budget",
       description: "Budget tracker",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "tracker-v1",
@@ -522,12 +516,15 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       name: "Inventory",
       description: "Inventory sheet with SKU, quantity, reorder level",
     },
-    { id: "project-plan-v1", name: "Project Plan", description: "Phased project plan" },
+    {
+      id: "project-plan-v1",
+      name: "Project Plan",
+      description: "Phased project plan",
+    },
     {
       id: "task-list-v1",
       name: "Task List",
       description: "Task list with owners",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "launch-checklist-v1",
@@ -538,38 +535,33 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "meeting-agenda-v1",
       name: "Meeting Agenda",
       description: "Structured meeting agenda",
-      availableLocales: CORE_LOCALES,
     },
     {
       id: "meeting-notes-v1",
       name: "Meeting Notes",
       description: "Decisions + actions from a meeting",
-      availableLocales: CORE_LOCALES,
     },
     // Plan — Industry-Specific
     {
       id: "curriculum-map-v1",
       name: "Curriculum Map",
       description: "Standards-aligned curriculum map with scope and sequence",
-      industry: ["education"],
     },
     {
       id: "maintenance-schedule-v1",
       name: "Maintenance Schedule",
       description: "PM schedule with FMEA, intervals, parts, KPIs",
-      industry: ["manufacturing"],
     },
     {
       id: "sales-forecast-v1",
       name: "Sales Forecast",
-      description: "Sales forecast with seasonality, scenarios, actuals tracking",
-      industry: ["retail", "finance"],
+      description:
+        "Sales forecast with seasonality, scenarios, actuals tracking",
     },
     {
       id: "product-catalog-v1",
       name: "Product Catalog",
       description: "Retail catalog with SKUs, variants, pricing, inventory",
-      industry: ["retail"],
     },
     {
       id: "crm-base-v1",
@@ -628,25 +620,22 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "contract-summary-v1",
       name: "Contract Summary",
       description: "Contract review with key terms, obligations, risks",
-      industry: ["legal"],
     },
     {
       id: "loan-proposal-v1",
       name: "Loan / Credit Proposal",
       description: "Credit proposal with financials, collateral, covenants",
-      industry: ["finance"],
     },
     {
       id: "lease-summary-v1",
       name: "Lease Summary",
       description: "Commercial lease abstract with rent, term, red flags",
-      industry: ["real-estate", "legal"],
     },
     {
       id: "compliance-register-base-v1",
       name: "Compliance Register",
-      description: "Compliance obligations register with controls and attestation",
-      industry: ["finance", "legal", "healthcare"],
+      description:
+        "Compliance obligations register with controls and attestation",
     },
   ],
 };
@@ -678,7 +667,8 @@ function localItemForTemplate(
   if (lastDash > 0) {
     const suffix = id.slice(lastDash + 1);
     const knownLocale = LOCALE_OPTIONS.some(
-      (opt) => opt.value === suffix && opt.value !== "all" && opt.value !== "en",
+      (opt) =>
+        opt.value === suffix && opt.value !== "all" && opt.value !== "en",
     );
     if (knownLocale) {
       lookupIds.push(id.slice(0, lastDash));
@@ -717,12 +707,125 @@ interface GenerateState {
 }
 
 const TAB_DESCRIPTIONS: Record<string, string> = {
-  Create: "Generate documents, slides, infographics, and landing pages from scratch.",
+  Create:
+    "Generate documents, slides, infographics, and landing pages from scratch.",
   Analyze:
     "Summarize sources, generate reports, and turn structured data into insights.",
   Plan: "Strategy decks, roadmaps, budgets, and project plans.",
-  Approve: "Approval workflows: purchases, budgets, exceptions, vendor reviews.",
+  Approve:
+    "Approval workflows: purchases, budgets, exceptions, vendor reviews.",
 };
+
+/**
+ * Default tab for an *uncurated* template that is auto-surfaced from
+ * the registry, chosen from its on-disk `category`. Output artifacts
+ * (documents, slides, infographics, landing pages) land in "Create";
+ * structured data (sheets, bases) lands in "Plan". A template that
+ * needs a different tab — or a curated short name — gets an explicit
+ * {@link CATEGORIES} entry, which always wins over this fallback. The
+ * returned tab is guaranteed to be one of {@link TABS}.
+ */
+function defaultTabForCategory(category: string): string {
+  switch (category) {
+    case "sheets":
+    case "bases":
+      return "Plan";
+    default:
+      // documents, slides, infographics, landing_pages — and any
+      // future category — default to the primary authoring tab.
+      return "Create";
+  }
+}
+
+/**
+ * Build the per-tab card lists the gallery renders by JOINing the
+ * curated {@link CATEGORIES} overlay with live registry metadata from
+ * `window.tessera.templates.list()`:
+ *
+ *   • Curated entries keep their tab, name, description, and workflow
+ *     badge, but their `industry` tags and `availableLocales` are
+ *     overlaid from the registry — the YAML is the single source of
+ *     truth for filterable metadata (see {@link CategoryItem}).
+ *   • Any base template (locale `"en"`) NOT curated in CATEGORIES is
+ *     auto-surfaced as a plain card under {@link defaultTabForCategory}.
+ *     This is what lets a freshly-dropped YAML appear as a filterable
+ *     card with no edit to this file.
+ *   • Localized variants (`<base-id>-<locale>`, locale ≠ `"en"`) are
+ *     never their own card; they are grouped into their base id's
+ *     `availableLocales` so the locale filter can resolve `<id>-<locale>`.
+ *
+ * Pure (reads only its `registry` argument and the static CATEGORIES
+ * overlay) so it can be memoised on the registry array; its behavior is
+ * covered through the {@link TemplateGallery} render tests.
+ */
+function buildDerivedCategories(
+  registry: TemplateInfo[],
+): Record<string, CategoryItem[]> {
+  const baseById = new Map<string, TemplateInfo>();
+  const localesByBaseId = new Map<string, Set<string>>();
+
+  for (const info of registry) {
+    const locale = info.locale || "en";
+    if (locale === "en") {
+      baseById.set(info.id, info);
+      continue;
+    }
+    // Localized variant: recover the base id by stripping the trailing
+    // `-<locale>` segment (the shipping convention). If the id does not
+    // follow the convention, fall back to the full id so the variant
+    // still groups under something rather than silently vanishing.
+    const suffix = `-${locale}`;
+    const baseId = info.id.endsWith(suffix)
+      ? info.id.slice(0, -suffix.length)
+      : info.id;
+    let locales = localesByBaseId.get(baseId);
+    if (!locales) {
+      locales = new Set<string>();
+      localesByBaseId.set(baseId, locales);
+    }
+    locales.add(locale);
+  }
+
+  const availableLocalesFor = (id: string): string[] | undefined => {
+    const set = localesByBaseId.get(id);
+    if (!set || set.size === 0) return undefined;
+    return Array.from(set).sort();
+  };
+
+  // 1. Curated overlay: preserve curation, overlay registry filters.
+  const curatedIds = new Set<string>();
+  const result: Record<string, CategoryItem[]> = {};
+  for (const [tab, items] of Object.entries(CATEGORIES)) {
+    result[tab] = items.map((item) => {
+      curatedIds.add(item.id);
+      const base = baseById.get(item.id);
+      const overlaid: CategoryItem = {
+        ...item,
+        industry: base?.industry ?? item.industry,
+        availableLocales: availableLocalesFor(item.id) ?? item.availableLocales,
+      };
+      return overlaid;
+    });
+  }
+
+  // 2. Auto-surface uncurated base templates into a default tab. Map
+  //    iteration preserves registry order, which the registry sorts by
+  //    name — so uncurated cards trail the curated ones alphabetically.
+  for (const base of baseById.values()) {
+    if (curatedIds.has(base.id)) continue;
+    const bucket = result[defaultTabForCategory(base.category)];
+    if (!bucket) continue;
+    bucket.push({
+      id: base.id,
+      name: base.name,
+      description: base.description,
+      industry: base.industry,
+      availableLocales: availableLocalesFor(base.id),
+    });
+  }
+
+  return result;
+}
 
 export default function CreatePage() {
   const [searchParams] = useSearchParams();
@@ -733,9 +836,6 @@ export default function CreatePage() {
   // text ("Pick a Sheet you've already imported...") instead of the
   // generic template description.
   const workflow = searchParams.get("workflow") ?? undefined;
-  const [activeTab, setActiveTab] = useState(TABS[0]);
-  const [selectedIndustry, setSelectedIndustry] = useState<string>("all");
-  const [selectedLocale, setSelectedLocale] = useState<string>("all");
 
   const { settings } = useSettings();
   const { update } = useUpdateSetting();
@@ -755,9 +855,7 @@ export default function CreatePage() {
   );
 
   if (templateId) {
-    return (
-      <TemplateRunner templateId={templateId} workflow={workflow} />
-    );
+    return <TemplateRunner templateId={templateId} workflow={workflow} />;
   }
 
   if (mode === "wizard") {
@@ -780,7 +878,35 @@ export default function CreatePage() {
     );
   }
 
-  const visibleItems = CATEGORIES[activeTab].filter(
+  return <TemplateGallery onShowWizard={() => setMode("wizard")} />;
+}
+
+/**
+ * The full template gallery: tab strip, industry/language filters, and
+ * the derived card grid. Split out of {@link CreatePage} so the
+ * `templates.list()` fetch (via {@link useTemplateList}) only runs when
+ * the gallery is actually shown — not in the guided-wizard or runner
+ * paths — and so the gallery owns its own filter state.
+ */
+function TemplateGallery({ onShowWizard }: { onShowWizard: () => void }) {
+  const navigate = useNavigate();
+  const { templates: registry } = useTemplateList();
+  const [activeTab, setActiveTab] = useState(TABS[0]);
+  const [selectedIndustry, setSelectedIndustry] = useState<string>("all");
+  const [selectedLocale, setSelectedLocale] = useState<string>("all");
+
+  // Cards are DERIVED from the registry; curated CATEGORIES is only an
+  // overlay (tab placement, short names, workflow shortcuts). An empty
+  // registry — first paint before `templates.list()` resolves, or unit
+  // tests with no bridge data — yields the curated cards alone;
+  // uncurated templates appear once the async list lands. Memoised so
+  // the JOIN re-runs only when the registry array changes.
+  const derivedCategories = useMemo(
+    () => buildDerivedCategories(registry),
+    [registry],
+  );
+  const categoryItems = derivedCategories[activeTab] ?? [];
+  const visibleItems = categoryItems.filter(
     (item) =>
       matchesIndustry(item, selectedIndustry) &&
       matchesLocale(item, selectedLocale),
@@ -792,7 +918,7 @@ export default function CreatePage() {
         title="Create"
         description={TAB_DESCRIPTIONS[activeTab]}
         actions={
-          <Button variant="secondary" onClick={() => setMode("wizard")}>
+          <Button variant="secondary" onClick={onShowWizard}>
             Guided picker
           </Button>
         }
@@ -901,7 +1027,7 @@ export default function CreatePage() {
             marginLeft: "auto",
           }}
         >
-          Showing {visibleItems.length} of {CATEGORIES[activeTab].length}{" "}
+          Showing {visibleItems.length} of {categoryItems.length}{" "}
           {activeTab.toLowerCase()} templates
         </span>
       </div>
@@ -1010,7 +1136,10 @@ function TemplateRunner({
   const [template, setTemplate] = useState<TemplateInfo | null>(null);
   const [templateLoaded, setTemplateLoaded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [gen, setGen] = useState<GenerateState>({ status: "idle", message: null });
+  const [gen, setGen] = useState<GenerateState>({
+    status: "idle",
+    message: null,
+  });
   // Tri-state model availability for the text slot: `null` while the
   // `runtime.getCurrentModel` probe is in flight, then `true` once a
   // model is installed (LLM drafting available) or `false` when the
@@ -1168,7 +1297,7 @@ function TemplateRunner({
   const displayName =
     localItem?.badge === "workflow"
       ? localItem.name
-      : template?.name ?? localItem?.name ?? templateId;
+      : (template?.name ?? localItem?.name ?? templateId);
   // Workflow shortcuts whose underlying template carries a generic
   // description (e.g. workflow "Summarize sources" → template "Report"
   // → "Analytical report") must keep their workflow-specific copy even
@@ -1229,7 +1358,10 @@ function TemplateRunner({
 
       <Card>
         {/* Top-level section of the Create page (under its `<h1>`) → `<h2>`. */}
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-sm)" }}>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-sm)" }}
+        >
           Select sources to ground this {displayName}
         </h2>
         <p
@@ -1246,10 +1378,13 @@ function TemplateRunner({
         {!sourcesLoading && sources.length === 0 && (
           <p style={{ color: "var(--color-text-secondary)" }}>
             No sources connected.{" "}
-            <a href="#" onClick={(e) => {
-              e.preventDefault();
-              navigate("/sources");
-            }}>
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/sources");
+              }}
+            >
               Connect one in Sources
             </a>{" "}
             first.
@@ -1347,8 +1482,8 @@ function TemplateRunner({
                     }}
                   >
                     <span style={{ fontSize: "var(--font-size-sm)" }}>
-                      You have {count} more source{count === 1 ? "" : "s"}{" "}
-                      about <strong>{suggestion.entity}</strong>.
+                      You have {count} more source{count === 1 ? "" : "s"} about{" "}
+                      <strong>{suggestion.entity}</strong>.
                     </span>
                     <Button
                       variant="secondary"
@@ -1401,7 +1536,10 @@ function TemplateRunner({
                 : "Generate"}
           </Button>
           {gen.status === "loading" && (
-            <span data-testid="create-generating" style={{ fontSize: "var(--font-size-sm)" }}>
+            <span
+              data-testid="create-generating"
+              style={{ fontSize: "var(--font-size-sm)" }}
+            >
               {modelAvailable === false
                 ? "Assembling from your sources…"
                 : "Generating from the local model…"}
@@ -1410,7 +1548,10 @@ function TemplateRunner({
           {gen.status === "error" && (
             <span
               data-testid="create-error"
-              style={{ color: "var(--color-danger, #ef4444)", fontSize: "var(--font-size-sm)" }}
+              style={{
+                color: "var(--color-danger, #ef4444)",
+                fontSize: "var(--font-size-sm)",
+              }}
             >
               {gen.message}
             </span>
@@ -1418,7 +1559,12 @@ function TemplateRunner({
         </div>
 
         {!templateLoaded && (
-          <p style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>
+          <p
+            style={{
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             Resolving template…
           </p>
         )}

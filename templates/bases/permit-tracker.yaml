@@ -1,0 +1,45 @@
+id: permit-tracker-base-v1
+name: Permit and License Tracker
+type: base
+description: Government base tracking permit applications, reviews, inspections, fees, and issuance
+industry:
+  - government
+profile:
+  - permit-officer
+  - government-administrator
+  - inspector
+sections:
+  - title: Applications
+    prompt: >
+      Per application: permit number, type (building / electrical
+      / plumbing / business / event / zoning), applicant,
+      property / address, description of work, submission date,
+      and status (submitted / under review / approved / issued /
+      denied / expired).
+  - title: Review and Routing
+    prompt: >
+      The departments reviewing (zoning / fire / health /
+      engineering), each review's status and comments, the
+      ball-in-court party, and resubmission cycles. Track the
+      target review timeline.
+    output_format: table
+  - title: Inspections
+    prompt: >
+      Required inspections per permit, scheduled and actual
+      dates, the inspector, result (pass / fail / partial /
+      re-inspect), deficiencies noted, and the corrective
+      follow-up.
+  - title: Fees and Payments
+    prompt: >
+      Fee schedule by permit type, calculated fees, payment
+      status, refunds, and any penalties for work without permit
+      or late renewal.
+    output_format: table
+  - title: Issuance and Conditions
+    prompt: >
+      Issued permit details, conditions and stipulations, expiry
+      / extension dates, certificate-of-occupancy linkage, and
+      the closeout once all inspections pass.
+export:
+  - markdown
+  - csv

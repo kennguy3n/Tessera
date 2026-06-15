@@ -1,0 +1,49 @@
+id: landing-webinar-v1-ja
+name: ウェビナー登録
+type: landing_page
+description: テーマのフック、アジェンダ、登壇者、学べる内容、登録フォームを備えたウェビナー登録ページ（日本語版）
+locale: ja
+default_icon_set: lucide
+color_scheme:
+  primary: '#1D4ED8'
+  secondary: '#7C3AED'
+  accent: '#F59E0B'
+profile:
+- marketing
+- events
+sections:
+- title: ヒーロー — テーマと日時
+  prompt: |-
+    ウェビナーのタイトル、タイムゾーンつきの日時、形式（ライブ／オンデマンド）、そして登録CTA（「席を確保する」）。誰が参加すべきかを1行で。 日本語で回答してください。
+  icon_suggestion: calendar-clock
+- title: 参加する理由
+  prompt: セッションが扱う課題と、その1時間の約束：参加者が終わったときに何ができるようになるか。2～3文で。 日本語で回答してください。
+  icon_suggestion: target
+- title: 学べること
+  prompt: 3～5個の具体的な学習成果を箇条書きで。各項目は、訪問者の1時間に値するだけの具体性を持たせる。 日本語で回答してください。
+  icon_suggestion: graduation-cap
+  output_format: bullets
+- title: アジェンダ
+  prompt: 時間配分つきの進行：イントロ、主要セグメント、デモ、質疑応答。価値の密度が明確になるよう簡潔にまとめる。 日本語で回答してください。
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: 登壇者
+  prompt: 登壇者ごとに、写真、氏名、役職、会社名、そしてこのテーマで信頼を得られる1行の実績。略歴は接続されたソースから取得する。 日本語で回答してください。
+  icon_suggestion: mic
+  required_sources:
+  - type: local
+    min: 1
+- title: 社会的証明
+  prompt: 過去のセッションの参加者数、推薦の声、またはパートナーのロゴ——このシリーズが時間をかける価値があることの証拠。 日本語で回答してください。
+  icon_suggestion: star
+- title: 登録と運営情報
+  prompt: |-
+    登録フォームの項目、登録後に何が起こるか（カレンダー招待、リマインダー、録画）、そしてメールアドレスの利用方法に関するプライバシーの注記。 日本語で回答してください。
+  icon_suggestion: ticket
+- title: FAQ
+  prompt: 4つのFAQ：録画されるか、無料か、ライブで参加できない場合はどうなるか、質問の仕方。最後に締めのCTAで終える。 日本語で回答してください。
+  icon_suggestion: help-circle
+export:
+- markdown
+- html
+- pdf

@@ -1,0 +1,51 @@
+id: patient-registry-base-v1
+name: Patient Registry
+type: base
+description: Clinical patient registry base tracking demographics, conditions, encounters, medications, and care team
+industry:
+  - healthcare
+profile:
+  - nurse
+  - clinician
+  - practice-manager
+sections:
+  - title: Patient Demographics
+    prompt: >
+      Per patient: medical record number, name, date of birth,
+      sex and gender identity, contact details, preferred
+      language, emergency contact, and consent / data-sharing
+      preferences. Treat all fields as protected health
+      information.
+  - title: Conditions and Diagnoses
+    prompt: >
+      Active and resolved diagnoses with coded terms (e.g.
+      ICD-10 / SNOMED CT), onset date, status, severity, and the
+      diagnosing clinician. Maintain an accurate, de-duplicated
+      problem list.
+  - title: Encounters and Visits
+    prompt: >
+      Per encounter: date, type (office visit / telehealth /
+      admission / ED / procedure), location, attending provider,
+      reason for visit, and disposition. Link encounters to the
+      relevant conditions.
+    output_format: table
+  - title: Medications and Allergies
+    prompt: >
+      Current medications with dose, route, frequency,
+      prescriber, and start / stop dates; the allergy list with
+      reaction and severity; and reconciliation status at each
+      transition of care.
+  - title: Care Team and Care Plan
+    prompt: >
+      The assigned care team (primary provider, specialists, care
+      coordinator), the active care plan goals and interventions,
+      and scheduled follow-ups or recalls.
+  - title: Privacy, Consent, and Audit
+    prompt: >
+      Consent and authorization records, the minimum-necessary
+      access tiers by role, break-the-glass handling, and the
+      audit log of who viewed or changed each record.
+    output_format: table
+export:
+  - markdown
+  - csv

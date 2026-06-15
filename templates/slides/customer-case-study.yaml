@@ -1,0 +1,51 @@
+id: customer-case-study-deck-v1
+name: Customer Case Study Deck
+type: slides
+description: Customer success story deck — context, challenge, solution, results, and quote, ready for sales and marketing
+format: marp
+theme: gaia
+paginate: true
+profile:
+  - product-marketing
+  - customer-success
+sections:
+  - title: Customer and Headline Result
+    prompt: >
+      Title slide with the customer's name and logo, their industry and
+      size, and the single headline result (e.g. "Cut onboarding time
+      62%"). Lead with the outcome, not the logo.
+  - title: About the Customer
+    prompt: >
+      Two or three sentences on who the customer is, what they do, and
+      why they matter to the audience reading this story.
+    required_sources:
+      - type: local
+        min: 1
+  - title: The Challenge
+    prompt: >
+      The situation before: the problem, what they had tried, and the
+      cost of leaving it unsolved. Quote the customer's own framing
+      where possible.
+  - title: Why They Chose Us
+    prompt: >
+      The evaluation: alternatives considered and the decision criteria
+      that tipped the choice. Keep it credible — include the close call.
+  - title: The Solution
+    prompt: >
+      What was deployed, how it was rolled out, the timeline, and who
+      was involved. Enough detail that a similar buyer sees themselves
+      in it.
+  - title: Results
+    prompt: >
+      The quantified outcomes — before/after metrics, ROI, payback, and
+      qualitative wins. Cite the measurement method and period.
+    output_format: table
+  - title: In Their Words
+    prompt: >
+      A strong pull quote with the speaker's name, title, and company,
+      plus a one-line note on what they plan to do next with the product.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

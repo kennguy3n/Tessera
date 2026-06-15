@@ -1,0 +1,57 @@
+id: privacy-notice-ccpa-v1
+name: Privacy Notice (US CCPA/CPRA)
+type: document
+description: California consumer privacy notice meeting CCPA/CPRA disclosure requirements, including notice at collection and opt-out rights
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Scope and Effective Date
+    prompt: >
+      State who the notice applies to (California consumers), the effective
+      date, and the businesses or brands it covers.
+  - title: Categories of Personal Information Collected
+    prompt: >
+      List the categories of personal information and sensitive personal
+      information collected in the prior 12 months, mapped to the CCPA
+      statutory categories.
+    output_format: table
+  - title: Sources of Personal Information
+    prompt: >
+      Describe the categories of sources from which the personal
+      information is collected.
+  - title: Business and Commercial Purposes
+    prompt: >
+      State the business and commercial purposes for collecting or using
+      each category of personal information.
+  - title: Sale or Sharing and Opt-Out
+    prompt: >
+      Disclose whether personal information is sold or shared (including for
+      cross-context behavioural advertising), the categories involved, and
+      how to exercise the right to opt out, including any "Do Not Sell or
+      Share My Personal Information" link.
+  - title: Sensitive Personal Information
+    prompt: >
+      Disclose the use of sensitive personal information and the consumer's
+      right to limit its use and disclosure to permitted purposes.
+  - title: Your CCPA Rights
+    prompt: >
+      Explain the consumer rights to know, delete, correct, opt out, and to
+      non-discrimination for exercising rights.
+    output_format: bullets
+  - title: How to Exercise Rights
+    prompt: >
+      Describe the methods to submit requests, how identity is verified,
+      how authorised agents may act, and the timelines for response.
+  - title: Non-Discrimination and Contact
+    prompt: >
+      Provide the non-discrimination statement and the contact details for
+      privacy questions, including a toll-free number or online method as
+      applicable.
+export:
+  - markdown
+  - html
+  - pdf

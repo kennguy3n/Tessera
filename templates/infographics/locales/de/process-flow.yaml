@@ -1,0 +1,37 @@
+id: infographic-process-flow-v1-de
+name: Prozessablauf
+type: infographic
+description: |-
+  Eine horizontale Infografik, die einen Prozess aus 3 bis 5 Schritten als Ablauf darstellt: Eingang → Zwischenschritte → Ergebnis. Jeder Schritt ist ein Abschnitt mit einem Symbol und einer kurzen Beschreibung. (deutsche Version)
+locale: de
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: Schritt 1 — Eingang
+  prompt: |-
+    Beschreiben Sie den Einstiegspunkt des Prozesses: wer oder was ihn auslöst und welche Daten oder Eingaben erforderlich sind. Antworten Sie auf Deutsch.
+  icon_suggestion: log-in
+- title: Schritt 2 — Verarbeitung
+  prompt: |-
+    Beschreiben Sie den zentralen Verarbeitungsschritt: was die Eingabe transformiert. Antworten Sie auf Deutsch.
+  icon_suggestion: settings
+- title: Schritt 3 — Entscheidung
+  prompt: |-
+    Beschreiben Sie den Entscheidungs- oder Weiterleitungsschritt, der das verzweigte Ergebnis bestimmt. Antworten Sie auf Deutsch.
+  icon_suggestion: git-branch
+- title: Schritt 4 — Aktion
+  prompt: |-
+    Beschreiben Sie die Aktion, die nach der Entscheidung ausgeführt wird. Antworten Sie auf Deutsch.
+  icon_suggestion: zap
+- title: Schritt 5 — Ergebnis
+  prompt: |-
+    Beschreiben Sie das Endergebnis, das dem Endnutzer geliefert wird. Antworten Sie auf Deutsch.
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

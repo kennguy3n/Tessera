@@ -1,0 +1,56 @@
+id: lecture-deck-v1
+name: Lecture / Course Deck
+type: slides
+description: Teaching deck for a single class session — objectives, concepts, worked examples, activity, and assessment
+format: marp
+theme: default
+paginate: true
+industry:
+  - education
+profile:
+  - teacher
+  - professor
+  - instructional-designer
+sections:
+  - title: Lesson Title and Objectives
+    prompt: >
+      The lesson title, the course and session number, and three
+      measurable learning objectives written as "students will be able
+      to…" statements.
+  - title: Hook / Prior Knowledge
+    prompt: >
+      An opening question, demo, or scenario that activates prior
+      knowledge and motivates the topic. Surface common misconceptions
+      to address.
+  - title: Key Concepts
+    prompt: >
+      The core concepts for this session, each defined plainly with one
+      illustration or analogy. Sequence from concrete to abstract.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Worked Example
+    prompt: >
+      A fully worked example modeling the target skill step by step,
+      narrating the reasoning at each step so students can follow the
+      thinking, not just the answer.
+    output_format: numbered_list
+  - title: Guided Practice / Activity
+    prompt: >
+      An in-class activity or problem set with clear instructions,
+      grouping, time box, and the check-for-understanding the
+      instructor will use while circulating.
+  - title: Assessment
+    prompt: >
+      Formative check questions tied to each objective, plus the
+      homework or follow-up task and how it will be graded.
+    output_format: bullets
+  - title: Summary and Next Steps
+    prompt: >
+      A one-slide recap mapping back to the objectives, the key terms
+      to remember, and a preview of the next session.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

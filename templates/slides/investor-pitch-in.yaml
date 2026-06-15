@@ -1,0 +1,53 @@
+id: investor-pitch-in-v1
+name: Investor Pitch (India — DPIIT Startup)
+type: slides
+description: India-tailored seed pitch — problem, solution, traction, and an ask framed for a DPIIT-recognised startup
+format: marp
+theme: gaia
+paginate: true
+industry:
+  - finance
+profile:
+  - founder
+sections:
+  - title: Hook
+    prompt: >
+      Open with a single high-impact line on the opportunity, leading
+      with the headline metric or the problem. Name the company and the
+      one-liner.
+  - title: Problem
+    prompt: >
+      Describe the problem in concrete, customer-grounded terms.
+      Quantify the pain for the India market, including Tier 1/2/3 and
+      Bharat segments where relevant.
+  - title: Solution
+    prompt: >
+      Explain the solution succinctly and the magical capability that
+      makes it work. Note India-specific enablers (UPI, ONDC,
+      Aadhaar/DigiLocker, vernacular) if applicable.
+  - title: Market and Traction
+    prompt: >
+      Size the India market with TAM/SAM/SOM and report traction
+      (users, GMV/ARR, growth). Cite the connected sources.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Business Model and Competition
+    prompt: >
+      How revenue is earned, unit economics (CAC/LTV in INR), and how
+      the offering differentiates from Indian incumbents.
+  - title: Team
+    prompt: >
+      Founders and key team with role, prior experience, and proof of
+      relevance, plus any notable advisors and India market presence.
+  - title: The Ask
+    prompt: >
+      The raise framed for Indian seed norms: round size and instrument
+      (priced round or CCPS), valuation, use of funds, and milestones
+      unlocked. State DPIIT recognition and entity structure
+      (Pvt Ltd), as these affect angel-tax and investor eligibility.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

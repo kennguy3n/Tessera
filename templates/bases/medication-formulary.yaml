@@ -1,0 +1,42 @@
+id: medication-formulary-base-v1
+name: Medication Formulary
+type: base
+description: Pharmacy formulary base tracking drugs, formulary status, dosing, interactions, and cost tiers
+industry:
+  - healthcare
+profile:
+  - pharmacist
+  - clinician
+  - formulary-committee
+sections:
+  - title: Drug Entries
+    prompt: >
+      Per drug: generic name, common brand names, therapeutic
+      class, available strengths and dosage forms, route(s) of
+      administration, and the standard indication(s).
+  - title: Formulary Status
+    prompt: >
+      Per entry: formulary status (formulary / non-formulary /
+      restricted), restriction criteria, prior-authorization or
+      step-therapy requirements, the approving committee, and the
+      review date.
+    output_format: table
+  - title: Dosing and Administration
+    prompt: >
+      Standard adult and pediatric dosing, renal / hepatic
+      adjustments, maximum doses, monitoring parameters, and
+      high-alert / look-alike-sound-alike flags.
+  - title: Interactions and Contraindications
+    prompt: >
+      Clinically significant drug–drug and drug–food
+      interactions, contraindications, black-box warnings, and
+      pregnancy / lactation considerations for each entry.
+  - title: Cost and Supply
+    prompt: >
+      Cost tier, acquisition cost, preferred vs. alternative
+      agents within the class, therapeutic-interchange rules, and
+      current supply / shortage status.
+    output_format: table
+export:
+  - markdown
+  - csv

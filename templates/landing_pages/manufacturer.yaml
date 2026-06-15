@@ -1,0 +1,62 @@
+id: landing-manufacturer-v1
+name: Manufacturer / Industrial Supplier
+type: landing_page
+description: B2B manufacturer page — capabilities, products, certifications, industries served, and a request-a-quote CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#0F766E"
+  secondary: "#334155"
+  accent: "#F59E0B"
+industry:
+  - manufacturing
+profile:
+  - sales-engineering
+  - business-development
+sections:
+  - title: Hero — Capability and Quote
+    prompt: >
+      The company name, the core capability ("Precision CNC machining
+      for aerospace"), a credibility line (years, certifications), and
+      a "Request a quote" CTA over a facility/product image.
+    icon_suggestion: factory
+  - title: Capabilities
+    prompt: >
+      The manufacturing capabilities, processes, tolerances, materials,
+      and capacity. Be specific enough that an engineer can judge fit.
+    icon_suggestion: settings-2
+    output_format: bullets
+  - title: Products / Lines
+    prompt: >
+      The product lines or part families, each with key specs. Pull
+      details from the connected catalog source.
+    icon_suggestion: package
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Industries Served
+    prompt: >
+      The end markets served (automotive, aerospace, medical, energy)
+      and any notable applications or OEM relationships.
+    icon_suggestion: building-2
+  - title: Quality and Certifications
+    prompt: >
+      Quality system and certifications (ISO 9001, AS9100, IATF 16949),
+      inspection capability, and traceability — the assurances B2B
+      buyers require.
+    icon_suggestion: badge-check
+  - title: Why Us
+    prompt: >
+      The differentiators: lead times, engineering support, on-time
+      delivery rate, and domestic/global footprint. Back claims with
+      figures.
+    icon_suggestion: trending-up
+  - title: Request a Quote
+    prompt: >
+      The RFQ form (part, quantity, material, drawings/specs upload),
+      the response-time commitment, and the sales-engineering contact.
+    icon_suggestion: clipboard-list
+export:
+  - markdown
+  - html
+  - pdf

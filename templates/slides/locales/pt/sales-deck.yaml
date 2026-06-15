@@ -1,0 +1,47 @@
+id: sales-deck-v1-pt
+name: Apresentação de vendas B2B
+type: slides
+description: |-
+  Apresentação de vendas para prospecção/fechamento — dor do comprador, ponto de vista, solução, provas, preços e um próximo passo claro (versão em português)
+locale: pt
+format: marp
+theme: gaia
+paginate: true
+profile:
+- sales
+- account-executive
+sections:
+- title: Título e agenda
+  prompt: |-
+    Slide de título com o nome da empresa do prospect, a empresa do vendedor, a data da reunião e os nomes/cargos dos participantes de ambos os lados. Em seguida, uma agenda de três linhas para que o comprador saiba o que esperar e quanto tempo levará. Responda em português.
+- title: A realidade atual do comprador
+  prompt: |-
+    Reflita a situação atual do comprador nas palavras dele: o gatilho que iniciou esta conversa, o fluxo de trabalho que usa hoje e o custo do status quo (tempo, dinheiro, risco). Fundamente cada afirmação nas notas de descoberta ou nas fontes conectadas. Responda em português.
+  required_sources:
+  - type: local
+    min: 1
+- title: Ponto de vista
+  prompt: |-
+    Apresente o ponto de vista contrário e defensável do vendedor sobre para onde o mercado do comprador está indo e por que o status quo não vai se sustentar. É o «por que mudar» antes do «por que nós». Responda em português.
+- title: Visão geral da solução
+  prompt: |-
+    Relacione a solução às duas ou três dores citadas acima. Para cada dor: a capacidade que a resolve e o resultado que o comprador obtém. Evite listas de recursos — comece pelo resultado. Responda em português.
+- title: Provas
+  prompt: |-
+    As provas mais fortes: um cliente nomeado no segmento do comprador, um resultado quantificado (percentual ou absoluto) e uma citação de uma linha. Cite o estudo de caso ou a ligação de referência de onde veio. Responda em português.
+  output_format: table
+- title: Preços e empacotamento
+  prompt: |-
+    Apresente o pacote recomendado, o que está incluído, o investimento e o período de retorno ou ROI esperado. Mostre as premissas para que o comprador possa defender o número internamente. Responda em português.
+- title: Plano de ação conjunto
+  prompt: |-
+    Trace o caminho até a decisão como uma lista de verificação com datas: validação técnica, revisão de segurança, aprovações das partes interessadas, contratação e go-live alvo. Nomeie o responsável de cada lado para cada etapa. Responda em português.
+  output_format: numbered_list
+- title: Próximo passo
+  prompt: |-
+    Encerre com um próximo passo específico e de baixo atrito (por exemplo, um workshop de escopo ou um piloto), com uma data proposta e a única decisão que o comprador precisa tomar para chegar lá. Responda em português.
+export:
+- markdown
+- html
+- pptx
+- pdf

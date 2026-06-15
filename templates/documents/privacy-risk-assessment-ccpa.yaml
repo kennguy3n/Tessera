@@ -1,0 +1,62 @@
+id: privacy-risk-assessment-ccpa-v1
+name: Privacy Risk Assessment (US CCPA/CPRA)
+type: document
+description: Risk assessment for personal-information processing under the California CCPA/CPRA, weighing risks to consumers against benefits
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Processing Overview
+    prompt: >
+      Describe the processing activity, the business purpose, and whether
+      it involves activities that present significant risk to consumers
+      under the CPRA regulations (e.g. profiling, automated decisions, or
+      processing of sensitive personal information).
+    required_sources:
+      - type: local
+        min: 0
+  - title: Categories of Personal Information
+    prompt: >
+      Identify the categories of personal information and sensitive
+      personal information (SPI) processed, the sources, and the consumers
+      affected. Use a table where it aids clarity.
+    output_format: table
+  - title: Purposes and Disclosures
+    prompt: >
+      State the business and commercial purposes for processing, whether
+      personal information is sold or shared, and the categories of third
+      parties, service providers, or contractors that receive it.
+  - title: Consumer Rights Impact
+    prompt: >
+      Assess how the processing affects consumer rights under the CCPA/CPRA
+      (know, delete, correct, opt-out of sale/sharing, limit use of SPI)
+      and how those rights are honoured.
+  - title: Risks versus Benefits
+    prompt: >
+      Weigh the risks to consumers' privacy against the benefits to the
+      business, the consumer, and the public, as required by the CPRA risk
+      assessment framework. Score each material risk.
+    output_format: table
+  - title: Safeguards
+    prompt: >
+      Describe the safeguards that reduce the identified risks (minimisation,
+      retention limits, security controls, de-identification) and the
+      residual risk after they are applied.
+    output_format: table
+  - title: Service Provider and Contractor Terms
+    prompt: >
+      Confirm that contracts with service providers, contractors, and third
+      parties contain the terms the CCPA/CPRA requires, and note any gaps
+      to remediate.
+  - title: Determination and Retention
+    prompt: >
+      Record the determination (proceed, proceed with safeguards, or do not
+      proceed), the approver and date, and confirm retention of the
+      assessment for regulator review.
+export:
+  - markdown
+  - pdf
+  - docx

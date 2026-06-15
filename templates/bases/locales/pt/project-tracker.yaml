@@ -1,0 +1,54 @@
+id: project-tracker-base-v1-pt
+name: Acompanhamento de Projetos e Tarefas
+type: base
+description: Base de acompanhamento de projetos e tarefas com itens de trabalho, fluxo de status, responsáveis, dependências, marcos e velocidade
+locale: pt
+profile:
+  - product-manager
+  - project-manager
+  - engineer
+sections:
+  - title: Projetos
+    prompt: >
+      Por projeto: chave / código do projeto, nome, objetivo, a
+      área de produto ou equipe, líder do projeto, data de início,
+      data-alvo de entrega e saúde (no prazo / em risco / fora do
+      rumo). Vincule-o à iniciativa estratégica que ele apoia.
+      Responda em português.
+  - title: Tarefas e Itens
+    prompt: >
+      Por item de trabalho: ID, título, tipo (funcionalidade /
+      bug / tarefa / spike), descrição, o projeto a que pertence,
+      prioridade (P0 / P1 / P2 / P3), estimativa (pontos de
+      história ou dias-pessoa) e os critérios de aceitação que
+      definem o "concluído". Responda em português.
+  - title: Status e Fluxo de Trabalho
+    prompt: >
+      Status do fluxo por item (Backlog / A fazer / Em andamento /
+      Em revisão / Bloqueado / Concluído), a data de entrada no
+      status atual, o motivo e o responsável por qualquer bloqueio
+      e o sprint ou iteração comprometido. Responda em português.
+    output_format: table
+  - title: Atribuições e Capacidade
+    prompt: >
+      O responsável e o revisor por item, a quantidade de
+      trabalhos em andamento de cada pessoa e a capacidade
+      comprometida frente à disponível da equipe para a iteração.
+      Sinalize pessoas sobrecarregadas e itens de alta prioridade
+      sem atribuição. Responda em português.
+  - title: Dependências e Marcos
+    prompt: >
+      Dependências a montante / a jusante entre itens e equipes,
+      dependências externas e os marcos aos quais cada projeto se
+      vincula com suas datas-alvo. Destaque qualquer dependência
+      no caminho crítico. Responda em português.
+  - title: Relatórios e Velocidade
+    prompt: >
+      Vazão e velocidade por iteração, tempo de ciclo e de
+      entrega, burndown / burnup frente ao escopo comprometido,
+      antiguidade dos itens em andamento e as principais causas
+      recorrentes de atraso. Responda em português.
+    output_format: table
+export:
+  - markdown
+  - csv

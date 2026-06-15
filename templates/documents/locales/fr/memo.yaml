@@ -1,0 +1,31 @@
+id: memo-v1-fr
+name: Note de service
+type: document
+description: Note de communication interne avec contexte, décision et actions à mener (version française)
+locale: fr
+sections:
+  - title: Objet
+    prompt: >
+      Indiquez l'objet de cette note de manière claire et concise.
+      Répondez en français.
+  - title: Contexte
+    prompt: >
+      Fournissez le contexte dont les destinataires ont besoin pour
+      comprendre la décision ou l'information communiquée.
+      Répondez en français.
+  - title: Décision ou information
+    prompt: >
+      Énoncez la décision, le changement de politique ou l'information
+      communiquée. Précisez ce qui change et pourquoi.
+      Répondez en français.
+  - title: Impact
+    prompt: >
+      Décrivez qui est concerné et comment. Incluez le calendrier des
+      changements. Répondez en français.
+  - title: Actions à mener
+    prompt: >
+      Énumérez les actions précises à mener avec leurs responsables et
+      leurs échéances. Répondez en français.
+export:
+  - markdown
+  - html

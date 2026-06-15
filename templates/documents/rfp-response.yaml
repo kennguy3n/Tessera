@@ -1,0 +1,68 @@
+id: rfp-response-v1
+name: RFP Response
+type: document
+description: Structured response to a Request for Proposal with solution, plan, qualifications, pricing, and a compliance matrix
+industry:
+  - government
+profile:
+  - program-manager
+  - account-manager
+  - analyst
+sections:
+  - title: Cover Letter
+    prompt: >
+      Write a concise cover letter addressed to the issuing authority:
+      reference the RFP number, confirm intent to bid, name the authorised
+      point of contact, and affirm the validity period of the offer.
+  - title: Executive Summary
+    prompt: >
+      Summarise why the bidder is the right choice: the understanding of
+      the need, the proposed outcome, and the differentiators. Avoid
+      boilerplate; tie everything to the buyer's stated objectives.
+  - title: Understanding of Requirements
+    prompt: >
+      Demonstrate understanding of the buyer's requirements, constraints,
+      and success criteria, citing the relevant RFP sections from the
+      provided source documents.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Proposed Solution and Approach
+    prompt: >
+      Describe the proposed solution and methodology, mapping each element
+      to a stated requirement. Make the approach concrete and verifiable.
+  - title: Project Plan and Timeline
+    prompt: >
+      Present the delivery plan as a table of phases, milestones,
+      deliverables, dates, and acceptance criteria, highlighting the
+      critical path.
+    output_format: table
+  - title: Team and Qualifications
+    prompt: >
+      Introduce the proposed team, their roles and relevant experience,
+      and the organisational capabilities and certifications that
+      de-risk delivery.
+  - title: Past Performance and References
+    prompt: >
+      Provide comparable past engagements with outcomes and references the
+      buyer can contact. Quantify results where possible.
+  - title: Pricing
+    prompt: >
+      Present the pricing in the format the RFP requires: line items,
+      unit rates, assumptions, and total cost of ownership. State what is
+      and is not included.
+    output_format: table
+  - title: Assumptions and Exceptions
+    prompt: >
+      List the assumptions the proposal relies on and any exceptions taken
+      to the RFP terms, so the evaluation is transparent.
+  - title: Compliance Matrix
+    prompt: >
+      Provide a compliance matrix mapping every mandatory requirement to
+      where in the proposal it is addressed, with a comply / partial /
+      not-comply status for each.
+    output_format: table
+export:
+  - markdown
+  - pdf
+  - docx

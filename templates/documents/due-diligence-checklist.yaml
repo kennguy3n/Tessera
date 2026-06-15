@@ -1,0 +1,74 @@
+id: due-diligence-checklist-v1
+name: Due Diligence Checklist
+type: document
+description: Buy-side due diligence checklist spanning corporate, financial, legal, tax, commercial, and technology workstreams
+industry:
+  - finance
+  - legal
+profile:
+  - investor
+  - attorney
+  - analyst
+sections:
+  - title: Transaction Overview
+    prompt: >
+      Summarise the target, the proposed transaction structure, the
+      rationale, and the scope and timeline of the diligence exercise.
+      Note the deal team and the data room reference.
+  - title: Corporate and Governance
+    prompt: >
+      Checklist of corporate items to verify: incorporation documents,
+      cap table and ownership, board minutes, subsidiaries, shareholder
+      agreements, and outstanding options or convertible instruments.
+    output_format: bullets
+  - title: Financial
+    prompt: >
+      Checklist of financial diligence items: audited and management
+      accounts, quality of earnings, revenue recognition, working capital,
+      debt and off-balance-sheet items, and forecast assumptions.
+    output_format: bullets
+    required_sources:
+      - type: local
+        min: 1
+  - title: Legal and Litigation
+    prompt: >
+      Checklist covering material contracts, change-of-control clauses,
+      pending or threatened litigation, regulatory orders, and insurance
+      coverage.
+    output_format: bullets
+  - title: Tax
+    prompt: >
+      Checklist of tax items: filing history and open audits, transfer
+      pricing, indirect taxes, tax attributes (losses, credits), and
+      exposure from the transaction structure.
+    output_format: bullets
+  - title: Commercial and Customers
+    prompt: >
+      Checklist covering customer concentration, churn, pipeline,
+      competitive position, key suppliers, and pricing power.
+    output_format: bullets
+  - title: Technology and Intellectual Property
+    prompt: >
+      Checklist covering IP ownership and registrations, open-source and
+      licensing exposure, security posture, technical debt, and data
+      protection compliance.
+    output_format: bullets
+  - title: People and HR
+    prompt: >
+      Checklist covering key-person dependence, employment terms,
+      incentive plans, benefits and pension liabilities, and any disputes.
+    output_format: bullets
+  - title: Findings and Red Flags
+    prompt: >
+      Summarise the material findings to date, flagging deal-breakers,
+      price-adjusting issues, and items requiring representations,
+      warranties, or indemnities.
+  - title: Recommendation
+    prompt: >
+      State the diligence recommendation (proceed, proceed with
+      conditions, renegotiate, or walk away) and the outstanding items
+      that must close before signing.
+export:
+  - markdown
+  - pdf
+  - docx

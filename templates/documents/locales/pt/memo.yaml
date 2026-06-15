@@ -1,0 +1,31 @@
+id: memo-v1-pt
+name: Memorando
+type: document
+description: Memorando de comunicação interna com contexto, decisão e itens de ação (versão em português)
+locale: pt
+sections:
+  - title: Assunto
+    prompt: >
+      Indique o assunto deste memorando de forma clara e concisa.
+      Responda em português.
+  - title: Contexto
+    prompt: >
+      Forneça o contexto de fundo que os destinatários precisam para
+      compreender a decisão ou a informação comunicada.
+      Responda em português.
+  - title: Decisão ou informação
+    prompt: >
+      Indique a decisão, a mudança de política ou a informação comunicada.
+      Seja específico sobre o que está mudando e por quê.
+      Responda em português.
+  - title: Impacto
+    prompt: >
+      Descreva quem é afetado e como. Inclua o cronograma das mudanças.
+      Responda em português.
+  - title: Itens de ação
+    prompt: >
+      Liste itens de ação específicos com responsáveis e prazos.
+      Responda em português.
+export:
+  - markdown
+  - html

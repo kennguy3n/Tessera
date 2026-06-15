@@ -1,0 +1,52 @@
+id: infographic-learning-path-v1
+name: Learning Path
+type: infographic
+description: >
+  A step-by-step learning-path infographic from beginner to mastery,
+  with modules, prerequisites, and checkpoints.
+layout: vertical
+default_icon_set: lucide
+color_scheme:
+  primary: "#7C3AED"
+  secondary: "#0EA5E9"
+  accent: "#22C55E"
+industry:
+  - education
+profile:
+  - instructional-designer
+  - teacher
+sections:
+  - title: Title and Outcome
+    prompt: >
+      The path's title, who it is for, and the capability a learner has
+      at the end. State the estimated total time to complete.
+    icon_suggestion: graduation-cap
+  - title: Prerequisites
+    prompt: >
+      What a learner should already know or have before starting, so
+      they self-select into the right entry point.
+    icon_suggestion: key-round
+  - title: Modules
+    prompt: >
+      The ordered modules from foundational to advanced. Per module:
+      title, the skills gained, the estimated time, and the resource or
+      activity. Draw from the connected curriculum source.
+    icon_suggestion: book-open
+    required_sources:
+      - type: local
+        min: 1
+    output_format: numbered_list
+  - title: Checkpoints
+    prompt: >
+      The assessments or projects that confirm mastery between stages,
+      and the criterion for advancing to the next module.
+    icon_suggestion: flag-triangle-right
+  - title: Mastery and Next Steps
+    prompt: >
+      What "done" looks like, how the learner demonstrates it
+      (capstone, certificate), and where to go next to keep growing.
+    icon_suggestion: award
+export:
+  - html
+  - pdf
+  - markdown

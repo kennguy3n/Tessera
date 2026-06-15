@@ -1,0 +1,51 @@
+id: infographic-checklist-v1
+name: Checklist / Readiness
+type: infographic
+description: >
+  A grouped checklist infographic that turns a launch, audit, or
+  readiness review into scannable, checkable items by category.
+layout: grid
+default_icon_set: lucide
+color_scheme:
+  primary: "#0891B2"
+  secondary: "#65A30D"
+  accent: "#E11D48"
+profile:
+  - project-manager
+  - operations
+sections:
+  - title: Title and Goal
+    prompt: >
+      The checklist's title, the milestone it gates (e.g. "Launch
+      readiness"), and the definition of "done" for the whole list.
+    icon_suggestion: clipboard-check
+  - title: Categories
+    prompt: >
+      The category groupings the items fall into (e.g. Product, Legal,
+      Marketing, Support). Each category gets its own cluster in the
+      visual.
+    icon_suggestion: folder-tree
+  - title: Checklist Items
+    prompt: >
+      The individual items under each category. Per item: a clear,
+      verifiable statement, the owner, and the current status. Draw
+      items from the connected source plan.
+    icon_suggestion: check-square
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Blockers
+    prompt: >
+      The items not yet complete that would block the milestone, with
+      the owner and the date each is expected to clear.
+    icon_suggestion: octagon-alert
+  - title: Sign-off
+    prompt: >
+      Who must approve before the milestone is declared met, and the
+      overall readiness verdict (go / no-go / conditional).
+    icon_suggestion: badge-check
+export:
+  - html
+  - pdf
+  - markdown

@@ -1,0 +1,32 @@
+id: infographic-process-flow-v1-ko
+name: 프로세스 흐름
+type: infographic
+description: |-
+  3~5단계 프로세스를 흐름으로 시각화하는 가로형 인포그래픽: 입력 → 중간 단계 → 결과. 각 단계는 아이콘과 짧은 설명이 있는 하나의 섹션입니다. (한국어 버전)
+locale: ko
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: 1단계 — 입력
+  prompt: '프로세스의 진입점을 설명하세요: 누가 또는 무엇이 그것을 시작하며, 어떤 데이터나 입력이 필요한지. 한국어로 작성하세요.'
+  icon_suggestion: log-in
+- title: 2단계 — 처리
+  prompt: '핵심 처리 단계를 설명하세요: 무엇이 입력을 변환하는지. 한국어로 작성하세요.'
+  icon_suggestion: settings
+- title: 3단계 — 결정
+  prompt: 분기되는 결과를 결정하는 결정 또는 라우팅 단계를 설명하세요. 한국어로 작성하세요.
+  icon_suggestion: git-branch
+- title: 4단계 — 실행
+  prompt: 결정이 내려진 후 취해지는 행동을 설명하세요. 한국어로 작성하세요.
+  icon_suggestion: zap
+- title: 5단계 — 결과
+  prompt: 최종 사용자에게 전달되는 최종 결과를 설명하세요. 한국어로 작성하세요.
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

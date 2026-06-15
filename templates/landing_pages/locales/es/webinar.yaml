@@ -1,0 +1,56 @@
+id: landing-webinar-v1-es
+name: Registro de seminario web
+type: landing_page
+description: |-
+  Página de registro de seminario web con gancho del tema, agenda, ponentes, lo que aprenderás y un formulario de registro (versión en español)
+locale: es
+default_icon_set: lucide
+color_scheme:
+  primary: '#1D4ED8'
+  secondary: '#7C3AED'
+  accent: '#F59E0B'
+profile:
+- marketing
+- events
+sections:
+- title: Hero — Tema y fecha
+  prompt: |-
+    El título del seminario web, la fecha y hora con zona horaria, el formato (en directo / a demanda) y una CTA de registro («Reservar mi plaza»). Una línea sobre quién debería asistir. Responda en español.
+  icon_suggestion: calendar-clock
+- title: Por qué asistir
+  prompt: |-
+    El problema que aborda la sesión y la promesa de la hora: qué podrán hacer los asistentes al terminar. Dos o tres frases. Responda en español.
+  icon_suggestion: target
+- title: Lo que aprenderás
+  prompt: |-
+    De tres a cinco resultados de aprendizaje concretos en viñetas, cada uno lo bastante específico como para justificar una hora del tiempo del visitante. Responda en español.
+  icon_suggestion: graduation-cap
+  output_format: bullets
+- title: Agenda
+  prompt: |-
+    El desarrollo de la sesión con bloques de tiempo: introducción, segmentos principales, demo y preguntas. Manténgalo ajustado para que la densidad de valor sea evidente. Responda en español.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Ponentes
+  prompt: |-
+    Cada ponente con foto, nombre, cargo, empresa y una credencial de una línea que genere confianza sobre el tema. Tome las biografías de la fuente conectada. Responda en español.
+  icon_suggestion: mic
+  required_sources:
+  - type: local
+    min: 1
+- title: Prueba social
+  prompt: |-
+    Cifras de asistencia de sesiones anteriores, un testimonio o logotipos de socios: prueba de que esta serie merece el tiempo. Responda en español.
+  icon_suggestion: star
+- title: Registro y logística
+  prompt: |-
+    Los campos del formulario de registro, qué ocurre tras inscribirse (invitación de calendario, recordatorios, grabación) y la nota de privacidad sobre cómo se usará el correo electrónico. Responda en español.
+  icon_suggestion: ticket
+- title: Preguntas frecuentes
+  prompt: |-
+    Cuatro preguntas frecuentes: si se grabará, si es gratuito, qué pasa si no puedo asistir en directo y cómo hacer preguntas. Termine con una CTA final. Responda en español.
+  icon_suggestion: help-circle
+export:
+- markdown
+- html
+- pdf

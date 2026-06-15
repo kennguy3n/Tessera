@@ -1,0 +1,58 @@
+id: incident-postmortem-v1
+name: Incident Postmortem
+type: document
+description: Blameless postmortem for a service or operational incident with timeline, root cause, and corrective actions
+profile:
+  - reliability-engineer
+  - engineer
+  - program-manager
+sections:
+  - title: Incident Summary
+    prompt: >
+      Summarise the incident in a few sentences: what happened, the
+      severity, the duration, and the headline customer impact. State that
+      this review is blameless and focused on systems, not individuals.
+  - title: Impact
+    prompt: >
+      Quantify the impact: affected users or customers, requests or
+      transactions lost, SLO/SLA breaches, revenue or trust impact, and
+      the regions or services involved.
+  - title: Timeline
+    prompt: >
+      Provide a chronological timeline in a table (timestamp, event,
+      actor/system, evidence). Include detection, escalation, key
+      diagnostic steps, mitigation, and full recovery.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 0
+  - title: Root Cause Analysis
+    prompt: >
+      Identify the root cause(s) using a technique such as the Five Whys.
+      Distinguish the trigger from the underlying cause and explain why
+      existing safeguards did not prevent or contain the incident.
+  - title: Contributing Factors
+    prompt: >
+      List the contributing factors that amplified the impact or slowed
+      detection and recovery (monitoring gaps, runbook gaps, fragile
+      dependencies, recent changes).
+    output_format: bullets
+  - title: Resolution and Recovery
+    prompt: >
+      Describe how the incident was mitigated and resolved, how recovery
+      was verified, and any temporary measures still in place.
+  - title: Lessons Learned
+    prompt: >
+      Capture what went well, what went poorly, and where the team got
+      lucky. Keep the framing blameless and systemic.
+  - title: Action Items
+    prompt: >
+      List concrete corrective and preventive actions as a table (action,
+      type [detect/prevent/mitigate], owner, priority, due date, tracking
+      link). Each must be specific and assigned.
+    output_format: table
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

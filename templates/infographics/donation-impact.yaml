@@ -1,0 +1,58 @@
+id: infographic-donation-impact-v1
+name: Donation Impact
+type: infographic
+description: >
+  A nonprofit impact infographic translating dollars raised into
+  concrete outcomes, with a clear "your gift does this" ladder.
+layout: vertical
+default_icon_set: phosphor
+color_scheme:
+  primary: "#15803D"
+  secondary: "#0EA5E9"
+  accent: "#F59E0B"
+industry:
+  - nonprofit
+profile:
+  - development-director
+  - communications
+sections:
+  - title: Title and Mission Line
+    prompt: >
+      The campaign or report title and a one-line restatement of the
+      mission, so impact is anchored to purpose.
+    icon_suggestion: heart
+  - title: Funds Raised
+    prompt: >
+      Total raised, the period, and the source mix (individuals,
+      grants, events, corporate). Cite the financial source.
+    icon_suggestion: hand-coins
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Gift-to-Outcome Ladder
+    prompt: >
+      The "your gift does this" ladder: several giving amounts, each
+      mapped to a concrete, verifiable outcome (e.g. "$50 = a week of
+      meals"). Keep the conversions honest and sourced.
+    icon_suggestion: ladder
+    output_format: numbered_list
+  - title: Outcomes Delivered
+    prompt: >
+      The headline outcomes achieved — people served, results, reach —
+      versus the prior period and a cumulative total.
+    icon_suggestion: chart-line-up
+  - title: Stewardship
+    prompt: >
+      Program/admin/fundraising ratios and any third-party rating, so
+      donors trust that gifts are used well.
+    icon_suggestion: seal-check
+  - title: Call to Action
+    prompt: >
+      The next step for a donor — give, recur, or share — with the
+      specific impact the next gift unlocks.
+    icon_suggestion: megaphone
+export:
+  - html
+  - pdf
+  - markdown

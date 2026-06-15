@@ -1,0 +1,48 @@
+id: infographic-roadmap-v1-fr
+name: Infographie de feuille de route
+type: infographic
+description: |-
+  Une feuille de route produit ou stratégie de type maintenant / ensuite / plus tard, visualisée en couloirs horizontaux, chacun avec des initiatives thématiques et des résultats. (version française)
+locale: fr
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: Titre et horizon
+  prompt: |-
+    Le titre de la feuille de route, l'équipe responsable et l'horizon temporel que représente chaque couloir (p. ex. Maintenant = ce trimestre, Ensuite = le trimestre prochain, Plus tard = au-delà). Précisez que les dates sont indicatives, et non des engagements. Répondez en français.
+  icon_suggestion: map
+- title: Thèmes stratégiques
+  prompt: |-
+    Les deux à quatre thèmes autour desquels s'organise la feuille de route. Chaque thème : un libellé court et le résultat qu'il vise, afin que les initiatives s'inscrivent dans la stratégie plutôt que de se lire comme une liste de fonctionnalités. Répondez en français.
+  icon_suggestion: target
+- title: Maintenant
+  prompt: |-
+    Initiatives engagées et en cours pour l'horizon actuel. Par élément : l'initiative, le thème qu'elle sert, le résultat attendu et un indicateur de confiance. Citez le plan source. Répondez en français.
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: Ensuite
+  prompt: |-
+    Initiatives prévues pour l'horizon suivant, ordonnées par priorité et dépendance. Indiquez ce qui doit être achevé dans « Maintenant » avant que chacune puisse commencer. Répondez en français.
+  icon_suggestion: arrow-right-circle
+- title: Plus tard
+  prompt: |-
+    Paris directionnels et explorations au-delà du court terme. Formulez-les comme des problèmes à résoudre, et non comme des fonctionnalités engagées, pour préserver la flexibilité. Répondez en français.
+  icon_suggestion: telescope
+- title: Dépendances et risques
+  prompt: |-
+    Dépendances inter-équipes et principaux risques de la feuille de route, chacun avec un responsable et une mesure d'atténuation en une ligne. Répondez en français.
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown

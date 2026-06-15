@@ -1,0 +1,49 @@
+id: legal-memo-v1
+name: Legal Memorandum
+type: document
+description: Objective legal research memorandum structured in IRAC form with questions presented, facts, analysis, and conclusion
+industry:
+  - legal
+profile:
+  - attorney
+  - paralegal
+  - law-clerk
+sections:
+  - title: Heading
+    prompt: >
+      Provide the memorandum heading: To, From, Date, and a precise Re
+      line identifying the client matter and the legal question. Note
+      whether the memo is privileged and confidential.
+  - title: Questions Presented
+    prompt: >
+      State each legal question precisely, framed around the determinative
+      facts and the governing law. Use one numbered question per issue.
+    output_format: numbered_list
+  - title: Brief Answers
+    prompt: >
+      Give a short answer to each question presented in the same order:
+      the predicted outcome and a one-sentence rationale.
+    output_format: numbered_list
+  - title: Statement of Facts
+    prompt: >
+      Set out the legally significant facts objectively and in a logical
+      order, citing the record or source documents. Do not argue; state
+      facts neutrally, including unfavourable ones.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Discussion
+    prompt: >
+      Analyse each issue using IRAC: state the rule from controlling
+      authority, apply it to the facts, address counter-arguments, and
+      reach a reasoned conclusion. Cite cases, statutes, and regulations
+      accurately and signal the weight of each authority.
+  - title: Conclusion
+    prompt: >
+      Summarise the overall conclusion across all issues, note the
+      residual risk and any open questions, and recommend next steps or
+      further research where the answer is uncertain.
+export:
+  - markdown
+  - pdf
+  - docx

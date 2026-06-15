@@ -1,0 +1,44 @@
+id: saas-subscription-base-v1
+name: SaaS Subscription Register
+type: base
+description: SaaS and software subscription register tracking apps, owners, seats, renewals, spend, and access risk
+profile:
+  - it-admin
+  - finance-manager
+  - operations
+sections:
+  - title: Applications
+    prompt: >
+      Per app: name, vendor, category (CRM / analytics /
+      design / security / infra), business owner, IT owner, the
+      data classification it handles, and whether it is
+      sanctioned or shadow IT.
+  - title: Contracts and Renewals
+    prompt: >
+      Per subscription: plan / tier, contract start and end
+      dates, renewal type (auto / manual), notice period to
+      cancel, billing frequency, and the renewal owner. Flag
+      renewals due within 90 days.
+    output_format: table
+  - title: Seats and Utilization
+    prompt: >
+      Licensed seats vs. active users, last-login distribution,
+      inactive or duplicate accounts, and right-sizing
+      opportunities. Identify reclaimable seats and overage
+      risk.
+  - title: Spend and Budget
+    prompt: >
+      Per app: unit price, total annual cost, cost per active
+      user, the cost center charged, and spend trend. Roll up
+      total SaaS spend and highlight redundant tools serving the
+      same job.
+    output_format: table
+  - title: Access and Offboarding Risk
+    prompt: >
+      SSO / SCIM coverage, MFA enforcement, admin-account
+      inventory, data-processing agreement status, and the
+      joiner-mover-leaver process to ensure access is revoked
+      promptly on offboarding.
+export:
+  - markdown
+  - csv

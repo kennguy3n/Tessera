@@ -1,0 +1,56 @@
+id: landing-product-launch-v1-de
+name: Produkt-Launch-Landingpage
+type: landing_page
+description: |-
+  Landingpage zum Launch-Tag mit Hero, Problem/Lösung, Funktionen, Social Proof, Preisen und einem starken primären CTA (deutsche Version)
+locale: de
+default_icon_set: lucide
+color_scheme:
+  primary: '#4F46E5'
+  secondary: '#0EA5E9'
+  accent: '#F97316'
+profile:
+- product-marketing
+- marketing
+sections:
+- title: Hero
+  prompt: |-
+    Eine nutzenorientierte Überschrift, die benennt, was neu ist und für wen, eine Unterüberschrift mit 15 bis 25 Wörtern und ein primärer CTA („Loslegen“ / „Kostenlos testen“). Fügen Sie einen sekundären CTA für eine Demo oder ein Video hinzu. Antworten Sie auf Deutsch.
+  icon_suggestion: rocket
+- title: Problem
+  prompt: |-
+    Das Problem, das der Launch löst, formuliert in den Worten des Besuchers. Zwei oder drei Sätze, die ihm das Gefühl geben, verstanden zu werden, noch vor jedem Pitch. Antworten Sie auf Deutsch.
+  icon_suggestion: alert-circle
+- title: Lösung
+  prompt: |-
+    Wie das Produkt dieses Problem löst, mit der einen Aha-Fähigkeit, die es abhebt. Beschränken Sie sich auf das Ergebnis, nicht auf ein Datenblatt. Antworten Sie auf Deutsch.
+  icon_suggestion: sparkles
+- title: Wichtige Funktionen
+  prompt: |-
+    Drei bis sechs Funktionskarten. Je Karte: ein Symbol, ein nutzenorientierter Titel und ein Satz dazu, was sie leistet. Ordnen Sie sie nach dem, was dem Zielbesucher am wichtigsten ist. Antworten Sie auf Deutsch.
+  icon_suggestion: layout-grid
+- title: Social Proof
+  prompt: |-
+    Logos, ein herausragendes Testimonial mit Name/Funktion/Unternehmen und eine zentrale Kennzahl. Nehmen Sie diese aus den verbundenen Quellen und weisen Sie jedes Zitat zu. Antworten Sie auf Deutsch.
+  icon_suggestion: quote
+  required_sources:
+  - type: local
+    min: 1
+- title: So funktioniert es
+  prompt: |-
+    Drei einfache Schritte von der Anmeldung bis zum Mehrwert, jeweils mit einem kurzen Label und einer Zeile, damit der Besucher sieht, wie schnell er das Ergebnis erreicht. Antworten Sie auf Deutsch.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Preise
+  prompt: |-
+    Die Preisstufen oder ein einzelner klarer Preis, was enthalten ist, und ein etwaiges Launch-Angebot mit Ablaufdatum. Senken Sie das Risiko mit einer Test- oder Garantiezeile. Antworten Sie auf Deutsch.
+  icon_suggestion: tag
+  output_format: table
+- title: Abschluss-CTA und FAQ
+  prompt: |-
+    Ein abschließender CTA, der den Kernnutzen erneut benennt, plus vier bis sechs einwandbehandelnde FAQ (Sicherheit, Preise, Migration, Support). Antworten Sie auf Deutsch.
+  icon_suggestion: check-circle
+export:
+- markdown
+- html
+- pdf

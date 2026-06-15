@@ -1,0 +1,42 @@
+id: volunteer-register-base-v1
+name: Volunteer Register
+type: base
+description: Nonprofit volunteer base tracking volunteers, skills, opportunities, shifts, hours, and screening
+industry:
+  - nonprofit
+profile:
+  - volunteer-coordinator
+  - program-manager
+  - nonprofit-administrator
+sections:
+  - title: Volunteers
+    prompt: >
+      Per volunteer: name, contact details, emergency contact,
+      enrollment date, status (active / inactive / prospective),
+      preferred communication, and consent / waiver status.
+  - title: Skills and Availability
+    prompt: >
+      Per volunteer: skills, certifications, languages,
+      interests, the causes they support, and their availability
+      by day / time. Capture any role-specific qualifications.
+  - title: Opportunities and Roles
+    prompt: >
+      Per role: title, program, description, location (on-site /
+      remote), required skills, minimum age, slots needed, and
+      the supervising staff member.
+    output_format: table
+  - title: Shifts and Hours
+    prompt: >
+      Shift sign-ups and assignments, check-in / check-out times,
+      hours logged per volunteer and program, no-show tracking,
+      and milestone recognition thresholds.
+    output_format: table
+  - title: Screening and Compliance
+    prompt: >
+      Background-check and reference status, required training
+      completion, signed waivers and policy acknowledgments, and
+      renewal dates. Restrict sensitive screening data to
+      authorized staff.
+export:
+  - markdown
+  - csv

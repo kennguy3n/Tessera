@@ -1,0 +1,47 @@
+id: infographic-cycle-v1
+name: Cycle / Continuous Loop
+type: infographic
+description: >
+  A circular infographic for a repeating process or framework
+  (e.g. PDCA, build-measure-learn) where the last step feeds the first.
+layout: radial
+default_icon_set: phosphor
+color_scheme:
+  primary: "#9333EA"
+  secondary: "#06B6D4"
+  accent: "#FACC15"
+profile:
+  - operations
+  - product-manager
+sections:
+  - title: Title and Loop Purpose
+    prompt: >
+      The cycle's name and the goal it improves with each turn. State
+      what triggers a new loop and roughly how long one revolution
+      takes.
+    icon_suggestion: arrows-clockwise
+  - title: Stages of the Cycle
+    prompt: >
+      The ordered stages arranged around the circle (aim for 3-6). Per
+      stage: a short label, what happens, and the hand-off to the next
+      stage. Emphasize that the final stage feeds back into the first.
+    icon_suggestion: circle-dashed
+    output_format: numbered_list
+  - title: Inputs and Outputs
+    prompt: >
+      What enters and leaves the loop each turn — the inputs consumed
+      and the artifacts or learnings produced.
+    icon_suggestion: arrows-left-right
+  - title: Feedback and Improvement
+    prompt: >
+      How learning from one cycle changes the next: the metric watched,
+      the decision made at the loop close, and the source of that
+      signal.
+    icon_suggestion: chart-line-up
+    required_sources:
+      - type: local
+        min: 1
+export:
+  - html
+  - pdf
+  - markdown

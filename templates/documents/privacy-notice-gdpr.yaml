@@ -1,0 +1,60 @@
+id: privacy-notice-gdpr-v1
+name: Privacy Notice (EU GDPR)
+type: document
+description: Transparency privacy notice meeting EU GDPR Articles 13-14 disclosure requirements for data subjects
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Controller Identity and DPO Contact
+    prompt: >
+      Identify the data controller (legal name, address) and provide the
+      contact details of the Data Protection Officer or privacy contact, as
+      required by Articles 13(1)(a)-(b).
+  - title: Personal Data We Collect
+    prompt: >
+      Describe the categories of personal data collected and, where data is
+      obtained from third parties, the source and whether it is publicly
+      available (Article 14).
+  - title: Purposes and Lawful Basis
+    prompt: >
+      For each purpose, state the lawful basis under Article 6 (and Article
+      9 for special categories). Where relying on legitimate interests,
+      describe those interests.
+    output_format: table
+  - title: Recipients and Disclosures
+    prompt: >
+      Identify the recipients or categories of recipients of the personal
+      data, including processors and any disclosures required by law.
+  - title: International Transfers
+    prompt: >
+      State whether personal data is transferred outside the EEA, the
+      countries involved, and the safeguards relied on (adequacy decision,
+      Standard Contractual Clauses) and how to obtain a copy.
+  - title: Retention Periods
+    prompt: >
+      State the retention period for each category of data, or the criteria
+      used to determine it.
+  - title: Your Rights
+    prompt: >
+      Explain the data-subject rights under Articles 15-22 (access,
+      rectification, erasure, restriction, portability, objection, and
+      rights related to automated decisions) and how to exercise them.
+    output_format: bullets
+  - title: Right to Complain
+    prompt: >
+      Inform data subjects of their right to lodge a complaint with a
+      supervisory authority and, where consent is the basis, the right to
+      withdraw consent at any time.
+  - title: Automated Decision-Making
+    prompt: >
+      Disclose any automated decision-making or profiling that produces
+      legal or similarly significant effects, the logic involved, and the
+      consequences for the data subject (Article 22).
+export:
+  - markdown
+  - html
+  - pdf

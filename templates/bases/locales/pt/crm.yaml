@@ -1,0 +1,64 @@
+id: crm-base-v1-pt
+name: CRM (Contatos, Empresas, Negócios)
+type: base
+description: Base CRM leve com contatos, empresas, negócios, atividades e etapas do funil
+locale: pt
+profile:
+  - sales-ops
+  - account-executive
+  - founder
+sections:
+  - title: Empresas
+    prompt: >
+      Registros de empresas com: razão social, domínio, setor,
+      número de funcionários, faixa de receita anual, região,
+      nível da conta (estratégica / corporativa / médio mercado /
+      pequena empresa), responsável pela conta e a etapa do ciclo
+      de vida (alvo / em contato / cliente / perdido). Responda em
+      português.
+  - title: Contatos
+    prompt: >
+      Registros de contatos com: nome completo, cargo, e-mail,
+      telefone, URL do LinkedIn, a empresa a que pertencem, o
+      papel no comitê de compra (comprador econômico / defensor /
+      usuário / bloqueador) e a data do último contato. Responda
+      em português.
+  - title: Negócios e Etapas do Funil
+    prompt: >
+      Registros de negócios com: nome do negócio, empresa, contato
+      principal, valor, moeda, data prevista de fechamento,
+      probabilidade, etapa atual do funil (Lead / Qualificado /
+      Proposta / Negociação / Ganho / Perdido), origem e
+      concorrente (se conhecido). Responda em português.
+    output_format: table
+  - title: Atividades e Notas
+    prompt: >
+      Registro de atividades: data, tipo (ligação / e-mail /
+      reunião / demonstração / proposta enviada / contrato
+      enviado / assinatura), resultado, responsável, o contato e
+      o negócio relacionados e notas livres resumindo o essencial.
+      Responda em português.
+  - title: Consolidação da Previsão
+    prompt: >
+      Consolidação do funil por etapa com previsão ponderada
+      (valor × probabilidade), resumo por representante, resumo
+      por trimestre e uma comparação com a meta ou o plano.
+      Responda em português.
+    output_format: table
+  - title: Roteamento de Leads e SLA
+    prompt: >
+      Defina as regras de roteamento de leads (rodízio, por
+      território, por setor, por conta nomeada), o SLA para a
+      primeira resposta (por exemplo, MQL → primeiro contato em
+      até 5 horas úteis) e o escalonamento quando o SLA não é
+      cumprido. Responda em português.
+  - title: Higiene e Governança
+    prompt: >
+      Regras de higiene de dados: campos obrigatórios por etapa,
+      detecção de duplicidades, política de transferência de
+      titularidade, retenção / arquivamento e a cadência de
+      auditoria para verificar completude e exatidão. Responda em
+      português.
+export:
+  - markdown
+  - csv

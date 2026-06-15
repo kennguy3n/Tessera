@@ -1,0 +1,60 @@
+id: legal-case-strategy-deck-v1
+name: Legal Case Strategy Deck
+type: slides
+description: Litigation strategy deck for client or partners — facts, claims, strengths, risks, budget, and recommendation
+format: marp
+theme: default
+paginate: true
+industry:
+  - legal
+profile:
+  - attorney
+  - litigator
+sections:
+  - title: Matter and Posture
+    prompt: >
+      Title slide with the matter name, the client, the venue, the
+      current procedural posture, and the next key date. Mark the deck
+      privileged and confidential.
+  - title: Statement of Facts
+    prompt: >
+      A neutral, chronological statement of the material facts, citing
+      the record. Separate undisputed facts from disputed ones.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Claims and Defenses
+    prompt: >
+      The claims and defenses at issue, the elements of each, and where
+      the evidence currently stands on every element.
+    output_format: table
+  - title: Strengths and Weaknesses
+    prompt: >
+      A candid assessment of the case's strengths and weaknesses,
+      including the best facts and the worst facts for the client and
+      how the other side will use them.
+  - title: Legal Analysis
+    prompt: >
+      The controlling authority and how it applies, the contested legal
+      questions, and the realistic range of outcomes. Cite cases and
+      statutes.
+  - title: Strategy and Roadmap
+    prompt: >
+      The recommended strategy: discovery plan, motions, expert needs,
+      and settlement posture, laid out on a timeline to trial or
+      resolution.
+    output_format: numbered_list
+  - title: Risk and Budget
+    prompt: >
+      Exposure analysis (likely, best, and worst case), the litigation
+      budget by phase, and the settlement-versus-trial economics.
+    output_format: table
+  - title: Recommendation
+    prompt: >
+      A clear recommendation and the decision being asked of the
+      client, with the immediate next steps and their deadlines.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,52 @@
+id: patient-registry-uk-base-v1
+name: Patient Registry (UK / NHS)
+type: base
+description: UK patient registry aligned to NHS practice, with NHS number, GP registration, ICB, and UK GDPR safeguards
+industry:
+  - healthcare
+profile:
+  - nurse
+  - clinician
+  - practice-manager
+sections:
+  - title: Patient Demographics
+    prompt: >
+      Per patient: NHS number (with validity check), legal name,
+      date of birth, sex and gender, ethnicity (per NHS Data
+      Dictionary), preferred language and accessibility needs,
+      contact details, and next of kin. Treat as special-category
+      personal data under UK GDPR.
+  - title: GP Registration and Care
+    prompt: >
+      Registered GP practice and code, named GP, the Integrated
+      Care Board (ICB) and PCN, registration status (registered /
+      temporary / dispersed), and the patient's usual place of
+      care.
+  - title: Conditions and Diagnoses
+    prompt: >
+      Active and resolved problems coded in SNOMED CT, onset
+      date, status, and the responsible clinician. Maintain an
+      accurate problem list aligned to the GP record.
+    output_format: table
+  - title: Encounters and Referrals
+    prompt: >
+      Per contact: date, type (GP appointment / community /
+      outpatient / A&E / admission), location, clinician, reason,
+      and outcome. Track referrals and e-Referral Service status
+      to secondary care.
+    output_format: table
+  - title: Medications and Allergies
+    prompt: >
+      Repeat and acute medications (dm+d) with dose, route, and
+      prescriber; the allergy and adverse-reaction list; and
+      reconciliation at transfers of care.
+  - title: UK GDPR and Caldicott
+    prompt: >
+      Consent and the lawful basis for processing, the National
+      Data Opt-out status, Caldicott-principle adherence,
+      role-based access, and the audit trail of access and
+      disclosures.
+    output_format: table
+export:
+  - markdown
+  - csv

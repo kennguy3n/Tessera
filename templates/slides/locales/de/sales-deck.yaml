@@ -1,0 +1,47 @@
+id: sales-deck-v1-de
+name: B2B-Vertriebspräsentation
+type: slides
+description: |-
+  Vertriebspräsentation für Akquise/Abschluss — Schmerz des Käufers, Standpunkt, Lösung, Nachweise, Preisgestaltung und ein klarer nächster Schritt (deutsche Version)
+locale: de
+format: marp
+theme: gaia
+paginate: true
+profile:
+- sales
+- account-executive
+sections:
+- title: Titel und Agenda
+  prompt: |-
+    Titelfolie mit dem Namen des Unternehmens des Interessenten, dem Unternehmen des Verkäufers, dem Termin des Meetings und den Namen/Rollen der Teilnehmenden auf beiden Seiten. Darauf folgt eine dreizeilige Agenda, damit der Käufer weiß, was ihn erwartet und wie lange es dauert. Antworten Sie auf Deutsch.
+- title: Ihre heutige Welt
+  prompt: |-
+    Spiegeln Sie die aktuelle Situation des Käufers in seinen eigenen Worten: der Auslöser dieses Gesprächs, der heute genutzte Arbeitsablauf und die Kosten des Status quo (Zeit, Geld, Risiko). Untermauern Sie jede Aussage mit Discovery-Notizen oder den verbundenen Quellen. Antworten Sie auf Deutsch.
+  required_sources:
+  - type: local
+    min: 1
+- title: Standpunkt
+  prompt: |-
+    Formulieren Sie den konträren, vertretbaren Standpunkt des Verkäufers dazu, wohin sich der Markt des Käufers entwickelt und warum der Status quo nicht bestehen bleibt. Das ist das „Warum ändern“ vor dem „Warum wir“. Antworten Sie auf Deutsch.
+- title: Lösungsüberblick
+  prompt: |-
+    Ordnen Sie die Lösung den oben genannten zwei oder drei Schmerzpunkten zu. Für jeden Schmerz: die Fähigkeit, die ihn adressiert, und das Ergebnis, das der Käufer erhält. Vermeiden Sie Funktionslisten – beginnen Sie mit dem Ergebnis. Antworten Sie auf Deutsch.
+- title: Nachweise
+  prompt: |-
+    Die stärksten Nachweise: ein namentlich genannter Kunde im Segment des Käufers, ein quantifiziertes Ergebnis (prozentual oder absolut) und ein einzeiliges Zitat. Nennen Sie die Fallstudie oder das Referenzgespräch als Quelle. Antworten Sie auf Deutsch.
+  output_format: table
+- title: Preise und Pakete
+  prompt: |-
+    Präsentieren Sie das empfohlene Paket, den Leistungsumfang, die Investition und die erwartete Amortisationsdauer bzw. den ROI. Zeigen Sie die Annahmen, damit der Käufer die Zahl intern vertreten kann. Antworten Sie auf Deutsch.
+- title: Gemeinsamer Aktionsplan
+  prompt: |-
+    Stellen Sie den Weg zur Entscheidung als datierte Checkliste dar: technische Validierung, Sicherheitsprüfung, Freigaben der Stakeholder, Vertragsabschluss und geplanter Go-Live. Benennen Sie für jeden Schritt die verantwortliche Person auf beiden Seiten. Antworten Sie auf Deutsch.
+  output_format: numbered_list
+- title: Nächster Schritt
+  prompt: |-
+    Schließen Sie mit einem konkreten, reibungsarmen nächsten Schritt (z. B. einem Scoping-Workshop oder einem Pilotprojekt), mit einem vorgeschlagenen Termin und der einen Entscheidung, die der Käufer dafür treffen muss. Antworten Sie auf Deutsch.
+export:
+- markdown
+- html
+- pptx
+- pdf

@@ -943,6 +943,25 @@ export interface TemplateInfo {
   description: string;
   sectionCount: number;
   exportFormats: string[];
+  /**
+   * Industry domains this template is tailored for (mirrors the YAML
+   * `industry:` list). Empty means industry-agnostic ("General"). The
+   * Create gallery derives its industry filter from these values.
+   */
+  industry: string[];
+  /**
+   * BCP-47 locale tag for this template variant. Base templates default
+   * to `"en"`; localized variants ship as `<base-id>-<locale>` and carry
+   * their own tag (e.g. `"es"`). The gallery groups these to derive each
+   * card's available languages.
+   */
+  locale: string;
+  /**
+   * On-disk category (directory) the template belongs to, derived from
+   * its artifact type (`document` → `"documents"`, …). Lets the renderer
+   * group templates without re-deriving the artifact→directory mapping.
+   */
+  category: string;
 }
 
 // -----------------------------------------------------------------

@@ -1,0 +1,54 @@
+id: project-tracker-base-v1-fr
+name: Suivi des Projets et des Tickets
+type: base
+description: Base de suivi des projets et tickets avec tâches, flux de statuts, responsables, dépendances, jalons et vélocité
+locale: fr
+profile:
+  - product-manager
+  - project-manager
+  - engineer
+sections:
+  - title: Projets
+    prompt: >
+      Par projet : clé / code du projet, nom, objectif, le domaine
+      produit ou l'équipe, responsable du projet, date de début,
+      date de livraison cible et santé (sur la bonne voie / à
+      risque / en dérive). Reliez-le à l'initiative stratégique
+      qu'il soutient. Répondez en français.
+  - title: Tâches et Tickets
+    prompt: >
+      Par élément de travail : ID, titre, type (fonctionnalité /
+      bogue / tâche / exploration), description, le projet auquel
+      il appartient, priorité (P0 / P1 / P2 / P3), estimation
+      (points ou jours-homme) et les critères d'acceptation qui
+      définissent le « terminé ». Répondez en français.
+  - title: Statut et Flux de Travail
+    prompt: >
+      Statut du flux par élément (Backlog / À faire / En cours /
+      En revue / Bloqué / Terminé), la date d'entrée dans le
+      statut actuel, le motif et le responsable de tout blocage,
+      et le sprint ou l'itération engagé. Répondez en français.
+    output_format: table
+  - title: Affectations et Capacité
+    prompt: >
+      Le responsable et le relecteur par élément, le nombre de
+      travaux en cours de chaque personne et la capacité engagée
+      par rapport à la capacité disponible de l'équipe pour
+      l'itération. Signalez les personnes surchargées et les
+      éléments prioritaires non affectés. Répondez en français.
+  - title: Dépendances et Jalons
+    prompt: >
+      Dépendances amont / aval entre éléments et équipes,
+      dépendances externes et les jalons auxquels chaque projet se
+      rattache avec leurs dates cibles. Mettez en évidence toute
+      dépendance sur le chemin critique. Répondez en français.
+  - title: Reporting et Vélocité
+    prompt: >
+      Débit et vélocité par itération, temps de cycle et délai de
+      livraison, burndown / burnup par rapport au périmètre
+      engagé, ancienneté des éléments en cours et les principales
+      causes récurrentes de retard. Répondez en français.
+    output_format: table
+export:
+  - markdown
+  - csv

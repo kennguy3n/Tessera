@@ -1,0 +1,62 @@
+id: fmea-worksheet-v1
+name: FMEA Worksheet
+type: document
+description: Failure Mode and Effects Analysis worksheet scoring severity, occurrence, and detection to prioritise actions by RPN
+industry:
+  - manufacturing
+profile:
+  - quality-engineer
+  - reliability-engineer
+sections:
+  - title: Scope and Team
+    prompt: >
+      Identify the FMEA type (design or process), the item or process under
+      analysis, its boundaries, the cross-functional team, and the revision
+      and date.
+  - title: Functions and Requirements
+    prompt: >
+      For each item or process step, state the intended function and the
+      requirements or specifications it must meet.
+    output_format: bullets
+  - title: Failure Modes and Effects
+    prompt: >
+      Build the core FMEA table: item/function, potential failure mode,
+      potential effect(s) of failure, and a Severity (S) rating 1-10 for
+      each effect.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 0
+  - title: Causes and Occurrence
+    prompt: >
+      For each failure mode, list the potential causes and rate the
+      likelihood of Occurrence (O) 1-10, referencing field or test data
+      where available.
+    output_format: table
+  - title: Current Controls and Detection
+    prompt: >
+      Document the current prevention and detection controls for each cause
+      and rate Detection (D) 1-10, where a higher score means the control
+      is less likely to detect the failure.
+    output_format: table
+  - title: RPN Ranking
+    prompt: >
+      Calculate the Risk Priority Number (RPN = S x O x D) for each line
+      and rank the failure modes. Identify the threshold above which action
+      is mandatory, and flag any high-severity items regardless of RPN.
+    output_format: table
+  - title: Recommended Actions
+    prompt: >
+      For each prioritised item, recommend actions to reduce severity,
+      occurrence, or improve detection, with an owner and target date.
+    output_format: table
+  - title: Action Results and Revised RPN
+    prompt: >
+      After actions are taken, record what was done and the revised S, O, D
+      and RPN to confirm the risk has been reduced to an acceptable level.
+    output_format: table
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

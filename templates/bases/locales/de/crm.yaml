@@ -1,0 +1,65 @@
+id: crm-base-v1-de
+name: CRM (Kontakte, Unternehmen, Geschäfte)
+type: base
+description: Schlanke CRM-Datenbank mit Kontakten, Unternehmen, Geschäften, Aktivitäten und Pipeline-Phasen
+locale: de
+profile:
+  - sales-ops
+  - account-executive
+  - founder
+sections:
+  - title: Unternehmen
+    prompt: >
+      Unternehmensdatensätze mit: Firmenname, Domain, Branche,
+      Mitarbeiterzahl, Jahresumsatzklasse, Region, Kontostufe
+      (strategisch / Großkunde / Mittelstand / KMU),
+      Kundenverantwortlicher und Lebenszyklusphase (Ziel /
+      kontaktiert / Kunde / abgewandert). Antworten Sie auf
+      Deutsch.
+  - title: Kontakte
+    prompt: >
+      Kontaktdatensätze mit: vollständiger Name, Position,
+      E-Mail, Telefon, LinkedIn-URL, das zugehörige Unternehmen,
+      die Rolle im Einkaufsgremium (wirtschaftlicher Entscheider /
+      Fürsprecher / Anwender / Blockierer) und das Datum des
+      letzten Kontakts. Antworten Sie auf Deutsch.
+  - title: Geschäfte und Pipeline-Phasen
+    prompt: >
+      Geschäftsdatensätze mit: Geschäftsname, Unternehmen,
+      Hauptkontakt, Betrag, Währung, erwartetes Abschlussdatum,
+      Wahrscheinlichkeit, aktuelle Pipeline-Phase (Lead /
+      Qualifiziert / Angebot / Verhandlung / Gewonnen /
+      Verloren), Quelle und Wettbewerber (falls bekannt).
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Aktivitäten und Notizen
+    prompt: >
+      Aktivitätsprotokoll: Datum, Typ (Anruf / E-Mail / Meeting /
+      Demo / Angebot gesendet / Vertrag gesendet / Unterschrift),
+      Ergebnis, Verantwortlicher, der zugehörige Kontakt und das
+      Geschäft sowie Freitextnotizen, die das Wesentliche
+      zusammenfassen. Antworten Sie auf Deutsch.
+  - title: Prognose-Zusammenführung
+    prompt: >
+      Zusammenführung der Pipeline nach Phase mit gewichteter
+      Prognose (Betrag × Wahrscheinlichkeit), Zusammenfassung je
+      Vertriebsmitarbeiter, Zusammenfassung je Quartal und ein
+      Vergleich mit Quote oder Plan. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Lead-Zuweisung und SLA
+    prompt: >
+      Definieren Sie die Regeln zur Lead-Zuweisung (Round-Robin,
+      nach Gebiet, nach Branche, nach benanntem Kunden), das SLA
+      für die Erstreaktion (z. B. MQL → Erstkontakt innerhalb von
+      5 Geschäftsstunden) und die Eskalation bei SLA-Verletzung.
+      Antworten Sie auf Deutsch.
+  - title: Datenhygiene und Governance
+    prompt: >
+      Regeln zur Datenhygiene: Pflichtfelder je Phase,
+      Dublettenerkennung, Richtlinie zur Eigentumsübertragung,
+      Aufbewahrung / Archivierung und die Prüfkadenz zur Kontrolle
+      von Vollständigkeit und Richtigkeit. Antworten Sie auf
+      Deutsch.
+export:
+  - markdown
+  - csv

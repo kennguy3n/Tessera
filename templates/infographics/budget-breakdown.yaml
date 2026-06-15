@@ -1,0 +1,52 @@
+id: infographic-budget-breakdown-v1
+name: Budget Breakdown
+type: infographic
+description: >
+  A budget-allocation infographic showing how a total is split across
+  categories, with year-over-year change and the story behind it.
+layout: grid
+default_icon_set: lucide
+color_scheme:
+  primary: "#1D4ED8"
+  secondary: "#0D9488"
+  accent: "#EA580C"
+industry:
+  - finance
+profile:
+  - cfo
+  - finance-analyst
+sections:
+  - title: Title and Total
+    prompt: >
+      What budget this is (department, project, fiscal year), the total
+      amount, the currency, and the period covered.
+    icon_suggestion: wallet
+  - title: Allocation by Category
+    prompt: >
+      How the total divides across major categories, each with its
+      amount and share of the whole. Use the connected source and make
+      the shares sum to 100%.
+    icon_suggestion: pie-chart
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Year-over-Year Change
+    prompt: >
+      How each category changed versus the prior period, in absolute
+      and percentage terms, with the driver behind the largest moves.
+    icon_suggestion: trending-up
+  - title: Fixed vs. Variable
+    prompt: >
+      The split between committed/fixed costs and discretionary/variable
+      spend, so the reader sees how much flexibility the budget has.
+    icon_suggestion: sliders-horizontal
+  - title: Notes and Assumptions
+    prompt: >
+      Key assumptions, one-time items, and contingencies, plus a link
+      to the detailed line-item source for anyone who wants to drill in.
+    icon_suggestion: file-text
+export:
+  - html
+  - pdf
+  - markdown

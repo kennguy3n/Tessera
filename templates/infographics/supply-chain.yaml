@@ -1,0 +1,59 @@
+id: infographic-supply-chain-v1
+name: Supply Chain Flow
+type: infographic
+description: >
+  A horizontal supply-chain infographic from raw materials to end
+  customer, with lead times, inventory points, and risk hotspots.
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: "#0F766E"
+  secondary: "#475569"
+  accent: "#F59E0B"
+industry:
+  - manufacturing
+profile:
+  - supply-chain
+  - operations
+sections:
+  - title: Title and Product
+    prompt: >
+      The product or product family the flow describes and the scope of
+      the chain shown (e.g. tier-2 supplier to retail shelf).
+    icon_suggestion: factory
+  - title: Sourcing and Suppliers
+    prompt: >
+      Raw materials and key suppliers, their regions, and the
+      single-source or concentration risks. Cite the source data for
+      volumes and lead times.
+    icon_suggestion: package
+    required_sources:
+      - type: local
+        min: 1
+  - title: Manufacturing
+    prompt: >
+      The production stages, the sites involved, and the throughput or
+      capacity constraints at each.
+    icon_suggestion: settings-2
+  - title: Distribution and Logistics
+    prompt: >
+      Warehousing, transport modes, and the inventory/buffer points,
+      with typical lead times between nodes.
+    icon_suggestion: truck
+    output_format: table
+  - title: Demand and Customer
+    prompt: >
+      How product reaches the end customer, the demand signal that
+      drives replenishment, and the service-level target.
+    icon_suggestion: store
+  - title: Risks and Resilience
+    prompt: >
+      The chain's risk hotspots (lead-time, geography, single source)
+      and the resilience levers (dual-sourcing, safety stock,
+      nearshoring) to address them.
+    icon_suggestion: shield-alert
+    output_format: bullets
+export:
+  - html
+  - pdf
+  - markdown

@@ -1,0 +1,59 @@
+id: landing-app-download-v1
+name: Mobile App Download
+type: landing_page
+description: App landing page — hero with store badges, screenshots, key features, ratings, and download CTAs
+default_icon_set: lucide
+color_scheme:
+  primary: "#7C3AED"
+  secondary: "#0EA5E9"
+  accent: "#22C55E"
+profile:
+  - product-marketing
+  - growth
+sections:
+  - title: Hero — App and Stores
+    prompt: >
+      The app name, a benefit-led tagline, a device mockup, and App
+      Store / Google Play badges as the primary CTA. Add a QR code line
+      for desktop visitors.
+    icon_suggestion: smartphone
+  - title: The Problem It Solves
+    prompt: >
+      The everyday problem the app removes, in the user's words. Two or
+      three sentences that make the download feel obvious.
+    icon_suggestion: alert-circle
+  - title: Key Features
+    prompt: >
+      Three to six feature highlights paired with screenshots. Per
+      feature: a benefit title and one line. Lead with what users open
+      the app to do.
+    icon_suggestion: layout-grid
+  - title: How It Works
+    prompt: >
+      Three steps from download to first value, each with a short label
+      and one line, so the path feels effortless.
+    icon_suggestion: list-ordered
+    output_format: numbered_list
+  - title: Ratings and Reviews
+    prompt: >
+      The star rating, review count, and two or three short user
+      reviews with names. Use real figures from the connected source.
+    icon_suggestion: star
+    required_sources:
+      - type: local
+        min: 1
+  - title: Privacy and Permissions
+    prompt: >
+      What data the app collects, the permissions it requests and why,
+      and a link to the privacy policy — building trust before the
+      install.
+    icon_suggestion: shield-check
+  - title: Final CTA
+    prompt: >
+      A closing download CTA repeating the store badges, with a
+      one-line reminder of the core benefit and that it's free to start.
+    icon_suggestion: download
+export:
+  - markdown
+  - html
+  - pdf

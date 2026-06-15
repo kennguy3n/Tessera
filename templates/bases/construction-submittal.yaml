@@ -1,0 +1,43 @@
+id: construction-submittal-base-v1
+name: Construction Submittal Log
+type: base
+description: Construction base tracking submittals, review status, approvals, and procurement lead times
+industry:
+  - construction
+profile:
+  - project-manager
+  - architect
+  - general-contractor
+sections:
+  - title: Submittals
+    prompt: >
+      Per submittal: submittal number, the specification section,
+      description, type (shop drawing / product data / sample /
+      mock-up / O&M manual), the responsible subcontractor, and
+      the revision number.
+  - title: Review Workflow
+    prompt: >
+      The review chain (contractor / architect / engineer), date
+      submitted, date returned, and the review action (approved /
+      approved as noted / revise and resubmit / rejected / for
+      record). Track resubmittals against the original.
+    output_format: table
+  - title: Schedule and Lead Time
+    prompt: >
+      Required-on-site date, fabrication / procurement lead time,
+      the latest date to approve without delaying the schedule,
+      and float remaining. Flag submittals on the critical path.
+  - title: Procurement and Delivery
+    prompt: >
+      Purchase-order status after approval, fabrication progress,
+      delivery date, and the linkage to installation activities
+      and inspections.
+  - title: Status and Outstanding
+    prompt: >
+      Outstanding and overdue submittals by spec section,
+      ball-in-court party, aging, and the items at risk of
+      delaying construction.
+    output_format: table
+export:
+  - markdown
+  - csv

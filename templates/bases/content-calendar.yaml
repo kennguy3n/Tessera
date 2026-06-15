@@ -1,0 +1,49 @@
+id: content-calendar-base-v1
+name: Content Calendar
+type: base
+description: Editorial content calendar tracking ideas, drafts, channels, schedule, owners, and performance
+industry:
+  - retail
+  - creative
+profile:
+  - marketing-manager
+  - content-strategist
+  - social-media-manager
+sections:
+  - title: Content Items
+    prompt: >
+      Per piece: title / working headline, content type
+      (blog / video / social / newsletter / webinar / case
+      study), target persona, the funnel stage
+      (awareness / consideration / decision / retention),
+      primary keyword or theme, and a one-line summary of the
+      angle.
+  - title: Channels and Formats
+    prompt: >
+      The channel(s) each item ships to (website / LinkedIn /
+      Instagram / X / YouTube / email / paid), the format and
+      aspect ratio per channel, and any channel-specific copy
+      or hashtag requirements.
+  - title: Workflow and Status
+    prompt: >
+      Editorial workflow status (Idea / Drafting / In Review /
+      Approved / Scheduled / Published / Archived), the
+      assigned writer, editor, and designer, and the review
+      gate each item must clear before publishing.
+    output_format: table
+  - title: Schedule and Calendar
+    prompt: >
+      Planned publish date and time per item, the campaign or
+      theme it belongs to, seasonal / event tie-ins, and any
+      embargo or go-live dependency. Flag scheduling conflicts
+      on the same channel.
+  - title: Performance and Repurposing
+    prompt: >
+      Post-publish metrics per item (impressions, engagement
+      rate, clicks, conversions, watch time), the
+      best-performing pieces, and repurposing plans (atomize a
+      webinar into clips, turn a post into a newsletter).
+    output_format: table
+export:
+  - markdown
+  - csv

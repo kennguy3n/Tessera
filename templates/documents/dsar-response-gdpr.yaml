@@ -1,0 +1,57 @@
+id: dsar-response-gdpr-v1
+name: Data Subject Access Request Response (EU GDPR)
+type: document
+description: Structured response to a GDPR Article 15 subject access request, documenting scope, disclosures, and exemptions applied
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Request Summary and Identity Verification
+    prompt: >
+      Record the requester, the date the request was received, the date the
+      one-month response clock under Article 12(3) starts, and how the
+      requester's identity was verified.
+  - title: Scope and Search Performed
+    prompt: >
+      Describe the scope agreed with the requester and the systems and
+      repositories searched, so the search is demonstrably reasonable and
+      complete.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Personal Data Disclosed
+    prompt: >
+      Summarise the personal data being provided to the data subject and
+      the format of disclosure. Reference the enclosed copy of the data.
+  - title: Purposes, Recipients and Retention
+    prompt: >
+      Provide the supplementary information required by Article 15: the
+      purposes of processing, the categories of data, the recipients, and
+      the retention period or criteria.
+    output_format: table
+  - title: Source of the Data
+    prompt: >
+      Where the personal data was not collected from the data subject,
+      provide the available information about its source.
+  - title: Rights Information
+    prompt: >
+      Inform the data subject of their rights to rectification, erasure,
+      restriction, and objection, and of their right to complain to a
+      supervisory authority.
+  - title: Exemptions and Redactions Applied
+    prompt: >
+      Document any exemptions relied on and any redactions made to protect
+      the rights of others, with the justification for each, so the
+      decision is defensible.
+  - title: Response Timeline
+    prompt: >
+      Record the date of response, whether any extension under Article 12(3)
+      was applied (and why), and confirmation that the response was provided
+      free of charge unless an exception applies.
+export:
+  - markdown
+  - pdf
+  - docx

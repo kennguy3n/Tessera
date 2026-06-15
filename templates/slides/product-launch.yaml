@@ -1,0 +1,61 @@
+id: product-launch-deck-v1
+name: Product Launch / Go-to-Market
+type: slides
+description: Product launch deck — positioning, target segments, messaging, launch plan, enablement, and success metrics
+format: marp
+theme: gaia
+paginate: true
+profile:
+  - product-manager
+  - product-marketing
+sections:
+  - title: Launch Headline
+    prompt: >
+      Title slide with the product/feature name, the launch tier
+      (major / minor / silent), the target launch date, and a one-line
+      promise that captures why this matters to customers.
+  - title: Why Now
+    prompt: >
+      The market shift, customer demand, or competitive gap that makes
+      this the right thing to ship now. Ground it in research or
+      pipeline data from the connected sources.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Positioning and Messaging
+    prompt: >
+      The positioning statement (for whom, the category, the key
+      benefit, the differentiator) and the three message pillars sales
+      and marketing will repeat everywhere.
+  - title: Target Segments and ICP
+    prompt: >
+      The primary and secondary segments, the ideal customer profile,
+      and the buyer/user personas. For each: the pain this launch
+      resolves and the trigger that makes them act.
+  - title: Packaging and Pricing
+    prompt: >
+      How the product is packaged and priced, what changes for existing
+      customers, and any migration or grandfathering plan. Flag the
+      pricing decisions still open.
+  - title: Launch Plan and Timeline
+    prompt: >
+      The phased plan: alpha, beta, GA, and post-launch. Per phase the
+      dates, the channels (PR, content, email, events, in-app), and the
+      gate criteria to advance.
+    output_format: table
+  - title: Sales and Support Enablement
+    prompt: >
+      What sales, success, and support need to be ready: demo script,
+      battlecard, pricing guidance, FAQ, and the training date. Name
+      the owner for each asset.
+  - title: Success Metrics
+    prompt: >
+      The launch scorecard: adoption, pipeline influenced, revenue,
+      and one leading indicator for the first 30/60/90 days. Define how
+      each is measured and the target.
+    output_format: bullets
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

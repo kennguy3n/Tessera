@@ -1,0 +1,51 @@
+id: project-tracker-base-v1
+name: Project and Issue Tracker
+type: base
+description: Project and issue tracker with tasks, status workflow, assignees, dependencies, milestones, and velocity
+profile:
+  - product-manager
+  - project-manager
+  - engineer
+sections:
+  - title: Projects
+    prompt: >
+      Per project: project key / code, name, objective, the
+      product or team area, project lead, start date, target
+      delivery date, and health (on track / at risk / off
+      track). Link to the strategic initiative it supports.
+  - title: Tasks and Issues
+    prompt: >
+      Per work item: ID, title, type (feature / bug / chore /
+      spike), description, the project it belongs to, priority
+      (P0 / P1 / P2 / P3), estimate (story points or
+      person-days), and the acceptance criteria that define
+      done.
+  - title: Status and Workflow
+    prompt: >
+      Workflow state per item (Backlog / To Do / In Progress /
+      In Review / Blocked / Done), the date it entered the
+      current state, the reason and owner for anything blocked,
+      and the sprint or iteration it is committed to.
+    output_format: table
+  - title: Assignments and Capacity
+    prompt: >
+      The assignee and reviewer per item, each person's current
+      work-in-progress count, and the team's committed vs.
+      available capacity for the iteration. Flag overloaded
+      assignees and unassigned high-priority items.
+  - title: Dependencies and Milestones
+    prompt: >
+      Upstream / downstream dependencies between items and
+      teams, external dependencies, and the milestones each
+      project rolls up to with their target dates. Highlight any
+      dependency on the critical path.
+  - title: Reporting and Velocity
+    prompt: >
+      Throughput and velocity per iteration, cycle time and lead
+      time, burndown / burnup against the committed scope, aging
+      of in-progress items, and the top recurring sources of
+      delay.
+    output_format: table
+export:
+  - markdown
+  - csv

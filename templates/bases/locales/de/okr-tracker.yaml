@@ -1,0 +1,52 @@
+id: okr-tracker-base-v1-de
+name: OKR-Tracker
+type: base
+description: Datenbank für Objectives und Key Results mit Zielen, messbaren Key Results, Ausrichtung, Check-ins und Bewertung
+locale: de
+profile:
+  - executive
+  - product-manager
+  - team-lead
+sections:
+  - title: Objectives
+    prompt: >
+      Pro Objective: eine qualitative, inspirierende Aussage, was
+      erreicht werden soll, der Verantwortliche, die Ebene
+      (Unternehmen / Team / Einzelperson), der Zyklus (z. B.
+      Q3 GJ25) und das übergeordnete Objective, dem es zugeordnet
+      ist. Objectives sind richtungsweisend, keine Kennzahlen.
+      Antworten Sie auf Deutsch.
+  - title: Key Results
+    prompt: >
+      Pro Key Result: ein messbares Ergebnis mit Ausgangswert,
+      Zielwert und Einheit; die Metrikquelle; der Verantwortliche;
+      und der Typ (Kennzahl / Meilenstein). Jedes Objective sollte
+      2–5 Key Results haben, die zusammen seine Erreichung
+      belegen. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Initiativen und Ausrichtung
+    prompt: >
+      Die Initiativen, Projekte oder Wetten, die finanziert
+      werden, um jedes Key Result voranzubringen, die
+      verantwortlichen Teams und wie sich jedes Objective
+      horizontal mit Peer-Teams und vertikal mit den
+      Unternehmenszielen ausrichtet. Markieren Sie Key Results
+      ohne unterstützende Initiative. Antworten Sie auf Deutsch.
+  - title: Check-ins und Zuversicht
+    prompt: >
+      Pro Check-in (wöchentlich oder zweiwöchentlich): aktueller
+      Wert, Prozent zum Ziel, ein Zuversichtswert (z. B. 0,0–1,0
+      oder rot / gelb / grün), der Trend seit dem letzten Check-in
+      und eine kurze Erläuterung zu Hindernissen und nächsten
+      Schritten. Antworten Sie auf Deutsch.
+  - title: Bewertung und Retrospektive
+    prompt: >
+      Endbewertung pro Key Result und Objective am Zyklusende
+      (z. B. 0,0–1,0), ob es verbindlich oder ambitioniert war,
+      die Gründe für Über- oder Untererfüllung und die
+      Erkenntnisse für den nächsten Zyklus. Antworten Sie auf
+      Deutsch.
+    output_format: table
+export:
+  - markdown
+  - csv

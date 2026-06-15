@@ -1,0 +1,54 @@
+id: brief-v1-es
+name: Briefing
+type: document
+description: Briefing conciso de proyecto o campaña con objetivo, audiencia, entregables y cronograma (versión en español)
+locale: es
+sections:
+  - title: Título y contexto del briefing
+    prompt: >
+      Título, solicitante, responsable, fecha objetivo de finalización y
+      un resumen de contexto de un párrafo. Responda en español.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Objetivo
+    prompt: >
+      Un único objetivo claro que el briefing busca lograr. Evite los
+      briefings con múltiples objetivos: divídalos si es necesario.
+      Responda en español.
+  - title: Antecedentes
+    prompt: >
+      Antecedentes relevantes y trabajo previo, citando material de
+      origen. Incluya enlaces a investigaciones, briefings anteriores o
+      artefactos relacionados. Responda en español.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Audiencia
+    prompt: >
+      A quién está dirigido el entregable. Incluya las audiencias
+      primaria, secundaria y cualquiera explícitamente fuera de alcance.
+      Responda en español.
+  - title: Mensajes clave
+    prompt: >
+      Los 3 a 5 mensajes principales que deben transmitirse en el
+      entregable. Cada uno debe ser una sola oración. Responda en español.
+  - title: Entregables
+    prompt: >
+      Enumere los entregables concretos esperados, con formato, extensión
+      y canal. Responda en español.
+  - title: Métricas de éxito
+    prompt: >
+      Cómo se medirá el éxito. De forma cuantitativa cuando sea posible.
+      Responda en español.
+  - title: Cronograma e hitos
+    prompt: >
+      Hitos clave con fechas objetivo y responsables. Responda en español.
+  - title: Restricciones
+    prompt: >
+      Restricciones de presupuesto, alcance, marca, legales u otras que el
+      entregable debe respetar. Responda en español.
+export:
+  - markdown
+  - html
+  - pdf

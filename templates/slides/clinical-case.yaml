@@ -1,0 +1,58 @@
+id: clinical-case-deck-v1
+name: Clinical Case Presentation
+type: slides
+description: Grand-rounds style clinical case deck — history, exam, workup, diagnosis, management, and teaching points
+format: marp
+theme: default
+paginate: true
+industry:
+  - healthcare
+profile:
+  - physician
+  - resident
+  - nurse
+sections:
+  - title: Case Title and Objectives
+    prompt: >
+      A de-identified case title and the three learning objectives for
+      the audience. Confirm that all patient identifiers have been
+      removed per privacy policy.
+  - title: Presentation and History
+    prompt: >
+      The chief complaint, history of present illness, relevant past
+      medical/surgical/family/social history, and medications. Keep it
+      chronological and de-identified.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Examination and Vitals
+    prompt: >
+      Vital signs and the pertinent positive and negative physical
+      exam findings, organized by system.
+    output_format: table
+  - title: Investigations
+    prompt: >
+      Labs, imaging, and other studies with their results and the
+      clinical reasoning for ordering each. Flag the values that drove
+      the diagnosis.
+  - title: Differential and Diagnosis
+    prompt: >
+      The differential diagnosis ranked by likelihood with supporting
+      and refuting features, then the working/final diagnosis and how
+      it was confirmed.
+    output_format: bullets
+  - title: Management
+    prompt: >
+      The treatment plan, the evidence or guideline it follows, the
+      patient's course, and the disposition. Note shared
+      decision-making with the patient where relevant.
+  - title: Teaching Points
+    prompt: >
+      Three evidence-based take-home points, each with a citation to a
+      guideline or primary source, plus one pitfall to avoid.
+    output_format: numbered_list
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,60 @@
+id: all-hands-deck-v1
+name: All-Hands / Town Hall
+type: slides
+description: Company all-hands deck — wins, metrics, strategy reminder, people updates, and open Q&A
+format: marp
+theme: default
+paginate: true
+profile:
+  - ceo
+  - executive
+  - people-ops
+sections:
+  - title: Opening and Theme
+    prompt: >
+      Title slide naming the period (month/quarter) and a single
+      memorable theme for the meeting. One sentence on why this period
+      mattered to set the emotional tone.
+  - title: Mission and Strategy Reminder
+    prompt: >
+      Re-anchor everyone on the mission and the small number of
+      company priorities for the year. Keep it to one slide — repetition
+      is the point, not novelty.
+  - title: Wins Since Last Time
+    prompt: >
+      Celebrate the period's biggest wins across product, customers,
+      and team. Name the people or squads responsible. Pair each win
+      with the metric or customer it moved.
+  - title: Company Metrics
+    prompt: >
+      The handful of company-level metrics everyone should track:
+      revenue or growth, customers, product usage, and one efficiency
+      metric. Show actual vs. plan and the trend, plainly.
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Spotlight / Deep Dive
+    prompt: >
+      One short deep dive: a team demoing new work, a customer story,
+      or a strategic bet getting more investment. Make it concrete and
+      human, not a status report.
+  - title: People Updates
+    prompt: >
+      New hires and welcomes, internal moves and promotions, work
+      anniversaries, and any org changes — framed around what it means
+      for how the team works together.
+  - title: What's Next
+    prompt: >
+      The two or three things the company is focused on next period and
+      what success looks like, so everyone leaves knowing where to push.
+  - title: Q&A
+    prompt: >
+      Curate the top questions submitted in advance with honest, direct
+      answers, and leave room for live questions. Note any answers that
+      will be followed up in writing.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

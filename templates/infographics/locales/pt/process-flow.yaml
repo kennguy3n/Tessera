@@ -1,0 +1,35 @@
+id: infographic-process-flow-v1-pt
+name: Fluxo de processo
+type: infographic
+description: |-
+  Um infográfico horizontal que visualiza um processo de 3 a 5 etapas como um fluxo: entrada → etapas intermediárias → resultado. Cada etapa é uma seção com um ícone e uma breve descrição. (versão em português)
+locale: pt
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: Etapa 1 — Entrada
+  prompt: |-
+    Descreva o ponto de entrada do processo: quem ou o que o inicia e quais dados ou entradas são necessários. Responda em português.
+  icon_suggestion: log-in
+- title: Etapa 2 — Processamento
+  prompt: |-
+    Descreva a etapa central de processamento: o que transforma a entrada. Responda em português.
+  icon_suggestion: settings
+- title: Etapa 3 — Decisão
+  prompt: |-
+    Descreva a etapa de decisão ou roteamento que determina o resultado da ramificação. Responda em português.
+  icon_suggestion: git-branch
+- title: Etapa 4 — Ação
+  prompt: Descreva a ação tomada depois que a decisão é tomada. Responda em português.
+  icon_suggestion: zap
+- title: Etapa 5 — Resultado
+  prompt: Descreva o resultado final entregue ao usuário final. Responda em português.
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

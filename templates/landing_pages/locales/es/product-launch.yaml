@@ -1,0 +1,56 @@
+id: landing-product-launch-v1-es
+name: Página de lanzamiento de producto
+type: landing_page
+description: |-
+  Página de aterrizaje para el día del lanzamiento, con hero, problema/solución, funciones, prueba social, precios y una llamada a la acción principal contundente (versión en español)
+locale: es
+default_icon_set: lucide
+color_scheme:
+  primary: '#4F46E5'
+  secondary: '#0EA5E9'
+  accent: '#F97316'
+profile:
+- product-marketing
+- marketing
+sections:
+- title: Hero
+  prompt: |-
+    Un titular orientado al beneficio que nombre qué hay de nuevo y para quién es, un subtítulo de 15 a 25 palabras y una CTA principal («Empezar» / «Pruébalo gratis»). Añada una CTA secundaria para una demo o un vídeo. Responda en español.
+  icon_suggestion: rocket
+- title: Problema
+  prompt: |-
+    El problema que resuelve el lanzamiento, planteado con las palabras del visitante. Dos o tres frases que le hagan sentirse comprendido antes de cualquier argumento de venta. Responda en español.
+  icon_suggestion: alert-circle
+- title: Solución
+  prompt: |-
+    Cómo resuelve el producto ese problema, con la única capacidad reveladora que lo distingue. Cíñase al resultado, no a una ficha técnica. Responda en español.
+  icon_suggestion: sparkles
+- title: Funciones clave
+  prompt: |-
+    De tres a seis tarjetas de funciones. Por tarjeta: un icono, un título centrado en el beneficio y una frase sobre lo que hace. Ordénelas según lo que más le importa al visitante objetivo. Responda en español.
+  icon_suggestion: layout-grid
+- title: Prueba social
+  prompt: |-
+    Logotipos, un testimonio destacado con nombre/cargo/empresa y una métrica principal. Tómelos de las fuentes conectadas y atribuya cada cita. Responda en español.
+  icon_suggestion: quote
+  required_sources:
+  - type: local
+    min: 1
+- title: Cómo funciona
+  prompt: |-
+    Tres pasos sencillos desde el registro hasta el valor, cada uno con una etiqueta breve y una línea, para que el visitante vea con qué rapidez alcanza el resultado. Responda en español.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Precios
+  prompt: |-
+    Los niveles de precios o un único precio claro, qué incluye y cualquier oferta de lanzamiento con su fecha de caducidad. Reduzca el riesgo con una línea de prueba o garantía. Responda en español.
+  icon_suggestion: tag
+  output_format: table
+- title: CTA final y preguntas frecuentes
+  prompt: |-
+    Una CTA de cierre que reafirme el beneficio principal, más cuatro a seis preguntas frecuentes que aborden objeciones (seguridad, precios, migración, soporte). Responda en español.
+  icon_suggestion: check-circle
+export:
+- markdown
+- html
+- pdf

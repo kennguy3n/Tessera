@@ -1,0 +1,44 @@
+id: course-catalog-base-v1
+name: Course Catalog
+type: base
+description: Academic course catalog base tracking courses, prerequisites, sections, instructors, and capacity
+industry:
+  - education
+profile:
+  - registrar
+  - department-chair
+  - school-administrator
+sections:
+  - title: Courses
+    prompt: >
+      Per course: course code, title, department, description,
+      credit hours, level (intro / intermediate / advanced /
+      graduate), delivery mode (in-person / online / hybrid), and
+      the learning outcomes.
+  - title: Prerequisites and Requirements
+    prompt: >
+      Prerequisite and co-requisite courses, minimum grade or
+      placement requirements, the program / degree requirements
+      the course satisfies, and any enrollment restrictions
+      (major-only, year level).
+  - title: Sections and Schedule
+    prompt: >
+      Per section: section number, term, meeting days and times,
+      room or platform, the instructor, and the start / end
+      dates. Flag scheduling and room conflicts.
+    output_format: table
+  - title: Instructors and Capacity
+    prompt: >
+      The assigned instructor and qualifications, seat capacity
+      vs. current enrollment, waitlist size, and the
+      cancellation threshold for under-enrolled sections.
+  - title: Materials and Assessment
+    prompt: >
+      Required textbooks and materials with estimated cost, the
+      assessment structure (exams / projects / participation
+      weighting), and the syllabus link or attachment per
+      section.
+    output_format: table
+export:
+  - markdown
+  - csv

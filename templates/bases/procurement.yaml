@@ -1,0 +1,49 @@
+id: procurement-base-v1
+name: Procurement and Purchase Orders
+type: base
+description: Procurement base tracking purchase requisitions, approvals, purchase orders, receipts, and supplier invoices
+industry:
+  - manufacturing
+  - retail
+  - government
+profile:
+  - procurement-manager
+  - operations
+  - finance-manager
+sections:
+  - title: Purchase Requisitions
+    prompt: >
+      Per requisition: requisition number, requester,
+      department, cost center, description of goods / services,
+      quantity, estimated unit cost and total, the budget line,
+      need-by date, and justification.
+  - title: Approvals and Authority
+    prompt: >
+      The approval workflow per requisition: approver chain by
+      spend threshold, current approval status (pending /
+      approved / rejected / returned), date of each decision,
+      and the delegation-of-authority rule that applies.
+  - title: Purchase Orders
+    prompt: >
+      Per PO: PO number, supplier, line items with quantity and
+      agreed price, currency, payment terms (e.g. Net 30),
+      incoterms / delivery terms, requested delivery date, and
+      status (issued / acknowledged / partially received /
+      closed / cancelled).
+    output_format: table
+  - title: Goods Receipt and Inspection
+    prompt: >
+      Per receipt: PO reference, quantity received, receipt
+      date, condition / inspection result, discrepancies
+      (short / over / damaged), and the three-way match status
+      (PO vs. receipt vs. invoice).
+  - title: Supplier Invoices and Payment
+    prompt: >
+      Per invoice: invoice number, supplier, PO reference,
+      amount, tax, due date, match status, approval, and payment
+      status (scheduled / paid / disputed). Track early-payment
+      discounts and aging.
+    output_format: table
+export:
+  - markdown
+  - csv
