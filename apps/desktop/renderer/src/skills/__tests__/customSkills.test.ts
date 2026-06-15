@@ -443,8 +443,7 @@ describe("defensive persistence", () => {
     const raw = serializeCustomSkillStore([
       good.skill,
       good.skill, // duplicate id → dropped
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { id: "builtin-x", name: "bad" } as any, // non-custom → dropped
+      { id: "builtin-x", name: "bad" } as unknown as Skill, // non-custom → dropped
     ]);
     const parsed = parseCustomSkillStore(raw);
     expect(parsed).not.toBeNull();
