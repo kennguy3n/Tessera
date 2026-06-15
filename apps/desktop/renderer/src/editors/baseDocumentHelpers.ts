@@ -36,6 +36,7 @@ import {
   sanitizeAppConfig,
 } from "./baseviews/appmode/appConfig";
 import type {
+  BaseAppConfig,
   BaseContent,
   BaseDocument,
   BaseField,
@@ -329,7 +330,21 @@ export function removeTable(doc: BaseDocument, tableId: string): BaseDocument {
   // nothing meaningful, drop the block so the legacy byte-compatibility
   // invariant (no `app` key ⇒ serialize as `{ fields, records }`) holds.
   if (!doc.app) return stripped;
-  const reconciled = reconcileAppConfig(doc.app, stripped);
+  // A form/widget that targeted the *removed* table must be dropped, not
+  // silently healed onto a survivor. `resolveTableId`'s single-table
+  // healing exists for load-time id re-minting (a legacy single-table base
+  // regenerates its table id each load), not for genuine deletion — so
+  // prune references to the deleted table here, before reconciling what
+  // remains against the surviving tables.
+  const prunedApp: BaseAppConfig = {
+    ...doc.app,
+    forms: doc.app.forms.filter((f) => f.tableId !== tableId),
+    dashboard: {
+      ...doc.app.dashboard,
+      widgets: doc.app.dashboard.widgets.filter((w) => w.tableId !== tableId),
+    },
+  };
+  const reconciled = reconcileAppConfig(prunedApp, stripped);
   return {
     ...stripped,
     app: isMeaningfulAppConfig(reconciled) ? reconciled : undefined,

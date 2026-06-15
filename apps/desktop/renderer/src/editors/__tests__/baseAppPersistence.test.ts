@@ -168,6 +168,43 @@ describe("addTable / removeTable — app config preservation", () => {
     expect(next.app?.dashboard.widgets.map((w) => w.id)).toEqual(["w0"]);
   });
 
+  it("removeTable down to a single table drops refs to the removed table (no healing onto the survivor)", () => {
+    const base = singleTableDocument(legacy);
+    const t0 = base.tables[0].id;
+    const d1 = addTable(base, "Reps");
+    const t1 = d1.activeTableId;
+    const app: BaseAppConfig = {
+      name: "CRM",
+      forms: [
+        {
+          id: "fSurvivor",
+          name: "Deal intake",
+          tableId: t0,
+          fieldNames: ["Name"],
+        },
+        { id: "fRemoved", name: "Rep intake", tableId: t1, fieldNames: [] },
+      ],
+      dashboard: {
+        widgets: [
+          { id: "wSurvivor", kind: "count", tableId: t0 },
+          { id: "wRemoved", kind: "count", tableId: t1 },
+        ],
+      },
+    };
+    // 2 -> 1: `resolveTableId`'s single-table healing would otherwise
+    // re-point the removed table's form/widget onto the sole survivor.
+    // They must be dropped, and the survivor's refs kept on its own id.
+    const next = removeTable({ ...d1, app }, t1);
+    expect(next.tables).toHaveLength(1);
+    expect(next.tables[0].id).toBe(t0);
+    expect(next.app?.forms.map((f) => f.id)).toEqual(["fSurvivor"]);
+    expect(next.app?.forms.every((f) => f.tableId === t0)).toBe(true);
+    expect(next.app?.dashboard.widgets.map((w) => w.id)).toEqual(["wSurvivor"]);
+    expect(next.app?.dashboard.widgets.every((w) => w.tableId === t0)).toBe(
+      true,
+    );
+  });
+
   it("removeTable drops the app entirely when reconcile leaves nothing meaningful", () => {
     const base = singleTableDocument(legacy);
     const d1 = addTable(base, "Reps");

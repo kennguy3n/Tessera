@@ -81,6 +81,16 @@ export default function AppShell({
   // current selection disappeared (e.g. its form / table was removed).
   const page: AppPage = pages.find((p) => p.id === selectedPageId) ?? pages[0];
 
+  // When the selection disappears the render above falls back to
+  // `pages[0]`, but `selectedPageId` keeps the now-dangling id so no nav
+  // link gets `aria-current` (the highlight vanishes). Sync the selection
+  // to the page actually shown so the nav highlight tracks it.
+  useEffect(() => {
+    if (!pages.some((p) => p.id === selectedPageId)) {
+      setSelectedPageId(page.id);
+    }
+  }, [pages, selectedPageId, page.id]);
+
   // Keep the active table aligned with table / form pages so the
   // index-based mutation handlers stay correct even if a render slipped
   // through before the click handler's switch committed.
