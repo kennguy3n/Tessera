@@ -722,6 +722,21 @@ export default function DocumentEditor({
     imageInputRef.current?.click();
   }, []);
 
+  // Stable open/close handlers for the template gallery. The gallery feeds
+  // onClose straight into useFocusTrap's effect deps, so an inline arrow here
+  // would re-arm the focus trap on every DocumentEditor re-render — its
+  // cleanup would move focus out of the gallery and overwrite the saved
+  // trigger, so focus would later be restored to the wrong element. Stable
+  // identities (setState setters are stable) avoid that churn.
+  const openTemplateGallery = useCallback(
+    () => setTemplateGalleryOpen(true),
+    [],
+  );
+  const closeTemplateGallery = useCallback(
+    () => setTemplateGalleryOpen(false),
+    [],
+  );
+
   // Insert a template's HTML into the document. An empty document is
   // replaced wholesale (so the starter *becomes* the document); otherwise
   // the content is inserted at the cursor. Routing through
@@ -889,7 +904,7 @@ export default function DocumentEditor({
         onInsertImage={insertImageFromToolbar}
         onOpenFind={() => setFindOpen(true)}
         onOpenAi={() => openAi()}
-        onOpenTemplates={() => setTemplateGalleryOpen(true)}
+        onOpenTemplates={openTemplateGallery}
         onAddComment={addCommentFromToolbar}
         onToggleComments={() => setCommentsOpen((open) => !open)}
         commentsOpen={commentsOpen}
@@ -960,7 +975,7 @@ export default function DocumentEditor({
       />
       <DocumentTemplateGallery
         isOpen={templateGalleryOpen}
-        onClose={() => setTemplateGalleryOpen(false)}
+        onClose={closeTemplateGallery}
         onApply={applyTemplateContent}
         onSaveCurrent={saveCurrentAsTemplate}
         onEditTemplate={editCustomTemplate}
