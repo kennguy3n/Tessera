@@ -92,6 +92,12 @@ const MASTER_RELS_PATH = "ppt/slideMasters/_rels/slideMaster1.xml.rels";
 // Image extensions a browser/Electron renderer can actually display. EMF /
 // WMF / TIFF (common in Office decks) are skipped — they would render as a
 // broken image — so the logo path stays best-effort and silent on failure.
+//
+// SVG is safe here only because the logo is rendered exclusively via
+// `<img src=…>` (a passive context: embedded scripts don't run, handlers
+// are inert, external subresources aren't fetched). If the logo render
+// context ever changes to `innerHTML` / `<iframe>` / `<object>`, SVG must
+// be sanitised or dropped from this map.
 const WEB_IMAGE_MIME: Readonly<Record<string, string>> = {
   png: "image/png",
   jpg: "image/jpeg",
