@@ -30,7 +30,8 @@ import {
   type SheetAiAction,
 } from "../sheetAiHelpers";
 import { SkillRunnerPanel } from "./SkillRunnerPanel";
-import { getSkillsForSurface } from "../../skills/skillLibrary";
+import { SkillManagerControls } from "./SkillManagerControls";
+import { useCustomSkills } from "../../skills/useCustomSkills";
 
 type SheetPanelMode = "quick" | "skills";
 
@@ -71,7 +72,11 @@ export function SheetAiPanel({
     useModelStream();
 
   const [panelMode, setPanelMode] = useState<SheetPanelMode>("quick");
-  const sheetSkills = useMemo(() => getSkillsForSurface("sheet"), []);
+  const { skillsForSurface } = useCustomSkills();
+  const sheetSkills = useMemo(
+    () => skillsForSurface("sheet"),
+    [skillsForSurface],
+  );
   const [skillId, setSkillId] = useState(sheetSkills[0]?.id ?? "");
   const selectedSkill =
     sheetSkills.find((s) => s.id === skillId) ?? sheetSkills[0];
@@ -243,6 +248,11 @@ export function SheetAiPanel({
               </select>
             </label>
           )}
+          <SkillManagerControls
+            surface="sheet"
+            selectedId={selectedSkill.id}
+            onSelect={setSkillId}
+          />
           <SkillRunnerPanel
             key={selectedSkill.id}
             skill={selectedSkill}

@@ -7,6 +7,7 @@ import {
   type SkillRunnerHandle,
 } from "../components/SkillRunnerPanel";
 import { DOCUMENT_DELIBERATE_DRAFT } from "../../skills/skillLibrary";
+import type { Skill } from "../../skills/skillTypes";
 import type { GenerateChunk } from "../../types/ipc";
 import { _resetActiveGenerationForTests } from "../../hooks/useActiveGeneration";
 
@@ -197,6 +198,93 @@ describe("SkillRunnerPanel", () => {
     expect(await screen.findByTestId("skill-final")).toHaveTextContent(
       "final two",
     );
+  });
+
+  it("re-seeds inputs when an in-place edit changes the skill's input set", async () => {
+    installModel([]);
+    const v1: Skill = {
+      id: "custom-reseed",
+      name: "Reseed",
+      description: "desc",
+      surfaces: ["document"],
+      inputs: [{ id: "topic", label: "Topic" }],
+      steps: [
+        {
+          id: "s1",
+          title: "Draft",
+          kind: "draft",
+          instruction: "Write {{topic}}.",
+          output: "result",
+        },
+      ],
+    };
+    // Same skill.id, but the author added an input -> the input signature
+    // changes, so the panel must re-seed (clearing in-progress fields).
+    const v2: Skill = {
+      ...v1,
+      inputs: [
+        { id: "topic", label: "Topic" },
+        { id: "audience", label: "Audience" },
+      ],
+      steps: [
+        { ...v1.steps[0], instruction: "Write {{topic}} for {{audience}}." },
+      ],
+    };
+    const user = userEvent.setup();
+    const { container, rerender } = render(<SkillRunnerPanel skill={v1} />);
+
+    const topic = container.querySelector(
+      "#skill-input-topic",
+    ) as HTMLInputElement;
+    await user.type(topic, "Some entered text");
+    expect(topic.value).toBe("Some entered text");
+
+    rerender(<SkillRunnerPanel skill={v2} />);
+    expect(
+      (container.querySelector("#skill-input-topic") as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (container.querySelector("#skill-input-audience") as HTMLInputElement)
+        .value,
+    ).toBe("");
+  });
+
+  it("preserves entered inputs when only the instruction changes", async () => {
+    installModel([]);
+    const v1: Skill = {
+      id: "custom-keep",
+      name: "Keep",
+      description: "desc",
+      surfaces: ["document"],
+      inputs: [{ id: "topic", label: "Topic" }],
+      steps: [
+        {
+          id: "s1",
+          title: "Draft",
+          kind: "draft",
+          instruction: "Write {{topic}}.",
+          output: "result",
+        },
+      ],
+    };
+    // Same input signature (only the instruction text differs), so the
+    // panel must NOT re-seed: in-progress field values are preserved.
+    const v2: Skill = {
+      ...v1,
+      steps: [{ ...v1.steps[0], instruction: "Rewrite {{topic}} crisply." }],
+    };
+    const user = userEvent.setup();
+    const { container, rerender } = render(<SkillRunnerPanel skill={v1} />);
+
+    const topic = container.querySelector(
+      "#skill-input-topic",
+    ) as HTMLInputElement;
+    await user.type(topic, "Kept text");
+
+    rerender(<SkillRunnerPanel skill={v2} />);
+    expect(
+      (container.querySelector("#skill-input-topic") as HTMLInputElement).value,
+    ).toBe("Kept text");
   });
 
   it("exposes an imperative handle that runs and cancels the skill", async () => {

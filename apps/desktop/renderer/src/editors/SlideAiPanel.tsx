@@ -48,7 +48,8 @@ import {
 import type { Slide, SlideLayout } from "./slideEditorTypes";
 import { getSlideLayout } from "./slideLayouts";
 import { SkillRunnerPanel } from "./components/SkillRunnerPanel";
-import { getSkillsForSurface } from "../skills/skillLibrary";
+import { SkillManagerControls } from "./components/SkillManagerControls";
+import { useCustomSkills } from "../skills/useCustomSkills";
 
 /**
  * Probe the local text model's availability so the AI surface can gate
@@ -124,7 +125,11 @@ export function SlideDeckGenerator({
   const [noUsableDeck, setNoUsableDeck] = useState(false);
 
   const [panelMode, setPanelMode] = useState<DeckPanelMode>("quick");
-  const deckSkills = useMemo(() => getSkillsForSurface("slide"), []);
+  const { skillsForSurface } = useCustomSkills();
+  const deckSkills = useMemo(
+    () => skillsForSurface("slide"),
+    [skillsForSurface],
+  );
   const [skillId, setSkillId] = useState(deckSkills[0]?.id ?? "");
   const selectedSkill =
     deckSkills.find((s) => s.id === skillId) ?? deckSkills[0];
@@ -283,6 +288,11 @@ export function SlideDeckGenerator({
               </select>
             </label>
           )}
+          <SkillManagerControls
+            surface="slide"
+            selectedId={selectedSkill.id}
+            onSelect={setSkillId}
+          />
           <SkillRunnerPanel
             key={selectedSkill.id}
             skill={selectedSkill}
