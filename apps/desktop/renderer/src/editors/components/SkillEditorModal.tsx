@@ -17,12 +17,16 @@ import Modal from "../../components/Modal";
 import {
   ALL_SKILL_SURFACES,
   ALL_STEP_KINDS,
+  MAX_CHECK_MAX_CHARS,
+  MAX_CHECK_MIN_LINES,
   MAX_SKILL_INPUTS,
   MAX_SKILL_STEPS,
   availableVarsBeforeStep,
+  emptyCheckDraft,
   emptyInputDraft,
   emptyStepDraft,
   slugifyVar,
+  type CustomCheckDraft,
   type CustomSkillDraft,
 } from "../../skills/customSkills";
 import { useCustomSkills } from "../../skills/useCustomSkills";
@@ -71,7 +75,11 @@ function cloneDraft(d: CustomSkillDraft): CustomSkillDraft {
     description: d.description,
     surfaces: [...d.surfaces],
     inputs: d.inputs.map((i) => ({ ...i })),
-    steps: d.steps.map((s) => ({ ...s, inputsFrom: [...s.inputsFrom] })),
+    steps: d.steps.map((s) => ({
+      ...s,
+      inputsFrom: [...s.inputsFrom],
+      check: { ...(s.check ?? emptyCheckDraft()) },
+    })),
   };
 }
 
@@ -157,6 +165,15 @@ export function SkillEditorModal({
             : [...row.inputsFrom, varName],
         };
       }),
+    }));
+  const updateStepCheck = (index: number, next: Partial<CustomCheckDraft>) =>
+    setDraft((d) => ({
+      ...d,
+      steps: d.steps.map((row, i) =>
+        i === index
+          ? { ...row, check: { ...(row.check ?? emptyCheckDraft()), ...next } }
+          : row,
+      ),
     }));
 
   const inputTokens = useMemo(
@@ -309,6 +326,7 @@ export function SkillEditorModal({
           {draft.steps.map((row, i) => {
             const available = availableVarsBeforeStep(draft, i);
             const outputToken = slugifyVar(row.output) || `step_${i + 1}`;
+            const check = row.check ?? emptyCheckDraft();
             return (
               <div
                 key={i}
@@ -401,6 +419,117 @@ export function SkillEditorModal({
                     aria-label={`Step ${i + 1} output variable`}
                   />
                 </label>
+                <details
+                  className="skill-editor-check-group"
+                  data-testid={`skill-editor-step-${i}-check`}
+                >
+                  <summary>Acceptance check (optional)</summary>
+                  <p className="ai-panel-hint">
+                    Reject this step&rsquo;s output unless it passes these
+                    deterministic rules. A failed check triggers one automatic
+                    repair attempt before the result is kept.
+                  </p>
+                  <div className="skill-editor-check-grid">
+                    <label className="skill-editor-check">
+                      <input
+                        type="checkbox"
+                        checked={check.nonEmpty}
+                        onChange={(e) =>
+                          updateStepCheck(i, { nonEmpty: e.target.checked })
+                        }
+                        data-testid={`skill-editor-step-${i}-check-nonempty`}
+                      />
+                      <span>Must not be empty</span>
+                    </label>
+                    <label className="skill-editor-check">
+                      <input
+                        type="checkbox"
+                        checked={check.forbidFences}
+                        onChange={(e) =>
+                          updateStepCheck(i, { forbidFences: e.target.checked })
+                        }
+                        data-testid={`skill-editor-step-${i}-check-forbidfences`}
+                      />
+                      <span>No Markdown code fences</span>
+                    </label>
+                  </div>
+                  <div className="skill-editor-check-grid">
+                    <label className="ai-panel-field skill-editor-check-num">
+                      <span>Min non-empty lines</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={MAX_CHECK_MIN_LINES}
+                        className="input"
+                        value={check.minLines}
+                        onChange={(e) =>
+                          updateStepCheck(i, { minLines: e.target.value })
+                        }
+                        placeholder="—"
+                        data-testid={`skill-editor-step-${i}-check-minlines`}
+                        aria-label={`Step ${i + 1} minimum non-empty lines`}
+                      />
+                    </label>
+                    <label className="ai-panel-field skill-editor-check-num">
+                      <span>Max characters</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={MAX_CHECK_MAX_CHARS}
+                        className="input"
+                        value={check.maxChars}
+                        onChange={(e) =>
+                          updateStepCheck(i, { maxChars: e.target.value })
+                        }
+                        placeholder="—"
+                        data-testid={`skill-editor-step-${i}-check-maxchars`}
+                        aria-label={`Step ${i + 1} maximum characters`}
+                      />
+                    </label>
+                  </div>
+                  <label className="ai-panel-field">
+                    <span>Must start with</span>
+                    <input
+                      type="text"
+                      className="input"
+                      value={check.mustStartWith}
+                      onChange={(e) =>
+                        updateStepCheck(i, { mustStartWith: e.target.value })
+                      }
+                      placeholder="e.g. ="
+                      data-testid={`skill-editor-step-${i}-check-startswith`}
+                      aria-label={`Step ${i + 1} must start with`}
+                    />
+                  </label>
+                  <label className="ai-panel-field">
+                    <span>Must include (one per line)</span>
+                    <textarea
+                      className="ai-panel-prompt"
+                      rows={2}
+                      value={check.mustInclude}
+                      onChange={(e) =>
+                        updateStepCheck(i, { mustInclude: e.target.value })
+                      }
+                      placeholder="Each line is a required substring"
+                      data-testid={`skill-editor-step-${i}-check-include`}
+                      aria-label={`Step ${i + 1} required substrings`}
+                    />
+                  </label>
+                  <label className="ai-panel-field">
+                    <span>Must not include (one per line)</span>
+                    <textarea
+                      className="ai-panel-prompt"
+                      rows={2}
+                      value={check.forbidContains}
+                      onChange={(e) =>
+                        updateStepCheck(i, { forbidContains: e.target.value })
+                      }
+                      placeholder="Each line is a forbidden substring"
+                      data-testid={`skill-editor-step-${i}-check-forbid`}
+                      aria-label={`Step ${i + 1} forbidden substrings`}
+                    />
+                  </label>
+                </details>
               </div>
             );
           })}

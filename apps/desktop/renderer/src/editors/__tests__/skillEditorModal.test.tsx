@@ -7,9 +7,11 @@ import {
   MAX_SKILL_INPUTS,
   MAX_SKILL_STEPS,
   emptyDraft,
+  skillToDraft,
   type CustomSkillDraft,
 } from "../../skills/customSkills";
 import { __resetCustomSkillsStoreForTests } from "../../skills/useCustomSkills";
+import { getSkillById } from "../../skills/skillLibrary";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -182,5 +184,81 @@ describe("SkillEditorModal", () => {
     expect(
       screen.getByTestId("skill-editor-step-1-from-topic"),
     ).toBeInTheDocument();
+  });
+
+  it("renders the per-step acceptance check controls", () => {
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={emptyDraft("document")}
+        title="New skill"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("skill-editor-step-0-check")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skill-editor-step-0-check-nonempty"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skill-editor-step-0-check-startswith"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skill-editor-step-0-check-include"),
+    ).toBeInTheDocument();
+  });
+
+  it("authors an acceptance check and includes it on the saved skill", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={nearlyValidDraft()}
+        title="New skill"
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    await user.type(screen.getByTestId("skill-editor-name"), "Formula writer");
+    // Open the collapsible check section before interacting with its controls.
+    await user.click(screen.getByText("Acceptance check (optional)"));
+    await user.click(screen.getByTestId("skill-editor-step-0-check-nonempty"));
+    await user.type(
+      screen.getByTestId("skill-editor-step-0-check-startswith"),
+      "=",
+    );
+    await user.click(screen.getByTestId("skill-editor-save"));
+
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    const saved = onSaved.mock.calls[0][0];
+    expect(saved.steps[0].check).toEqual({
+      nonEmpty: true,
+      mustStartWith: "=",
+    });
+  });
+
+  it("shows a duplicated built-in's preserved check values", () => {
+    const sheet = getSkillById("sheet-intent-formula-selfcheck");
+    expect(sheet).toBeDefined();
+    if (!sheet) return;
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={skillToDraft(sheet)}
+        title="Duplicate skill"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    // The built-in's "propose" step requires an "=" prefix; the editor must
+    // surface that preserved value in the Must-start-with field.
+    expect(
+      screen.getByTestId("skill-editor-step-0-check-startswith"),
+    ).toHaveValue("=");
+    expect(
+      screen.getByTestId("skill-editor-step-0-check-nonempty"),
+    ).toBeChecked();
   });
 });

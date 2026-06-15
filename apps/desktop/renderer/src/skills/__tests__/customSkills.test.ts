@@ -5,12 +5,19 @@ import {
   ALL_STEP_KINDS,
   CUSTOM_SKILLS_STORAGE_KEY,
   CUSTOM_SKILL_ID_PREFIX,
+  MAX_CHECK_MAX_CHARS,
+  MAX_CHECK_MIN_LINES,
+  MAX_CHECK_TERM,
+  MAX_CHECK_TERMS,
   MAX_CUSTOM_SKILLS,
   MAX_SKILL_INPUTS,
   MAX_SKILL_NAME,
   MAX_SKILL_STEPS,
   availableVarsBeforeStep,
   buildCustomSkill,
+  buildStepCheck,
+  checkToDraft,
+  emptyCheckDraft,
   emptyDraft,
   isCustomSkillId,
   loadCustomSkills,
@@ -25,9 +32,11 @@ import {
   skillToDraft,
   slugifyVar,
   upsertCustomSkill,
+  type CustomCheckDraft,
   type CustomSkillDraft,
 } from "../customSkills";
-import type { Skill } from "../skillTypes";
+import { getSkillById } from "../skillLibrary";
+import type { Skill, SkillStepCheck } from "../skillTypes";
 
 let idCounter = 0;
 const fixedId = () => `${CUSTOM_SKILL_ID_PREFIX}fixed-${++idCounter}`;
@@ -466,5 +475,235 @@ describe("defensive persistence", () => {
     expect(loadCustomSkills()).toEqual([]);
     window.localStorage.setItem(CUSTOM_SKILLS_STORAGE_KEY, "{broken");
     expect(loadCustomSkills()).toEqual([]);
+  });
+});
+
+describe("acceptance check authoring — buildStepCheck", () => {
+  function checkDraft(
+    overrides: Partial<CustomCheckDraft> = {},
+  ): CustomCheckDraft {
+    return { ...emptyCheckDraft(), ...overrides };
+  }
+
+  it("returns no check (and no errors) for an all-empty / undefined draft", () => {
+    expect(buildStepCheck(undefined)).toEqual({ errors: [] });
+    expect(buildStepCheck(emptyCheckDraft())).toEqual({ errors: [] });
+  });
+
+  it("emits only the fields the author actually set", () => {
+    const { check, errors } = buildStepCheck(
+      checkDraft({ nonEmpty: true, forbidFences: true }),
+    );
+    expect(errors).toEqual([]);
+    expect(check).toEqual({ nonEmpty: true, forbidFences: true });
+    // Unset booleans/strings never appear (keeps the persisted blob minimal).
+    expect(check).not.toHaveProperty("minLines");
+    expect(check).not.toHaveProperty("mustStartWith");
+  });
+
+  it("parses numeric fields and preserves the exact prefix (case-sensitive)", () => {
+    const { check, errors } = buildStepCheck(
+      checkDraft({ minLines: "3", maxChars: "200", mustStartWith: "=SUM(" }),
+    );
+    expect(errors).toEqual([]);
+    expect(check).toEqual({
+      minLines: 3,
+      maxChars: 200,
+      mustStartWith: "=SUM(",
+    });
+  });
+
+  it("splits list fields by line, drops blank lines, dedupes, keeps content verbatim", () => {
+    const { check } = buildStepCheck(
+      checkDraft({
+        // Whitespace inside a term is significant to the engine, so it is
+        // preserved (only whitespace-only lines are dropped). The two "## "
+        // lines are identical and collapse to one.
+        mustInclude: "## \n\nIntro\n## ",
+        forbidContains: "TODO\nTODO\n  FIXME  ",
+      }),
+    );
+    expect(check?.mustInclude).toEqual(["## ", "Intro"]);
+    expect(check?.forbidContains).toEqual(["TODO", "  FIXME  "]);
+  });
+
+  it("caps a list at MAX_CHECK_TERMS terms", () => {
+    const many = Array.from({ length: MAX_CHECK_TERMS + 5 }, (_, i) => `t${i}`);
+    const { check } = buildStepCheck(
+      checkDraft({ mustInclude: many.join("\n") }),
+    );
+    expect(check?.mustInclude).toHaveLength(MAX_CHECK_TERMS);
+    expect(check?.mustInclude?.[0]).toBe("t0");
+  });
+
+  it("clamps an over-long term to MAX_CHECK_TERM characters", () => {
+    const long = "x".repeat(MAX_CHECK_TERM + 50);
+    const { check } = buildStepCheck(checkDraft({ mustStartWith: long }));
+    expect(check?.mustStartWith?.length).toBe(MAX_CHECK_TERM);
+  });
+
+  it("reports a friendly error for non-numeric / out-of-range numbers", () => {
+    const bad = buildStepCheck(
+      checkDraft({
+        minLines: "abc",
+        maxChars: String(MAX_CHECK_MAX_CHARS + 1),
+      }),
+    );
+    expect(bad.check).toBeUndefined();
+    expect(bad.errors).toHaveLength(2);
+    expect(bad.errors[0]).toMatch(
+      new RegExp(`whole number from 1 to ${MAX_CHECK_MIN_LINES}`),
+    );
+    expect(bad.errors[1]).toMatch(
+      new RegExp(`whole number from 1 to ${MAX_CHECK_MAX_CHARS}`),
+    );
+  });
+
+  it("rejects zero and negative numbers (only 1..max are valid)", () => {
+    expect(buildStepCheck(checkDraft({ minLines: "0" })).errors).toHaveLength(
+      1,
+    );
+    expect(buildStepCheck(checkDraft({ maxChars: "-4" })).errors).toHaveLength(
+      1,
+    );
+  });
+
+  it("surfaces a step-prefixed check error through buildCustomSkill", () => {
+    const result = buildCustomSkill(
+      draft({
+        steps: [
+          {
+            title: "Draft",
+            kind: "draft",
+            instruction: "Write about {{topic}}.",
+            output: "result",
+            inputsFrom: [],
+            outputContract: "",
+            check: { ...emptyCheckDraft(), minLines: "not-a-number" },
+          },
+        ],
+      }),
+      fixedId,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.join(" ")).toMatch(/Step 1 \("Draft"\) check:/);
+  });
+
+  it("a valid authored check survives buildCustomSkill onto the step", () => {
+    const result = buildCustomSkill(
+      draft({
+        surfaces: ["sheet"],
+        steps: [
+          {
+            title: "Formula",
+            kind: "draft",
+            instruction: "Write a formula for {{topic}}.",
+            output: "formula",
+            inputsFrom: [],
+            outputContract: "",
+            check: {
+              ...emptyCheckDraft(),
+              nonEmpty: true,
+              mustStartWith: "=",
+            },
+          },
+        ],
+      }),
+      fixedId,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.skill.steps[0].check).toEqual({
+      nonEmpty: true,
+      mustStartWith: "=",
+    });
+    expect(validateSkill(result.skill)).toEqual([]);
+  });
+});
+
+describe("acceptance check authoring — round-trips", () => {
+  it("checkToDraft is the inverse of buildStepCheck for a populated check", () => {
+    const original: SkillStepCheck = {
+      nonEmpty: true,
+      forbidFences: true,
+      minLines: 2,
+      maxChars: 500,
+      mustStartWith: "## ",
+      mustInclude: ["alpha", "beta"],
+      forbidContains: ["TODO"],
+    };
+    const rebuilt = buildStepCheck(checkToDraft(original)).check;
+    expect(rebuilt).toEqual(original);
+  });
+
+  it("checkToDraft is defensive against arbitrary stored JSON", () => {
+    expect(checkToDraft(undefined)).toEqual(emptyCheckDraft());
+    expect(checkToDraft(null)).toEqual(emptyCheckDraft());
+    expect(checkToDraft([1, 2, 3])).toEqual(emptyCheckDraft());
+    expect(
+      checkToDraft({ minLines: -1, maxChars: NaN, mustInclude: "not-array" }),
+    ).toEqual(emptyCheckDraft());
+  });
+
+  it("skillToDraft preserves a built-in's checks so a duplicate keeps them", () => {
+    const sheet = getSkillById("sheet-intent-formula-selfcheck");
+    expect(sheet).toBeDefined();
+    if (!sheet) return;
+    const back = buildCustomSkill(skillToDraft(sheet), fixedId);
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    // The "propose" + "repair" steps require an "=" prefix in the built-in.
+    expect(back.skill.steps[0].check).toEqual({
+      nonEmpty: true,
+      mustStartWith: "=",
+    });
+    expect(back.skill.steps[2].check).toEqual({
+      nonEmpty: true,
+      mustStartWith: "=",
+    });
+  });
+
+  it("a custom skill's checks survive a full localStorage save/load round-trip", () => {
+    const built = buildCustomSkill(
+      draft({
+        surfaces: ["slide"],
+        steps: [
+          {
+            title: "Outline",
+            kind: "plan",
+            instruction: "Outline {{topic}}.",
+            output: "outline",
+            inputsFrom: [],
+            outputContract: "",
+            check: {
+              ...emptyCheckDraft(),
+              nonEmpty: true,
+              forbidFences: true,
+              mustInclude: "## ",
+            },
+          },
+        ],
+      }),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    saveCustomSkills([built.skill]);
+    const [loaded] = loadCustomSkills();
+    // The trailing space in "## " is significant to the engine, so it must
+    // survive the round-trip verbatim.
+    expect(loaded.steps[0].check).toEqual({
+      nonEmpty: true,
+      forbidFences: true,
+      mustInclude: ["## "],
+    });
+    // And re-editing the loaded skill keeps the check in the draft.
+    expect(skillToDraft(loaded).steps[0].check).toEqual({
+      ...emptyCheckDraft(),
+      nonEmpty: true,
+      forbidFences: true,
+      mustInclude: "## ",
+    });
   });
 });
