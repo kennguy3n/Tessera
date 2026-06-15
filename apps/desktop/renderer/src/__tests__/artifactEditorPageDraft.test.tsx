@@ -62,6 +62,11 @@ const artifactWithUnresolvableIcon = {
 
 describe("ArtifactEditorPage live-draft export", () => {
   beforeEach(() => {
+    // Reset persisted Brand Kits (and any other localStorage state) before
+    // every test. A kit saved by one test must not leak into a later slide
+    // export and silently inject brand CSS — this guarantees isolation
+    // regardless of test execution order or future additions to this file.
+    window.localStorage.clear();
     window.tessera.artifacts.get = vi.fn().mockResolvedValue(baseArtifact);
     window.tessera.artifacts.exportArtifact = vi.fn().mockResolvedValue({
       // CSV is a sheet-appropriate non-icon-aware format. Markdown was
@@ -246,8 +251,8 @@ describe("ArtifactEditorPage live-draft export", () => {
     // Persist a Brand Kit and point a slide deck at it. Exporting to each of
     // the three slide Marp formats must route through `exportMarp` (NOT the
     // generic Rust exporters) with the brand CSS injected into the markdown,
-    // so the brand survives end-to-end for every format.
-    window.localStorage.clear();
+    // so the brand survives end-to-end for every format. (localStorage is
+    // cleared in beforeEach, so this test starts from a known-empty store.)
     const built = buildBrandKit(
       {
         ...emptyBrandKitDraft("aurora"),
