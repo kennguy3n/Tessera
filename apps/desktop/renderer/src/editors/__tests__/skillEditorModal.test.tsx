@@ -331,4 +331,79 @@ describe("SkillEditorModal", () => {
       1200,
     );
   });
+
+  it("renders the per-step output-format-contract control", () => {
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={emptyDraft("document")}
+        title="New skill"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByTestId("skill-editor-step-0-contract"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skill-editor-step-0-contract-text"),
+    ).toBeInTheDocument();
+    // A step with no contract advertises the section as optional.
+    expect(
+      screen.getByText(/Output format contract \(optional\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("authors an output format contract and includes it on the saved skill", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={nearlyValidDraft()}
+        title="New skill"
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    await user.type(screen.getByTestId("skill-editor-name"), "Bullet planner");
+    await user.click(screen.getByText(/Output format contract/));
+    await user.type(
+      screen.getByTestId("skill-editor-step-0-contract-text"),
+      "FORMAT: one '- ' bullet per line, no prose.",
+    );
+    await user.click(screen.getByTestId("skill-editor-save"));
+
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    const saved = onSaved.mock.calls[0][0];
+    expect(saved.steps[0].outputContract).toBe(
+      "FORMAT: one '- ' bullet per line, no prose.",
+    );
+  });
+
+  it("surfaces a duplicated built-in's preserved output contract", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    expect(doc).toBeDefined();
+    if (!doc) return;
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={skillToDraft(doc)}
+        title="Duplicate skill"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    // Step 0 ("plan") ships a FORMAT contract; the editor must surface it
+    // verbatim and flag that step's section as already set. (The built-in
+    // has multiple contract-bearing steps, so scope the summary to step 0.)
+    expect(screen.getByTestId("skill-editor-step-0-contract-text")).toHaveValue(
+      doc.steps[0].outputContract,
+    );
+    const step0 = screen.getByTestId("skill-editor-step-0");
+    expect(
+      within(step0).getByText(/Output format contract \(set\)/),
+    ).toBeInTheDocument();
+  });
 });

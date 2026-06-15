@@ -4920,18 +4920,21 @@
   background: var(--color-bg-page);
 }
 .skill-editor-check-group,
-.skill-editor-sampling-group {
+.skill-editor-sampling-group,
+.skill-editor-contract-group {
   margin-top: var(--spacing-xs);
 }
 /* `<details>` ignores non-block `display` values before Chromium 131 (the
    shell ships 126), so space the stacked children with margins instead of a
    flex `gap` — matching the `.connector-scopes` details pattern. */
 .skill-editor-check-group > * + *,
-.skill-editor-sampling-group > * + * {
+.skill-editor-sampling-group > * + *,
+.skill-editor-contract-group > * + * {
   margin-top: var(--spacing-xs);
 }
 .skill-editor-check-group > summary,
-.skill-editor-sampling-group > summary {
+.skill-editor-sampling-group > summary,
+.skill-editor-contract-group > summary {
   cursor: pointer;
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);

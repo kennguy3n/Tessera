@@ -424,6 +424,35 @@ export function SkillEditorModal({
                   />
                 </label>
                 <details
+                  className="skill-editor-contract-group"
+                  data-testid={`skill-editor-step-${i}-contract`}
+                >
+                  <summary>
+                    Output format contract
+                    {row.outputContract.trim() ? " (set)" : " (optional)"}
+                  </summary>
+                  <p className="ai-panel-hint">
+                    Appended to this step&rsquo;s prompt to pin the exact output
+                    shape (e.g. &ldquo;FORMAT: 3&ndash;6 &lsquo;- &rsquo;
+                    bullets, no prose&rdquo;). Tight format discipline is the
+                    single biggest reliability lever for a small local model.
+                  </p>
+                  <label className="ai-panel-field">
+                    <span>Required output format</span>
+                    <textarea
+                      className="ai-panel-prompt"
+                      rows={2}
+                      value={row.outputContract}
+                      onChange={(e) =>
+                        updateStep(i, { outputContract: e.target.value })
+                      }
+                      placeholder="e.g. FORMAT: one '- ' bullet per line, no sub-bullets, no prose."
+                      data-testid={`skill-editor-step-${i}-contract-text`}
+                      aria-label={`Step ${i + 1} output format contract`}
+                    />
+                  </label>
+                </details>
+                <details
                   className="skill-editor-sampling-group"
                   data-testid={`skill-editor-step-${i}-sampling`}
                 >
