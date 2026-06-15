@@ -1,0 +1,55 @@
+id: employment-contract-uk-v1
+name: Employment Contract / Statement of Particulars (UK)
+type: document
+description: UK contract of employment incorporating the written statement of particulars required by the Employment Rights Act 1996 s.1
+industry:
+  - legal
+profile:
+  - hr-manager
+  - attorney
+sections:
+  - title: Parties and Job Title
+    prompt: >
+      Identify the employer and employee, the job title, and a brief
+      description of the duties, as required by the s.1 statement.
+  - title: Start Date and Continuous Employment
+    prompt: >
+      State the date employment begins and the date continuous employment
+      begins (including any period with a previous employer that counts).
+  - title: Pay and Hours
+    prompt: >
+      State the rate of pay (and how it is calculated), the pay interval,
+      the normal working hours, and any provisions for variable hours or
+      overtime.
+  - title: Holiday and Leave
+    prompt: >
+      Set out the holiday entitlement (including public holidays) and how
+      accrued holiday pay is calculated on termination, plus other leave
+      entitlements.
+  - title: Place of Work
+    prompt: >
+      State the place(s) of work, any mobility or remote-working
+      provisions, and whether the employee is required to work outside the UK.
+  - title: Notice Periods
+    prompt: >
+      State the notice the employer and employee must give to terminate
+      employment, consistent with statutory minimum notice.
+  - title: Pension and Sick Pay
+    prompt: >
+      Describe the pension arrangements (including auto-enrolment) and the
+      terms relating to incapacity for work and sick pay, including
+      Statutory Sick Pay.
+  - title: Disciplinary and Grievance
+    prompt: >
+      Summarise the disciplinary and grievance procedures (or where they
+      can be found), as required by the statement of particulars.
+  - title: Statutory Particulars Checklist
+    prompt: >
+      Confirm that all particulars required by Employment Rights Act 1996
+      s.1 are included (including any probationary period, training
+      entitlement, and benefits), flagging any item to be provided separately.
+    output_format: bullets
+export:
+  - markdown
+  - pdf
+  - docx

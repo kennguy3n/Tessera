@@ -1,0 +1,56 @@
+id: risk-assessment-v1
+name: Risk Assessment
+type: document
+description: General-purpose risk assessment with a scored risk register, treatment plan, residual risk, and approval
+profile:
+  - risk-manager
+  - analyst
+  - compliance-officer
+sections:
+  - title: Scope and Context
+    prompt: >
+      State what is being assessed (project, process, system, or change),
+      the boundaries of the assessment, the stakeholders, and the date and
+      owner of the assessment.
+  - title: Methodology and Scoring
+    prompt: >
+      Describe the risk methodology: how likelihood and impact are scored
+      (e.g. 1-5 scales), how the two combine into a risk rating, and the
+      thresholds that define low / medium / high / critical.
+  - title: Risk Register
+    prompt: >
+      Produce a risk register table with columns: ID, risk description,
+      cause, likelihood, impact, inherent rating, and owner. List each
+      identified risk as a row.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 0
+  - title: Risk Analysis
+    prompt: >
+      Analyse the most significant risks in prose: the scenario, the
+      drivers, and why each is rated as it is. Highlight any
+      interdependencies or systemic risks.
+  - title: Treatment Plan
+    prompt: >
+      For each material risk, state the treatment decision (avoid, reduce,
+      transfer, accept), the specific controls or actions, the owner, and
+      the target date.
+    output_format: table
+  - title: Residual Risk
+    prompt: >
+      State the expected residual rating once treatments are in place and
+      whether that residual level is within the organisation's risk appetite.
+  - title: Monitoring and Review
+    prompt: >
+      Describe how risks and treatments will be monitored, the review
+      cadence, the escalation triggers, and the indicators that would
+      reopen the assessment.
+  - title: Approval
+    prompt: >
+      Record the risk owner and approver sign-off, including any explicit
+      acceptance of residual risks that exceed appetite.
+export:
+  - markdown
+  - pdf
+  - docx

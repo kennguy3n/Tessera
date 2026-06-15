@@ -1,0 +1,53 @@
+id: job-description-v1
+name: Job Description
+type: document
+description: Structured job description with responsibilities, qualifications, compensation, and an equal-opportunity statement
+profile:
+  - hr-manager
+  - recruiter
+sections:
+  - title: Role Overview
+    prompt: >
+      State the job title, department, reporting line, location and work
+      model (on-site / hybrid / remote), and a two-to-three sentence
+      summary of the role's purpose and how it contributes to the team.
+  - title: Key Responsibilities
+    prompt: >
+      List the core responsibilities as outcome-oriented bullet points.
+      Lead each with an action verb and focus on what the person will own,
+      not a list of tasks.
+    output_format: bullets
+  - title: Required Qualifications
+    prompt: >
+      List the must-have qualifications: experience, skills, education or
+      equivalent, and any certifications or licences genuinely required to
+      perform the role.
+    output_format: bullets
+  - title: Preferred Qualifications
+    prompt: >
+      List the nice-to-have qualifications that distinguish strong
+      candidates but are not disqualifying if absent.
+    output_format: bullets
+  - title: Compensation and Benefits
+    prompt: >
+      Summarise the pay range, bonus or equity if applicable, and the
+      headline benefits. Include a pay range where local pay-transparency
+      norms or laws apply.
+  - title: Working Conditions
+    prompt: >
+      Describe the working environment, travel expectations, physical
+      requirements, and any non-standard hours, stated in inclusive,
+      job-related terms.
+  - title: Equal Opportunity Statement
+    prompt: >
+      Include an equal-opportunity / non-discrimination statement and a
+      note that reasonable accommodations are available in the hiring process.
+  - title: How to Apply
+    prompt: >
+      Explain how to apply, what to submit, the application deadline if
+      any, and what candidates can expect from the process.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

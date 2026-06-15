@@ -1,0 +1,26 @@
+id: memo-v1-zh
+name: 备忘录
+type: document
+description: 包含背景、决定和行动项的内部沟通备忘录（中文版）
+locale: zh
+sections:
+  - title: 主题
+    prompt: >
+      清晰简洁地说明本备忘录的主题。请用中文回答。
+  - title: 背景
+    prompt: >
+      提供收件人理解所传达决定或信息所需的背景情况。请用中文回答。
+  - title: 决定或信息
+    prompt: >
+      说明所传达的决定、政策变更或信息。具体说明发生了什么变化以及
+      原因。请用中文回答。
+  - title: 影响
+    prompt: >
+      描述谁会受到影响以及如何受到影响。包含变更的时间安排。
+      请用中文回答。
+  - title: 行动项
+    prompt: >
+      列出具体的行动项，并注明负责人和截止日期。请用中文回答。
+export:
+  - markdown
+  - html

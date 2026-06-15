@@ -1,0 +1,57 @@
+id: construction-daily-report-v1
+name: Construction Daily Report
+type: document
+description: Daily construction site report logging labor, equipment, work completed, deliveries, delays, and safety events
+industry:
+  - construction
+profile:
+  - site-manager
+  - superintendent
+  - foreman
+sections:
+  - title: Project and Date
+    prompt: >
+      Record the project name and number, the report date, the day number,
+      the author, and the overall site status for the day.
+  - title: Weather and Site Conditions
+    prompt: >
+      Document the weather (temperature, precipitation, wind) and ground or
+      site conditions, noting any conditions that affected or stopped work.
+  - title: Labor on Site
+    prompt: >
+      Record the workforce in a table: trade or subcontractor, company,
+      headcount, and hours worked. Total the labor at the bottom.
+    output_format: table
+  - title: Equipment on Site
+    prompt: >
+      List the plant and equipment on site, whether it was operating, idle,
+      or down, and any equipment delivered or removed.
+    output_format: table
+  - title: Work Completed Today
+    prompt: >
+      Summarise the work performed by area and trade, with progress against
+      plan and any quantities installed.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Materials Delivered
+    prompt: >
+      Log materials received: item, quantity, supplier, and any quality or
+      shortage issues on delivery.
+    output_format: table
+  - title: Delays, Issues and Safety
+    prompt: >
+      Record delays and their cause, any issues or disputes, near-misses,
+      first-aid cases, and reportable safety incidents, with actions taken.
+  - title: Visitors and Inspections
+    prompt: >
+      Note site visitors, inspections, and tests carried out, including the
+      inspector, scope, and outcome.
+  - title: Notes and Plan for Tomorrow
+    prompt: >
+      Capture any additional notes and the planned activities, crews, and
+      deliveries for the next working day.
+export:
+  - markdown
+  - pdf
+  - docx

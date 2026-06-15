@@ -1,0 +1,53 @@
+id: performance-review-v1
+name: Performance Review
+type: document
+description: Balanced employee performance review covering goal achievement, competencies, development areas, and next-period goals
+profile:
+  - hr-manager
+  - supervisor
+sections:
+  - title: Employee and Review Period
+    prompt: >
+      Capture the employee name, role, manager, and the review period, plus
+      the type of review (annual, mid-year, probationary) and the date.
+  - title: Summary Rating
+    prompt: >
+      Provide an overall summary of performance for the period and the
+      overall rating, with a one-paragraph justification grounded in
+      specific outcomes rather than generalities.
+  - title: Goal Achievement
+    prompt: >
+      Review each goal or objective set for the period in a table: goal,
+      target, result, and status (exceeded / met / partially met / not met),
+      with evidence for each.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 0
+  - title: Competency Assessment
+    prompt: >
+      Assess the role-relevant competencies (e.g. communication,
+      collaboration, technical skill, leadership) with a rating and a
+      concrete example for each.
+  - title: Strengths
+    prompt: >
+      Highlight the employee's key strengths and contributions during the
+      period, with specific examples and their impact.
+    output_format: bullets
+  - title: Development Areas
+    prompt: >
+      Identify development areas constructively, framed as opportunities,
+      with the support or resources the organisation will provide.
+    output_format: bullets
+  - title: Goals for Next Period
+    prompt: >
+      Set SMART goals for the next period, each with a measure of success
+      and a target date, aligned to team and organisational priorities.
+  - title: Comments and Sign-off
+    prompt: >
+      Provide space for manager comments, employee comments and
+      self-assessment, and sign-off by both parties with dates.
+export:
+  - markdown
+  - pdf
+  - docx

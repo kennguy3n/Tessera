@@ -1,0 +1,53 @@
+id: tax-memo-uk-v1
+name: Tax Position Memorandum (UK / HMRC)
+type: document
+description: UK tax memorandum analysing a tax position against UK legislation and HMRC guidance, with a risk rating and disclosure assessment
+industry:
+  - finance
+  - legal
+profile:
+  - tax-advisor
+  - accountant
+  - attorney
+sections:
+  - title: Issue
+    prompt: >
+      State the precise tax question(s) presented, framed around the
+      determinative facts and the relevant UK tax legislation.
+    output_format: numbered_list
+  - title: Facts
+    prompt: >
+      Set out the relevant facts objectively: the taxpayer, residence and
+      domicile where relevant, the transaction, amounts, dates, and
+      structure. Distinguish facts from assumptions and cite source documents.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Applicable Law and Guidance
+    prompt: >
+      Identify the controlling authority: the relevant statutes (e.g. ITA
+      2007, CTA 2009/2010, TCGA 1992, VATA 1994), case law, and HMRC
+      published guidance, noting the weight and currency of each.
+  - title: Analysis
+    prompt: >
+      Apply the law to the facts, consider HMRC's likely view and any
+      contrary arguments, and explain the reasoning that supports the
+      conclusion.
+  - title: Conclusion and Risk Rating
+    prompt: >
+      State the conclusion for each issue and a risk rating for the
+      position, reflecting the likelihood of a successful HMRC challenge.
+  - title: Disclosure Considerations
+    prompt: >
+      Assess any disclosure obligations or considerations (e.g. DOTAS,
+      uncertain tax treatment for large businesses, or disclosure in the
+      return) relevant to the position.
+  - title: Limitations
+    prompt: >
+      State the scope and limitations: the memo relies on the stated facts
+      and the law and HMRC practice current at the date, and does not
+      address non-UK tax unless stated.
+export:
+  - markdown
+  - pdf
+  - docx

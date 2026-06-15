@@ -1,0 +1,65 @@
+id: breach-notification-us-v1
+name: Data Breach Notification (US State Laws)
+type: document
+description: Data breach notification workpaper for US state breach-notification laws, mapping obligations and consumer notices by jurisdiction
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - security-officer
+sections:
+  - title: Incident Identification
+    prompt: >
+      Record the incident reference, the date of discovery, the date(s) of
+      the breach, the systems involved, and the internal and external
+      counsel coordinating the response.
+  - title: Description and Timeline
+    prompt: >
+      Describe what happened and provide a timeline from initial
+      compromise through discovery, containment, and remediation.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Types of Information Involved
+    prompt: >
+      Identify the types of personal information involved (e.g. name with
+      SSN, financial account, driver's license, medical, or credentials)
+      and whether it was encrypted, as this drives notification triggers.
+    output_format: bullets
+  - title: Affected Residents by State
+    prompt: >
+      Quantify the number of affected residents by US state or territory,
+      since obligations and thresholds vary by jurisdiction.
+    output_format: table
+  - title: Risk of Harm Analysis
+    prompt: >
+      Assess the risk of harm to affected individuals, noting which state
+      statutes permit a risk-of-harm exception to notification and the
+      conclusion for each.
+  - title: Notification Obligations by Jurisdiction
+    prompt: >
+      Build a table mapping each applicable jurisdiction to its notification
+      deadline, the trigger, whether the Attorney General or a regulator
+      must be notified, and any consumer-reporting-agency thresholds.
+    output_format: table
+  - title: Regulator and Attorney General Notices
+    prompt: >
+      Summarise the content and timing of notices to Attorneys General,
+      regulators, or consumer reporting agencies required by the applicable
+      statutes.
+  - title: Consumer Notification Content
+    prompt: >
+      Draft the elements of the consumer notice required by the applicable
+      states (what happened, information involved, steps taken, what
+      individuals can do, contact information).
+  - title: Remediation Offered
+    prompt: >
+      Document any credit monitoring or identity-protection services
+      offered, the duration, and how affected individuals enrol, along with
+      the action items and owners to close the response.
+    output_format: table
+export:
+  - markdown
+  - pdf
+  - docx

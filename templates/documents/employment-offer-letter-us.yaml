@@ -1,0 +1,50 @@
+id: employment-offer-letter-us-v1
+name: Employment Offer Letter (US, At-Will)
+type: document
+description: US at-will employment offer letter covering compensation, benefits, classification, contingencies, and acceptance
+industry:
+  - legal
+profile:
+  - hr-manager
+  - recruiter
+  - attorney
+sections:
+  - title: Position and Start Date
+    prompt: >
+      State the job title, department, reporting manager, work location or
+      remote arrangement, full- or part-time status, and the anticipated
+      start date.
+  - title: Compensation and Pay Frequency
+    prompt: >
+      State the base salary or hourly rate, the pay frequency, the FLSA
+      classification (exempt or non-exempt), and any bonus, commission, or
+      equity, with the conditions attached.
+  - title: Benefits Summary
+    prompt: >
+      Summarise the benefits the employee is eligible for (health,
+      retirement/401(k), paid time off, leave) and the eligibility dates,
+      noting that plan documents govern.
+  - title: At-Will Employment Statement
+    prompt: >
+      Include a clear at-will employment statement: employment is for no
+      fixed term and may be terminated by either party at any time, with or
+      without cause or notice, and that the letter is not a contract of
+      continued employment.
+  - title: Contingencies
+    prompt: >
+      State the conditions to which the offer is subject, such as
+      satisfactory background check, reference checks, and verification of
+      eligibility to work in the US via Form I-9.
+  - title: Confidentiality and Intellectual Property
+    prompt: >
+      Reference any confidentiality, invention-assignment, or restrictive
+      covenant agreements the employee must sign as a condition of
+      employment, consistent with applicable state law.
+  - title: Acceptance and Signature
+    prompt: >
+      Provide the offer expiration date and signature blocks for the
+      candidate and the company, with dates, to indicate acceptance.
+export:
+  - markdown
+  - pdf
+  - docx

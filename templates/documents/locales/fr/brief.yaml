@@ -1,0 +1,54 @@
+id: brief-v1-fr
+name: Brief
+type: document
+description: Brief concis de projet ou de campagne avec objectif, audience, livrables et calendrier (version française)
+locale: fr
+sections:
+  - title: Titre et contexte du brief
+    prompt: >
+      Titre, demandeur, responsable, date cible d'achèvement et un résumé
+      de contexte d'un paragraphe. Répondez en français.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Objectif
+    prompt: >
+      Un seul objectif clair que le brief vise à atteindre. Évitez les
+      briefs à objectifs multiples : scindez-les si nécessaire.
+      Répondez en français.
+  - title: Contexte
+    prompt: >
+      Contexte pertinent et travaux antérieurs, en citant le matériel
+      source. Incluez des liens vers des recherches, des briefs antérieurs
+      ou des artefacts liés. Répondez en français.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Audience
+    prompt: >
+      À qui le livrable est destiné. Incluez les audiences principale,
+      secondaire et toute audience explicitement hors périmètre.
+      Répondez en français.
+  - title: Messages clés
+    prompt: >
+      Les 3 à 5 messages principaux qui doivent ressortir du livrable.
+      Chacun doit tenir en une phrase. Répondez en français.
+  - title: Livrables
+    prompt: >
+      Listez les livrables concrets attendus, avec leur format, leur
+      longueur et leur canal. Répondez en français.
+  - title: Indicateurs de réussite
+    prompt: >
+      Comment la réussite sera mesurée. De façon quantitative lorsque
+      c'est possible. Répondez en français.
+  - title: Calendrier et jalons
+    prompt: >
+      Jalons clés avec dates cibles et responsables. Répondez en français.
+  - title: Contraintes
+    prompt: >
+      Contraintes de budget, de périmètre, de marque, juridiques ou autres
+      que le livrable doit respecter. Répondez en français.
+export:
+  - markdown
+  - html
+  - pdf

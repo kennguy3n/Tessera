@@ -1,0 +1,49 @@
+id: project-plan-v1-pt
+name: Plano de Projeto
+type: document
+description: Plano de projeto abrangente com cronograma, marcos, responsáveis e riscos (versão em português)
+locale: pt
+sections:
+  - title: Resumo do projeto
+    prompt: >
+      Resumo executivo de um parágrafo incluindo o objetivo, o escopo, o
+      responsável, a data-alvo de conclusão e o status atual.
+      Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Objetivos e critérios de sucesso
+    prompt: >
+      Liste os objetivos (como é o sucesso) e os critérios mensuráveis
+      pelos quais o projeto será avaliado. Responda em português.
+  - title: Escopo
+    prompt: >
+      Especifique o que está dentro do escopo, fora do escopo e
+      explicitamente adiado. Cite material de origem quando relevante.
+      Responda em português.
+  - title: Marcos e cronograma
+    prompt: >
+      Tabela de marcos com data-alvo, entregável, responsável e critérios
+      de aceitação. Inclua notas sobre o caminho crítico.
+      Responda em português.
+  - title: Recursos e equipe
+    prompt: >
+      Liste os membros da equipe, seus papéis e alocações, e quaisquer
+      dependências interfuncionais. Responda em português.
+  - title: Riscos e mitigações
+    prompt: >
+      Catalogue os principais riscos com probabilidade, impacto,
+      responsável e a mitigação planejada. Responda em português.
+  - title: Dependências
+    prompt: >
+      Documente as dependências externas e internas com responsável e
+      status. Sinalize os bloqueios. Responda em português.
+  - title: Plano de comunicação
+    prompt: >
+      Descreva a cadência de reuniões, a frequência dos relatórios de
+      status e os caminhos de escalonamento. Responda em português.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

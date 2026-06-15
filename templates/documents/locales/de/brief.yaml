@@ -1,0 +1,58 @@
+id: brief-v1-de
+name: Briefing
+type: document
+description: Prägnantes Projekt- oder Kampagnen-Briefing mit Ziel, Zielgruppe, Liefergegenständen und Zeitplan (deutsche Version)
+locale: de
+sections:
+  - title: Titel und Kontext des Briefings
+    prompt: >
+      Titel, Auftraggeber, Verantwortlicher, geplanter
+      Fertigstellungstermin und eine Kontextzusammenfassung in einem
+      Absatz. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Ziel
+    prompt: >
+      Ein einziges klares Ziel, das mit dem Briefing erreicht werden soll.
+      Vermeiden Sie Briefings mit mehreren Zielen – teilen Sie sie bei
+      Bedarf auf. Antworten Sie auf Deutsch.
+  - title: Hintergrund
+    prompt: >
+      Relevanter Hintergrund und Vorarbeiten, unter Angabe von
+      Quellenmaterial. Fügen Sie Links zu Recherchen, früheren Briefings
+      oder verwandten Artefakten hinzu. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Zielgruppe
+    prompt: >
+      Für wen der Liefergegenstand bestimmt ist. Nennen Sie die primäre,
+      die sekundäre und alle ausdrücklich ausgeschlossenen Zielgruppen.
+      Antworten Sie auf Deutsch.
+  - title: Kernbotschaften
+    prompt: >
+      Die 3 bis 5 wichtigsten Botschaften, die im Liefergegenstand
+      vermittelt werden müssen. Jede sollte aus einem Satz bestehen.
+      Antworten Sie auf Deutsch.
+  - title: Liefergegenstände
+    prompt: >
+      Listen Sie die erwarteten konkreten Liefergegenstände mit Format,
+      Umfang und Kanal auf. Antworten Sie auf Deutsch.
+  - title: Erfolgskennzahlen
+    prompt: >
+      Wie der Erfolg gemessen wird. Wo möglich quantitativ.
+      Antworten Sie auf Deutsch.
+  - title: Zeitplan und Meilensteine
+    prompt: >
+      Wichtige Meilensteine mit Zielterminen und Verantwortlichen.
+      Antworten Sie auf Deutsch.
+  - title: Rahmenbedingungen
+    prompt: >
+      Budget-, Umfangs-, Marken-, rechtliche oder sonstige
+      Rahmenbedingungen, die der Liefergegenstand einhalten muss.
+      Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - pdf

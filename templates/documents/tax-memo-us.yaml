@@ -1,0 +1,53 @@
+id: tax-memo-us-v1
+name: Tax Position Memorandum (US Federal / IRS)
+type: document
+description: US federal tax memorandum analysing a tax position against the Internal Revenue Code and authority, with a confidence level
+industry:
+  - finance
+  - legal
+profile:
+  - tax-advisor
+  - accountant
+  - attorney
+sections:
+  - title: Issue
+    prompt: >
+      State the precise tax question(s) presented, framed around the
+      determinative facts and the Internal Revenue Code provisions in play.
+    output_format: numbered_list
+  - title: Facts
+    prompt: >
+      Set out the relevant facts objectively, including the taxpayer, the
+      transaction, amounts, dates, and entity structure. Distinguish facts
+      from assumptions and cite the source documents.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Applicable Law and Authority
+    prompt: >
+      Identify the controlling authority: Internal Revenue Code sections,
+      Treasury Regulations, revenue rulings, and case law, noting the weight
+      and currency of each authority.
+  - title: Analysis
+    prompt: >
+      Apply the law to the facts, address contrary authority and
+      alternative positions, and explain the reasoning that leads to the
+      conclusion.
+  - title: Conclusion and Confidence Level
+    prompt: >
+      State the conclusion for each issue and the comfort level (e.g. more
+      likely than not, substantial authority, reasonable basis), as this
+      drives penalty protection.
+  - title: Disclosure Considerations
+    prompt: >
+      Assess whether disclosure is advisable or required (e.g. Form 8275 or
+      8275-R, reportable-transaction rules) to mitigate penalty exposure.
+  - title: Limitations
+    prompt: >
+      State the scope and limitations: the memo is based on the stated
+      facts and current law as of the date, is not a covered opinion unless
+      stated, and does not address state, local, or non-US tax.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,49 @@
+id: project-plan-v1-es
+name: Plan de Proyecto
+type: document
+description: Plan de proyecto integral con cronograma, hitos, responsables y riesgos (versión en español)
+locale: es
+sections:
+  - title: Resumen del proyecto
+    prompt: >
+      Resumen ejecutivo de un párrafo que incluya el objetivo, el
+      alcance, el responsable, la fecha objetivo de finalización y el
+      estado actual. Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Objetivos y criterios de éxito
+    prompt: >
+      Enumere los objetivos (cómo se ve el éxito) y los criterios
+      medibles con los que se evaluará el proyecto. Responda en español.
+  - title: Alcance
+    prompt: >
+      Especifique qué está dentro del alcance, fuera del alcance y
+      explícitamente aplazado. Cite material de origen cuando corresponda.
+      Responda en español.
+  - title: Hitos y cronograma
+    prompt: >
+      Tabla de hitos con fecha objetivo, entregable, responsable y
+      criterios de aceptación. Incluya notas sobre la ruta crítica.
+      Responda en español.
+  - title: Recursos y equipo
+    prompt: >
+      Enumere los miembros del equipo, sus roles y asignaciones, y
+      cualquier dependencia interfuncional. Responda en español.
+  - title: Riesgos y mitigaciones
+    prompt: >
+      Catalogue los principales riesgos con probabilidad, impacto,
+      responsable y la mitigación planificada. Responda en español.
+  - title: Dependencias
+    prompt: >
+      Documente las dependencias externas e internas con responsable y
+      estado. Señale los bloqueos. Responda en español.
+  - title: Plan de comunicación
+    prompt: >
+      Describa la cadencia de reuniones, la frecuencia de los informes de
+      estado y las vías de escalamiento. Responda en español.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

@@ -1,0 +1,52 @@
+id: privacy-notice-lgpd-v1
+name: Privacy Notice (Brazil LGPD)
+type: document
+description: Privacy notice meeting Brazil's Lei Geral de Protecao de Dados (LGPD) transparency and data-subject rights requirements
+industry:
+  - legal
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Controller and DPO Contact
+    prompt: >
+      Identify the controller (controlador) and the data protection officer
+      (encarregado), with contact details, as required by the LGPD.
+  - title: Personal Data Collected
+    prompt: >
+      Describe the categories of personal data and sensitive personal data
+      (dados pessoais sensiveis) collected, and the sources.
+  - title: Purposes and Legal Basis
+    prompt: >
+      State each purpose for processing and the corresponding legal basis
+      under LGPD Article 7 (and Article 11 for sensitive data), such as
+      consent, legitimate interest, or legal obligation.
+    output_format: table
+  - title: Sharing and International Transfer
+    prompt: >
+      Disclose with whom data is shared and any international transfers,
+      including the safeguards relied on for transfers outside Brazil.
+  - title: Retention and Elimination
+    prompt: >
+      State the retention periods and the criteria for elimination of
+      personal data once the purpose is fulfilled.
+  - title: Data Subject Rights
+    prompt: >
+      Explain the data-subject rights under LGPD Article 18 (confirmation,
+      access, correction, anonymisation, portability, deletion, information
+      on sharing, and revocation of consent).
+    output_format: bullets
+  - title: How to Exercise Rights
+    prompt: >
+      Describe how data subjects (titulares) can exercise their rights, how
+      requests are verified, and the response timelines.
+  - title: ANPD Complaint
+    prompt: >
+      Inform data subjects of their right to petition the Autoridade
+      Nacional de Protecao de Dados (ANPD) and how to contact the
+      controller about privacy concerns.
+export:
+  - markdown
+  - html
+  - pdf

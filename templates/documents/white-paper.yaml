@@ -1,0 +1,61 @@
+id: white-paper-v1
+name: White Paper
+type: document
+description: Authoritative long-form white paper that frames a problem, presents an approach, and backs it with evidence
+industry:
+  - creative
+profile:
+  - content-strategist
+  - marketing-manager
+  - analyst
+sections:
+  - title: Title and Executive Summary
+    prompt: >
+      Provide a compelling title and a one-page executive summary that
+      states the problem, the proposed approach, and the value to the
+      reader. A busy executive should grasp the thesis from this section alone.
+  - title: Problem Landscape
+    prompt: >
+      Describe the market or technical problem in depth: who is affected,
+      the cost of inaction, and the trends making it urgent. Cite credible
+      data from the provided sources.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Background and Context
+    prompt: >
+      Give the reader the context needed to evaluate the argument:
+      definitions, prior approaches, and why existing solutions fall
+      short. Remain vendor-neutral and analytical in tone.
+  - title: Proposed Approach
+    prompt: >
+      Present the recommended approach or framework. Explain how it works,
+      the principles behind it, and how it addresses the gaps identified
+      in the problem landscape.
+  - title: Evidence and Case Studies
+    prompt: >
+      Support the approach with evidence: benchmarks, case studies, or
+      data. Where a claim is made, cite the source. Use a table to compare
+      outcomes where it aids clarity.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 1
+  - title: Implementation Considerations
+    prompt: >
+      Outline what adopting the approach involves: prerequisites, phasing,
+      risks, and how to measure success. Be candid about trade-offs.
+  - title: Conclusion and Call to Action
+    prompt: >
+      Restate the thesis, summarise the evidence, and give the reader a
+      concrete, low-friction next step.
+  - title: References
+    prompt: >
+      List all cited works in a numbered reference list with a consistent
+      citation style.
+    output_format: numbered_list
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

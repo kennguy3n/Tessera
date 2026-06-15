@@ -1,0 +1,31 @@
+id: memo-v1-de
+name: Memo
+type: document
+description: Internes Kommunikationsmemo mit Kontext, Entscheidung und Maßnahmen (deutsche Version)
+locale: de
+sections:
+  - title: Betreff
+    prompt: >
+      Geben Sie den Betreff dieses Memos klar und prägnant an.
+      Antworten Sie auf Deutsch.
+  - title: Kontext
+    prompt: >
+      Stellen Sie den Hintergrundkontext bereit, den die Empfänger
+      benötigen, um die mitgeteilte Entscheidung oder Information zu
+      verstehen. Antworten Sie auf Deutsch.
+  - title: Entscheidung oder Information
+    prompt: >
+      Nennen Sie die Entscheidung, die Richtlinienänderung oder die
+      mitgeteilte Information. Seien Sie konkret, was sich ändert und
+      warum. Antworten Sie auf Deutsch.
+  - title: Auswirkung
+    prompt: >
+      Beschreiben Sie, wer betroffen ist und wie. Geben Sie den Zeitplan
+      für die Änderungen an. Antworten Sie auf Deutsch.
+  - title: Maßnahmen
+    prompt: >
+      Listen Sie konkrete Maßnahmen mit Verantwortlichen und Fristen auf.
+      Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html

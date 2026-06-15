@@ -1,0 +1,57 @@
+id: store-audit-report-v1
+name: Store Audit Report
+type: document
+description: Retail store operations audit report scoring compliance across safety, experience, inventory, and loss prevention
+industry:
+  - retail
+profile:
+  - store-manager
+  - auditor
+  - operations-manager
+sections:
+  - title: Store Identification
+    prompt: >
+      Record the store number and location, the audit date, the auditor,
+      the store manager, and the audit type (announced, unannounced,
+      follow-up).
+  - title: Audit Scope and Standard
+    prompt: >
+      State the scope of the audit and the standard or checklist it is
+      assessed against, including the pass threshold and scoring scheme.
+  - title: Compliance Findings
+    prompt: >
+      Record findings in a table: area, requirement, observation, status
+      (compliant / minor / major / critical), and score. Cover operations,
+      merchandising standards, and policy adherence.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 0
+  - title: Health, Safety and Loss Prevention
+    prompt: >
+      Document health-and-safety and loss-prevention observations: hazards,
+      emergency readiness, cash handling, security, and any incidents since
+      the last audit.
+  - title: Customer Experience
+    prompt: >
+      Assess the customer experience: cleanliness, staffing and service,
+      queue management, fitting rooms, and adherence to brand presentation
+      standards.
+  - title: Inventory and Shrinkage
+    prompt: >
+      Review inventory accuracy, stock-on-hand vs. system, known shrinkage,
+      damaged or expired stock, and replenishment discipline.
+  - title: Corrective Actions
+    prompt: >
+      List the required corrective actions in a table (finding, action,
+      owner, due date, priority), prioritising critical and major findings.
+    output_format: table
+  - title: Score and Sign-off
+    prompt: >
+      State the overall audit score and pass/fail outcome, summarise the
+      headline risks, and capture sign-off by the auditor and store manager
+      with dates.
+export:
+  - markdown
+  - pdf
+  - docx

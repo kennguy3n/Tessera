@@ -1,0 +1,66 @@
+id: dpia-gdpr-v1
+name: Data Protection Impact Assessment (EU GDPR)
+type: document
+description: DPIA under EU GDPR Articles 35-36 assessing necessity, risks to data subjects, and mitigations for high-risk processing
+industry:
+  - legal
+  - government
+profile:
+  - privacy-officer
+  - compliance-officer
+  - attorney
+sections:
+  - title: Processing Overview
+    prompt: >
+      Describe the processing operation, its purpose, the controller and
+      any processors, and why a DPIA is required under Article 35 (e.g.
+      large-scale, systematic monitoring, or special-category data).
+    required_sources:
+      - type: local
+        min: 0
+  - title: Necessity and Proportionality
+    prompt: >
+      Assess whether the processing is necessary and proportionate to the
+      purpose: data minimisation, accuracy, storage limitation, and
+      whether a less intrusive means could achieve the same outcome.
+  - title: Data Flows and Categories
+    prompt: >
+      Map the personal data: categories of data and data subjects, sources,
+      data flows, recipients, and retention periods. Use a table where it
+      aids clarity.
+    output_format: table
+  - title: Lawful Basis
+    prompt: >
+      Identify the lawful basis under Article 6 (and Article 9 for special
+      categories), and document how transparency and data-subject rights
+      are satisfied.
+  - title: Consultation
+    prompt: >
+      Record consultation with the Data Protection Officer and, where
+      appropriate, with data subjects or their representatives, and
+      summarise the advice received.
+  - title: Risk Assessment to Data Subjects
+    prompt: >
+      Assess the risks to the rights and freedoms of data subjects
+      (unauthorised access, loss, discrimination, reputational or financial
+      harm), scoring likelihood and severity for each risk.
+    output_format: table
+  - title: Mitigating Measures
+    prompt: >
+      For each risk, describe the technical and organisational measures
+      that reduce it (encryption, pseudonymisation, access controls,
+      minimisation), with an owner and the residual risk after mitigation.
+    output_format: table
+  - title: Residual Risk and Prior Consultation
+    prompt: >
+      State the residual risk. If a high residual risk remains and cannot
+      be mitigated, document the requirement to consult the supervisory
+      authority under Article 36 before processing begins.
+  - title: Outcome and Sign-off
+    prompt: >
+      Record the DPIA outcome, the DPO's advice, the approver and date, and
+      the date the DPIA will be reviewed.
+export:
+  - markdown
+  - pdf
+  - docx
