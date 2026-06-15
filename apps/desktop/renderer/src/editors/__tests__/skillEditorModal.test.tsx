@@ -261,4 +261,74 @@ describe("SkillEditorModal", () => {
       screen.getByTestId("skill-editor-step-0-check-nonempty"),
     ).toBeChecked();
   });
+
+  it("renders the per-step model-sampling controls", () => {
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={emptyDraft("document")}
+        title="New skill"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByTestId("skill-editor-step-0-sampling"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skill-editor-step-0-temperature"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("skill-editor-step-0-maxtokens"),
+    ).toBeInTheDocument();
+  });
+
+  it("authors sampling overrides and includes them on the saved skill", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={nearlyValidDraft()}
+        title="New skill"
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    await user.type(screen.getByTestId("skill-editor-name"), "Tuned writer");
+    await user.click(screen.getByText("Model sampling (optional)"));
+    await user.type(
+      screen.getByTestId("skill-editor-step-0-temperature"),
+      "0.2",
+    );
+    await user.type(screen.getByTestId("skill-editor-step-0-maxtokens"), "800");
+    await user.click(screen.getByTestId("skill-editor-save"));
+
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    const saved = onSaved.mock.calls[0][0];
+    expect(saved.steps[0].temperature).toBe(0.2);
+    expect(saved.steps[0].maxTokens).toBe(800);
+  });
+
+  it("surfaces preserved sampling overrides when editing a skill", () => {
+    const seeded = emptyDraft("document");
+    seeded.steps[0].temperature = "0.5";
+    seeded.steps[0].maxTokens = "1200";
+    render(
+      <SkillEditorModal
+        isOpen
+        initialDraft={seeded}
+        title="Edit skill"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("skill-editor-step-0-temperature")).toHaveValue(
+      0.5,
+    );
+    expect(screen.getByTestId("skill-editor-step-0-maxtokens")).toHaveValue(
+      1200,
+    );
+  });
 });

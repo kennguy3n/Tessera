@@ -707,3 +707,178 @@ describe("acceptance check authoring — round-trips", () => {
     });
   });
 });
+
+describe("step sampling authoring — buildCustomSkill", () => {
+  const sampledDraft = (temperature: string, maxTokens: string) =>
+    draft({
+      steps: [
+        {
+          title: "Draft",
+          kind: "draft",
+          instruction: "Write about {{topic}}.",
+          output: "result",
+          inputsFrom: [],
+          outputContract: "",
+          temperature,
+          maxTokens,
+        },
+      ],
+    });
+
+  it("parses authored temperature + max tokens onto the step", () => {
+    const built = buildCustomSkill(sampledDraft("0.2", "800"), fixedId);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.skill.steps[0].temperature).toBe(0.2);
+    expect(built.skill.steps[0].maxTokens).toBe(800);
+  });
+
+  it("omits sampling overrides when the fields are blank", () => {
+    const built = buildCustomSkill(sampledDraft("", ""), fixedId);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect("temperature" in built.skill.steps[0]).toBe(false);
+    expect("maxTokens" in built.skill.steps[0]).toBe(false);
+  });
+
+  it("preserves an explicit temperature of 0 (not treated as blank)", () => {
+    const built = buildCustomSkill(sampledDraft("0", ""), fixedId);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.skill.steps[0].temperature).toBe(0);
+  });
+
+  it("rejects an out-of-range or non-numeric temperature", () => {
+    for (const bad of ["3", "-0.5", "abc", "1e3"]) {
+      const built = buildCustomSkill(sampledDraft(bad, ""), fixedId);
+      expect(built.ok).toBe(false);
+      if (built.ok) return;
+      expect(built.errors.some((e) => /temperature/i.test(e))).toBe(true);
+    }
+  });
+
+  it("rejects a non-integer or out-of-range max tokens", () => {
+    for (const bad of ["0", "5000", "1.5", "abc"]) {
+      const built = buildCustomSkill(sampledDraft("", bad), fixedId);
+      expect(built.ok).toBe(false);
+      if (built.ok) return;
+      expect(built.errors.some((e) => /max tokens/i.test(e))).toBe(true);
+    }
+  });
+
+  it("accepts the exact engine bounds (temperature 2, max tokens 4096 and 1)", () => {
+    const high = buildCustomSkill(sampledDraft("2", "4096"), fixedId);
+    expect(high.ok).toBe(true);
+    if (!high.ok) return;
+    expect(high.skill.steps[0].temperature).toBe(2);
+    expect(high.skill.steps[0].maxTokens).toBe(4096);
+
+    const low = buildCustomSkill(sampledDraft("0", "1"), fixedId);
+    expect(low.ok).toBe(true);
+    if (!low.ok) return;
+    expect(low.skill.steps[0].maxTokens).toBe(1);
+  });
+});
+
+describe("step sampling authoring — round-trips", () => {
+  it("skillToDraft renders sampling overrides as editable strings", () => {
+    const skill: Skill = {
+      id: `${CUSTOM_SKILL_ID_PREFIX}sampling`,
+      name: "Sampling",
+      description: "",
+      surfaces: ["document"],
+      inputs: [{ id: "topic", label: "Topic" }],
+      steps: [
+        {
+          id: "s1",
+          title: "Draft",
+          kind: "draft",
+          instruction: "Write about {{topic}}.",
+          output: "result",
+          temperature: 0.7,
+          maxTokens: 1024,
+        },
+      ],
+    };
+    const back = skillToDraft(skill);
+    expect(back.steps[0].temperature).toBe("0.7");
+    expect(back.steps[0].maxTokens).toBe("1024");
+  });
+
+  it("leaves the sampling fields blank for a step with no overrides", () => {
+    const back = skillToDraft({
+      id: `${CUSTOM_SKILL_ID_PREFIX}plain`,
+      name: "Plain",
+      description: "",
+      surfaces: ["document"],
+      inputs: [{ id: "topic", label: "Topic" }],
+      steps: [
+        {
+          id: "s1",
+          title: "Draft",
+          kind: "draft",
+          instruction: "Write {{topic}}.",
+          output: "result",
+        },
+      ],
+    });
+    expect(back.steps[0].temperature).toBe("");
+    expect(back.steps[0].maxTokens).toBe("");
+  });
+
+  it("duplicating a skill with sampling overrides keeps them losslessly", () => {
+    const built = buildCustomSkill(
+      draft({
+        steps: [
+          {
+            title: "Draft",
+            kind: "draft",
+            instruction: "Write {{topic}}.",
+            output: "result",
+            inputsFrom: [],
+            outputContract: "",
+            temperature: "0.1",
+            maxTokens: "1500",
+          },
+        ],
+      }),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    // Re-hydrate the saved skill into a draft (the duplicate path) and rebuild.
+    const rebuilt = buildCustomSkill(skillToDraft(built.skill), fixedId);
+    expect(rebuilt.ok).toBe(true);
+    if (!rebuilt.ok) return;
+    expect(rebuilt.skill.steps[0].temperature).toBe(0.1);
+    expect(rebuilt.skill.steps[0].maxTokens).toBe(1500);
+  });
+
+  it("sampling overrides survive a full localStorage save/load round-trip", () => {
+    const built = buildCustomSkill(
+      draft({
+        steps: [
+          {
+            title: "Draft",
+            kind: "draft",
+            instruction: "Write {{topic}}.",
+            output: "result",
+            inputsFrom: [],
+            outputContract: "",
+            temperature: "0.3",
+            maxTokens: "640",
+          },
+        ],
+      }),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    saveCustomSkills([built.skill]);
+    const [loaded] = loadCustomSkills();
+    expect(loaded.steps[0].temperature).toBe(0.3);
+    expect(loaded.steps[0].maxTokens).toBe(640);
+    expect(skillToDraft(loaded).steps[0].temperature).toBe("0.3");
+    expect(skillToDraft(loaded).steps[0].maxTokens).toBe("640");
+  });
+});

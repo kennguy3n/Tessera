@@ -27,7 +27,13 @@
  * Skills engine.
  */
 
-import { validateSkill } from "./skillEngine";
+import {
+  MAX_MAX_TOKENS,
+  MAX_TEMPERATURE,
+  MIN_MAX_TOKENS,
+  MIN_TEMPERATURE,
+  validateSkill,
+} from "./skillEngine";
 import type {
   Skill,
   SkillInputSpec,
@@ -36,6 +42,11 @@ import type {
   SkillStepKind,
   SkillSurface,
 } from "./skillTypes";
+
+// Re-export the engine's sampling bounds so the authoring UI (which already
+// imports its other limits from this module) has a single import site and
+// the editor's accepted range can never drift from what the engine clamps.
+export { MAX_MAX_TOKENS, MAX_TEMPERATURE, MIN_MAX_TOKENS, MIN_TEMPERATURE };
 
 // ─────────────────────────────────────────────────────────────────────
 // Persistence + bounds
@@ -151,6 +162,18 @@ export interface CustomStepDraft {
    * always populate it. Built into a {@link SkillStepCheck} on save.
    */
   check?: CustomCheckDraft;
+  /**
+   * Sampling-temperature override as a free-text field; blank ⇒ use the
+   * sensible per-kind default. Absent on legacy drafts; the factories always
+   * populate it. Parsed + clamped into {@link SkillStep.temperature} on save.
+   */
+  temperature?: string;
+  /**
+   * Max-tokens override as a free-text field; blank ⇒ use the per-kind
+   * default. Absent on legacy drafts; the factories always populate it.
+   * Parsed into {@link SkillStep.maxTokens} on save.
+   */
+  maxTokens?: string;
 }
 
 /** The full draft the {@link SkillEditorModal} edits. */
@@ -272,6 +295,8 @@ export function emptyStepDraft(): CustomStepDraft {
     inputsFrom: [],
     outputContract: "",
     check: emptyCheckDraft(),
+    temperature: "",
+    maxTokens: "",
   };
 }
 
@@ -325,6 +350,18 @@ function positiveIntToDraft(value: unknown): string {
 }
 
 /**
+ * Any finite number becomes its string form; anything else "". Unlike
+ * {@link positiveIntToDraft} this keeps `0` (a valid temperature) and decimals
+ * (e.g. `0.2`), so a stored sampling override round-trips back into the editor
+ * verbatim. Blank ⇒ the step inherits its per-kind default.
+ */
+function numberToDraft(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "";
+}
+
+/**
  * A `string[]` becomes a newline-joined textarea value. Term content is kept
  * verbatim (whitespace is significant to the engine) — only whitespace-only
  * entries are dropped — so re-building the draft is the exact inverse.
@@ -358,6 +395,8 @@ export function skillToDraft(skill: Skill): CustomSkillDraft {
       inputsFrom: [...(s.inputsFrom ?? [])],
       outputContract: s.outputContract ?? "",
       check: checkToDraft(s.check),
+      temperature: numberToDraft(s.temperature),
+      maxTokens: numberToDraft(s.maxTokens),
     })),
   };
 }
@@ -414,6 +453,38 @@ function parseCheckInt(raw: string, max: number): number | null {
   if (!/^[0-9]+$/.test(s)) return null;
   const n = Number.parseInt(s, 10);
   if (!Number.isFinite(n) || n < 1 || n > max) return null;
+  return n;
+}
+
+/**
+ * Parse an authored temperature into the engine's accepted range, or `null`
+ * when blank/invalid (so the caller can surface a friendly error rather than
+ * silently clamping). Decimals and `0` are valid; anything outside
+ * [{@link MIN_TEMPERATURE}, {@link MAX_TEMPERATURE}] is rejected.
+ */
+function parseTemperatureDraft(raw: string): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < MIN_TEMPERATURE || n > MAX_TEMPERATURE) {
+    return null;
+  }
+  return n;
+}
+
+/**
+ * Parse an authored max-tokens value into a whole number in the engine's
+ * accepted range, or `null` when blank/invalid. Mirrors {@link parseCheckInt}'s
+ * strict integer grammar (this regex only ever runs on author input).
+ */
+function parseMaxTokensDraft(raw: string): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (!/^[0-9]+$/.test(s)) return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || n < MIN_MAX_TOKENS || n > MAX_MAX_TOKENS) {
+    return null;
+  }
   return n;
 }
 
@@ -611,6 +682,31 @@ export function buildCustomSkill(
     }
     if (check) step.check = check;
 
+    // Optional per-step sampling overrides; blank ⇒ inherit the per-kind
+    // default. A present-but-invalid value errors rather than being dropped.
+    const temperatureRaw = row.temperature ?? "";
+    if (temperatureRaw.trim()) {
+      const t = parseTemperatureDraft(temperatureRaw);
+      if (t === null) {
+        errors.push(
+          `Step ${i + 1} ("${title}") temperature must be a number from ${MIN_TEMPERATURE} to ${MAX_TEMPERATURE}.`,
+        );
+      } else {
+        step.temperature = t;
+      }
+    }
+    const maxTokensRaw = row.maxTokens ?? "";
+    if (maxTokensRaw.trim()) {
+      const m = parseMaxTokensDraft(maxTokensRaw);
+      if (m === null) {
+        errors.push(
+          `Step ${i + 1} ("${title}") max tokens must be a whole number from ${MIN_MAX_TOKENS} to ${MAX_MAX_TOKENS}.`,
+        );
+      } else {
+        step.maxTokens = m;
+      }
+    }
+
     outputs.add(output);
     producedSoFar.add(output);
     steps.push(step);
@@ -758,6 +854,8 @@ function parseStoredSteps(raw: unknown): CustomStepDraft[] {
       outputContract:
         typeof rec.outputContract === "string" ? rec.outputContract : "",
       check: checkToDraft(rec.check),
+      temperature: numberToDraft(rec.temperature),
+      maxTokens: numberToDraft(rec.maxTokens),
     });
   }
   return out;
