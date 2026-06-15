@@ -75,6 +75,11 @@ export function BaseTemplateGallery({
   // Id of the template awaiting a replace confirmation ("builtin:<id>" /
   // "custom:<id>"), or null when no confirmation is pending.
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  // Deferred document factory for the template awaiting confirmation. A
+  // *thunk* (never an eagerly-built doc) so a built-in `template.build()`
+  // runs exactly once — at apply time — instead of once on "Use" and again
+  // on "Replace" (which minted a second, throwaway set of fresh ids).
+  const pendingApply = useRef<(() => BaseDocument) | null>(null);
 
   const guardReplace = baseHasData(currentDoc);
 
@@ -87,15 +92,28 @@ export function BaseTemplateGallery({
   );
 
   const requestApply = useCallback(
-    (key: string, doc: BaseDocument) => {
+    (key: string, factory: () => BaseDocument) => {
       if (guardReplace) {
+        pendingApply.current = factory;
         setConfirmKey(key);
       } else {
-        apply(doc);
+        apply(factory());
       }
     },
     [guardReplace, apply],
   );
+
+  const confirmApply = useCallback(() => {
+    const factory = pendingApply.current;
+    pendingApply.current = null;
+    setConfirmKey(null);
+    if (factory) apply(factory());
+  }, [apply]);
+
+  const cancelConfirm = useCallback(() => {
+    pendingApply.current = null;
+    setConfirmKey(null);
+  }, []);
 
   const handleSave = useCallback(() => {
     const draft: CustomBaseTemplateDraft = {
@@ -179,7 +197,7 @@ export function BaseTemplateGallery({
             <button
               type="button"
               className="btn btn-danger btn-sm"
-              onClick={() => apply(template.build())}
+              onClick={confirmApply}
               data-testid="base-template-confirm-apply"
             >
               Replace
@@ -187,7 +205,7 @@ export function BaseTemplateGallery({
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={() => setConfirmKey(null)}
+              onClick={cancelConfirm}
             >
               Cancel
             </button>
@@ -196,7 +214,7 @@ export function BaseTemplateGallery({
           <button
             type="button"
             className="btn btn-secondary btn-sm base-template-use"
-            onClick={() => requestApply(key, template.build())}
+            onClick={() => requestApply(key, () => template.build())}
             data-testid="base-template-use-builtin"
           >
             Use
@@ -225,7 +243,7 @@ export function BaseTemplateGallery({
             <button
               type="button"
               className="btn btn-danger btn-sm"
-              onClick={() => apply(template.content)}
+              onClick={confirmApply}
               data-testid="base-template-confirm-apply"
             >
               Replace
@@ -233,7 +251,7 @@ export function BaseTemplateGallery({
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={() => setConfirmKey(null)}
+              onClick={cancelConfirm}
             >
               Cancel
             </button>
@@ -243,7 +261,7 @@ export function BaseTemplateGallery({
             <button
               type="button"
               className="btn btn-secondary btn-sm base-template-use"
-              onClick={() => requestApply(key, template.content)}
+              onClick={() => requestApply(key, () => template.content)}
               data-testid="base-template-use-custom"
             >
               Use
