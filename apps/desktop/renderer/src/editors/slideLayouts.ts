@@ -54,6 +54,13 @@ export interface SlideLayoutDef {
   marpClass: string;
   /** Compact ASCII glyph for the layout picker thumbnail. */
   glyph: string;
+  /**
+   * Optional lucide icon name (resolved via `iconResolver`) shown
+   * alongside the label in the richer layout/insert menus. Purely a
+   * display affordance: when absent or unresolvable the UI falls back
+   * to {@link glyph}, so this never affects layout geometry or export.
+   */
+  iconName?: string;
 }
 
 /**
@@ -65,11 +72,10 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     id: "titleContent",
     label: "Title + Content",
     description: "Heading with a body region below.",
-    regions: [
-      { slot: "body", label: "Body", placeholder: "Add content…" },
-    ],
+    regions: [{ slot: "body", label: "Body", placeholder: "Add content…" }],
     marpClass: "layout-titleContent",
     glyph: "═\n─",
+    iconName: "Type",
   },
   {
     id: "title",
@@ -78,6 +84,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     regions: [],
     marpClass: "layout-title",
     glyph: "═",
+    iconName: "Heading1",
   },
   {
     id: "sectionHeader",
@@ -88,6 +95,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-sectionHeader",
     glyph: "◆",
+    iconName: "Minus",
   },
   {
     id: "twoColumn",
@@ -99,6 +107,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-twoColumn",
     glyph: "│ │",
+    iconName: "Columns2",
   },
   {
     id: "imageLeft",
@@ -110,6 +119,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-imageLeft",
     glyph: "▣ ─",
+    iconName: "PanelLeft",
   },
   {
     id: "imageRight",
@@ -121,6 +131,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-imageRight",
     glyph: "─ ▣",
+    iconName: "PanelRight",
   },
   {
     id: "bigNumber",
@@ -132,6 +143,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-bigNumber",
     glyph: "##",
+    iconName: "Hash",
   },
   {
     id: "quote",
@@ -143,6 +155,7 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-quote",
     glyph: "❝❞",
+    iconName: "Quote",
   },
   {
     id: "imageCaption",
@@ -154,16 +167,66 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutDef[] = [
     ],
     marpClass: "layout-imageCaption",
     glyph: "▣\n─",
+    iconName: "Image",
   },
   {
     id: "blank",
     label: "Blank",
     description: "Empty canvas — arrange blocks freely.",
-    regions: [
-      { slot: "body", label: "Body", placeholder: "Add content…" },
-    ],
+    regions: [{ slot: "body", label: "Body", placeholder: "Add content…" }],
     marpClass: "layout-blank",
     glyph: "□",
+    iconName: "Square",
+  },
+  {
+    id: "timeline",
+    label: "Timeline",
+    description: "Horizontal sequence of milestones connected on a track.",
+    regions: [
+      { slot: "event", label: "Milestone", placeholder: "Add a milestone…" },
+    ],
+    marpClass: "layout-timeline",
+    glyph: "●─●─●",
+    iconName: "Milestone",
+  },
+  {
+    id: "process",
+    label: "Process / Steps",
+    description: "Numbered steps that flow left-to-right for how-to flows.",
+    regions: [{ slot: "step", label: "Step", placeholder: "Describe a step…" }],
+    marpClass: "layout-process",
+    glyph: "1·2·3",
+    iconName: "ListOrdered",
+  },
+  {
+    id: "comparison",
+    label: "Comparison",
+    description: "Two side-by-side panels with a central divider.",
+    regions: [
+      { slot: "left", label: "Option A", placeholder: "First option…" },
+      { slot: "right", label: "Option B", placeholder: "Second option…" },
+    ],
+    marpClass: "layout-comparison",
+    glyph: "▮│▮",
+    iconName: "GitCompare",
+  },
+  {
+    id: "gallery",
+    label: "Gallery",
+    description: "Responsive grid of images that wraps to fit the canvas.",
+    regions: [{ slot: "image", label: "Image", placeholder: "Add an image…" }],
+    marpClass: "layout-gallery",
+    glyph: "▦",
+    iconName: "Images",
+  },
+  {
+    id: "metricRow",
+    label: "Metric Row",
+    description: "A row of headline numbers with supporting labels.",
+    regions: [{ slot: "metric", label: "Metric", placeholder: "e.g. 99%" }],
+    marpClass: "layout-metricRow",
+    glyph: "## ##",
+    iconName: "BarChart3",
   },
 ] as const;
 
@@ -189,9 +252,7 @@ export function isKnownSlideLayout(
  * layout definition, falling back to the default. Total — never
  * throws, always returns a usable layout.
  */
-export function getSlideLayout(
-  id: string | undefined | null,
-): SlideLayoutDef {
+export function getSlideLayout(id: string | undefined | null): SlideLayoutDef {
   if (id != null) {
     const found = LAYOUT_BY_ID.get(id);
     if (found) return found;
@@ -225,11 +286,7 @@ export function inferLayoutFromBlocks(slide: Slide): SlideLayout {
   }
 
   // Image + one text/bullets → imageRight
-  if (
-    blocks.length === 2 &&
-    hasImage &&
-    textishCount === 1
-  ) {
+  if (blocks.length === 2 && hasImage && textishCount === 1) {
     const imageIdx = types.indexOf("image");
     return imageIdx === 0 ? "imageLeft" : "imageRight";
   }
@@ -240,10 +297,7 @@ export function inferLayoutFromBlocks(slide: Slide): SlideLayout {
   }
 
   // Single short text line → could be bigNumber or quote
-  if (
-    blocks.length === 1 &&
-    blocks[0].type === "text"
-  ) {
+  if (blocks.length === 1 && blocks[0].type === "text") {
     const content = blocks[0].content.trim();
     // Looks like a number/stat (starts with digit or %, short)
     if (/^\d/.test(content) && content.length <= 20) {

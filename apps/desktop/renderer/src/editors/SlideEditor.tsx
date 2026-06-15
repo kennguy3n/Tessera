@@ -45,8 +45,14 @@ import {
   MermaidPreview,
 } from "./components/SlideBlockPreviews";
 import { SlideDesignCanvas } from "./components/SlideDesignCanvas";
-import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
+import {
+  SLIDE_THEMES,
+  getSlideTheme,
+  SLIDE_BG_STYLES,
+  type SlideBgStyle,
+} from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
+import { resolveIconComponent } from "../services/iconResolver";
 import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
 
 import {
@@ -63,6 +69,7 @@ import {
 import type {
   MarpModeState,
   Slide,
+  SlideAspectRatio,
   SlideBlock,
   SlideBlockType,
   SlideContent,
@@ -144,6 +151,44 @@ const LAYOUT_LABELS: Record<SlideLayout, string> = Object.fromEntries(
 
 const LAYOUT_ORDER: SlideLayout[] = SLIDE_LAYOUTS.map((l) => l.id);
 
+/**
+ * Per-layout display metadata (icon name + emoji/text glyph fallback)
+ * keyed by layout id, derived once from the catalogue. Lets the
+ * Add-Slide menu surface a real vector icon while keeping the emoji
+ * glyph as a guaranteed fallback for any layout whose `iconName`
+ * doesn't resolve in the bundled icon set.
+ */
+const LAYOUT_META: Record<SlideLayout, { iconName?: string; glyph: string }> =
+  Object.fromEntries(
+    SLIDE_LAYOUTS.map((l) => [l.id, { iconName: l.iconName, glyph: l.glyph }]),
+  ) as Record<SlideLayout, { iconName?: string; glyph: string }>;
+
+/**
+ * Render a menu glyph as a crisp Lucide vector icon when `iconName`
+ * resolves, otherwise fall back to the emoji/text `glyph`. Resolution
+ * is a cheap namespace lookup (no async, no hooks) so it's safe to call
+ * inside a `.map()` over menu items. The icon is purely decorative —
+ * the adjacent text label carries the accessible name — so it's marked
+ * `aria-hidden`.
+ */
+function SlideMenuIcon({
+  iconName,
+  glyph,
+  size = 16,
+}: {
+  iconName?: string;
+  glyph: string;
+  size?: number;
+}) {
+  const Icon = iconName
+    ? resolveIconComponent({ set: "lucide", name: iconName })
+    : null;
+  if (Icon) {
+    return <Icon size={size} aria-hidden="true" focusable="false" />;
+  }
+  return <span aria-hidden="true">{glyph}</span>;
+}
+
 export default function SlideEditor({
   content,
   onSave,
@@ -177,6 +222,12 @@ export default function SlideEditor({
     () => initial.marpTheme ?? "default",
   );
   const [themeId, setThemeId] = useState<string>(() => initial.themeId);
+  // Deck-wide aspect ratio (16:9 legacy default). Seeded from the parsed
+  // content so a restored deck keeps its ratio; persisted via the
+  // debounced save like `themeId`.
+  const [aspectRatio, setAspectRatio] = useState<SlideAspectRatio>(
+    () => initial.aspectRatio,
+  );
   const [deckGenOpen, setDeckGenOpen] = useState(false);
   const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
@@ -225,6 +276,15 @@ export default function SlideEditor({
   useEffect(() => {
     themeIdRef.current = themeId;
   }, [themeId]);
+
+  // Mirror the deck aspect ratio into a ref for the same flush-time
+  // consistency reason as `themeIdRef`: a save scheduled from a slide
+  // mutator (which takes no ratio argument) must serialise the freshest
+  // chosen ratio, not the value captured when the callback was created.
+  const aspectRatioRef = useRef<SlideAspectRatio>(aspectRatio);
+  useEffect(() => {
+    aspectRatioRef.current = aspectRatio;
+  }, [aspectRatio]);
 
   // Mirror activeIndex into a ref so callbacks that run inside
   // `setSlides` updaters can read the freshest committed value
@@ -404,6 +464,7 @@ export default function SlideEditor({
         slides: updatedSlides,
         marp: marpState ?? marpStateRef.current,
         themeId: themeIdRef.current,
+        aspectRatio: aspectRatioRef.current,
       };
       const json = JSON.stringify(data);
       // Publish the draft immediately (no debounce) so exporting before
@@ -467,6 +528,8 @@ export default function SlideEditor({
       setMarpTheme(parsed.marpTheme ?? "default");
       setThemeId(parsed.themeId);
       themeIdRef.current = parsed.themeId;
+      setAspectRatio(parsed.aspectRatio);
+      aspectRatioRef.current = parsed.aspectRatio;
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
@@ -626,6 +689,32 @@ export default function SlideEditor({
       debouncedSave(slides);
     },
     [debouncedSave, slides],
+  );
+
+  // Switch the deck-wide aspect ratio. Mirrors `changeTheme`: the ref is
+  // updated synchronously before the debounced save so the just-chosen
+  // ratio is serialised even though `debouncedSave(slides)` doesn't take
+  // a ratio argument.
+  const changeAspectRatio = useCallback(
+    (next: SlideAspectRatio) => {
+      setAspectRatio(next);
+      aspectRatioRef.current = next;
+      debouncedSave(slides);
+    },
+    [debouncedSave, slides],
+  );
+
+  // Set (or clear) the active slide's per-slide background override.
+  // An empty selection clears the override so the slide inherits the
+  // theme's default `bgStyle` again. Routed through `updateSlide` so it
+  // persists and round-trips like any other per-slide edit.
+  const changeSlideBackground = useCallback(
+    (value: SlideBgStyle | "") => {
+      updateSlide(activeIndex, {
+        background: value === "" ? undefined : value,
+      });
+    },
+    [updateSlide, activeIndex],
   );
 
   // Apply a pre-built deck template. Replaces the entire deck with
@@ -1333,6 +1422,12 @@ export default function SlideEditor({
                   className="slide-layout-menu-item"
                   onClick={() => addSlide(layout)}
                 >
+                  <span className="slide-layout-menu-item-icon">
+                    <SlideMenuIcon
+                      iconName={LAYOUT_META[layout].iconName}
+                      glyph={LAYOUT_META[layout].glyph}
+                    />
+                  </span>
                   {LAYOUT_LABELS[layout]}
                 </button>
               ))}
@@ -1488,7 +1583,9 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckRestyleOpen ? "active" : ""}`}
-            onClick={() => openExclusiveMenu(deckRestyleOpen ? null : "restyle")}
+            onClick={() =>
+              openExclusiveMenu(deckRestyleOpen ? null : "restyle")
+            }
             aria-label="Restyle the deck with AI"
             aria-expanded={deckRestyleOpen}
             title="Restyle the current deck with the on-device model"
@@ -1510,6 +1607,45 @@ export default function SlideEditor({
                 {SLIDE_LAYOUTS.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!marpMode && (
+            <label className="slide-layout-picker">
+              Ratio
+              <select
+                className="slide-layout-select"
+                value={aspectRatio}
+                onChange={(e) =>
+                  changeAspectRatio(e.target.value as SlideAspectRatio)
+                }
+                aria-label="Deck aspect ratio"
+                title="Aspect ratio for the whole deck (16:9, 4:3, or square 1:1)"
+              >
+                <option value="16:9">16:9</option>
+                <option value="4:3">4:3</option>
+                <option value="1:1">1:1</option>
+              </select>
+            </label>
+          )}
+          {!marpMode && activeSlide && (
+            <label className="slide-layout-picker">
+              Background
+              <select
+                className="slide-layout-select"
+                value={activeSlide.background ?? ""}
+                onChange={(e) =>
+                  changeSlideBackground(e.target.value as SlideBgStyle | "")
+                }
+                aria-label="Slide background style"
+                title="Background for this slide (overrides the theme default)"
+              >
+                <option value="">Theme default</option>
+                {SLIDE_BG_STYLES.map((style) => (
+                  <option key={style} value={style}>
+                    {style.charAt(0).toUpperCase() + style.slice(1)}
                   </option>
                 ))}
               </select>
@@ -1608,7 +1744,11 @@ export default function SlideEditor({
                       onClick={() => insertPreset(preset)}
                     >
                       <span className="slide-insert-preset-icon">
-                        {preset.icon}
+                        <SlideMenuIcon
+                          iconName={preset.iconName}
+                          glyph={preset.icon}
+                          size={18}
+                        />
                       </span>
                       <span>
                         <span className="slide-insert-preset-label">
@@ -1790,7 +1930,12 @@ export default function SlideEditor({
             className={`slide-canvas${designView ? " slide-canvas-design" : ""}`}
             data-slide-theme={themeId}
             data-slide-layout={resolveSlideLayout(activeSlide)}
-            data-slide-bg={getSlideTheme(themeId).bgStyle ?? undefined}
+            data-slide-bg={
+              activeSlide.background ??
+              getSlideTheme(themeId).bgStyle ??
+              undefined
+            }
+            data-slide-aspect={aspectRatio}
           >
             <input
               className="slide-title-input"
@@ -1828,86 +1973,86 @@ export default function SlideEditor({
                 }
               />
             ) : (
-            <div className="slide-blocks">
-              {activeSlide.blocks.map((block, bi) => (
-                <SlideBlockRow
-                  // Stable key driven off `block.id` (not `bi`) so a
-                  // drag-reorder preserves component identity — the
-                  // `<textarea>` keeps its cursor / selection state
-                  // across the reorder, instead of being unmounted
-                  // and re-created with a fresh DOM node.
-                  key={block.id}
-                  block={block}
-                  blockIndex={bi}
-                  totalBlocks={activeSlide.blocks.length}
-                  onTypeChange={(nextType) => {
-                    onBlockReplace(
-                      activeIndex,
-                      bi,
-                      nextBlockForTypeChange(block, nextType),
-                    );
-                  }}
-                  onContentChange={(nextContent) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      content: nextContent,
-                    });
-                  }}
-                  onAltChange={(nextAlt) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      alt: nextAlt,
-                    });
-                  }}
-                  onImageFile={(file) => {
-                    // Pass `activeSlide.id` and `block.id` (not
-                    // `activeIndex` / `bi`) so that an in-flight upload
-                    // still lands on the right block after a drag-
-                    // reorder shifts positions at either the slide or
-                    // block level.
-                    onImageUpload(activeSlide.id, block.id, file);
-                  }}
-                  onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
-                  onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
-                  onRemove={() => onBlockRemove(activeIndex, bi)}
-                  draggedBlockId={draggedBlockId}
-                  onDragStartBlock={setDraggedBlockId}
-                  onDragEndBlock={() => setDraggedBlockId(null)}
-                  onDropBlock={(targetIdx) => {
-                    if (!draggedBlockId) return;
-                    const fromIdx = activeSlide.blocks.findIndex(
-                      (b) => b.id === draggedBlockId,
-                    );
-                    // Clear on every termination path (success AND
-                    // lookup-miss) so the `is-dragging` class can't
-                    // stick if the source block is removed mid-drag
-                    // (e.g. the active slide changes via find-panel
-                    // jump or version restore between dragstart and
-                    // drop). `onDragEnd` is a defence in depth but
-                    // doesn't always fire reliably in Chromium's
-                    // touch-emulation path.
-                    if (fromIdx < 0) {
+              <div className="slide-blocks">
+                {activeSlide.blocks.map((block, bi) => (
+                  <SlideBlockRow
+                    // Stable key driven off `block.id` (not `bi`) so a
+                    // drag-reorder preserves component identity — the
+                    // `<textarea>` keeps its cursor / selection state
+                    // across the reorder, instead of being unmounted
+                    // and re-created with a fresh DOM node.
+                    key={block.id}
+                    block={block}
+                    blockIndex={bi}
+                    totalBlocks={activeSlide.blocks.length}
+                    onTypeChange={(nextType) => {
+                      onBlockReplace(
+                        activeIndex,
+                        bi,
+                        nextBlockForTypeChange(block, nextType),
+                      );
+                    }}
+                    onContentChange={(nextContent) => {
+                      onBlockReplace(activeIndex, bi, {
+                        ...block,
+                        content: nextContent,
+                      });
+                    }}
+                    onAltChange={(nextAlt) => {
+                      onBlockReplace(activeIndex, bi, {
+                        ...block,
+                        alt: nextAlt,
+                      });
+                    }}
+                    onImageFile={(file) => {
+                      // Pass `activeSlide.id` and `block.id` (not
+                      // `activeIndex` / `bi`) so that an in-flight upload
+                      // still lands on the right block after a drag-
+                      // reorder shifts positions at either the slide or
+                      // block level.
+                      onImageUpload(activeSlide.id, block.id, file);
+                    }}
+                    onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
+                    onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
+                    onRemove={() => onBlockRemove(activeIndex, bi)}
+                    draggedBlockId={draggedBlockId}
+                    onDragStartBlock={setDraggedBlockId}
+                    onDragEndBlock={() => setDraggedBlockId(null)}
+                    onDropBlock={(targetIdx) => {
+                      if (!draggedBlockId) return;
+                      const fromIdx = activeSlide.blocks.findIndex(
+                        (b) => b.id === draggedBlockId,
+                      );
+                      // Clear on every termination path (success AND
+                      // lookup-miss) so the `is-dragging` class can't
+                      // stick if the source block is removed mid-drag
+                      // (e.g. the active slide changes via find-panel
+                      // jump or version restore between dragstart and
+                      // drop). `onDragEnd` is a defence in depth but
+                      // doesn't always fire reliably in Chromium's
+                      // touch-emulation path.
+                      if (fromIdx < 0) {
+                        setDraggedBlockId(null);
+                        return;
+                      }
+                      onBlockMove(activeIndex, fromIdx, targetIdx);
                       setDraggedBlockId(null);
-                      return;
-                    }
-                    onBlockMove(activeIndex, fromIdx, targetIdx);
-                    setDraggedBlockId(null);
-                  }}
-                />
-              ))}
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() =>
-                  onBlockAppend(
-                    activeIndex,
-                    buildBlock({ type: "text", content: "" }),
-                  )
-                }
-              >
-                + Add Block
-              </button>
-            </div>
+                    }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() =>
+                    onBlockAppend(
+                      activeIndex,
+                      buildBlock({ type: "text", content: "" }),
+                    )
+                  }
+                >
+                  + Add Block
+                </button>
+              </div>
             )}
 
             <SlideAiActions

@@ -42,6 +42,35 @@ export type MarpBuiltinTheme = NonNullable<MarpRenderOptions["theme"]>;
  */
 export type SlideBgStyle = "solid" | "gradient" | "mesh" | "dots" | "lines";
 
+/**
+ * The known background styles in picker display order. Single source
+ * of truth for the per-slide background control and the
+ * {@link isKnownSlideBgStyle} guard, so adding a style here surfaces
+ * it everywhere without touching call sites. Frozen `as const` so the
+ * literal element type is preserved and the array can't be mutated at
+ * runtime.
+ */
+export const SLIDE_BG_STYLES: readonly SlideBgStyle[] = [
+  "solid",
+  "gradient",
+  "mesh",
+  "dots",
+  "lines",
+] as const;
+
+const SLIDE_BG_STYLE_SET: ReadonlySet<string> = new Set(SLIDE_BG_STYLES);
+
+/**
+ * True iff `value` names a known background style. Used by
+ * `parseSlideContent` to validate a persisted / hand-edited per-slide
+ * `background` before trusting it, mirroring `isKnownSlideThemeId`.
+ */
+export function isKnownSlideBgStyle(
+  value: string | undefined | null,
+): value is SlideBgStyle {
+  return typeof value === "string" && SLIDE_BG_STYLE_SET.has(value);
+}
+
 export interface SlideTheme {
   /**
    * Stable identifier persisted in the saved deck JSON

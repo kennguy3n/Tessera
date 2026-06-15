@@ -19,6 +19,7 @@ import { getSlideLayout } from "./slideLayouts";
 import type { ChartData } from "./sheetCharts";
 import type {
   Slide,
+  SlideAspectRatio,
   SlideBlock,
   SlideContent,
   SlideLayout,
@@ -47,6 +48,41 @@ export interface ParsedSlideContent {
    * downstream consumers never have to re-validate.
    */
   themeId: string;
+  /**
+   * Resolved deck aspect ratio. Always one of the known
+   * {@link SlideAspectRatio} values — `parseSlideContent` validates
+   * the persisted value and falls back to {@link DEFAULT_ASPECT_RATIO}
+   * for missing / unknown ids, so downstream consumers can stamp it
+   * onto the canvas without re-validating.
+   */
+  aspectRatio: SlideAspectRatio;
+}
+
+/**
+ * Legacy default aspect ratio. Decks saved before aspect ratios
+ * shipped (and any deck that doesn't override) render 16:9, exactly
+ * as before.
+ */
+export const DEFAULT_ASPECT_RATIO: SlideAspectRatio = "16:9";
+
+const KNOWN_ASPECT_RATIOS: ReadonlySet<string> = new Set<SlideAspectRatio>([
+  "16:9",
+  "4:3",
+  "1:1",
+]);
+
+/**
+ * Coerce a persisted, possibly-unknown aspect ratio to a known value,
+ * falling back to {@link DEFAULT_ASPECT_RATIO}. Exported so the
+ * SlideEditor's content-sync path and the tests share one validation
+ * rule, mirroring {@link resolveThemeId}.
+ */
+export function resolveAspectRatio(
+  value: string | undefined | null,
+): SlideAspectRatio {
+  return typeof value === "string" && KNOWN_ASPECT_RATIOS.has(value)
+    ? (value as SlideAspectRatio)
+    : DEFAULT_ASPECT_RATIO;
 }
 
 /**
@@ -199,6 +235,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpSource: "",
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
   };
   if (!content) return emptyDefault;
   try {
@@ -214,6 +251,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
         marpSource: parsed.marp?.source ?? "",
         marpTheme: parsed.marp?.theme,
         themeId: resolveThemeId(parsed.themeId),
+        aspectRatio: resolveAspectRatio(parsed.aspectRatio),
       };
     }
   } catch {
@@ -232,6 +270,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpSource: "",
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
   };
 }
 
@@ -636,6 +675,65 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
         notes: "",
         layout,
       };
+    case "timeline":
+      return {
+        id: baseId,
+        title: "Timeline",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "event" }),
+          buildBlock({ type: "text", content: "", slot: "event" }),
+          buildBlock({ type: "text", content: "", slot: "event" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "process":
+      return {
+        id: baseId,
+        title: "Process",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "step" }),
+          buildBlock({ type: "text", content: "", slot: "step" }),
+          buildBlock({ type: "text", content: "", slot: "step" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "comparison":
+      return {
+        id: baseId,
+        title: "Comparison",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "left" }),
+          buildBlock({ type: "text", content: "", slot: "right" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "gallery":
+      return {
+        id: baseId,
+        title: "Gallery",
+        blocks: [
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "metricRow":
+      return {
+        id: baseId,
+        title: "Key Metrics",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "metric" }),
+          buildBlock({ type: "text", content: "", slot: "metric" }),
+          buildBlock({ type: "text", content: "", slot: "metric" }),
+        ],
+        notes: "",
+        layout,
+      };
   }
 }
 
@@ -731,12 +829,19 @@ export function duplicateSlideAt(
   // every block. Reusing the originals' IDs would collide with the
   // source's React keys and corrupt drag-and-drop reorder + the find
   // panel's per-slide / per-block jump pointer.
+  // Rebuilt field-by-field (rather than spread) so the duplicate can
+  // only ever carry known `Slide` fields with fresh ids. Any *new*
+  // optional field added to `Slide` must be copied here explicitly —
+  // `background` is the per-slide background override, conditionally
+  // spread so a slide with no override doesn't gain an `undefined` key
+  // (keeping the serialised JSON identical to the "inherit theme" case).
   const copy: Slide = {
     id: newSlideId("slide"),
     title: original.title,
     notes: original.notes,
     blocks: original.blocks.map((b) => ({ ...b, id: newSlideId("block") })),
     layout: original.layout,
+    ...(original.background ? { background: original.background } : {}),
   };
   const next = [
     ...slides.slice(0, index + 1),

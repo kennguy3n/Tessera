@@ -2805,6 +2805,9 @@
 }
 
 .slide-layout-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   background: transparent;
   border: none;
@@ -3601,10 +3604,12 @@
 }
 
 .slide-insert-preset-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--font-size-base, 0.875rem);
   flex-shrink: 0;
   width: 20px;
-  text-align: center;
 }
 
 .slide-insert-preset-label {
@@ -3831,6 +3836,297 @@
   .slide-layout-placeholder {
     transition: none;
   }
+}
+
+/* =================================================================
+ * VISUAL POLISH (S6) — smart layouts, aspect ratios, accent
+ * decorations.  Self-contained, additive section: every rule here is
+ * gated on a NEW layout id (`timeline` / `process` / `comparison` /
+ * `gallery` / `metricRow`), the per-slide `data-slide-bg` override, or
+ * the deck `data-slide-aspect` attribute, so legacy decks and the ten
+ * original layouts render exactly as before.  Grids are stamped on
+ * `.slide-canvas[data-slide-layout="<id>"] .slide-blocks`, the SAME
+ * container in both the Outline view (`.slide-blocks`) and the WYSIWYG
+ * Design view (`.slide-blocks.slide-blocks-design`), so one rule styles
+ * both.  Design view appends a trailing "+ Add block" button
+ * (`.slide-design-add`) as a grid/flex item — it is pushed onto its own
+ * full-width row so it never occupies a content cell.  Children are
+ * matched positionally (`:not(.slide-design-add)`, `:*-of-type`,
+ * counters) rather than by `data-slot`, because Design-view blocks have
+ * no slot attribute.  Do NOT fold the `[data-slide-theme]` colour rules
+ * into this block (parallel Brand-Kit session owns those).
+ * ================================================================= */
+
+/* ---- Deck aspect ratio (Design canvas) -------------------------
+ * The Outline canvas is a tall scrolling editor with no fixed ratio;
+ * only the Design canvas reads as a real slide, so the ratio applies
+ * there.  16:9 is the inherited default from `.slide-canvas-design`. */
+.slide-canvas-design[data-slide-aspect="4:3"] {
+  aspect-ratio: 4 / 3;
+  max-width: 880px;
+}
+
+.slide-canvas-design[data-slide-aspect="1:1"] {
+  aspect-ratio: 1 / 1;
+  max-width: 720px;
+}
+
+/* ---- Shared: keep the Design "+ Add block" button on its own row -- */
+.slide-canvas[data-slide-layout="comparison"]
+  .slide-blocks-design
+  > .slide-design-add,
+.slide-canvas[data-slide-layout="gallery"]
+  .slide-blocks-design
+  > .slide-design-add {
+  grid-column: 1 / -1;
+}
+
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks-design
+  > .slide-design-add,
+.slide-canvas[data-slide-layout="process"]
+  .slide-blocks-design
+  > .slide-design-add,
+.slide-canvas[data-slide-layout="metricRow"]
+  .slide-blocks-design
+  > .slide-design-add {
+  flex: 0 0 100%;
+}
+
+/* ---- Decorative pseudo-elements never intercept editing clicks --- */
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks
+  > *:not(.slide-design-add)::before,
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks
+  > *:not(.slide-design-add)::after,
+.slide-canvas[data-slide-layout="process"]
+  .slide-blocks
+  > *:not(.slide-design-add)::before {
+  pointer-events: none;
+}
+
+/* ---- timeline: milestones on a connected horizontal track -------- */
+.slide-canvas[data-slide-layout="timeline"] .slide-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-lg) var(--spacing-md);
+  align-items: flex-start;
+}
+
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks
+  > *:not(.slide-design-add) {
+  position: relative;
+  flex: 1 1 150px;
+  min-width: 150px;
+  padding-top: calc(var(--spacing-md) + 6px);
+}
+
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks
+  > *:not(.slide-design-add)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--slide-accent, var(--color-primary));
+  box-shadow: 0 0 0 4px
+    color-mix(
+      in srgb,
+      var(--slide-accent, var(--color-primary)) 16%,
+      transparent
+    );
+}
+
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks
+  > *:not(.slide-design-add)::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 22px;
+  right: calc(-1 * var(--spacing-md));
+  height: 2px;
+  background: color-mix(
+    in srgb,
+    var(--slide-accent, var(--color-primary)) 30%,
+    transparent
+  );
+}
+
+.slide-canvas[data-slide-layout="timeline"]
+  .slide-blocks
+  > *:not(.slide-design-add):last-of-type::after {
+  display: none;
+}
+
+.slide-canvas[data-slide-layout="timeline"] .slide-block-content {
+  min-height: auto;
+}
+
+/* ---- process: numbered left-to-right steps ----------------------- */
+.slide-canvas[data-slide-layout="process"] .slide-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-lg) var(--spacing-md);
+  counter-reset: tessera-step;
+}
+
+.slide-canvas[data-slide-layout="process"]
+  .slide-blocks
+  > *:not(.slide-design-add) {
+  position: relative;
+  flex: 1 1 170px;
+  min-width: 170px;
+  padding: var(--spacing-md);
+  padding-top: calc(var(--spacing-lg) + 2px);
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--slide-accent, var(--color-primary)) 16%,
+      var(--color-border)
+    );
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in srgb,
+    var(--slide-accent, var(--color-primary)) 4%,
+    transparent
+  );
+  counter-increment: tessera-step;
+}
+
+.slide-canvas[data-slide-layout="process"]
+  .slide-blocks
+  > *:not(.slide-design-add)::before {
+  content: counter(tessera-step);
+  position: absolute;
+  top: calc(-1 * var(--spacing-sm));
+  left: var(--spacing-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--slide-accent, var(--color-primary));
+  color: var(--slide-surface, var(--color-bg-page));
+  font-family: var(--slide-font-headline, var(--font-family));
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+}
+
+.slide-canvas[data-slide-layout="process"] .slide-block-content {
+  min-height: auto;
+}
+
+/* ---- comparison: two balanced panels ----------------------------- */
+.slide-canvas[data-slide-layout="comparison"] .slide-blocks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-md);
+  align-items: stretch;
+}
+
+.slide-canvas[data-slide-layout="comparison"]
+  .slide-blocks
+  > *:not(.slide-design-add) {
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in srgb,
+    var(--slide-accent, var(--color-primary)) 4%,
+    transparent
+  );
+}
+
+.slide-canvas[data-slide-layout="comparison"]
+  .slide-blocks
+  > *:not(.slide-design-add):first-of-type {
+  border-top: 3px solid var(--slide-accent, var(--color-primary));
+}
+
+.slide-canvas[data-slide-layout="comparison"]
+  .slide-blocks
+  > *:not(.slide-design-add):nth-of-type(2) {
+  border-top: 3px solid
+    color-mix(
+      in srgb,
+      var(--slide-accent, var(--color-primary)) 45%,
+      var(--color-border)
+    );
+}
+
+/* ---- gallery: responsive image grid ------------------------------ */
+.slide-canvas[data-slide-layout="gallery"] .slide-blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--spacing-sm);
+  align-items: start;
+}
+
+.slide-canvas[data-slide-layout="gallery"] .slide-wys-image-preview,
+.slide-canvas[data-slide-layout="gallery"] .slide-block-image-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
+/* ---- metricRow: a row of headline numbers ------------------------ */
+.slide-canvas[data-slide-layout="metricRow"] .slide-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  align-items: stretch;
+}
+
+.slide-canvas[data-slide-layout="metricRow"]
+  .slide-blocks
+  > *:not(.slide-design-add) {
+  flex: 1 1 120px;
+  min-width: 120px;
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in srgb,
+    var(--slide-accent, var(--color-primary)) 5%,
+    transparent
+  );
+  text-align: center;
+}
+
+.slide-canvas[data-slide-layout="metricRow"] .slide-wys-text {
+  text-align: center;
+  font-family: var(--slide-font-headline, var(--font-family));
+  font-size: var(--font-size-3xl, 1.875rem);
+  font-weight: var(--font-weight-bold);
+  color: var(--slide-accent, var(--color-primary));
+}
+
+.slide-canvas[data-slide-layout="metricRow"] .slide-block-content {
+  min-height: auto;
+  text-align: center;
+}
+
+/* ---- Add Slide / Insert-preset menu icons ------------------------ */
+.slide-layout-menu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  color: var(--color-text-secondary);
+}
+
+.slide-layout-menu-item-icon svg,
+.slide-insert-preset-icon svg {
+  display: block;
 }
 
 /* -----------------------------------------------------------------

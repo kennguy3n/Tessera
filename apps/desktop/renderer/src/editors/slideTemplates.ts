@@ -58,7 +58,14 @@ export interface InsertCardPreset {
   id: string;
   label: string;
   description: string;
+  /** Emoji / text glyph fallback, rendered when no icon component resolves. */
   icon: string;
+  /**
+   * Optional lucide icon name (display-only). When it resolves via the
+   * icon resolver the menu renders the vector icon; otherwise it falls
+   * back to {@link icon}. Never persisted — purely a picker affordance.
+   */
+  iconName?: string;
   layout: SlideLayout;
   title: string;
   blocks: ReadonlyArray<{
@@ -76,7 +83,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
   {
     id: "pitch",
     label: "Pitch Deck",
-    description: "Classic startup / product pitch — problem → solution → traction → ask.",
+    description:
+      "Classic startup / product pitch — problem → solution → traction → ask.",
     icon: "🚀",
     suggestedTheme: "aurora",
     slides: [
@@ -123,7 +131,11 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         title: "",
         blocks: [
           { type: "text", content: "10x", slot: "number" },
-          { type: "text", content: "improvement in key metric", slot: "caption" },
+          {
+            type: "text",
+            content: "improvement in key metric",
+            slot: "caption",
+          },
         ],
         notes: "Share your most impressive traction metric.",
       },
@@ -142,16 +154,15 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
       {
         layout: "sectionHeader",
         title: "Thank You",
-        blocks: [
-          { type: "text", content: "your@email.com", slot: "subtitle" },
-        ],
+        blocks: [{ type: "text", content: "your@email.com", slot: "subtitle" }],
       },
     ],
   },
   {
     id: "status-report",
     label: "Status Report",
-    description: "Weekly / monthly progress update — highlights, metrics, blockers, next steps.",
+    description:
+      "Weekly / monthly progress update — highlights, metrics, blockers, next steps.",
     icon: "📊",
     suggestedTheme: "slate",
     slides: [
@@ -167,7 +178,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         blocks: [
           {
             type: "bullets",
-            content: "Completed feature X\nShipped release v2.1\nOnboarded 3 new clients",
+            content:
+              "Completed feature X\nShipped release v2.1\nOnboarded 3 new clients",
             slot: "body",
           },
         ],
@@ -207,7 +219,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
   {
     id: "workshop",
     label: "Workshop",
-    description: "Interactive session — agenda, activities, discussion, takeaways.",
+    description:
+      "Interactive session — agenda, activities, discussion, takeaways.",
     icon: "🎓",
     suggestedTheme: "mint",
     slides: [
@@ -223,7 +236,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         blocks: [
           {
             type: "bullets",
-            content: "Introduction (10 min)\nActivity 1 (20 min)\nDiscussion (15 min)\nWrap-up (5 min)",
+            content:
+              "Introduction (10 min)\nActivity 1 (20 min)\nDiscussion (15 min)\nWrap-up (5 min)",
             slot: "body",
           },
         ],
@@ -232,7 +246,11 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         layout: "sectionHeader",
         title: "Activity 1",
         blocks: [
-          { type: "text", content: "Instructions for the first exercise", slot: "subtitle" },
+          {
+            type: "text",
+            content: "Instructions for the first exercise",
+            slot: "subtitle",
+          },
         ],
       },
       {
@@ -257,16 +275,15 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
       {
         layout: "sectionHeader",
         title: "Questions?",
-        blocks: [
-          { type: "text", content: "", slot: "subtitle" },
-        ],
+        blocks: [{ type: "text", content: "", slot: "subtitle" }],
       },
     ],
   },
   {
     id: "project-proposal",
     label: "Project Proposal",
-    description: "Structured proposal — objective, scope, timeline, budget, team.",
+    description:
+      "Structured proposal — objective, scope, timeline, budget, team.",
     icon: "📋",
     suggestedTheme: "editorial",
     slides: [
@@ -292,7 +309,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         blocks: [
           {
             type: "bullets",
-            content: "Deliverable 1\nDeliverable 2\nDeliverable 3\nOut of scope: …",
+            content:
+              "Deliverable 1\nDeliverable 2\nDeliverable 3\nOut of scope: …",
             slot: "body",
           },
         ],
@@ -301,8 +319,16 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         layout: "twoColumn",
         title: "Timeline & Budget",
         blocks: [
-          { type: "text", content: "Phase 1: Q1\nPhase 2: Q2\nPhase 3: Q3", slot: "left" },
-          { type: "text", content: "Total: $X\nHeadcount: N\nTools: $Y", slot: "right" },
+          {
+            type: "text",
+            content: "Phase 1: Q1\nPhase 2: Q2\nPhase 3: Q3",
+            slot: "left",
+          },
+          {
+            type: "text",
+            content: "Total: $X\nHeadcount: N\nTools: $Y",
+            slot: "right",
+          },
         ],
       },
       {
@@ -320,7 +346,11 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         layout: "sectionHeader",
         title: "Next Steps",
         blocks: [
-          { type: "text", content: "Approval → Kickoff → First milestone", slot: "subtitle" },
+          {
+            type: "text",
+            content: "Approval → Kickoff → First milestone",
+            slot: "subtitle",
+          },
         ],
       },
     ],
@@ -328,7 +358,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
   {
     id: "retrospective",
     label: "Retrospective",
-    description: "Sprint / project retro — what went well, what didn't, action items.",
+    description:
+      "Sprint / project retro — what went well, what didn't, action items.",
     icon: "🔄",
     suggestedTheme: "ocean",
     slides: [
@@ -344,7 +375,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         blocks: [
           {
             type: "bullets",
-            content: "Positive outcome 1\nPositive outcome 2\nPositive outcome 3",
+            content:
+              "Positive outcome 1\nPositive outcome 2\nPositive outcome 3",
             slot: "body",
           },
         ],
@@ -374,7 +406,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         blocks: [
           {
             type: "bullets",
-            content: "Action 1 — Owner: …\nAction 2 — Owner: …\nAction 3 — Owner: …",
+            content:
+              "Action 1 — Owner: …\nAction 2 — Owner: …\nAction 3 — Owner: …",
             slot: "body",
           },
         ],
@@ -384,7 +417,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
   {
     id: "case-study",
     label: "Case Study",
-    description: "Client success story — challenge, approach, results, testimonial.",
+    description:
+      "Client success story — challenge, approach, results, testimonial.",
     icon: "💼",
     suggestedTheme: "rosewood",
     slides: [
@@ -410,7 +444,8 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         blocks: [
           {
             type: "bullets",
-            content: "Step 1: Discovery\nStep 2: Implementation\nStep 3: Optimisation",
+            content:
+              "Step 1: Discovery\nStep 2: Implementation\nStep 3: Optimisation",
             slot: "body",
           },
         ],
@@ -420,15 +455,27 @@ export const SLIDE_TEMPLATES: readonly SlideTemplate[] = [
         title: "",
         blocks: [
           { type: "text", content: "300%", slot: "number" },
-          { type: "text", content: "improvement in key outcome", slot: "caption" },
+          {
+            type: "text",
+            content: "improvement in key outcome",
+            slot: "caption",
+          },
         ],
       },
       {
         layout: "quote",
         title: "",
         blocks: [
-          { type: "text", content: "This solution transformed how we work.", slot: "quote" },
-          { type: "text", content: "— Client Name, Title", slot: "attribution" },
+          {
+            type: "text",
+            content: "This solution transformed how we work.",
+            slot: "quote",
+          },
+          {
+            type: "text",
+            content: "— Client Name, Title",
+            slot: "attribution",
+          },
         ],
       },
     ],
@@ -445,6 +492,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Stat Card",
     description: "Hero number with caption",
     icon: "#",
+    iconName: "Hash",
     layout: "bigNumber",
     title: "",
     blocks: [
@@ -457,6 +505,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Comparison",
     description: "Side-by-side two columns",
     icon: "⇔",
+    iconName: "Columns2",
     layout: "twoColumn",
     title: "Comparison",
     blocks: [
@@ -469,6 +518,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Quote",
     description: "Centred quotation with attribution",
     icon: "❝",
+    iconName: "Quote",
     layout: "quote",
     title: "",
     blocks: [
@@ -481,17 +531,17 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Section Break",
     description: "Bold section divider",
     icon: "◆",
+    iconName: "Minus",
     layout: "sectionHeader",
     title: "New Section",
-    blocks: [
-      { type: "text", content: "", slot: "subtitle" },
-    ],
+    blocks: [{ type: "text", content: "", slot: "subtitle" }],
   },
   {
     id: "image-text",
     label: "Image + Text",
     description: "Image left with text body",
     icon: "▣",
+    iconName: "PanelLeft",
     layout: "imageLeft",
     title: "Visual Point",
     blocks: [
@@ -504,6 +554,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Bullet List",
     description: "Title with key points",
     icon: "•",
+    iconName: "List",
     layout: "titleContent",
     title: "Key Points",
     blocks: [
@@ -519,10 +570,83 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Blank Slide",
     description: "Empty canvas",
     icon: "□",
+    iconName: "Square",
     layout: "blank",
     title: "",
+    blocks: [{ type: "text", content: "", slot: "body" }],
+  },
+  // -------------------------------------------------------------------------
+  // Smart-layout presets (additive — surface the new CSS-grid layouts as
+  // one-click insert cards). Ids are new and never collide with the layout
+  // ids of the same theme (preset ids live in their own namespace).
+  // -------------------------------------------------------------------------
+  {
+    id: "timeline-card",
+    label: "Timeline",
+    description: "Milestones on a connected track",
+    icon: "●─●─●",
+    iconName: "Milestone",
+    layout: "timeline",
+    title: "Timeline",
     blocks: [
-      { type: "text", content: "", slot: "body" },
+      { type: "text", content: "Q1 — Kickoff", slot: "event" },
+      { type: "text", content: "Q2 — Build", slot: "event" },
+      { type: "text", content: "Q3 — Launch", slot: "event" },
+    ],
+  },
+  {
+    id: "process-card",
+    label: "Process / Steps",
+    description: "Numbered left-to-right steps",
+    icon: "1·2·3",
+    iconName: "ListOrdered",
+    layout: "process",
+    title: "Process",
+    blocks: [
+      { type: "text", content: "Plan the work", slot: "step" },
+      { type: "text", content: "Do the work", slot: "step" },
+      { type: "text", content: "Review results", slot: "step" },
+    ],
+  },
+  {
+    id: "comparison-split",
+    label: "Comparison Panels",
+    description: "Two panels with a central divider",
+    icon: "▮│▮",
+    iconName: "GitCompare",
+    layout: "comparison",
+    title: "Comparison",
+    blocks: [
+      { type: "text", content: "Option A", slot: "left" },
+      { type: "text", content: "Option B", slot: "right" },
+    ],
+  },
+  {
+    id: "gallery-card",
+    label: "Gallery",
+    description: "Responsive grid of images",
+    icon: "▦",
+    iconName: "Images",
+    layout: "gallery",
+    title: "Gallery",
+    blocks: [
+      { type: "image", content: "", slot: "image" },
+      { type: "image", content: "", slot: "image" },
+      { type: "image", content: "", slot: "image" },
+    ],
+  },
+  {
+    id: "metric-row",
+    label: "Metric Row",
+    description: "Row of headline numbers",
+    icon: "## ##",
+    iconName: "BarChart3",
+    layout: "metricRow",
+    title: "Key Metrics",
+    blocks: [
+      { type: "text", content: "99%", slot: "metric" },
+      { type: "text", content: "2.4k", slot: "metric" },
+      { type: "text", content: "3x", slot: "metric" },
     ],
   },
 ] as const;
