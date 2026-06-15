@@ -179,6 +179,83 @@ export interface BaseTable extends BaseContent {
 export interface BaseDocument {
   tables: BaseTable[];
   activeTableId: string;
+  /**
+   * Optional "app usage" configuration (forms surface + dashboard +
+   * default open mode). Absent on every legacy base, so a base with no
+   * `app` block opens in builder mode unchanged — see
+   * {@link BaseAppConfig}. Persisted additively by
+   * `serializeBaseDocument` only when it carries real content, so bases
+   * that never enter app mode keep their byte-compatible legacy body.
+   */
+  app?: BaseAppConfig;
+}
+
+/**
+ * Which face of the Base editor is showing: the full builder (field
+ * management, view config, schema editing) or the "app usage" runtime
+ * that presents the base as a focused mini-application. This is a
+ * renderer/runtime concern — the *current* mode is never serialized;
+ * only {@link BaseAppConfig.defaultMode} (which mode a base OPENS in)
+ * persists.
+ */
+export type BaseAppMode = "builder" | "app";
+
+/** Dashboard widget flavours. All operate over a single table's records. */
+export type BaseAppWidgetKind = "count" | "group" | "rollup" | "chart";
+
+/**
+ * A data-entry form surfaced in app mode. A form creates records in
+ * exactly one table (`tableId`). `fieldNames` is an ordered subset of
+ * that table's fillable fields to show; an empty list means "every
+ * fillable field" so a freshly-derived form needs no per-field config.
+ */
+export interface BaseAppForm {
+  id: string;
+  name: string;
+  tableId: string;
+  fieldNames: string[];
+  description?: string;
+  submitLabel?: string;
+}
+
+/**
+ * A single dashboard tile:
+ *   - `count`  — total record count of `tableId`.
+ *   - `group`  — record counts grouped by `groupByField`.
+ *   - `rollup` — one aggregate (`aggregation`) of `valueField` over all
+ *                records.
+ *   - `chart`  — bar chart of `aggregation` of `valueField` (or COUNT)
+ *                per `groupByField` category.
+ */
+export interface BaseAppWidget {
+  id: string;
+  kind: BaseAppWidgetKind;
+  tableId: string;
+  title?: string;
+  groupByField?: string;
+  valueField?: string;
+  aggregation?: RollupAggregation;
+}
+
+export interface BaseAppDashboard {
+  title?: string;
+  widgets: BaseAppWidget[];
+}
+
+/**
+ * The "app usage" configuration persisted on a {@link BaseDocument}.
+ *
+ * Legacy-safe by construction: every field is optional or defaulted, so
+ * a missing/partial block degrades to "no forms, no dashboard widgets,
+ * opens in builder mode". Pages shown in app mode are largely DERIVED
+ * (one data page per table plus the dashboard), so a base with an empty
+ * `app` block is still usable in app mode without any authoring.
+ */
+export interface BaseAppConfig {
+  name?: string;
+  defaultMode?: BaseAppMode;
+  forms: BaseAppForm[];
+  dashboard: BaseAppDashboard;
 }
 
 /**
