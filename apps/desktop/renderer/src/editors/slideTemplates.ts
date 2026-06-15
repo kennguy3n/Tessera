@@ -2363,17 +2363,37 @@ export function getInsertCardPreset(
 // ---------------------------------------------------------------------------
 
 /**
+ * The minimal gallery-facing shape {@link filterSlideTemplates} needs.
+ * Both the built-in {@link SlideTemplate} and the user-authored
+ * `CustomSlideTemplate` (see `customSlideTemplates.ts`) satisfy it, so
+ * the filter is generic over either — or a merged list of both —
+ * without this module depending on the custom-template module. A
+ * built-in always carries a string `description`; a custom one may
+ * omit it, hence the optional field.
+ */
+export interface FilterableTemplate {
+  label: string;
+  description?: string;
+  category?: TemplateCategory;
+}
+
+/**
  * Pure filter used by the template gallery. Narrows by `category`
  * (the "All" sentinel matches everything) and then by a free-text
  * `query` matched case-insensitively against the label, description,
  * and category. Input order is preserved and the source array is
  * never mutated, so callers can memoise on the result safely.
+ *
+ * Generic over {@link FilterableTemplate} so it filters built-in or
+ * user templates (or a merged list) and returns the same concrete
+ * element type it was given. The matching behaviour is unchanged for
+ * built-ins (whose `description` is always a string).
  */
-export function filterSlideTemplates(
-  templates: readonly SlideTemplate[],
+export function filterSlideTemplates<T extends FilterableTemplate>(
+  templates: readonly T[],
   category: TemplateCategoryFilter,
   query: string,
-): SlideTemplate[] {
+): T[] {
   const normalisedQuery = query.trim().toLowerCase();
   return templates.filter((template) => {
     if (category !== ALL_TEMPLATES_CATEGORY && template.category !== category) {
@@ -2382,7 +2402,7 @@ export function filterSlideTemplates(
     if (normalisedQuery.length === 0) {
       return true;
     }
-    const haystack = `${template.label} ${template.description} ${
+    const haystack = `${template.label} ${template.description ?? ""} ${
       template.category ?? ""
     }`.toLowerCase();
     return haystack.includes(normalisedQuery);

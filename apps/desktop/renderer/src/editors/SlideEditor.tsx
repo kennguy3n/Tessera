@@ -37,6 +37,8 @@ import {
   nextBlockForTypeChange,
   buildDeckFromTemplate,
   buildSlideFromPreset,
+  cloneSlidesWithFreshIds,
+  slideToTemplateSlide,
   resolveThemeId,
   type ParsedSlideContent,
   type SlideFindMatch,
@@ -73,6 +75,17 @@ import {
   filterSlideTemplates,
   type TemplateCategoryFilter,
 } from "./slideTemplates";
+import { SlideTemplateSaveModal } from "./components/SlideTemplateSaveModal";
+import { useCustomSlideTemplates } from "./useCustomSlideTemplates";
+import {
+  emptySlideTemplateDraft,
+  customSlideTemplateToDraft,
+  serializeSlideTemplate,
+  slideTemplateFilename,
+  parseSlideTemplate,
+  type CustomSlideTemplate,
+  type CustomSlideTemplateDraft,
+} from "./customSlideTemplates";
 
 import {
   applyBulletsToSlide,
@@ -267,6 +280,30 @@ export default function SlideEditor({
   const [templateCategory, setTemplateCategory] =
     useState<TemplateCategoryFilter>(ALL_TEMPLATES_CATEGORY);
   const [templateQuery, setTemplateQuery] = useState("");
+  // The save / edit / import metadata modal. `null` ⇒ closed; otherwise
+  // it carries the seed draft + dialog title for the active mode. Mounted
+  // only while non-null so the modal re-seeds its form on every open.
+  const [templateEditor, setTemplateEditor] = useState<{
+    draft: CustomSlideTemplateDraft;
+    title: string;
+  } | null>(null);
+  // Inline (role="alert") error shown in the gallery when a template
+  // import fails (bad JSON / wrong format / newer version / unreadable).
+  const [templateImportError, setTemplateImportError] = useState<string | null>(
+    null,
+  );
+  // Id of the user template whose delete is pending a second
+  // confirmation click, or `null`. Mirrors SkillManagerControls.
+  const [confirmingTemplateDeleteId, setConfirmingTemplateDeleteId] = useState<
+    string | null
+  >(null);
+  // When the metadata modal is launched from *within* the open gallery
+  // (Edit / Import), the gallery is closed first so only one focus trap
+  // is ever active (the app's documented overlay invariant — see
+  // useFocusTrap). This flag reopens the gallery when that modal closes,
+  // returning the user to the now-updated card grid.
+  const [reopenPickerOnEditorClose, setReopenPickerOnEditorClose] =
+    useState(false);
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [insertPresetOpen, setInsertPresetOpen] = useState(false);
   const [findPanelOpen, setFindPanelOpen] = useState(false);
@@ -339,6 +376,12 @@ export default function SlideEditor({
     () => brandKitById(brandKitId),
     [brandKitById, brandKitId],
   );
+
+  // User-authored slide templates (saved decks). Shared across every
+  // open editor via the module store behind this hook, so a save / edit
+  // / delete here is reflected in the gallery immediately.
+  const { customTemplates, deleteTemplate, duplicateTemplate, templateById } =
+    useCustomSlideTemplates();
   // The brand kit's `--slide-*` overrides, stamped INLINE on the canvas
   // so they win over the stylesheet's `[data-slide-theme]` declarations
   // (same element ⇒ inline beats selector) without touching the curated
@@ -372,6 +415,10 @@ export default function SlideEditor({
   useEffect(() => {
     brandBuilderOpenRef.current = brandBuilderOpen;
   }, [brandBuilderOpen]);
+  const templateEditorOpenRef = useRef(false);
+  useEffect(() => {
+    templateEditorOpenRef.current = templateEditor !== null;
+  }, [templateEditor]);
 
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
@@ -385,6 +432,8 @@ export default function SlideEditor({
   const insertPresetRef = useRef<HTMLDivElement | null>(null);
   const insertPresetTriggerRef = useRef<HTMLButtonElement | null>(null);
   const templatePickerRef = useRef<HTMLDivElement | null>(null);
+  // Hidden file input backing the gallery's "Import template" button.
+  const templateImportInputRef = useRef<HTMLInputElement | null>(null);
 
   // The toolbar popovers (Add-Slide layout menu, AI Deck, theme picker,
   // insert-preset menu) are mutually exclusive: opening one closes the
@@ -405,6 +454,20 @@ export default function SlideEditor({
     () => setTemplatePickerOpen(false),
     [],
   );
+
+  // Reset the gallery's transient UI state whenever it closes so a pending
+  // two-step delete confirmation or an inline import error can never survive
+  // to a later open. This mirrors the version-restore cleanup (which clears
+  // the same fields on a hard deck swap) and covers every close path —
+  // overlay click, Escape (focus trap), Apply, and the Edit/Import hand-off —
+  // without threading a reset through each one. Clearing to an already-`null`
+  // value bails out of re-rendering, so this never costs an extra render.
+  useEffect(() => {
+    if (!templatePickerOpen) {
+      setConfirmingTemplateDeleteId(null);
+      setTemplateImportError(null);
+    }
+  }, [templatePickerOpen]);
 
   // Close the layout picker when the user clicks anywhere outside it.
   // We listen on `mousedown` (not `click`) so the dismiss happens
@@ -508,9 +571,16 @@ export default function SlideEditor({
   useEffect(() => {
     const onNavKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
-      // The template picker and brand builder are true modals — don't let
-      // slide navigation run behind their backdrop while one is open.
-      if (templatePickerOpenRef.current || brandBuilderOpenRef.current) return;
+      // The template picker, brand builder, and save-template modal are
+      // true modals — don't let slide navigation run behind their backdrop
+      // while one is open.
+      if (
+        templatePickerOpenRef.current ||
+        brandBuilderOpenRef.current ||
+        templateEditorOpenRef.current
+      ) {
+        return;
+      }
       if (event.key === "PageUp") {
         event.preventDefault();
         navigateByRef.current(-1);
@@ -610,6 +680,14 @@ export default function SlideEditor({
       uploadTokensRef.current.clear();
       openExclusiveMenu(null);
       setTemplatePickerOpen(false);
+      // Dismiss the save-template modal: its draft captured the *old*
+      // deck, so a hard swap would otherwise let a save persist a
+      // template for a deck that's no longer on screen. Clear the
+      // import error + pending delete confirmation for the same reason.
+      setTemplateEditor(null);
+      setTemplateImportError(null);
+      setConfirmingTemplateDeleteId(null);
+      setReopenPickerOnEditorClose(false);
       // Dismiss the brand builder too. It seeds its draft once from the
       // deck's `themeId`/`brandKitId` at mount (`useState` initialiser), so
       // a hard deck swap would leave it editing a stale draft and a save
@@ -834,6 +912,15 @@ export default function SlideEditor({
     [templateCategory, templateQuery],
   );
 
+  // The user's own templates, filtered by the SAME category + search as
+  // the built-ins through the same pure helper, so the "Your templates"
+  // section of the gallery stays in lock-step with the built-in grid.
+  const visibleCustomTemplates = useMemo(
+    () =>
+      filterSlideTemplates(customTemplates, templateCategory, templateQuery),
+    [customTemplates, templateCategory, templateQuery],
+  );
+
   // Apply a pre-built deck template. Replaces the entire deck with
   // the template's slides and optionally switches to the suggested
   // theme if the template declares one.
@@ -880,6 +967,157 @@ export default function SlideEditor({
       });
     },
     [debouncedSave, marpSource, marpTheme],
+  );
+
+  // Apply a user-authored template. Unlike a built-in (which is a
+  // stateless blueprint materialised by `buildDeckFromTemplate`), a user
+  // template carries a full captured deck, so we replay it through the
+  // same defensive `parseSlideContent` the content-sync path uses, then
+  // reissue every slide/block id via `cloneSlidesWithFreshIds` so the
+  // applied deck never aliases the stored template's ids. The deck-level
+  // settings (theme, aspect ratio, brand kit, Marp state) are restored
+  // from the captured content rather than reset, faithfully reproducing
+  // the saved deck.
+  const applyCustomTemplate = useCallback(
+    (template: CustomSlideTemplate) => {
+      const parsed = parseSlideContent(JSON.stringify(template.content));
+      const newSlides = cloneSlidesWithFreshIds(parsed.slides);
+      if (newSlides.length === 0) return;
+      const nextMarp: MarpModeState = {
+        enabled: parsed.marpMode,
+        source: parsed.marpSource,
+        theme: parsed.marpTheme ?? "default",
+      };
+      setSlides(newSlides);
+      setActiveIndex(0);
+      setMarpMode(parsed.marpMode);
+      setMarpSource(parsed.marpSource);
+      setMarpTheme(parsed.marpTheme ?? "default");
+      setThemeId(parsed.themeId);
+      themeIdRef.current = parsed.themeId;
+      setAspectRatio(parsed.aspectRatio);
+      aspectRatioRef.current = parsed.aspectRatio;
+      // Restore the captured brand kit id verbatim. An unknown id
+      // resolves to "no brand kit" at render via `useBrandKits`, exactly
+      // like a legacy deck — no special-casing needed here.
+      setBrandKitId(parsed.brandKitId);
+      brandKitIdRef.current = parsed.brandKitId;
+      setTemplatePickerOpen(false);
+      setBrandBuilderOpen(false);
+      setDraggedSlideId(null);
+      setDraggedBlockId(null);
+      uploadTokensRef.current.clear();
+      setFindPanelOpen(false);
+      setFindQuery("");
+      debouncedSave(newSlides, nextMarp);
+    },
+    [debouncedSave],
+  );
+
+  // Open the metadata modal seeded with the *current* deck, captured as
+  // a `SlideContent` from the same refs the debounced save serialises —
+  // so "Save deck as template" stores exactly what the editor would
+  // persist. Build-time normalisation (in `buildCustomSlideTemplate`)
+  // canonicalises it on save.
+  const openSaveDeckAsTemplate = useCallback(() => {
+    setTemplateImportError(null);
+    // Launched from the toolbar (the gallery is closed), so there's no
+    // gallery to return to on close.
+    setReopenPickerOnEditorClose(false);
+    setTemplateEditor({
+      draft: emptySlideTemplateDraft({
+        slides,
+        marp: marpStateRef.current,
+        themeId: themeIdRef.current,
+        aspectRatio: aspectRatioRef.current,
+        brandKitId: brandKitIdRef.current,
+      }),
+      title: "Save deck as template",
+    });
+  }, [slides]);
+
+  // Open the metadata modal to edit an existing user template in place.
+  // Resolved live through `templateById` so we never edit a stale
+  // snapshot; the draft keeps the id so the save replaces it.
+  const openEditTemplate = useCallback(
+    (id: string) => {
+      const template = templateById(id);
+      if (!template) return;
+      setTemplateImportError(null);
+      // Launched from inside the gallery — close it (single-trap
+      // invariant) and reopen it once editing is done.
+      setReopenPickerOnEditorClose(true);
+      setTemplatePickerOpen(false);
+      setTemplateEditor({
+        draft: customSlideTemplateToDraft(template),
+        title: "Edit template",
+      });
+    },
+    [templateById],
+  );
+
+  // Download a user template as a portable `tessera-slide-template-*.json`
+  // file (mirrors `BaseEditor.triggerDownload`). `serializeSlideTemplate`
+  // only reads the template, so the source is never mutated.
+  const handleTemplateExport = useCallback((template: CustomSlideTemplate) => {
+    const body = serializeSlideTemplate(template);
+    const blob = new Blob([body], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = slideTemplateFilename(template);
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  // Read a chosen file, parse it as a portable template, and — on
+  // success — open the metadata modal pre-filled for review (the parsed
+  // draft carries no id, so saving mints a fresh one and never
+  // overwrites). On failure surface an inline, accessible error.
+  const handleTemplateImportFile = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      // Reset the input so re-picking the same file fires onChange again.
+      event.target.value = "";
+      if (!file) return;
+      file
+        .text()
+        .then((body) => {
+          const result = parseSlideTemplate(body);
+          if (!result.ok) {
+            setTemplateImportError(result.error);
+            return;
+          }
+          setTemplateImportError(null);
+          // Same single-trap handling as Edit: close the gallery while
+          // the review modal is up, reopen it after.
+          setReopenPickerOnEditorClose(true);
+          setTemplatePickerOpen(false);
+          setTemplateEditor({ draft: result.draft, title: "Import template" });
+        })
+        .catch(() => {
+          setTemplateImportError("Couldn’t read that file.");
+        });
+    },
+    [],
+  );
+
+  // Two-step delete: the first click arms the confirmation for that
+  // template, the second (on the same row) commits. Mirrors the
+  // SkillManagerControls confirm pattern so a stray click can't destroy
+  // a saved template.
+  const handleTemplateDelete = useCallback(
+    (id: string) => {
+      if (confirmingTemplateDeleteId === id) {
+        deleteTemplate(id);
+        setConfirmingTemplateDeleteId(null);
+      } else {
+        setConfirmingTemplateDeleteId(id);
+      }
+    },
+    [confirmingTemplateDeleteId, deleteTemplate],
   );
 
   // Insert a single slide from an insert-card preset after the
@@ -1959,6 +2197,20 @@ export default function SlideEditor({
               Templates
             </button>
           )}
+          {!marpMode && (
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => {
+                openExclusiveMenu(null);
+                openSaveDeckAsTemplate();
+              }}
+              title="Save the current deck as a reusable template"
+              data-testid="slide-save-as-template"
+            >
+              Save as template
+            </button>
+          )}
         </div>
 
         {findPanelOpen && (
@@ -2316,6 +2568,10 @@ export default function SlideEditor({
           >
             <div className="slide-template-gallery-header">
               <h2>Start from a Template</h2>
+              {/* The search box MUST stay the first focusable control in
+                  the dialog — the focus trap defers initial focus to it.
+                  Keep the import button + (display:none) file input AFTER
+                  it so neither steals that initial focus. */}
               <input
                 type="search"
                 className="input slide-template-search"
@@ -2324,7 +2580,37 @@ export default function SlideEditor({
                 placeholder="Search templates…"
                 aria-label="Search templates by name or description"
               />
+              <div className="slide-template-gallery-actions">
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => templateImportInputRef.current?.click()}
+                  title="Import a template from a .json file"
+                  data-testid="slide-template-import"
+                >
+                  Import template
+                </button>
+                <input
+                  ref={templateImportInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  style={{ display: "none" }}
+                  onChange={handleTemplateImportFile}
+                  data-testid="slide-template-import-input"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+              </div>
             </div>
+            {templateImportError && (
+              <p
+                className="ai-panel-error slide-template-import-error"
+                role="alert"
+                data-testid="slide-template-import-error"
+              >
+                {templateImportError}
+              </p>
+            )}
             <div
               className="slide-template-categories"
               role="group"
@@ -2346,56 +2632,204 @@ export default function SlideEditor({
                 ),
               )}
             </div>
-            {visibleTemplates.length === 0 ? (
+            {visibleCustomTemplates.length > 0 && (
+              <section
+                className="slide-template-section"
+                aria-label="Your templates"
+                data-testid="slide-template-custom-section"
+              >
+                <h3 className="slide-template-section-title">Your templates</h3>
+                <div className="slide-template-picker-grid slide-template-gallery-grid">
+                  {visibleCustomTemplates.map((template) => {
+                    const firstSlide = template.content.slides[0];
+                    const armed = confirmingTemplateDeleteId === template.id;
+                    return (
+                      <div
+                        key={template.id}
+                        className="slide-template-card slide-template-gallery-card slide-template-custom-card"
+                        data-testid={`slide-template-custom-${template.id}`}
+                      >
+                        {template.category && (
+                          <span className="slide-template-card-category">
+                            {template.category}
+                          </span>
+                        )}
+                        {firstSlide && (
+                          <SlideThumbnail
+                            slide={slideToTemplateSlide(firstSlide)}
+                            themeId={
+                              template.content.themeId ?? DEFAULT_SLIDE_THEME_ID
+                            }
+                          />
+                        )}
+                        <span className="slide-template-card-meta">
+                          <span className="slide-template-card-text">
+                            <span className="slide-template-card-title">
+                              {template.label}
+                            </span>
+                            {template.description && (
+                              <span className="slide-template-card-desc">
+                                {template.description}
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                        <div className="slide-template-card-actions">
+                          <button
+                            type="button"
+                            className="btn-sm slide-template-card-apply"
+                            onClick={() => applyCustomTemplate(template)}
+                            aria-label={`Apply the ${template.label} template`}
+                            data-testid={`slide-template-apply-${template.id}`}
+                          >
+                            Apply
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            onClick={() => openEditTemplate(template.id)}
+                            aria-label={`Edit the ${template.label} template`}
+                            data-testid={`slide-template-edit-${template.id}`}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            onClick={() => duplicateTemplate(template.id)}
+                            aria-label={`Duplicate the ${template.label} template`}
+                            data-testid={`slide-template-duplicate-${template.id}`}
+                          >
+                            Duplicate
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            onClick={() => handleTemplateExport(template)}
+                            aria-label={`Export the ${template.label} template`}
+                            data-testid={`slide-template-export-${template.id}`}
+                          >
+                            Export
+                          </button>
+                          {armed ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-sm slide-template-delete-confirm"
+                                onClick={() =>
+                                  handleTemplateDelete(template.id)
+                                }
+                                aria-label={`Confirm deleting the ${template.label} template`}
+                                data-testid={`slide-template-delete-confirm-${template.id}`}
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-sm"
+                                onClick={() =>
+                                  setConfirmingTemplateDeleteId(null)
+                                }
+                                aria-label="Cancel deleting the template"
+                                data-testid={`slide-template-delete-cancel-${template.id}`}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-sm slide-template-delete"
+                              onClick={() => handleTemplateDelete(template.id)}
+                              aria-label={`Delete the ${template.label} template`}
+                              data-testid={`slide-template-delete-${template.id}`}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+            {visibleCustomTemplates.length > 0 &&
+              visibleTemplates.length > 0 && (
+                <h3 className="slide-template-section-title">
+                  Built-in templates
+                </h3>
+              )}
+            {visibleTemplates.length === 0 &&
+            visibleCustomTemplates.length === 0 ? (
               <p className="slide-template-empty" role="status">
                 No templates match your search.
               </p>
             ) : (
-              <div className="slide-template-picker-grid slide-template-gallery-grid">
-                {visibleTemplates.map((template) => (
-                  <div
-                    key={template.id}
-                    className="slide-template-card slide-template-gallery-card"
-                  >
-                    {template.category && (
-                      <span className="slide-template-card-category">
-                        {template.category}
-                      </span>
-                    )}
-                    <SlideThumbnail
-                      slide={template.slides[0]}
-                      themeId={
-                        template.suggestedTheme ?? DEFAULT_SLIDE_THEME_ID
-                      }
-                    />
-                    <span className="slide-template-card-meta">
-                      <span className="slide-template-card-icon">
-                        {template.icon}
-                      </span>
-                      <span className="slide-template-card-text">
-                        <span className="slide-template-card-title">
-                          {template.label}
+              visibleTemplates.length > 0 && (
+                <div className="slide-template-picker-grid slide-template-gallery-grid">
+                  {visibleTemplates.map((template) => (
+                    <div
+                      key={template.id}
+                      className="slide-template-card slide-template-gallery-card"
+                    >
+                      {template.category && (
+                        <span className="slide-template-card-category">
+                          {template.category}
                         </span>
-                        <span className="slide-template-card-desc">
-                          {template.description}
+                      )}
+                      <SlideThumbnail
+                        slide={template.slides[0]}
+                        themeId={
+                          template.suggestedTheme ?? DEFAULT_SLIDE_THEME_ID
+                        }
+                      />
+                      <span className="slide-template-card-meta">
+                        <span className="slide-template-card-icon">
+                          {template.icon}
+                        </span>
+                        <span className="slide-template-card-text">
+                          <span className="slide-template-card-title">
+                            {template.label}
+                          </span>
+                          <span className="slide-template-card-desc">
+                            {template.description}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                    {/* Stretched, transparent click target so the whole
-                        card is one focusable control without nesting the
-                        thumbnail's block markup inside a <button>. */}
-                    <button
-                      type="button"
-                      className="slide-template-card-button"
-                      onClick={() => applyTemplate(template)}
-                      aria-label={`Use the ${template.label} template — ${template.description}`}
-                    />
-                  </div>
-                ))}
-              </div>
+                      {/* Stretched, transparent click target so the whole
+                          card is one focusable control without nesting the
+                          thumbnail's block markup inside a <button>. */}
+                      <button
+                        type="button"
+                        className="slide-template-card-button"
+                        onClick={() => applyTemplate(template)}
+                        aria-label={`Use the ${template.label} template — ${template.description}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )
             )}
           </div>
         </div>
+      )}
+      {templateEditor && (
+        <SlideTemplateSaveModal
+          isOpen
+          initialDraft={templateEditor.draft}
+          title={templateEditor.title}
+          onSaved={() => {
+            /* The shared store updates the gallery; nothing else to do. */
+          }}
+          onClose={() => {
+            setTemplateEditor(null);
+            if (reopenPickerOnEditorClose) {
+              setReopenPickerOnEditorClose(false);
+              setTemplatePickerOpen(true);
+            }
+          }}
+        />
       )}
     </div>
   );
