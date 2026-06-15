@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   SLIDE_TEMPLATES,
   INSERT_CARD_PRESETS,
+  TEMPLATE_CATEGORIES,
+  ALL_TEMPLATES_CATEGORY,
   getSlideTemplate,
   getInsertCardPreset,
+  filterSlideTemplates,
+  type TemplateCategory,
 } from "../editors/slideTemplates";
 import { isKnownSlideLayout } from "../editors/slideLayouts";
 import { isKnownSlideThemeId } from "../editors/slideThemes";
@@ -65,6 +69,168 @@ describe("getSlideTemplate", () => {
     expect(getSlideTemplate("nonexistent")).toBeUndefined();
     expect(getSlideTemplate(null)).toBeUndefined();
     expect(getSlideTemplate(undefined)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Taxonomy + catalogue breadth
+// ---------------------------------------------------------------------------
+
+describe("template taxonomy", () => {
+  it("exposes the 11 Gamma-style categories", () => {
+    expect(TEMPLATE_CATEGORIES).toEqual([
+      "Company",
+      "Consulting",
+      "Creative",
+      "Education",
+      "Fundraising",
+      "Marketing",
+      "People",
+      "Project Management",
+      "Reporting",
+      "Sales",
+      "Strategy",
+    ]);
+  });
+
+  it('"All" is distinct from every real category', () => {
+    expect(TEMPLATE_CATEGORIES).not.toContain(ALL_TEMPLATES_CATEGORY);
+  });
+
+  it("every template is tagged with a known category", () => {
+    const known = new Set<string>(TEMPLATE_CATEGORIES);
+    for (const template of SLIDE_TEMPLATES) {
+      const category = template.category;
+      expect(category).toBeDefined();
+      expect(category !== undefined && known.has(category)).toBe(true);
+    }
+  });
+
+  it("grows the catalogue to a professional breadth (>= 24)", () => {
+    expect(SLIDE_TEMPLATES.length).toBeGreaterThanOrEqual(24);
+  });
+
+  it("offers at least two templates in every category", () => {
+    const counts = new Map<TemplateCategory, number>();
+    for (const template of SLIDE_TEMPLATES) {
+      if (template.category) {
+        counts.set(template.category, (counts.get(template.category) ?? 0) + 1);
+      }
+    }
+    for (const category of TEMPLATE_CATEGORIES) {
+      expect(counts.get(category) ?? 0).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("keeps the six original template ids working", () => {
+    for (const id of [
+      "pitch",
+      "status-report",
+      "workshop",
+      "project-proposal",
+      "retrospective",
+      "case-study",
+    ]) {
+      expect(getSlideTemplate(id)).toBeDefined();
+    }
+  });
+
+  it("materialises every catalogue template into a real deck", () => {
+    for (const template of SLIDE_TEMPLATES) {
+      const slides = buildDeckFromTemplate(template);
+      expect(slides.length).toBe(template.slides.length);
+      expect(slides.length).toBeGreaterThan(0);
+      for (const slide of slides) {
+        expect(slide.id).toBeTruthy();
+        expect(isKnownSlideLayout(slide.layout)).toBe(true);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gallery filtering: filterSlideTemplates
+// ---------------------------------------------------------------------------
+
+describe("filterSlideTemplates", () => {
+  it('"All" + empty query returns the whole catalogue', () => {
+    const result = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      ALL_TEMPLATES_CATEGORY,
+      "",
+    );
+    expect(result).toEqual([...SLIDE_TEMPLATES]);
+  });
+
+  it("filters down to a single category", () => {
+    const result = filterSlideTemplates(SLIDE_TEMPLATES, "Fundraising", "");
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.every((t) => t.category === "Fundraising")).toBe(true);
+  });
+
+  it("matches by label, case-insensitively", () => {
+    const result = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      ALL_TEMPLATES_CATEGORY,
+      "PITCH",
+    );
+    expect(result.some((t) => t.id === "pitch")).toBe(true);
+  });
+
+  it("matches by description text", () => {
+    const target = SLIDE_TEMPLATES[0];
+    const word = target.description.split(/\s+/)[0];
+    const result = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      ALL_TEMPLATES_CATEGORY,
+      word,
+    );
+    expect(result.some((t) => t.id === target.id)).toBe(true);
+  });
+
+  it("matches by category name in free-text search", () => {
+    const result = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      ALL_TEMPLATES_CATEGORY,
+      "consulting",
+    );
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.every((t) => t.category === "Consulting")).toBe(true);
+  });
+
+  it("intersects category + query", () => {
+    const all = filterSlideTemplates(SLIDE_TEMPLATES, "Strategy", "");
+    const narrowed = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      "Strategy",
+      all[0].label,
+    );
+    expect(narrowed.length).toBeLessThanOrEqual(all.length);
+    expect(narrowed.every((t) => t.category === "Strategy")).toBe(true);
+  });
+
+  it("treats a whitespace-only query as no query", () => {
+    const result = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      ALL_TEMPLATES_CATEGORY,
+      "   ",
+    );
+    expect(result).toEqual([...SLIDE_TEMPLATES]);
+  });
+
+  it("returns an empty list when nothing matches", () => {
+    const result = filterSlideTemplates(
+      SLIDE_TEMPLATES,
+      ALL_TEMPLATES_CATEGORY,
+      "zzz-no-such-template-zzz",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("does not mutate the source catalogue", () => {
+    const before = SLIDE_TEMPLATES.length;
+    filterSlideTemplates(SLIDE_TEMPLATES, "Sales", "deck");
+    expect(SLIDE_TEMPLATES.length).toBe(before);
   });
 });
 
