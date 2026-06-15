@@ -521,6 +521,12 @@ export default function SlideEditor({
       uploadTokensRef.current.clear();
       openExclusiveMenu(null);
       setTemplatePickerOpen(false);
+      // Dismiss the brand builder too. It seeds its draft once from the
+      // deck's `themeId`/`brandKitId` at mount (`useState` initialiser), so
+      // a hard deck swap would leave it editing a stale draft and a save
+      // could re-apply an old kit or a mismatched theme. Reopening reseeds
+      // it against the freshly swapped deck.
+      setBrandBuilderOpen(false);
       // Close the find panel *and* clear its query (mirroring the panel's
       // own close button). A non-empty query would otherwise survive the
       // swap, re-run `findMatches` against the new deck, and silently jump
@@ -715,6 +721,9 @@ export default function SlideEditor({
       setActiveIndex(0);
       setMarpMode(false);
       setTemplatePickerOpen(false);
+      // Dismiss the brand builder — like the version-restore path, a deck
+      // swap invalidates the draft it seeded at mount.
+      setBrandBuilderOpen(false);
       // Clear stale drag/upload state — the entire deck is being
       // replaced, so ids from the previous deck are invalid (mirrors
       // the version-restore sync effect at line 391-408).
@@ -781,6 +790,9 @@ export default function SlideEditor({
       setMarpMode(false);
       setDeckGenOpen(false);
       setDeckRestyleOpen(false);
+      // Dismiss the brand builder — like the version-restore path, a deck
+      // swap invalidates the draft it seeded at mount.
+      setBrandBuilderOpen(false);
       // Clear stale drag/upload state — the entire deck is being
       // replaced, matching applyTemplate and the version-restore
       // sync effect.
@@ -1676,7 +1688,14 @@ export default function SlideEditor({
             <button
               type="button"
               className="slide-brand-trigger"
-              onClick={() => setBrandBuilderOpen(true)}
+              onClick={() => {
+                // Close any open toolbar popover first, mirroring how the
+                // template picker opens (`openExclusiveMenu(null)` before
+                // `setTemplatePickerOpen(true)`), so a popover can't linger
+                // behind the modal.
+                openExclusiveMenu(null);
+                setBrandBuilderOpen(true);
+              }}
               aria-haspopup="dialog"
               aria-expanded={brandBuilderOpen}
               title="Copy a theme and re-skin it with your brand colours, fonts and logo"

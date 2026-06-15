@@ -114,13 +114,25 @@ rules:
   re-establishes a coherent brand state rather than carrying the old skin
   over: a version restore reads `brandKitId` from the incoming deck, and
   applying a template or an AI-generated deck **detaches** the kit
-  (`brandKitId → undefined`). This keeps the invariant that a deck's
-  `themeId` matches its kit's `baseThemeId` — a template declares its own
+  (`brandKitId → undefined`). A template declares its own
   `suggestedTheme`, so inheriting a kit authored against a different base
-  theme would both mismatch that invariant and let a later re-apply snap
-  the theme back. Detaching only removes the skin; the curated theme and
-  all slide content are preserved, and the kit (still in the store) is
-  one click away from being re-applied.
+  theme would leave `deck.themeId !== kit.baseThemeId` and let a later
+  re-apply snap the theme back. Detaching only removes the skin; the
+  curated theme and all slide content are preserved, and the kit (still
+  in the store) is one click away from being re-applied. A deck swap also
+  dismisses the brand builder modal, which seeds its draft from the deck
+  at mount and would otherwise edit a stale draft.
+- **`themeId == baseThemeId` is established, not invariant.** The deck's
+  `themeId` is aligned to the kit's `baseThemeId` only at the points
+  where the brand state is (re-)established — applying/saving a kit
+  (`applyBrandKit`) and restoring/replacing a deck — not as a standing
+  invariant. The interactive theme picker is the one path that
+  deliberately lets the two diverge: because a kit is a _layer_,
+  switching themes keeps the skin and re-skins the newly chosen base (the
+  Gamma/Google-Slides "swap the base, keep the brand" model). The builder
+  is where `baseThemeId` is authoritatively chosen, so re-applying the
+  kit from there re-asserts that base — expected, since the builder shows
+  the base-theme selector.
 
 UI integration is additive and reuses existing primitives:
 

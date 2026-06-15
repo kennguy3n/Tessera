@@ -39,6 +39,15 @@ function brandedDeck(brandKitId: string): string {
   return JSON.stringify(content);
 }
 
+/** A brand-less deck on a different theme, as a version restore would supply. */
+function plainDeck(): string {
+  const content: SlideContent = {
+    slides: [{ id: "s2", title: "Restored", blocks: [], notes: "" }],
+    themeId: "slate",
+  };
+  return JSON.stringify(content);
+}
+
 /** Parse the payload from the most recent onDraftChange call. */
 function lastDraft(onDraftChange: ReturnType<typeof vi.fn>): SlideContent {
   const calls = onDraftChange.mock.calls;
@@ -102,5 +111,59 @@ describe("SlideEditor brand kit + deck-replacing operations", () => {
     const draft = lastDraft(onDraftChange);
     expect(draft.themeId).toBe("slate");
     expect(draft.brandKitId).toBeUndefined();
+  });
+
+  it("dismisses an open brand builder when a template replaces the deck", async () => {
+    const user = userEvent.setup();
+    const id = seedAcmeKit();
+    render(
+      <SlideEditor
+        content={brandedDeck(id)}
+        onSave={vi.fn()}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    await flushMount();
+
+    await user.click(screen.getByTestId("slide-brand-trigger"));
+    expect(screen.getByTestId("brand-kit-builder")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Templates" }));
+    await user.click(screen.getByRole("button", { name: /Status Report/ }));
+
+    // The modal seeds its draft from the deck at mount, so a deck swap must
+    // close it rather than leave it editing a stale draft.
+    expect(screen.queryByTestId("brand-kit-builder")).not.toBeInTheDocument();
+  });
+
+  it("dismisses an open brand builder on version restore (external content change)", async () => {
+    const user = userEvent.setup();
+    const id = seedAcmeKit();
+    const { rerender } = render(
+      <SlideEditor
+        content={brandedDeck(id)}
+        onSave={vi.fn()}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    await flushMount();
+
+    await user.click(screen.getByTestId("slide-brand-trigger"));
+    expect(screen.getByTestId("brand-kit-builder")).toBeInTheDocument();
+
+    // A version restore feeds a brand-less deck through the `content` prop.
+    rerender(
+      <SlideEditor
+        content={plainDeck()}
+        onSave={vi.fn()}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    await flushMount();
+
+    expect(screen.queryByTestId("brand-kit-builder")).not.toBeInTheDocument();
+    expect(screen.getByTestId("slide-brand-trigger")).toHaveTextContent(
+      "Customize brand",
+    );
   });
 });
