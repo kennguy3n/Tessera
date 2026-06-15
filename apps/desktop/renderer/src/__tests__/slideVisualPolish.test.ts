@@ -313,6 +313,51 @@ describe("parseSlideContent per-slide background handling", () => {
     const parsed = parseSlideContent(JSON.stringify(legacy));
     expect(parsed.slides[0].background).toBeUndefined();
   });
+
+  it("strips a hand-edited unknown background, removing the key entirely", () => {
+    const corrupted = {
+      slides: [
+        {
+          id: "s1",
+          title: "A",
+          blocks: [{ id: "b1", type: "text", content: "" }],
+          notes: "",
+          background: "plaid",
+        },
+      ],
+    };
+    const parsed = parseSlideContent(JSON.stringify(corrupted));
+    expect(parsed.slides[0].background).toBeUndefined();
+    // Removed outright (not set to `undefined`) so the cleaned slide
+    // serialises identically to one that never had an override.
+    expect("background" in parsed.slides[0]).toBe(false);
+  });
+
+  it("sanitises only the offending slide, preserving valid neighbours by reference", () => {
+    const mixed: SlideContent = {
+      slides: [
+        {
+          id: "s1",
+          title: "valid",
+          blocks: [{ id: "b1", type: "text", content: "" }],
+          notes: "",
+          background: "mesh",
+        },
+        {
+          id: "s2",
+          title: "bad",
+          blocks: [{ id: "b2", type: "text", content: "" }],
+          notes: "",
+          // Deliberately invalid — must be stripped.
+          background: "argyle" as SlideBgStyle,
+        },
+      ],
+    };
+    const parsed = parseSlideContent(JSON.stringify(mixed));
+    expect(parsed.slides[0].background).toBe("mesh");
+    expect(parsed.slides[1].background).toBeUndefined();
+    expect("background" in parsed.slides[1]).toBe(false);
+  });
 });
 
 describe("duplicateSlideAt background propagation", () => {

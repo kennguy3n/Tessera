@@ -14,7 +14,11 @@
 import type { MarpRenderOptions } from "../services/marpRenderer";
 import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
-import { DEFAULT_SLIDE_THEME_ID, isKnownSlideThemeId } from "./slideThemes";
+import {
+  DEFAULT_SLIDE_THEME_ID,
+  isKnownSlideBgStyle,
+  isKnownSlideThemeId,
+} from "./slideThemes";
 import { getSlideLayout } from "./slideLayouts";
 import type { ChartData } from "./sheetCharts";
 import type {
@@ -221,6 +225,44 @@ export function backfillSlideIds(slides: readonly Slide[]): Slide[] {
   return nextSlides ?? (slides as Slide[]);
 }
 
+/**
+ * Strip an unknown per-slide `background` override down to "no
+ * override" so a hand-edited or corrupted persisted value can never
+ * reach the canvas as a dangling `data-slide-bg="…"` that matches no
+ * CSS rule. This mirrors the deck-level `resolveThemeId` /
+ * `resolveAspectRatio` coercion so EVERY persisted style field is
+ * trusted only after a catalogue check, and is what makes
+ * {@link isKnownSlideBgStyle}'s contract — "validated by
+ * `parseSlideContent`" — actually hold.
+ *
+ * Lazy clone-on-first-mutation, exactly like {@link backfillSlideIds}:
+ * a slide whose `background` is absent or already valid is passed
+ * through by reference, so an already-clean deck returns the same
+ * array (and the same slide objects) and React's setState equality
+ * short-circuit still holds. Only a slide carrying an invalid
+ * override is shallow cloned, with the bad key deleted entirely
+ * (rather than set to `undefined`) so the sanitised slide serialises
+ * identically to one that never had an override.
+ */
+function sanitizeSlideBackgrounds(slides: Slide[]): Slide[] {
+  let next: Slide[] | null = null;
+  for (let i = 0; i < slides.length; i += 1) {
+    const slide = slides[i];
+    if (
+      slide.background === undefined ||
+      isKnownSlideBgStyle(slide.background)
+    ) {
+      if (next) next.push(slide);
+      continue;
+    }
+    if (!next) next = slides.slice(0, i);
+    const cleaned = { ...slide };
+    delete cleaned.background;
+    next.push(cleaned);
+  }
+  return next ?? slides;
+}
+
 export function parseSlideContent(content: string): ParsedSlideContent {
   const emptyDefault: ParsedSlideContent = {
     slides: backfillSlideIds([
@@ -246,7 +288,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
       parsed.slides.length > 0
     ) {
       return {
-        slides: backfillSlideIds(parsed.slides),
+        slides: sanitizeSlideBackgrounds(backfillSlideIds(parsed.slides)),
         marpMode: parsed.marp?.enabled ?? false,
         marpSource: parsed.marp?.source ?? "",
         marpTheme: parsed.marp?.theme,
