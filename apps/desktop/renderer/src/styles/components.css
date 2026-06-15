@@ -4919,6 +4919,30 @@
   padding-top: var(--spacing-sm);
   background: var(--color-bg-page);
 }
+.skill-editor-check-group {
+  margin-top: var(--spacing-xs);
+}
+/* `<details>` ignores non-block `display` values before Chromium 131 (the
+   shell ships 126), so space the stacked children with margins instead of a
+   flex `gap` — matching the `.connector-scopes` details pattern. */
+.skill-editor-check-group > * + * {
+  margin-top: var(--spacing-xs);
+}
+.skill-editor-check-group > summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+.skill-editor-check-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+.skill-editor-check-num {
+  flex: 1 1 8rem;
+  min-width: 8rem;
+}
 
 /* ── Link popover ────────────────────────────────────────────────── */
 .link-popover {

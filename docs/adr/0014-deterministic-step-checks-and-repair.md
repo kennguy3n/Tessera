@@ -133,6 +133,7 @@ Scope boundaries (deliberate, to keep the change tight and reviewable):
 - `evaluateCheck` / `compileRepairStep` are pure and exhaustively
   unit-testable; the loop itself is covered by synthetic-skill runner and
   panel tests, so the built-in fixtures did not need to be perturbed.
-- **Follow-up:** expose `check` authoring in the custom-skill editor, and
-  (if the IPC schema ever gains a `grammar` field) layer GBNF enforcement
-  _underneath_ these checks rather than replacing them.
+- **Follow-up:** expose `check` authoring in the custom-skill editor
+  (done in [0015](0015-custom-skill-check-authoring.md)), and (if the IPC
+  schema ever gains a `grammar` field) layer GBNF enforcement _underneath_
+  these checks rather than replacing them.

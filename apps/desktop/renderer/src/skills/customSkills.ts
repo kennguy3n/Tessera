@@ -32,6 +32,7 @@ import type {
   Skill,
   SkillInputSpec,
   SkillStep,
+  SkillStepCheck,
   SkillStepKind,
   SkillSurface,
 } from "./skillTypes";
@@ -66,6 +67,15 @@ export const MAX_INPUT_LABEL = 60;
 export const MAX_INPUT_PLACEHOLDER = 120;
 export const MAX_VAR_NAME = 40;
 
+/** Max distinct terms in a check's must-include / must-not-contain list. */
+export const MAX_CHECK_TERMS = 8;
+/** Max length of a single check term / `mustStartWith` prefix. */
+export const MAX_CHECK_TERM = 120;
+/** Upper bound the authoring UI accepts for a check's `minLines`. */
+export const MAX_CHECK_MIN_LINES = 100;
+/** Upper bound the authoring UI accepts for a check's `maxChars`. */
+export const MAX_CHECK_MAX_CHARS = 8000;
+
 /** Canonical surface order, used to normalise + render surface lists. */
 export const ALL_SKILL_SURFACES: readonly SkillSurface[] = [
   "document",
@@ -99,6 +109,31 @@ export interface CustomInputDraft {
   multiline: boolean;
 }
 
+/**
+ * The loose, text-input-friendly form of a step's deterministic
+ * acceptance {@link SkillStepCheck}. Numbers and lists are held as raw
+ * strings (the numeric fields back `<input type="number">`; the list
+ * fields are newline-separated, one term per line) so the editor never
+ * has to juggle `number | ""`. {@link buildStepCheck} parses this into a
+ * real {@link SkillStepCheck} (or `undefined` when nothing is set).
+ */
+export interface CustomCheckDraft {
+  /** Output must be non-empty after trimming. */
+  nonEmpty: boolean;
+  /** Output must not contain a Markdown code fence. */
+  forbidFences: boolean;
+  /** Minimum non-empty lines (blank ⇒ no constraint). */
+  minLines: string;
+  /** Maximum characters (blank ⇒ no constraint). */
+  maxChars: string;
+  /** Exact case-sensitive prefix the trimmed output must start with. */
+  mustStartWith: string;
+  /** Required substrings, one per line (case-insensitive). */
+  mustInclude: string;
+  /** Forbidden substrings, one per line (case-insensitive). */
+  forbidContains: string;
+}
+
 /** One row in the steps editor. */
 export interface CustomStepDraft {
   title: string;
@@ -110,6 +145,12 @@ export interface CustomStepDraft {
   inputsFrom: string[];
   /** Optional strict output contract; empty ⇒ omitted. */
   outputContract: string;
+  /**
+   * Optional deterministic acceptance check authored for this step.
+   * Absent on legacy drafts; {@link emptyStepDraft} / {@link skillToDraft}
+   * always populate it. Built into a {@link SkillStepCheck} on save.
+   */
+  check?: CustomCheckDraft;
 }
 
 /** The full draft the {@link SkillEditorModal} edits. */
@@ -208,6 +249,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 // Authoring helpers (used by the editor UI)
 // ─────────────────────────────────────────────────────────────────────
 
+/** An empty acceptance-check draft (no constraint on any field). */
+export function emptyCheckDraft(): CustomCheckDraft {
+  return {
+    nonEmpty: false,
+    forbidFences: false,
+    minLines: "",
+    maxChars: "",
+    mustStartWith: "",
+    mustInclude: "",
+    forbidContains: "",
+  };
+}
+
 /** An empty step draft (sensible defaults). */
 export function emptyStepDraft(): CustomStepDraft {
   return {
@@ -217,6 +271,7 @@ export function emptyStepDraft(): CustomStepDraft {
     output: "",
     inputsFrom: [],
     outputContract: "",
+    check: emptyCheckDraft(),
   };
 }
 
@@ -240,6 +295,48 @@ export function emptyDraft(
   };
 }
 
+/**
+ * Convert a step's {@link SkillStepCheck} (or a raw persisted record) into
+ * the editor's {@link CustomCheckDraft}. Reads every field defensively so
+ * it is safe on either a typed built-in check or arbitrary stored JSON; an
+ * absent/garbage value yields an all-empty draft. Inverse of
+ * {@link buildStepCheck}.
+ */
+export function checkToDraft(raw: SkillStepCheck | unknown): CustomCheckDraft {
+  const rec = asRecord(raw);
+  if (!rec) return emptyCheckDraft();
+  return {
+    nonEmpty: rec.nonEmpty === true,
+    forbidFences: rec.forbidFences === true,
+    minLines: positiveIntToDraft(rec.minLines),
+    maxChars: positiveIntToDraft(rec.maxChars),
+    mustStartWith:
+      typeof rec.mustStartWith === "string" ? rec.mustStartWith : "",
+    mustInclude: stringListToDraft(rec.mustInclude),
+    forbidContains: stringListToDraft(rec.forbidContains),
+  };
+}
+
+/** A finite positive integer becomes its decimal string; anything else "". */
+function positiveIntToDraft(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? String(Math.floor(value))
+    : "";
+}
+
+/**
+ * A `string[]` becomes a newline-joined textarea value. Term content is kept
+ * verbatim (whitespace is significant to the engine) — only whitespace-only
+ * entries are dropped — so re-building the draft is the exact inverse.
+ */
+function stringListToDraft(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .filter((t): t is string => typeof t === "string")
+    .filter((t) => t.trim().length > 0)
+    .join("\n");
+}
+
 /** Re-hydrate a saved {@link Skill} back into an editable draft. */
 export function skillToDraft(skill: Skill): CustomSkillDraft {
   return {
@@ -260,6 +357,7 @@ export function skillToDraft(skill: Skill): CustomSkillDraft {
       output: s.output,
       inputsFrom: [...(s.inputsFrom ?? [])],
       outputContract: s.outputContract ?? "",
+      check: checkToDraft(s.check),
     })),
   };
 }
@@ -293,6 +391,116 @@ export function availableVarsBeforeStep(
 // ─────────────────────────────────────────────────────────────────────
 // Build a Skill from a draft (the authoring path)
 // ─────────────────────────────────────────────────────────────────────
+
+/** Result of building one step's acceptance check. */
+export interface CheckBuildResult {
+  /**
+   * The built check from the fields that parsed cleanly, or `undefined` when
+   * no field is set. Note this may be defined *alongside* `errors` when some
+   * fields are valid and others are not (e.g. `nonEmpty` set but `minLines`
+   * non-numeric); callers must treat a non-empty `errors` as authoritative
+   * and ignore `check` (as `buildCustomSkill` does — it aborts on any error).
+   */
+  check?: SkillStepCheck;
+  /** Human-readable problems (e.g. a non-numeric `minLines`). */
+  errors: string[];
+}
+
+/** Parse a raw numeric-input string into a bounded positive integer, or
+ *  `null` when blank/invalid (so the caller can surface a friendly error). */
+function parseCheckInt(raw: string, max: number): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (!/^[0-9]+$/.test(s)) return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 1 || n > max) return null;
+  return n;
+}
+
+/**
+ * Length-clamp a single check term. Content is preserved verbatim (the
+ * engine treats a needle's interior/surrounding whitespace as significant
+ * and `mustInclude: ["## "]` is a real built-in), so this only enforces the
+ * length bound — it never trims, which is what keeps duplicating a built-in
+ * skill lossless.
+ */
+function clampTerm(raw: string): string {
+  return raw.length > MAX_CHECK_TERM ? raw.slice(0, MAX_CHECK_TERM) : raw;
+}
+
+/**
+ * Split a newline-separated list field into length-clamped, deduped, capped
+ * terms. Whitespace-only lines are dropped (they would be no-ops in the
+ * engine, which ignores empty needles), but a meaningful term keeps its
+ * surrounding whitespace.
+ */
+function parseTermList(raw: string): string[] {
+  const terms = (raw ?? "")
+    .split("\n")
+    .map(clampTerm)
+    .filter((t) => t.trim().length > 0);
+  return dedupe(terms).slice(0, MAX_CHECK_TERMS);
+}
+
+/**
+ * Build a normalised {@link SkillStepCheck} from a {@link CustomCheckDraft},
+ * collecting any human-readable problems. Only fields the author actually
+ * set are emitted (so a step with no check stays `check`-free, keeping the
+ * persisted blob and the round-trip clean). Numeric fields that are present
+ * but non-numeric / out of range produce an error rather than being silently
+ * dropped. Mirrors the engine's regex-free primitives — never builds a
+ * dynamic regular expression. Inverse of {@link checkToDraft}.
+ *
+ * When some fields are valid and others error, the returned `check` reflects
+ * only the valid fields; callers must treat a non-empty `errors` as a build
+ * failure and discard `check` (see {@link CheckBuildResult}).
+ */
+export function buildStepCheck(
+  draft: CustomCheckDraft | undefined,
+): CheckBuildResult {
+  const errors: string[] = [];
+  if (!draft) return { errors };
+
+  const check: SkillStepCheck = {};
+
+  if (draft.nonEmpty) check.nonEmpty = true;
+  if (draft.forbidFences) check.forbidFences = true;
+
+  if (draft.minLines.trim()) {
+    const n = parseCheckInt(draft.minLines, MAX_CHECK_MIN_LINES);
+    if (n === null) {
+      errors.push(
+        `Minimum lines must be a whole number from 1 to ${MAX_CHECK_MIN_LINES}.`,
+      );
+    } else {
+      check.minLines = n;
+    }
+  }
+
+  if (draft.maxChars.trim()) {
+    const n = parseCheckInt(draft.maxChars, MAX_CHECK_MAX_CHARS);
+    if (n === null) {
+      errors.push(
+        `Maximum characters must be a whole number from 1 to ${MAX_CHECK_MAX_CHARS}.`,
+      );
+    } else {
+      check.maxChars = n;
+    }
+  }
+
+  // Leading whitespace on a prefix can never match (the engine trims the
+  // output before `startsWith`), so strip it; trailing whitespace is kept.
+  const startsWith = clampTerm(draft.mustStartWith.replace(/^\s+/, ""));
+  if (startsWith.trim().length > 0) check.mustStartWith = startsWith;
+
+  const include = parseTermList(draft.mustInclude);
+  if (include.length > 0) check.mustInclude = include;
+
+  const forbid = parseTermList(draft.forbidContains);
+  if (forbid.length > 0) check.forbidContains = forbid;
+
+  return Object.keys(check).length > 0 ? { check, errors } : { errors };
+}
 
 /**
  * Validate + normalise a {@link CustomSkillDraft} into a {@link Skill}.
@@ -396,6 +604,12 @@ export function buildCustomSkill(
       MAX_STEP_OUTPUT_CONTRACT,
     );
     if (contract) step.outputContract = contract;
+
+    const { check, errors: checkErrors } = buildStepCheck(row.check);
+    for (const problem of checkErrors) {
+      errors.push(`Step ${i + 1} ("${title}") check: ${problem}`);
+    }
+    if (check) step.check = check;
 
     outputs.add(output);
     producedSoFar.add(output);
@@ -543,6 +757,7 @@ function parseStoredSteps(raw: unknown): CustomStepDraft[] {
         : [],
       outputContract:
         typeof rec.outputContract === "string" ? rec.outputContract : "",
+      check: checkToDraft(rec.check),
     });
   }
   return out;

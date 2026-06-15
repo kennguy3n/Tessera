@@ -26,3 +26,4 @@ the record stays verifiable).
 | [0012](0012-deliberate-skills-engine.md)             | Deliberate multi-step Skills engine for small-model AI quality |
 | [0013](0013-user-authored-skills.md)                 | User-authored ("custom") Skills persisted in the renderer      |
 | [0014](0014-deterministic-step-checks-and-repair.md) | Deterministic per-step output checks with bounded auto-repair  |
+| [0015](0015-custom-skill-check-authoring.md)         | Acceptance-check authoring in the custom-skill editor          |
