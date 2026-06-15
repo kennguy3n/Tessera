@@ -9,6 +9,12 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import ArtifactEditorPage from "../pages/ArtifactEditorPage";
+import {
+  BRAND_KIT_ID_PREFIX,
+  buildBrandKit,
+  emptyBrandKitDraft,
+  saveBrandKits,
+} from "../editors/slideBrandKit";
 
 // Slow/loaded CI runners (notably windows-2022) intermittently need more than
 // testing-library's 1000ms default for the initial async artifact load → parse
@@ -56,6 +62,11 @@ const artifactWithUnresolvableIcon = {
 
 describe("ArtifactEditorPage live-draft export", () => {
   beforeEach(() => {
+    // Reset persisted Brand Kits (and any other localStorage state) before
+    // every test. A kit saved by one test must not leak into a later slide
+    // export and silently inject brand CSS — this guarantees isolation
+    // regardless of test execution order or future additions to this file.
+    window.localStorage.clear();
     window.tessera.artifacts.get = vi.fn().mockResolvedValue(baseArtifact);
     window.tessera.artifacts.exportArtifact = vi.fn().mockResolvedValue({
       // CSV is a sheet-appropriate non-icon-aware format. Markdown was
@@ -97,7 +108,9 @@ describe("ArtifactEditorPage live-draft export", () => {
     // Immediately export as CSV (a sheet-appropriate non-icon-aware
     // format — no debounce wait, which is the bug scenario the fix
     // targets).
-    const exportSelect = screen.getByLabelText("Export artifact") as HTMLSelectElement;
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
     await act(async () => {
       fireEvent.change(exportSelect, { target: { value: "csv" } });
     });
@@ -232,6 +245,92 @@ describe("ArtifactEditorPage live-draft export", () => {
     const arg = mockFn.mock.calls[0][0];
     expect(arg.theme).toBe("default");
     expect(arg.markdown).toContain("theme: 'default'");
+  });
+
+  it("carries the active Brand Kit's CSS into PPTX, PDF, and HTML Marp exports", async () => {
+    // Persist a Brand Kit and point a slide deck at it. Exporting to each of
+    // the three slide Marp formats must route through `exportMarp` (NOT the
+    // generic Rust exporters) with the brand CSS injected into the markdown,
+    // so the brand survives end-to-end for every format. (localStorage is
+    // cleared in beforeEach, so this test starts from a known-empty store.)
+    const built = buildBrandKit(
+      {
+        ...emptyBrandKitDraft("aurora"),
+        name: "Acme",
+        colors: {
+          accent: "#0ea5e9",
+          surface: "#0b1324",
+          text: "#f8fafc",
+          heading: "#e2e8f0",
+          muted: "",
+        },
+        headingFont: "serif",
+        bodyFont: "inter",
+      },
+      () => `${BRAND_KIT_ID_PREFIX}acme`,
+    );
+    if (!built.ok) throw new Error("brand kit build failed in test setup");
+    saveBrandKits([built.brandKit]);
+
+    const slideArtifact = {
+      ...baseArtifact,
+      id: "art-slide-brand",
+      artifactType: "slides" as const,
+      content: JSON.stringify({
+        slides: [
+          {
+            title: "Cover",
+            blocks: [{ type: "text", content: "hello" }],
+            notes: "",
+          },
+        ],
+        marp: { enabled: false, source: "", theme: "gaia" },
+        brandKitId: built.brandKit.id,
+      }),
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(slideArtifact);
+    window.tessera.artifacts.exportMarp = vi
+      .fn()
+      .mockResolvedValue("/tmp/Cover.out");
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-slide-brand"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const exportSelect = await waitFor(() => {
+      const el = screen.queryByLabelText("Export artifact");
+      if (!el) throw new Error("export select not mounted yet");
+      return el as HTMLSelectElement;
+    });
+
+    const mockFn = window.tessera.artifacts.exportMarp as unknown as {
+      mock: {
+        calls: Array<[{ markdown: string; theme?: string; format: string }]>;
+      };
+    };
+    const formats = ["pptx", "pdf", "html"] as const;
+    for (let i = 0; i < formats.length; i++) {
+      await act(async () => {
+        fireEvent.change(exportSelect, { target: { value: formats[i] } });
+      });
+      await waitFor(() => {
+        expect(mockFn.mock.calls.length).toBe(i + 1);
+      });
+      const arg = mockFn.mock.calls[i][0];
+      // Routed through the Marp pipeline for THIS format …
+      expect(arg.format).toBe(formats[i]);
+      // … with the brand CSS injected as a `style:` directive carrying the
+      // kit's accent colour (the value the in-app re-skin would use).
+      expect(arg.markdown).toContain("style: |");
+      expect(arg.markdown).toContain("--slide-accent: #0ea5e9");
+      expect(arg.markdown).toContain("background-color: var(--slide-surface)");
+      // The deck's chosen theme still rides along unchanged.
+      expect(arg.theme).toBe("gaia");
+      expect(arg.markdown).toContain("theme: 'gaia'");
+    }
   });
 
   it("exports the live draft when icon-aware format has only unresolvable icon tokens", async () => {
@@ -375,7 +474,11 @@ describe("ArtifactEditorPage live-draft export", () => {
           statLabel: "growth",
         },
       ],
-      colorScheme: { primary: "#7C3AED", secondary: "#5B21B6", accent: "#F59E0B" },
+      colorScheme: {
+        primary: "#7C3AED",
+        secondary: "#5B21B6",
+        accent: "#F59E0B",
+      },
       layout: "vertical",
     });
     const infographicArtifact = {
@@ -384,7 +487,9 @@ describe("ArtifactEditorPage live-draft export", () => {
       artifactType: "infographic" as const,
       content: infographicJson,
     };
-    window.tessera.artifacts.get = vi.fn().mockResolvedValue(infographicArtifact);
+    window.tessera.artifacts.get = vi
+      .fn()
+      .mockResolvedValue(infographicArtifact);
 
     render(
       <MemoryRouter initialEntries={["/artifact/art-infographic"]}>
@@ -451,7 +556,11 @@ describe("ArtifactEditorPage live-draft export", () => {
       stats: [],
       testimonials: [],
       cta: null,
-      colorScheme: { primary: "#7C3AED", secondary: "#5B21B6", accent: "#F59E0B" },
+      colorScheme: {
+        primary: "#7C3AED",
+        secondary: "#5B21B6",
+        accent: "#F59E0B",
+      },
     });
     const landingArtifact = {
       ...baseArtifact,
@@ -470,9 +579,9 @@ describe("ArtifactEditorPage live-draft export", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getAllByDisplayValue("Ship Faster").length,
-      ).toBeGreaterThan(0);
+      expect(screen.getAllByDisplayValue("Ship Faster").length).toBeGreaterThan(
+        0,
+      );
     });
 
     const exportSelect = screen.getByLabelText(
@@ -521,7 +630,11 @@ describe("ArtifactEditorPage live-draft export", () => {
           statLabel: "growth",
         },
       ],
-      colorScheme: { primary: "#7C3AED", secondary: "#5B21B6", accent: "#F59E0B" },
+      colorScheme: {
+        primary: "#7C3AED",
+        secondary: "#5B21B6",
+        accent: "#F59E0B",
+      },
       layout: "vertical",
     });
     const infographicArtifact = {
@@ -635,9 +748,9 @@ describe("ArtifactEditorPage live-draft export", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getAllByDisplayValue("Ship Faster").length,
-      ).toBeGreaterThan(0);
+      expect(screen.getAllByDisplayValue("Ship Faster").length).toBeGreaterThan(
+        0,
+      );
     });
 
     const exportSelect = screen.getByLabelText(

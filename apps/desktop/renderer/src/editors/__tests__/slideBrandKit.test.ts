@@ -4,6 +4,7 @@ import {
   BRAND_KIT_ID_PREFIX,
   MAX_BRAND_KITS,
   MAX_LOGO_DATA_URL_LENGTH,
+  brandCssForExport,
   brandDraftCssVars,
   brandFontStack,
   brandKitCssVars,
@@ -296,6 +297,77 @@ describe("brandKitCssVars / brandDraftCssVars", () => {
     expect(vars["--slide-accent"]).toBe("#7c3aed");
     expect(vars["--slide-text"]).toBe("#1e1b2e");
     expect(vars["--slide-surface"]).toBeUndefined();
+  });
+});
+
+describe("brandCssForExport", () => {
+  it("binds only the required vars onto Marp elements for a minimal kit", () => {
+    const css = brandCssForExport(kit());
+
+    // :root declares every var brandKitCssVars produced (single source of
+    // truth) — here, exactly the three required ones.
+    expect(css).toContain(":root {");
+    expect(css).toContain("--slide-accent: #7c3aed;");
+    expect(css).toContain("--slide-surface: #ffffff;");
+    expect(css).toContain("--slide-text: #1e1b2e;");
+
+    // section is always re-skinned with surface + body text colour.
+    expect(css).toMatch(
+      /section \{\n {2}background-color: var\(--slide-surface\);\n {2}color: var\(--slide-text\);\n\}/,
+    );
+    // No body font → no font-family binding on section.
+    expect(css).not.toContain("font-family: var(--slide-font-body)");
+
+    // No heading colour/font defined → no heading block emitted at all.
+    expect(css).not.toContain("section h1,");
+    expect(css).not.toContain("color: var(--slide-headline)");
+
+    // Accent always tints links + the title underline (never body copy).
+    expect(css).toContain("section a {\n  color: var(--slide-accent);\n}");
+    expect(css).toContain(
+      "border-bottom: 0.075em solid color-mix(in srgb, var(--slide-accent) 32%, transparent);",
+    );
+
+    // No muted → no secondary-text block.
+    expect(css).not.toContain("--slide-muted");
+    expect(css).not.toContain("section blockquote");
+  });
+
+  it("binds heading colour/fonts and muted when the kit defines them", () => {
+    const css = brandCssForExport(
+      kit({
+        colors: {
+          accent: "#7c3aed",
+          surface: "#ffffff",
+          text: "#1e1b2e",
+          heading: "#111111",
+          muted: "#6b7280",
+        },
+        headingFont: "serif",
+        bodyFont: "inter",
+      }),
+    );
+
+    // :root carries the conditional vars + resolved curated font stacks.
+    expect(css).toContain("--slide-headline: #111111;");
+    expect(css).toContain("--slide-muted: #6b7280;");
+    expect(css).toContain("--slide-font-headline: ");
+    expect(css).toContain("Georgia");
+    expect(css).toContain("Inter");
+
+    // Body font binds onto section.
+    expect(css).toContain("font-family: var(--slide-font-body);");
+
+    // Heading block binds colour + heading font across h1..h6.
+    expect(css).toContain("section h1,");
+    expect(css).toContain("section h6 {");
+    expect(css).toContain("color: var(--slide-headline);");
+    expect(css).toContain("font-family: var(--slide-font-headline);");
+
+    // Muted drives conventional secondary-text elements.
+    expect(css).toContain(
+      "section blockquote,\nsection figcaption,\nsection small {\n  color: var(--slide-muted);\n}",
+    );
   });
 });
 

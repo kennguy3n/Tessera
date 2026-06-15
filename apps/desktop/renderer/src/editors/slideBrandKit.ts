@@ -532,6 +532,82 @@ export function brandKitCssVars(kit: BrandKit): Record<string, string> {
 }
 
 /**
+ * Build a small, Marp-compatible CSS string that re-skins an *exported*
+ * deck with the active {@link BrandKit}, so the brand's colours and fonts
+ * survive into PPTX / PDF / HTML instead of collapsing to the bare Marp
+ * built-in theme.
+ *
+ * In-app the brand is applied by stamping {@link brandKitCssVars} inline on
+ * the canvas, where the editor's own `[data-slide-theme]` rules already
+ * consume those `--slide-*` variables (see `components.css`). The Marp CLI
+ * has no such rules: its built-in themes style `section` and its headings
+ * directly and never read `--slide-*`. This helper therefore does BOTH:
+ *
+ *   1. declares the brand variables on `:root` (single source of truth,
+ *      derived from {@link brandKitCssVars} so the in-app and exported
+ *      re-skins can never drift), and
+ *   2. BINDS each variable the kit actually defines onto the real Marp
+ *      elements — `section` (surface + body text + body font), the
+ *      headings (`h1…h6` colour + heading font), and the accent (links +
+ *      the title underline rule), mirroring the in-app mapping.
+ *
+ * Only properties the kit defines are bound; unset refinements (heading
+ * colour, fonts, muted) keep inheriting the built-in theme, exactly like
+ * the in-app re-skin. The emitted values are already validated upstream —
+ * hex colours through {@link normalizeHexColor}, font stacks through the
+ * curated {@link BRAND_FONTS} catalogue — so no raw user string is
+ * interpolated. The CSS is still escaped for safe `<style>`/front-matter
+ * embedding at the single injection site (`slidesToMarpMarkdown`).
+ */
+export function brandCssForExport(kit: BrandKit): string {
+  const vars = brandKitCssVars(kit);
+  const rootLines = Object.entries(vars).map(
+    ([key, value]) => `  ${key}: ${value};`,
+  );
+
+  const sectionLines = [
+    "  background-color: var(--slide-surface);",
+    "  color: var(--slide-text);",
+  ];
+  if (vars["--slide-font-body"]) {
+    sectionLines.push("  font-family: var(--slide-font-body);");
+  }
+
+  const headingLines: string[] = [];
+  if (vars["--slide-headline"]) {
+    headingLines.push("  color: var(--slide-headline);");
+  }
+  if (vars["--slide-font-headline"]) {
+    headingLines.push("  font-family: var(--slide-font-headline);");
+  }
+
+  const blocks: string[] = [
+    `:root {\n${rootLines.join("\n")}\n}`,
+    `section {\n${sectionLines.join("\n")}\n}`,
+  ];
+  if (headingLines.length > 0) {
+    blocks.push(
+      `section h1,\nsection h2,\nsection h3,\nsection h4,\nsection h5,\nsection h6 {\n${headingLines.join("\n")}\n}`,
+    );
+  }
+  // Accent tints links and the title's underline rule — never the body
+  // copy — mirroring the in-app `[data-slide-theme]` treatment
+  // (`components.css`: title `border-bottom-color: color-mix(accent 32%)`).
+  blocks.push("section a {\n  color: var(--slide-accent);\n}");
+  blocks.push(
+    "section h1 {\n  border-bottom: 0.075em solid color-mix(in srgb, var(--slide-accent) 32%, transparent);\n  padding-bottom: 0.2em;\n}",
+  );
+  // Muted, when defined, drives conventional secondary-text elements so the
+  // brand's muted tone carries through without touching primary content.
+  if (vars["--slide-muted"]) {
+    blocks.push(
+      "section blockquote,\nsection figcaption,\nsection small {\n  color: var(--slide-muted);\n}",
+    );
+  }
+  return blocks.join("\n\n");
+}
+
+/**
  * Like {@link brandKitCssVars} but for an in-progress {@link BrandKitDraft},
  * so the builder UI can show a live preview before the draft is a valid,
  * saved kit. Emits only the properties whose values are currently valid
