@@ -54,6 +54,7 @@ export const DOCUMENT_DELIBERATE_DRAFT: Skill = {
       outputContract:
         "FORMAT: 3–6 lines, each a single '- ' bullet naming one point to " +
         "cover. No sub-bullets, no prose.",
+      check: { nonEmpty: true, minLines: 2, forbidFences: true },
     },
     {
       id: "draft",
@@ -64,6 +65,7 @@ export const DOCUMENT_DELIBERATE_DRAFT: Skill = {
         "staying faithful to any supplied material.\n\nTASK: {{topic}}",
       inputsFrom: ["outline", "context"],
       output: "draft_text",
+      check: { nonEmpty: true, forbidFences: true },
     },
     {
       id: "critique",
@@ -78,6 +80,7 @@ export const DOCUMENT_DELIBERATE_DRAFT: Skill = {
       outputContract:
         "FORMAT: up to 5 '- ' bullets, each a single specific problem. If " +
         "the draft is already strong, output exactly 'NONE'.",
+      check: { nonEmpty: true },
     },
     {
       id: "revise",
@@ -89,6 +92,7 @@ export const DOCUMENT_DELIBERATE_DRAFT: Skill = {
         "and any factual details.\n\nTASK: {{topic}}",
       inputsFrom: ["draft_text", "critique"],
       output: "final_text",
+      check: { nonEmpty: true, forbidFences: true },
     },
   ],
 };
@@ -131,6 +135,7 @@ export const SLIDE_PLAN_WRITE_TIGHTEN: Skill = {
       outputContract:
         "FORMAT: one '## ' heading per slide, each followed by 2–4 '- ' " +
         "bullets. No prose outside this structure.",
+      check: { nonEmpty: true, mustInclude: ["## "], forbidFences: true },
     },
     {
       id: "expand",
@@ -142,6 +147,7 @@ export const SLIDE_PLAN_WRITE_TIGHTEN: Skill = {
         "structure and the same slide order.\n\nTOPIC: {{topic}}",
       inputsFrom: ["deck_outline"],
       output: "deck_expanded",
+      check: { nonEmpty: true, mustInclude: ["## "], forbidFences: true },
     },
     {
       id: "tighten",
@@ -156,6 +162,7 @@ export const SLIDE_PLAN_WRITE_TIGHTEN: Skill = {
       outputContract:
         "FORMAT: preserve '## heading' lines and '- bullet' lines exactly; " +
         "only shorten the bullet wording.",
+      check: { nonEmpty: true },
     },
   ],
 };
@@ -200,6 +207,7 @@ export const SHEET_INTENT_FORMULA_SELFCHECK: Skill = {
       outputContract:
         "FORMAT: output ONLY the formula on one line, starting with '='. No " +
         "explanation.",
+      check: { nonEmpty: true, mustStartWith: "=" },
     },
     {
       id: "check",
@@ -214,6 +222,7 @@ export const SHEET_INTENT_FORMULA_SELFCHECK: Skill = {
       outputContract:
         "FORMAT: if correct, output exactly 'OK'. Otherwise output one line " +
         "describing the single most important problem.",
+      check: { nonEmpty: true },
     },
     {
       id: "repair",
@@ -228,6 +237,7 @@ export const SHEET_INTENT_FORMULA_SELFCHECK: Skill = {
       outputContract:
         "FORMAT: output ONLY the final formula on one line, starting with " +
         "'='. No explanation.",
+      check: { nonEmpty: true, mustStartWith: "=" },
     },
   ],
 };
@@ -266,6 +276,7 @@ export const BASE_SCHEMA_DESIGN: Skill = {
         "FORMAT: one '## TableName' heading per table, each followed by " +
         "'- field_name: type' lines. Use 'link → OtherTable' as the type " +
         "for relationships.",
+      check: { nonEmpty: true, forbidFences: true },
     },
     {
       id: "critique",
@@ -280,6 +291,7 @@ export const BASE_SCHEMA_DESIGN: Skill = {
       outputContract:
         "FORMAT: up to 5 '- ' bullets, each one concrete issue. If the " +
         "design is sound, output exactly 'NONE'.",
+      check: { nonEmpty: true },
     },
     {
       id: "finalize",
@@ -293,6 +305,7 @@ export const BASE_SCHEMA_DESIGN: Skill = {
       outputContract:
         "FORMAT: same structure as the draft — '## TableName' headings with " +
         "'- field_name: type' lines.",
+      check: { nonEmpty: true },
     },
   ],
 };

@@ -7,7 +7,7 @@ import {
   type SkillRunnerHandle,
 } from "../components/SkillRunnerPanel";
 import { DOCUMENT_DELIBERATE_DRAFT } from "../../skills/skillLibrary";
-import type { Skill } from "../../skills/skillTypes";
+import type { Skill, SkillStepCheck } from "../../skills/skillTypes";
 import type { GenerateChunk } from "../../types/ipc";
 import { _resetActiveGenerationForTests } from "../../hooks/useActiveGeneration";
 
@@ -317,6 +317,140 @@ describe("SkillRunnerPanel", () => {
       ref.current?.cancel();
     });
     expect(cancelJob).toHaveBeenCalled();
+    await waitFor(() => expect(ref.current?.isRunning).toBe(false));
+  });
+
+  /** A one-step skill whose single step carries a deterministic check. */
+  function syntheticBadgeSkill(check: SkillStepCheck): Skill {
+    return {
+      id: "synthetic-badge",
+      name: "Synthetic badge skill",
+      description: "Single step carrying a deterministic self-check.",
+      surfaces: ["document"],
+      inputs: [{ id: "topic", label: "Topic", required: true }],
+      steps: [
+        {
+          id: "only",
+          title: "Only step",
+          kind: "extract",
+          instruction: "Do {{topic}}",
+          output: "result",
+          check,
+        },
+      ],
+    };
+  }
+
+  it("marks a step 'Self-checked' when its check passes on the first try", async () => {
+    installModel(["=OK"]);
+    const user = userEvent.setup();
+    const { container } = render(
+      <SkillRunnerPanel skill={syntheticBadgeSkill({ mustStartWith: "=" })} />,
+    );
+    await user.type(
+      container.querySelector("#skill-input-topic") as HTMLInputElement,
+      "sum it",
+    );
+    await user.click(screen.getByTestId("skill-run"));
+
+    const badge = await screen.findByTestId("skill-step-check-only");
+    expect(badge).toHaveTextContent("Self-checked");
+  });
+
+  it("marks a step 'Auto-repaired' when a failing first output is repaired", async () => {
+    // First attempt fails the `mustStartWith` check; the repair pass fixes it.
+    installModel(["BAD", "=GOOD"]);
+    const user = userEvent.setup();
+    const { container } = render(
+      <SkillRunnerPanel skill={syntheticBadgeSkill({ mustStartWith: "=" })} />,
+    );
+    await user.type(
+      container.querySelector("#skill-input-topic") as HTMLInputElement,
+      "sum it",
+    );
+    await user.click(screen.getByTestId("skill-run"));
+
+    const badge = await screen.findByTestId("skill-step-check-only");
+    expect(badge).toHaveTextContent("Auto-repaired");
+    expect(await screen.findByTestId("skill-final")).toHaveTextContent("=GOOD");
+  });
+
+  it("marks a step 'Check not satisfied' when repair can't fix it", async () => {
+    // Both the first attempt and its single repair fail the check, so the
+    // panel proceeds with the best output and surfaces the residual failure.
+    installModel(["BAD1", "BAD2"]);
+    const user = userEvent.setup();
+    const { container } = render(
+      <SkillRunnerPanel skill={syntheticBadgeSkill({ mustStartWith: "=" })} />,
+    );
+    await user.type(
+      container.querySelector("#skill-input-topic") as HTMLInputElement,
+      "sum it",
+    );
+    await user.click(screen.getByTestId("skill-run"));
+
+    const badge = await screen.findByTestId("skill-step-check-only");
+    expect(badge).toHaveTextContent("Check not satisfied");
+    expect(badge).toHaveAttribute("title", 'The output must start with "=".');
+  });
+
+  it("shows a 'Repairing…' state label while a step is being re-prompted", async () => {
+    // The first attempt fails the check and completes; the repair attempt's
+    // generate never streams `done`, so the panel stays in the repair state.
+    let subscriber: ((chunk: GenerateChunk) => void) | null = null;
+    let call = 0;
+    const generate = vi.fn(async () => {
+      const index = call;
+      call += 1;
+      if (index === 0) {
+        const cb = subscriber;
+        setTimeout(() => {
+          cb?.({ token: "BAD", done: false });
+          cb?.({ token: "", done: true });
+        }, 0);
+      }
+      return undefined;
+    });
+    const onToken = vi.fn((cb: (chunk: GenerateChunk) => void) => {
+      subscriber = cb;
+      return () => {
+        if (subscriber === cb) subscriber = null;
+      };
+    });
+    (window.tessera as unknown as { model: unknown }).model = {
+      status: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      generate,
+      cancelJob: vi.fn().mockResolvedValue(undefined),
+      onToken,
+    };
+
+    const user = userEvent.setup();
+    const ref = createRef<SkillRunnerHandle>();
+    const { container } = render(
+      <SkillRunnerPanel
+        ref={ref}
+        skill={syntheticBadgeSkill({ mustStartWith: "=" })}
+      />,
+    );
+    await user.type(
+      container.querySelector("#skill-input-topic") as HTMLInputElement,
+      "sum it",
+    );
+    await user.click(screen.getByTestId("skill-run"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("skill-step-only")).toHaveTextContent(
+        "Repairing…",
+      ),
+    );
+    expect(generate).toHaveBeenCalledTimes(2);
+
+    // Settle: cancel the hung repair so the run unwinds inside act().
+    act(() => {
+      ref.current?.cancel();
+    });
     await waitFor(() => expect(ref.current?.isRunning).toBe(false));
   });
 });

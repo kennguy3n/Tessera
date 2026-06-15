@@ -4787,6 +4787,19 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
+/* Subtle, secondary badge reflecting a step's deterministic self-check. */
+.skill-step-check {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.skill-step-check-repaired {
+  color: var(--color-success-fg);
+}
+.skill-step-check-warn {
+  color: var(--color-warning-fg);
+}
 
 /* ── Skill manage controls (New / Edit / Duplicate / Delete) ─────── */
 .skill-manage {

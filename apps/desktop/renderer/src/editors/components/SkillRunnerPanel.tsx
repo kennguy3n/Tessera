@@ -202,8 +202,32 @@ export const SkillRunnerPanel = forwardRef<
               state === "done"
                 ? "Done"
                 : state === "active"
-                  ? "Running…"
+                  ? runner.isRepairing
+                    ? "Repairing…"
+                    : "Running…"
                   : "Queued";
+            // A subtle, secondary badge reflecting the step's deterministic
+            // self-check: it was auto-repaired, it still fell short after the
+            // repair budget, or it passed an enforced check on the first try.
+            const result = done ? runner.steps[index] : undefined;
+            let checkBadge: {
+              label: string;
+              tone: "ok" | "repaired" | "warn";
+              title?: string;
+            } | null = null;
+            if (result) {
+              if (result.checkFailures && result.checkFailures.length > 0) {
+                checkBadge = {
+                  label: "Check not satisfied",
+                  tone: "warn",
+                  title: result.checkFailures.join("\n"),
+                };
+              } else if (result.repaired) {
+                checkBadge = { label: "Auto-repaired", tone: "repaired" };
+              } else if (step.check) {
+                checkBadge = { label: "Self-checked", tone: "ok" };
+              }
+            }
             return (
               <li
                 key={step.id}
@@ -214,6 +238,15 @@ export const SkillRunnerPanel = forwardRef<
                   <span className="skill-step-title">{step.title}</span>
                   <span className="skill-step-state">{stateLabel}</span>
                 </div>
+                {checkBadge && (
+                  <span
+                    className={`skill-step-check skill-step-check-${checkBadge.tone}`}
+                    data-testid={`skill-step-check-${step.id}`}
+                    title={checkBadge.title}
+                  >
+                    {checkBadge.label}
+                  </span>
+                )}
                 {done && (
                   <details className="skill-step-output">
                     <summary>View output</summary>

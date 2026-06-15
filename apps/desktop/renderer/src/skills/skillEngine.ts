@@ -19,6 +19,7 @@ import type {
   SkillContext,
   SkillInputSpec,
   SkillStep,
+  SkillStepCheck,
   SkillStepKind,
 } from "./skillTypes";
 
@@ -37,6 +38,15 @@ export const MAX_TEMPERATURE = 2;
  * a chain of steps cannot blow the per-request IPC ceiling (32k). */
 export const MIN_MAX_TOKENS = 1;
 export const MAX_MAX_TOKENS = 4096;
+/**
+ * How many times a single step may be re-prompted when its deterministic
+ * `check` fails. Kept at 1: a small model that fails the same structural
+ * check twice in a row will almost never fix it on a third try, and an
+ * unbounded loop would burn the battery and stall the chain. After the
+ * budget is spent the runner proceeds with the best attempt and records
+ * the residual failures for the UI.
+ */
+export const MAX_STEP_REPAIRS = 1;
 
 /**
  * Default sampling temperature per step kind. Planning, critique, and
@@ -203,7 +213,11 @@ export function missingRequiredInputs(
  *   <outputContract>             // verbatim, if present
  */
 export function compileStep(step: SkillStep, ctx: SkillContext): CompiledStep {
-  const parts: string[] = [STEP_PREAMBLES[step.kind], "", interpolate(step.instruction, ctx).trim()];
+  const parts: string[] = [
+    STEP_PREAMBLES[step.kind],
+    "",
+    interpolate(step.instruction, ctx).trim(),
+  ];
 
   for (const varName of step.inputsFrom ?? []) {
     const value = (ctx[varName] ?? "").trim();
@@ -243,6 +257,119 @@ export function foldStepOutput(
   cleanedOutput: string,
 ): SkillContext {
   return { ...ctx, [step.output]: clampValue(cleanedOutput) };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Deterministic step checks + bounded repair
+// ─────────────────────────────────────────────────────────────────────
+
+/** A Markdown code fence marker — checked as a plain substring. */
+const FENCE_MARKER = "```";
+
+/**
+ * Evaluate a step's deterministic acceptance `check` against its cleaned
+ * output and return a list of human-readable failure messages (empty ⇒
+ * the output is acceptable, or there was no check). Pure and total: it
+ * uses only fixed substring / length / line predicates — never a
+ * dynamically-built regular expression — so it cannot be made to hang or
+ * to execute skill/model-supplied text.
+ *
+ * Each predicate is independent, so a single output can report several
+ * concrete problems at once; the runner appends all of them to the
+ * repair prompt so the model knows everything it must fix in one pass.
+ */
+export function evaluateCheck(
+  check: SkillStepCheck | undefined,
+  output: string,
+): string[] {
+  if (!check) return [];
+
+  const problems: string[] = [];
+  const trimmed = output.trim();
+
+  if (check.nonEmpty && trimmed.length === 0) {
+    problems.push("The output is empty.");
+  }
+
+  if (typeof check.minLines === "number") {
+    const lines = trimmed
+      .split("\n")
+      .filter((line) => line.trim().length > 0).length;
+    if (lines < check.minLines) {
+      problems.push(
+        `The output must have at least ${check.minLines} non-empty ` +
+          `line${check.minLines === 1 ? "" : "s"}, but has ${lines}.`,
+      );
+    }
+  }
+
+  if (typeof check.maxChars === "number" && trimmed.length > check.maxChars) {
+    problems.push(
+      `The output must be at most ${check.maxChars} characters, but is ` +
+        `${trimmed.length}.`,
+    );
+  }
+
+  if (
+    typeof check.mustStartWith === "string" &&
+    check.mustStartWith.length > 0 &&
+    !trimmed.startsWith(check.mustStartWith)
+  ) {
+    problems.push(`The output must start with "${check.mustStartWith}".`);
+  }
+
+  if (check.mustInclude) {
+    const lower = trimmed.toLowerCase();
+    for (const needle of check.mustInclude) {
+      if (needle.length > 0 && !lower.includes(needle.toLowerCase())) {
+        problems.push(`The output must include "${needle}".`);
+      }
+    }
+  }
+
+  if (check.forbidFences && trimmed.includes(FENCE_MARKER)) {
+    problems.push("The output must not contain a Markdown code fence (```).");
+  }
+
+  if (check.forbidContains) {
+    const lower = trimmed.toLowerCase();
+    for (const needle of check.forbidContains) {
+      if (needle.length > 0 && lower.includes(needle.toLowerCase())) {
+        problems.push(`The output must not contain "${needle}".`);
+      }
+    }
+  }
+
+  return problems;
+}
+
+/**
+ * Compile a one-shot repair prompt for a step whose previous attempt
+ * failed its `check`. It reuses the step's normal compiled prompt (same
+ * preamble, instruction, material blocks, output contract, and resolved
+ * sampling parameters) and appends the rejected attempt plus the exact
+ * failures, instructing the model to return only a corrected result.
+ * Pure: it derives entirely from `compileStep`, so the repair prompt can
+ * never drift from the original step's framing.
+ */
+export function compileRepairStep(
+  step: SkillStep,
+  ctx: SkillContext,
+  previousOutput: string,
+  failures: string[],
+): CompiledStep {
+  const base = compileStep(step, ctx);
+  const addendum = [
+    "",
+    "YOUR PREVIOUS ANSWER did not meet the required format:",
+    clampValue(previousOutput.trim()),
+    "",
+    "Fix every one of these problems:",
+    ...failures.map((failure) => `- ${failure}`),
+    "",
+    "Return ONLY the corrected result. Do not apologise or explain.",
+  ];
+  return { ...base, prompt: `${base.prompt}\n${addendum.join("\n")}` };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -322,14 +449,17 @@ export function validateSkill(skill: Skill): string[] {
   const seenOutputs = new Set<string>();
 
   for (const step of skill.steps) {
-    if (!step.id.trim()) problems.push(`a step in "${skill.id}" has a blank id`);
+    if (!step.id.trim())
+      problems.push(`a step in "${skill.id}" has a blank id`);
     if (seenStepIds.has(step.id)) {
       problems.push(`duplicate step id "${step.id}" in "${skill.id}"`);
     }
     seenStepIds.add(step.id);
 
     if (!step.instruction.trim()) {
-      problems.push(`step "${step.id}" in "${skill.id}" has a blank instruction`);
+      problems.push(
+        `step "${step.id}" in "${skill.id}" has a blank instruction`,
+      );
     }
 
     const refs = new Set<string>([
