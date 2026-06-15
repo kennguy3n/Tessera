@@ -34,10 +34,7 @@ import {
   computeWordDiff,
   getDocumentAiAction,
 } from "../ai/documentAiHelpers";
-import {
-  applyAiResult,
-  type DocumentAiRange,
-} from "../ai/documentAiApply";
+import { applyAiResult, type DocumentAiRange } from "../ai/documentAiApply";
 import type {
   DocumentAiActionId,
   DocumentAiApplyMode,
@@ -45,7 +42,8 @@ import type {
 } from "../ai/documentAiTypes";
 import { useDocumentAi } from "../../hooks/useDocumentAi";
 import { SkillRunnerPanel, type SkillRunnerHandle } from "./SkillRunnerPanel";
-import { getSkillsForSurface } from "../../skills/skillLibrary";
+import { SkillManagerControls } from "./SkillManagerControls";
+import { useCustomSkills } from "../../skills/useCustomSkills";
 
 type AiPanelMode = "quick" | "skills";
 
@@ -95,7 +93,11 @@ export function AiAssistantPanel({
   const activeAction = getDocumentAiAction(action);
 
   const [panelMode, setPanelMode] = useState<AiPanelMode>("quick");
-  const documentSkills = useMemo(() => getSkillsForSurface("document"), []);
+  const { skillsForSurface } = useCustomSkills();
+  const documentSkills = useMemo(
+    () => skillsForSurface("document"),
+    [skillsForSurface],
+  );
   const [skillId, setSkillId] = useState(documentSkills[0]?.id ?? "");
   const selectedSkill =
     documentSkills.find((s) => s.id === skillId) ?? documentSkills[0];
@@ -105,7 +107,9 @@ export function AiAssistantPanel({
   const applySkillText = useCallback(
     (text: string) => {
       if (text.trim().length === 0) return;
-      const mode: DocumentAiApplyMode = hasSelection ? "replace" : "insert-below";
+      const mode: DocumentAiApplyMode = hasSelection
+        ? "replace"
+        : "insert-below";
       const ok = applyAiResult(editor, context.range, mode, text, "custom");
       if (ok) onClose();
     },
@@ -283,7 +287,9 @@ export function AiAssistantPanel({
           <button
             type="button"
             className={
-              panelMode === "skills" ? "ai-action-chip active" : "ai-action-chip"
+              panelMode === "skills"
+                ? "ai-action-chip active"
+                : "ai-action-chip"
             }
             aria-pressed={panelMode === "skills"}
             onClick={() => switchMode("skills")}
@@ -312,6 +318,11 @@ export function AiAssistantPanel({
               </select>
             </label>
           )}
+          <SkillManagerControls
+            surface="document"
+            selectedId={selectedSkill.id}
+            onSelect={setSkillId}
+          />
           <SkillRunnerPanel
             key={selectedSkill.id}
             ref={skillRunnerRef}
@@ -322,169 +333,176 @@ export function AiAssistantPanel({
         </>
       ) : (
         <>
+          {!hasSelection && action !== "custom" && action !== "continue" && (
+            <p className="ai-panel-hint" data-testid="ai-needs-selection">
+              Select text to use this action, or switch to Ask AI.
+            </p>
+          )}
 
-      {!hasSelection && action !== "custom" && action !== "continue" && (
-        <p className="ai-panel-hint" data-testid="ai-needs-selection">
-          Select text to use this action, or switch to Ask AI.
-        </p>
-      )}
+          <div
+            className="ai-panel-actions"
+            role="group"
+            aria-label="AI actions"
+          >
+            {DOCUMENT_AI_ACTIONS.map((a) => {
+              const disabled = a.needsSelection && !hasSelection;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={
+                    a.id === action ? "ai-action-chip active" : "ai-action-chip"
+                  }
+                  aria-pressed={a.id === action}
+                  disabled={disabled}
+                  title={a.description}
+                  onClick={() => setAction(a.id)}
+                >
+                  {a.label}
+                </button>
+              );
+            })}
+          </div>
 
-      <div className="ai-panel-actions" role="group" aria-label="AI actions">
-        {DOCUMENT_AI_ACTIONS.map((a) => {
-          const disabled = a.needsSelection && !hasSelection;
-          return (
-            <button
-              key={a.id}
-              type="button"
-              className={
-                a.id === action ? "ai-action-chip active" : "ai-action-chip"
+          {action === "tone" && (
+            <label className="ai-panel-field">
+              <span>Tone</span>
+              <select
+                value={tone}
+                onChange={(e) => setTone(e.target.value as DocumentAiTone)}
+              >
+                {DOCUMENT_AI_TONES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {action === "translate" && (
+            <label className="ai-panel-field">
+              <span>Language</span>
+              <input
+                type="text"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                placeholder="e.g. French"
+              />
+            </label>
+          )}
+
+          {(action === "custom" || hasSelection) && (
+            <textarea
+              ref={promptInputRef}
+              className="ai-panel-prompt"
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              rows={action === "custom" ? 3 : 2}
+              placeholder={
+                action === "custom"
+                  ? "Ask AI to write something…"
+                  : "Optional: add extra instructions"
               }
-              aria-pressed={a.id === action}
-              disabled={disabled}
-              title={a.description}
-              onClick={() => setAction(a.id)}
-            >
-              {a.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {action === "tone" && (
-        <label className="ai-panel-field">
-          <span>Tone</span>
-          <select
-            value={tone}
-            onChange={(e) => setTone(e.target.value as DocumentAiTone)}
-          >
-            {DOCUMENT_AI_TONES.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      {action === "translate" && (
-        <label className="ai-panel-field">
-          <span>Language</span>
-          <input
-            type="text"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            placeholder="e.g. French"
-          />
-        </label>
-      )}
-
-      {(action === "custom" || hasSelection) && (
-        <textarea
-          ref={promptInputRef}
-          className="ai-panel-prompt"
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          rows={action === "custom" ? 3 : 2}
-          placeholder={
-            action === "custom"
-              ? "Ask AI to write something…"
-              : "Optional: add extra instructions"
-          }
-          aria-label="AI instruction"
-        />
-      )}
-
-      <div className="ai-panel-run-row">
-        <button
-          type="button"
-          className="btn btn-primary ai-panel-run"
-          onClick={run}
-          disabled={runDisabled}
-          data-testid="ai-run"
-        >
-          {ai.isStreaming ? "Generating…" : "Generate"}
-        </button>
-        {ai.isStreaming && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={cancelGeneration}
-            data-testid="ai-stop"
-          >
-            Stop
-          </button>
-        )}
-        <span className="ai-panel-shortcut">⌘⏎</span>
-      </div>
-
-      {ai.status === "error" && (
-        <p className="ai-panel-error" role="alert" data-testid="ai-error">
-          {ai.error ?? "Generation failed."}
-        </p>
-      )}
-      {ai.status === "battery_low" && (
-        <p className="ai-panel-error" role="alert">
-          Generation paused — device battery is below 20%.
-        </p>
-      )}
-      {ai.status === "cancelled" && (
-        <p className="ai-panel-hint">Generation stopped.</p>
-      )}
-
-      {showResult && (
-        <div className="ai-panel-result" data-testid="ai-result">
-          {diff ? (
-            <div className="ai-diff" aria-label="Suggested changes">
-              {diff.map((seg, i) => (
-                <span key={i} className={`ai-diff-${seg.kind}`}>
-                  {seg.value}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div className="ai-result-text">{cleaned}</div>
+              aria-label="AI instruction"
+            />
           )}
-        </div>
-      )}
 
-      {ai.status === "done" && cleaned.length > 0 && (
-        <div className="ai-panel-apply" role="group" aria-label="Apply result">
-          {hasSelection && (
+          <div className="ai-panel-run-row">
             <button
               type="button"
-              className="btn btn-primary"
-              onClick={() => apply("replace")}
-              data-testid="ai-apply-replace"
+              className="btn btn-primary ai-panel-run"
+              onClick={run}
+              disabled={runDisabled}
+              data-testid="ai-run"
             >
-              Replace
+              {ai.isStreaming ? "Generating…" : "Generate"}
             </button>
+            {ai.isStreaming && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={cancelGeneration}
+                data-testid="ai-stop"
+              >
+                Stop
+              </button>
+            )}
+            <span className="ai-panel-shortcut">⌘⏎</span>
+          </div>
+
+          {ai.status === "error" && (
+            <p className="ai-panel-error" role="alert" data-testid="ai-error">
+              {ai.error ?? "Generation failed."}
+            </p>
           )}
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => apply("insert-below")}
-            data-testid="ai-apply-insert"
-          >
-            Insert below
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => apply("append")}
-            data-testid="ai-apply-append"
-          >
-            Append
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={run}
-            title="Run again"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+          {ai.status === "battery_low" && (
+            <p className="ai-panel-error" role="alert">
+              Generation paused — device battery is below 20%.
+            </p>
+          )}
+          {ai.status === "cancelled" && (
+            <p className="ai-panel-hint">Generation stopped.</p>
+          )}
+
+          {showResult && (
+            <div className="ai-panel-result" data-testid="ai-result">
+              {diff ? (
+                <div className="ai-diff" aria-label="Suggested changes">
+                  {diff.map((seg, i) => (
+                    <span key={i} className={`ai-diff-${seg.kind}`}>
+                      {seg.value}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="ai-result-text">{cleaned}</div>
+              )}
+            </div>
+          )}
+
+          {ai.status === "done" && cleaned.length > 0 && (
+            <div
+              className="ai-panel-apply"
+              role="group"
+              aria-label="Apply result"
+            >
+              {hasSelection && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => apply("replace")}
+                  data-testid="ai-apply-replace"
+                >
+                  Replace
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => apply("insert-below")}
+                data-testid="ai-apply-insert"
+              >
+                Insert below
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => apply("append")}
+                data-testid="ai-apply-append"
+              >
+                Append
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={run}
+                title="Run again"
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>

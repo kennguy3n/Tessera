@@ -72,8 +72,16 @@ export const SkillRunnerPanel = forwardRef<
     blankInputs(skill),
   );
 
-  // Re-seed inputs whenever the selected skill changes.
-  const seededFor = useMemo(() => skill.id, [skill.id]);
+  // Re-seed inputs whenever the selected skill changes *or* its declared
+  // input set changes. Editing a custom skill in place keeps the same
+  // `skill.id`, so keying on the id alone would leave the fields stale after
+  // an edit that adds/removes/renames an input; the signature folds the
+  // input ids in so that case re-seeds too. (Editing only an instruction
+  // keeps the signature stable, so in-progress field values are preserved.)
+  const seededFor = useMemo(
+    () => `${skill.id}\u0000${skill.inputs.map((i) => i.id).join("\u0000")}`,
+    [skill.id, skill.inputs],
+  );
   const [seedKey, setSeedKey] = useState(seededFor);
   if (seedKey !== seededFor) {
     setSeedKey(seededFor);

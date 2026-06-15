@@ -19,7 +19,8 @@ import {
   type AiSchemaSuggestion,
 } from "./baseAiHelpers";
 import { SkillRunnerPanel } from "./components/SkillRunnerPanel";
-import { getSkillsForSurface } from "../skills/skillLibrary";
+import { SkillManagerControls } from "./components/SkillManagerControls";
+import { useCustomSkills } from "../skills/useCustomSkills";
 import { evaluateBaseFormula } from "./baseFormulaEngine";
 import { isComputedFieldType } from "./baseEditorHelpers";
 import {
@@ -201,7 +202,11 @@ export default function BaseAiAssistant({
 
   // Quick (single-shot modes) vs. Skills (deliberate multi-step runner).
   const [panelMode, setPanelMode] = useState<BasePanelMode>("quick");
-  const baseSkills = useMemo(() => getSkillsForSurface("base"), []);
+  const { skillsForSurface } = useCustomSkills();
+  const baseSkills = useMemo(
+    () => skillsForSurface("base"),
+    [skillsForSurface],
+  );
   const [skillId, setSkillId] = useState(baseSkills[0]?.id ?? "");
   const selectedSkill =
     baseSkills.find((s) => s.id === skillId) ?? baseSkills[0];
@@ -593,6 +598,11 @@ export default function BaseAiAssistant({
                 </select>
               </label>
             )}
+            <SkillManagerControls
+              surface="base"
+              selectedId={selectedSkill.id}
+              onSelect={setSkillId}
+            />
             <SkillRunnerPanel
               key={selectedSkill.id}
               skill={selectedSkill}
