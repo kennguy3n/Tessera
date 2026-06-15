@@ -587,24 +587,19 @@ export function findBrandKit(
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * Coerce one raw stored object into a valid {@link BrandKit}, or `null`
- * when unusable. Routes through {@link buildBrandKit} so a persisted kit
- * reuses the exact same normalisation + validation as the builder UI and
- * can never diverge from it. A stored id that is not brand-namespaced is
- * rejected so a tampered blob cannot shadow anything.
+ * Coerce one raw object — a persisted store row OR an imported brand
+ * pack's `brandKit` payload — into the flat {@link BrandKitDraft} the
+ * builder binds to. Identity is deliberately excluded: the caller owns
+ * it (persistence re-attaches the stored id; {@link parseBrandPack} omits
+ * it so a fresh id is minted and the import is non-destructive by
+ * construction). Centralising every field's coercion here means a stored
+ * kit and an imported kit can never diverge in how they are normalised.
  */
-export function parseStoredBrandKit(value: unknown): BrandKit | null {
-  const rec = asRecord(value);
-  if (!rec) return null;
-  if (typeof rec.id !== "string" || !isBrandKitId(rec.id)) return null;
-  if (typeof rec.name !== "string") return null;
-
+function coerceBrandKitDraft(rec: Record<string, unknown>): BrandKitDraft {
   const colors = asRecord(rec.colors) ?? {};
   const logo = asRecord(rec.logo);
-
-  const draft: BrandKitDraft = {
-    id: rec.id,
-    name: rec.name,
+  return {
+    name: asString(rec.name),
     baseThemeId: asString(rec.baseThemeId) || DEFAULT_SLIDE_THEME_ID,
     colors: {
       accent: asString(colors.accent),
@@ -621,7 +616,22 @@ export function parseStoredBrandKit(value: unknown): BrandKit | null {
       logo && isLogoPlacement(logo.placement) ? logo.placement : "tl",
     bgStyle: asString(rec.bgStyle),
   };
+}
 
+/**
+ * Coerce one raw stored object into a valid {@link BrandKit}, or `null`
+ * when unusable. Routes through {@link buildBrandKit} so a persisted kit
+ * reuses the exact same normalisation + validation as the builder UI and
+ * can never diverge from it. A stored id that is not brand-namespaced is
+ * rejected so a tampered blob cannot shadow anything.
+ */
+export function parseStoredBrandKit(value: unknown): BrandKit | null {
+  const rec = asRecord(value);
+  if (!rec) return null;
+  if (typeof rec.id !== "string" || !isBrandKitId(rec.id)) return null;
+  if (typeof rec.name !== "string") return null;
+
+  const draft: BrandKitDraft = { ...coerceBrandKitDraft(rec), id: rec.id };
   const result = buildBrandKit(draft, () => rec.id as string);
   return result.ok ? result.brandKit : null;
 }
@@ -706,4 +716,137 @@ export function coerceBrandKitId(
   value: string | undefined | null,
 ): string | undefined {
   return isBrandKitId(value) ? (value as string) : undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Brand Pack — portable export / import (mirrors skills/customSkills.ts)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Identifies a file as a Tessera Brand Pack. Carried in the export
+ * envelope's `format` field so an unrelated JSON file (or the
+ * `localStorage` store envelope, which has *no* `format`) is rejected on
+ * import. Mirrors `SKILL_EXPORT_FORMAT`.
+ */
+export const BRAND_PACK_FORMAT = "tessera.brandpack";
+
+/**
+ * Brand Pack file-format version. Deliberately INDEPENDENT of the
+ * `localStorage` {@link SCHEMA_VERSION}: the on-disk store and the
+ * portable file evolve separately, so bumping one must not silently
+ * invalidate the other. Bump only when the *exported* shape changes
+ * incompatibly. Mirrors `SKILL_EXPORT_VERSION`.
+ */
+export const BRAND_PACK_VERSION = 1;
+
+/**
+ * Outcome of {@link parseBrandPack}: either a ready-to-edit draft (with
+ * NO id, so saving mints a fresh one) or a human-readable error. Mirrors
+ * `SkillImportResult`.
+ */
+export type BrandPackImportResult =
+  | { ok: true; draft: BrandKitDraft }
+  | { ok: false; error: string };
+
+/**
+ * Filename-safe kebab slug from a brand name, or `""` when nothing
+ * usable remains (so {@link brandPackFilename} can fall back). Bounded
+ * by {@link MAX_BRAND_NAME}; a trailing hyphen left by truncation is
+ * trimmed. Mirrors `slugifyVar` but emits hyphens for a filename rather
+ * than underscores for a `{{var}}` token.
+ */
+function slugifyBrandName(raw: string): string {
+  const s = (raw ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return s.length > MAX_BRAND_NAME
+    ? s.slice(0, MAX_BRAND_NAME).replace(/-+$/g, "")
+    : s;
+}
+
+/**
+ * Serialize a brand kit to a portable Brand Pack JSON string. The
+ * envelope `{ format, version, brandKit }` is intentionally DISTINCT
+ * from the `localStorage` store envelope `{ version, brandKits }` — the
+ * `format` tag + singular `brandKit` key let {@link parseBrandPack}
+ * tell a portable file apart from a raw store dump. Pretty-printed
+ * (2-space) since the file is human-facing. Pure: never mutates `kit`.
+ */
+export function serializeBrandPack(kit: BrandKit): string {
+  return JSON.stringify(
+    { format: BRAND_PACK_FORMAT, version: BRAND_PACK_VERSION, brandKit: kit },
+    null,
+    2,
+  );
+}
+
+/** Suggested download filename for a kit's Brand Pack (`tessera-brand-<slug>.json`). */
+export function brandPackFilename(kit: BrandKit): string {
+  return `tessera-brand-${slugifyBrandName(kit.name) || "brand"}.json`;
+}
+
+/**
+ * Parse a Brand Pack file into a builder-ready {@link BrandKitDraft}, or
+ * an error. Mirrors `parseSkillImport`:
+ *
+ * - The incoming id is ALWAYS dropped (the draft carries none), so on
+ *   save {@link buildBrandKit} mints a fresh custom id — import can never
+ *   overwrite an existing kit. This is the core non-destructive invariant.
+ * - The payload routes through {@link coerceBrandKitDraft} +
+ *   {@link buildBrandKit}, i.e. the EXACT normalisation + validation the
+ *   builder UI and persistence use, so an imported kit can never diverge
+ *   (bad hex colours, an oversized/non-inline logo, unknown fonts/themes
+ *   all degrade or error identically to a hand-built kit).
+ * - Version guard order matches the hardened skill importer: a
+ *   non-numeric / non-integer / `< 1` version is rejected as "not valid"
+ *   FIRST, only then a `> BRAND_PACK_VERSION` version as "newer".
+ * - Forward-compatible: a Brand Pack may carry extra fields a later
+ *   session adds (e.g. an optional `templates` array bundling user
+ *   templates). Unknown fields are simply ignored here — only `brandKit`
+ *   is read — so an older client never rejects a newer-but-same-version
+ *   pack.
+ */
+export function parseBrandPack(raw: string): BrandPackImportResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "This file isn’t valid JSON." };
+  }
+
+  const rec = asRecord(parsed);
+  if (!rec || rec.format !== BRAND_PACK_FORMAT) {
+    return { ok: false, error: "This isn’t a Tessera brand pack." };
+  }
+  if (
+    typeof rec.version !== "number" ||
+    !Number.isInteger(rec.version) ||
+    rec.version < 1
+  ) {
+    return { ok: false, error: "This isn’t a valid Tessera brand pack." };
+  }
+  if (rec.version > BRAND_PACK_VERSION) {
+    return {
+      ok: false,
+      error: "This brand pack was exported by a newer version of Tessera.",
+    };
+  }
+
+  const kitRec = asRecord(rec.brandKit);
+  if (!kitRec || typeof kitRec.name !== "string") {
+    return { ok: false, error: "This file doesn’t contain a brand kit." };
+  }
+
+  // Drop the incoming id: import mints a fresh custom id on save.
+  const draft = coerceBrandKitDraft(kitRec);
+  const built = buildBrandKit(draft);
+  if (!built.ok) {
+    return {
+      ok: false,
+      error: built.errors[0] ?? "This brand pack couldn’t be imported.",
+    };
+  }
+  return { ok: true, draft };
 }
