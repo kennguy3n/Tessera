@@ -1,0 +1,51 @@
+id: infographic-before-after-v1
+name: Before / After
+type: infographic
+description: >
+  A two-column before/after infographic contrasting a starting state
+  with an improved end state and the change that bridges them.
+layout: grid
+default_icon_set: phosphor
+color_scheme:
+  primary: "#64748B"
+  secondary: "#16A34A"
+  accent: "#F59E0B"
+profile:
+  - marketing
+  - customer-success
+sections:
+  - title: Title and Transformation
+    prompt: >
+      The headline transformation in one line ("From 6-hour close to
+      same-day"), what is being compared, and over what period the
+      change happened.
+    icon_suggestion: arrows-left-right
+  - title: Before
+    prompt: >
+      The starting state: the pains, the metrics, and the daily
+      experience. Be specific and unflattering so the contrast lands.
+      Cite the baseline source.
+    icon_suggestion: cloud-fog
+    required_sources:
+      - type: local
+        min: 1
+  - title: After
+    prompt: >
+      The end state across the same dimensions as "Before", so the two
+      columns line up point for point. Quantify the improvement.
+    icon_suggestion: sun
+  - title: What Changed
+    prompt: >
+      The intervention that produced the shift — the product, process,
+      or decision — and the effort it took, so the result is credible.
+    icon_suggestion: wrench
+  - title: Proof
+    prompt: >
+      The headline metric deltas presented as before → after pairs,
+      with the measurement method noted so the comparison is fair.
+    icon_suggestion: chart-bar
+    output_format: table
+export:
+  - html
+  - pdf
+  - markdown

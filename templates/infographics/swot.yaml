@@ -1,0 +1,56 @@
+id: infographic-swot-v1
+name: SWOT Analysis
+type: infographic
+description: >
+  A four-quadrant SWOT infographic — strengths, weaknesses,
+  opportunities, and threats — with a synthesis into strategy.
+layout: grid
+default_icon_set: lucide
+color_scheme:
+  primary: "#16A34A"
+  secondary: "#DC2626"
+  accent: "#2563EB"
+profile:
+  - strategy
+  - executive
+  - analyst
+sections:
+  - title: Subject and Context
+    prompt: >
+      What is being analyzed (company, product, market entry, team),
+      the time frame, and the decision this SWOT is meant to inform.
+    icon_suggestion: crosshair
+  - title: Strengths
+    prompt: >
+      Internal advantages that are real and defensible. Each point
+      backed by evidence from the connected sources, not aspiration.
+    icon_suggestion: thumbs-up
+    required_sources:
+      - type: local
+        min: 1
+  - title: Weaknesses
+    prompt: >
+      Internal limitations and gaps, stated honestly. Avoid disguising
+      weaknesses as strengths — the value is in candor.
+    icon_suggestion: thumbs-down
+  - title: Opportunities
+    prompt: >
+      External trends and openings the subject could exploit. Note the
+      window of time and what it would take to capture each.
+    icon_suggestion: trending-up
+  - title: Threats
+    prompt: >
+      External risks — competitors, regulation, market shifts — with a
+      sense of likelihood and potential impact.
+    icon_suggestion: shield-alert
+  - title: Strategic Synthesis
+    prompt: >
+      Cross the quadrants into action: use strengths to capture
+      opportunities and to defend against threats; shore up weaknesses
+      that threats could exploit. End with the top two or three moves.
+    icon_suggestion: git-merge
+    output_format: bullets
+export:
+  - html
+  - pdf
+  - markdown

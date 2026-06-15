@@ -1,0 +1,61 @@
+id: government-budget-briefing-deck-v1
+name: Government Budget Briefing
+type: slides
+description: Public-sector budget briefing for council/board — priorities, revenue, spending, trade-offs, and recommendation
+format: marp
+theme: default
+paginate: true
+industry:
+  - government
+profile:
+  - public-administrator
+  - budget-director
+sections:
+  - title: Title and Purpose
+    prompt: >
+      Title slide with the jurisdiction or department, the fiscal year,
+      the meeting body (council, board, committee), and the decision
+      being requested (adopt, amend, receive and file).
+  - title: Priorities and Mandate
+    prompt: >
+      The strategic priorities and any legal or charter mandates that
+      shape this budget, tying spending choices to community goals and
+      prior direction.
+  - title: Revenue Outlook
+    prompt: >
+      Projected revenues by major source (taxes, fees, grants,
+      transfers), the assumptions and economic outlook behind them, and
+      the year-over-year change.
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Proposed Spending
+    prompt: >
+      Proposed expenditures by department/program, operating versus
+      capital, and the change from the current year, with the drivers
+      of any significant increases.
+    output_format: table
+  - title: Capital and Debt
+    prompt: >
+      The capital improvement plan highlights, the funding sources, and
+      the debt-service and reserve position relative to policy targets.
+  - title: Trade-offs and Service Impacts
+    prompt: >
+      The hard choices: what is funded, what is deferred, and the
+      service-level impact of each, presented transparently so the
+      public can follow the reasoning.
+  - title: Public Input and Equity
+    prompt: >
+      Summary of public input received, how it shaped the proposal, and
+      the equity considerations across the communities served.
+  - title: Recommendation and Schedule
+    prompt: >
+      The staff recommendation, the adoption timeline and required
+      public hearings, and the specific motion before the body.
+    output_format: numbered_list
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

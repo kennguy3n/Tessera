@@ -1,0 +1,63 @@
+id: landing-gov-program-v1
+name: Government Program / Public Service
+type: landing_page
+description: Public-service program page — eligibility, benefits, how to apply, documents, deadlines, and accessible help
+default_icon_set: lucide
+color_scheme:
+  primary: "#1E3A8A"
+  secondary: "#0F766E"
+  accent: "#B45309"
+industry:
+  - government
+profile:
+  - public-administrator
+  - program-manager
+sections:
+  - title: Header — Program and Purpose
+    prompt: >
+      The program name, the agency, and one plain-language sentence on
+      what it provides and who it helps. Add a clear "Apply" or "Check
+      eligibility" action. Write at a broad reading level.
+    icon_suggestion: landmark
+  - title: Who Is Eligible
+    prompt: >
+      The eligibility criteria in plain language with examples, plus
+      who is not eligible. Avoid jargon; define any required terms.
+    icon_suggestion: user-check
+    output_format: bullets
+  - title: What You Get
+    prompt: >
+      The concrete benefits or services, amounts or levels where
+      applicable, and how long they last. Pull specifics from the
+      connected policy source.
+    icon_suggestion: package
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: How to Apply
+    prompt: >
+      The step-by-step application process, online and offline options,
+      and how long a decision takes. Number the steps clearly.
+    icon_suggestion: list-ordered
+    output_format: numbered_list
+  - title: Documents and Deadlines
+    prompt: >
+      The documents applicants must provide, important dates and
+      deadlines, and what to do if a document is missing.
+    icon_suggestion: file-text
+  - title: Get Help and Accessibility
+    prompt: >
+      Where to get help (phone, in-person, languages offered),
+      accessibility accommodations, and the non-discrimination notice.
+    icon_suggestion: life-buoy
+  - title: Privacy and Next Steps
+    prompt: >
+      How the applicant's personal information is collected, used, and
+      protected, and what happens after submission, including how to
+      check status or appeal.
+    icon_suggestion: shield-check
+export:
+  - markdown
+  - html
+  - pdf

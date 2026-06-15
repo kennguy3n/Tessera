@@ -1,0 +1,57 @@
+id: retail-line-review-deck-v1
+name: Retail Line Review
+type: slides
+description: Buyer/vendor line review deck — category performance, assortment, pricing, promo plan, and the ask
+format: marp
+theme: default
+paginate: true
+industry:
+  - retail
+profile:
+  - merchandiser
+  - category-manager
+  - buyer
+sections:
+  - title: Title and Category Scope
+    prompt: >
+      Title slide naming the category, the review period, the retailer
+      and vendor, and the attendees. State the decisions this review
+      needs to land.
+  - title: Category Performance
+    prompt: >
+      Category sales, units, margin, and share versus last year and
+      versus plan. Call out the trend and the two or three drivers
+      behind it.
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Shopper and Market Insight
+    prompt: >
+      What shoppers are doing in this category: demand trends,
+      switching behavior, unmet needs, and how the competitive set is
+      moving. Cite the data source.
+  - title: Assortment Recommendation
+    prompt: >
+      The proposed assortment: items to add, keep, and delist, with the
+      rationale and the expected impact on sales and margin per change.
+    output_format: table
+  - title: Pricing and Margin
+    prompt: >
+      Price architecture across good/better/best, price-gap analysis
+      versus competitors, and the margin impact of the proposed
+      changes.
+  - title: Promotion and Space Plan
+    prompt: >
+      The promotional calendar, key price points, display and
+      planogram/space recommendations, and the expected lift per event.
+  - title: The Ask and Next Steps
+    prompt: >
+      The specific decisions requested (listings, space, funding), the
+      implementation timeline, and the owners on both sides.
+    output_format: numbered_list
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,63 @@
+id: construction-bid-deck-v1
+name: Construction Bid / Proposal Deck
+type: slides
+description: General-contractor bid presentation — approach, team, schedule, cost, safety, and differentiators
+format: marp
+theme: default
+paginate: true
+industry:
+  - construction
+profile:
+  - estimator
+  - project-manager
+  - preconstruction
+sections:
+  - title: Cover and Project
+    prompt: >
+      Title slide with the project name and location, the owner/client,
+      the contractor, the bid date, and the delivery method
+      (design-bid-build, design-build, CM-at-risk).
+  - title: Understanding the Project
+    prompt: >
+      Demonstrate command of the scope, the site conditions, the
+      owner's priorities, and the project's hardest constraints.
+      Reference the bid documents and any RFIs.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Our Approach
+    prompt: >
+      The construction approach and means-and-methods that de-risk the
+      project: phasing, logistics, constructability insights, and how
+      problems anticipated above will be handled.
+  - title: Project Team
+    prompt: >
+      The proposed team and org chart: project executive,
+      superintendent, PM, and key subs, with the relevant experience of
+      each and their availability for this project.
+  - title: Schedule
+    prompt: >
+      The proposed schedule with major milestones, the critical path,
+      long-lead items, and the float strategy. State the substantial-
+      completion date being committed to.
+    output_format: table
+  - title: Cost Proposal
+    prompt: >
+      The cost breakdown by division/major scope, general conditions,
+      fee, allowances, and assumptions/exclusions. Be explicit about
+      what is and is not included.
+    output_format: table
+  - title: Safety and Quality
+    prompt: >
+      The safety record (EMR, incident rates) and program, plus the
+      quality-control and commissioning approach for this project.
+  - title: Why Us and Next Steps
+    prompt: >
+      The differentiators (relevant past projects, references,
+      self-perform capability) and the next steps to award, including
+      any value-engineering options offered.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

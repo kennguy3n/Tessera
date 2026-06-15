@@ -1,0 +1,64 @@
+id: landing-contractor-v1
+name: Contractor / Trade Services
+type: landing_page
+description: Contractor services page — services, service area, project gallery, reviews, licensing, and a quote CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#B45309"
+  secondary: "#1E3A8A"
+  accent: "#15803D"
+industry:
+  - construction
+profile:
+  - contractor
+  - trades
+sections:
+  - title: Hero — Service and Quote
+    prompt: >
+      The business name, the core service and area ("Roofing &
+      exteriors across the Tri-Valley"), a trust line (licensed,
+      insured, years in business), and a "Get a free quote" CTA.
+    icon_suggestion: hard-hat
+  - title: Services
+    prompt: >
+      The services offered, each with a one-line scope and the typical
+      project it suits. Group residential vs. commercial if relevant.
+    icon_suggestion: wrench
+    output_format: bullets
+  - title: Why Choose Us
+    prompt: >
+      The differentiators: workmanship warranty, on-time/on-budget
+      record, crew quality, and responsiveness. Back claims with
+      specifics.
+    icon_suggestion: badge-check
+  - title: Project Gallery
+    prompt: >
+      Before/after photos and short project write-ups. Pull real
+      projects from the connected source, each with scope, timeline,
+      and outcome.
+    icon_suggestion: image
+    required_sources:
+      - type: local
+        min: 1
+  - title: Reviews
+    prompt: >
+      Customer reviews with names and locations, the overall rating,
+      and any third-party ratings (BBB, Google, Houzz).
+    icon_suggestion: star
+  - title: Service Area and Licensing
+    prompt: >
+      The geographic service area, the license numbers, insurance and
+      bonding, and the trade certifications — the trust details
+      homeowners check.
+    icon_suggestion: map-pin
+    output_format: table
+  - title: Quote CTA
+    prompt: >
+      The estimate-request form (project type, location, timeline,
+      photos), the response-time promise, and the phone/text contact
+      for urgent jobs.
+    icon_suggestion: clipboard-list
+export:
+  - markdown
+  - html
+  - pdf

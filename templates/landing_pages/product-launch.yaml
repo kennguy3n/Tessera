@@ -1,0 +1,69 @@
+id: landing-product-launch-v1
+name: Product Launch Landing
+type: landing_page
+description: Launch-day landing page with hero, problem/solution, features, social proof, pricing, and a strong primary CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#4F46E5"
+  secondary: "#0EA5E9"
+  accent: "#F97316"
+profile:
+  - product-marketing
+  - marketing
+sections:
+  - title: Hero
+    prompt: >
+      A benefit-led headline naming what's new and who it's for, a
+      15-25 word subheadline, and a primary CTA ("Get started" /
+      "Try it free"). Add a secondary CTA for a demo or video.
+    icon_suggestion: rocket
+  - title: Problem
+    prompt: >
+      The problem the launch solves, framed in the visitor's words.
+      Two or three sentences that make them feel understood before any
+      pitch.
+    icon_suggestion: alert-circle
+  - title: Solution
+    prompt: >
+      How the product solves that problem, with the single "aha"
+      capability that sets it apart. Keep it to the outcome, not a spec
+      sheet.
+    icon_suggestion: sparkles
+  - title: Key Features
+    prompt: >
+      Three to six feature cards. Per card: an icon, a benefit-first
+      title, and one sentence on what it does. Order by what the target
+      visitor cares about most.
+    icon_suggestion: layout-grid
+  - title: Social Proof
+    prompt: >
+      Logos, a standout testimonial with name/title/company, and one
+      headline metric. Pull from the connected sources and attribute
+      every quote.
+    icon_suggestion: quote
+    required_sources:
+      - type: local
+        min: 1
+  - title: How It Works
+    prompt: >
+      Three simple steps from sign-up to value, each with a short
+      label and one line, so the visitor sees how fast they reach the
+      outcome.
+    icon_suggestion: list-ordered
+    output_format: numbered_list
+  - title: Pricing
+    prompt: >
+      The pricing tiers or a single clear price, what's included, and
+      any launch offer with its expiry. Reduce risk with a trial or
+      guarantee line.
+    icon_suggestion: tag
+    output_format: table
+  - title: Final CTA and FAQ
+    prompt: >
+      A closing CTA that restates the core benefit, plus four to six
+      objection-handling FAQs (security, pricing, migration, support).
+    icon_suggestion: check-circle
+export:
+  - markdown
+  - html
+  - pdf

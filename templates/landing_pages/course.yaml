@@ -1,0 +1,68 @@
+id: landing-course-v1
+name: Online Course / Cohort
+type: landing_page
+description: Course sales page — outcome promise, curriculum, instructor, proof, pricing, and enrollment CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#6D28D9"
+  secondary: "#0EA5E9"
+  accent: "#F59E0B"
+industry:
+  - education
+profile:
+  - instructor
+  - course-creator
+sections:
+  - title: Hero — Transformation
+    prompt: >
+      The course title, the transformation it delivers ("Go from X to
+      Y in N weeks"), the format (self-paced / cohort), start date, and
+      an "Enroll now" CTA.
+    icon_suggestion: graduation-cap
+  - title: Who This Is For
+    prompt: >
+      The ideal student and the prerequisites, plus who it's not for,
+      so the right people enroll and finish.
+    icon_suggestion: user-check
+  - title: What You'll Learn
+    prompt: >
+      The concrete outcomes and skills, written as capabilities the
+      student will have by the end. Tie each to a real-world result.
+    icon_suggestion: target
+    output_format: bullets
+  - title: Curriculum
+    prompt: >
+      The module-by-module syllabus with the topics and estimated time
+      per module. Pull structure from the connected outline source.
+    icon_suggestion: book-open
+    required_sources:
+      - type: local
+        min: 1
+    output_format: numbered_list
+  - title: Instructor
+    prompt: >
+      The instructor's bio and the credentials that make them worth
+      learning from on this topic, with a photo.
+    icon_suggestion: user-round
+  - title: Student Results
+    prompt: >
+      Testimonials and outcomes from past students — projects shipped,
+      jobs landed, results achieved — with names and specifics.
+    icon_suggestion: trophy
+  - title: Pricing and Guarantee
+    prompt: >
+      The price and any payment plan, what's included (materials,
+      community, support, certificate), any cohort cap, and the refund
+      guarantee.
+    icon_suggestion: tag
+    output_format: table
+  - title: FAQ and Enrollment
+    prompt: >
+      Common questions (time commitment, access duration, support,
+      refunds) and a closing enrollment CTA with the deadline or
+      cohort-fill urgency.
+    icon_suggestion: help-circle
+export:
+  - markdown
+  - html
+  - pdf

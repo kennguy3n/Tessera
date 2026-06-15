@@ -1,0 +1,51 @@
+id: investor-pitch-us-v1
+name: Investor Pitch (US — SAFE / C-corp)
+type: slides
+description: US-tailored seed pitch — problem, solution, traction, and an ask framed around a SAFE into a Delaware C-corp
+format: marp
+theme: gaia
+paginate: true
+industry:
+  - finance
+profile:
+  - founder
+sections:
+  - title: Hook
+    prompt: >
+      Open with a single high-impact line on the opportunity, leading
+      with the headline metric or the problem. Name the company and the
+      one-liner.
+  - title: Problem
+    prompt: >
+      Describe the problem in concrete, customer-grounded terms.
+      Quantify the pain (cost, time, churn) for a US buyer/market.
+  - title: Solution
+    prompt: >
+      Explain the solution succinctly and the magical capability that
+      makes it work. Show the before/after for the customer.
+  - title: Market and Traction
+    prompt: >
+      Size the US (and expansion) market with TAM/SAM/SOM and report
+      traction (users, ARR/MRR, growth). Cite the connected sources.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Business Model and Competition
+    prompt: >
+      How revenue is earned, unit economics (CAC/LTV), and how the
+      offering differentiates from US incumbents and alternatives.
+  - title: Team
+    prompt: >
+      Founders and key team with role, prior experience, and proof of
+      relevance. Note US presence and any notable advisors.
+  - title: The Ask
+    prompt: >
+      The raise framed for US seed norms: round size on a post-money
+      SAFE (or priced round), valuation cap, use of funds, the
+      milestones it unlocks, and that the entity is a Delaware C-corp.
+      Note 83(b)/QSBS readiness only if relevant.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

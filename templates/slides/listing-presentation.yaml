@@ -1,0 +1,62 @@
+id: listing-presentation-deck-v1
+name: Real-Estate Listing Presentation
+type: slides
+description: Seller listing-pitch deck — market read, pricing, marketing plan, process, and the agent's track record
+format: marp
+theme: gaia
+paginate: true
+industry:
+  - real-estate
+profile:
+  - agent
+  - broker
+sections:
+  - title: Cover and Promise
+    prompt: >
+      Title slide with the property address, the seller's name, the
+      agent and brokerage, and a one-line promise (e.g. "Sold for top
+      dollar, on your timeline").
+  - title: Understanding Your Goals
+    prompt: >
+      The seller's priorities — target price, timing, reason for
+      selling, and any constraints — reflected back so they know they
+      were heard.
+  - title: Market Analysis
+    prompt: >
+      Current local market conditions: inventory, days on market,
+      list-to-sale ratio, and the trend. Use the connected comps/data
+      and cite the source.
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Comparable Sales and Pricing
+    prompt: >
+      The comparable sales and active competition, leading to a
+      recommended list-price range with the rationale and the trade-off
+      between price and time-on-market.
+  - title: Marketing Plan
+    prompt: >
+      How the property will be marketed: staging and photography,
+      listing syndication, social and email, open houses, and any
+      pre-market/coming-soon strategy, with the timeline.
+  - title: The Selling Process
+    prompt: >
+      The step-by-step process from listing to close: prep, launch,
+      showings, offers and negotiation, inspection, and closing — with
+      what the seller can expect at each step.
+    output_format: numbered_list
+  - title: Why This Agent
+    prompt: >
+      The agent's track record (recent comparable sales, average
+      days-on-market, list-to-sale ratio), client testimonials, and the
+      brokerage's reach.
+  - title: Next Steps
+    prompt: >
+      The commission and terms, what is needed to go live, and the
+      proposed launch date. Close by asking for the listing.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,58 @@
+id: project-kickoff-deck-v1
+name: Project Kickoff
+type: slides
+description: Kickoff deck aligning a team on goals, scope, plan, roles, risks, and ways of working
+format: marp
+theme: default
+paginate: true
+profile:
+  - project-manager
+  - program-manager
+sections:
+  - title: Project Title and Sponsor
+    prompt: >
+      Title slide with the project name, the executive sponsor, the
+      project lead, the start date, and the target completion date.
+  - title: Why This Project
+    prompt: >
+      The business case in three lines: the problem or opportunity, the
+      expected value, and what happens if nothing changes. Reference the
+      charter or brief.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Goals and Success Criteria
+    prompt: >
+      The measurable goals and the definition of done. For each goal a
+      target metric and the date by which it should be hit.
+    output_format: bullets
+  - title: Scope and Out of Scope
+    prompt: >
+      Explicitly list what is in scope and what is deliberately out of
+      scope, so boundaries are clear from day one and scope creep is
+      visible later.
+    output_format: table
+  - title: Plan and Milestones
+    prompt: >
+      The phased plan with major milestones and dates. Highlight the
+      critical path and any hard external deadlines.
+  - title: Team and Roles
+    prompt: >
+      The team and a simple RACI: who is responsible, accountable,
+      consulted, and informed for each workstream. Include partner and
+      vendor contacts.
+  - title: Risks and Dependencies
+    prompt: >
+      The top risks and cross-team dependencies, each with an owner, a
+      mitigation, and an early-warning signal.
+    output_format: table
+  - title: Ways of Working
+    prompt: >
+      Cadence (standups, reviews, demos), tools, decision-making
+      process, and where status lives. End with the immediate next
+      actions and their owners.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

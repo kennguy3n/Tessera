@@ -1,0 +1,63 @@
+id: earnings-call-deck-v1
+name: Earnings Call Deck
+type: slides
+description: Public-company quarterly earnings presentation — results, segment detail, guidance, and capital allocation
+format: marp
+theme: default
+paginate: true
+industry:
+  - finance
+profile:
+  - cfo
+  - investor-relations
+sections:
+  - title: Title and Safe Harbor
+    prompt: >
+      Title slide with company name, fiscal quarter and year, and the
+      call date. Include the forward-looking-statements safe-harbor
+      disclaimer and a pointer to non-GAAP reconciliations in the
+      appendix.
+  - title: Quarter Highlights
+    prompt: >
+      The three or four headlines of the quarter: revenue, growth, and
+      profitability versus guidance, plus the single strategic
+      accomplishment leadership wants remembered.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Financial Results
+    prompt: >
+      Revenue, gross margin, operating margin, net income, EPS (GAAP
+      and non-GAAP), and free cash flow. Show current quarter, prior
+      year, and consensus where appropriate.
+    output_format: table
+  - title: Segment / Geography Detail
+    prompt: >
+      Performance by reporting segment and geography: revenue, growth,
+      and margin, with a one-line driver for each material move.
+    output_format: table
+  - title: Key Operating Metrics
+    prompt: >
+      The operating KPIs the Street tracks (e.g. customers, net
+      retention, ARR, units, take rate), with trend and the reason
+      behind any inflection.
+  - title: Balance Sheet and Cash Flow
+    prompt: >
+      Cash and investments, debt, leverage, share count, and
+      buyback/dividend activity in the quarter. Note liquidity and any
+      refinancing on the horizon.
+  - title: Guidance
+    prompt: >
+      Forward guidance for next quarter and full year (revenue,
+      margins, EPS), the assumptions behind it, and how it compares to
+      prior guidance. Be explicit about what changed and why.
+  - title: Capital Allocation and Closing
+    prompt: >
+      Capital-allocation priorities (organic investment, M&A,
+      buybacks, dividends, debt paydown) and a closing statement on
+      strategy. Hand off to Q&A.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

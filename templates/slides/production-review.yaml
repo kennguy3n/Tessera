@@ -1,0 +1,62 @@
+id: production-review-deck-v1
+name: Manufacturing Operations Review
+type: slides
+description: Plant operations review deck — safety, output, quality, OEE, cost, and continuous-improvement actions
+format: marp
+theme: default
+paginate: true
+industry:
+  - manufacturing
+profile:
+  - plant-manager
+  - operations
+  - continuous-improvement
+sections:
+  - title: Title and Period
+    prompt: >
+      Title slide with the plant/site name, the review period, and the
+      attendees. State the operational decisions this review needs to
+      drive.
+  - title: Safety First
+    prompt: >
+      Safety performance leads every operations review: recordable
+      incidents, near-misses, lost-time rate, and the status of open
+      corrective actions. Never bury safety behind output.
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Output and Schedule Attainment
+    prompt: >
+      Production volume versus plan, schedule attainment, and on-time
+      delivery. Explain the largest variances and the recovery plan.
+  - title: Quality
+    prompt: >
+      Quality metrics — first-pass yield, scrap and rework, defects per
+      unit, and customer returns/complaints — with the top defect
+      drivers and containment status.
+    output_format: table
+  - title: OEE and Equipment
+    prompt: >
+      Overall Equipment Effectiveness broken into availability,
+      performance, and quality, plus downtime Pareto and the status of
+      maintenance and reliability actions.
+  - title: Cost and Productivity
+    prompt: >
+      Conversion cost, labor and material efficiency, energy use, and
+      productivity per the period's targets. Tie cost movements to the
+      operational drivers above.
+  - title: Continuous Improvement
+    prompt: >
+      The active improvement projects (kaizen, 5S, Six Sigma), their
+      status, savings realized versus expected, and the next priorities.
+  - title: Actions and Owners
+    prompt: >
+      A consolidated action register: the action, the owner, the due
+      date, and the status. Close the loop on prior-period actions.
+    output_format: numbered_list
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

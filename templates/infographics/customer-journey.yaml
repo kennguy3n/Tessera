@@ -1,0 +1,58 @@
+id: infographic-customer-journey-v1
+name: Customer Journey
+type: infographic
+description: >
+  A horizontal retail customer-journey infographic from awareness to
+  advocacy, mapping touchpoints, emotions, and moments of truth.
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: "#DB2777"
+  secondary: "#7C3AED"
+  accent: "#F59E0B"
+industry:
+  - retail
+profile:
+  - marketing
+  - cx
+sections:
+  - title: Title and Persona
+    prompt: >
+      The journey's title and the shopper persona it follows — their
+      goal, context, and the purchase they are working toward.
+    icon_suggestion: user-round
+  - title: Awareness
+    prompt: >
+      How the shopper first discovers the brand or need: channels,
+      triggers, and the first impression. Cite the source data for
+      channel mix.
+    icon_suggestion: search
+    required_sources:
+      - type: local
+        min: 1
+  - title: Consideration
+    prompt: >
+      How the shopper evaluates options: research, reviews, comparison,
+      and the questions they need answered before buying.
+    icon_suggestion: scale
+  - title: Purchase
+    prompt: >
+      The buying moment across channels (in-store, web, app): the path
+      to checkout, the friction points, and what closes the sale.
+    icon_suggestion: shopping-cart
+  - title: Onboarding and Use
+    prompt: >
+      The post-purchase experience: delivery/pickup, first use,
+      support, and the moment the shopper realizes the value.
+    icon_suggestion: package-check
+  - title: Loyalty and Advocacy
+    prompt: >
+      Repeat purchase, loyalty program, and referral/advocacy. The
+      emotional arc across all stages and the top moments of truth to
+      get right.
+    icon_suggestion: heart
+    output_format: bullets
+export:
+  - html
+  - pdf
+  - markdown
