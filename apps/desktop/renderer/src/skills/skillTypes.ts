@@ -65,6 +65,38 @@ export interface SkillInputSpec {
 }
 
 /**
+ * A declarative, deterministic acceptance check for a step's cleaned
+ * output. Every field is OPTIONAL; an absent field imposes no
+ * constraint. The check is evaluated by the pure `evaluateCheck` in
+ * `skillEngine.ts` — it never runs user-supplied code or raw regular
+ * expressions (so there is no ReDoS or injection surface), only the
+ * fixed set of substring / length / line predicates below.
+ *
+ * This is the engine's own structural discipline, distinct from a
+ * model-authored self-critique step: when a small model drops the
+ * required structure (an empty answer, a stray code fence, a formula
+ * that does not start with `=`), the runner can deterministically catch
+ * it and re-prompt once with the specific failures, rather than
+ * trusting the model to notice its own mistake.
+ */
+export interface SkillStepCheck {
+  /** The cleaned output must be non-empty after trimming. */
+  nonEmpty?: boolean;
+  /** Minimum number of non-empty lines the output must contain. */
+  minLines?: number;
+  /** Maximum length (characters) of the cleaned output. */
+  maxChars?: number;
+  /** Trimmed output must start with this exact (case-sensitive) prefix. */
+  mustStartWith?: string;
+  /** Every listed substring must be present (case-insensitive). */
+  mustInclude?: string[];
+  /** The output must not contain a Markdown code fence (```). */
+  forbidFences?: boolean;
+  /** None of these substrings may be present (case-insensitive). */
+  forbidContains?: string[];
+}
+
+/**
  * One deliberate step in a skill. Each step compiles to exactly one
  * `model.generate` call.
  *
@@ -106,6 +138,13 @@ export interface SkillStep {
    * change. Until then, `outputContract` does the structural work.
    */
   grammar?: string;
+  /**
+   * Optional deterministic acceptance check for this step's cleaned
+   * output. When present and unsatisfied, the runner re-prompts the
+   * step once (up to `MAX_STEP_REPAIRS`) with the rejected attempt and
+   * the specific failures appended, then proceeds with the best output.
+   */
+  check?: SkillStepCheck;
   /** Sampling temperature override; defaults per `kind`. */
   temperature?: number;
   /** Max tokens override; defaults per `kind`. */
@@ -169,4 +208,13 @@ export interface SkillStepResult {
   title: string;
   /** The cleaned text the model produced for this step. */
   output: string;
+  /**
+   * Remaining deterministic-check failures after any repair attempts
+   * (empty / absent ⇒ the step's check passed, or it had no check).
+   * Surfaced so the UI can flag a step that the engine could not bring
+   * into structural compliance within the repair budget.
+   */
+  checkFailures?: string[];
+  /** True when a repair re-prompt produced this step's output. */
+  repaired?: boolean;
 }

@@ -3,11 +3,14 @@ import {
   DEFAULT_STEP_MAX_TOKENS,
   DEFAULT_STEP_TEMPERATURE,
   MAX_CONTEXT_VALUE_CHARS,
+  MAX_STEP_REPAIRS,
   STEP_PREAMBLES,
   cleanStepOutput,
   clampMaxTokens,
   clampTemperature,
+  compileRepairStep,
   compileStep,
+  evaluateCheck,
   foldStepOutput,
   humanizeVarName,
   initialContext,
@@ -98,7 +101,13 @@ describe("initialContext", () => {
       { id: "notes", label: "Notes" },
     ],
     steps: [
-      { id: "a", title: "A", kind: "draft", instruction: "{{topic}}", output: "o" },
+      {
+        id: "a",
+        title: "A",
+        kind: "draft",
+        instruction: "{{topic}}",
+        output: "o",
+      },
     ],
   };
 
@@ -127,14 +136,20 @@ describe("missingRequiredInputs", () => {
       { id: "notes", label: "Notes" },
     ],
     steps: [
-      { id: "a", title: "A", kind: "draft", instruction: "{{topic}}", output: "o" },
+      {
+        id: "a",
+        title: "A",
+        kind: "draft",
+        instruction: "{{topic}}",
+        output: "o",
+      },
     ],
   };
 
   it("reports a blank required input", () => {
-    expect(missingRequiredInputs(skill, { topic: "  " }).map((m) => m.id)).toEqual([
-      "topic",
-    ]);
+    expect(
+      missingRequiredInputs(skill, { topic: "  " }).map((m) => m.id),
+    ).toEqual(["topic"]);
   });
 
   it("passes when required inputs are present", () => {
@@ -178,7 +193,11 @@ describe("compileStep", () => {
   });
 
   it("skips inputsFrom variables that are empty/whitespace", () => {
-    const compiled = compileStep(baseStep, { topic: "x", outline: "", empty_var: "" });
+    const compiled = compileStep(baseStep, {
+      topic: "x",
+      outline: "",
+      empty_var: "",
+    });
     expect(compiled.prompt).not.toContain("OUTLINE:");
     expect(compiled.prompt).not.toContain("EMPTY VAR:");
   });
@@ -199,7 +218,10 @@ describe("compileStep", () => {
   });
 
   it("forwards the grammar id and identity fields", () => {
-    const compiled = compileStep({ ...baseStep, grammar: "doc.gbnf" }, { topic: "x" });
+    const compiled = compileStep(
+      { ...baseStep, grammar: "doc.gbnf" },
+      { topic: "x" },
+    );
     expect(compiled.grammar).toBe("doc.gbnf");
     expect(compiled.id).toBe("draft");
     expect(compiled.title).toBe("Write the draft");
@@ -209,7 +231,10 @@ describe("compileStep", () => {
 
   it("omits the contract when absent", () => {
     const { outputContract: _omit, ...noContract } = baseStep;
-    const compiled = compileStep({ ...noContract }, { topic: "x", outline: "o" });
+    const compiled = compileStep(
+      { ...noContract },
+      { topic: "x", outline: "o" },
+    );
     expect(compiled.prompt.endsWith("OUTLINE:\no")).toBe(true);
   });
 });
@@ -237,7 +262,11 @@ describe("foldStepOutput", () => {
       instruction: "x",
       output: "o",
     };
-    const next = foldStepOutput({}, step, "y".repeat(MAX_CONTEXT_VALUE_CHARS + 5));
+    const next = foldStepOutput(
+      {},
+      step,
+      "y".repeat(MAX_CONTEXT_VALUE_CHARS + 5),
+    );
     expect(next.o.length).toBe(MAX_CONTEXT_VALUE_CHARS);
   });
 });
@@ -281,7 +310,13 @@ describe("validateSkill", () => {
     surfaces: ["document"],
     inputs: [{ id: "topic", label: "Topic" }],
     steps: [
-      { id: "plan", title: "Plan", kind: "plan", instruction: "Plan {{topic}}", output: "outline" },
+      {
+        id: "plan",
+        title: "Plan",
+        kind: "plan",
+        instruction: "Plan {{topic}}",
+        output: "outline",
+      },
       {
         id: "draft",
         title: "Draft",
@@ -298,7 +333,9 @@ describe("validateSkill", () => {
   });
 
   it("flags an empty step list", () => {
-    expect(validateSkill({ ...good, steps: [] })).toContain('skill "good" has no steps');
+    expect(validateSkill({ ...good, steps: [] })).toContain(
+      'skill "good" has no steps',
+    );
   });
 
   it("flags duplicate step ids", () => {
@@ -306,7 +343,9 @@ describe("validateSkill", () => {
       ...good,
       steps: [good.steps[0], { ...good.steps[1], id: "plan" }],
     };
-    expect(validateSkill(dup).some((p) => p.includes("duplicate step id"))).toBe(true);
+    expect(
+      validateSkill(dup).some((p) => p.includes("duplicate step id")),
+    ).toBe(true);
   });
 
   it("flags duplicate output variables", () => {
@@ -333,7 +372,9 @@ describe("validateSkill", () => {
       ],
     };
     expect(
-      validateSkill(bad).some((p) => p.includes('unknown variable "nonexistent"')),
+      validateSkill(bad).some((p) =>
+        p.includes('unknown variable "nonexistent"'),
+      ),
     ).toBe(true);
   });
 
@@ -359,17 +400,166 @@ describe("validateSkill", () => {
       ],
     };
     expect(
-      validateSkill(bad).some((p) => p.includes('unknown variable "draft_text"')),
+      validateSkill(bad).some((p) =>
+        p.includes('unknown variable "draft_text"'),
+      ),
     ).toBe(true);
   });
 
   it("flags blank instruction / output", () => {
     const bad: Skill = {
       ...good,
-      steps: [{ id: "a", title: "A", kind: "draft", instruction: "  ", output: "  " }],
+      steps: [
+        { id: "a", title: "A", kind: "draft", instruction: "  ", output: "  " },
+      ],
     };
     const problems = validateSkill(bad);
     expect(problems.some((p) => p.includes("blank instruction"))).toBe(true);
     expect(problems.some((p) => p.includes("blank output"))).toBe(true);
+  });
+});
+
+describe("evaluateCheck", () => {
+  it("returns no problems when the check is undefined", () => {
+    expect(evaluateCheck(undefined, "")).toEqual([]);
+  });
+
+  it("returns no problems when every predicate is satisfied", () => {
+    const problems = evaluateCheck(
+      {
+        nonEmpty: true,
+        minLines: 2,
+        maxChars: 100,
+        mustStartWith: "## ",
+        mustInclude: ["alpha", "beta"],
+        forbidFences: true,
+        forbidContains: ["i cannot"],
+      },
+      "## alpha\n- beta line",
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("flags empty output for nonEmpty", () => {
+    expect(evaluateCheck({ nonEmpty: true }, "   \n  ")).toEqual([
+      "The output is empty.",
+    ]);
+  });
+
+  it("counts only non-empty lines for minLines", () => {
+    expect(evaluateCheck({ minLines: 3 }, "a\n\n   \nb")).toEqual([
+      "The output must have at least 3 non-empty lines, but has 2.",
+    ]);
+    expect(evaluateCheck({ minLines: 2 }, "a\nb")).toEqual([]);
+  });
+
+  it("uses singular wording for minLines of 1", () => {
+    expect(evaluateCheck({ minLines: 1 }, "   ")).toEqual([
+      "The output must have at least 1 non-empty line, but has 0.",
+    ]);
+  });
+
+  it("flags overlong output for maxChars (measured after trimming)", () => {
+    expect(evaluateCheck({ maxChars: 3 }, "  abcd  ")).toEqual([
+      "The output must be at most 3 characters, but is 4.",
+    ]);
+    expect(evaluateCheck({ maxChars: 4 }, "  abcd  ")).toEqual([]);
+  });
+
+  it("enforces a case-sensitive mustStartWith on the trimmed output", () => {
+    expect(evaluateCheck({ mustStartWith: "=" }, "  =SUM(A1:A2)")).toEqual([]);
+    expect(evaluateCheck({ mustStartWith: "=" }, "SUM(A1:A2)")).toEqual([
+      'The output must start with "=".',
+    ]);
+  });
+
+  it("requires every mustInclude substring, case-insensitively", () => {
+    expect(evaluateCheck({ mustInclude: ["## "] }, "## Slide one")).toEqual([]);
+    expect(
+      evaluateCheck({ mustInclude: ["Alpha", "Gamma"] }, "alpha and beta"),
+    ).toEqual(['The output must include "Gamma".']);
+  });
+
+  it("flags a code fence for forbidFences", () => {
+    expect(evaluateCheck({ forbidFences: true }, "```\ncode\n```")).toEqual([
+      "The output must not contain a Markdown code fence (```).",
+    ]);
+    expect(evaluateCheck({ forbidFences: true }, "plain text")).toEqual([]);
+  });
+
+  it("flags forbidden substrings case-insensitively", () => {
+    expect(
+      evaluateCheck({ forbidContains: ["I cannot"] }, "Sorry, I CANNOT help"),
+    ).toEqual(['The output must not contain "I cannot".']);
+  });
+
+  it("accumulates several failures at once", () => {
+    const problems = evaluateCheck(
+      { nonEmpty: true, mustStartWith: "=", forbidFences: true },
+      "```\nnot a formula\n```",
+    );
+    expect(problems).toHaveLength(2);
+    expect(problems).toContain('The output must start with "=".');
+    expect(problems).toContain(
+      "The output must not contain a Markdown code fence (```).",
+    );
+  });
+
+  it("ignores empty needles in mustInclude / forbidContains", () => {
+    expect(evaluateCheck({ mustInclude: [""] }, "anything")).toEqual([]);
+    expect(evaluateCheck({ forbidContains: [""] }, "anything")).toEqual([]);
+  });
+
+  it("does not falsely fail on NaN bounds", () => {
+    expect(evaluateCheck({ minLines: Number.NaN }, "")).toEqual([]);
+    expect(evaluateCheck({ maxChars: Number.NaN }, "abc")).toEqual([]);
+  });
+});
+
+describe("compileRepairStep", () => {
+  const step: SkillStep = {
+    id: "propose",
+    title: "Propose",
+    kind: "extract",
+    instruction: "Write a formula for {{intent}}",
+    output: "formula",
+    outputContract: "Output ONLY the formula on one line, starting with '='.",
+    check: { nonEmpty: true, mustStartWith: "=" },
+  };
+
+  it("preserves the base compiled prompt and appends the failures", () => {
+    const ctx = { intent: "sum column A" };
+    const base = compileStep(step, ctx);
+    const failures = ['The output must start with "=".'];
+    const repair = compileRepairStep(step, ctx, "SUM(A1:A2)", failures);
+
+    expect(repair.id).toBe(base.id);
+    expect(repair.temperature).toBe(base.temperature);
+    expect(repair.maxTokens).toBe(base.maxTokens);
+    expect(repair.output).toBe(base.output);
+    // The base prompt is fully contained, then the repair addendum follows.
+    expect(repair.prompt.startsWith(base.prompt)).toBe(true);
+    expect(repair.prompt).toContain("YOUR PREVIOUS ANSWER");
+    expect(repair.prompt).toContain("SUM(A1:A2)");
+    expect(repair.prompt).toContain('- The output must start with "=".');
+    expect(repair.prompt).toContain("Return ONLY the corrected result");
+  });
+
+  it("clamps a pathologically long previous attempt in the repair prompt", () => {
+    const huge = "x".repeat(MAX_CONTEXT_VALUE_CHARS + 500);
+    const repair = compileRepairStep(step, { intent: "t" }, huge, [
+      "The output is empty.",
+    ]);
+    expect(repair.prompt).toContain("x".repeat(MAX_CONTEXT_VALUE_CHARS));
+    expect(repair.prompt).not.toContain(
+      "x".repeat(MAX_CONTEXT_VALUE_CHARS + 1),
+    );
+  });
+});
+
+describe("MAX_STEP_REPAIRS", () => {
+  it("is a small, bounded budget", () => {
+    expect(MAX_STEP_REPAIRS).toBeGreaterThanOrEqual(1);
+    expect(MAX_STEP_REPAIRS).toBeLessThanOrEqual(2);
   });
 });

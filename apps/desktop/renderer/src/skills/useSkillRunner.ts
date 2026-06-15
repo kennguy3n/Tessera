@@ -30,8 +30,11 @@ import {
   useActiveGeneration,
 } from "../hooks/useActiveGeneration";
 import {
+  MAX_STEP_REPAIRS,
   cleanStepOutput,
+  compileRepairStep,
   compileStep,
+  evaluateCheck,
   foldStepOutput,
   initialContext,
   missingRequiredInputs,
@@ -62,6 +65,11 @@ export interface UseSkillRunnerResult {
   error: string | null;
   /** True while any step is in flight. */
   isRunning: boolean;
+  /**
+   * True while the current step is being re-prompted because its
+   * deterministic `check` failed (a bounded auto-repair pass).
+   */
+  isRepairing: boolean;
   /** Names of required inputs missing on the last `run` attempt. */
   missingInputs: string[];
   /** Start a run with the user-supplied input values. */
@@ -90,6 +98,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
   const [finalOutput, setFinalOutput] = useState("");
   const [contextVars, setContextVars] = useState<SkillContext>({});
   const [error, setError] = useState<string | null>(null);
+  const [isRepairing, setIsRepairing] = useState(false);
   const [missingInputs, setMissingInputs] = useState<string[]>([]);
   const { cancel: cancelGeneration } = useActiveGeneration();
 
@@ -145,7 +154,9 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
       return new Promise<StepOutcome>((resolve, reject) => {
         const api = typeof window !== "undefined" ? window.tessera : undefined;
         if (!api?.model?.generate || !api.model.onToken) {
-          reject(new Error("The on-device model is unavailable in this context."));
+          reject(
+            new Error("The on-device model is unavailable in this context."),
+          );
           return;
         }
 
@@ -221,6 +232,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
       setFinalOutput("");
       setContextVars(ctx);
       setError(null);
+      setIsRepairing(false);
       setCurrentStepIndex(-1);
       setCurrentStepTitle(null);
       setStatus("running");
@@ -250,14 +262,72 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
             return;
           }
 
-          const cleaned = cleanStepOutput(outcome.text);
+          // Deterministic acceptance check + bounded auto-repair. When a
+          // step declares a `check` and the small model's output misses
+          // it (empty, fenced, wrong shape), re-prompt once with the
+          // rejected attempt and the exact failures rather than trusting
+          // the model to notice. We keep a repaired attempt only when it
+          // is strictly better, and never hard-fail: after the budget the
+          // chain proceeds with the best output and records the residual
+          // failures for the UI.
+          let cleaned = cleanStepOutput(outcome.text);
+          let checkFailures = evaluateCheck(step.check, cleaned);
+          let repaired = false;
+
+          for (
+            let attempt = 0;
+            checkFailures.length > 0 && attempt < MAX_STEP_REPAIRS;
+            attempt++
+          ) {
+            if (mountedRef.current) {
+              setIsRepairing(true);
+              setLiveOutput("");
+            }
+            const repairCompiled = compileRepairStep(
+              step,
+              ctx,
+              cleaned,
+              checkFailures,
+            );
+            const repairOutcome = await streamStep(
+              runId,
+              repairCompiled.prompt,
+              repairCompiled.maxTokens,
+              repairCompiled.temperature,
+            );
+            if (runId !== runIdRef.current) return;
+            if (repairOutcome.kind === "battery_low") {
+              if (mountedRef.current) {
+                setIsRepairing(false);
+                setStatus("battery_low");
+              }
+              return;
+            }
+
+            const repairCleaned = cleanStepOutput(repairOutcome.text);
+            const repairFailures = evaluateCheck(step.check, repairCleaned);
+            if (repairFailures.length < checkFailures.length) {
+              cleaned = repairCleaned;
+              checkFailures = repairFailures;
+              repaired = true;
+            } else {
+              // No improvement — keep the original attempt and stop.
+              break;
+            }
+          }
+          if (mountedRef.current) setIsRepairing(false);
+
           ctx = foldStepOutput(ctx, step, cleaned);
 
           if (mountedRef.current) {
-            setSteps((prev) => [
-              ...prev,
-              { id: step.id, title: step.title, output: cleaned },
-            ]);
+            const result: SkillStepResult = {
+              id: step.id,
+              title: step.title,
+              output: cleaned,
+            };
+            if (repaired) result.repaired = true;
+            if (checkFailures.length > 0) result.checkFailures = checkFailures;
+            setSteps((prev) => [...prev, result]);
             setContextVars(ctx);
             setFinalOutput(cleaned);
           }
@@ -288,6 +358,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
     }
     void cancelGeneration();
     if (mountedRef.current) {
+      setIsRepairing(false);
       setStatus((prev) => (prev === "running" ? "cancelled" : prev));
     }
   }, [cancelGeneration, teardownSubscription]);
@@ -312,6 +383,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
     setFinalOutput("");
     setContextVars({});
     setError(null);
+    setIsRepairing(false);
     setMissingInputs([]);
   }, [cancelGeneration, teardownSubscription]);
 
@@ -326,6 +398,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
       contextVars,
       error,
       isRunning: status === "running",
+      isRepairing,
       missingInputs,
       run,
       cancel,
@@ -340,6 +413,7 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
       finalOutput,
       contextVars,
       error,
+      isRepairing,
       missingInputs,
       run,
       cancel,
