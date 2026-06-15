@@ -279,8 +279,11 @@ const TEXT_ALIGNMENTS = [
 ] as const;
 
 // Leading tags that mark a serialized fragment as already block-level.
-// Mirrors documentEditorHelpers' trusted-tag allow-list closely enough to
-// decide whether a captured selection needs wrapping in a paragraph.
+// Intentionally the block-level subset of documentEditorHelpers'
+// TRUSTED_LEADING_TAGS: inline tags (span, mark, a, strong, em, img, …) are
+// excluded so an inline-only selection still gets wrapped in a paragraph by
+// selectionToBlockHtml — which is what keeps the captured HTML block-level
+// for parseDocumentContent's trusted-tag passthrough.
 const BLOCK_HTML_LEADING_TAG =
   /^<(?:p|h[1-6]|ul|ol|li|blockquote|pre|table|hr|div|details)\b/i;
 
