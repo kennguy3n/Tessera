@@ -19,6 +19,7 @@ import type {
   CellFormat,
   ChartSpec,
   ConditionalFormatRule,
+  DataValidation,
   PivotSpec,
   SheetContent,
   SheetNamedRange,
@@ -410,11 +411,13 @@ const KPI_SCORECARD = buildTemplate({
       "=C3/B3",
       '=IF(D3>=1,"On track",IF(D3>=0.8,"At risk","Off track"))',
     ],
+    // Churn is lower-is-better, so attainment inverts to target / actual:
+    // beating the target (actual < target) yields >= 1 ("On track").
     [
       "Churn",
       "0.03",
       "0.041",
-      "=C4/B4",
+      "=B4/C4",
       '=IF(D4>=1,"On track",IF(D4>=0.8,"At risk","Off track"))',
     ],
   ],
@@ -523,10 +526,56 @@ export function filterSheetTemplates<T extends FilterableSheetTemplate>(
 }
 
 /**
+ * Deep-clone a per-cell format map. `CellFormat` is flat (every member is
+ * a primitive), so a spread per entry fully detaches it from the source.
+ */
+function cloneFormats(
+  formats: Record<string, CellFormat>,
+): Record<string, CellFormat> {
+  const out: Record<string, CellFormat> = {};
+  for (const [key, fmt] of Object.entries(formats)) out[key] = { ...fmt };
+  return out;
+}
+
+/**
+ * Deep-clone conditional rules. Each rule's only nested mutable member is
+ * `style`, so spread the rule and re-spread its `style`.
+ */
+function cloneConditionalRules(
+  rules: readonly ConditionalFormatRule[],
+): ConditionalFormatRule[] {
+  return rules.map((rule) => ({ ...rule, style: { ...rule.style } }));
+}
+
+/**
+ * Deep-clone one validation rule, copying the `list` variant's `values`
+ * array so the clone shares no mutable state with the source.
+ */
+function cloneValidation(rule: DataValidation): DataValidation {
+  return rule.kind === "list"
+    ? { kind: "list", values: [...rule.values] }
+    : { kind: "checkbox" };
+}
+
+/** Deep-clone a column-index → validation map. */
+function cloneValidations(validations: ValidationMap): ValidationMap {
+  const out: ValidationMap = {};
+  for (const [key, rule] of Object.entries(validations)) {
+    out[key] = cloneValidation(rule);
+  }
+  return out;
+}
+
+/**
  * Convert a {@link SheetTemplateContent} into a full {@link SheetContent}
  * ready to mount in the editor. Empty optional collections are dropped so
  * the serialised artifact stays byte-identical to legacy single-sheet
  * JSON when a template carries no extras.
+ *
+ * Every nested collection is deep-copied so the returned content shares no
+ * mutable state with the source template. This matters for the built-ins,
+ * which are module-level constants (`MONTHLY_BUDGET`, …): a caller mutating
+ * the applied sheet in place must never corrupt the template it came from.
  */
 export function sheetContentFromTemplate(
   template: SheetTemplateContent,
@@ -536,28 +585,28 @@ export function sheetContentFromTemplate(
     rows: template.rows.map((row) => row.slice()),
   };
   if (template.formats && Object.keys(template.formats).length > 0) {
-    content.formats = template.formats;
+    content.formats = cloneFormats(template.formats);
   }
   if (template.conditionalRules && template.conditionalRules.length > 0) {
-    content.conditionalRules = template.conditionalRules;
+    content.conditionalRules = cloneConditionalRules(template.conditionalRules);
   }
   if (template.validations && Object.keys(template.validations).length > 0) {
-    content.validations = template.validations;
+    content.validations = cloneValidations(template.validations);
   }
   if (template.charts && template.charts.length > 0) {
-    content.charts = template.charts;
+    content.charts = template.charts.map((chart) => ({ ...chart }));
   }
   if (template.pivots && template.pivots.length > 0) {
-    content.pivots = template.pivots;
+    content.pivots = template.pivots.map((pivot) => ({ ...pivot }));
   }
   if (template.namedRanges && template.namedRanges.length > 0) {
-    content.namedRanges = template.namedRanges;
+    content.namedRanges = template.namedRanges.map((range) => ({ ...range }));
   }
   if (template.columnWidths && template.columnWidths.length > 0) {
-    content.columnWidths = template.columnWidths;
+    content.columnWidths = template.columnWidths.slice();
   }
   if (template.rowHeights && template.rowHeights.length > 0) {
-    content.rowHeights = template.rowHeights;
+    content.rowHeights = template.rowHeights.slice();
   }
   if (template.frozenRows) content.frozenRows = template.frozenRows;
   if (template.frozenCols) content.frozenCols = template.frozenCols;

@@ -122,6 +122,15 @@ describe("normalizeSheetContent", () => {
     ]);
   });
 
+  it("falls back to one empty row when every row is a non-array", () => {
+    const normalized = normalizeSheetContent({
+      columns: ["A", "B"],
+      rows: [1, 2, 3],
+    });
+    expect(normalized.columns).toEqual(["A", "B"]);
+    expect(normalized.rows).toEqual([["", ""]]);
+  });
+
   it("keeps valid per-cell formats and drops malformed keys / styles", () => {
     const normalized = normalizeSheetContent({
       columns: ["A"],

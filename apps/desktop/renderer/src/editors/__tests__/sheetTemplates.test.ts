@@ -8,6 +8,7 @@ import {
   sheetContentFromTemplate,
   type FilterableSheetTemplate,
   type SheetTemplate,
+  type SheetTemplateContent,
 } from "../sheetTemplates";
 
 const CATEGORY_SET = new Set<string>(SHEET_TEMPLATE_CATEGORIES);
@@ -142,6 +143,96 @@ describe("sheetContentFromTemplate", () => {
     expect(content.rows).not.toBe(template.content.rows);
     content.rows[0][0] = "MUTATED";
     expect(template.content.rows[0][0]).not.toBe("MUTATED");
+  });
+
+  it("deep-copies every nested collection so edits never touch the source", () => {
+    const source: SheetTemplateContent = {
+      columns: ["A", "B"],
+      rows: [["1", "2"]],
+      formats: { "0,0": { bold: true, numberFormat: "#,##0.00" } },
+      conditionalRules: [
+        {
+          id: "r1",
+          column: 0,
+          operator: "gt",
+          value: "0",
+          style: { background: "#fee2e2", color: "#991b1b" },
+        },
+      ],
+      validations: { "1": { kind: "list", values: ["x", "y"] } },
+      charts: [{ id: "c1", type: "bar", range: "A1:B1" }],
+      pivots: [
+        { id: "p1", range: "A1:B2", rowField: 0, valueField: 1, agg: "sum" },
+      ],
+      namedRanges: [{ name: "Region", range: "A1:A2" }],
+      columnWidths: [80, 120],
+      rowHeights: [24],
+    };
+    const content = sheetContentFromTemplate(source);
+
+    // Every nested container (and its elements) is a fresh reference.
+    expect(content.formats).not.toBe(source.formats);
+    expect(content.formats?.["0,0"]).not.toBe(source.formats?.["0,0"]);
+    expect(content.conditionalRules).not.toBe(source.conditionalRules);
+    expect(content.conditionalRules?.[0]).not.toBe(
+      source.conditionalRules?.[0],
+    );
+    expect(content.conditionalRules?.[0]?.style).not.toBe(
+      source.conditionalRules?.[0]?.style,
+    );
+    expect(content.validations).not.toBe(source.validations);
+    expect(content.validations?.["1"]).not.toBe(source.validations?.["1"]);
+    expect(content.charts).not.toBe(source.charts);
+    expect(content.charts?.[0]).not.toBe(source.charts?.[0]);
+    expect(content.pivots).not.toBe(source.pivots);
+    expect(content.pivots?.[0]).not.toBe(source.pivots?.[0]);
+    expect(content.namedRanges).not.toBe(source.namedRanges);
+    expect(content.namedRanges?.[0]).not.toBe(source.namedRanges?.[0]);
+    expect(content.columnWidths).not.toBe(source.columnWidths);
+    expect(content.rowHeights).not.toBe(source.rowHeights);
+
+    // Mutating the clone leaves the source built-in pristine.
+    const cloneFmt = content.formats?.["0,0"];
+    if (cloneFmt) cloneFmt.bold = false;
+    expect(source.formats?.["0,0"]?.bold).toBe(true);
+
+    const cloneRule = content.conditionalRules?.[0];
+    if (cloneRule) cloneRule.style.background = "#000000";
+    expect(source.conditionalRules?.[0]?.style.background).toBe("#fee2e2");
+
+    const cloneVal = content.validations?.["1"];
+    if (cloneVal && cloneVal.kind === "list") cloneVal.values.push("z");
+    const srcVal = source.validations?.["1"];
+    expect(srcVal && srcVal.kind === "list" ? srcVal.values.length : -1).toBe(
+      2,
+    );
+
+    const cloneChart = content.charts?.[0];
+    if (cloneChart) cloneChart.range = "ZZ1";
+    expect(source.charts?.[0]?.range).toBe("A1:B1");
+
+    const clonePivot = content.pivots?.[0];
+    if (clonePivot) clonePivot.agg = "count";
+    expect(source.pivots?.[0]?.agg).toBe("sum");
+
+    const cloneNamed = content.namedRanges?.[0];
+    if (cloneNamed) cloneNamed.range = "ZZ1";
+    expect(source.namedRanges?.[0]?.range).toBe("A1:A2");
+
+    if (content.columnWidths) content.columnWidths[0] = 999;
+    expect(source.columnWidths?.[0]).toBe(80);
+
+    if (content.rowHeights) content.rowHeights[0] = 999;
+    expect(source.rowHeights?.[0]).toBe(24);
+  });
+
+  it("scores the KPI scorecard churn metric as lower-is-better", () => {
+    const kpi = pick("kpi-scorecard");
+    const churn = kpi.content.rows.find((row) => row[0] === "Churn");
+    expect(churn).toBeDefined();
+    // Attainment inverts to target / actual (column D), so beating the
+    // lower churn target reads as >= 1 ("On track").
+    expect(churn?.[3]).toBe("=B4/C4");
   });
 
   it("carries non-empty optional collections through", () => {

@@ -250,13 +250,20 @@ function normalizeColumns(value: unknown): string[] {
 }
 
 function normalizeRows(value: unknown, columnCount: number): string[][] {
+  const oneEmptyRow = (): string[][] => [
+    Array.from({ length: columnCount }, () => ""),
+  ];
   if (!Array.isArray(value)) {
-    return [Array.from({ length: columnCount }, () => "")];
+    return oneEmptyRow();
   }
-  return value
+  const rows = value
     .slice(0, MAX_TEMPLATE_ROWS)
     .filter((row): row is unknown[] => Array.isArray(row))
     .map((row) => row.slice(0, MAX_TEMPLATE_COLUMNS).map(toCellText));
+  // An array whose every element was a non-array filters down to nothing;
+  // fall back to one empty row so the grid is never zero-height (matching
+  // the non-array path above).
+  return rows.length > 0 ? rows : oneEmptyRow();
 }
 
 const ALIGN_VALUES: ReadonlySet<string> = new Set(["left", "center", "right"]);

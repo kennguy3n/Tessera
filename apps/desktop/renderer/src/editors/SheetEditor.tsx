@@ -1110,6 +1110,20 @@ export default function SheetEditor({
     [debouncedSave],
   );
 
+  // Open the gallery from the toolbar. The gallery installs a focus trap,
+  // so close the other side panels first — only one focus-trapping surface
+  // should compete for keyboard focus at a time (the panels don't otherwise
+  // close one another, but none of the others trap focus).
+  const openTemplatePicker = useCallback(() => {
+    setCfOpen(false);
+    setNrOpen(false);
+    setAiOpen(false);
+    setDvOpen(false);
+    setChartsOpen(false);
+    setPivotsOpen(false);
+    setTemplatePickerOpen(true);
+  }, []);
+
   // Open the metadata modal seeded with the *current* sheet so "Save as
   // template" stores exactly what the editor persists; build-time
   // normalisation canonicalises it on save. Launched from the toolbar
@@ -1531,7 +1545,7 @@ export default function SheetEditor({
           aria-expanded={templatePickerOpen}
           data-testid="sheet-templates-toggle"
           title="Start from a curated or saved template"
-          onClick={() => setTemplatePickerOpen(true)}
+          onClick={openTemplatePicker}
         >
           <LayoutTemplate size={15} aria-hidden="true" /> Templates
         </button>
