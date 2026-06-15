@@ -674,13 +674,13 @@ describe("CreatePage", () => {
     // `localItem.description` priority over `template.description`,
     // matching the parallel `displayName` precedence.
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
-    window.tessera.templates.get = vi.fn().mockResolvedValue({
-      id: "report-v1",
-      name: "Report",
-      description: "Analytical report",
-      version: "1",
-      category: "documents",
-    });
+    window.tessera.templates.get = vi.fn().mockResolvedValue(
+      templateInfo({
+        id: "report-v1",
+        name: "Report",
+        description: "Analytical report",
+      }),
+    );
 
     render(
       <MemoryRouter initialEntries={["/create"]}>
