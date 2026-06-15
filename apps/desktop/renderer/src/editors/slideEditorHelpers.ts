@@ -14,12 +14,17 @@
 import type { MarpRenderOptions } from "../services/marpRenderer";
 import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
-import { DEFAULT_SLIDE_THEME_ID, isKnownSlideThemeId } from "./slideThemes";
+import {
+  DEFAULT_SLIDE_THEME_ID,
+  isKnownSlideBgStyle,
+  isKnownSlideThemeId,
+} from "./slideThemes";
 import { coerceBrandKitId } from "./slideBrandKit";
 import { getSlideLayout } from "./slideLayouts";
 import type { ChartData } from "./sheetCharts";
 import type {
   Slide,
+  SlideAspectRatio,
   SlideBlock,
   SlideContent,
   SlideLayout,
@@ -49,6 +54,14 @@ export interface ParsedSlideContent {
    */
   themeId: string;
   /**
+   * Resolved deck aspect ratio. Always one of the known
+   * {@link SlideAspectRatio} values — `parseSlideContent` validates
+   * the persisted value and falls back to {@link DEFAULT_ASPECT_RATIO}
+   * for missing / unknown ids, so downstream consumers can stamp it
+   * onto the canvas without re-validating.
+   */
+  aspectRatio: SlideAspectRatio;
+  /**
    * Persisted active brand-kit id, or `undefined` when the deck has no
    * brand kit (the common case). Only structurally validated here (it
    * must be brand-namespaced); whether the id resolves to a real kit is
@@ -56,6 +69,33 @@ export interface ParsedSlideContent {
    * id pointing at a deleted/foreign kit degrades to "no brand kit".
    */
   brandKitId: string | undefined;
+}
+
+/**
+ * Legacy default aspect ratio. Decks saved before aspect ratios
+ * shipped (and any deck that doesn't override) render 16:9, exactly
+ * as before.
+ */
+export const DEFAULT_ASPECT_RATIO: SlideAspectRatio = "16:9";
+
+const KNOWN_ASPECT_RATIOS: ReadonlySet<string> = new Set<SlideAspectRatio>([
+  "16:9",
+  "4:3",
+  "1:1",
+]);
+
+/**
+ * Coerce a persisted, possibly-unknown aspect ratio to a known value,
+ * falling back to {@link DEFAULT_ASPECT_RATIO}. Exported so the
+ * SlideEditor's content-sync path and the tests share one validation
+ * rule, mirroring {@link resolveThemeId}.
+ */
+export function resolveAspectRatio(
+  value: string | undefined | null,
+): SlideAspectRatio {
+  return typeof value === "string" && KNOWN_ASPECT_RATIOS.has(value)
+    ? (value as SlideAspectRatio)
+    : DEFAULT_ASPECT_RATIO;
 }
 
 /**
@@ -194,6 +234,44 @@ export function backfillSlideIds(slides: readonly Slide[]): Slide[] {
   return nextSlides ?? (slides as Slide[]);
 }
 
+/**
+ * Strip an unknown per-slide `background` override down to "no
+ * override" so a hand-edited or corrupted persisted value can never
+ * reach the canvas as a dangling `data-slide-bg="…"` that matches no
+ * CSS rule. This mirrors the deck-level `resolveThemeId` /
+ * `resolveAspectRatio` coercion so EVERY persisted style field is
+ * trusted only after a catalogue check, and is what makes
+ * {@link isKnownSlideBgStyle}'s contract — "validated by
+ * `parseSlideContent`" — actually hold.
+ *
+ * Lazy clone-on-first-mutation, exactly like {@link backfillSlideIds}:
+ * a slide whose `background` is absent or already valid is passed
+ * through by reference, so an already-clean deck returns the same
+ * array (and the same slide objects) and React's setState equality
+ * short-circuit still holds. Only a slide carrying an invalid
+ * override is shallow cloned, with the bad key deleted entirely
+ * (rather than set to `undefined`) so the sanitised slide serialises
+ * identically to one that never had an override.
+ */
+function sanitizeSlideBackgrounds(slides: Slide[]): Slide[] {
+  let next: Slide[] | null = null;
+  for (let i = 0; i < slides.length; i += 1) {
+    const slide = slides[i];
+    if (
+      slide.background === undefined ||
+      isKnownSlideBgStyle(slide.background)
+    ) {
+      if (next) next.push(slide);
+      continue;
+    }
+    if (!next) next = slides.slice(0, i);
+    const cleaned = { ...slide };
+    delete cleaned.background;
+    next.push(cleaned);
+  }
+  return next ?? slides;
+}
+
 export function parseSlideContent(content: string): ParsedSlideContent {
   const emptyDefault: ParsedSlideContent = {
     slides: backfillSlideIds([
@@ -208,6 +286,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpSource: "",
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
     brandKitId: undefined,
   };
   if (!content) return emptyDefault;
@@ -219,11 +298,12 @@ export function parseSlideContent(content: string): ParsedSlideContent {
       parsed.slides.length > 0
     ) {
       return {
-        slides: backfillSlideIds(parsed.slides),
+        slides: sanitizeSlideBackgrounds(backfillSlideIds(parsed.slides)),
         marpMode: parsed.marp?.enabled ?? false,
         marpSource: parsed.marp?.source ?? "",
         marpTheme: parsed.marp?.theme,
         themeId: resolveThemeId(parsed.themeId),
+        aspectRatio: resolveAspectRatio(parsed.aspectRatio),
         brandKitId: coerceBrandKitId(parsed.brandKitId),
       };
     }
@@ -243,6 +323,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpSource: "",
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
     brandKitId: undefined,
   };
 }
@@ -648,6 +729,65 @@ export function buildSlideFromLayout(layout: SlideLayout): Slide {
         notes: "",
         layout,
       };
+    case "timeline":
+      return {
+        id: baseId,
+        title: "Timeline",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "event" }),
+          buildBlock({ type: "text", content: "", slot: "event" }),
+          buildBlock({ type: "text", content: "", slot: "event" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "process":
+      return {
+        id: baseId,
+        title: "Process",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "step" }),
+          buildBlock({ type: "text", content: "", slot: "step" }),
+          buildBlock({ type: "text", content: "", slot: "step" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "comparison":
+      return {
+        id: baseId,
+        title: "Comparison",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "left" }),
+          buildBlock({ type: "text", content: "", slot: "right" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "gallery":
+      return {
+        id: baseId,
+        title: "Gallery",
+        blocks: [
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+          buildBlock({ type: "image", content: "", alt: "", slot: "image" }),
+        ],
+        notes: "",
+        layout,
+      };
+    case "metricRow":
+      return {
+        id: baseId,
+        title: "Key Metrics",
+        blocks: [
+          buildBlock({ type: "text", content: "", slot: "metric" }),
+          buildBlock({ type: "text", content: "", slot: "metric" }),
+          buildBlock({ type: "text", content: "", slot: "metric" }),
+        ],
+        notes: "",
+        layout,
+      };
   }
 }
 
@@ -743,12 +883,19 @@ export function duplicateSlideAt(
   // every block. Reusing the originals' IDs would collide with the
   // source's React keys and corrupt drag-and-drop reorder + the find
   // panel's per-slide / per-block jump pointer.
+  // Rebuilt field-by-field (rather than spread) so the duplicate can
+  // only ever carry known `Slide` fields with fresh ids. Any *new*
+  // optional field added to `Slide` must be copied here explicitly —
+  // `background` is the per-slide background override, conditionally
+  // spread so a slide with no override doesn't gain an `undefined` key
+  // (keeping the serialised JSON identical to the "inherit theme" case).
   const copy: Slide = {
     id: newSlideId("slide"),
     title: original.title,
     notes: original.notes,
     blocks: original.blocks.map((b) => ({ ...b, id: newSlideId("block") })),
     layout: original.layout,
+    ...(original.background ? { background: original.background } : {}),
   };
   const next = [
     ...slides.slice(0, index + 1),

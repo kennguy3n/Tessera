@@ -110,7 +110,14 @@ export interface InsertCardPreset {
   id: string;
   label: string;
   description: string;
+  /** Emoji / text glyph fallback, rendered when no icon component resolves. */
   icon: string;
+  /**
+   * Optional lucide icon name (display-only). When it resolves via the
+   * icon resolver the menu renders the vector icon; otherwise it falls
+   * back to {@link icon}. Never persisted — purely a picker affordance.
+   */
+  iconName?: string;
   layout: SlideLayout;
   title: string;
   blocks: ReadonlyArray<{
@@ -2168,6 +2175,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Stat Card",
     description: "Hero number with caption",
     icon: "#",
+    iconName: "Hash",
     layout: "bigNumber",
     title: "",
     blocks: [
@@ -2180,6 +2188,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Comparison",
     description: "Side-by-side two columns",
     icon: "⇔",
+    iconName: "Columns2",
     layout: "twoColumn",
     title: "Comparison",
     blocks: [
@@ -2192,6 +2201,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Quote",
     description: "Centred quotation with attribution",
     icon: "❝",
+    iconName: "Quote",
     layout: "quote",
     title: "",
     blocks: [
@@ -2204,6 +2214,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Section Break",
     description: "Bold section divider",
     icon: "◆",
+    iconName: "Minus",
     layout: "sectionHeader",
     title: "New Section",
     blocks: [{ type: "text", content: "", slot: "subtitle" }],
@@ -2213,6 +2224,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Image + Text",
     description: "Image left with text body",
     icon: "▣",
+    iconName: "PanelLeft",
     layout: "imageLeft",
     title: "Visual Point",
     blocks: [
@@ -2225,6 +2237,7 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Bullet List",
     description: "Title with key points",
     icon: "•",
+    iconName: "List",
     layout: "titleContent",
     title: "Key Points",
     blocks: [
@@ -2240,9 +2253,84 @@ export const INSERT_CARD_PRESETS: readonly InsertCardPreset[] = [
     label: "Blank Slide",
     description: "Empty canvas",
     icon: "□",
+    iconName: "Square",
     layout: "blank",
     title: "",
     blocks: [{ type: "text", content: "", slot: "body" }],
+  },
+  // -------------------------------------------------------------------------
+  // Smart-layout presets (additive — surface the new CSS-grid layouts as
+  // one-click insert cards). Ids are new and never collide with the layout
+  // ids of the same theme (preset ids live in their own namespace).
+  // -------------------------------------------------------------------------
+  {
+    id: "timeline-card",
+    label: "Timeline",
+    description: "Milestones on a connected track",
+    icon: "●─●─●",
+    iconName: "Milestone",
+    layout: "timeline",
+    title: "Timeline",
+    blocks: [
+      { type: "text", content: "Q1 — Kickoff", slot: "event" },
+      { type: "text", content: "Q2 — Build", slot: "event" },
+      { type: "text", content: "Q3 — Launch", slot: "event" },
+    ],
+  },
+  {
+    id: "process-card",
+    label: "Process / Steps",
+    description: "Numbered left-to-right steps",
+    icon: "1·2·3",
+    iconName: "ListOrdered",
+    layout: "process",
+    title: "Process",
+    blocks: [
+      { type: "text", content: "Plan the work", slot: "step" },
+      { type: "text", content: "Do the work", slot: "step" },
+      { type: "text", content: "Review results", slot: "step" },
+    ],
+  },
+  {
+    id: "comparison-split",
+    label: "Comparison Panels",
+    description: "Two panels with a central divider",
+    icon: "▮│▮",
+    iconName: "GitCompare",
+    layout: "comparison",
+    title: "Comparison",
+    blocks: [
+      { type: "text", content: "Option A", slot: "left" },
+      { type: "text", content: "Option B", slot: "right" },
+    ],
+  },
+  {
+    id: "gallery-card",
+    label: "Gallery",
+    description: "Responsive grid of images",
+    icon: "▦",
+    iconName: "Images",
+    layout: "gallery",
+    title: "Gallery",
+    blocks: [
+      { type: "image", content: "", slot: "image" },
+      { type: "image", content: "", slot: "image" },
+      { type: "image", content: "", slot: "image" },
+    ],
+  },
+  {
+    id: "metric-row",
+    label: "Metric Row",
+    description: "Row of headline numbers",
+    icon: "## ##",
+    iconName: "BarChart3",
+    layout: "metricRow",
+    title: "Key Metrics",
+    blocks: [
+      { type: "text", content: "99%", slot: "metric" },
+      { type: "text", content: "2.4k", slot: "metric" },
+      { type: "text", content: "3x", slot: "metric" },
+    ],
   },
 ] as const;
 

@@ -6,6 +6,7 @@
  * directly without creating a runtime cycle. Compile-time-erased
  * declarations only — no value-level code lives here, by design.
  */
+import type { SlideBgStyle } from "./slideThemes";
 
 export type SlideBlockType =
   | "text"
@@ -89,7 +90,20 @@ export type SlideLayout =
   | "sectionHeader"
   | "bigNumber"
   | "quote"
-  | "imageCaption";
+  | "imageCaption"
+  // Smart layouts (additive — never reorder/rename the ids above).
+  | "timeline"
+  | "process"
+  | "comparison"
+  | "gallery"
+  | "metricRow";
+
+/**
+ * Deck-level canvas aspect ratio. Optional and additive: legacy decks
+ * omit it and `parseSlideContent` resolves the 16:9 default, so they
+ * render exactly as before. "1:1" is useful for square social exports.
+ */
+export type SlideAspectRatio = "16:9" | "4:3" | "1:1";
 
 export interface Slide {
   /**
@@ -116,6 +130,15 @@ export interface Slide {
    * block shape. Unknown ids degrade to the default layout.
    */
   layout?: SlideLayout;
+  /**
+   * Per-slide background override. When set, this slide renders with
+   * the given background style instead of the deck theme's default
+   * `bgStyle` (see `slideThemes.ts`). Optional and additive: legacy
+   * decks and slides that don't override simply inherit the theme
+   * background. Reuses the existing `SlideBgStyle` union and the
+   * `[data-slide-bg]` CSS so no new rendering primitive is needed.
+   */
+  background?: SlideBgStyle;
 }
 
 export interface MarpModeState {
@@ -136,6 +159,13 @@ export interface SlideContent {
    * unstyled theme attribute onto the canvas.
    */
   themeId?: string;
+  /**
+   * Deck canvas aspect ratio (see {@link SlideAspectRatio}). Optional
+   * and additive: legacy decks omit it and `parseSlideContent`
+   * resolves the 16:9 default. A hand-edited / unknown value degrades
+   * to 16:9 rather than stamping an invalid attribute onto the canvas.
+   */
+  aspectRatio?: SlideAspectRatio;
   /**
    * Active brand kit id (see `slideBrandKit.ts`). Optional and
    * additive: a deck with no brand kit renders exactly as today. The

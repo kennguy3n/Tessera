@@ -52,11 +52,14 @@ import { SlideThumbnail } from "./components/SlideThumbnail";
 import {
   SLIDE_THEMES,
   getSlideTheme,
+  SLIDE_BG_STYLES,
   DEFAULT_SLIDE_THEME_ID,
+  type SlideBgStyle,
 } from "./slideThemes";
 import { brandKitCssVars, type BrandKit } from "./slideBrandKit";
 import { useBrandKits } from "./useBrandKits";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
+import { resolveIconComponent } from "../services/iconResolver";
 import {
   SLIDE_TEMPLATES,
   INSERT_CARD_PRESETS,
@@ -80,6 +83,7 @@ import {
 import type {
   MarpModeState,
   Slide,
+  SlideAspectRatio,
   SlideBlock,
   SlideBlockType,
   SlideContent,
@@ -161,6 +165,44 @@ const LAYOUT_LABELS: Record<SlideLayout, string> = Object.fromEntries(
 
 const LAYOUT_ORDER: SlideLayout[] = SLIDE_LAYOUTS.map((l) => l.id);
 
+/**
+ * Per-layout display metadata (icon name + emoji/text glyph fallback)
+ * keyed by layout id, derived once from the catalogue. Lets the
+ * Add-Slide menu surface a real vector icon while keeping the emoji
+ * glyph as a guaranteed fallback for any layout whose `iconName`
+ * doesn't resolve in the bundled icon set.
+ */
+const LAYOUT_META: Record<SlideLayout, { iconName?: string; glyph: string }> =
+  Object.fromEntries(
+    SLIDE_LAYOUTS.map((l) => [l.id, { iconName: l.iconName, glyph: l.glyph }]),
+  ) as Record<SlideLayout, { iconName?: string; glyph: string }>;
+
+/**
+ * Render a menu glyph as a crisp Lucide vector icon when `iconName`
+ * resolves, otherwise fall back to the emoji/text `glyph`. Resolution
+ * is a cheap namespace lookup (no async, no hooks) so it's safe to call
+ * inside a `.map()` over menu items. The icon is purely decorative —
+ * the adjacent text label carries the accessible name — so it's marked
+ * `aria-hidden`.
+ */
+function SlideMenuIcon({
+  iconName,
+  glyph,
+  size = 16,
+}: {
+  iconName?: string;
+  glyph: string;
+  size?: number;
+}) {
+  const Icon = iconName
+    ? resolveIconComponent({ set: "lucide", name: iconName })
+    : null;
+  if (Icon) {
+    return <Icon size={size} aria-hidden="true" focusable="false" />;
+  }
+  return <span aria-hidden="true">{glyph}</span>;
+}
+
 export default function SlideEditor({
   content,
   onSave,
@@ -194,6 +236,12 @@ export default function SlideEditor({
     () => initial.marpTheme ?? "default",
   );
   const [themeId, setThemeId] = useState<string>(() => initial.themeId);
+  // Deck-wide aspect ratio (16:9 legacy default). Seeded from the parsed
+  // content so a restored deck keeps its ratio; persisted via the
+  // debounced save like `themeId`.
+  const [aspectRatio, setAspectRatio] = useState<SlideAspectRatio>(
+    () => initial.aspectRatio,
+  );
   // Active brand-kit id (re-skins the curated theme). `undefined` ⇒ no
   // brand kit, the legacy/default case. Validity against the live store
   // is resolved below via `useBrandKits`, so a stale/foreign id here
@@ -253,6 +301,15 @@ export default function SlideEditor({
   useEffect(() => {
     themeIdRef.current = themeId;
   }, [themeId]);
+
+  // Mirror the deck aspect ratio into a ref for the same flush-time
+  // consistency reason as `themeIdRef`: a save scheduled from a slide
+  // mutator (which takes no ratio argument) must serialise the freshest
+  // chosen ratio, not the value captured when the callback was created.
+  const aspectRatioRef = useRef<SlideAspectRatio>(aspectRatio);
+  useEffect(() => {
+    aspectRatioRef.current = aspectRatio;
+  }, [aspectRatio]);
 
   // Mirror the active brand-kit id into a ref for the same flush-time
   // consistency the theme + marp refs guarantee: a save scheduled from a
@@ -466,6 +523,7 @@ export default function SlideEditor({
         slides: updatedSlides,
         marp: marpState ?? marpStateRef.current,
         themeId: themeIdRef.current,
+        aspectRatio: aspectRatioRef.current,
         // `JSON.stringify` drops `undefined`, so a deck that never set a
         // brand kit serialises exactly as before (no `brandKitId` key) —
         // keeping legacy decks byte-identical and the field truly additive.
@@ -533,6 +591,8 @@ export default function SlideEditor({
       setMarpTheme(parsed.marpTheme ?? "default");
       setThemeId(parsed.themeId);
       themeIdRef.current = parsed.themeId;
+      setAspectRatio(parsed.aspectRatio);
+      aspectRatioRef.current = parsed.aspectRatio;
       setBrandKitId(parsed.brandKitId);
       brandKitIdRef.current = parsed.brandKitId;
       setDraggedSlideId(null);
@@ -700,6 +760,32 @@ export default function SlideEditor({
       debouncedSave(slides);
     },
     [debouncedSave, slides],
+  );
+
+  // Switch the deck-wide aspect ratio. Mirrors `changeTheme`: the ref is
+  // updated synchronously before the debounced save so the just-chosen
+  // ratio is serialised even though `debouncedSave(slides)` doesn't take
+  // a ratio argument.
+  const changeAspectRatio = useCallback(
+    (next: SlideAspectRatio) => {
+      setAspectRatio(next);
+      aspectRatioRef.current = next;
+      debouncedSave(slides);
+    },
+    [debouncedSave, slides],
+  );
+
+  // Set (or clear) the active slide's per-slide background override.
+  // An empty selection clears the override so the slide inherits the
+  // theme's default `bgStyle` again. Routed through `updateSlide` so it
+  // persists and round-trips like any other per-slide edit.
+  const changeSlideBackground = useCallback(
+    (value: SlideBgStyle | "") => {
+      updateSlide(activeIndex, {
+        background: value === "" ? undefined : value,
+      });
+    },
+    [updateSlide, activeIndex],
   );
 
   // Apply a brand kit to the deck. A kit re-skins a curated base theme,
@@ -1465,6 +1551,12 @@ export default function SlideEditor({
                   className="slide-layout-menu-item"
                   onClick={() => addSlide(layout)}
                 >
+                  <span className="slide-layout-menu-item-icon">
+                    <SlideMenuIcon
+                      iconName={LAYOUT_META[layout].iconName}
+                      glyph={LAYOUT_META[layout].glyph}
+                    />
+                  </span>
                   {LAYOUT_LABELS[layout]}
                 </button>
               ))}
@@ -1650,6 +1742,45 @@ export default function SlideEditor({
             </label>
           )}
           {!marpMode && (
+            <label className="slide-layout-picker">
+              Ratio
+              <select
+                className="slide-layout-select"
+                value={aspectRatio}
+                onChange={(e) =>
+                  changeAspectRatio(e.target.value as SlideAspectRatio)
+                }
+                aria-label="Deck aspect ratio"
+                title="Aspect ratio for the whole deck (16:9, 4:3, or square 1:1)"
+              >
+                <option value="16:9">16:9</option>
+                <option value="4:3">4:3</option>
+                <option value="1:1">1:1</option>
+              </select>
+            </label>
+          )}
+          {!marpMode && activeSlide && (
+            <label className="slide-layout-picker">
+              Background
+              <select
+                className="slide-layout-select"
+                value={activeSlide.background ?? ""}
+                onChange={(e) =>
+                  changeSlideBackground(e.target.value as SlideBgStyle | "")
+                }
+                aria-label="Slide background style"
+                title="Background for this slide (overrides the theme default)"
+              >
+                <option value="">Theme default</option>
+                {SLIDE_BG_STYLES.map((style) => (
+                  <option key={style} value={style}>
+                    {style.charAt(0).toUpperCase() + style.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!marpMode && (
             <div className="slide-theme-picker-wrap">
               <button
                 ref={themePickerTriggerRef}
@@ -1772,7 +1903,11 @@ export default function SlideEditor({
                       onClick={() => insertPreset(preset)}
                     >
                       <span className="slide-insert-preset-icon">
-                        {preset.icon}
+                        <SlideMenuIcon
+                          iconName={preset.iconName}
+                          glyph={preset.icon}
+                          size={18}
+                        />
                       </span>
                       <span>
                         <span className="slide-insert-preset-label">
@@ -1954,13 +2089,16 @@ export default function SlideEditor({
             className={`slide-canvas${designView ? " slide-canvas-design" : ""}`}
             data-slide-theme={themeId}
             data-slide-layout={resolveSlideLayout(activeSlide)}
-            // A brand kit may override the theme's background style; fall
-            // back to the curated theme's when it doesn't declare one.
+            // Background precedence: an explicit per-slide override (the
+            // most specific user choice) wins, then a brand kit's bgStyle,
+            // then the curated theme's default.
             data-slide-bg={
+              activeSlide.background ??
               activeBrandKit?.bgStyle ??
               getSlideTheme(themeId).bgStyle ??
               undefined
             }
+            data-slide-aspect={aspectRatio}
             // Presence of `data-slide-brand` is the hook the appended
             // brand CSS keys on (e.g. brand body-text colour in Design
             // view); `style` stamps the actual `--slide-*` overrides.
