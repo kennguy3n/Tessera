@@ -6113,3 +6113,279 @@
   margin: 0;
   color: var(--color-error);
 }
+
+/* ===== Document templates ===== */
+/* In-editor document template gallery + save/edit/import modal. Mirrors
+   the Slide template gallery chrome above, retuned for HTML-document
+   starters (plain-text card previews rather than rendered thumbnails).
+   Appended as a self-contained banner section; no existing rule above is
+   modified. */
+
+.document-template-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: var(--spacing-lg);
+}
+
+.document-template-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  width: min(92vw, 1040px);
+  max-height: 84vh;
+  overflow-y: auto;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+  padding: var(--spacing-lg);
+}
+
+.document-template-gallery-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.document-template-gallery-header h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text-headline);
+}
+
+.document-template-help {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+  max-width: 60ch;
+}
+
+.document-template-search {
+  width: 100%;
+  max-width: 360px;
+}
+
+.document-template-gallery-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.document-template-import-error {
+  margin: 0;
+}
+
+.document-template-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.document-template-chip {
+  padding: var(--spacing-2xs, 2px) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 999px);
+  background: var(--color-bg-page);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color var(--duration-fast, 150ms),
+    background var(--duration-fast, 150ms),
+    color var(--duration-fast, 150ms);
+}
+
+.document-template-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-body);
+}
+
+.document-template-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.document-template-chip.is-active {
+  border-color: var(--color-primary);
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 12%,
+    var(--color-bg-page)
+  );
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.document-template-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.document-template-section-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary);
+}
+
+.document-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--spacing-md);
+}
+
+/* Card chrome shared by built-in + custom cards. A built-in card carries
+   a single stretched transparent click target; a custom card swaps that
+   for an explicit action row, so it opts out of the pointer cursor. */
+.document-template-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-page);
+  overflow: hidden;
+  transition:
+    border-color var(--duration-fast, 150ms),
+    box-shadow var(--duration-fast, 150ms);
+}
+
+.document-template-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.document-template-card:focus-within {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+
+.document-template-custom-card {
+  cursor: default;
+}
+
+.document-template-card-button {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.document-template-card-button:focus {
+  outline: none;
+}
+
+.document-template-card-category {
+  position: absolute;
+  top: var(--spacing-xs);
+  right: var(--spacing-xs);
+  z-index: 1;
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-page) 86%, transparent);
+  backdrop-filter: blur(2px);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.document-template-card-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+}
+
+.document-template-card-icon {
+  font-size: var(--font-size-xl, 1.25rem);
+  line-height: 1;
+  flex: none;
+}
+
+.document-template-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs, 2px);
+  min-width: 0;
+}
+
+.document-template-card-title {
+  font-weight: var(--font-weight-medium, 500);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-headline);
+}
+
+.document-template-card-desc {
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-tertiary);
+  line-height: 1.3;
+}
+
+/* Plain-text excerpt of the template body. Clamped to a few lines so a
+   long document doesn't blow out card height. */
+.document-template-card-preview {
+  margin-top: var(--spacing-2xs, 2px);
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.document-template-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  margin-top: auto;
+}
+
+.document-template-delete,
+.document-template-delete-confirm {
+  color: var(--color-danger, var(--color-error));
+}
+
+.document-template-empty {
+  margin: 0;
+  padding: var(--spacing-xl) var(--spacing-md);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Save / edit / import metadata modal body (rendered inside the shared
+   Modal). The fields reuse the AI panel field styling; only the action
+   row spacing is set here. */
+.document-template-save {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.document-template-save-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+/* ===== end Document templates ===== */
