@@ -45,9 +45,21 @@ import {
   MermaidPreview,
 } from "./components/SlideBlockPreviews";
 import { SlideDesignCanvas } from "./components/SlideDesignCanvas";
-import { SLIDE_THEMES, getSlideTheme } from "./slideThemes";
+import { SlideThumbnail } from "./components/SlideThumbnail";
+import {
+  SLIDE_THEMES,
+  getSlideTheme,
+  DEFAULT_SLIDE_THEME_ID,
+} from "./slideThemes";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
-import { SLIDE_TEMPLATES, INSERT_CARD_PRESETS } from "./slideTemplates";
+import {
+  SLIDE_TEMPLATES,
+  INSERT_CARD_PRESETS,
+  TEMPLATE_CATEGORIES,
+  ALL_TEMPLATES_CATEGORY,
+  filterSlideTemplates,
+  type TemplateCategoryFilter,
+} from "./slideTemplates";
 
 import {
   applyBulletsToSlide,
@@ -181,6 +193,9 @@ export default function SlideEditor({
   const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [templateCategory, setTemplateCategory] =
+    useState<TemplateCategoryFilter>(ALL_TEMPLATES_CATEGORY);
+  const [templateQuery, setTemplateQuery] = useState("");
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [insertPresetOpen, setInsertPresetOpen] = useState(false);
   const [findPanelOpen, setFindPanelOpen] = useState(false);
@@ -626,6 +641,15 @@ export default function SlideEditor({
       debouncedSave(slides);
     },
     [debouncedSave, slides],
+  );
+
+  // Templates visible in the gallery for the current category +
+  // search. Pure + memoised so typing in the search box doesn't
+  // re-filter the whole catalogue on unrelated renders.
+  const visibleTemplates = useMemo(
+    () =>
+      filterSlideTemplates(SLIDE_TEMPLATES, templateCategory, templateQuery),
+    [templateCategory, templateQuery],
   );
 
   // Apply a pre-built deck template. Replaces the entire deck with
@@ -1488,7 +1512,9 @@ export default function SlideEditor({
           <button
             type="button"
             className={`btn-sm ${deckRestyleOpen ? "active" : ""}`}
-            onClick={() => openExclusiveMenu(deckRestyleOpen ? null : "restyle")}
+            onClick={() =>
+              openExclusiveMenu(deckRestyleOpen ? null : "restyle")
+            }
             aria-label="Restyle the deck with AI"
             aria-expanded={deckRestyleOpen}
             title="Restyle the current deck with the on-device model"
@@ -1828,86 +1854,86 @@ export default function SlideEditor({
                 }
               />
             ) : (
-            <div className="slide-blocks">
-              {activeSlide.blocks.map((block, bi) => (
-                <SlideBlockRow
-                  // Stable key driven off `block.id` (not `bi`) so a
-                  // drag-reorder preserves component identity — the
-                  // `<textarea>` keeps its cursor / selection state
-                  // across the reorder, instead of being unmounted
-                  // and re-created with a fresh DOM node.
-                  key={block.id}
-                  block={block}
-                  blockIndex={bi}
-                  totalBlocks={activeSlide.blocks.length}
-                  onTypeChange={(nextType) => {
-                    onBlockReplace(
-                      activeIndex,
-                      bi,
-                      nextBlockForTypeChange(block, nextType),
-                    );
-                  }}
-                  onContentChange={(nextContent) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      content: nextContent,
-                    });
-                  }}
-                  onAltChange={(nextAlt) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      alt: nextAlt,
-                    });
-                  }}
-                  onImageFile={(file) => {
-                    // Pass `activeSlide.id` and `block.id` (not
-                    // `activeIndex` / `bi`) so that an in-flight upload
-                    // still lands on the right block after a drag-
-                    // reorder shifts positions at either the slide or
-                    // block level.
-                    onImageUpload(activeSlide.id, block.id, file);
-                  }}
-                  onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
-                  onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
-                  onRemove={() => onBlockRemove(activeIndex, bi)}
-                  draggedBlockId={draggedBlockId}
-                  onDragStartBlock={setDraggedBlockId}
-                  onDragEndBlock={() => setDraggedBlockId(null)}
-                  onDropBlock={(targetIdx) => {
-                    if (!draggedBlockId) return;
-                    const fromIdx = activeSlide.blocks.findIndex(
-                      (b) => b.id === draggedBlockId,
-                    );
-                    // Clear on every termination path (success AND
-                    // lookup-miss) so the `is-dragging` class can't
-                    // stick if the source block is removed mid-drag
-                    // (e.g. the active slide changes via find-panel
-                    // jump or version restore between dragstart and
-                    // drop). `onDragEnd` is a defence in depth but
-                    // doesn't always fire reliably in Chromium's
-                    // touch-emulation path.
-                    if (fromIdx < 0) {
+              <div className="slide-blocks">
+                {activeSlide.blocks.map((block, bi) => (
+                  <SlideBlockRow
+                    // Stable key driven off `block.id` (not `bi`) so a
+                    // drag-reorder preserves component identity — the
+                    // `<textarea>` keeps its cursor / selection state
+                    // across the reorder, instead of being unmounted
+                    // and re-created with a fresh DOM node.
+                    key={block.id}
+                    block={block}
+                    blockIndex={bi}
+                    totalBlocks={activeSlide.blocks.length}
+                    onTypeChange={(nextType) => {
+                      onBlockReplace(
+                        activeIndex,
+                        bi,
+                        nextBlockForTypeChange(block, nextType),
+                      );
+                    }}
+                    onContentChange={(nextContent) => {
+                      onBlockReplace(activeIndex, bi, {
+                        ...block,
+                        content: nextContent,
+                      });
+                    }}
+                    onAltChange={(nextAlt) => {
+                      onBlockReplace(activeIndex, bi, {
+                        ...block,
+                        alt: nextAlt,
+                      });
+                    }}
+                    onImageFile={(file) => {
+                      // Pass `activeSlide.id` and `block.id` (not
+                      // `activeIndex` / `bi`) so that an in-flight upload
+                      // still lands on the right block after a drag-
+                      // reorder shifts positions at either the slide or
+                      // block level.
+                      onImageUpload(activeSlide.id, block.id, file);
+                    }}
+                    onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
+                    onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
+                    onRemove={() => onBlockRemove(activeIndex, bi)}
+                    draggedBlockId={draggedBlockId}
+                    onDragStartBlock={setDraggedBlockId}
+                    onDragEndBlock={() => setDraggedBlockId(null)}
+                    onDropBlock={(targetIdx) => {
+                      if (!draggedBlockId) return;
+                      const fromIdx = activeSlide.blocks.findIndex(
+                        (b) => b.id === draggedBlockId,
+                      );
+                      // Clear on every termination path (success AND
+                      // lookup-miss) so the `is-dragging` class can't
+                      // stick if the source block is removed mid-drag
+                      // (e.g. the active slide changes via find-panel
+                      // jump or version restore between dragstart and
+                      // drop). `onDragEnd` is a defence in depth but
+                      // doesn't always fire reliably in Chromium's
+                      // touch-emulation path.
+                      if (fromIdx < 0) {
+                        setDraggedBlockId(null);
+                        return;
+                      }
+                      onBlockMove(activeIndex, fromIdx, targetIdx);
                       setDraggedBlockId(null);
-                      return;
-                    }
-                    onBlockMove(activeIndex, fromIdx, targetIdx);
-                    setDraggedBlockId(null);
-                  }}
-                />
-              ))}
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() =>
-                  onBlockAppend(
-                    activeIndex,
-                    buildBlock({ type: "text", content: "" }),
-                  )
-                }
-              >
-                + Add Block
-              </button>
-            </div>
+                    }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() =>
+                    onBlockAppend(
+                      activeIndex,
+                      buildBlock({ type: "text", content: "" }),
+                    )
+                  }
+                >
+                  + Add Block
+                </button>
+              </div>
             )}
 
             <SlideAiActions
@@ -1951,33 +1977,92 @@ export default function SlideEditor({
         >
           <div
             ref={templatePickerRef}
-            className="slide-template-picker"
+            className="slide-template-picker slide-template-gallery"
             role="dialog"
             aria-modal="true"
             aria-label="Choose a deck template"
             tabIndex={-1}
           >
-            <h2>Start from a Template</h2>
-            <div className="slide-template-picker-grid">
-              {SLIDE_TEMPLATES.map((template) => (
-                <button
-                  key={template.id}
-                  type="button"
-                  className="slide-template-card"
-                  onClick={() => applyTemplate(template)}
-                >
-                  <span className="slide-template-card-icon">
-                    {template.icon}
-                  </span>
-                  <span className="slide-template-card-title">
-                    {template.label}
-                  </span>
-                  <span className="slide-template-card-desc">
-                    {template.description}
-                  </span>
-                </button>
-              ))}
+            <div className="slide-template-gallery-header">
+              <h2>Start from a Template</h2>
+              <input
+                type="search"
+                className="input slide-template-search"
+                value={templateQuery}
+                onChange={(e) => setTemplateQuery(e.target.value)}
+                placeholder="Search templates…"
+                aria-label="Search templates by name or description"
+              />
             </div>
+            <div
+              className="slide-template-categories"
+              role="group"
+              aria-label="Filter templates by category"
+            >
+              {[ALL_TEMPLATES_CATEGORY, ...TEMPLATE_CATEGORIES].map(
+                (category) => (
+                  <button
+                    key={category}
+                    type="button"
+                    className={`slide-template-chip${
+                      templateCategory === category ? " is-active" : ""
+                    }`}
+                    aria-pressed={templateCategory === category}
+                    onClick={() => setTemplateCategory(category)}
+                  >
+                    {category}
+                  </button>
+                ),
+              )}
+            </div>
+            {visibleTemplates.length === 0 ? (
+              <p className="slide-template-empty" role="status">
+                No templates match your search.
+              </p>
+            ) : (
+              <div className="slide-template-picker-grid slide-template-gallery-grid">
+                {visibleTemplates.map((template) => (
+                  <div
+                    key={template.id}
+                    className="slide-template-card slide-template-gallery-card"
+                  >
+                    {template.category && (
+                      <span className="slide-template-card-category">
+                        {template.category}
+                      </span>
+                    )}
+                    <SlideThumbnail
+                      slide={template.slides[0]}
+                      themeId={
+                        template.suggestedTheme ?? DEFAULT_SLIDE_THEME_ID
+                      }
+                    />
+                    <span className="slide-template-card-meta">
+                      <span className="slide-template-card-icon">
+                        {template.icon}
+                      </span>
+                      <span className="slide-template-card-text">
+                        <span className="slide-template-card-title">
+                          {template.label}
+                        </span>
+                        <span className="slide-template-card-desc">
+                          {template.description}
+                        </span>
+                      </span>
+                    </span>
+                    {/* Stretched, transparent click target so the whole
+                        card is one focusable control without nesting the
+                        thumbnail's block markup inside a <button>. */}
+                    <button
+                      type="button"
+                      className="slide-template-card-button"
+                      onClick={() => applyTemplate(template)}
+                      aria-label={`Use the ${template.label} template — ${template.description}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
