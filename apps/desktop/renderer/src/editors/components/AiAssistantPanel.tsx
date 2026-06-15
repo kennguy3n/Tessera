@@ -44,6 +44,10 @@ import type {
   DocumentAiTone,
 } from "../ai/documentAiTypes";
 import { useDocumentAi } from "../../hooks/useDocumentAi";
+import { SkillRunnerPanel, type SkillRunnerHandle } from "./SkillRunnerPanel";
+import { getSkillsForSurface } from "../../skills/skillLibrary";
+
+type AiPanelMode = "quick" | "skills";
 
 export interface AiAssistantContext {
   /** Plain text of the selection captured when the panel opened. */
@@ -84,10 +88,29 @@ export function AiAssistantPanel({
   const [applyMode, setApplyMode] = useState<DocumentAiApplyMode>("replace");
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const skillRunnerRef = useRef<SkillRunnerHandle>(null);
 
   const hasSelection = context.selection.trim().length > 0;
   const cleaned = useMemo(() => cleanModelOutput(ai.output), [ai.output]);
   const activeAction = getDocumentAiAction(action);
+
+  const [panelMode, setPanelMode] = useState<AiPanelMode>("quick");
+  const documentSkills = useMemo(() => getSkillsForSurface("document"), []);
+  const [skillId, setSkillId] = useState(documentSkills[0]?.id ?? "");
+  const selectedSkill =
+    documentSkills.find((s) => s.id === skillId) ?? documentSkills[0];
+
+  // A skill produces a fresh, self-contained passage, so it is inserted
+  // below the cursor by default (or replaces an active selection).
+  const applySkillText = useCallback(
+    (text: string) => {
+      if (text.trim().length === 0) return;
+      const mode: DocumentAiApplyMode = hasSelection ? "replace" : "insert-below";
+      const ok = applyAiResult(editor, context.range, mode, text, "custom");
+      if (ok) onClose();
+    },
+    [editor, context.range, hasSelection, onClose],
+  );
 
   // The diff preview only makes sense for a selection-scoped rewrite
   // that will replace the selection.
@@ -156,9 +179,24 @@ export function AiAssistantPanel({
 
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
+      // In skills mode the active generation is driven by `useSkillRunner`
+      // (not `useDocumentAi`), so `ai.isStreaming` is always false here —
+      // route cancel/run through the skill panel's imperative handle.
+      const inSkillsMode = panelMode === "skills";
       if (e.key === "Escape") {
         e.preventDefault();
-        if (ai.isStreaming) {
+        if (inSkillsMode) {
+          if (skillRunnerRef.current?.isRunning) {
+            skillRunnerRef.current.cancel();
+          } else if (ai.isStreaming) {
+            // A quick action started before the user switched tabs is still
+            // streaming through `useDocumentAi`; cancel it before closing so
+            // Escape never silently leaves the model running.
+            cancelGeneration();
+          } else {
+            onClose();
+          }
+        } else if (ai.isStreaming) {
           cancelGeneration();
         } else {
           onClose();
@@ -168,10 +206,35 @@ export function AiAssistantPanel({
       // Cmd/Ctrl+Enter runs the action from anywhere in the panel.
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        run();
+        if (inSkillsMode) {
+          // Guard against starting a second chain over a running one, which
+          // would orphan the first step's promise and mix generations.
+          if (!skillRunnerRef.current?.isRunning) {
+            skillRunnerRef.current?.submit();
+          }
+        } else {
+          run();
+        }
       }
     },
-    [ai.isStreaming, cancelGeneration, onClose, run],
+    [panelMode, ai.isStreaming, cancelGeneration, onClose, run],
+  );
+
+  // Switching tabs must not leave the mode we are leaving streaming
+  // invisibly in the background: cancel its in-flight generation first. A
+  // quick action streams through `useDocumentAi` (`cancelGeneration`); a
+  // skill chain streams through `useSkillRunner` (the panel's handle).
+  const switchMode = useCallback(
+    (next: AiPanelMode) => {
+      if (next === panelMode) return;
+      if (next === "skills") {
+        if (ai.isStreaming) cancelGeneration();
+      } else {
+        skillRunnerRef.current?.cancel();
+      }
+      setPanelMode(next);
+    },
+    [panelMode, ai.isStreaming, cancelGeneration],
   );
 
   const showResult = ai.output.length > 0 || ai.status === "streaming";
@@ -199,6 +262,66 @@ export function AiAssistantPanel({
           ✕
         </button>
       </div>
+
+      {documentSkills.length > 0 && (
+        <div
+          className="ai-panel-actions ai-panel-modes"
+          role="group"
+          aria-label="Assistant mode"
+        >
+          <button
+            type="button"
+            className={
+              panelMode === "quick" ? "ai-action-chip active" : "ai-action-chip"
+            }
+            aria-pressed={panelMode === "quick"}
+            onClick={() => switchMode("quick")}
+            data-testid="ai-mode-quick"
+          >
+            Quick actions
+          </button>
+          <button
+            type="button"
+            className={
+              panelMode === "skills" ? "ai-action-chip active" : "ai-action-chip"
+            }
+            aria-pressed={panelMode === "skills"}
+            onClick={() => switchMode("skills")}
+            data-testid="ai-mode-skills"
+          >
+            Skills
+          </button>
+        </div>
+      )}
+
+      {panelMode === "skills" && selectedSkill ? (
+        <>
+          {documentSkills.length > 1 && (
+            <label className="ai-panel-field">
+              <span>Skill</span>
+              <select
+                value={skillId}
+                onChange={(e) => setSkillId(e.target.value)}
+                aria-label="Choose a skill"
+              >
+                {documentSkills.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <SkillRunnerPanel
+            key={selectedSkill.id}
+            ref={skillRunnerRef}
+            skill={selectedSkill}
+            onApply={applySkillText}
+            applyLabel={hasSelection ? "Replace" : "Insert below"}
+          />
+        </>
+      ) : (
+        <>
 
       {!hasSelection && action !== "custom" && action !== "continue" && (
         <p className="ai-panel-hint" data-testid="ai-needs-selection">
@@ -361,6 +484,8 @@ export function AiAssistantPanel({
             Retry
           </button>
         </div>
+      )}
+        </>
       )}
     </div>
   );
