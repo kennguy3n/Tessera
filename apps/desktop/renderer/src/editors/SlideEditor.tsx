@@ -2124,6 +2124,7 @@ export default function SlideEditor({
           {!marpMode && (
             <BrandKitShareControls
               activeKit={activeBrandKit}
+              deckThemeId={themeId}
               onImported={(draft) => {
                 // Mirror the trigger: close any open popover, then open the
                 // builder pre-filled with the imported draft for review.
