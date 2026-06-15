@@ -6114,6 +6114,320 @@
   color: var(--color-error);
 }
 
+/* ===== Sheet templates =====
+ * The Sheet editor's template gallery + save/edit/import modal. Mirrors
+ * the Slide editor's `.slide-template-*` chrome (overlay → searchable,
+ * category-filtered card grid with "Your templates" / "Built-in"
+ * sections) but with a flat HTML-table thumbnail instead of a scaled
+ * canvas, since a sheet preview is itself a small grid. Self-contained:
+ * the `sheet-` classes do not inherit any `slide-` rules. */
+.sheet-template-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.sheet-template-picker {
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+  padding: var(--spacing-lg);
+  max-width: 640px;
+  width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.sheet-template-picker h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text-headline);
+}
+
+/* Gallery dialog overrides the base picker width via the compound
+   selector so it wins by specificity (0-2-0), not source order. */
+.sheet-template-picker.sheet-template-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  width: min(92vw, 1040px);
+  max-width: 1040px;
+}
+
+.sheet-template-gallery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.sheet-template-gallery-header h2 {
+  margin: 0;
+}
+
+.sheet-template-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.sheet-template-gallery-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.sheet-template-import-error {
+  margin: 0;
+}
+
+.sheet-template-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.sheet-template-chip {
+  padding: var(--spacing-2xs, 2px) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 999px);
+  background: var(--color-bg-page);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color var(--duration-fast, 150ms),
+    background var(--duration-fast, 150ms),
+    color var(--duration-fast, 150ms);
+}
+
+.sheet-template-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-body);
+}
+
+.sheet-template-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sheet-template-chip.is-active {
+  border-color: var(--color-primary);
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 12%,
+    var(--color-bg-page)
+  );
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.sheet-template-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.sheet-template-section-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary);
+}
+
+.sheet-template-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+}
+
+/* The card is a plain container; built-in cards stretch a transparent
+   button (`.sheet-template-card-button`) over the whole card as the
+   click target, while custom cards use an explicit action row. */
+.sheet-template-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-page);
+  overflow: hidden;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast, 150ms),
+    box-shadow var(--duration-fast, 150ms);
+}
+
+.sheet-template-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.sheet-template-card:focus-within {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+
+.sheet-template-custom-card {
+  cursor: default;
+}
+
+.sheet-template-card-button {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sheet-template-card-button:focus {
+  outline: none;
+}
+
+.sheet-template-card-category {
+  position: absolute;
+  top: var(--spacing-xs);
+  right: var(--spacing-xs);
+  z-index: 1;
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-page) 86%, transparent);
+  backdrop-filter: blur(2px);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.sheet-template-card-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.sheet-template-card-icon {
+  font-size: var(--font-size-xl, 1.25rem);
+  line-height: 1;
+}
+
+.sheet-template-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xs, 2px);
+  min-width: 0;
+}
+
+.sheet-template-card-title {
+  font-weight: var(--font-weight-medium, 500);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-headline);
+}
+
+.sheet-template-card-desc {
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-tertiary);
+  line-height: 1.3;
+}
+
+/* Custom cards need Apply + manage controls, so they use an explicit
+   action row pinned to the card's bottom (`margin-top: auto`) so the
+   bars line up across differently-sized cards in a row. */
+.sheet-template-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  margin-top: auto;
+}
+
+.sheet-template-card-apply {
+  flex: 1 1 100%;
+}
+
+.sheet-template-delete,
+.sheet-template-delete-confirm {
+  color: var(--color-danger);
+}
+
+.sheet-template-empty {
+  margin: 0;
+  padding: var(--spacing-xl) var(--spacing-md);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Flat HTML-table thumbnail: a few header cells + sample rows, with an
+   ellipsis column when the template is wider than the preview. */
+.sheet-template-preview {
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-bg-subtle);
+}
+
+.sheet-template-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--font-size-2xs, 0.65rem);
+  color: var(--color-text-secondary);
+}
+
+.sheet-template-preview-table th,
+.sheet-template-preview-table td {
+  max-width: 0;
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border: 1px solid var(--color-border);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet-template-preview-table th {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-page));
+  color: var(--color-text-headline);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.sheet-template-preview-more {
+  width: 1.25rem;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+/* Save / edit / import metadata modal (reuses the shared `ai-panel-*`
+   field + error chrome; only layout differs). */
+.sheet-template-save {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  min-width: min(92vw, 420px);
+}
+
+.sheet-template-save-actions {
+  justify-content: flex-end;
+}
+/* ===== end ===== */
+
 /* ===== Document templates ===== */
 /* In-editor document template gallery + save/edit/import modal. Mirrors
    the Slide template gallery chrome above, retuned for HTML-document

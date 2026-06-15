@@ -12,6 +12,7 @@
  * `cellKey(row, col)` shape documented on `SheetTab.formats`.
  */
 import type { CellFormat } from "./sheetEditorTypes";
+import { LOCALE_FORMAT_PRESETS } from "./localeNumberFormats";
 import type { CellCoord } from "./sheetSelection";
 
 export type BoolFormatKey = "bold" | "italic" | "underline";
@@ -22,6 +23,12 @@ export interface NumberFormatPreset {
   label: string;
   /** `undefined` clears the number format (General). */
   pattern: string | undefined;
+  /**
+   * Optional `<optgroup>` label. Ungrouped presets (the common formats)
+   * render directly; grouped ones (locale currency / date) cluster under
+   * their label. See {@link groupedNumberFormatPresets}.
+   */
+  group?: string;
 }
 
 // Curated presets covering the common Excel/Sheets formats. Patterns are
@@ -51,12 +58,57 @@ export const NUMBER_FORMAT_PRESETS: NumberFormatPreset[] = [
 ];
 
 /**
+ * The full preset menu: the curated common formats above followed by the
+ * locale-aware currency + date presets (Deliverable 3). Kept separate
+ * from {@link NUMBER_FORMAT_PRESETS} so the canonical base set — which a
+ * formula-engine test renders exhaustively — stays stable, while the
+ * grouped toolbar menu and the pattern reverse-lookup operate over
+ * everything. Locale patterns never collide with a base pattern (each
+ * carries a distinct currency symbol or date layout), so the reverse
+ * lookup stays unambiguous.
+ */
+export const ALL_NUMBER_FORMAT_PRESETS: NumberFormatPreset[] = [
+  ...NUMBER_FORMAT_PRESETS,
+  ...LOCALE_FORMAT_PRESETS,
+];
+
+/** A cluster of presets sharing an `<optgroup>` label (or none). */
+export interface NumberFormatPresetGroup {
+  /** `undefined` for the ungrouped common presets. */
+  label: string | undefined;
+  presets: NumberFormatPreset[];
+}
+
+/**
+ * Cluster presets by their `group`, preserving first-appearance order so
+ * the ungrouped common formats stay on top and each locale group follows
+ * in declaration order. Lets the toolbar render `<optgroup>`s without
+ * duplicating the grouping logic.
+ */
+export function groupedNumberFormatPresets(
+  presets: ReadonlyArray<NumberFormatPreset> = ALL_NUMBER_FORMAT_PRESETS,
+): NumberFormatPresetGroup[] {
+  const groups: NumberFormatPresetGroup[] = [];
+  const byLabel = new Map<string | undefined, NumberFormatPresetGroup>();
+  for (const preset of presets) {
+    let group = byLabel.get(preset.group);
+    if (!group) {
+      group = { label: preset.group, presets: [] };
+      byLabel.set(preset.group, group);
+      groups.push(group);
+    }
+    group.presets.push(preset);
+  }
+  return groups;
+}
+
+/**
  * The pattern of a known preset, or `undefined` for General / unknown.
  * Used by the toolbar to keep the preset `<select>` and the custom-pattern
  * input in sync without duplicating the lookup.
  */
 export function presetPattern(id: string): string | undefined {
-  return NUMBER_FORMAT_PRESETS.find((p) => p.id === id)?.pattern;
+  return ALL_NUMBER_FORMAT_PRESETS.find((p) => p.id === id)?.pattern;
 }
 
 /**
@@ -65,7 +117,7 @@ export function presetPattern(id: string): string | undefined {
  */
 export function presetIdForPattern(pattern: string | undefined): string {
   if (pattern === undefined || pattern === "") return "general";
-  const hit = NUMBER_FORMAT_PRESETS.find((p) => p.pattern === pattern);
+  const hit = ALL_NUMBER_FORMAT_PRESETS.find((p) => p.pattern === pattern);
   return hit ? hit.id : "custom";
 }
 
