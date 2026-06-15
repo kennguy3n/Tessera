@@ -136,6 +136,42 @@ describe("SlideEditor brand kit + deck-replacing operations", () => {
     expect(screen.queryByTestId("brand-kit-builder")).not.toBeInTheDocument();
   });
 
+  it("suppresses Ctrl+PageDown slide navigation while the brand builder is open", async () => {
+    const user = userEvent.setup();
+    const id = seedAcmeKit();
+    const twoSlideDeck: SlideContent = {
+      slides: [
+        { id: "s1", title: "One", blocks: [], notes: "" },
+        { id: "s2", title: "Two", blocks: [], notes: "" },
+      ],
+      themeId: "aurora",
+      brandKitId: id,
+    };
+    render(
+      <SlideEditor
+        content={JSON.stringify(twoSlideDeck)}
+        onSave={vi.fn()}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    await flushMount();
+    expect(screen.getByText("Slide 1 / 2")).toBeInTheDocument();
+
+    // With no modal up, the global Ctrl+PageDown shortcut navigates the deck.
+    await user.keyboard("{Control>}{PageDown}{/Control}");
+    expect(screen.getByText("Slide 2 / 2")).toBeInTheDocument();
+
+    // Return to the first slide and open the brand builder.
+    await user.keyboard("{Control>}{PageUp}{/Control}");
+    expect(screen.getByText("Slide 1 / 2")).toBeInTheDocument();
+    await user.click(screen.getByTestId("slide-brand-trigger"));
+    expect(screen.getByTestId("brand-kit-builder")).toBeInTheDocument();
+
+    // The shortcut is now inert — the deck must not move behind the backdrop.
+    await user.keyboard("{Control>}{PageDown}{/Control}");
+    expect(screen.getByText("Slide 1 / 2")).toBeInTheDocument();
+  });
+
   it("dismisses an open brand builder on version restore (external content change)", async () => {
     const user = userEvent.setup();
     const id = seedAcmeKit();

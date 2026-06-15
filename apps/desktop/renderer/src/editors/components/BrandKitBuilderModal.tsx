@@ -19,7 +19,7 @@ import Modal from "../../components/Modal";
 import {
   BRAND_FONTS,
   LOGO_PLACEMENTS,
-  MAX_LOGO_DATA_URL_LENGTH,
+  MAX_LOGO_IMAGE_KB,
   brandDraftCssVars,
   brandKitToDraft,
   emptyBrandKitDraft,
@@ -124,9 +124,7 @@ export function BrandKitBuilderModal({
       .then((dataUrl) => {
         if (!isInlineImageDataUrl(dataUrl)) {
           setErrors([
-            `Logo must be an image under ${Math.round(
-              MAX_LOGO_DATA_URL_LENGTH / 1024,
-            )} KB.`,
+            `Logo image is too large — choose a smaller image (under ~${MAX_LOGO_IMAGE_KB} KB).`,
           ]);
           return;
         }

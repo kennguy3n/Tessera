@@ -72,6 +72,18 @@ export const MAX_LOGO_ALT = 120;
  */
 export const MAX_LOGO_DATA_URL_LENGTH = 512 * 1024;
 
+/**
+ * Approximate maximum *source-image* size the logo cap permits, in KB, for
+ * user-facing copy. The hard limit is on the inline data: URL **length**
+ * ({@link MAX_LOGO_DATA_URL_LENGTH}); base64 inflates bytes by ~4/3, so the
+ * usable source image is ~3/4 of that. Stating this figure (rather than the
+ * raw 512 KB char budget) keeps the limit we *show* in step with the limit
+ * we *enforce* — a ~400 KB file is rejected, so "under 512 KB" would mislead.
+ */
+export const MAX_LOGO_IMAGE_KB = Math.round(
+  (MAX_LOGO_DATA_URL_LENGTH * 3) / 4 / 1024,
+);
+
 // ─────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────
@@ -433,8 +445,7 @@ export function buildBrandKit(
   if (draft.logoDataUrl.trim()) {
     if (!isInlineImageDataUrl(draft.logoDataUrl)) {
       errors.push(
-        "Logo must be an inline image under " +
-          `${Math.round(MAX_LOGO_DATA_URL_LENGTH / 1024)} KB.`,
+        `Logo image is too large — choose a smaller image (under ~${MAX_LOGO_IMAGE_KB} KB).`,
       );
     } else {
       logo = {
