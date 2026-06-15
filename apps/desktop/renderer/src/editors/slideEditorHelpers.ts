@@ -19,6 +19,7 @@ import {
   isKnownSlideBgStyle,
   isKnownSlideThemeId,
 } from "./slideThemes";
+import { coerceBrandKitId } from "./slideBrandKit";
 import { getSlideLayout } from "./slideLayouts";
 import type { ChartData } from "./sheetCharts";
 import type {
@@ -60,6 +61,14 @@ export interface ParsedSlideContent {
    * onto the canvas without re-validating.
    */
   aspectRatio: SlideAspectRatio;
+  /**
+   * Persisted active brand-kit id, or `undefined` when the deck has no
+   * brand kit (the common case). Only structurally validated here (it
+   * must be brand-namespaced); whether the id resolves to a real kit is
+   * decided at render time against the live `localStorage` store, so an
+   * id pointing at a deleted/foreign kit degrades to "no brand kit".
+   */
+  brandKitId: string | undefined;
 }
 
 /**
@@ -278,6 +287,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
     aspectRatio: DEFAULT_ASPECT_RATIO,
+    brandKitId: undefined,
   };
   if (!content) return emptyDefault;
   try {
@@ -294,6 +304,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
         marpTheme: parsed.marp?.theme,
         themeId: resolveThemeId(parsed.themeId),
         aspectRatio: resolveAspectRatio(parsed.aspectRatio),
+        brandKitId: coerceBrandKitId(parsed.brandKitId),
       };
     }
   } catch {
@@ -313,6 +324,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
     aspectRatio: DEFAULT_ASPECT_RATIO,
+    brandKitId: undefined,
   };
 }
 

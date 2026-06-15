@@ -6,6 +6,7 @@ import {
   useId,
   useMemo,
   type ChangeEvent,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
@@ -36,6 +37,7 @@ import {
   nextBlockForTypeChange,
   buildDeckFromTemplate,
   buildSlideFromPreset,
+  resolveThemeId,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
@@ -45,6 +47,7 @@ import {
   MermaidPreview,
 } from "./components/SlideBlockPreviews";
 import { SlideDesignCanvas } from "./components/SlideDesignCanvas";
+import { BrandKitBuilderModal } from "./components/BrandKitBuilderModal";
 import { SlideThumbnail } from "./components/SlideThumbnail";
 import {
   SLIDE_THEMES,
@@ -53,6 +56,8 @@ import {
   DEFAULT_SLIDE_THEME_ID,
   type SlideBgStyle,
 } from "./slideThemes";
+import { brandKitCssVars, type BrandKit } from "./slideBrandKit";
+import { useBrandKits } from "./useBrandKits";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
 import { resolveIconComponent } from "../services/iconResolver";
 import {
@@ -237,6 +242,14 @@ export default function SlideEditor({
   const [aspectRatio, setAspectRatio] = useState<SlideAspectRatio>(
     () => initial.aspectRatio,
   );
+  // Active brand-kit id (re-skins the curated theme). `undefined` ⇒ no
+  // brand kit, the legacy/default case. Validity against the live store
+  // is resolved below via `useBrandKits`, so a stale/foreign id here
+  // simply degrades to "no brand kit" at render.
+  const [brandKitId, setBrandKitId] = useState<string | undefined>(
+    () => initial.brandKitId,
+  );
+  const [brandBuilderOpen, setBrandBuilderOpen] = useState(false);
   const [deckGenOpen, setDeckGenOpen] = useState(false);
   const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
@@ -298,6 +311,36 @@ export default function SlideEditor({
     aspectRatioRef.current = aspectRatio;
   }, [aspectRatio]);
 
+  // Mirror the active brand-kit id into a ref for the same flush-time
+  // consistency the theme + marp refs guarantee: a save scheduled from a
+  // slide mutator must serialise the freshest brand id, not a stale
+  // closure capture from when the mutator was created.
+  const brandKitIdRef = useRef<string | undefined>(brandKitId);
+  useEffect(() => {
+    brandKitIdRef.current = brandKitId;
+  }, [brandKitId]);
+
+  // Resolve the deck's persisted brand-kit id against the live store.
+  // An unknown id (kit deleted on this or another machine, or a hand-
+  // edited deck) resolves to `null`, so the canvas silently renders with
+  // its curated theme — no brand overrides — exactly like a legacy deck.
+  const { brandKitById } = useBrandKits();
+  const activeBrandKit = useMemo(
+    () => brandKitById(brandKitId),
+    [brandKitById, brandKitId],
+  );
+  // The brand kit's `--slide-*` overrides, stamped INLINE on the canvas
+  // so they win over the stylesheet's `[data-slide-theme]` declarations
+  // (same element ⇒ inline beats selector) without touching the curated
+  // theme CSS or any slide content.
+  const brandStyle = useMemo<CSSProperties | undefined>(
+    () =>
+      activeBrandKit
+        ? (brandKitCssVars(activeBrandKit) as CSSProperties)
+        : undefined,
+    [activeBrandKit],
+  );
+
   // Mirror activeIndex into a ref so callbacks that run inside
   // `setSlides` updaters can read the freshest committed value
   // rather than a potentially stale closure capture. Used by
@@ -307,14 +350,18 @@ export default function SlideEditor({
     activeIndexRef.current = activeIndex;
   }, [activeIndex]);
 
-  // Mirror the template-modal open flag into a ref so the always-on
+  // Mirror the open flag of each blocking modal into a ref so the always-on
   // global navigation listener (attached once, below) can suppress
-  // Ctrl+PageUp/Dn while the modal is up without being re-attached on
+  // Ctrl+PageUp/Dn while a modal is up without being re-attached on
   // every toggle.
   const templatePickerOpenRef = useRef(false);
   useEffect(() => {
     templatePickerOpenRef.current = templatePickerOpen;
   }, [templatePickerOpen]);
+  const brandBuilderOpenRef = useRef(false);
+  useEffect(() => {
+    brandBuilderOpenRef.current = brandBuilderOpen;
+  }, [brandBuilderOpen]);
 
   // Refs for the "+ Add Slide" trigger button and its layout-picker
   // popover. The click-outside effect below uses these to discriminate
@@ -451,9 +498,9 @@ export default function SlideEditor({
   useEffect(() => {
     const onNavKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
-      // The template picker is a true modal — don't let slide navigation
-      // mutate the deck behind its backdrop while it's open.
-      if (templatePickerOpenRef.current) return;
+      // The template picker and brand builder are true modals — don't let
+      // slide navigation run behind their backdrop while one is open.
+      if (templatePickerOpenRef.current || brandBuilderOpenRef.current) return;
       if (event.key === "PageUp") {
         event.preventDefault();
         navigateByRef.current(-1);
@@ -477,6 +524,10 @@ export default function SlideEditor({
         marp: marpState ?? marpStateRef.current,
         themeId: themeIdRef.current,
         aspectRatio: aspectRatioRef.current,
+        // `JSON.stringify` drops `undefined`, so a deck that never set a
+        // brand kit serialises exactly as before (no `brandKitId` key) —
+        // keeping legacy decks byte-identical and the field truly additive.
+        brandKitId: brandKitIdRef.current,
       };
       const json = JSON.stringify(data);
       // Publish the draft immediately (no debounce) so exporting before
@@ -542,11 +593,19 @@ export default function SlideEditor({
       themeIdRef.current = parsed.themeId;
       setAspectRatio(parsed.aspectRatio);
       aspectRatioRef.current = parsed.aspectRatio;
+      setBrandKitId(parsed.brandKitId);
+      brandKitIdRef.current = parsed.brandKitId;
       setDraggedSlideId(null);
       setDraggedBlockId(null);
       uploadTokensRef.current.clear();
       openExclusiveMenu(null);
       setTemplatePickerOpen(false);
+      // Dismiss the brand builder too. It seeds its draft once from the
+      // deck's `themeId`/`brandKitId` at mount (`useState` initialiser), so
+      // a hard deck swap would leave it editing a stale draft and a save
+      // could re-apply an old kit or a mismatched theme. Reopening reseeds
+      // it against the freshly swapped deck.
+      setBrandBuilderOpen(false);
       // Close the find panel *and* clear its query (mirroring the panel's
       // own close button). A non-empty query would otherwise survive the
       // swap, re-run `findMatches` against the new deck, and silently jump
@@ -729,6 +788,33 @@ export default function SlideEditor({
     [updateSlide, activeIndex],
   );
 
+  // Apply a brand kit to the deck. A kit re-skins a curated base theme,
+  // so we also switch the deck to the kit's `baseThemeId` (validated via
+  // `resolveThemeId`, which degrades an unknown id to the default) — that
+  // way the brand overrides layer over the theme they were authored
+  // against. Refs are updated synchronously for the same flush-time
+  // consistency `changeTheme` relies on.
+  const applyBrandKit = useCallback(
+    (kit: BrandKit) => {
+      const baseTheme = resolveThemeId(kit.baseThemeId);
+      setThemeId(baseTheme);
+      themeIdRef.current = baseTheme;
+      setBrandKitId(kit.id);
+      brandKitIdRef.current = kit.id;
+      debouncedSave(slides);
+    },
+    [debouncedSave, slides],
+  );
+
+  // Detach the brand kit, returning the deck to its plain curated theme.
+  // The curated `themeId` is intentionally left untouched (the kit only
+  // re-skinned it) so removal is a clean, content-preserving toggle.
+  const clearBrandKit = useCallback(() => {
+    setBrandKitId(undefined);
+    brandKitIdRef.current = undefined;
+    debouncedSave(slides);
+  }, [debouncedSave, slides]);
+
   // Templates visible in the gallery for the current category +
   // search. Pure + memoised so typing in the search box doesn't
   // re-filter the whole catalogue on unrelated renders.
@@ -749,6 +835,9 @@ export default function SlideEditor({
       setActiveIndex(0);
       setMarpMode(false);
       setTemplatePickerOpen(false);
+      // Dismiss the brand builder — like the version-restore path, a deck
+      // swap invalidates the draft it seeded at mount.
+      setBrandBuilderOpen(false);
       // Clear stale drag/upload state — the entire deck is being
       // replaced, so ids from the previous deck are invalid (mirrors
       // the version-restore sync effect at line 391-408).
@@ -760,6 +849,16 @@ export default function SlideEditor({
       // setActiveIndex(0) above (same hazard as the restore path).
       setFindPanelOpen(false);
       setFindQuery("");
+      // Detach any active brand kit. A template is a fresh, self-contained
+      // design that declares its own `suggestedTheme`; carrying a kit
+      // authored against a different base theme would leave the deck in an
+      // inconsistent `themeId !== baseThemeId` state, and a later re-apply
+      // from the builder would silently snap the theme back. This mirrors
+      // the version-restore sync effect, which resets `brandKitId` from the
+      // incoming (brand-less) deck. The ref is cleared synchronously so the
+      // save below serialises the detach.
+      setBrandKitId(undefined);
+      brandKitIdRef.current = undefined;
       if (template.suggestedTheme) {
         setThemeId(template.suggestedTheme);
         themeIdRef.current = template.suggestedTheme;
@@ -805,6 +904,9 @@ export default function SlideEditor({
       setMarpMode(false);
       setDeckGenOpen(false);
       setDeckRestyleOpen(false);
+      // Dismiss the brand builder — like the version-restore path, a deck
+      // swap invalidates the draft it seeded at mount.
+      setBrandBuilderOpen(false);
       // Clear stale drag/upload state — the entire deck is being
       // replaced, matching applyTemplate and the version-restore
       // sync effect.
@@ -815,6 +917,12 @@ export default function SlideEditor({
       // active slide away from the freshly-anchored slide 0.
       setFindPanelOpen(false);
       setFindQuery("");
+      // Detach any active brand kit — a generated deck is a wholesale
+      // replacement, so (like applyTemplate and the version-restore path)
+      // it starts brand-less rather than inheriting the previous deck's
+      // skin. The ref is cleared synchronously so the save serialises it.
+      setBrandKitId(undefined);
+      brandKitIdRef.current = undefined;
       debouncedSave(generated, {
         enabled: false,
         source: marpSource,
@@ -1736,6 +1844,36 @@ export default function SlideEditor({
             </div>
           )}
           {!marpMode && (
+            <button
+              type="button"
+              className="slide-brand-trigger"
+              onClick={() => {
+                // Close any open toolbar popover first, mirroring how the
+                // template picker opens (`openExclusiveMenu(null)` before
+                // `setTemplatePickerOpen(true)`), so a popover can't linger
+                // behind the modal.
+                openExclusiveMenu(null);
+                setBrandBuilderOpen(true);
+              }}
+              aria-haspopup="dialog"
+              aria-expanded={brandBuilderOpen}
+              title="Copy a theme and re-skin it with your brand colours, fonts and logo"
+              data-testid="slide-brand-trigger"
+            >
+              {activeBrandKit ? (
+                <>
+                  <span
+                    className="slide-brand-swatch"
+                    style={{ background: activeBrandKit.colors.accent }}
+                  />
+                  {activeBrandKit.name}
+                </>
+              ) : (
+                "Customize brand"
+              )}
+            </button>
+          )}
+          {!marpMode && (
             <div style={{ position: "relative", display: "inline-flex" }}>
               <button
                 ref={insertPresetTriggerRef}
@@ -1951,13 +2089,30 @@ export default function SlideEditor({
             className={`slide-canvas${designView ? " slide-canvas-design" : ""}`}
             data-slide-theme={themeId}
             data-slide-layout={resolveSlideLayout(activeSlide)}
+            // Background precedence: an explicit per-slide override (the
+            // most specific user choice) wins, then a brand kit's bgStyle,
+            // then the curated theme's default.
             data-slide-bg={
               activeSlide.background ??
+              activeBrandKit?.bgStyle ??
               getSlideTheme(themeId).bgStyle ??
               undefined
             }
             data-slide-aspect={aspectRatio}
+            // Presence of `data-slide-brand` is the hook the appended
+            // brand CSS keys on (e.g. brand body-text colour in Design
+            // view); `style` stamps the actual `--slide-*` overrides.
+            data-slide-brand={activeBrandKit?.id}
+            data-slide-logo={activeBrandKit?.logo?.placement}
+            style={brandStyle}
           >
+            {activeBrandKit?.logo && (
+              <img
+                className="slide-brand-logo"
+                src={activeBrandKit.logo.dataUrl}
+                alt={activeBrandKit.logo.alt}
+              />
+            )}
             <input
               className="slide-title-input"
               value={activeSlide.title}
@@ -2108,6 +2263,16 @@ export default function SlideEditor({
           </div>
         )}
       </div>
+      {brandBuilderOpen && (
+        <BrandKitBuilderModal
+          isOpen
+          deckThemeId={themeId}
+          activeKitId={brandKitId}
+          onApply={applyBrandKit}
+          onClear={clearBrandKit}
+          onClose={() => setBrandBuilderOpen(false)}
+        />
+      )}
       {templatePickerOpen && (
         <div
           className="slide-template-picker-overlay"

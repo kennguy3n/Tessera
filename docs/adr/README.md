@@ -29,5 +29,6 @@ the record stays verifiable).
 | [0015](0015-custom-skill-check-authoring.md)           | Acceptance-check authoring in the custom-skill editor          |
 | [0016](0016-custom-skill-sampling-authoring.md)        | Per-step sampling authoring in the custom-skill editor         |
 | [0017](0017-custom-skill-output-contract-authoring.md) | Per-step output-contract authoring in the custom-skill editor  |
+| [0019](0019-slide-brand-kit.md)                        | Slide Brand Kit data model + brand-aware theming               |
 | [0020](0020-slide-template-library.md)                 | Slide template library: breadth, taxonomy, and gallery         |
 | [0021](0021-slide-visual-polish.md)                    | Slide visual polish — smart layouts, icons, aspect ratios      |
