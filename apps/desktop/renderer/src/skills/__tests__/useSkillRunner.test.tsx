@@ -428,4 +428,57 @@ describe("useSkillRunner", () => {
     expect(result.current.isRepairing).toBe(false);
     expect(result.current.status).toBe("cancelled");
   });
+
+  it("clears isRepairing when the repair attempt errors", async () => {
+    // First attempt fails the check and completes; the repair attempt then
+    // errors out. The thrown error must surface as status "error" without
+    // leaving `isRepairing` stuck true (the in-loop reset is skipped when
+    // the await throws).
+    let subscriber: ((chunk: GenerateChunk) => void) | null = null;
+    let calls = 0;
+    const generate = vi.fn(async () => {
+      const callIndex = calls++;
+      const cb = subscriber;
+      if (callIndex === 0) {
+        setTimeout(() => {
+          cb?.({ token: "SUM(A1:A2)", done: false });
+          cb?.({ token: "", done: true });
+        }, 0);
+      } else {
+        // The repair attempt fails with a model error chunk.
+        setTimeout(() => {
+          cb?.({ token: "", done: false, error: "model crashed" });
+        }, 0);
+      }
+      return undefined;
+    });
+    const onToken = vi.fn((cb: (chunk: GenerateChunk) => void) => {
+      subscriber = cb;
+      return () => {
+        if (subscriber === cb) subscriber = null;
+      };
+    });
+    const cancelJob = vi.fn().mockResolvedValue(undefined);
+    (window.tessera as unknown as { model: unknown }).model = {
+      status: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      generate,
+      cancelJob,
+      onToken,
+    };
+
+    const skill = syntheticCheckedSkill({ mustStartWith: "=" });
+    const { result } = renderHook(() => useSkillRunner(skill));
+
+    act(() => {
+      result.current.run({ intent: "sum column A" });
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.error).toMatch(/model crashed/);
+    expect(result.current.isRepairing).toBe(false);
+    // Original attempt + exactly one repair attempt (which threw).
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
 });

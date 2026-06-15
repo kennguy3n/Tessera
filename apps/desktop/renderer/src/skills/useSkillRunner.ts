@@ -341,6 +341,9 @@ export function useSkillRunner(skill: Skill): UseSkillRunnerResult {
       void runChain().catch((err: unknown) => {
         if (err === CANCELLED || runId !== runIdRef.current) return;
         if (!mountedRef.current) return;
+        // A throw inside the repair loop unwinds past the in-loop
+        // `setIsRepairing(false)`, so clear it here too.
+        setIsRepairing(false);
         setError(err instanceof Error ? err.message : String(err));
         setStatus("error");
       });
