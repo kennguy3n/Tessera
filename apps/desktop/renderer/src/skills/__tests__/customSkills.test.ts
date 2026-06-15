@@ -13,6 +13,7 @@ import {
   MAX_SKILL_INPUTS,
   MAX_SKILL_NAME,
   MAX_SKILL_STEPS,
+  MAX_STEP_OUTPUT_CONTRACT,
   availableVarsBeforeStep,
   buildCustomSkill,
   buildStepCheck,
@@ -880,5 +881,93 @@ describe("step sampling authoring — round-trips", () => {
     expect(loaded.steps[0].maxTokens).toBe(640);
     expect(skillToDraft(loaded).steps[0].temperature).toBe("0.3");
     expect(skillToDraft(loaded).steps[0].maxTokens).toBe("640");
+  });
+});
+
+describe("step output contract authoring", () => {
+  const contractDraft = (outputContract: string) =>
+    draft({
+      steps: [
+        {
+          title: "Draft",
+          kind: "draft",
+          instruction: "Write about {{topic}}.",
+          output: "result",
+          inputsFrom: [],
+          outputContract,
+        },
+      ],
+    });
+
+  it("sets an authored output contract on the built step", () => {
+    const built = buildCustomSkill(
+      contractDraft("FORMAT: one '- ' bullet per line."),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.skill.steps[0].outputContract).toBe(
+      "FORMAT: one '- ' bullet per line.",
+    );
+  });
+
+  it("omits the output contract when blank or whitespace-only", () => {
+    for (const blank of ["", "   ", "\n\t"]) {
+      const built = buildCustomSkill(contractDraft(blank), fixedId);
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      expect("outputContract" in built.skill.steps[0]).toBe(false);
+    }
+  });
+
+  it("clamps an over-long contract to MAX_STEP_OUTPUT_CONTRACT", () => {
+    const built = buildCustomSkill(
+      contractDraft("x".repeat(MAX_STEP_OUTPUT_CONTRACT + 50)),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.skill.steps[0].outputContract?.length).toBe(
+      MAX_STEP_OUTPUT_CONTRACT,
+    );
+  });
+
+  it("preserves internal newlines in a multiline contract", () => {
+    const built = buildCustomSkill(
+      contractDraft("Line one.\nLine two."),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.skill.steps[0].outputContract).toBe("Line one.\nLine two.");
+  });
+
+  it("round-trips a built-in's contract through skillToDraft and rebuild", () => {
+    const doc = getSkillById("document-deliberate-draft");
+    expect(doc).toBeDefined();
+    if (!doc) return;
+    const back = skillToDraft(doc);
+    expect(back.steps[0].outputContract).toBe(doc.steps[0].outputContract);
+    const rebuilt = buildCustomSkill(back, fixedId);
+    expect(rebuilt.ok).toBe(true);
+    if (!rebuilt.ok) return;
+    expect(rebuilt.skill.steps[0].outputContract).toBe(
+      doc.steps[0].outputContract,
+    );
+  });
+
+  it("output contract survives a full localStorage save/load round-trip", () => {
+    const built = buildCustomSkill(
+      contractDraft("FORMAT: JSON object only."),
+      fixedId,
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    saveCustomSkills([built.skill]);
+    const [loaded] = loadCustomSkills();
+    expect(loaded.steps[0].outputContract).toBe("FORMAT: JSON object only.");
+    expect(skillToDraft(loaded).steps[0].outputContract).toBe(
+      "FORMAT: JSON object only.",
+    );
   });
 });
