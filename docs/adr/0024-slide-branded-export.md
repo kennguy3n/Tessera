@@ -150,6 +150,20 @@ untouched.
   artifact exporters. This is the intended outcome (those paths never
   produced slide-shaped output); documents, sheets, infographics, and
   landing pages are unaffected and keep their existing exporters.
+- **Marp Mode source is intentionally not re-branded (preview parity).**
+  The Brand Kit is a _structured-deck_ re-skin: the "Customize brand"
+  control and the `--slide-*` inline overrides exist only in the
+  structured Design view (`SlideEditor.tsx` gates both on `!marpMode`),
+  and the Marp-Mode preview (`MarpPreview`) renders the user's raw
+  markdown through a built-in theme with **no brand input**. So in Marp
+  Mode the brand is absent from the in-app preview too — exporting the
+  source verbatim keeps the file faithful to what the user sees.
+  Injecting brand CSS into hand-authored Marp source would instead (a)
+  diverge from that preview and (b) risk emitting a second
+  `style:`/front-matter key that conflicts with or silently overrides
+  the user's own directives. Marp Mode is the raw escape hatch where the
+  user owns the styling; a user who wants the brand applied authors the
+  deck in the structured view.
 - The export CSS is derived from the same `brandKitCssVars` map used
   in-app, so the brand layer and the curated themes cannot drift: the
   export re-skins the brand essentials (accent/surface/text colours +
