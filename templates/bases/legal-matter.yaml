@@ -1,0 +1,45 @@
+id: legal-matter-base-v1
+name: Legal Matter Management
+type: base
+description: Legal case management base tracking matters, parties, deadlines, documents, time, and outcomes
+industry:
+  - legal
+profile:
+  - attorney
+  - paralegal
+  - legal-operations
+sections:
+  - title: Matters
+    prompt: >
+      Per matter: matter number, title, type (litigation /
+      transactional / advisory / regulatory), practice area, the
+      client, responsible attorney, open date, and status (open /
+      on hold / closed). Note the billing arrangement.
+  - title: Parties and Counsel
+    prompt: >
+      The parties involved (client, opposing parties, co-parties)
+      with their roles, opposing counsel, the court / tribunal or
+      counterparty, judge / arbitrator, and any conflicts-check
+      result.
+  - title: Key Dates and Deadlines
+    prompt: >
+      Statutes of limitation, filing and hearing dates, discovery
+      cut-offs, response deadlines, and the responsible owner per
+      date. Treat docketed deadlines as critical and flag those
+      approaching.
+    output_format: table
+  - title: Documents and Evidence
+    prompt: >
+      Pleadings, contracts, correspondence, and exhibits with
+      version, privilege status, and the access restriction;
+      plus a clear, searchable index linking documents to the
+      matter.
+  - title: Time, Billing, and Outcome
+    prompt: >
+      Time entries and expenses per matter, budget vs. actual,
+      invoices and realization, and the final outcome / resolution
+      with any judgment, settlement, or lessons learned.
+    output_format: table
+export:
+  - markdown
+  - csv

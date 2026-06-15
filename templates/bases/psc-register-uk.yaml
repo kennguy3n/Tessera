@@ -1,0 +1,46 @@
+id: psc-register-uk-base-v1
+name: PSC Register (UK / Companies House)
+type: base
+description: UK people-with-significant-control statutory register aligned to Companies House, with conditions and filings
+industry:
+  - legal
+profile:
+  - company-secretary
+  - legal-operations
+  - compliance-officer
+sections:
+  - title: People with Significant Control
+    prompt: >
+      Per PSC: full name, the service and (held separately,
+      non-public) usual residential address, date of birth
+      (month / year shown publicly), nationality, country of
+      residence, and the date they became registrable.
+  - title: Nature of Control
+    prompt: >
+      The applicable conditions of control: ownership of more
+      than 25% of shares; more than 25% of voting rights; the
+      right to appoint or remove a majority of directors; or
+      otherwise significant influence or control. Record the
+      band(s) precisely as required.
+    output_format: table
+  - title: Relevant Legal Entities and RLEs
+    prompt: >
+      Registrable relevant legal entities (RLEs) and their
+      details, the chain of ownership where control is indirect,
+      and any registrable superior entity in a layered structure.
+  - title: Required Particulars and Status
+    prompt: >
+      Confirmation that all required particulars are confirmed,
+      restrictions on shares, and any statutory wording used
+      where details are unconfirmed, not yet provided, or subject
+      to a protection application.
+  - title: Filings and Confirmation Statement
+    prompt: >
+      Changes to PSC information with the date of change and the
+      date notified to Companies House, the relevant forms (e.g.
+      PSC01–PSC09), and confirmation-statement (CS01) currency.
+      Flag changes not yet filed within the deadline.
+    output_format: table
+export:
+  - markdown
+  - csv

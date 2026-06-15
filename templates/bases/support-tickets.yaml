@@ -1,0 +1,44 @@
+id: support-ticket-base-v1
+name: Customer Support Tickets
+type: base
+description: Customer support ticket base tracking requests, priority, SLA, assignment, resolution, and CSAT
+profile:
+  - support-manager
+  - customer-success
+  - support-agent
+sections:
+  - title: Tickets
+    prompt: >
+      Per ticket: ticket ID, subject, requester (name, email,
+      account / plan), channel (email / chat / phone / portal),
+      category (bug / how-to / billing / outage / feature
+      request), and a clear description of the problem and
+      desired outcome.
+  - title: Priority and SLA
+    prompt: >
+      Priority / severity per ticket, the applicable SLA targets
+      for first response and resolution, the time remaining or
+      breached, and any entitlement tier (e.g. by plan or
+      contract). Flag at-risk and breached SLAs.
+    output_format: table
+  - title: Assignment and Workflow
+    prompt: >
+      Status (new / open / pending customer / on hold /
+      escalated / resolved / closed), the assigned agent and
+      team, escalation target, and the reassignment / handoff
+      history. Capture pending reasons that pause the SLA clock.
+  - title: Resolution and Knowledge
+    prompt: >
+      Resolution summary, root cause where known, linked
+      knowledge-base article or bug ticket, whether a macro /
+      canned response was used, and follow-up actions. Identify
+      candidates for new self-serve articles.
+  - title: Satisfaction and Trends
+    prompt: >
+      CSAT / CES survey results per resolved ticket, reopen
+      rate, backlog and aging, volume by category and channel,
+      and the recurring themes driving contact volume.
+    output_format: table
+export:
+  - markdown
+  - csv

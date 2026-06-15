@@ -1,0 +1,54 @@
+id: gdpr-ropa-base-v1
+name: GDPR Records of Processing (RoPA)
+type: base
+description: EU GDPR Article 30 records of processing activities base covering purposes, lawful basis, transfers, and retention
+industry:
+  - legal
+  - government
+profile:
+  - data-protection-officer
+  - compliance-officer
+  - legal-operations
+sections:
+  - title: Processing Activities
+    prompt: >
+      Per activity: a unique reference, name, the business
+      function / department, a description of the processing
+      operation, and the controller / processor role. Name the
+      controller and, where relevant, the joint controller or
+      processor.
+  - title: Purposes and Lawful Basis
+    prompt: >
+      The purpose(s) of processing and the Article 6 lawful basis
+      for each; for special-category data, the Article 9
+      condition; and, where relied upon, the legitimate-interests
+      assessment reference.
+    output_format: table
+  - title: Data Subjects and Categories
+    prompt: >
+      The categories of data subjects (e.g. customers, employees,
+      patients), the categories of personal data, and any
+      special-category or criminal-offence data, with volume
+      estimates where useful.
+  - title: Recipients and Transfers
+    prompt: >
+      Internal and external recipients, processors engaged, and
+      any transfers to third countries or international
+      organisations with the safeguard relied upon (adequacy
+      decision / SCCs / BCRs) and the transfer-impact assessment.
+    output_format: table
+  - title: Retention and Security
+    prompt: >
+      The retention period or criteria per category, the deletion
+      mechanism, and a general description of the technical and
+      organisational security measures (encryption,
+      pseudonymisation, access control).
+  - title: DPIA and Review
+    prompt: >
+      Whether a Data Protection Impact Assessment is required and
+      its status, the residual risk, the last review date and
+      owner, and the linkage to breach and data-subject-rights
+      registers.
+export:
+  - markdown
+  - csv

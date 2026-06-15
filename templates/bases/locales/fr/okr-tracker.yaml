@@ -1,0 +1,50 @@
+id: okr-tracker-base-v1-fr
+name: Suivi des OKR
+type: base
+description: Base d'Objectifs et Résultats Clés pour objectifs, résultats clés mesurables, alignement, points d'avancement et notation
+locale: fr
+profile:
+  - executive
+  - product-manager
+  - team-lead
+sections:
+  - title: Objectifs
+    prompt: >
+      Par objectif : un énoncé qualitatif et inspirant de ce qui
+      doit être accompli, le responsable, le niveau (entreprise /
+      équipe / individuel), le cycle (p. ex. T3 EX25) et
+      l'objectif parent auquel il se rattache. Les objectifs sont
+      directionnels, pas des métriques. Répondez en français.
+  - title: Résultats Clés
+    prompt: >
+      Par résultat clé : un résultat mesurable avec une valeur de
+      référence, une cible et une unité ; la source de la
+      métrique ; le responsable ; et le type (métrique / jalon).
+      Chaque objectif doit avoir 2 à 5 résultats clés qui, pris
+      ensemble, prouvent son atteinte. Répondez en français.
+    output_format: table
+  - title: Initiatives et Alignement
+    prompt: >
+      Les initiatives, projets ou paris financés pour faire
+      avancer chaque résultat clé, les équipes responsables, et la
+      façon dont chaque objectif s'aligne horizontalement avec les
+      équipes pairs et verticalement avec les objectifs de
+      l'entreprise. Signalez les résultats clés sans initiative de
+      soutien. Répondez en français.
+  - title: Points d'Avancement et Confiance
+    prompt: >
+      Par point d'avancement (hebdomadaire ou bimensuel) : valeur
+      actuelle, pourcentage vers la cible, un indice de confiance
+      (p. ex. 0,0–1,0 ou rouge / orange / vert), la tendance
+      depuis le dernier point et un bref récit sur les obstacles
+      et les prochaines étapes. Répondez en français.
+  - title: Notation et Rétrospective
+    prompt: >
+      Note de fin de cycle par résultat clé et objectif (p. ex.
+      0,0–1,0), s'il était engagé ou aspirationnel, les raisons de
+      la sur- ou sous-performance, et les enseignements reportés
+      au cycle suivant. Répondez en français.
+    output_format: table
+export:
+  - markdown
+  - csv

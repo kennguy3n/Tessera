@@ -1,0 +1,50 @@
+id: okr-tracker-base-v1-pt
+name: Acompanhamento de OKR
+type: base
+description: Base de Objetivos e Resultados-Chave para objetivos, resultados-chave mensuráveis, alinhamento, check-ins e pontuação
+locale: pt
+profile:
+  - executive
+  - product-manager
+  - team-lead
+sections:
+  - title: Objetivos
+    prompt: >
+      Por objetivo: uma declaração qualitativa e inspiradora do
+      que se quer alcançar, o responsável, o nível (empresa /
+      equipe / individual), o ciclo (por exemplo, T3 AF25) e o
+      objetivo superior ao qual se alinha. Objetivos são
+      direcionais, não métricas. Responda em português.
+  - title: Resultados-Chave
+    prompt: >
+      Por resultado-chave: um resultado mensurável com linha de
+      base, meta e unidade; a fonte da métrica; o responsável; e o
+      tipo (métrica / marco). Cada objetivo deve ter de 2 a 5
+      resultados-chave que, em conjunto, comprovem sua realização.
+      Responda em português.
+    output_format: table
+  - title: Iniciativas e Alinhamento
+    prompt: >
+      As iniciativas, projetos ou apostas financiadas para
+      movimentar cada resultado-chave, as equipes responsáveis e
+      como cada objetivo se alinha horizontalmente com equipes
+      pares e verticalmente com as metas da empresa. Sinalize
+      resultados-chave sem iniciativa de apoio. Responda em
+      português.
+  - title: Check-ins e Confiança
+    prompt: >
+      Por check-in (semanal ou quinzenal): valor atual,
+      percentual em direção à meta, uma pontuação de confiança
+      (por exemplo, 0,0–1,0 ou vermelho / âmbar / verde), a
+      tendência desde o último check-in e uma breve narrativa
+      sobre obstáculos e próximos passos. Responda em português.
+  - title: Pontuação e Retrospectiva
+    prompt: >
+      Nota de fim de ciclo por resultado-chave e objetivo (por
+      exemplo, 0,0–1,0), se era comprometido ou aspiracional, as
+      razões do sobre ou subdesempenho e os aprendizados levados
+      ao ciclo seguinte. Responda em português.
+    output_format: table
+export:
+  - markdown
+  - csv

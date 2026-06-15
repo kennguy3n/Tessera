@@ -1,0 +1,52 @@
+id: kyc-cdd-base-v1
+name: KYC / Customer Due Diligence Register
+type: base
+description: KYC and customer due diligence base tracking identity verification, risk rating, screening, and review cadence
+industry:
+  - finance
+  - legal
+profile:
+  - compliance-officer
+  - risk-manager
+  - analyst
+sections:
+  - title: Customer Records
+    prompt: >
+      Per customer: customer ID, type (individual / entity),
+      legal name, date of birth or incorporation, country of
+      residence / registration, occupation or business activity,
+      and the onboarding date and channel.
+  - title: Identity Verification
+    prompt: >
+      Identity evidence collected (government ID, proof of
+      address, registration documents), verification method
+      (documentary / electronic / biometric), verification
+      status, and the expiry of any document requiring refresh.
+  - title: Beneficial Ownership and Control
+    prompt: >
+      For entities: the ownership structure, ultimate beneficial
+      owners above the applicable threshold, controlling persons,
+      and any nominee or complex-structure flags requiring
+      enhanced scrutiny.
+  - title: Risk Rating
+    prompt: >
+      Customer risk rating (low / medium / high) driven by
+      geography, product, channel, and customer type; the
+      rationale; whether enhanced due diligence applies; and the
+      PEP / high-risk-jurisdiction determination.
+    output_format: table
+  - title: Screening and Monitoring
+    prompt: >
+      Sanctions, PEP, and adverse-media screening results with
+      dates and dispositions; ongoing transaction-monitoring
+      alerts; SAR / STR considerations; and the periodic-review
+      cadence by risk tier.
+  - title: Review and Audit Trail
+    prompt: >
+      Last review date, next review due, the reviewer and
+      approver, outstanding remediation items, and the immutable
+      audit trail of every status and rating change.
+    output_format: table
+export:
+  - markdown
+  - csv

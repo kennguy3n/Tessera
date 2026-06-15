@@ -1,0 +1,46 @@
+id: loan-portfolio-base-v1
+name: Loan Portfolio Register
+type: base
+description: Lending base tracking loans, borrowers, terms, repayment schedules, collateral, and delinquency
+industry:
+  - finance
+profile:
+  - credit-analyst
+  - finance-manager
+  - risk-manager
+sections:
+  - title: Loans
+    prompt: >
+      Per loan: loan ID, borrower, product type (term /
+      revolving / mortgage / auto / SME), origination date,
+      principal, interest rate and basis (fixed / variable +
+      index), term / maturity, and status (current / delinquent /
+      restructured / in default / closed).
+  - title: Borrowers
+    prompt: >
+      Borrower records: name / entity, type (individual /
+      business), credit score or internal risk grade, KYC status,
+      relationship manager, and aggregate exposure across all
+      facilities.
+  - title: Repayment Schedule
+    prompt: >
+      Per loan: amortization schedule with due dates, scheduled
+      principal and interest, payments received, outstanding
+      balance, next payment due, and any prepayments or payment
+      holidays.
+    output_format: table
+  - title: Collateral and Security
+    prompt: >
+      Per secured loan: collateral type and description,
+      appraised value, valuation date, loan-to-value ratio, lien
+      position, and insurance / perfection status.
+  - title: Delinquency and Provisioning
+    prompt: >
+      Days past due and delinquency bucket, the staging /
+      classification (e.g. performing / underperforming /
+      non-performing), expected credit loss or provision amount,
+      and the workout / recovery action and owner.
+    output_format: table
+export:
+  - markdown
+  - csv

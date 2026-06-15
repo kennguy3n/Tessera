@@ -1,0 +1,57 @@
+id: project-tracker-base-v1-de
+name: Projekt- und Issue-Tracker
+type: base
+description: Projekt- und Issue-Tracker mit Aufgaben, Status-Workflow, Zuständigen, Abhängigkeiten, Meilensteinen und Velocity
+locale: de
+profile:
+  - product-manager
+  - project-manager
+  - engineer
+sections:
+  - title: Projekte
+    prompt: >
+      Pro Projekt: Projektschlüssel / -code, Name, Ziel, der
+      Produkt- oder Teambereich, Projektleitung, Startdatum,
+      Zieltermin und Status (im Plan / gefährdet / aus dem Plan).
+      Verknüpfen Sie es mit der unterstützten strategischen
+      Initiative. Antworten Sie auf Deutsch.
+  - title: Aufgaben und Issues
+    prompt: >
+      Pro Arbeitspaket: ID, Titel, Typ (Feature / Bug / Aufgabe /
+      Spike), Beschreibung, das zugehörige Projekt, Priorität
+      (P0 / P1 / P2 / P3), Schätzung (Story Points oder
+      Personentage) und die Akzeptanzkriterien, die "fertig"
+      definieren. Antworten Sie auf Deutsch.
+  - title: Status und Workflow
+    prompt: >
+      Workflow-Status pro Arbeitspaket (Backlog / To-do / In
+      Arbeit / In Review / Blockiert / Erledigt), das Datum des
+      Eintritts in den aktuellen Status, Grund und Zuständiger für
+      Blockaden sowie der zugesagte Sprint oder die Iteration.
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Zuweisungen und Kapazität
+    prompt: >
+      Der Zuständige und Reviewer pro Arbeitspaket, die Anzahl
+      laufender Arbeiten je Person und die zugesagte gegenüber der
+      verfügbaren Kapazität des Teams für die Iteration. Markieren
+      Sie überlastete Personen und nicht zugewiesene Arbeitspakete
+      mit hoher Priorität. Antworten Sie auf Deutsch.
+  - title: Abhängigkeiten und Meilensteine
+    prompt: >
+      Vor- / nachgelagerte Abhängigkeiten zwischen Arbeitspaketen
+      und Teams, externe Abhängigkeiten und die Meilensteine, zu
+      denen jedes Projekt mit seinen Zielterminen beiträgt. Heben
+      Sie Abhängigkeiten auf dem kritischen Pfad hervor. Antworten
+      Sie auf Deutsch.
+  - title: Reporting und Velocity
+    prompt: >
+      Durchsatz und Velocity je Iteration, Zyklus- und
+      Durchlaufzeit, Burndown / Burnup gegenüber dem zugesagten
+      Umfang, Alter der laufenden Arbeitspakete und die häufigsten
+      wiederkehrenden Ursachen für Verzögerungen. Antworten Sie
+      auf Deutsch.
+    output_format: table
+export:
+  - markdown
+  - csv

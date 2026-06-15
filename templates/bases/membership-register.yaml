@@ -1,0 +1,44 @@
+id: membership-register-base-v1
+name: Membership Register
+type: base
+description: Membership organization base tracking members, dues, renewals, benefits, and engagement
+industry:
+  - nonprofit
+profile:
+  - membership-manager
+  - nonprofit-administrator
+  - operations
+sections:
+  - title: Members
+    prompt: >
+      Per member: member ID, name, type (individual / family /
+      corporate / student / lifetime), join date, contact
+      details, status (active / lapsed / cancelled), and
+      communication preferences.
+  - title: Dues and Payments
+    prompt: >
+      Per member: membership level, dues amount and frequency,
+      billing method, amount paid and outstanding, payment
+      history, and any discounts or scholarships applied.
+    output_format: table
+  - title: Renewals
+    prompt: >
+      Renewal date, renewal status (upcoming / overdue /
+      auto-renew / lapsed), the reminder sequence sent, grace
+      period, and the win-back action for lapsed members. Flag
+      renewals due within 60 days.
+  - title: Benefits and Entitlements
+    prompt: >
+      The benefits per membership level, entitlement usage
+      (event access, discounts, publications), and any
+      member-only credentials or access that must be provisioned
+      or revoked.
+  - title: Engagement and Retention
+    prompt: >
+      Event attendance, volunteer / committee involvement,
+      communication engagement, tenure, and the retention /
+      churn-risk indicators per member segment.
+    output_format: table
+export:
+  - markdown
+  - csv

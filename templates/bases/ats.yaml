@@ -1,0 +1,55 @@
+id: applicant-tracking-base-v1
+name: Applicant Tracking System (ATS)
+type: base
+description: Recruiting base tracking requisitions, candidates, pipeline stages, interviews, and offers
+profile:
+  - recruiter
+  - hr-manager
+  - hiring-manager
+sections:
+  - title: Job Requisitions
+    prompt: >
+      Per open role: requisition ID, job title, department,
+      hiring manager, recruiter, location (and remote
+      eligibility), employment type (FTE / contract / intern),
+      seniority level, headcount approved, budget / salary band,
+      target start date, and status (draft / open / on hold /
+      filled / cancelled).
+  - title: Candidates
+    prompt: >
+      Candidate records: full name, email, phone, location,
+      current title and employer, source (referral / inbound /
+      sourced / agency / job board), the requisition applied to,
+      resume / portfolio links, and consent status for data
+      retention.
+  - title: Pipeline Stages
+    prompt: >
+      Track each candidate's stage (Applied / Screen /
+      Hiring-Manager Review / Interview Loop / Reference Check /
+      Offer / Hired / Rejected / Withdrawn), the stage entry
+      date, the owner, and the disposition reason for any
+      rejection. Capture days-in-stage to surface bottlenecks.
+    output_format: table
+  - title: Interviews and Scorecards
+    prompt: >
+      Per interview: date, interviewers, format (phone / onsite /
+      panel / take-home), the competencies assessed, structured
+      scorecard ratings, the overall recommendation
+      (strong yes / yes / no / strong no), and free-form notes.
+      Keep feedback consistent and bias-aware.
+  - title: Offers and Approvals
+    prompt: >
+      Per offer: base compensation, variable / bonus, equity,
+      sign-on, level, start date, approval chain, offer status
+      (pending / extended / accepted / declined / rescinded),
+      and the decline reason where applicable.
+  - title: Pipeline Metrics and Compliance
+    prompt: >
+      Funnel metrics by requisition and source: time-to-fill,
+      time-in-stage, pass-through rates, offer-acceptance rate,
+      and diversity of the pipeline where lawfully tracked.
+      Note EEO / data-retention obligations and the audit cadence.
+    output_format: table
+export:
+  - markdown
+  - csv

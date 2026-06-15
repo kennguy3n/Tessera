@@ -1,0 +1,44 @@
+id: preventive-maintenance-base-v1
+name: Preventive Maintenance Schedule
+type: base
+description: Asset maintenance base tracking equipment, PM schedules, work orders, spare parts, and downtime
+industry:
+  - manufacturing
+profile:
+  - maintenance-manager
+  - reliability-engineer
+  - operations
+sections:
+  - title: Assets
+    prompt: >
+      Per asset: asset tag, name, type, manufacturer / model,
+      location / line, criticality rating, installation date, and
+      operating status. Note the parent system for hierarchical
+      assets.
+  - title: PM Schedules
+    prompt: >
+      Per asset: maintenance task, trigger (time-based interval /
+      meter / condition), frequency, estimated duration,
+      required skills, and the next-due date. Distinguish
+      statutory inspections from routine PM.
+    output_format: table
+  - title: Maintenance Work Orders
+    prompt: >
+      Per work order: type (preventive / corrective /
+      predictive), the triggering schedule or fault, assigned
+      technician, scheduled vs. actual dates, labor hours, and
+      status (open / in progress / completed / deferred).
+  - title: Spare Parts and Inventory
+    prompt: >
+      Spare parts consumed per work order, the parts catalog with
+      on-hand quantity and reorder point, critical spares for
+      high-criticality assets, and stockout risk.
+  - title: Downtime and Reliability
+    prompt: >
+      Downtime events with duration and cause, planned vs.
+      unplanned split, MTBF / MTTR per asset, PM compliance rate,
+      and the bad-actor assets driving most downtime.
+    output_format: table
+export:
+  - markdown
+  - csv

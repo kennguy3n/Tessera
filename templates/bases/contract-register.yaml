@@ -1,0 +1,43 @@
+id: contract-register-base-v1
+name: Contract Register
+type: base
+description: Contract lifecycle base tracking agreements, parties, key terms, obligations, and renewals
+industry:
+  - legal
+profile:
+  - legal-operations
+  - contract-manager
+  - procurement-manager
+sections:
+  - title: Contracts
+    prompt: >
+      Per contract: contract ID, title, type (NDA / MSA / SOW /
+      license / lease / employment), the counterparty, owning
+      business unit, effective date, and status (draft / in
+      negotiation / executed / active / expired / terminated).
+  - title: Parties and Signatories
+    prompt: >
+      The contracting parties, their legal entities, authorized
+      signatories, the signature method and date, and the
+      internal contract owner responsible for performance.
+  - title: Key Terms and Value
+    prompt: >
+      Contract value, payment terms, term length, governing law,
+      liability caps, indemnities, exclusivity, and other clauses
+      that materially affect risk or value.
+    output_format: table
+  - title: Obligations and Milestones
+    prompt: >
+      Deliverables, service levels, reporting and payment
+      obligations with due dates and owners, and the compliance
+      status of each obligation. Flag overdue obligations.
+  - title: Renewal and Expiry
+    prompt: >
+      Expiry date, renewal type (auto / manual), notice period,
+      the notice deadline to terminate or renegotiate, and the
+      renewal owner. Flag contracts requiring action within 90
+      days.
+    output_format: table
+export:
+  - markdown
+  - csv

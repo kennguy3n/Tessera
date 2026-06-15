@@ -1,0 +1,47 @@
+id: inventory-stock-base-v1
+name: Inventory and Stock Register
+type: base
+description: Stock control base tracking items, locations, quantities, reorder points, movements, and valuation
+industry:
+  - retail
+  - manufacturing
+profile:
+  - operations
+  - warehouse-manager
+  - merchandiser
+sections:
+  - title: Stock Items
+    prompt: >
+      Per item: SKU, name, category, unit of measure, barcode,
+      whether it is stocked / non-stocked / serialized /
+      lot-tracked, and the default supplier. Distinguish raw
+      materials, WIP, and finished goods where relevant.
+  - title: Locations and Quantities
+    prompt: >
+      Per item per location (warehouse / store / bin):
+      quantity on hand, allocated / reserved, available to
+      promise, and in-transit. Support multiple locations for the
+      same item.
+    output_format: table
+  - title: Reorder Policy
+    prompt: >
+      Per item: reorder point, safety stock, economic order
+      quantity or par level, lead time, and the preferred
+      replenishment method (min/max, just-in-time). Flag items
+      below reorder point.
+  - title: Stock Movements
+    prompt: >
+      Movement log: date, type (receipt / sale / transfer /
+      adjustment / return / scrap), quantity, from / to location,
+      reference document, and the user. Maintain a complete audit
+      trail.
+  - title: Valuation and Counts
+    prompt: >
+      Costing method (FIFO / weighted average / standard),
+      current stock value, last cost, cycle-count schedule and
+      variance, shrinkage, and slow-moving / obsolete-stock
+      flags.
+    output_format: table
+export:
+  - markdown
+  - csv

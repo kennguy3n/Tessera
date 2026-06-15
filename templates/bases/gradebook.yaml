@@ -1,0 +1,44 @@
+id: gradebook-base-v1
+name: Gradebook
+type: base
+description: Classroom gradebook base tracking assignments, scores, weighting, final grades, and feedback
+industry:
+  - education
+profile:
+  - teacher
+  - instructor
+  - registrar
+sections:
+  - title: Assignments
+    prompt: >
+      Per assignment: title, category (homework / quiz / exam /
+      project / participation), assigned and due dates, points
+      possible, the weight or category, and the learning
+      objective it assesses.
+  - title: Scores
+    prompt: >
+      Per student per assignment: raw score, late / missing /
+      excused flag, submission date, and any rubric-level
+      breakdown. Support resubmissions with the policy applied.
+    output_format: table
+  - title: Weighting and Calculation
+    prompt: >
+      The grade-category weights, the rounding and
+      drop-lowest rules, the scale mapping percentages to letter
+      grades, and how incomplete or excused items are handled in
+      the calculation.
+  - title: Final Grades
+    prompt: >
+      Per student: current weighted average, projected and final
+      letter grade, trend over the term, and the threshold flags
+      for at-risk students needing intervention.
+    output_format: table
+  - title: Feedback and Communication
+    prompt: >
+      Per-assignment and overall narrative feedback, the
+      guardian / student communication log, and the privacy
+      controls ensuring grades are visible only to authorized
+      parties.
+export:
+  - markdown
+  - csv

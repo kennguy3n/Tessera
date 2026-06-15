@@ -1,0 +1,44 @@
+id: property-maintenance-base-v1
+name: Property Maintenance Requests
+type: base
+description: Property management base tracking maintenance requests, work orders, vendors, costs, and SLAs
+industry:
+  - real-estate
+profile:
+  - property-manager
+  - facilities-manager
+  - operations
+sections:
+  - title: Requests
+    prompt: >
+      Per request: request ID, property / unit, the reporting
+      tenant, date reported, category (plumbing / electrical /
+      HVAC / appliance / structural / pest), description, and
+      priority (emergency / urgent / routine).
+  - title: Triage and SLA
+    prompt: >
+      Priority-driven response and resolution SLA targets,
+      whether it is an emergency or habitability issue, time
+      remaining or breached, and access arrangements with the
+      tenant.
+    output_format: table
+  - title: Work Orders and Vendors
+    prompt: >
+      The assigned vendor or in-house technician, scheduled
+      visit, quote / estimate, parts required, status (open /
+      scheduled / in progress / completed / on hold), and the
+      completion sign-off.
+  - title: Costs and Responsibility
+    prompt: >
+      Estimated vs. actual cost, who bears it (landlord / tenant /
+      warranty / insurance), invoice and payment status, and
+      whether the cost is recoverable through service charges.
+    output_format: table
+  - title: History and Recurrence
+    prompt: >
+      Maintenance history per unit and asset, recurring issues,
+      warranty coverage, and preventive actions to reduce repeat
+      requests.
+export:
+  - markdown
+  - csv

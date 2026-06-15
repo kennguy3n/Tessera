@@ -1,0 +1,44 @@
+id: subcontractor-register-base-v1
+name: Subcontractor Register
+type: base
+description: Construction base tracking subcontractors, trades, contracts, insurance, compliance, and performance
+industry:
+  - construction
+profile:
+  - general-contractor
+  - project-manager
+  - procurement-manager
+sections:
+  - title: Subcontractors
+    prompt: >
+      Per subcontractor: company name, trade(s), primary
+      contact, license number and class, service area, and
+      approval status (prequalified / approved / conditional /
+      suspended).
+  - title: Contracts and Scope
+    prompt: >
+      Per contract / subcontract: project, scope of work,
+      contract value, retention percentage, start and completion
+      dates, and the payment schedule / milestones.
+    output_format: table
+  - title: Insurance and Bonding
+    prompt: >
+      Certificates of insurance (general liability, workers'
+      comp, auto) with coverage limits and expiry, bonding
+      capacity, additional-insured / waiver status, and flags for
+      expiring or insufficient coverage.
+  - title: Compliance and Safety
+    prompt: >
+      Licenses and certifications with expiry, safety record /
+      EMR, prequalification documents, lien waivers, and
+      prevailing-wage / certified-payroll status where
+      applicable.
+    output_format: table
+  - title: Performance and Ratings
+    prompt: >
+      Quality, schedule, and safety ratings per project; defect
+      and rework history; responsiveness; and the overall
+      scorecard informing future awards.
+export:
+  - markdown
+  - csv

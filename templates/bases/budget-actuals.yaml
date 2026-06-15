@@ -1,0 +1,45 @@
+id: budget-actuals-base-v1
+name: Budget vs. Actuals
+type: base
+description: Departmental budget base tracking accounts, planned budget, actual spend, variance, forecast, and approvals
+industry:
+  - finance
+profile:
+  - finance-manager
+  - executive
+  - operations
+sections:
+  - title: Budget Lines
+    prompt: >
+      Per line: GL account or category, department / cost
+      center, fiscal period, the planned budget amount, the
+      budget owner, and whether the line is fixed, variable, or
+      discretionary.
+  - title: Actuals and Commitments
+    prompt: >
+      Per line and period: actual recorded spend, committed but
+      unspent (open POs), the source system reference, and the
+      posting date. Reconcile actuals to the general ledger.
+    output_format: table
+  - title: Variance Analysis
+    prompt: >
+      Per line: budget vs. actual variance in amount and
+      percent, favorable / unfavorable flag, the materiality
+      threshold, and a short explanation for any variance
+      exceeding the threshold.
+    output_format: table
+  - title: Forecast and Reforecast
+    prompt: >
+      Full-year forecast per line (actuals to date plus
+      remaining run rate), the latest reforecast vs. original
+      budget, key assumptions, and the drivers behind significant
+      changes.
+  - title: Approvals and Governance
+    prompt: >
+      Budget-transfer and reforecast requests with requester,
+      amount, justification, approval status, and approver;
+      spend-authority limits; and the monthly close / review
+      cadence.
+export:
+  - markdown
+  - csv

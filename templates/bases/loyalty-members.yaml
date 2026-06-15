@@ -1,0 +1,43 @@
+id: loyalty-members-base-v1
+name: Loyalty Program Members
+type: base
+description: Loyalty base tracking members, tiers, points, transactions, rewards, and engagement
+industry:
+  - retail
+profile:
+  - crm-manager
+  - marketing-manager
+  - ecommerce-manager
+sections:
+  - title: Members
+    prompt: >
+      Per member: member ID, name, contact details, enrollment
+      date, channel, marketing-consent status, and the preferred
+      store / region. Respect opt-in and data-retention
+      preferences.
+  - title: Tiers and Status
+    prompt: >
+      Per member: current tier (e.g. Bronze / Silver / Gold),
+      qualifying spend or points in the period, progress to the
+      next tier, tier expiry / downgrade date, and any retained
+      lifetime-status flags.
+    output_format: table
+  - title: Points and Balances
+    prompt: >
+      Points earned, redeemed, expired, and current balance;
+      the earn rate and any multipliers; point-expiry policy; and
+      the cash-equivalent liability the balance represents.
+  - title: Transactions and Rewards
+    prompt: >
+      Per transaction: date, channel, basket value, points
+      earned, reward or offer redeemed, and the resulting margin
+      impact. Link redemptions to specific reward catalog items.
+  - title: Engagement and Segments
+    prompt: >
+      Recency / frequency / monetary segmentation, churn-risk
+      and reactivation flags, campaign responsiveness, and
+      next-best-offer suggestions per segment.
+    output_format: table
+export:
+  - markdown
+  - csv

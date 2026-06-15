@@ -1,0 +1,47 @@
+id: donor-management-us-base-v1
+name: Donor Management (US / IRS 501(c)(3))
+type: base
+description: US nonprofit donor base aligned to IRS rules, with written acknowledgments, quid pro quo, and deductibility
+industry:
+  - nonprofit
+profile:
+  - development-director
+  - fundraiser
+  - nonprofit-administrator
+sections:
+  - title: Donors and Constituents
+    prompt: >
+      Per donor: constituent ID, name, type (individual /
+      household / corporation / private foundation / DAF),
+      contact details, segment, communication preferences, and
+      consent status.
+  - title: Gifts and Contributions
+    prompt: >
+      Per gift: date, amount, fund / designation, type (cash /
+      check / card / stock / in-kind / DAF grant / QCD), whether
+      restricted, and the fair market value for non-cash gifts.
+      Note gifts requiring Form 8283 substantiation.
+    output_format: table
+  - title: Written Acknowledgments
+    prompt: >
+      The contemporaneous written acknowledgment per gift of $250
+      or more: the amount or description of property, the
+      statement of whether goods or services were provided, and
+      the acknowledgment date. Track which gifts still need a
+      receipt.
+  - title: Quid Pro Quo and Deductibility
+    prompt: >
+      For quid pro quo contributions over $75, the fair market
+      value of goods / services provided and the deductible
+      portion disclosed to the donor. Flag benefits, galas, and
+      auctions requiring this treatment.
+    output_format: table
+  - title: Campaigns and Stewardship
+    prompt: >
+      Campaign / appeal performance, pledge schedules and
+      fulfillment, the moves-management stage and gift officer
+      per major-gift prospect, and the stewardship touches
+      completed.
+export:
+  - markdown
+  - csv
