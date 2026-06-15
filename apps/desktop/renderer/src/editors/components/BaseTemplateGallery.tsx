@@ -17,7 +17,7 @@
  * validation as any loaded artifact.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../../components/Modal";
 import {
   BASE_TEMPLATES,
@@ -114,6 +114,18 @@ export function BaseTemplateGallery({
     pendingApply.current = null;
     setConfirmKey(null);
   }, []);
+
+  // Keep the gallery self-contained: clear any pending replace confirmation
+  // (and its deferred factory) whenever the modal is closed. Today the parent
+  // also unmounts us on close, which would reset this state anyway — but not
+  // relying on that means a stale, destructive "Replace base?" prompt can
+  // never resurface if the gallery is ever kept mounted across open/close.
+  useEffect(() => {
+    if (!isOpen) {
+      pendingApply.current = null;
+      setConfirmKey(null);
+    }
+  }, [isOpen]);
 
   const handleSave = useCallback(() => {
     const draft: CustomBaseTemplateDraft = {

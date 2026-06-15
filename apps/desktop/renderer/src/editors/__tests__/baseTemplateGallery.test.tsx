@@ -119,4 +119,51 @@ describe("BaseTemplateGallery built-in apply flow", () => {
     // The "Use" affordance returns so the gallery stays usable.
     expect(screen.getByTestId("base-template-use-builtin")).toBeInTheDocument();
   });
+
+  it("clears a pending replace confirm when closed, even if kept mounted", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    const onClose = vi.fn();
+    const currentDoc = docWith([{ id: "r1", Name: "Acme" }]);
+    const { rerender } = render(
+      <BaseTemplateGallery
+        isOpen
+        currentDoc={currentDoc}
+        onApply={onApply}
+        onClose={onClose}
+      />,
+    );
+
+    // Arm the destructive confirm, then close WITHOUT cancelling/confirming.
+    await user.click(screen.getByTestId("base-template-use-builtin"));
+    expect(
+      screen.getByTestId("base-template-confirm-apply"),
+    ).toBeInTheDocument();
+    rerender(
+      <BaseTemplateGallery
+        isOpen={false}
+        currentDoc={currentDoc}
+        onApply={onApply}
+        onClose={onClose}
+      />,
+    );
+
+    // Reopen the very same (still-mounted) instance: the confirm must be gone
+    // and no deferred factory should linger — clicking "Use" re-arms a fresh
+    // confirm rather than firing a stale Replace.
+    rerender(
+      <BaseTemplateGallery
+        isOpen
+        currentDoc={currentDoc}
+        onApply={onApply}
+        onClose={onClose}
+      />,
+    );
+    expect(
+      screen.queryByTestId("base-template-confirm-apply"),
+    ).not.toBeInTheDocument();
+    expect(buildSpy).not.toHaveBeenCalled();
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByTestId("base-template-use-builtin")).toBeInTheDocument();
+  });
 });
