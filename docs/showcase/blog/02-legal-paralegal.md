@@ -66,7 +66,10 @@ rows amber; a **named range** (`Obligations`) anchors the column; and a **formul
 spreadsheet surface (160+ formula functions, named ranges, validation, conditional formatting,
 charts, pivot tables, on-device AI assistant) over the model's own values. The non-renewal notice deadline (2027-12-31), the
 breach-notification window, and the liability-cap negotiation all become trackable line
-items. Source JSON:
+items. Because every SaaS agreement David abstracts needs the same tracker, he saves this one
+from the editor's in-editor **template gallery** as a reusable `tessera.sheettemplate` — the
+next contract starts pre-built with the same columns, validations, and flag formula instead of
+from scratch. Source JSON:
 [`outputs/obligation-tracker.json`](../artifacts/legal/outputs/obligation-tracker.json).
 
 ## Why it matters

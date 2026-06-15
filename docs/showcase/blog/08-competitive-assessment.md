@@ -31,10 +31,10 @@ because that's where the buyer's budget and habits already are.
 | Inference location | Vendor cloud | Vendor cloud | **Your device** | **Your device** |
 | Usable with PHI / privileged / NPI | Usually blocked by policy | Usually blocked | Yes | **Yes — the design point** |
 | Raw model quality (prose) | **Best (frontier)** | **Strong** | Varies | Good, small on-device model |
-| Structured deliverables (doc/slides/sheet/base) | Chat text | **Native + AI add-on** | Mostly chat/notes | **Four parity-level editors (Docs/Sheets/Slides/Airtable-class)** |
+| Structured deliverables (doc/slides/sheet/base) | Chat text | **Native + AI add-on** | Mostly chat/notes | **Four parity-level editors (Docs/Sheets/Slides/Airtable-class) with in-editor templates + Base App mode** |
 | Source grounding | You paste context | Workspace-scoped | **Yes (RAG)** | **You select sources; output cites them** |
 | Inline per-claim citations | Rare | Limited | Sometimes | **Built-in, per-section** |
-| Structure enforcement | None | Some | None | **Template sections enforce completeness** |
+| Structure enforcement | None | Some | None | **Template sections + a deliberate multi-step Skills engine** |
 | Real-time multi-user collaboration | N/A | **Excellent** | No | **No (KChat for async)** |
 | Ecosystem / integrations breadth | **Large** | **Large** | Small | 33 read-only connectors (still smaller) |
 | Verifiable export provenance | No | No | Rare | **PQC-signed evidence pack** |
@@ -86,9 +86,14 @@ comments, and an on-device rewrite/shorten/expand/tone/translate AI assistant), 
 Sheets-class spreadsheet (160+ formula functions, named ranges, dropdown/checkbox validation,
 rule-based conditional formatting, bar/line/pie charts, and pivot tables), an Airtable-style
 multi-table base (cross-table linked records with lookup/rollup, an expand-record modal with
-comments, six views including a fillable form, group-by), and a Slides-class deck builder
-(layout engine, themes, a WYSIWYG Design view, speaker notes, presenter mode) — all on-device.
-The artifacts in posts 1–5 exercise exactly these.
+comments, six views including a fillable form, group-by, and an **App mode** that turns the base
+into a lightweight internal app), and a Slides-class deck builder (layout engine, themes, a
+**Brand Kit** with portable brand packs and brand-faithful PPTX/PDF/HTML export, a WYSIWYG
+Design view, speaker notes, presenter mode) — all on-device. Each editor also opens its own
+**template gallery** (save the current artifact as a reusable, portable template), and every AI
+action runs through a **deliberate multi-step Skills engine** with per-step checks and bounded
+auto-repair — which is how a small model produces these structured deliverables reliably. The
+artifacts in posts 1–5 exercise exactly these.
 
 **Verifiable, post-quantum-ready provenance on export.** The Evidence Pack bundles the artifact,
 its cited sources, and an ML-DSA-65 (FIPS 204) signature. No mainstream cloud workspace ships

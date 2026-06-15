@@ -15,32 +15,41 @@
 - **Review citations and provenance** — every generated section links back to the source material it drew from.
 - **Export completed work** — Markdown, HTML, PDF, DOCX, CSV, XLSX, PPTX.
 
-## Latest release highlights
+## Highlights
 
-The most recent release integrates eight parallel work streams that push
-every product dimension toward best-in-class against Notion / Coda /
-Google Workspace while staying a local-first desktop app. See
+Tessera pairs a local-first, on-device architecture with four parity-level
+editors and a deliberate AI engine tuned for small models. See
 [`docs/COMPETITIVE_SCORECARD.md`](docs/COMPETITIVE_SCORECARD.md) for the
 dimension-by-dimension scoring and [`CHANGELOG.md`](CHANGELOG.md) for the
-full list.
+full detail.
 
-- **Editors** — inline document comments, Sheet conditional formatting, a
-  fillable Base form view, and a Slides presenter mode with speaker notes.
-- **Tasks & automations** — task dependencies with cycle detection, an
-  SVG Gantt timeline, a KChat-message-match trigger, and multi-step
-  automation actions.
-- **Performance** — incremental IVF index updates, 100K/500K-chunk
-  benchmarks, virtual-scrolling grids, read-pool pre-warm, and a 3s
-  cold-start CI gate.
-- **Security** — FIDO2/WebAuthn app-lock, `PRAGMA secure_delete` on all
-  deletion paths, tightened CSP, keychain enforce-mode write-blocking,
-  and `cargo vet` + `npm audit` supply-chain CI gates.
-- **Architecture & DX** — a versioned SQL migration framework, typed
-  database errors, 10 ADRs, `missing_docs` + generated-IPC-type CI gates,
-  and React error boundaries with crash reports.
-- **KChat depth** — offline queue with replay, `@mention` extension,
-  native notification bridge, DOCX/PDF/deeplink share formats, presence
-  indicator, and bidirectional task sync.
+- **Four real editors with in-editor template galleries.** Documents,
+  Sheets, Slides, and Bases each open a built-in template gallery — insert a
+  starter, or save the current artifact (or a selection) as a reusable
+  template and share it as a portable file (`tessera.doctemplate`,
+  `tessera.sheettemplate`, `tessera.slidetemplate`, `tessera.basetemplate`).
+- **Base App mode.** Any base flips between its builder view and a
+  lightweight **App** — an app-shell navigation, a record-detail page,
+  runtime data-entry forms, and a summary dashboard — turning a table into an
+  internal mini-app without leaving the desktop app.
+- **Branded slides.** A **Brand Kit** re-skins any deck (colours, fonts,
+  logo, background); brand packs (`tessera.brandpack`) carry a brand between
+  workspaces; the brand survives **PPTX / PDF / HTML** export; a brand can be
+  **imported from an existing `.pptx`**; and a smart-layout engine renders
+  timelines, processes, comparisons, galleries, and metrics.
+- **Deliberate Skills engine.** AI runs as multi-step skills with per-step
+  deterministic checks and bounded auto-repair, per-step sampling, and an
+  output-format contract — so a small on-device model produces structured,
+  reliable output. Skills are user-authorable and portable (`tessera.skill`).
+- **Registry-derived Create + an enriched template library.** Dropping a
+  template YAML surfaces a filterable card automatically; the library ships
+  **287 English templates** across six artifact types (**530 including nine
+  non-English locales**), pre-tagged by industry, country / jurisdiction, and
+  language.
+- **Local-first by construction.** Indexing, retrieval, and generation run
+  on-device; sources are folders and connectors you explicitly choose; every
+  generated section cites the source it drew from; and exports can be packaged
+  as a PQC-signed (ML-DSA-65 / FIPS 204) evidence pack.
 
 ## What Tessera is not
 
@@ -224,7 +233,7 @@ it locally with `npm run build:kchat-extension` (output:
 | Documents | PRDs, proposals, SOPs, reports, memos, forms — plus industry-specific variants (clinical protocols, legal briefs, lesson plans, policy briefs, investment memos, audit findings, brand guidelines, campaign briefs, …) |
 | Slides | QBRs, strategy decks, pitch decks, board / investor updates, onboarding decks, sales enablement, workshop decks |
 | Sheets | Budgets, scorecards, roadmaps, trackers, product catalogs, sales forecasts |
-| Bases | Vendor registers, risk registers, roadmap tables, asset inventory, CRM, incident tracker, employee directory, compliance register — five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records |
+| Bases | Vendor registers, risk registers, roadmap tables, asset inventory, CRM, incident tracker, employee directory, compliance register — six views (Grid / Kanban / Calendar / Timeline / Gallery / Form) over the same records, plus an **App mode** that turns a base into a lightweight internal app (nav, record detail, data-entry forms, dashboard) |
 | Infographics | Stats overview, process flow, comparison, KPI dashboard, organization chart, timeline |
 | Landing pages | Hero / features / stats / testimonials / CTA sections — SaaS, event / conference, nonprofit cause, personal & agency portfolio — exportable as standalone HTML or PDF |
 
@@ -247,20 +256,20 @@ Templates ship pre-tagged for the following industries; the CreatePage industry 
 
 ## Language support
 
-The ten most-used templates (PRD, proposal, SOP, report, meeting agenda, meeting notes, task list, form, budget, pitch) ship localized variants in nine languages besides English. Section titles and LLM prompts are translated and the prompt itself asks the model to respond in the target language. The CreatePage language filter switches the visible cards to a locale; non-localized templates default to English regardless of selection.
+Twenty-seven core templates spanning all six artifact types (documents, sheets, bases, slides, infographics, landing pages) ship localized variants in nine languages besides English. Section titles and LLM prompts are translated and the prompt itself asks the model to respond in the target language. The CreatePage language filter switches the visible cards to a locale; non-localized templates default to English regardless of selection.
 
 | Locale | Language | Variants shipped |
 |---|---|---|
-| `en` | English | All 100+ templates (default) |
-| `es` | Spanish | Top 10 core templates |
-| `fr` | French | Top 10 core templates |
-| `de` | German | Top 10 core templates |
-| `ja` | Japanese | Top 10 core templates |
-| `zh` | Chinese (Simplified) | Top 10 core templates |
-| `pt` | Portuguese | Top 10 core templates |
-| `ko` | Korean | Top 10 core templates |
-| `ar` | Arabic | Top 10 core templates |
-| `hi` | Hindi | Top 10 core templates |
+| `en` | English | All 287 English templates (default) |
+| `es` | Spanish | 27 core templates (all six types) |
+| `fr` | French | 27 core templates (all six types) |
+| `de` | German | 27 core templates (all six types) |
+| `ja` | Japanese | 27 core templates (all six types) |
+| `zh` | Chinese (Simplified) | 27 core templates (all six types) |
+| `pt` | Portuguese | 27 core templates (all six types) |
+| `ko` | Korean | 27 core templates (all six types) |
+| `ar` | Arabic | 27 core templates (all six types) |
+| `hi` | Hindi | 27 core templates (all six types) |
 
 Localized templates live under `templates/<category>/locales/<locale>/<slug>.yaml` and share the same base id with a locale suffix (e.g. `prd-v1-es`). `crates/tessera_templates/tests/bundled_templates.rs` enforces that every non-English locale ships the full canonical set so the filter shows a consistent picker across languages.
 
@@ -437,10 +446,10 @@ Tessera ships six real editor implementations — no stubs:
 
 | Editor | Description |
 |---|---|
-| **Document** | TipTap (ProseMirror) rich text — headings, lists, code blocks, links, images, tables, task lists, code-block syntax highlighting (`lowlight`, 30+ languages), text-align, highlight, underline, outline panel, slash-command menu, find / replace with case-sensitive and whole-word toggles, Mermaid diagram block. |
-| **Slides** | Ordered slide deck with five layouts (`blank`, `title`, `titleContent`, `twoColumn`, `imageCaption`), per-block reorder / type-change / delete, stable UUID block IDs, native HTML5 drag-and-drop sidebar reorder, per-slide and deck word count, deck-wide find panel, image uploads inlined through a shared 5 MiB cap, speaker notes, Marp Mode (Markdown + Shadow-DOM-isolated live preview), Diagram (Mermaid) block, Marp CLI–backed PPTX / HTML / PDF export. |
-| **Sheet** | Spreadsheet workbook with a hand-rolled formula engine — tokenizer → Pratt parser → tree-walking evaluator over a `DependencyGraph` (topological recompute), **64 functions** across math / conditional / logic / text / lookup / date / stats categories, cross-sheet references (`Sheet2!A1`), multi-sheet tabs, column / row resize, rectangular and multi-cell selection, copy / paste, freeze panes, auto-fill, persistent dependency cache, CSV import, XLSX export with native formulas. |
-| **Base** | Database table with **20 field types** — six baseline (`text`, `number`, `date`, `select`, `checkbox`, `url`), seven advanced (`multi_select`, `formula`, `linked_record`, `rollup`, `lookup`, `attachment`, `long_text`), seven simple (`email`, `phone`, `currency`, `percent`, `rating`, `duration`, `auto_number`) — sorting, per-type filters, bulk-select with shift-click range and bulk-delete, manage-fields dialog (reorder / rename / type-change with data migration / delete), CSV / JSON import-export (RFC 4180), five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records. |
+| **Document** | TipTap (ProseMirror) rich text — headings, lists, code blocks, links, images, tables, task lists, code-block syntax highlighting (`lowlight`, 30+ languages), text-align, highlight, underline, outline panel, slash-command menu, find / replace with case-sensitive and whole-word toggles, Mermaid diagram block, plus an in-editor **template gallery** (insert a starter, save the current document or selection as a template, import / export portable `tessera.doctemplate` files). |
+| **Slides** | Ordered slide deck with a smart **layout engine** (timeline / process / comparison / gallery / metric), per-block reorder / type-change / delete, stable UUID block IDs, native HTML5 drag-and-drop sidebar reorder, per-slide and deck word count, deck-wide find panel, image uploads inlined through a shared 5 MiB cap, speaker notes, presenter mode, a deck **template gallery** + save-as-template (portable `tessera.slidetemplate`), a **Brand Kit** (colours / fonts / logo / background) + portable brand packs (`tessera.brandpack`) + brand import from an existing `.pptx`, Marp Mode (Markdown + Shadow-DOM-isolated live preview), Diagram (Mermaid) block, and brand-faithful Marp CLI–backed PPTX / HTML / PDF export. |
+| **Sheet** | Spreadsheet workbook with a hand-rolled formula engine — tokenizer → Pratt parser → tree-walking evaluator over a `DependencyGraph` (topological recompute), **160+ functions** across math / conditional / logic / text / lookup / date / stats / financial categories, cross-sheet references (`Sheet2!A1`), multi-sheet tabs, column / row resize, rectangular and multi-cell selection, copy / paste, freeze panes, chart-from-selection, locale-aware number formats, auto-fill, persistent dependency cache, an in-editor **template gallery** + save-as-template (portable `tessera.sheettemplate`), CSV import, XLSX export with native formulas. |
+| **Base** | Database table with **20 field types** — six baseline (`text`, `number`, `date`, `select`, `checkbox`, `url`), seven advanced (`multi_select`, `formula`, `linked_record`, `rollup`, `lookup`, `attachment`, `long_text`), seven simple (`email`, `phone`, `currency`, `percent`, `rating`, `duration`, `auto_number`) — sorting, per-type filters, bulk-select with shift-click range and bulk-delete, manage-fields dialog (reorder / rename / type-change with data migration / delete), CSV / JSON import-export (RFC 4180), six views (Grid / Kanban / Calendar / Timeline / Gallery / Form) over the same records, a **template gallery** + save-as-template (portable `tessera.basetemplate`), and an **App mode** that flips the base into a lightweight internal app (app-shell nav, record-detail page, runtime data-entry forms, summary dashboard). |
 | **Infographic** | Drag-and-drop sections with icon + heading + body + stat blocks, color theme selector, vertical / horizontal / grid layouts, live HTML preview. |
 | **Landing Page** | Hero / features / stats / testimonials / CTA editor with `IconPicker`, exports to standalone HTML or PDF. |
 

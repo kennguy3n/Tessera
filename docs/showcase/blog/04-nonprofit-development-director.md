@@ -61,7 +61,10 @@ Progress, Product & Customer, Talent & Organization, Risks & Mitigations, Asks &
 Required, and Appendix. The deck runs through the slide editor's **layout engine** (a
 *Section Header* opener followed by *Title + Content* layouts), wears the **Editorial**
 theme, and carries **speaker notes** on every slide — so Sofia can rehearse in **present
-mode** (a fullscreen second window with her notes) straight from the generated deck. Source
+mode** (a fullscreen second window with her notes) straight from the generated deck. With a
+**Brand Kit** she applies the organization's colours, fonts, and logo in one click — the brand
+re-skins every slide and **survives PPTX / PDF export**, so the board sees a deck that looks
+unmistakably theirs rather than a generic template. Source
 JSON: [`outputs/board-update.json`](../artifacts/nonprofit/outputs/board-update.json).
 
 ## Why it matters

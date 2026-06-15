@@ -10,12 +10,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-#### Competitive upgrade — parallel feature streams
+#### Editors — template galleries, Base App mode, branded slides
 
-This release integrates eight parallel work streams (merged in the order
-arch → opt → perf → sec → dx → editors → tasks → kchat) that push every
-critique dimension toward best-in-class against Notion / Coda / Google
-Workspace while staying a local-first desktop app. See
+- **In-editor template galleries across all four editors.** Documents,
+  Sheets, Slides, and Bases each gain a built-in template gallery: insert a
+  starter, save the current artifact (or a selection) as a reusable template,
+  and import / export portable template files (`tessera.doctemplate`,
+  `tessera.sheettemplate`, `tessera.slidetemplate`, `tessera.basetemplate`),
+  each guarded by a hardened envelope-version check that mints a fresh id on
+  import.
+- **Base App mode.** A base flips between its builder view and a lightweight
+  **App** — an app-shell navigation derived from the schema, a record-detail
+  page, runtime data-entry forms that create records, and a summary dashboard
+  of counts and rollups over existing fields. Renderer-only; legacy bases
+  open unchanged with no `SCHEMA_VERSION` bump.
+- **Branded slides.** A **Brand Kit** re-skins any deck (colours, fonts,
+  logo, background) from a visual builder; brand packs (`tessera.brandpack`)
+  carry a brand between workspaces; the brand survives PPTX / PDF / HTML
+  export via Marp `style:` injection (byte-identical output when no kit is
+  active); a brand can be imported from an existing `.pptx` theme; and a
+  smart-layout engine renders timeline / process / comparison / gallery /
+  metric slides.
+
+#### AI — a deliberate, small-model Skills engine
+
+- **Multi-step Skills engine.** AI actions run as ordered skills with
+  per-step deterministic output checks and bounded auto-repair, per-step
+  model sampling, and a per-step output-format contract — so a small
+  on-device model produces structured, reliable output instead of one-shot
+  prose. Skills are wired into Slides, Sheets, and Base, are user-authorable,
+  and export / import as portable `tessera.skill` files.
+
+#### Create & templates — registry-derived cards and an enriched library
+
+- **Registry-derived Create flow.** Create cards are derived from the
+  template registry (`TemplateInfo` gains additive `industry`, `locale`, and
+  `category` fields), so dropping a template YAML surfaces a filterable card
+  with no `CreatePage` edit. The gallery filters by industry, language, and
+  country / jurisdiction.
+- **Enriched template library.** The bundled library now ships **287 English
+  templates** across the six artifact types (**530 including nine non-English
+  locales**, 27 localized variants per language), pre-tagged across 10
+  industries with country / jurisdiction variants. `bundled_templates.rs`
+  enforces that every non-English locale ships the full canonical set.
+
+#### Platform foundations
+
+The editors above build on a local-first desktop core (Electron + Rust,
+single-file encrypted SQLite) hardened across architecture, performance,
+security, and developer experience. See
 `docs/COMPETITIVE_SCORECARD.md` for the dimension-by-dimension scoring.
 
 - **Architecture — versioned migrations & typed errors.** New
