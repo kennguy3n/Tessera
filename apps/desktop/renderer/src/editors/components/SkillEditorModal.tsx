@@ -19,8 +19,12 @@ import {
   ALL_STEP_KINDS,
   MAX_CHECK_MAX_CHARS,
   MAX_CHECK_MIN_LINES,
+  MAX_MAX_TOKENS,
   MAX_SKILL_INPUTS,
   MAX_SKILL_STEPS,
+  MAX_TEMPERATURE,
+  MIN_MAX_TOKENS,
+  MIN_TEMPERATURE,
   availableVarsBeforeStep,
   emptyCheckDraft,
   emptyInputDraft,
@@ -419,6 +423,52 @@ export function SkillEditorModal({
                     aria-label={`Step ${i + 1} output variable`}
                   />
                 </label>
+                <details
+                  className="skill-editor-sampling-group"
+                  data-testid={`skill-editor-step-${i}-sampling`}
+                >
+                  <summary>Model sampling (optional)</summary>
+                  <p className="ai-panel-hint">
+                    Tune how the model samples this step. Leave blank to use the
+                    sensible default for a {KIND_LABELS[row.kind].toLowerCase()}{" "}
+                    step.
+                  </p>
+                  <div className="skill-editor-check-grid">
+                    <label className="ai-panel-field skill-editor-check-num">
+                      <span>Temperature</span>
+                      <input
+                        type="number"
+                        min={MIN_TEMPERATURE}
+                        max={MAX_TEMPERATURE}
+                        step={0.1}
+                        className="input"
+                        value={row.temperature ?? ""}
+                        onChange={(e) =>
+                          updateStep(i, { temperature: e.target.value })
+                        }
+                        placeholder="—"
+                        data-testid={`skill-editor-step-${i}-temperature`}
+                        aria-label={`Step ${i + 1} temperature`}
+                      />
+                    </label>
+                    <label className="ai-panel-field skill-editor-check-num">
+                      <span>Max tokens</span>
+                      <input
+                        type="number"
+                        min={MIN_MAX_TOKENS}
+                        max={MAX_MAX_TOKENS}
+                        className="input"
+                        value={row.maxTokens ?? ""}
+                        onChange={(e) =>
+                          updateStep(i, { maxTokens: e.target.value })
+                        }
+                        placeholder="—"
+                        data-testid={`skill-editor-step-${i}-maxtokens`}
+                        aria-label={`Step ${i + 1} max tokens`}
+                      />
+                    </label>
+                  </div>
+                </details>
                 <details
                   className="skill-editor-check-group"
                   data-testid={`skill-editor-step-${i}-check`}
