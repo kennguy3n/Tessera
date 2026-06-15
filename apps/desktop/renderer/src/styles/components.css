@@ -3954,6 +3954,12 @@
   align-items: center;
 }
 
+.slide-ai-mode-row {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
 .slide-ai-hint {
   margin: 0;
   font-size: var(--font-size-xs);

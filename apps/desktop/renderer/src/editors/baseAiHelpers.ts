@@ -74,7 +74,10 @@ export const AI_SCHEMA_FIELD_TYPES: ReadonlySet<FieldType> = new Set<FieldType>(
  */
 export function normalizeAiFieldType(raw: unknown): FieldType | null {
   if (typeof raw !== "string") return null;
-  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const key = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   const alias: Record<string, FieldType> = {
     text: "text",
     string: "text",
@@ -281,6 +284,109 @@ export function parseSchemaResponse(
       ? obj.tableName.trim()
       : "Table";
   return { ok: true, value: { tableName, fields } };
+}
+
+/** Match a Markdown heading line (`## TableName`) of any level. */
+const SCHEMA_HEADING_RE = /^\s*#{1,6}\s+(.+?)\s*$/;
+/** Match a `- field name: type` (or `*` / `•`) schema field line. */
+const SCHEMA_FIELD_RE = /^\s*[-*•]\s*(.+?)\s*:\s*(.+?)\s*$/;
+
+/**
+ * Resolve the field type for a skill-emitted `- name: type` line.
+ *
+ * A relationship type — `link → OtherTable`, `link -> X`, or a bare
+ * `link` — is materialised as `text`: the editor can't safely create a
+ * real `linked_record` from a prompt because the target table doesn't
+ * exist yet (and `linked_record` is excluded from the AI whitelist for
+ * exactly that reason), so the column is created as plain text the user
+ * can convert to a link afterwards. Everything else flows through
+ * {@link normalizeAiFieldType}, falling back to `text` for anything
+ * unrecognised — identical to {@link parseSchemaResponse}.
+ */
+function resolveSkillFieldType(raw: string): FieldType {
+  const lower = raw.trim().toLowerCase();
+  if (lower.startsWith("link") || lower.includes("→") || lower.includes("->")) {
+    return "text";
+  }
+  return normalizeAiFieldType(raw) ?? "text";
+}
+
+/**
+ * Parse the Markdown schema a deliberate Base *skill* emits — one
+ * `## TableName` heading per table, each followed by `- field_name:
+ * type` lines — into one validated {@link AiSchemaSuggestion} per
+ * table.
+ *
+ * Unlike {@link parseSchemaResponse} (which consumes the single-shot
+ * JSON prompt's output), the skill's final step is documented to emit
+ * this human-readable structure, so the apply path parses it directly
+ * rather than forcing the small model back into brittle JSON.
+ *
+ * The SAME safety rules apply: unknown types fall back to `text`, field
+ * names are deduped case-insensitively within a table, reserved names
+ * are dropped, and `select`/`multi_select` fields start with an empty
+ * option list (the skill format carries no inline options). Tables with
+ * no usable fields are skipped; the parse fails only when no table with
+ * at least one field can be recovered, so a bad completion can never
+ * silently create empty tables.
+ */
+export function parseSchemaMarkdown(
+  text: string,
+): AiParseResult<AiSchemaSuggestion[]> {
+  if (typeof text !== "string" || text.trim() === "") {
+    return { ok: false, error: "The skill returned no schema." };
+  }
+  // Strip code fences a model may wrap the schema in, keeping inner text.
+  const cleaned = text.replace(/```[a-zA-Z]*/g, "").replace(/```/g, "");
+  const lines = cleaned.split(/\r?\n/);
+
+  const tables: AiSchemaSuggestion[] = [];
+  let current: {
+    tableName: string;
+    fields: BaseField[];
+    seen: Set<string>;
+  } | null = null;
+
+  const flush = () => {
+    if (current && current.fields.length > 0) {
+      tables.push({ tableName: current.tableName, fields: current.fields });
+    }
+  };
+
+  for (const rawLine of lines) {
+    const heading = SCHEMA_HEADING_RE.exec(rawLine);
+    if (heading) {
+      flush();
+      const name = heading[1].trim();
+      current = {
+        tableName: name === "" ? "Table" : name,
+        fields: [],
+        seen: new Set(),
+      };
+      continue;
+    }
+    if (!current) continue;
+    const field = SCHEMA_FIELD_RE.exec(rawLine);
+    if (!field) continue;
+    const name = field[1].trim();
+    if (name === "") continue;
+    const key = name.toLowerCase();
+    if (current.seen.has(key)) continue;
+    if (isReservedFieldName(name)) continue;
+    current.seen.add(key);
+    const type = resolveSkillFieldType(field[2]);
+    const entry: BaseField = { name, type };
+    if (type === "select" || type === "multi_select") {
+      entry.options = [];
+    }
+    current.fields.push(entry);
+  }
+  flush();
+
+  if (tables.length === 0) {
+    return { ok: false, error: "The skill's schema had no usable tables." };
+  }
+  return { ok: true, value: tables };
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -496,9 +602,7 @@ export function parseFillResponse(
       const out: string[] = [];
       for (const tok of tokens) {
         if (opts.length > 0) {
-          const match = opts.find(
-            (o) => o.toLowerCase() === tok.toLowerCase(),
-          );
+          const match = opts.find((o) => o.toLowerCase() === tok.toLowerCase());
           if (!match) {
             return {
               ok: false,

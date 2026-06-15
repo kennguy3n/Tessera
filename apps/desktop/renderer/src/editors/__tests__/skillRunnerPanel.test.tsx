@@ -25,7 +25,14 @@ function installPendingModel(): { cancelJob: ReturnType<typeof vi.fn> } {
   const generate = vi.fn(async () => undefined);
   const cancelJob = vi.fn().mockResolvedValue(undefined);
   const api = window.tessera as unknown as { model: unknown };
-  api.model = { status: vi.fn(), start: vi.fn(), stop: vi.fn(), generate, cancelJob, onToken };
+  api.model = {
+    status: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    generate,
+    cancelJob,
+    onToken,
+  };
   return { cancelJob };
 }
 
@@ -107,8 +114,11 @@ describe("SkillRunnerPanel", () => {
     await user.click(screen.getByTestId("skill-run"));
 
     expect(await screen.findByTestId("skill-error")).toBeInTheDocument();
-    const generate = (window.tessera as unknown as { model: { generate: ReturnType<typeof vi.fn> } })
-      .model.generate;
+    const generate = (
+      window.tessera as unknown as {
+        model: { generate: ReturnType<typeof vi.fn> };
+      }
+    ).model.generate;
     expect(generate).not.toHaveBeenCalled();
   });
 
@@ -143,6 +153,50 @@ describe("SkillRunnerPanel", () => {
 
     await user.click(screen.getByTestId("skill-apply"));
     expect(onApply).toHaveBeenCalledWith("The polished final passage.");
+  });
+
+  it("fires onRunStart on the initial run and again on Retry", async () => {
+    // Two full runs' worth of step responses so Retry's re-run completes.
+    installModel([
+      "- a\n- b",
+      "first draft",
+      "NONE",
+      "final one",
+      "- a\n- b",
+      "second draft",
+      "NONE",
+      "final two",
+    ]);
+    const onRunStart = vi.fn();
+    const onApply = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(
+      <SkillRunnerPanel
+        skill={DOCUMENT_DELIBERATE_DRAFT}
+        onApply={onApply}
+        onRunStart={onRunStart}
+      />,
+    );
+
+    const topic = container.querySelector(
+      "#skill-input-topic",
+    ) as HTMLTextAreaElement;
+    await user.type(topic, "Quarterly customer-support summary");
+
+    // The Run button fires onRunStart once before the chain starts.
+    await user.click(screen.getByTestId("skill-run"));
+    expect(onRunStart).toHaveBeenCalledTimes(1);
+    expect(await screen.findByTestId("skill-final")).toHaveTextContent(
+      "final one",
+    );
+
+    // Retry shares the same `run` callback, so it must fire onRunStart
+    // again — this is what lets a host clear a stale apply-time error.
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRunStart).toHaveBeenCalledTimes(2);
+    expect(await screen.findByTestId("skill-final")).toHaveTextContent(
+      "final two",
+    );
   });
 
   it("exposes an imperative handle that runs and cancels the skill", async () => {

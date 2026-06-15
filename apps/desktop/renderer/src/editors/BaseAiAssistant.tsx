@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { BaseField, BaseRecord } from "./baseEditorTypes";
 import {
   buildSchemaPrompt,
@@ -9,8 +15,11 @@ import {
   parseFillResponse,
   buildSummarizePrompt,
   parseTextResponse,
+  parseSchemaMarkdown,
   type AiSchemaSuggestion,
 } from "./baseAiHelpers";
+import { SkillRunnerPanel } from "./components/SkillRunnerPanel";
+import { getSkillsForSurface } from "../skills/skillLibrary";
 import { evaluateBaseFormula } from "./baseFormulaEngine";
 import { isComputedFieldType } from "./baseEditorHelpers";
 import {
@@ -45,6 +54,10 @@ import {
  */
 
 type Mode = "schema" | "fields" | "formula" | "fill" | "summarize";
+
+/** Top-level panel mode: the existing single-shot quick actions, or the
+ *  deliberate multi-step Skills runner. */
+type BasePanelMode = "quick" | "skills";
 
 export interface BaseAiAssistantProps {
   fields: BaseField[];
@@ -109,37 +122,42 @@ function useModelRunner() {
     };
   }, []);
 
-  return useCallback((prompt: string, maxTokens?: number): Promise<RunHandle> => {
-    const api = typeof window !== "undefined" ? window.tessera : undefined;
-    if (!api?.model?.generate) {
-      return Promise.reject(new Error("The on-device model is unavailable."));
-    }
-    if (runRef.current) {
-      return Promise.reject(new Error("A generation is already in progress."));
-    }
-    return new Promise<RunHandle>((resolve, reject) => {
-      runRef.current = { buffer: "", resolve, reject };
-      notifyGenerationStarted();
-      api.model
-        .generate({ prompt, maxTokens })
-        .then((res) => {
-          // Battery-gated dispatch resolves a sentinel instead of
-          // streaming — surface it and clear the pending run.
-          if (res && typeof res === "object" && "status" in res) {
+  return useCallback(
+    (prompt: string, maxTokens?: number): Promise<RunHandle> => {
+      const api = typeof window !== "undefined" ? window.tessera : undefined;
+      if (!api?.model?.generate) {
+        return Promise.reject(new Error("The on-device model is unavailable."));
+      }
+      if (runRef.current) {
+        return Promise.reject(
+          new Error("A generation is already in progress."),
+        );
+      }
+      return new Promise<RunHandle>((resolve, reject) => {
+        runRef.current = { buffer: "", resolve, reject };
+        notifyGenerationStarted();
+        api.model
+          .generate({ prompt, maxTokens })
+          .then((res) => {
+            // Battery-gated dispatch resolves a sentinel instead of
+            // streaming — surface it and clear the pending run.
+            if (res && typeof res === "object" && "status" in res) {
+              runRef.current = null;
+              reject(
+                new Error(
+                  "Generation paused — device battery is below 20%. Plug in to continue.",
+                ),
+              );
+            }
+          })
+          .catch((e: unknown) => {
             runRef.current = null;
-            reject(
-              new Error(
-                "Generation paused — device battery is below 20%. Plug in to continue.",
-              ),
-            );
-          }
-        })
-        .catch((e: unknown) => {
-          runRef.current = null;
-          reject(e instanceof Error ? e : new Error(String(e)));
-        });
-    });
-  }, []);
+            reject(e instanceof Error ? e : new Error(String(e)));
+          });
+      });
+    },
+    [],
+  );
 }
 
 /**
@@ -181,6 +199,14 @@ export default function BaseAiAssistant({
   const run = useModelRunner();
   const { isActive, cancel } = useActiveGeneration();
 
+  // Quick (single-shot modes) vs. Skills (deliberate multi-step runner).
+  const [panelMode, setPanelMode] = useState<BasePanelMode>("quick");
+  const baseSkills = useMemo(() => getSkillsForSurface("base"), []);
+  const [skillId, setSkillId] = useState(baseSkills[0]?.id ?? "");
+  const selectedSkill =
+    baseSkills.find((s) => s.id === skillId) ?? baseSkills[0];
+  const [skillError, setSkillError] = useState<string | null>(null);
+
   // Per-mode result previews.
   const [schemaPreview, setSchemaPreview] = useState<AiSchemaSuggestion | null>(
     null,
@@ -191,9 +217,10 @@ export default function BaseAiAssistant({
 
   // Fill state.
   const [fillFieldName, setFillFieldName] = useState("");
-  const [fillProgress, setFillProgress] = useState<{ done: number; total: number } | null>(
-    null,
-  );
+  const [fillProgress, setFillProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [fillPreview, setFillPreview] = useState<Map<string, unknown> | null>(
     null,
   );
@@ -232,6 +259,39 @@ export default function BaseAiAssistant({
     setFillProgress(null);
     setError(null);
   }, []);
+
+  // Apply a skill's final Markdown schema: parse it into one or more
+  // validated table suggestions and create each table. A parse failure
+  // surfaces inline and creates nothing (never a blind/partial apply).
+  const applySchemaFromSkill = useCallback(
+    (text: string) => {
+      const res = parseSchemaMarkdown(text);
+      if (!res.ok) {
+        setSkillError(res.error);
+        return;
+      }
+      setSkillError(null);
+      for (const table of res.value) {
+        onCreateTable(table.tableName, table.fields);
+      }
+      onClose();
+    },
+    [onCreateTable, onClose],
+  );
+
+  // Switching modes clears any stale preview/error and cancels an
+  // in-flight quick generation so it can't stream on invisibly. A skill
+  // chain (skills → quick) is torn down by SkillRunnerPanel's own unmount.
+  const switchPanelMode = useCallback(
+    (next: BasePanelMode) => {
+      if (next === panelMode) return;
+      if (next === "skills" && isActive) void cancel();
+      setSkillError(null);
+      clearPreviews();
+      setPanelMode(next);
+    },
+    [panelMode, isActive, cancel, clearPreviews],
+  );
 
   const handleGenerate = useCallback(async () => {
     // `fill` has its own bounded row-by-row driver (`handleFill`); the
@@ -285,7 +345,8 @@ export default function BaseAiAssistant({
           selectedIds.size > 0
             ? records.filter((r) => selectedIds.has(r.id))
             : records;
-        if (scope.length === 0) throw new Error("There are no records to summarize.");
+        if (scope.length === 0)
+          throw new Error("There are no records to summarize.");
         const { text } = await run(
           buildSummarizePrompt(scope, fields, prompt),
           400,
@@ -387,7 +448,8 @@ export default function BaseAiAssistant({
   }, [cancel]);
 
   const promptPlaceholder: Record<Mode, string> = {
-    schema: "Describe the table you want, e.g. 'a CRM of customers with stage and deal value'",
+    schema:
+      "Describe the table you want, e.g. 'a CRM of customers with stage and deal value'",
     fields: "What is this table about? e.g. 'project tasks'",
     formula: "Describe the formula, e.g. 'price times quantity with 8% tax'",
     fill: "Optional instruction, e.g. 'classify sentiment as Positive/Negative'",
@@ -458,245 +520,393 @@ export default function BaseAiAssistant({
           Runs entirely on your device. No data leaves Tessera.
         </p>
 
-        <div
-          role="tablist"
-          aria-label="AI mode"
-          style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", marginBottom: "0.6rem" }}
-        >
-          {(Object.keys(MODE_LABELS) as Mode[]).map((m) => (
+        {baseSkills.length > 0 && (
+          <div
+            role="group"
+            aria-label="Assistant mode"
+            style={{ display: "flex", gap: "0.3rem", marginBottom: "0.6rem" }}
+          >
             <button
-              key={m}
               type="button"
-              role="tab"
-              aria-selected={mode === m}
               className="btn-sm"
+              aria-pressed={panelMode === "quick"}
               disabled={busy}
-              onClick={() => {
-                setMode(m);
-                clearPreviews();
-              }}
+              onClick={() => switchPanelMode("quick")}
+              data-testid="base-ai-mode-quick"
               style={{
                 background:
-                  mode === m
+                  panelMode === "quick"
                     ? "var(--color-primary-soft, #ede9fe)"
                     : "transparent",
-                fontWeight: mode === m ? 600 : 400,
+                fontWeight: panelMode === "quick" ? 600 : 400,
               }}
             >
-              {MODE_LABELS[m]}
+              Quick
             </button>
-          ))}
-        </div>
-
-        {mode === "fill" && (
-          <label
-            style={{ display: "block", fontSize: "0.8rem", marginBottom: "0.4rem" }}
-          >
-            Field to fill
-            <select
-              className="input"
-              value={fillFieldName}
-              onChange={(e) => setFillFieldName(e.target.value)}
+            <button
+              type="button"
+              className="btn-sm"
+              aria-pressed={panelMode === "skills"}
               disabled={busy}
-              style={{ display: "block", width: "100%", marginTop: "0.2rem" }}
-            >
-              <option value="">Choose a field…</option>
-              {fillTargets.map((f) => (
-                <option key={f.name} value={f.name}>
-                  {f.name} ({f.type})
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        <textarea
-          className="input"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder={promptPlaceholder[mode]}
-          rows={3}
-          disabled={busy}
-          style={{ width: "100%", resize: "vertical" }}
-        />
-
-        <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.6rem", alignItems: "center" }}>
-          {mode === "fill" ? (
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => void handleFill()}
-              disabled={busy || fillFieldName === ""}
-            >
-              Generate
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => void handleGenerate()}
-              disabled={busy || (mode !== "summarize" && prompt.trim() === "")}
-            >
-              Generate
-            </button>
-          )}
-          {isActive && (
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={handleCancel}
-              data-testid="base-ai-stop"
-            >
-              Stop
-            </button>
-          )}
-          {fillProgress && (
-            <span style={{ fontSize: "0.78rem", color: "var(--color-text-secondary, #6b7280)" }}>
-              {fillProgress.done}/{fillProgress.total}
-            </span>
-          )}
-        </div>
-
-        {error && (
-          <div
-            role="alert"
-            style={{
-              marginTop: "0.6rem",
-              fontSize: "0.82rem",
-              color: "var(--color-danger, #b91c1c)",
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {/* ── Previews ───────────────────────────────────────────── */}
-
-        {schemaPreview && (
-          <div style={{ marginTop: "0.8rem" }}>
-            <strong style={{ fontSize: "0.9rem" }}>
-              Table: {schemaPreview.tableName}
-            </strong>
-            <ul style={{ margin: "0.3rem 0", paddingLeft: "1.1rem", fontSize: "0.85rem" }}>
-              {schemaPreview.fields.map((f) => (
-                <li key={f.name}>
-                  {f.name} — <em>{f.type}</em>
-                  {f.options?.length ? ` (${f.options.join(", ")})` : ""}
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => {
-                onCreateTable(schemaPreview.tableName, schemaPreview.fields);
-                onClose();
-              }}
-            >
-              Create table
-            </button>
-          </div>
-        )}
-
-        {fieldsPreview && (
-          <div style={{ marginTop: "0.8rem" }}>
-            <strong style={{ fontSize: "0.9rem" }}>Suggested fields</strong>
-            <ul style={{ margin: "0.3rem 0", paddingLeft: "1.1rem", fontSize: "0.85rem" }}>
-              {fieldsPreview.map((f) => (
-                <li key={f.name}>
-                  {f.name} — <em>{f.type}</em>
-                  {f.options?.length ? ` (${f.options.join(", ")})` : ""}
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => {
-                onAddFields(fieldsPreview);
-                onClose();
-              }}
-            >
-              Add {fieldsPreview.length} field
-              {fieldsPreview.length === 1 ? "" : "s"}
-            </button>
-          </div>
-        )}
-
-        {formulaPreview && (
-          <div style={{ marginTop: "0.8rem" }}>
-            <strong style={{ fontSize: "0.9rem" }}>Formula</strong>
-            <pre
+              onClick={() => switchPanelMode("skills")}
+              data-testid="base-ai-mode-skills"
               style={{
-                background: "var(--color-bg-secondary, #f9fafb)",
-                borderRadius: "var(--radius-md, 8px)",
-                padding: "0.5rem",
-                fontSize: "0.85rem",
-                whiteSpace: "pre-wrap",
-                margin: "0.3rem 0",
+                background:
+                  panelMode === "skills"
+                    ? "var(--color-primary-soft, #ede9fe)"
+                    : "transparent",
+                fontWeight: panelMode === "skills" ? 600 : 400,
               }}
             >
-              {formulaPreview}
-            </pre>
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => {
-                onAddFields([
-                  {
-                    name: uniqueFormulaName(fields),
-                    type: "formula",
-                    formula: formulaPreview,
-                  },
-                ]);
-                onClose();
-              }}
-            >
-              Add as formula field
+              Skill
             </button>
           </div>
         )}
 
-        {fillPreview && (
-          <div style={{ marginTop: "0.8rem" }}>
-            <strong style={{ fontSize: "0.9rem" }}>
-              Preview ({fillPreview.size} value
-              {fillPreview.size === 1 ? "" : "s"})
-            </strong>
-            <ul style={{ margin: "0.3rem 0", paddingLeft: "1.1rem", fontSize: "0.82rem", maxHeight: "180px", overflowY: "auto" }}>
-              {Array.from(fillPreview.entries())
-                .slice(0, 20)
-                .map(([id, value]) => (
-                  <li key={id}>{String(value)}</li>
-                ))}
-            </ul>
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => {
-                onApplyCellValues(fillFieldName, fillPreview);
-                onClose();
+        {panelMode === "skills" && selectedSkill ? (
+          <>
+            {baseSkills.length > 1 && (
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.8rem",
+                  marginBottom: "0.4rem",
+                }}
+              >
+                Skill
+                <select
+                  className="input"
+                  value={skillId}
+                  onChange={(e) => setSkillId(e.target.value)}
+                  aria-label="Choose a skill"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: "0.2rem",
+                  }}
+                >
+                  {baseSkills.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <SkillRunnerPanel
+              key={selectedSkill.id}
+              skill={selectedSkill}
+              onApply={applySchemaFromSkill}
+              onRunStart={() => setSkillError(null)}
+              applyLabel="Create tables"
+            />
+            {skillError && (
+              <div
+                role="alert"
+                data-testid="base-ai-skill-error"
+                style={{
+                  marginTop: "0.6rem",
+                  fontSize: "0.82rem",
+                  color: "var(--color-danger, #b91c1c)",
+                }}
+              >
+                {skillError}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div
+              role="tablist"
+              aria-label="AI mode"
+              style={{
+                display: "flex",
+                gap: "0.3rem",
+                flexWrap: "wrap",
+                marginBottom: "0.6rem",
               }}
             >
-              Apply to {fillPreview.size} record
-              {fillPreview.size === 1 ? "" : "s"}
-            </button>
-          </div>
-        )}
+              {(Object.keys(MODE_LABELS) as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === m}
+                  className="btn-sm"
+                  disabled={busy}
+                  onClick={() => {
+                    setMode(m);
+                    clearPreviews();
+                  }}
+                  style={{
+                    background:
+                      mode === m
+                        ? "var(--color-primary-soft, #ede9fe)"
+                        : "transparent",
+                    fontWeight: mode === m ? 600 : 400,
+                  }}
+                >
+                  {MODE_LABELS[m]}
+                </button>
+              ))}
+            </div>
 
-        {summary && (
-          <div
-            style={{
-              marginTop: "0.8rem",
-              fontSize: "0.88rem",
-              whiteSpace: "pre-wrap",
-              background: "var(--color-bg-secondary, #f9fafb)",
-              borderRadius: "var(--radius-md, 8px)",
-              padding: "0.6rem",
-            }}
-          >
-            {summary}
-          </div>
+            {mode === "fill" && (
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.8rem",
+                  marginBottom: "0.4rem",
+                }}
+              >
+                Field to fill
+                <select
+                  className="input"
+                  value={fillFieldName}
+                  onChange={(e) => setFillFieldName(e.target.value)}
+                  disabled={busy}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: "0.2rem",
+                  }}
+                >
+                  <option value="">Choose a field…</option>
+                  {fillTargets.map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.name} ({f.type})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <textarea
+              className="input"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={promptPlaceholder[mode]}
+              rows={3}
+              disabled={busy}
+              style={{ width: "100%", resize: "vertical" }}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.4rem",
+                marginTop: "0.6rem",
+                alignItems: "center",
+              }}
+            >
+              {mode === "fill" ? (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => void handleFill()}
+                  disabled={busy || fillFieldName === ""}
+                >
+                  Generate
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => void handleGenerate()}
+                  disabled={
+                    busy || (mode !== "summarize" && prompt.trim() === "")
+                  }
+                >
+                  Generate
+                </button>
+              )}
+              {isActive && (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={handleCancel}
+                  data-testid="base-ai-stop"
+                >
+                  Stop
+                </button>
+              )}
+              {fillProgress && (
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--color-text-secondary, #6b7280)",
+                  }}
+                >
+                  {fillProgress.done}/{fillProgress.total}
+                </span>
+              )}
+            </div>
+
+            {error && (
+              <div
+                role="alert"
+                style={{
+                  marginTop: "0.6rem",
+                  fontSize: "0.82rem",
+                  color: "var(--color-danger, #b91c1c)",
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            {/* ── Previews ───────────────────────────────────────────── */}
+
+            {schemaPreview && (
+              <div style={{ marginTop: "0.8rem" }}>
+                <strong style={{ fontSize: "0.9rem" }}>
+                  Table: {schemaPreview.tableName}
+                </strong>
+                <ul
+                  style={{
+                    margin: "0.3rem 0",
+                    paddingLeft: "1.1rem",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {schemaPreview.fields.map((f) => (
+                    <li key={f.name}>
+                      {f.name} — <em>{f.type}</em>
+                      {f.options?.length ? ` (${f.options.join(", ")})` : ""}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => {
+                    onCreateTable(
+                      schemaPreview.tableName,
+                      schemaPreview.fields,
+                    );
+                    onClose();
+                  }}
+                >
+                  Create table
+                </button>
+              </div>
+            )}
+
+            {fieldsPreview && (
+              <div style={{ marginTop: "0.8rem" }}>
+                <strong style={{ fontSize: "0.9rem" }}>Suggested fields</strong>
+                <ul
+                  style={{
+                    margin: "0.3rem 0",
+                    paddingLeft: "1.1rem",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {fieldsPreview.map((f) => (
+                    <li key={f.name}>
+                      {f.name} — <em>{f.type}</em>
+                      {f.options?.length ? ` (${f.options.join(", ")})` : ""}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => {
+                    onAddFields(fieldsPreview);
+                    onClose();
+                  }}
+                >
+                  Add {fieldsPreview.length} field
+                  {fieldsPreview.length === 1 ? "" : "s"}
+                </button>
+              </div>
+            )}
+
+            {formulaPreview && (
+              <div style={{ marginTop: "0.8rem" }}>
+                <strong style={{ fontSize: "0.9rem" }}>Formula</strong>
+                <pre
+                  style={{
+                    background: "var(--color-bg-secondary, #f9fafb)",
+                    borderRadius: "var(--radius-md, 8px)",
+                    padding: "0.5rem",
+                    fontSize: "0.85rem",
+                    whiteSpace: "pre-wrap",
+                    margin: "0.3rem 0",
+                  }}
+                >
+                  {formulaPreview}
+                </pre>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => {
+                    onAddFields([
+                      {
+                        name: uniqueFormulaName(fields),
+                        type: "formula",
+                        formula: formulaPreview,
+                      },
+                    ]);
+                    onClose();
+                  }}
+                >
+                  Add as formula field
+                </button>
+              </div>
+            )}
+
+            {fillPreview && (
+              <div style={{ marginTop: "0.8rem" }}>
+                <strong style={{ fontSize: "0.9rem" }}>
+                  Preview ({fillPreview.size} value
+                  {fillPreview.size === 1 ? "" : "s"})
+                </strong>
+                <ul
+                  style={{
+                    margin: "0.3rem 0",
+                    paddingLeft: "1.1rem",
+                    fontSize: "0.82rem",
+                    maxHeight: "180px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {Array.from(fillPreview.entries())
+                    .slice(0, 20)
+                    .map(([id, value]) => (
+                      <li key={id}>{String(value)}</li>
+                    ))}
+                </ul>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => {
+                    onApplyCellValues(fillFieldName, fillPreview);
+                    onClose();
+                  }}
+                >
+                  Apply to {fillPreview.size} record
+                  {fillPreview.size === 1 ? "" : "s"}
+                </button>
+              </div>
+            )}
+
+            {summary && (
+              <div
+                style={{
+                  marginTop: "0.8rem",
+                  fontSize: "0.88rem",
+                  whiteSpace: "pre-wrap",
+                  background: "var(--color-bg-secondary, #f9fafb)",
+                  borderRadius: "var(--radius-md, 8px)",
+                  padding: "0.6rem",
+                }}
+              >
+                {summary}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

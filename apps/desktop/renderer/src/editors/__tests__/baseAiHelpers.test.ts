@@ -12,6 +12,7 @@ import {
   parseFillResponse,
   buildSummarizePrompt,
   parseTextResponse,
+  parseSchemaMarkdown,
 } from "../baseAiHelpers";
 import type { BaseField } from "../baseEditorTypes";
 
@@ -49,7 +50,9 @@ describe("extractJson", () => {
   });
 
   it("ignores prose around the JSON", () => {
-    expect(extractJson('Sure! Here you go:\n{"a":1}\nHope that helps.')).toEqual({
+    expect(
+      extractJson('Sure! Here you go:\n{"a":1}\nHope that helps.'),
+    ).toEqual({
       a: 1,
     });
   });
@@ -284,14 +287,18 @@ describe("buildFillPrompt", () => {
     );
     expect(p).toContain("yes or no");
     // The hint must elicit a value parseFillResponse actually accepts.
-    expect(parseFillResponse("yes", { name: "Done", type: "checkbox" })).toEqual({
+    expect(
+      parseFillResponse("yes", { name: "Done", type: "checkbox" }),
+    ).toEqual({
       ok: true,
       value: true,
     });
-    expect(parseFillResponse("no", { name: "Done", type: "checkbox" })).toEqual({
-      ok: true,
-      value: false,
-    });
+    expect(parseFillResponse("no", { name: "Done", type: "checkbox" })).toEqual(
+      {
+        ok: true,
+        value: false,
+      },
+    );
   });
 });
 
@@ -315,10 +322,12 @@ describe("parseFillResponse", () => {
     expect(
       parseFillResponse("yes", { name: "Done", type: "checkbox" }),
     ).toEqual({ ok: true, value: true });
-    expect(parseFillResponse("No", { name: "Done", type: "checkbox" })).toEqual({
-      ok: true,
-      value: false,
-    });
+    expect(parseFillResponse("No", { name: "Done", type: "checkbox" })).toEqual(
+      {
+        ok: true,
+        value: false,
+      },
+    );
     expect(
       parseFillResponse("maybe", { name: "Done", type: "checkbox" }).ok,
     ).toBe(false);
@@ -400,5 +409,118 @@ describe("buildSummarizePrompt / parseTextResponse", () => {
       value: "A summary.",
     });
     expect(parseTextResponse("   ").ok).toBe(false);
+  });
+});
+
+describe("parseSchemaMarkdown", () => {
+  it("parses multiple tables with their fields and types", () => {
+    const md = [
+      "## Companies",
+      "- name: text",
+      "- revenue: currency",
+      "",
+      "## Deals",
+      "- title: text",
+      "- amount: currency",
+      "- stage: single select",
+    ].join("\n");
+    const res = parseSchemaMarkdown(md);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value).toHaveLength(2);
+    const [companies, deals] = res.value;
+    expect(companies.tableName).toBe("Companies");
+    expect(companies.fields).toEqual([
+      { name: "name", type: "text" },
+      { name: "revenue", type: "currency" },
+    ]);
+    expect(deals.tableName).toBe("Deals");
+    expect(deals.fields).toEqual([
+      { name: "title", type: "text" },
+      { name: "amount", type: "currency" },
+      { name: "stage", type: "select", options: [] },
+    ]);
+  });
+
+  it("materialises link relationships (→, ->, bare) as plain text", () => {
+    const md = [
+      "## Contacts",
+      "- name: text",
+      "- company: link → Companies",
+      "- account: link -> Companies",
+      "- manager: link",
+    ].join("\n");
+    const res = parseSchemaMarkdown(md);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value[0].fields).toEqual([
+      { name: "name", type: "text" },
+      { name: "company", type: "text" },
+      { name: "account", type: "text" },
+      { name: "manager", type: "text" },
+    ]);
+  });
+
+  it("gives select / multi_select fields an empty option list", () => {
+    const res = parseSchemaMarkdown(
+      "## T\n- status: select\n- tags: multi-select",
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value[0].fields).toEqual([
+      { name: "status", type: "select", options: [] },
+      { name: "tags", type: "multi_select", options: [] },
+    ]);
+  });
+
+  it("dedupes field names case-insensitively, keeping the first", () => {
+    const res = parseSchemaMarkdown(
+      "## T\n- Name: text\n- name: currency\n- amount: number",
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value[0].fields).toEqual([
+      { name: "Name", type: "text" },
+      { name: "amount", type: "number" },
+    ]);
+  });
+
+  it("drops reserved field names", () => {
+    const res = parseSchemaMarkdown("## T\n- id: text\n- title: text");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value[0].fields).toEqual([{ name: "title", type: "text" }]);
+  });
+
+  it("falls back to text for unrecognised types", () => {
+    const res = parseSchemaMarkdown("## T\n- where: geolocation");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value[0].fields).toEqual([{ name: "where", type: "text" }]);
+  });
+
+  it("skips tables that have no usable fields", () => {
+    const md = ["## Empty", "(no fields here)", "## Real", "- a: text"].join(
+      "\n",
+    );
+    const res = parseSchemaMarkdown(md);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value).toHaveLength(1);
+    expect(res.value[0].tableName).toBe("Real");
+  });
+
+  it("strips surrounding code fences", () => {
+    const res = parseSchemaMarkdown("```markdown\n## T\n- a: text\n```");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value[0].fields).toEqual([{ name: "a", type: "text" }]);
+  });
+
+  it("fails on empty input and on schemas with zero usable tables", () => {
+    expect(parseSchemaMarkdown("").ok).toBe(false);
+    expect(parseSchemaMarkdown("   ").ok).toBe(false);
+    // A heading with no parseable field lines yields no table.
+    expect(parseSchemaMarkdown("## Only a heading\njust prose").ok).toBe(false);
   });
 });

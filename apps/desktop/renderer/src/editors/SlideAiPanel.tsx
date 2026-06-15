@@ -22,7 +22,7 @@
  * keyboard-reachable with the shared focus ring, and motion is gated
  * on `prefers-reduced-motion` in CSS.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useModelGeneration } from "../hooks/useModelGeneration";
 import {
   buildDeckPrompt,
@@ -47,6 +47,8 @@ import {
 } from "./slideAiHelpers";
 import type { Slide, SlideLayout } from "./slideEditorTypes";
 import { getSlideLayout } from "./slideLayouts";
+import { SkillRunnerPanel } from "./components/SkillRunnerPanel";
+import { getSkillsForSurface } from "../skills/skillLibrary";
 
 /**
  * Probe the local text model's availability so the AI surface can gate
@@ -99,9 +101,13 @@ export interface SlideDeckGeneratorProps {
   onApply: (slides: Slide[]) => void;
 }
 
+type DeckPanelMode = "quick" | "skills";
+
 /**
  * "Generate a deck" panel: prompt + options → streamed outline preview
- * → parsed slides → Apply.
+ * → parsed slides → Apply. A "Skills" tab swaps the one-shot prompt for
+ * a deliberate multi-step skill (outline → expand → tighten) whose final
+ * deck markdown flows through the SAME parse → apply path.
  */
 export function SlideDeckGenerator({
   open,
@@ -116,6 +122,59 @@ export function SlideDeckGenerator({
   const [slideCount, setSlideCount] = useState(6);
   const [preview, setPreview] = useState<Slide[] | null>(null);
   const [noUsableDeck, setNoUsableDeck] = useState(false);
+
+  const [panelMode, setPanelMode] = useState<DeckPanelMode>("quick");
+  const deckSkills = useMemo(() => getSkillsForSurface("slide"), []);
+  const [skillId, setSkillId] = useState(deckSkills[0]?.id ?? "");
+  const selectedSkill =
+    deckSkills.find((s) => s.id === skillId) ?? deckSkills[0];
+  const [skillNoUsableDeck, setSkillNoUsableDeck] = useState(false);
+
+  // A skill's final output is the same `## heading` + `- bullet` deck
+  // markdown the quick generator parses, so the apply path is identical:
+  // parse -> slides -> replace the deck wholesale. A skill that produced
+  // no parseable slides surfaces the same "no usable deck" guidance
+  // rather than silently clearing the deck.
+  const applyDeckFromSkill = useCallback(
+    (text: string) => {
+      const slides = outlineToSlides(parseDeckOutline(text));
+      if (slides.length === 0) {
+        setSkillNoUsableDeck(true);
+        return;
+      }
+      setSkillNoUsableDeck(false);
+      onApply(slides);
+      onClose();
+    },
+    [onApply, onClose],
+  );
+
+  // `useModelGeneration` returns a fresh object literal every render, but
+  // its `cancel`/`reset` callbacks are stable (memoised in the hook).
+  // Depend on those stable refs (plus the `isStreaming` value) instead of
+  // the whole `gen` object so `switchDeckMode` isn't needlessly recreated
+  // every render — mirroring SheetAiPanel's `switchSheetMode`.
+  const { isStreaming: genStreaming, cancel: cancelGen, reset: resetGen } = gen;
+
+  // Switching modes cancels an in-flight quick generation (so it can't
+  // keep streaming invisibly once the Stop button is hidden in skills
+  // mode) and clears any stale quick preview / streamed text / error /
+  // skill notice. `reset()` drops the hook's `text` + `error` so a prior
+  // run's stream or failure can't ghost back on a return to quick mode.
+  // The skill chain (skills -> quick) is torn down by SkillRunnerPanel's
+  // own unmount.
+  const switchDeckMode = useCallback(
+    (next: DeckPanelMode) => {
+      if (next === panelMode) return;
+      if (next === "skills" && genStreaming) cancelGen();
+      resetGen();
+      setPreview(null);
+      setNoUsableDeck(false);
+      setSkillNoUsableDeck(false);
+      setPanelMode(next);
+    },
+    [panelMode, genStreaming, cancelGen, resetGen],
+  );
 
   const onGenerate = useCallback(async () => {
     const trimmed = topic.trim();
@@ -176,127 +235,194 @@ export function SlideDeckGenerator({
         </p>
       )}
 
-      <label className="slide-ai-field">
-        <span className="slide-ai-field-label">Topic or brief</span>
-        <textarea
-          className="slide-ai-textarea"
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          placeholder="e.g. A quarterly sales review for the APAC region…"
-          rows={3}
-          disabled={gen.isStreaming}
-        />
-      </label>
-
-      <div className="slide-ai-field-row">
-        <label className="slide-ai-field">
-          <span className="slide-ai-field-label">Slides</span>
-          <input
-            type="number"
-            className="slide-ai-number"
-            value={slideCount}
-            min={3}
-            max={20}
-            onChange={(e) =>
-              setSlideCount(clampDeckSlideCount(Number(e.target.value)))
-            }
-            disabled={gen.isStreaming}
-            aria-label="Number of slides"
-          />
-        </label>
-        <label className="slide-ai-field">
-          <span className="slide-ai-field-label">Tone</span>
-          <select
-            className="slide-ai-select"
-            value={tone}
-            onChange={(e) => setTone(e.target.value as DeckTone)}
-            disabled={gen.isStreaming}
-            aria-label="Deck tone"
-          >
-            {TONE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <label className="slide-ai-field">
-        <span className="slide-ai-field-label">Audience (optional)</span>
-        <input
-          type="text"
-          className="slide-ai-input"
-          value={audience}
-          onChange={(e) => setAudience(e.target.value)}
-          placeholder="e.g. Regional sales managers"
-          disabled={gen.isStreaming}
-        />
-      </label>
-
-      <div className="slide-ai-actions-row">
-        {gen.isStreaming ? (
-          <button
-            type="button"
-            className="btn-sm danger"
-            onClick={gen.cancel}
-            aria-label="Stop generating deck"
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn-sm primary"
-            onClick={() => void onGenerate()}
-            disabled={disabled}
-          >
-            Generate
-          </button>
-        )}
-        {preview && !gen.isStreaming && (
-          <button
-            type="button"
-            className="btn-sm primary"
-            onClick={onApplyClick}
-          >
-            Apply {preview.length} slide{preview.length === 1 ? "" : "s"}
-          </button>
-        )}
-      </div>
-
-      {gen.error && (
-        <p className="slide-ai-error" role="alert">
-          {gen.error}
-        </p>
-      )}
-      {noUsableDeck && !gen.isStreaming && (
-        <p className="slide-ai-error" role="alert">
-          The model didn’t return a usable outline. Try a more specific topic.
-        </p>
-      )}
-
-      {(gen.isStreaming || gen.text) && !preview && (
-        <pre
-          className="slide-ai-stream"
-          aria-live="polite"
-          aria-label="Generation preview"
+      {deckSkills.length > 0 && (
+        <div
+          className="slide-ai-mode-row"
+          role="group"
+          aria-label="Deck generation mode"
         >
-          {gen.text || "…"}
-        </pre>
+          <button
+            type="button"
+            className={panelMode === "quick" ? "btn-sm active" : "btn-sm"}
+            aria-pressed={panelMode === "quick"}
+            disabled={gen.isStreaming}
+            data-testid="slide-ai-mode-quick"
+            onClick={() => switchDeckMode("quick")}
+          >
+            Quick
+          </button>
+          <button
+            type="button"
+            className={panelMode === "skills" ? "btn-sm active" : "btn-sm"}
+            aria-pressed={panelMode === "skills"}
+            disabled={gen.isStreaming}
+            data-testid="slide-ai-mode-skills"
+            onClick={() => switchDeckMode("skills")}
+          >
+            Skill
+          </button>
+        </div>
       )}
 
-      {preview && (
-        <ol className="slide-ai-preview-list" aria-label="Generated slides">
-          {preview.map((slide, i) => (
-            <li key={slide.id} className="slide-ai-preview-item">
-              <span className="slide-ai-preview-num">{i + 1}</span>
-              <span className="slide-ai-preview-title">
-                {slide.title || "Untitled slide"}
-              </span>
-            </li>
-          ))}
-        </ol>
+      {panelMode === "skills" && selectedSkill ? (
+        <>
+          {deckSkills.length > 1 && (
+            <label className="slide-ai-field">
+              <span className="slide-ai-field-label">Skill</span>
+              <select
+                className="slide-ai-select"
+                value={skillId}
+                onChange={(e) => setSkillId(e.target.value)}
+                aria-label="Choose a skill"
+              >
+                {deckSkills.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <SkillRunnerPanel
+            key={selectedSkill.id}
+            skill={selectedSkill}
+            onApply={applyDeckFromSkill}
+            onRunStart={() => setSkillNoUsableDeck(false)}
+            applyLabel="Apply deck"
+          />
+          {skillNoUsableDeck && (
+            <p className="slide-ai-error" role="alert">
+              The skill didn’t return a usable outline. Try a more specific
+              topic.
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <label className="slide-ai-field">
+            <span className="slide-ai-field-label">Topic or brief</span>
+            <textarea
+              className="slide-ai-textarea"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="e.g. A quarterly sales review for the APAC region…"
+              rows={3}
+              disabled={gen.isStreaming}
+            />
+          </label>
+
+          <div className="slide-ai-field-row">
+            <label className="slide-ai-field">
+              <span className="slide-ai-field-label">Slides</span>
+              <input
+                type="number"
+                className="slide-ai-number"
+                value={slideCount}
+                min={3}
+                max={20}
+                onChange={(e) =>
+                  setSlideCount(clampDeckSlideCount(Number(e.target.value)))
+                }
+                disabled={gen.isStreaming}
+                aria-label="Number of slides"
+              />
+            </label>
+            <label className="slide-ai-field">
+              <span className="slide-ai-field-label">Tone</span>
+              <select
+                className="slide-ai-select"
+                value={tone}
+                onChange={(e) => setTone(e.target.value as DeckTone)}
+                disabled={gen.isStreaming}
+                aria-label="Deck tone"
+              >
+                {TONE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="slide-ai-field">
+            <span className="slide-ai-field-label">Audience (optional)</span>
+            <input
+              type="text"
+              className="slide-ai-input"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value)}
+              placeholder="e.g. Regional sales managers"
+              disabled={gen.isStreaming}
+            />
+          </label>
+
+          <div className="slide-ai-actions-row">
+            {gen.isStreaming ? (
+              <button
+                type="button"
+                className="btn-sm danger"
+                onClick={gen.cancel}
+                aria-label="Stop generating deck"
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-sm primary"
+                onClick={() => void onGenerate()}
+                disabled={disabled}
+              >
+                Generate
+              </button>
+            )}
+            {preview && !gen.isStreaming && (
+              <button
+                type="button"
+                className="btn-sm primary"
+                onClick={onApplyClick}
+              >
+                Apply {preview.length} slide{preview.length === 1 ? "" : "s"}
+              </button>
+            )}
+          </div>
+
+          {gen.error && (
+            <p className="slide-ai-error" role="alert">
+              {gen.error}
+            </p>
+          )}
+          {noUsableDeck && !gen.isStreaming && (
+            <p className="slide-ai-error" role="alert">
+              The model didn’t return a usable outline. Try a more specific
+              topic.
+            </p>
+          )}
+
+          {(gen.isStreaming || gen.text) && !preview && (
+            <pre
+              className="slide-ai-stream"
+              aria-live="polite"
+              aria-label="Generation preview"
+            >
+              {gen.text || "…"}
+            </pre>
+          )}
+
+          {preview && (
+            <ol className="slide-ai-preview-list" aria-label="Generated slides">
+              {preview.map((slide, i) => (
+                <li key={slide.id} className="slide-ai-preview-item">
+                  <span className="slide-ai-preview-num">{i + 1}</span>
+                  <span className="slide-ai-preview-title">
+                    {slide.title || "Untitled slide"}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
       )}
     </div>
   );

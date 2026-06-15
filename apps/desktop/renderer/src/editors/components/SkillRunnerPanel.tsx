@@ -31,6 +31,13 @@ export interface SkillRunnerPanelProps {
   onApply?: (text: string) => void;
   /** Label for the apply button (defaults to "Insert"). */
   applyLabel?: string;
+  /**
+   * Fired when a run starts — from either the Run or the Retry button
+   * (and the imperative `submit`). Lets the host clear any stale
+   * apply-time error it surfaced for a previous run (e.g. "no usable
+   * deck/formula/schema") so it can't linger while the new run streams.
+   */
+  onRunStart?: () => void;
 }
 
 /**
@@ -56,7 +63,10 @@ function blankInputs(skill: Skill): Record<string, string> {
 export const SkillRunnerPanel = forwardRef<
   SkillRunnerHandle,
   SkillRunnerPanelProps
->(function SkillRunnerPanel({ skill, onApply, applyLabel = "Insert" }, ref) {
+>(function SkillRunnerPanel(
+  { skill, onApply, applyLabel = "Insert", onRunStart },
+  ref,
+) {
   const runner = useSkillRunner(skill);
   const [inputs, setInputs] = useState<Record<string, string>>(() =>
     blankInputs(skill),
@@ -76,8 +86,9 @@ export const SkillRunnerPanel = forwardRef<
   }, []);
 
   const run = useCallback(() => {
+    onRunStart?.();
     runner.run(inputs);
-  }, [runner, inputs]);
+  }, [onRunStart, runner, inputs]);
 
   useImperativeHandle(
     ref,
@@ -155,9 +166,7 @@ export const SkillRunnerPanel = forwardRef<
             Stop
           </button>
         )}
-        <span className="ai-panel-shortcut">
-          {skill.steps.length} steps
-        </span>
+        <span className="ai-panel-shortcut">{skill.steps.length} steps</span>
       </div>
 
       {runner.status === "error" && (
@@ -178,7 +187,8 @@ export const SkillRunnerPanel = forwardRef<
         <ol className="skill-step-list" data-testid="skill-steps">
           {skill.steps.map((step, index) => {
             const done = index < runner.steps.length;
-            const active = runner.isRunning && index === runner.currentStepIndex;
+            const active =
+              runner.isRunning && index === runner.currentStepIndex;
             const state = done ? "done" : active ? "active" : "pending";
             const stateLabel =
               state === "done"
