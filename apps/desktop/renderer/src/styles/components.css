@@ -5433,3 +5433,309 @@
     transition: none;
   }
 }
+
+/* =====================================================================
+ * Brand Kit — slide brand-aware theming (S1)
+ *
+ * A brand kit re-skins a curated slide theme by stamping `--slide-*`
+ * custom properties INLINE on `.slide-canvas` (see `slideBrandKit.ts` +
+ * `SlideEditor`). The existing `[data-slide-theme]` rules above already
+ * read those vars (`--slide-accent`, `--slide-surface`,
+ * `--slide-font-headline`, `--slide-font-body`, …), so the colour/font
+ * re-skin needs no new rules here. This block adds ONLY what the curated
+ * themes did not already cover:
+ *   1. the brand toolbar trigger,
+ *   2. the master-logo corner slot,
+ *   3. the brand body-text colour (`--slide-text`) + muted colour
+ *      (`--slide-muted`) in Design view, and
+ *   4. the builder modal layout + live preview.
+ *
+ * Everything brand-kit lives in this single delimited block to minimise
+ * merge conflicts with the parallel components.css visual-polish work.
+ * ===================================================================== */
+
+/* 1. Toolbar trigger — mirrors `.slide-theme-picker-trigger`. */
+.slide-brand-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: border-color var(--duration-fast, 150ms);
+}
+.slide-brand-trigger:hover {
+  border-color: var(--color-primary);
+}
+.slide-brand-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--color-primary);
+}
+.slide-brand-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-xs, 2px);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  flex-shrink: 0;
+}
+
+/* 2. Master logo corner slot. The canvas only becomes the positioning
+ *    context when a logo is present, so non-branded decks are untouched.
+ *    `pointer-events: none` keeps the logo from swallowing clicks on the
+ *    title/blocks beneath it. */
+.slide-canvas[data-slide-logo],
+.brand-kit-preview[data-slide-logo] {
+  position: relative;
+}
+.slide-brand-logo {
+  position: absolute;
+  max-width: 22%;
+  max-height: 18%;
+  object-fit: contain;
+  pointer-events: none;
+  z-index: 1;
+}
+[data-slide-logo="tl"] > .slide-brand-logo {
+  top: var(--spacing-md);
+  left: var(--spacing-md);
+}
+[data-slide-logo="tr"] > .slide-brand-logo {
+  top: var(--spacing-md);
+  right: var(--spacing-md);
+}
+[data-slide-logo="bl"] > .slide-brand-logo {
+  bottom: var(--spacing-md);
+  left: var(--spacing-md);
+}
+[data-slide-logo="br"] > .slide-brand-logo {
+  bottom: var(--spacing-md);
+  right: var(--spacing-md);
+}
+
+/* 3. Brand body/muted text colour — Design view only. In Outline view
+ *    the prose fields sit on the neutral editing surface for legibility
+ *    (see the note by the `.slide-canvas[data-slide-theme]` rules), so we
+ *    only recolour them when they render on the themed Design canvas. */
+.slide-canvas-design[data-slide-brand] .slide-wys-text,
+.slide-canvas-design[data-slide-brand] .slide-wys-bullet-input {
+  color: var(--slide-text, var(--color-text-body));
+}
+.slide-canvas-design[data-slide-brand] .slide-wys-image-placeholder {
+  color: var(--slide-muted, var(--color-text-tertiary));
+}
+
+/* 4. Builder modal — widen the shared modal shell for the two-pane
+ *    (form + live preview) layout, collapsing to one column when narrow. */
+.modal-content:has(.brand-kit-builder) {
+  max-width: 760px;
+}
+.brand-kit-builder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+.brand-kit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 280px);
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+@media (max-width: 640px) {
+  .brand-kit-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.brand-kit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  min-width: 0;
+}
+.brand-kit-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.brand-kit-fieldset legend {
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-headline);
+}
+
+/* Colour rows: native swatch picker + editable hex + optional clear. */
+.brand-kit-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.brand-kit-color-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.brand-kit-color-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+.brand-kit-color-swatch {
+  width: 34px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.brand-kit-color-hex {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-family-mono, monospace);
+}
+
+/* Saved-kit list. */
+.brand-kit-saved-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+.brand-kit-saved-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+.brand-kit-saved-name {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--spacing-2xs, 2px) var(--spacing-xs);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.brand-kit-saved-name:hover {
+  border-color: var(--color-border);
+  background: var(--color-surface-hover);
+}
+.brand-kit-saved-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-xs, 2px);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  flex-shrink: 0;
+}
+.brand-kit-saved-active {
+  padding: 0 var(--spacing-xs);
+  border-radius: var(--radius-xs, 2px);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--font-size-2xs, 10px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Logo controls + danger affordances. */
+.brand-kit-logo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+.brand-kit-logo-upload {
+  cursor: pointer;
+}
+.brand-kit-delete:not(.btn) {
+  color: var(--color-danger-fg, #dc2626);
+}
+.brand-kit-delete:not(.btn):hover:not(:disabled) {
+  border-color: var(--color-danger-light, #dc2626);
+  background: var(--color-danger-bg, transparent);
+}
+
+.brand-kit-actions {
+  flex-wrap: wrap;
+}
+.brand-kit-errors {
+  margin: 0;
+}
+.brand-kit-errors ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+/* Live preview pane: a real (scaled) themed canvas so the brand vars
+ *    render exactly as they will on a slide. */
+.brand-kit-preview-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  position: sticky;
+  top: 0;
+}
+.brand-kit-preview-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+.brand-kit-preview {
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  padding: var(--spacing-md);
+  gap: var(--spacing-xs);
+  overflow: hidden;
+}
+.brand-kit-preview .slide-title-input {
+  font-size: var(--font-size-md);
+  pointer-events: none;
+}
+.brand-kit-preview .slide-wys-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  pointer-events: none;
+}
+.brand-kit-preview-bullets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+.brand-kit-preview-bullet {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--slide-text, var(--color-text-body));
+  font-family: var(--slide-font-body, var(--font-family));
+}
+.brand-kit-preview-bullet::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--slide-accent, var(--color-primary));
+  flex-shrink: 0;
+}

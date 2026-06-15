@@ -15,6 +15,7 @@ import type { MarpRenderOptions } from "../services/marpRenderer";
 import type { PresentationSlide } from "../types/ipc";
 import { yamlSingleQuote } from "../utils/yaml";
 import { DEFAULT_SLIDE_THEME_ID, isKnownSlideThemeId } from "./slideThemes";
+import { coerceBrandKitId } from "./slideBrandKit";
 import { getSlideLayout } from "./slideLayouts";
 import type { ChartData } from "./sheetCharts";
 import type {
@@ -47,6 +48,14 @@ export interface ParsedSlideContent {
    * downstream consumers never have to re-validate.
    */
   themeId: string;
+  /**
+   * Persisted active brand-kit id, or `undefined` when the deck has no
+   * brand kit (the common case). Only structurally validated here (it
+   * must be brand-namespaced); whether the id resolves to a real kit is
+   * decided at render time against the live `localStorage` store, so an
+   * id pointing at a deleted/foreign kit degrades to "no brand kit".
+   */
+  brandKitId: string | undefined;
 }
 
 /**
@@ -199,6 +208,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpSource: "",
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
+    brandKitId: undefined,
   };
   if (!content) return emptyDefault;
   try {
@@ -214,6 +224,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
         marpSource: parsed.marp?.source ?? "",
         marpTheme: parsed.marp?.theme,
         themeId: resolveThemeId(parsed.themeId),
+        brandKitId: coerceBrandKitId(parsed.brandKitId),
       };
     }
   } catch {
@@ -232,6 +243,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     marpSource: "",
     marpTheme: undefined,
     themeId: DEFAULT_SLIDE_THEME_ID,
+    brandKitId: undefined,
   };
 }
 
