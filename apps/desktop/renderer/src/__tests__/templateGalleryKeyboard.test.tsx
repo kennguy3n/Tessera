@@ -19,6 +19,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { TemplateInfo } from "../types/ipc";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -43,6 +44,8 @@ vi.mock("../hooks/useTemplates", () => ({
         name: "Doc One",
         description: "first",
         artifactType: "document",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
         industry: [],
         locale: "en",
         category: "documents",
@@ -52,6 +55,8 @@ vi.mock("../hooks/useTemplates", () => ({
         name: "Doc Two",
         description: "second",
         artifactType: "document",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
         industry: [],
         locale: "en",
         category: "documents",
@@ -61,6 +66,8 @@ vi.mock("../hooks/useTemplates", () => ({
         name: "Doc Three",
         description: "third",
         artifactType: "document",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
         industry: [],
         locale: "en",
         category: "documents",
@@ -70,11 +77,13 @@ vi.mock("../hooks/useTemplates", () => ({
         name: "Deck One",
         description: "fourth",
         artifactType: "slides",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
         industry: [],
         locale: "en",
         category: "slides",
       },
-    ],
+    ] satisfies TemplateInfo[],
     loading: false,
     refresh: vi.fn(),
   }),
