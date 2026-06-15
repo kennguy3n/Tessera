@@ -10,8 +10,10 @@
  * presentational and easy to reason about.
  *
  * The host (`SlideEditor`) mounts this only while open, so the form seeds
- * its draft once from the active kit (edit) or a fresh kit (create) in
- * the `useState` initialiser — no render-phase re-seed needed.
+ * its draft once in the `useState` initialiser — from an imported draft
+ * ({@link BrandKitBuilderModalProps.initialDraft}, reviewed before save),
+ * else the active kit (edit), else a fresh kit (create) — no render-phase
+ * re-seed needed.
  */
 
 import { useState, type ChangeEvent, type CSSProperties } from "react";
@@ -76,6 +78,14 @@ export interface BrandKitBuilderModalProps {
   deckThemeId: string;
   /** Deck's active brand-kit id, or `undefined` when none is applied. */
   activeKitId: string | undefined;
+  /**
+   * A draft to seed the form with — used by the import flow to open the
+   * builder pre-filled from a Brand Pack so the user reviews it before
+   * saving. It carries NO id (see {@link parseBrandPack}), so saving
+   * persists a NEW kit and never overwrites an existing one. When absent
+   * the form seeds from the active kit (edit) or a fresh kit (create).
+   */
+  initialDraft?: BrandKitDraft;
   /** Apply a (just-saved or existing) kit to the deck. */
   onApply: (kit: BrandKit) => void;
   /** Remove the brand kit from the deck (keep the curated theme). */
@@ -87,6 +97,7 @@ export function BrandKitBuilderModal({
   isOpen,
   deckThemeId,
   activeKitId,
+  initialDraft,
   onApply,
   onClear,
   onClose,
@@ -94,12 +105,18 @@ export function BrandKitBuilderModal({
   const { brandKits, saveBrandKit, deleteBrandKit } = useBrandKits();
 
   const [draft, setDraft] = useState<BrandKitDraft>(() => {
+    if (initialDraft) return initialDraft;
     const active = activeKitId
       ? (brandKits.find((k) => k.id === activeKitId) ?? null)
       : null;
     return active ? brandKitToDraft(active) : newDraftForTheme(deckThemeId);
   });
   const [errors, setErrors] = useState<string[]>([]);
+  // Whether the draft currently shown is still the freshly imported one.
+  // Drives the title: it must stop saying "Import brand kit" the moment the
+  // user navigates to a saved kit or starts a new draft, rather than tracking
+  // the (immutable) `initialDraft` prop for the modal's whole lifetime.
+  const [isImporting, setIsImporting] = useState<boolean>(() => !!initialDraft);
 
   const patch = (next: Partial<BrandKitDraft>) =>
     setDraft((d) => ({ ...d, ...next }));
@@ -109,10 +126,12 @@ export function BrandKitBuilderModal({
   const loadKit = (kit: BrandKit) => {
     setDraft(brandKitToDraft(kit));
     setErrors([]);
+    setIsImporting(false);
   };
   const startNew = () => {
     setDraft(newDraftForTheme(deckThemeId));
     setErrors([]);
+    setIsImporting(false);
   };
 
   const handleLogoFile = (event: ChangeEvent<HTMLInputElement>) => {
@@ -167,7 +186,13 @@ export function BrandKitBuilderModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={draft.id ? "Edit brand kit" : "Customize brand"}
+      title={
+        isImporting
+          ? "Import brand kit"
+          : draft.id
+            ? "Edit brand kit"
+            : "Customize brand"
+      }
       closeOnOverlayClick={false}
     >
       <div className="brand-kit-builder" data-testid="brand-kit-builder">
