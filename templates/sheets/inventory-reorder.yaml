@@ -1,0 +1,53 @@
+id: inventory-reorder-v1
+name: Inventory Reorder Worksheet
+type: sheet
+description: Inventory reorder worksheet computing reorder points, economic order quantity, and safety stock from demand and lead time to prevent stock-outs
+industry:
+  - retail
+  - manufacturing
+profile:
+  - inventory-manager
+  - purchasing
+  - operations-manager
+sections:
+  - title: Worksheet Header
+    prompt: >
+      Identify the location or warehouse, the planning date, the
+      service-level target, the currency, and the source system the
+      stock and demand data come from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Item Demand and Lead Time
+    prompt: >
+      For each SKU capture: description, supplier, unit cost, average
+      demand per period, demand variability, supplier lead time, and
+      lead-time variability.
+    output_format: table
+  - title: Reorder Point and Safety Stock
+    prompt: >
+      Compute the safety stock from demand and lead-time variability
+      at the target service level, and the reorder point (average
+      demand over lead time plus safety stock) for each SKU.
+    output_format: table
+  - title: Economic Order Quantity
+    prompt: >
+      Compute the economic order quantity from annual demand, ordering
+      cost, and holding cost for each SKU, and the resulting order
+      frequency. Note any supplier minimum order or pack-size
+      constraint.
+    output_format: table
+  - title: Reorder Recommendations
+    prompt: >
+      List items at or below the reorder point with the recommended
+      order quantity, the supplier, and the expected receipt date.
+      Flag items already short and any overstock to work down.
+  - title: Inventory Health
+    prompt: >
+      Summarize inventory value, turnover, and days of supply by
+      category, and highlight slow-moving or obsolete stock for
+      action.
+export:
+  - markdown
+  - csv
+  - xlsx

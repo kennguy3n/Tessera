@@ -1,0 +1,48 @@
+id: payroll-register-canada-v1
+name: Payroll Register (Canada)
+type: sheet
+description: Canada payroll register computing gross-to-net with federal and provincial tax, CPP and EI, and employer contributions with remittance summary
+industry:
+  - finance
+profile:
+  - payroll-specialist
+  - hr-manager
+  - accountant
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the employer and business number with the payroll
+      program account, the pay period and date, the pay frequency, the
+      provinces of employment, and the source records.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Earnings
+    prompt: >
+      For each employee capture: employee ID, province, regular and
+      overtime earnings, vacation pay, bonus, and taxable benefits,
+      with gross earnings for the period and year to date.
+    output_format: table
+  - title: Statutory Deductions
+    prompt: >
+      Compute federal and provincial income tax using the TD1 claim
+      codes, Canada Pension Plan (or QPP in Quebec) contributions
+      against the exemption and maximum, and Employment Insurance
+      premiums. Show year-to-date toward the annual maximums.
+    output_format: table
+  - title: Other Deductions and Net Pay
+    prompt: >
+      Apply other deductions (registered pension, RRSP, benefits,
+      garnishments) and compute net pay per employee with the payment
+      method.
+    output_format: table
+  - title: Employer Contributions and Remittance
+    prompt: >
+      Compute employer CPP (matching) and EI (1.4 times employee) and
+      any provincial health or workers' compensation levy. Summarize
+      the source deductions to remit to the CRA and the remittance
+      due date for the remitter type.
+export:
+  - markdown
+  - csv
+  - xlsx

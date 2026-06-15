@@ -1,0 +1,53 @@
+id: enterprise-risk-register-v1
+name: Enterprise Risk Register
+type: sheet
+description: Enterprise risk register scoring likelihood and impact, mapping mitigations and owners, and tracking residual risk and review cadence
+industry:
+  - finance
+  - government
+profile:
+  - risk-manager
+  - pmo
+  - compliance-officer
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the organization, program, or project the register
+      covers, the scoring scale in use (for example 1-5 for
+      likelihood and impact), the risk appetite statement, and the
+      review cadence.
+  - title: Risk Identification
+    prompt: >
+      For each risk capture: a unique risk ID, the risk category
+      (strategic, financial, operational, compliance, technology,
+      safety, reputational), a clear risk statement in cause-event-
+      consequence form, and the risk owner.
+    output_format: table
+  - title: Inherent Risk Scoring
+    prompt: >
+      Score each risk before mitigation: likelihood, impact, and the
+      resulting inherent risk rating (likelihood times impact). Sort
+      by rating so the highest inherent risks surface first.
+    output_format: table
+  - title: Mitigations and Controls
+    prompt: >
+      For each risk document the existing controls and the planned
+      mitigating actions, the action owner, and the target date.
+      Distinguish preventive from detective and corrective controls.
+    output_format: table
+  - title: Residual Risk
+    prompt: >
+      Re-score each risk after mitigation to show the residual
+      likelihood, impact, and rating. Flag any residual risk that
+      remains above appetite and the treatment decision (accept,
+      reduce, transfer, avoid).
+    output_format: table
+  - title: Monitoring
+    prompt: >
+      State the leading indicators or triggers to monitor for each
+      top risk, the escalation path, and the date each risk is next
+      due for review. List risks newly added or closed this period.
+export:
+  - markdown
+  - csv
+  - xlsx

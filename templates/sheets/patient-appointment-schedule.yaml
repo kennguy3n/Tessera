@@ -1,0 +1,44 @@
+id: patient-appointment-schedule-v1
+name: Patient Appointment Schedule
+type: sheet
+description: Clinic appointment schedule with provider columns, slot times, visit type, status, and no-show and utilization analysis for capacity planning
+industry:
+  - healthcare
+profile:
+  - practice-manager
+  - front-desk
+  - clinician
+sections:
+  - title: Schedule Header
+    prompt: >
+      Identify the clinic or department, the date or week covered, the
+      providers and their working hours, the slot length, and the
+      scheduling system the data is exported from. Use subject IDs or
+      initials rather than full patient names.
+  - title: Appointment Slots
+    prompt: >
+      For each appointment capture: date, start and end time,
+      provider, room, visit type (new, follow-up, procedure,
+      telehealth), subject reference, and status (booked, confirmed,
+      arrived, completed, cancelled, no-show).
+    output_format: table
+  - title: Provider Utilization
+    prompt: >
+      For each provider compute the booked slots, available slots,
+      and utilization percentage for the period. Highlight
+      under-utilized and over-booked sessions.
+    output_format: table
+  - title: No-shows and Cancellations
+    prompt: >
+      Summarize the no-show and late-cancellation counts and rates by
+      provider and visit type. Identify patterns (time of day, day of
+      week) and recommend overbooking or reminder adjustments.
+  - title: Waitlist and Backfill
+    prompt: >
+      List patients on the waitlist and the open or freed slots they
+      could fill. Recommend a backfill plan to recover capacity lost
+      to cancellations.
+export:
+  - markdown
+  - csv
+  - xlsx

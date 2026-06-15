@@ -1,0 +1,60 @@
+id: sales-pipeline-v1-de
+name: Vertriebs-Pipeline
+type: sheet
+description: Vertriebs-Pipeline-Tracker mit Opportunities nach Phase, gewichteter Prognose, Velocity und Gewinnraten-Analyse für die Umsatzprognose (deutsche Version)
+locale: de
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: Pipeline-Kopf
+    prompt: >
+      Bestimmen Sie das Team oder Gebiet, den Prognosezeitraum, die
+      Währung, die Definitionen der Vertriebsphasen und ihre
+      Standardwahrscheinlichkeiten sowie das CRM, aus dem die
+      Opportunities exportiert werden. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Opportunities
+    prompt: >
+      Erfassen Sie für jede Opportunity: Kunde, Name der Opportunity,
+      Verantwortlicher, Phase, Abschlusssumme, erwartetes
+      Abschlussdatum, Lead-Quelle und den nächsten Schritt mit Datum.
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Gewichtete Prognose
+    prompt: >
+      Wenden Sie die Phasenwahrscheinlichkeit auf jede Abschlusssumme
+      an, um einen gewichteten Wert zu erzeugen, und aggregieren Sie
+      die zugesagte Prognose, den Best Case und die gewichtete Pipeline
+      für die Periode gegenüber dem Soll. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Phasen-Funnel und Velocity
+    prompt: >
+      Zeigen Sie Anzahl und Wert der Opportunities je Phase, die
+      durchschnittlichen Tage in jeder Phase und die gesamte
+      Vertriebszyklusdauer. Identifizieren Sie Phasen, in denen
+      Abschlüsse ins Stocken geraten. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Gewinnrate und Abdeckung
+    prompt: >
+      Berechnen Sie die Gewinnrate, die durchschnittliche
+      Abschlussgröße und das Pipeline-Abdeckungsverhältnis gegenüber
+      der Soll-Lücke. Kennzeichnen Sie, ob genügend Pipeline vorhanden
+      ist, um das Ziel zu erreichen. Antworten Sie auf Deutsch.
+  - title: Risiken und Maßnahmen
+    prompt: >
+      Heben Sie die größten gefährdeten und ins Rutschen geratenen
+      Abschlüsse hervor, die Gründe sowie die Maßnahmen und
+      Verantwortlichen, um sie voranzubringen oder abzuschließen.
+      Vermerken Sie Abschlüsse ohne jüngste Aktivität. Antworten Sie
+      auf Deutsch.
+export:
+  - markdown
+  - csv
+  - xlsx

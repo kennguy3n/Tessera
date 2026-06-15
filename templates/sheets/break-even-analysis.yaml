@@ -1,0 +1,54 @@
+id: break-even-analysis-v1
+name: Break-even Analysis
+type: sheet
+description: Break-even analysis with fixed and variable costs, contribution margin, break-even volume and revenue, and margin-of-safety sensitivity
+industry:
+  - finance
+profile:
+  - founder
+  - finance-analyst
+  - product-manager
+sections:
+  - title: Analysis Header
+    prompt: >
+      State the product, service, or business unit being analyzed,
+      the period and currency, the unit of sale, and the source data
+      behind the cost and price assumptions.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Price and Variable Costs
+    prompt: >
+      State the selling price per unit and itemize the variable cost
+      per unit (materials, direct labor, packaging, payment fees,
+      shipping). Compute the contribution margin per unit and the
+      contribution margin ratio.
+    output_format: table
+  - title: Fixed Costs
+    prompt: >
+      List the period fixed costs (rent, salaries, software,
+      insurance, depreciation, marketing retainers) and total them.
+      Note any step-fixed costs that change above a volume threshold.
+    output_format: table
+  - title: Break-even Point
+    prompt: >
+      Compute the break-even volume (fixed costs divided by
+      contribution margin per unit) and the break-even revenue
+      (fixed costs divided by contribution margin ratio). State the
+      assumptions clearly.
+  - title: Target Profit and Margin of Safety
+    prompt: >
+      Compute the volume required to hit a stated target profit, and
+      the margin of safety between the current or forecast volume and
+      the break-even point, in units and percent.
+  - title: Sensitivity
+    prompt: >
+      Show how the break-even point moves under changes in price,
+      variable cost, and fixed cost (for example plus or minus ten
+      percent each). Identify the assumption the break-even is most
+      sensitive to.
+    output_format: table
+export:
+  - markdown
+  - csv
+  - xlsx

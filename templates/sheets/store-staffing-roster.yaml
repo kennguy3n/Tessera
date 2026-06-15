@@ -1,0 +1,49 @@
+id: store-staffing-roster-v1
+name: Store Staffing Roster
+type: sheet
+description: Retail staff roster scheduling shifts against forecast footfall with coverage, labor cost, and compliance checks on breaks and hours
+industry:
+  - retail
+profile:
+  - store-manager
+  - shift-supervisor
+  - workforce-planner
+sections:
+  - title: Roster Header
+    prompt: >
+      Identify the store, the week covered, the opening hours, the
+      roles to be covered (cashier, floor, stockroom, supervisor), the
+      labor budget, and the scheduling rules (maximum hours, minimum
+      rest, break entitlements).
+  - title: Demand Forecast
+    prompt: >
+      Lay out the forecast footfall or sales by day and hour, and
+      translate it into the staffing requirement per role and time
+      band.
+    output_format: table
+  - title: Shift Schedule
+    prompt: >
+      Build the weekly schedule: for each employee and day, the shift
+      start and end, role, and break times. Use an employee ID
+      alongside the name.
+    output_format: table
+  - title: Coverage Check
+    prompt: >
+      Compare scheduled staff against the required staffing per time
+      band and flag any under- or over-coverage. Highlight peak
+      periods left short.
+    output_format: table
+  - title: Labor Cost and Compliance
+    prompt: >
+      Compute scheduled hours and labor cost per employee and for the
+      store against budget. Check each schedule against maximum-hours,
+      minimum-rest, and break rules and flag any breach.
+  - title: Open Shifts and Notes
+    prompt: >
+      List unfilled shifts, time-off requests, and availability
+      constraints, and recommend how to fill gaps (swap, overtime,
+      temporary cover).
+export:
+  - markdown
+  - csv
+  - xlsx

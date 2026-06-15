@@ -1,0 +1,56 @@
+id: clinical-trial-tracker-v1
+name: Clinical Trial Enrollment Tracker
+type: sheet
+description: Clinical trial subject enrollment and visit tracker with screening, randomization, visit windows, protocol deviations, and adverse-event flags
+industry:
+  - healthcare
+profile:
+  - clinical-research-coordinator
+  - principal-investigator
+  - data-manager
+sections:
+  - title: Study Header
+    prompt: >
+      Identify the protocol number and title, the sponsor, the phase,
+      the site and principal investigator, the target enrollment, and
+      the source documents (protocol, delegation log) the tracker is
+      built from. Do not include any directly identifying patient
+      information beyond the assigned subject ID.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Screening and Eligibility
+    prompt: >
+      For each candidate capture: subject ID, screening date,
+      inclusion and exclusion criteria met, screening status
+      (screening, screen failure, eligible), and the reason for any
+      screen failure.
+    output_format: table
+  - title: Randomization and Arm Assignment
+    prompt: >
+      For each enrolled subject record the randomization date, the
+      assigned treatment arm or cohort, the kit or dose level, and the
+      consent version signed.
+    output_format: table
+  - title: Visit Schedule and Windows
+    prompt: >
+      Lay out the protocol visit schedule per subject: visit name,
+      target date, allowable window, actual date, and completion
+      status. Flag visits outside their window.
+    output_format: table
+  - title: Protocol Deviations and Adverse Events
+    prompt: >
+      Log protocol deviations (date, description, severity,
+      corrective action) and adverse-event flags (onset, severity,
+      seriousness, relatedness, outcome) for follow-up. Keep entries
+      de-identified.
+    output_format: table
+  - title: Enrollment Summary
+    prompt: >
+      Summarize screened, enrolled, active, completed, and withdrawn
+      counts against the target. Compute the screen-failure rate and
+      the enrollment rate versus plan, and note recruitment risks.
+export:
+  - markdown
+  - csv
+  - xlsx

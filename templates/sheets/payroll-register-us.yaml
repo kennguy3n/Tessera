@@ -1,0 +1,48 @@
+id: payroll-register-us-v1
+name: Payroll Register (US)
+type: sheet
+description: US payroll register computing gross-to-net pay with federal and state withholding, FICA, and deductions, plus employer taxes and a funding summary
+industry:
+  - finance
+profile:
+  - payroll-specialist
+  - hr-manager
+  - controller
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the employer and EIN, the pay period and pay date, the
+      pay frequency, the states involved, and the source timekeeping
+      and benefits records. Treat the register as confidential payroll
+      data.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Earnings
+    prompt: >
+      For each employee capture: employee ID, regular hours and rate,
+      overtime, bonus and commission, other earnings, and gross pay.
+      Total earnings by type for the period.
+    output_format: table
+  - title: Taxes Withheld
+    prompt: >
+      Compute employee withholding: federal income tax (per Form W-4),
+      Social Security and Medicare (FICA, with the additional Medicare
+      where applicable), and state and local income tax. Show year-to-
+      date taxable wages.
+    output_format: table
+  - title: Deductions and Net Pay
+    prompt: >
+      Apply pre-tax deductions (401(k), Section 125 health, HSA) and
+      post-tax deductions (garnishments, Roth, union dues) and compute
+      net pay per employee. Note the payment method.
+    output_format: table
+  - title: Employer Taxes and Funding
+    prompt: >
+      Compute employer-side taxes: matching FICA, FUTA, and SUTA, plus
+      employer benefit contributions. Summarize total net pay, total
+      taxes to deposit, and the total cash to fund the payroll run.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,47 @@
+id: change-order-log-v1
+name: Change Order Log
+type: sheet
+description: Construction change order log tracking proposed and approved changes with cost and schedule impact, status, and effect on the contract sum
+industry:
+  - construction
+profile:
+  - project-manager
+  - contract-administrator
+  - cost-engineer
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the project, the contract and original contract sum,
+      the currency, the owner and contractor, and the source
+      documents (change directives, proposals) the log consolidates.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Change Items
+    prompt: >
+      For each change capture: change number, date raised, originator,
+      a description of the change and its cause (design change, field
+      condition, owner request, error), and the reference document.
+    output_format: table
+  - title: Cost and Schedule Impact
+    prompt: >
+      For each change record the proposed cost (add or deduct), the
+      schedule impact in days, the basis of the pricing, and whether
+      it is lump sum, unit price, or time and materials.
+    output_format: table
+  - title: Status and Approvals
+    prompt: >
+      Track each change through its status (proposed, under review,
+      approved, rejected, void) with the approver and date, and the
+      executed change-order number where issued.
+    output_format: table
+  - title: Contract Sum Reconciliation
+    prompt: >
+      Reconcile the original contract sum, the total approved changes,
+      and the pending changes to the current and projected contract
+      sum. Summarize the cumulative cost and schedule impact and flag
+      changes aging in review.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,53 @@
+id: capex-plan-v1
+name: Capital Expenditure Plan
+type: sheet
+description: Capital expenditure plan with project list, phasing, funding, depreciation, and ROI/payback metrics for capital allocation decisions
+industry:
+  - finance
+profile:
+  - cfo
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: Plan Header
+    prompt: >
+      Identify the entity, the planning horizon (typically three to
+      five years), the currency, the approved capital envelope, and
+      the committee that governs capital allocation.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Capital Projects
+    prompt: >
+      List each proposed capital project with a short description,
+      the category (growth, maintenance, regulatory, replacement,
+      IT), the sponsoring function, the priority, and the strategic
+      rationale.
+    output_format: table
+  - title: Cost and Phasing
+    prompt: >
+      For each project show the total cost and the phasing of spend
+      by year or quarter. Distinguish committed from planned spend
+      and roll up the annual capital requirement.
+    output_format: table
+  - title: Funding and Depreciation
+    prompt: >
+      State the funding source for each project (operating cash,
+      debt, lease, grant), the asset's useful life, the depreciation
+      method, and the resulting annual depreciation charge.
+  - title: Returns and Payback
+    prompt: >
+      For revenue- or savings-generating projects, estimate the
+      incremental cash flows, the net present value, the internal
+      rate of return, and the payback period. Rank projects by
+      risk-adjusted return.
+    output_format: table
+  - title: Prioritization and Risks
+    prompt: >
+      Recommend which projects to fund within the capital envelope
+      and which to defer. Identify the principal execution risks and
+      the gating conditions for release of funds.
+export:
+  - markdown
+  - csv
+  - xlsx

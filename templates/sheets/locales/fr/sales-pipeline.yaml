@@ -1,0 +1,59 @@
+id: sales-pipeline-v1-fr
+name: Pipeline Commercial
+type: sheet
+description: Suivi du pipeline commercial avec opportunités par étape, prévision pondérée, vélocité et analyse du taux de conversion pour la prévision du chiffre d'affaires (version française)
+locale: fr
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: En-tête du pipeline
+    prompt: >
+      Identifiez l'équipe ou le territoire, la période de prévision, la
+      devise, les définitions des étapes de vente et leurs probabilités
+      par défaut, ainsi que le CRM d'où les opportunités sont
+      exportées. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Opportunités
+    prompt: >
+      Pour chaque opportunité, saisissez : le compte, le nom de
+      l'opportunité, le responsable, l'étape, le montant de l'affaire,
+      la date de clôture prévue, la source du prospect et la prochaine
+      étape avec sa date. Répondez en français.
+    output_format: table
+  - title: Prévision pondérée
+    prompt: >
+      Appliquez la probabilité de l'étape au montant de chaque affaire
+      pour produire une valeur pondérée, et consolidez la prévision
+      engagée, le meilleur scénario et le pipeline pondéré pour la
+      période par rapport au quota. Répondez en français.
+    output_format: table
+  - title: Entonnoir par étape et vélocité
+    prompt: >
+      Indiquez le nombre et la valeur des opportunités par étape, le
+      nombre moyen de jours dans chaque étape et la durée globale du
+      cycle de vente. Identifiez les étapes où les affaires stagnent.
+      Répondez en français.
+    output_format: table
+  - title: Taux de conversion et couverture
+    prompt: >
+      Calculez le taux de conversion, la taille moyenne des affaires et
+      le ratio de couverture du pipeline par rapport à l'écart de
+      quota. Indiquez s'il y a suffisamment de pipeline pour atteindre
+      l'objectif. Répondez en français.
+  - title: Risques et actions
+    prompt: >
+      Mettez en évidence les affaires les plus importantes à risque et
+      qui glissent, les raisons, ainsi que les actions et les
+      responsables pour les faire avancer ou les conclure. Signalez les
+      affaires sans activité récente. Répondez en français.
+export:
+  - markdown
+  - csv
+  - xlsx

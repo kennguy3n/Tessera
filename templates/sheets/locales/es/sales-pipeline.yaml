@@ -1,0 +1,59 @@
+id: sales-pipeline-v1-es
+name: Embudo de Ventas
+type: sheet
+description: Seguimiento del embudo de ventas con oportunidades por etapa, pronóstico ponderado, velocidad y análisis de tasa de cierre para la proyección de ingresos (versión en español)
+locale: es
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: Encabezado del embudo
+    prompt: >
+      Identifique el equipo o territorio, el período de pronóstico, la
+      moneda, las definiciones de las etapas de venta y sus
+      probabilidades predeterminadas, y el CRM del que se exportan las
+      oportunidades. Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Oportunidades
+    prompt: >
+      Para cada oportunidad registre: cuenta, nombre de la
+      oportunidad, responsable, etapa, importe del negocio, fecha de
+      cierre prevista, origen del prospecto y el siguiente paso con su
+      fecha. Responda en español.
+    output_format: table
+  - title: Pronóstico ponderado
+    prompt: >
+      Aplique la probabilidad de la etapa al importe de cada negocio
+      para obtener un valor ponderado, y consolide el pronóstico
+      comprometido, el de mejor caso y el del embudo ponderado para el
+      período frente a la cuota. Responda en español.
+    output_format: table
+  - title: Embudo por etapa y velocidad
+    prompt: >
+      Muestre el número y el valor de las oportunidades por etapa, los
+      días promedio en cada etapa y la duración total del ciclo de
+      venta. Identifique las etapas donde los negocios se estancan.
+      Responda en español.
+    output_format: table
+  - title: Tasa de cierre y cobertura
+    prompt: >
+      Calcule la tasa de cierre, el tamaño promedio del negocio y el
+      ratio de cobertura del embudo frente a la brecha de cuota.
+      Indique si hay suficiente embudo para alcanzar el objetivo.
+      Responda en español.
+  - title: Riesgos y acciones
+    prompt: >
+      Destaque los negocios más grandes en riesgo y que se están
+      retrasando, las razones, y las acciones y responsables para
+      avanzarlos o cerrarlos. Señale los negocios sin actividad
+      reciente. Responda en español.
+export:
+  - markdown
+  - csv
+  - xlsx

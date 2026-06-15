@@ -1,0 +1,56 @@
+id: profit-loss-statement-v1-zh
+name: 利润表
+type: sheet
+description: 包含收入、销售成本、营业费用以及各报告期利润率的利润表（损益表），并列示与预算的差异（中文版）
+locale: zh
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: 报表表头
+    prompt: >
+      确定报告主体、报告期间及比较期（本期、上期、年初至今）、
+      记账货币、编制基础，以及数据所依据的源文件（总账、试算
+      平衡表）。请用中文回答。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 营业收入
+    prompt: >
+      按业务条线、产品或渠道分解营业收入。列示本期、比较期和
+      预算的总收入、退货与折让以及净收入，并附增长率和与预算的
+      差异。请用中文回答。
+    output_format: table
+  - title: 销售成本与毛利
+    prompt: >
+      详细列示已售商品或服务的成本（材料、直接人工、履约及其他
+      直接成本）。计算各期间及与预算相比的毛利和毛利率。请用中文
+      回答。
+    output_format: table
+  - title: 营业费用
+    prompt: >
+      按职能列示营业费用（销售与市场、研发、一般及行政）。列示
+      本期、比较期和预算的各类别，并附差异以及费用占收入的比率。
+      请用中文回答。
+    output_format: table
+  - title: 营业利润与EBITDA
+    prompt: >
+      计算营业利润（毛利减营业费用），然后加回折旧与摊销以列示
+      EBITDA。列示各期间的营业利润率和EBITDA利润率。请用中文
+      回答。
+  - title: 净利润
+    prompt: >
+      从营业利润过渡到净利润：净利息、其他收益与费用以及所得税。
+      列示税前利润、实际税率以及净利润和净利率。请用中文回答。
+  - title: 差异说明
+    prompt: >
+      说明与上期及预算相比最重大的差异。将每项差异与业务驱动因素
+      （数量、价格、结构、成本上涨、一次性项目）相联系，并注明任何
+      纠正措施。请用中文回答。
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,51 @@
+id: oee-tracker-v1
+name: OEE Tracker
+type: sheet
+description: Overall equipment effectiveness tracker computing availability, performance, and quality with downtime Pareto and loss analysis per line
+industry:
+  - manufacturing
+profile:
+  - plant-manager
+  - production-supervisor
+  - continuous-improvement
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the line or asset, the period and shift pattern, the
+      planned production time, the ideal cycle time or rate, and the
+      source logs (machine data, shift reports) the figures come from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Run-time and Availability
+    prompt: >
+      For each shift record planned time, unplanned downtime, planned
+      stops, and actual run time. Compute availability as run time
+      divided by planned production time.
+    output_format: table
+  - title: Performance
+    prompt: >
+      Record the total units produced and the ideal cycle time, and
+      compute performance as actual output divided by the theoretical
+      output at ideal rate. Capture minor stops and speed loss.
+    output_format: table
+  - title: Quality
+    prompt: >
+      Record good units, rejects, and rework, and compute quality as
+      good units divided by total units. Note the principal defect
+      categories.
+    output_format: table
+  - title: OEE and Loss Analysis
+    prompt: >
+      Compute OEE as availability times performance times quality per
+      shift and for the period, and compare to target and to world-
+      class benchmarks. Build a Pareto of downtime and loss causes.
+    output_format: table
+  - title: Improvement Actions
+    prompt: >
+      Identify the top losses dragging OEE down, the likely root
+      causes, and the countermeasures with owners and due dates.
+export:
+  - markdown
+  - csv
+  - xlsx

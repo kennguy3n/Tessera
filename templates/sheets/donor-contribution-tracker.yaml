@@ -1,0 +1,53 @@
+id: donor-contribution-tracker-v1
+name: Donor Contribution Tracker
+type: sheet
+description: Donor contribution tracker logging gifts by donor and campaign with restrictions, acknowledgement status, pledges, and retention analysis
+industry:
+  - nonprofit
+profile:
+  - development-manager
+  - fundraiser
+  - finance-manager
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the organization, the fiscal year or campaign period,
+      the currency, the fund and campaign codes, and the source
+      system (CRM, donation platform) the contributions come from.
+      Treat donor contact details as sensitive.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Contributions
+    prompt: >
+      For each gift capture: date received, donor (with a donor ID),
+      amount, gift type (one-time, recurring, pledge payment,
+      in-kind), payment method, campaign or appeal, and the fund.
+    output_format: table
+  - title: Restrictions and Designations
+    prompt: >
+      Record whether each gift is unrestricted, temporarily
+      restricted, or permanently restricted, and the designated
+      purpose. Summarize totals by restriction so they can be
+      recognized correctly.
+    output_format: table
+  - title: Pledges and Receivables
+    prompt: >
+      Track pledges: total pledged, received to date, balance
+      outstanding, and the payment schedule. Flag pledges past their
+      expected payment date.
+    output_format: table
+  - title: Acknowledgement and Compliance
+    prompt: >
+      Record the acknowledgement and tax-receipt status for each gift
+      and flag any outstanding. Note gifts requiring special handling
+      (quid pro quo, matching, anonymous).
+  - title: Campaign Performance and Retention
+    prompt: >
+      Summarize totals raised by campaign and fund against goal, the
+      number of donors, the average and largest gift, and donor
+      retention and new-versus-returning split.
+export:
+  - markdown
+  - csv
+  - xlsx

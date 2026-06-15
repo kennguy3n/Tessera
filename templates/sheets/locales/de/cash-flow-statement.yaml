@@ -1,0 +1,70 @@
+id: cash-flow-statement-v1-de
+name: Kapitalflussrechnung
+type: sheet
+description: Kapitalflussrechnung mit betrieblicher, Investitions- und Finanzierungstätigkeit, abgestimmt auf die Veränderung des Zahlungsmittelbestands und verknüpft mit Anfangs- und Endbeständen (deutsche Version)
+locale: de
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Kopfzeile der Rechnung
+    prompt: >
+      Bestimmen Sie das Unternehmen, den Berichtszeitraum (Monat,
+      Quartal oder Jahr), die Berichtswährung, die
+      Rechnungslegungsgrundlage (IFRS, US-GAAP oder lokale Standards),
+      die Methode für den operativen Cashflow (direkt oder indirekt)
+      und die Quelldokumente, aus denen die Zahlen stammen. Antworten
+      Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Betriebliche Tätigkeit
+    prompt: >
+      Erstellen Sie den Cashflow aus der betrieblichen Tätigkeit. Bei
+      der indirekten Methode beginnen Sie mit dem Jahresüberschuss und
+      bereinigen um Abschreibungen, aktienbasierte Vergütung, latente
+      Steuern und andere zahlungsunwirksame Posten; fügen Sie dann die
+      Veränderungen des Working Capital hinzu (Forderungen, Vorräte,
+      aktive Rechnungsabgrenzung, Verbindlichkeiten, Rückstellungen,
+      passive Rechnungsabgrenzung). Zeigen Sie jede Position mit dem
+      Periodenwert und dem Vorjahresvergleich. Antworten Sie auf
+      Deutsch.
+    output_format: table
+  - title: Investitionstätigkeit
+    prompt: >
+      Listen Sie die Zahlungsmittel aus der Investitionstätigkeit auf:
+      Investitionsausgaben, Käufe und Verkäufe von Sachanlagen,
+      Akquisitionen und Veräußerungen, Käufe und Fälligkeiten von
+      Finanzanlagen sowie aktivierte Software. Zeigen Sie jede Position
+      mit Perioden- und Vergleichsbeträgen. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Finanzierungstätigkeit
+    prompt: >
+      Listen Sie die Zahlungsmittel aus der Finanzierungstätigkeit
+      auf: Aufnahme und Tilgung von Schulden, Ausgabe und Rückkauf von
+      Eigenkapital, gezahlte Dividenden und Ausschüttungen,
+      Tilgungsanteile von Leasingverhältnissen und
+      Finanzierungsgebühren. Zeigen Sie jede Position mit Perioden- und
+      Vergleichsbeträgen. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Nettoveränderung und Überleitung
+    prompt: >
+      Summieren Sie die drei Tätigkeitsbereiche zur Nettoveränderung
+      der Zahlungsmittel, addieren Sie den Anfangsbestand und weisen
+      Sie nach, dass der Endbestand mit der Bilanz übereinstimmt.
+      Stimmen Sie etwaige Währungseffekte auf in Fremdwährung
+      gehaltene Zahlungsmittel ab. Antworten Sie auf Deutsch.
+  - title: Freier Cashflow und Kommentar
+    prompt: >
+      Berechnen Sie den freien Cashflow (operativer Cashflow abzüglich
+      Investitionsausgaben) und die Cash-Conversion-Rate (operativer
+      Cashflow geteilt durch Jahresüberschuss). Kommentieren Sie die
+      wesentlichen Treiber der Zahlungsmittelbewegung der Periode und
+      weisen Sie auf Liquiditätsrisiken hin. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - csv
+  - xlsx

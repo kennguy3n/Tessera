@@ -1,0 +1,48 @@
+id: sales-tax-worksheet-us-v1
+name: Sales Tax Worksheet (US)
+type: sheet
+description: US sales and use tax worksheet computing taxable sales, exemptions, and tax due by state and local jurisdiction with nexus and filing summary
+industry:
+  - finance
+profile:
+  - bookkeeper
+  - accountant
+  - tax-manager
+sections:
+  - title: Worksheet Header
+    prompt: >
+      Identify the business, the filing entity and tax IDs, the
+      reporting period, and the states and local jurisdictions where
+      the business has nexus and is registered to collect. Note rates
+      vary by state, county, city, and special district.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Gross and Taxable Sales by Jurisdiction
+    prompt: >
+      For each state and local jurisdiction summarize gross sales,
+      non-taxable and exempt sales, and the resulting taxable sales.
+      Separate marketplace-facilitated sales where the platform
+      remits.
+    output_format: table
+  - title: Exemptions and Deductions
+    prompt: >
+      Detail exempt sales by reason (resale, exempt entity, exempt
+      product, shipping) and confirm exemption certificates are on
+      file. Total the deductions by jurisdiction.
+    output_format: table
+  - title: Tax Due by Jurisdiction
+    prompt: >
+      Apply the combined state and local rate to taxable sales for
+      each jurisdiction to compute tax due. Add use tax on taxable
+      purchases where no tax was paid. Account for any vendor discount.
+    output_format: table
+  - title: Filing Summary
+    prompt: >
+      Summarize total tax collected, tax due, and any difference to
+      investigate, by jurisdiction and filing frequency. List the
+      returns due, their deadlines, and the prepayment requirements.
+export:
+  - markdown
+  - csv
+  - xlsx

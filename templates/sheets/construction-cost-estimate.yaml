@@ -1,0 +1,52 @@
+id: construction-cost-estimate-v1
+name: Construction Cost Estimate
+type: sheet
+description: Construction cost estimate by CSI division with quantity takeoff, labor and material pricing, markups, and contingency for a bid or budget
+industry:
+  - construction
+profile:
+  - estimator
+  - project-manager
+  - quantity-surveyor
+sections:
+  - title: Estimate Header
+    prompt: >
+      Identify the project, the location, the estimate type (order of
+      magnitude, budget, definitive) and basis, the currency, the
+      pricing date, and the drawings and specifications the takeoff is
+      based on.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Quantity Takeoff
+    prompt: >
+      Break the work down by trade or CSI division. For each line
+      capture the description, the unit of measure, and the quantity
+      taken off from the drawings.
+    output_format: table
+  - title: Unit Pricing
+    prompt: >
+      For each line apply the material unit cost, the labor unit cost
+      (crew rate and productivity), and any equipment cost to compute
+      the extended cost. Cite the pricing source.
+    output_format: table
+  - title: Division Summary
+    prompt: >
+      Roll up the extended costs by division and show the direct cost
+      subtotal. Present the cost per division and per unit of building
+      area for benchmarking.
+    output_format: table
+  - title: Markups and Contingency
+    prompt: >
+      Add general conditions, overhead, profit, bonds, insurance,
+      escalation, and design and construction contingency, each as a
+      stated percentage or amount, to reach the total estimated cost.
+  - title: Assumptions and Exclusions
+    prompt: >
+      List the assumptions, allowances, and exclusions, and the
+      qualifications that bound the estimate. Note the estimate
+      accuracy range and the items most likely to move the number.
+export:
+  - markdown
+  - csv
+  - xlsx

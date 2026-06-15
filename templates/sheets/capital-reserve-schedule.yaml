@@ -1,0 +1,49 @@
+id: capital-reserve-schedule-v1
+name: Capital Reserve Schedule
+type: sheet
+description: Reserve study schedule listing building components with useful life, replacement cost, and funding plan to keep reserves adequately funded
+industry:
+  - real-estate
+profile:
+  - property-manager
+  - association-board
+  - facilities-manager
+sections:
+  - title: Schedule Header
+    prompt: >
+      Identify the property or association, the study date, the
+      currency, the inflation and interest assumptions, the current
+      reserve balance, and the source (reserve study, inspection
+      reports) of the component data.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Component Inventory
+    prompt: >
+      For each major component (roof, elevators, HVAC, paving, paint,
+      amenities) capture: description, quantity, the year placed in
+      service, the estimated useful life, and the remaining useful
+      life.
+    output_format: table
+  - title: Replacement Cost and Timing
+    prompt: >
+      Estimate the current replacement cost of each component and the
+      future cost at the scheduled replacement year using the
+      inflation assumption. Lay out the replacement timeline.
+    output_format: table
+  - title: Funding Plan
+    prompt: >
+      Project the reserve balance year by year given the opening
+      balance, planned contributions, interest, and expenditures.
+      Compute the percent funded against the fully funded balance.
+    output_format: table
+  - title: Adequacy and Recommendations
+    prompt: >
+      Assess whether contributions keep the fund above the threshold
+      that avoids special assessments, identify years of projected
+      shortfall, and recommend a contribution level or a special
+      assessment if required.
+export:
+  - markdown
+  - csv
+  - xlsx

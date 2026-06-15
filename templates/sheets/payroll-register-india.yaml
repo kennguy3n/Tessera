@@ -1,0 +1,48 @@
+id: payroll-register-india-v1
+name: Payroll Register (India)
+type: sheet
+description: India payroll register computing gross-to-net with TDS, EPF, ESI, and professional tax, structured by CTC components with statutory employer cost
+industry:
+  - finance
+profile:
+  - payroll-specialist
+  - hr-manager
+  - accountant
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the employer and TAN and PF and ESI codes, the wage
+      month, the states involved, and the source records. Note the
+      statutory components (EPF, ESI, professional tax) that apply.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Earnings and CTC Components
+    prompt: >
+      For each employee capture: employee ID, basic, house rent
+      allowance, dearness and other allowances, special allowance, and
+      gross earnings, structured against the cost-to-company.
+    output_format: table
+  - title: Statutory Deductions
+    prompt: >
+      Compute employee EPF (12% of basic up to the wage ceiling), ESI
+      where wages are within the threshold, professional tax by state
+      slab, and any labour welfare fund. Show the amounts per
+      employee.
+    output_format: table
+  - title: TDS and Net Pay
+    prompt: >
+      Compute income-tax TDS on salary based on the employee's
+      declared regime and investment proofs, apply other deductions,
+      and arrive at net pay. Show projected annual tax and TDS to
+      date.
+    output_format: table
+  - title: Employer Contributions and Filing
+    prompt: >
+      Compute employer EPF (with EPS split) and ESI contributions and
+      total the statutory employer cost. Summarize net pay, the
+      challans due (EPF, ESI, TDS, PT), and their deposit deadlines.
+export:
+  - markdown
+  - csv
+  - xlsx

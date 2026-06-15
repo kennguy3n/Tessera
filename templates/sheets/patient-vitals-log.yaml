@@ -1,0 +1,43 @@
+id: patient-vitals-log-v1
+name: Patient Vitals Log
+type: sheet
+description: Vital signs log capturing serial measurements with reference ranges, early-warning score, and trend flags for clinical monitoring
+industry:
+  - healthcare
+profile:
+  - nurse
+  - clinician
+  - care-coordinator
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the unit, the subject reference (ID or initials), the
+      monitoring period, the baseline observations, and the
+      early-warning scoring system in use. Keep the log de-identified.
+  - title: Vital Sign Readings
+    prompt: >
+      For each reading capture: date and time, temperature, heart
+      rate, respiratory rate, blood pressure (systolic and
+      diastolic), oxygen saturation, supplemental oxygen, and pain
+      score, with the recording clinician.
+    output_format: table
+  - title: Reference Ranges and Flags
+    prompt: >
+      State the normal reference range for each vital sign and flag
+      any reading outside range. Compute an early-warning score per
+      reading where applicable.
+    output_format: table
+  - title: Trend and Escalation
+    prompt: >
+      Describe the trend across readings (improving, stable,
+      deteriorating) and identify any reading or score that should
+      trigger clinical escalation, with the action taken.
+  - title: Intake, Output, and Notes
+    prompt: >
+      Record fluid intake and output where monitored, and any nursing
+      notes relevant to the observations (mobility, consciousness,
+      interventions).
+export:
+  - markdown
+  - csv
+  - xlsx

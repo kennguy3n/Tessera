@@ -1,0 +1,68 @@
+id: profit-loss-statement-v1-pt
+name: Demonstração do Resultado
+type: sheet
+description: Demonstração do resultado (lucros e perdas) com receita, custo das vendas, despesas operacionais e margens ao longo dos períodos, com variação em relação ao orçamento (versão em português)
+locale: pt
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Cabeçalho da demonstração
+    prompt: >
+      Identifique a entidade, o período do relatório e os comparativos
+      (período atual, período anterior, acumulado do ano), a moeda, a
+      base de preparação e os documentos de origem (razão geral,
+      balancete) dos quais os valores são extraídos. Responda em
+      português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Receita
+    prompt: >
+      Detalhe a receita por linha de negócio, produto ou canal. Mostre
+      a receita bruta, devoluções e abatimentos e a receita líquida do
+      período atual, do período comparativo e do orçamento, com o
+      percentual de crescimento e a variação em relação ao orçamento.
+      Responda em português.
+    output_format: table
+  - title: Custo das vendas e lucro bruto
+    prompt: >
+      Detalhe o custo dos produtos ou serviços vendidos (materiais,
+      mão de obra direta, logística e outros custos diretos). Calcule o
+      lucro bruto e o percentual de margem bruta para cada período e em
+      relação ao orçamento. Responda em português.
+    output_format: table
+  - title: Despesas operacionais
+    prompt: >
+      Liste as despesas operacionais por função (vendas e marketing,
+      pesquisa e desenvolvimento, gerais e administrativas). Mostre
+      cada categoria para o período atual, o comparativo e o orçamento,
+      com variações e a despesa como percentual da receita. Responda em
+      português.
+    output_format: table
+  - title: Resultado operacional e EBITDA
+    prompt: >
+      Calcule o resultado operacional (lucro bruto menos despesas
+      operacionais) e, em seguida, adicione a depreciação e amortização
+      para mostrar o EBITDA. Apresente a margem operacional e a margem
+      EBITDA para cada período. Responda em português.
+  - title: Lucro líquido
+    prompt: >
+      Faça a ponte do resultado operacional ao lucro líquido: juros
+      líquidos, outras receitas e despesas, e imposto de renda. Mostre
+      o resultado antes dos impostos, a alíquota efetiva e o lucro
+      líquido com a margem líquida. Responda em português.
+  - title: Comentário das variações
+    prompt: >
+      Explique as variações mais relevantes em relação ao período
+      anterior e ao orçamento. Relacione cada variação a um fator do
+      negócio (volume, preço, mix, inflação de custos, itens não
+      recorrentes) e indique qualquer ação corretiva. Responda em
+      português.
+export:
+  - markdown
+  - csv
+  - xlsx

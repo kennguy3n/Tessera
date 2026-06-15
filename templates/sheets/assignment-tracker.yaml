@@ -1,0 +1,43 @@
+id: assignment-tracker-v1
+name: Assignment Tracker
+type: sheet
+description: Assignment and submission tracker logging due dates, submission status, grading progress, and late or missing work per student
+industry:
+  - education
+profile:
+  - teacher
+  - instructor
+  - student
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the course, the term, the instructor, the grading
+      turnaround target, and the assessment plan the assignments come
+      from.
+  - title: Assignments
+    prompt: >
+      For each assignment capture: title, type (homework, essay, lab,
+      project, exam), assigned date, due date, points possible,
+      submission method, and the rubric reference.
+    output_format: table
+  - title: Submission Status
+    prompt: >
+      For each student and assignment record the submission status
+      (not started, submitted, late, missing, excused), the submission
+      timestamp, and whether it has been graded.
+    output_format: table
+  - title: Grading Progress
+    prompt: >
+      Summarize grading progress per assignment: submissions
+      received, graded, and outstanding, and the average turnaround
+      against the target. Flag any backlog.
+    output_format: table
+  - title: Late and Missing Work
+    prompt: >
+      List late and missing submissions by student, apply the stated
+      late penalty, and recommend follow-up (reminder, extension,
+      parent contact) for students with multiple missing items.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,64 @@
+id: kpi-dashboard-v1-pt
+name: Painel de KPIs
+type: sheet
+description: Painel executivo de KPIs com definições de métricas, metas, valores reais, tendências e status RAG nas perspectivas financeira, de clientes, operacional e de pessoas (versão em português)
+locale: pt
+industry:
+  - finance
+profile:
+  - executive
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: Cabeçalho do painel
+    prompt: >
+      Identifique a organização ou unidade de negócio, o período e a
+      cadência do relatório (semanal, mensal, trimestral), o
+      responsável pelo painel e os sistemas de registro dos quais as
+      métricas são extraídas. Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Definições das métricas
+    prompt: >
+      Para cada KPI, documente a definição precisa, a fórmula, a
+      unidade, a fonte de dados, a cadência de atualização e o
+      responsável. Definições inequívocas evitam que a mesma métrica
+      seja calculada de duas maneiras diferentes. Responda em
+      português.
+    output_format: table
+  - title: Métricas financeiras
+    prompt: >
+      Reporte os KPIs financeiros (receita, margem bruta, EBITDA,
+      caixa, queima de caixa, ARR ou reservas conforme aplicável) com
+      meta, valor real, período anterior, variação e um status
+      vermelho/âmbar/verde. Responda em português.
+    output_format: table
+  - title: Métricas de clientes
+    prompt: >
+      Reporte os KPIs de clientes (novos clientes, churn, retenção,
+      retenção líquida de receita, NPS, CAC, LTV) com meta, valor real,
+      período anterior, variação e status. Responda em português.
+    output_format: table
+  - title: Métricas operacionais
+    prompt: >
+      Reporte os KPIs operacionais relevantes para o negócio (produção,
+      tempo de ciclo, entrega no prazo, utilização, taxa de defeitos,
+      cumprimento de SLA) com meta, valor real, período anterior e
+      status. Responda em português.
+    output_format: table
+  - title: Métricas de pessoas
+    prompt: >
+      Reporte os KPIs de pessoas (quadro de pessoal, vagas abertas,
+      tempo de preenchimento, rotatividade voluntária, engajamento) com
+      meta, valor real e status. Responda em português.
+    output_format: table
+  - title: Percepções e ações
+    prompt: >
+      Resuma o que os números indicam neste período: as duas ou três
+      métricas mais fora da meta, os prováveis fatores e o responsável
+      e o prazo da ação corretiva de cada uma. Responda em português.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,70 @@
+id: profit-loss-statement-v1-de
+name: Gewinn- und Verlustrechnung
+type: sheet
+description: Gewinn- und Verlustrechnung mit Umsatz, Umsatzkosten, Betriebsaufwand und Margen über mehrere Berichtsperioden, mit Abweichung zum Budget (deutsche Version)
+locale: de
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Kopfzeile der Rechnung
+    prompt: >
+      Bestimmen Sie das Unternehmen, den Berichtszeitraum und die
+      Vergleichswerte (laufende Periode, Vorperiode, kumuliert seit
+      Jahresbeginn), die Währung, die Rechnungslegungsgrundlage und die
+      Quelldokumente (Hauptbuch, Saldenliste), aus denen die Zahlen
+      stammen. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Umsatzerlöse
+    prompt: >
+      Gliedern Sie die Umsatzerlöse nach Geschäftsbereich, Produkt oder
+      Kanal. Zeigen Sie Bruttoumsatz, Retouren und Erlösschmälerungen
+      sowie Nettoumsatz für die laufende Periode, die Vergleichsperiode
+      und das Budget, mit Wachstumsrate und Abweichung zum Budget.
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Umsatzkosten und Bruttoergebnis
+    prompt: >
+      Detaillieren Sie die Kosten der verkauften Waren oder Leistungen
+      (Material, direkte Arbeit, Fulfillment und sonstige direkte
+      Kosten). Berechnen Sie das Bruttoergebnis und die Bruttomarge in
+      Prozent für jede Periode und gegenüber dem Budget. Antworten Sie
+      auf Deutsch.
+    output_format: table
+  - title: Betriebsaufwand
+    prompt: >
+      Listen Sie den Betriebsaufwand nach Funktion auf (Vertrieb und
+      Marketing, Forschung und Entwicklung, allgemeine Verwaltung).
+      Zeigen Sie jede Kategorie für die laufende Periode, den Vergleich
+      und das Budget, mit Abweichungen und dem Aufwand als Prozentsatz
+      des Umsatzes. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Betriebsergebnis und EBITDA
+    prompt: >
+      Berechnen Sie das Betriebsergebnis (Bruttoergebnis abzüglich
+      Betriebsaufwand) und addieren Sie dann Abschreibungen hinzu, um
+      das EBITDA zu zeigen. Stellen Sie die operative Marge und die
+      EBITDA-Marge für jede Periode dar. Antworten Sie auf Deutsch.
+  - title: Jahresüberschuss
+    prompt: >
+      Führen Sie vom Betriebsergebnis zum Jahresüberschuss über:
+      Nettozinsen, sonstige Erträge und Aufwendungen sowie
+      Ertragsteuern. Zeigen Sie das Ergebnis vor Steuern, den
+      effektiven Steuersatz und den Jahresüberschuss mit der
+      Nettomarge. Antworten Sie auf Deutsch.
+  - title: Abweichungskommentar
+    prompt: >
+      Erläutern Sie die wesentlichsten Abweichungen gegenüber der
+      Vorperiode und gegenüber dem Budget. Verknüpfen Sie jede
+      Abweichung mit einem Geschäftstreiber (Menge, Preis, Mix,
+      Kosteninflation, Einmaleffekte) und nennen Sie etwaige
+      Korrekturmaßnahmen. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - csv
+  - xlsx

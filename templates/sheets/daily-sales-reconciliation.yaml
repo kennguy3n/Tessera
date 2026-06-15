@@ -1,0 +1,46 @@
+id: daily-sales-reconciliation-v1
+name: Daily Sales Reconciliation
+type: sheet
+description: End-of-day sales reconciliation matching register totals to cash, card, and digital tender with over/short, refunds, and deposit summary
+industry:
+  - retail
+profile:
+  - store-manager
+  - cashier
+  - bookkeeper
+sections:
+  - title: Reconciliation Header
+    prompt: >
+      Identify the store and register, the business date, the shift
+      and cashier, the opening float, and the point-of-sale system the
+      totals are read from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Sales by Tender
+    prompt: >
+      Record the system-reported sales by tender type: cash, credit
+      and debit card, mobile and digital wallets, gift card, and store
+      credit. Total gross sales and separate tax collected.
+    output_format: table
+  - title: Cash Count
+    prompt: >
+      Record the counted cash by denomination, subtract the opening
+      float, and compare the counted cash takings to the system cash
+      total. Compute the cash over or short amount.
+    output_format: table
+  - title: Refunds, Voids, and Discounts
+    prompt: >
+      Log refunds, voids, no-sales, and manual discounts with the
+      reason and the authorizing supervisor. Reconcile these against
+      the system exception report.
+    output_format: table
+  - title: Variance and Deposit
+    prompt: >
+      Summarize the net over or short across all tenders, explain any
+      material variance, state the amount to be deposited to the bank,
+      and record the deposit reference and the sign-offs.
+export:
+  - markdown
+  - csv
+  - xlsx

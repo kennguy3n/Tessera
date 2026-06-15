@@ -1,0 +1,54 @@
+id: fixed-asset-register-v1
+name: Fixed Asset Register
+type: sheet
+description: Fixed asset register tracking each capitalized asset with cost, depreciation method, accumulated depreciation, net book value, and disposal status
+industry:
+  - finance
+  - manufacturing
+profile:
+  - accountant
+  - controller
+  - asset-manager
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the entity, the as-of date, the reporting currency,
+      the capitalization threshold policy, and the source records the
+      register is reconciled to.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Asset Records
+    prompt: >
+      For each asset capture: asset tag or ID, description, class
+      (land, building, plant, equipment, vehicles, IT, furniture),
+      location, custodian, acquisition date, supplier, and capitalized
+      cost.
+    output_format: table
+  - title: Depreciation
+    prompt: >
+      For each asset record the depreciation method (straight-line,
+      declining balance, units of production), the useful life, the
+      residual value, the period depreciation charge, and the
+      accumulated depreciation to date.
+    output_format: table
+  - title: Net Book Value
+    prompt: >
+      Compute the net book value of each asset (cost less accumulated
+      depreciation) and roll up by asset class and location. Reconcile
+      the total to the balance-sheet carrying amount.
+    output_format: table
+  - title: Additions, Disposals, and Impairment
+    prompt: >
+      Record additions and disposals in the period (date, proceeds,
+      gain or loss on disposal) and any impairment recognized.
+      Highlight fully depreciated assets still in use.
+  - title: Verification and Controls
+    prompt: >
+      Note the date of the last physical verification, any assets not
+      located, and the control actions outstanding (re-tagging,
+      write-off approval, insurance update).
+export:
+  - markdown
+  - csv
+  - xlsx
