@@ -1,0 +1,59 @@
+id: landing-waitlist-v1
+name: Waitlist / Coming Soon
+type: landing_page
+description: Pre-launch waitlist page with a teaser hero, value proposition, email capture, and referral incentive
+default_icon_set: lucide
+color_scheme:
+  primary: "#111827"
+  secondary: "#6366F1"
+  accent: "#10B981"
+profile:
+  - founder
+  - growth
+sections:
+  - title: Hero — Teaser
+    prompt: >
+      A curiosity-piquing headline that hints at what's coming without
+      giving everything away, a one-line value promise, and a single
+      email field with a "Join the waitlist" button.
+    icon_suggestion: hourglass
+  - title: The Promise
+    prompt: >
+      Two or three sentences on the change the product will bring and
+      why it's worth waiting for. Speak to the early-adopter visitor.
+    icon_suggestion: sparkles
+  - title: What to Expect
+    prompt: >
+      A short bulleted preview of the headline capabilities, kept
+      aspirational but honest, so sign-ups know what they're joining.
+    icon_suggestion: list-checks
+    output_format: bullets
+  - title: Early-access Perks
+    prompt: >
+      The incentives for joining now: early access, founder pricing, or
+      a say in the roadmap. Make the reason to sign up today concrete.
+    icon_suggestion: gift
+  - title: Referral Incentive
+    prompt: >
+      A referral mechanic that moves people up the list for inviting
+      others, with the reward tiers and the share prompt.
+    icon_suggestion: share-2
+  - title: Social Proof / Momentum
+    prompt: >
+      A momentum signal — number already on the list, notable backers,
+      or press — to create FOMO. Use real figures from the connected
+      source.
+    icon_suggestion: users
+    required_sources:
+      - type: local
+        min: 1
+  - title: FAQ and Footer
+    prompt: >
+      Three or four FAQs (when it launches, cost, data handling) and a
+      footer with contact and social links. Reassure on privacy of the
+      collected email.
+    icon_suggestion: help-circle
+export:
+  - markdown
+  - html
+  - pdf

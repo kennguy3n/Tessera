@@ -1,0 +1,53 @@
+id: landing-product-launch-v1-ko
+name: 제품 출시 랜딩 페이지
+type: landing_page
+description: 히어로, 문제/해결책, 기능, 사회적 증거, 가격, 그리고 강력한 주요 CTA를 갖춘 출시 당일 랜딩 페이지 (한국어 버전)
+locale: ko
+default_icon_set: lucide
+color_scheme:
+  primary: '#4F46E5'
+  secondary: '#0EA5E9'
+  accent: '#F97316'
+profile:
+- product-marketing
+- marketing
+sections:
+- title: 히어로
+  prompt: |-
+    무엇이 새롭고 누구를 위한 것인지 밝히는 혜택 중심의 헤드라인, 15~25단어의 서브헤드라인, 그리고 주요 CTA(‘시작하기’ / ‘무료로 사용해 보기’). 데모나 영상을 위한 보조 CTA도 추가하세요. 한국어로 작성하세요.
+  icon_suggestion: rocket
+- title: 문제
+  prompt: 출시가 해결하는 문제를 방문자 자신의 말로 표현하세요. 어떤 영업 멘트보다 먼저 이해받고 있다고 느끼게 하는 두세 문장. 한국어로 작성하세요.
+  icon_suggestion: alert-circle
+- title: 해결책
+  prompt: |-
+    제품이 그 문제를 어떻게 해결하는지, 그것을 차별화하는 단 하나의 ‘아하’ 역량과 함께 제시하세요. 사양서가 아니라 성과에 집중하세요. 한국어로 작성하세요.
+  icon_suggestion: sparkles
+- title: 핵심 기능
+  prompt: |-
+    3~6개의 기능 카드. 카드마다 아이콘, 혜택을 앞세운 제목, 그리고 무엇을 하는지에 대한 한 문장. 타깃 방문자가 가장 중요하게 여기는 순으로 배열하세요. 한국어로 작성하세요.
+  icon_suggestion: layout-grid
+- title: 사회적 증거
+  prompt: |-
+    로고, 이름/직책/회사가 포함된 눈에 띄는 추천사, 그리고 하나의 핵심 지표. 연결된 소스에서 가져오고 모든 인용에 출처를 밝히세요. 한국어로 작성하세요.
+  icon_suggestion: quote
+  required_sources:
+  - type: local
+    min: 1
+- title: 작동 방식
+  prompt: |-
+    가입에서 가치 실현까지의 간단한 세 단계. 각 단계에 짧은 라벨과 한 줄을 붙여, 방문자가 얼마나 빨리 성과에 도달하는지 보여 주세요. 한국어로 작성하세요.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: 가격
+  prompt: |-
+    가격 등급 또는 명확한 단일 가격, 포함 내용, 그리고 만료일이 있는 출시 혜택이 있다면 그것. 체험이나 보증 문구로 위험을 낮추세요. 한국어로 작성하세요.
+  icon_suggestion: tag
+  output_format: table
+- title: 마무리 CTA와 FAQ
+  prompt: 핵심 혜택을 다시 강조하는 마무리 CTA와, 이의에 대응하는 4~6개의 FAQ(보안, 가격, 마이그레이션, 지원). 한국어로 작성하세요.
+  icon_suggestion: check-circle
+export:
+- markdown
+- html
+- pdf

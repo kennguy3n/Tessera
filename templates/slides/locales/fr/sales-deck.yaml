@@ -1,0 +1,47 @@
+id: sales-deck-v1-fr
+name: Présentation commerciale B2B
+type: slides
+description: |-
+  Présentation commerciale de prospection/closing — douleur de l'acheteur, point de vue, solution, preuves, tarification et une prochaine étape claire (version française)
+locale: fr
+format: marp
+theme: gaia
+paginate: true
+profile:
+- sales
+- account-executive
+sections:
+- title: Titre et ordre du jour
+  prompt: |-
+    Diapositive de titre avec le nom de l'entreprise du prospect, l'entreprise du vendeur, la date de la réunion et les noms/fonctions des participants des deux côtés. Suivez d'un ordre du jour en trois lignes pour que l'acheteur sache à quoi s'attendre et combien de temps cela prendra. Répondez en français.
+- title: Leur réalité actuelle
+  prompt: |-
+    Reflétez la situation actuelle de l'acheteur dans ses propres mots : le déclencheur de cette conversation, le flux de travail qu'il utilise aujourd'hui et le coût du statu quo (temps, argent, risque). Étayez chaque affirmation par les notes de découverte ou les sources connectées. Répondez en français.
+  required_sources:
+  - type: local
+    min: 1
+- title: Point de vue
+  prompt: |-
+    Exposez le point de vue à contre-courant et défendable du vendeur sur l'évolution du marché de l'acheteur et sur les raisons pour lesquelles le statu quo ne tiendra pas. C'est le « pourquoi changer » avant le « pourquoi nous ». Répondez en français.
+- title: Aperçu de la solution
+  prompt: |-
+    Reliez la solution aux deux ou trois douleurs nommées ci-dessus. Pour chaque douleur : la capacité qui y répond et le résultat obtenu par l'acheteur. Évitez l'inventaire de fonctionnalités : commencez par le résultat. Répondez en français.
+- title: Preuves
+  prompt: |-
+    Les preuves les plus solides : un client nommé dans le segment de l'acheteur, un résultat chiffré (pourcentage ou absolu) et une citation d'une ligne. Citez l'étude de cas ou l'appel de référence dont cela provient. Répondez en français.
+  output_format: table
+- title: Tarification et conditionnement
+  prompt: |-
+    Présentez le forfait recommandé, ce qu'il comprend, l'investissement et la période de retour sur investissement attendue. Montrez les hypothèses pour que l'acheteur puisse défendre le chiffre en interne. Répondez en français.
+- title: Plan d'action commun
+  prompt: |-
+    Décrivez le chemin vers la décision sous forme de liste de contrôle datée : validation technique, revue de sécurité, validations des parties prenantes, contractualisation et mise en service cible. Nommez le responsable de chaque côté pour chaque étape. Répondez en français.
+  output_format: numbered_list
+- title: Prochaine étape
+  prompt: |-
+    Concluez sur une prochaine étape précise et à faible friction (p. ex. un atelier de cadrage ou un pilote), avec une date proposée et la seule décision que l'acheteur doit prendre pour y parvenir. Répondez en français.
+export:
+- markdown
+- html
+- pptx
+- pdf

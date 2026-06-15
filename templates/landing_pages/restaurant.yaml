@@ -1,0 +1,56 @@
+id: landing-restaurant-v1
+name: Restaurant / Local Business
+type: landing_page
+description: Restaurant landing page — atmosphere hero, menu highlights, hours, location, reviews, and a reserve CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#9A3412"
+  secondary: "#166534"
+  accent: "#CA8A04"
+industry:
+  - retail
+profile:
+  - owner
+  - marketing
+sections:
+  - title: Hero — Atmosphere and Reserve
+    prompt: >
+      The restaurant name, a mouth-watering one-liner on the cuisine
+      and vibe, a hero food/room photo, and a "Reserve a table" or
+      "Order online" CTA.
+    icon_suggestion: utensils
+  - title: Our Story
+    prompt: >
+      A short, warm origin story: the chef or owner, the inspiration,
+      and what makes the place special. Two or three sentences.
+    icon_suggestion: book-open
+  - title: Menu Highlights
+    prompt: >
+      Signature dishes across courses with a tempting one-line
+      description and price. Pull items from the connected menu source
+      and flag dietary options.
+    icon_suggestion: chef-hat
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Reviews
+    prompt: >
+      Two or three short guest reviews with names and a star rating,
+      plus any press mentions or awards.
+    icon_suggestion: star
+  - title: Hours and Location
+    prompt: >
+      Opening hours by day, address with map, parking/transit, and
+      contact. Note any reservation policy or walk-in waits.
+    icon_suggestion: map-pin
+    output_format: table
+  - title: Order, Reserve, Events
+    prompt: >
+      The ways to engage: reservation link, online ordering/delivery
+      partners, private events and catering, and the gift-card option.
+    icon_suggestion: calendar-check
+export:
+  - markdown
+  - html
+  - pdf

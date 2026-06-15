@@ -1,0 +1,47 @@
+id: product-launch-deck-v1-de
+name: Produkteinführung / Go-to-Market
+type: slides
+description: |-
+  Präsentation zur Produkteinführung — Positionierung, Zielsegmente, Botschaften, Einführungsplan, Enablement und Erfolgskennzahlen (deutsche Version)
+locale: de
+format: marp
+theme: gaia
+paginate: true
+profile:
+- product-manager
+- product-marketing
+sections:
+- title: Einführungs-Headline
+  prompt: |-
+    Titelfolie mit dem Namen des Produkts oder Features, der Einführungsstufe (groß / klein / still), dem geplanten Einführungstermin und einem einzeiligen Versprechen, das festhält, warum dies für Kunden wichtig ist. Antworten Sie auf Deutsch.
+- title: Warum jetzt
+  prompt: |-
+    Der Marktwandel, die Kundennachfrage oder die Wettbewerbslücke, die jetzt den richtigen Zeitpunkt für die Einführung schafft. Untermauern Sie dies mit Recherchen oder Pipeline-Daten aus den verbundenen Quellen. Antworten Sie auf Deutsch.
+  required_sources:
+  - type: local
+    min: 1
+- title: Positionierung und Botschaften
+  prompt: |-
+    Das Positionierungs-Statement (für wen, die Kategorie, der Hauptnutzen, das Unterscheidungsmerkmal) und die drei Botschaftssäulen, die Vertrieb und Marketing überall wiederholen. Antworten Sie auf Deutsch.
+- title: Zielsegmente und ICP
+  prompt: |-
+    Die primären und sekundären Segmente, das ideale Kundenprofil und die Käufer-/Nutzer-Personas. Für jedes: der Schmerz, den diese Einführung löst, und der Auslöser, der sie zum Handeln bewegt. Antworten Sie auf Deutsch.
+- title: Verpackung und Preisgestaltung
+  prompt: |-
+    Wie das Produkt verpackt und bepreist wird, was sich für Bestandskunden ändert und etwaige Migrations- oder Bestandsschutzpläne. Kennzeichnen Sie noch offene Preisentscheidungen. Antworten Sie auf Deutsch.
+- title: Einführungsplan und Zeitplan
+  prompt: |-
+    Der Phasenplan: Alpha, Beta, allgemeine Verfügbarkeit und Nacheinführung. Pro Phase: die Termine, die Kanäle (PR, Content, E-Mail, Events, In-App) und die Kriterien zum Weiterkommen. Antworten Sie auf Deutsch.
+  output_format: table
+- title: Enablement für Vertrieb und Support
+  prompt: |-
+    Was Vertrieb, Customer Success und Support bereit haben müssen: Demo-Skript, Battlecard, Preisleitfaden, FAQ und das Schulungsdatum. Benennen Sie die verantwortliche Person für jedes Asset. Antworten Sie auf Deutsch.
+- title: Erfolgskennzahlen
+  prompt: |-
+    Das Einführungs-Scorecard: Akzeptanz, beeinflusste Pipeline, Umsatz und ein Frühindikator für die ersten 30/60/90 Tage. Definieren Sie, wie jede Kennzahl gemessen wird, und das Ziel. Antworten Sie auf Deutsch.
+  output_format: bullets
+export:
+- markdown
+- html
+- pptx
+- pdf

@@ -1,0 +1,60 @@
+id: infographic-patient-journey-v1
+name: Patient Journey
+type: infographic
+description: >
+  A horizontal patient-journey infographic mapping the stages of care
+  from symptom to follow-up, with touchpoints and patient experience.
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: "#0EA5E9"
+  secondary: "#14B8A6"
+  accent: "#F43F5E"
+industry:
+  - healthcare
+profile:
+  - care-coordinator
+  - clinical-operations
+sections:
+  - title: Title and Patient Cohort
+    prompt: >
+      The journey's title and the patient cohort or condition it maps.
+      Confirm the content is de-identified and educational, not
+      individual patient data.
+    icon_suggestion: stethoscope
+  - title: Awareness and Symptom Onset
+    prompt: >
+      How the patient first recognizes a problem and what prompts them
+      to seek care. Note the channels (self, family, screening) and any
+      barriers to access.
+    icon_suggestion: activity
+  - title: Access and Triage
+    prompt: >
+      First contact with the system: scheduling, triage, intake, and
+      wait. Capture the patient's experience and where friction occurs.
+    icon_suggestion: clipboard-list
+    required_sources:
+      - type: local
+        min: 1
+  - title: Diagnosis and Treatment
+    prompt: >
+      The clinical pathway: assessment, diagnosis, the care plan, and
+      the care-team touchpoints. Keep it at journey grain, not protocol
+      detail.
+    icon_suggestion: heart-pulse
+  - title: Follow-up and Self-management
+    prompt: >
+      Discharge, follow-up, medication adherence, and self-management,
+      including the education and reminders the patient receives.
+    icon_suggestion: calendar-check
+  - title: Experience and Improvement
+    prompt: >
+      The emotional highs and lows across the journey, the moments that
+      matter most, and the top opportunities to improve outcomes and
+      satisfaction.
+    icon_suggestion: smile
+    output_format: bullets
+export:
+  - html
+  - pdf
+  - markdown

@@ -1,0 +1,62 @@
+id: landing-property-listing-v1
+name: Property Listing
+type: landing_page
+description: Real-estate listing page — hero gallery, key facts, features, neighborhood, and a schedule-a-tour CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#1E3A8A"
+  secondary: "#0D9488"
+  accent: "#D97706"
+industry:
+  - real-estate
+profile:
+  - agent
+  - broker
+sections:
+  - title: Hero — Address and Price
+    prompt: >
+      The headline (address or a name like "The Glass House on
+      Maple"), the price, the headline stats (beds / baths / sq ft),
+      and a "Schedule a tour" CTA over a hero photo or gallery.
+    icon_suggestion: home
+  - title: Property Overview
+    prompt: >
+      A compelling two- or three-paragraph description of the property
+      and lifestyle. Pull facts from the connected listing source and
+      keep claims accurate.
+    icon_suggestion: file-text
+    required_sources:
+      - type: local
+        min: 1
+  - title: Key Facts
+    prompt: >
+      A facts table: type, year built, lot size, square footage,
+      bedrooms, bathrooms, parking, HOA, taxes, and price per sq ft.
+    icon_suggestion: list
+    output_format: table
+  - title: Features and Upgrades
+    prompt: >
+      The standout features and recent upgrades grouped by area
+      (kitchen, primary suite, outdoor, systems). Lead with what makes
+      this home different.
+    icon_suggestion: sparkles
+    output_format: bullets
+  - title: Neighborhood
+    prompt: >
+      The location story: schools, transit, walkability, parks, dining,
+      and commute times. Match the detail to the likely buyer.
+    icon_suggestion: map-pin
+  - title: Gallery and Floor Plan
+    prompt: >
+      How the photo gallery, video/3D tour, and floor plan are
+      organized, with captions that guide the buyer through the home.
+    icon_suggestion: image
+  - title: Agent and Tour CTA
+    prompt: >
+      The listing agent's name, brokerage, photo, and contact, plus the
+      open-house schedule and a form to request a private showing.
+    icon_suggestion: calendar-check
+export:
+  - markdown
+  - html
+  - pdf

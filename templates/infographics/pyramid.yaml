@@ -1,0 +1,50 @@
+id: infographic-pyramid-v1
+name: Hierarchy / Pyramid
+type: infographic
+description: >
+  A layered pyramid infographic showing a hierarchy of needs, a
+  strategy stack, or a foundation-to-peak progression.
+layout: vertical
+default_icon_set: lucide
+color_scheme:
+  primary: "#0F766E"
+  secondary: "#F59E0B"
+  accent: "#DC2626"
+profile:
+  - strategy
+  - educator
+sections:
+  - title: Title and Framing
+    prompt: >
+      The pyramid's title and what the vertical axis means — does the
+      base represent the foundation, the largest population, or the
+      prerequisite? Make the reading direction explicit.
+    icon_suggestion: triangle
+  - title: Base Layer
+    prompt: >
+      The foundational layer everything rests on: its label, what it
+      includes, and why it must come first.
+    icon_suggestion: layers
+  - title: Middle Layers
+    prompt: >
+      The intermediate layers in order, each with a label, a short
+      description, and how it builds on the layer below.
+    icon_suggestion: align-center-horizontal
+    output_format: numbered_list
+  - title: Peak
+    prompt: >
+      The apex — the goal, the smallest/highest tier, or the ideal
+      state — and what it takes to reach it once the lower layers hold.
+    icon_suggestion: mountain-snow
+  - title: Takeaway
+    prompt: >
+      The single insight the pyramid is meant to convey, plus any
+      supporting data or source that justifies the ordering.
+    icon_suggestion: quote
+    required_sources:
+      - type: local
+        min: 1
+export:
+  - html
+  - pdf
+  - markdown

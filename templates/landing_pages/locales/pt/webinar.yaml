@@ -1,0 +1,56 @@
+id: landing-webinar-v1-pt
+name: Inscrição em webinar
+type: landing_page
+description: |-
+  Página de inscrição em webinar com gancho do tema, agenda, palestrantes, o que você vai aprender e um formulário de inscrição (versão em português)
+locale: pt
+default_icon_set: lucide
+color_scheme:
+  primary: '#1D4ED8'
+  secondary: '#7C3AED'
+  accent: '#F59E0B'
+profile:
+- marketing
+- events
+sections:
+- title: Hero — Tema e data
+  prompt: |-
+    O título do webinar, a data/hora com fuso horário, o formato (ao vivo / sob demanda) e uma CTA de inscrição («Garantir minha vaga»). Uma linha sobre quem deve participar. Responda em português.
+  icon_suggestion: calendar-clock
+- title: Por que participar
+  prompt: |-
+    O problema que a sessão aborda e a promessa da hora: o que os participantes sairão capazes de fazer. Duas ou três frases. Responda em português.
+  icon_suggestion: target
+- title: O que você vai aprender
+  prompt: |-
+    De três a cinco resultados de aprendizagem concretos em tópicos, cada um específico o bastante para justificar uma hora do tempo do visitante. Responda em português.
+  icon_suggestion: graduation-cap
+  output_format: bullets
+- title: Agenda
+  prompt: |-
+    O roteiro com blocos de tempo: introdução, segmentos principais, demonstração e perguntas. Mantenha enxuto para que a densidade de valor seja evidente. Responda em português.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Palestrantes
+  prompt: |-
+    Cada palestrante com foto, nome, cargo, empresa e uma credencial de uma linha que gere confiança sobre o tema. Extraia as biografias da fonte conectada. Responda em português.
+  icon_suggestion: mic
+  required_sources:
+  - type: local
+    min: 1
+- title: Prova social
+  prompt: |-
+    Números de participação de sessões anteriores, um depoimento ou logotipos de parceiros — prova de que esta série vale o tempo. Responda em português.
+  icon_suggestion: star
+- title: Inscrição e logística
+  prompt: |-
+    Os campos do formulário de inscrição, o que acontece após a inscrição (convite de calendário, lembretes, gravação) e a nota de privacidade sobre como o e-mail será usado. Responda em português.
+  icon_suggestion: ticket
+- title: Perguntas frequentes
+  prompt: |-
+    Quatro perguntas frequentes: será gravado, é gratuito, e se eu não puder participar ao vivo, e como fazer perguntas. Termine com uma CTA final. Responda em português.
+  icon_suggestion: help-circle
+export:
+- markdown
+- html
+- pdf

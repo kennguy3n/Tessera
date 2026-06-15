@@ -1,0 +1,65 @@
+id: landing-webinar-v1
+name: Webinar Registration
+type: landing_page
+description: Webinar registration page with topic hook, agenda, speakers, what-you'll-learn, and a registration form
+default_icon_set: lucide
+color_scheme:
+  primary: "#1D4ED8"
+  secondary: "#7C3AED"
+  accent: "#F59E0B"
+profile:
+  - marketing
+  - events
+sections:
+  - title: Hero — Topic and Date
+    prompt: >
+      The webinar title, the date/time with time zone, the format
+      (live / on-demand), and a "Save my seat" registration CTA. One
+      line on who should attend.
+    icon_suggestion: calendar-clock
+  - title: Why Attend
+    prompt: >
+      The problem the session addresses and the promise of the hour:
+      what attendees will walk away able to do. Two or three sentences.
+    icon_suggestion: target
+  - title: What You'll Learn
+    prompt: >
+      Three to five concrete learning outcomes as bullets, each
+      specific enough to justify an hour of the visitor's time.
+    icon_suggestion: graduation-cap
+    output_format: bullets
+  - title: Agenda
+    prompt: >
+      The run of show with time blocks: intro, main segments, demo, and
+      Q&A. Keep it tight so the value density is obvious.
+    icon_suggestion: list-ordered
+    output_format: numbered_list
+  - title: Speakers
+    prompt: >
+      Each speaker with photo, name, title, company, and a one-line
+      credential that earns trust on this topic. Pull bios from the
+      connected source.
+    icon_suggestion: mic
+    required_sources:
+      - type: local
+        min: 1
+  - title: Social Proof
+    prompt: >
+      Attendance numbers from past sessions, a testimonial, or partner
+      logos — evidence that this series is worth the time.
+    icon_suggestion: star
+  - title: Registration and Logistics
+    prompt: >
+      The registration form fields, what happens after signing up
+      (calendar invite, reminders, recording), and the privacy note on
+      how the email will be used.
+    icon_suggestion: ticket
+  - title: FAQ
+    prompt: >
+      Four FAQs: will it be recorded, is it free, what if I can't make
+      it live, and how to ask questions. End with a final CTA.
+    icon_suggestion: help-circle
+export:
+  - markdown
+  - html
+  - pdf

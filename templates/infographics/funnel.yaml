@@ -1,0 +1,54 @@
+id: infographic-funnel-v1
+name: Conversion Funnel
+type: infographic
+description: >
+  A top-to-bottom funnel infographic showing stage-by-stage volumes
+  and conversion rates from first touch to retained customer.
+layout: vertical
+default_icon_set: lucide
+color_scheme:
+  primary: "#0EA5E9"
+  secondary: "#6366F1"
+  accent: "#22C55E"
+profile:
+  - marketing
+  - growth
+  - analyst
+sections:
+  - title: Title and Definition
+    prompt: >
+      The funnel's title, the population it measures, and the time
+      window. Define each stage precisely so the rates are
+      unambiguous.
+    icon_suggestion: filter
+  - title: Stages and Volumes
+    prompt: >
+      Each funnel stage from awareness to conversion, with the count
+      entering each stage and the stage-to-stage conversion rate.
+      Ground the numbers in the connected analytics source.
+    icon_suggestion: bar-chart-3
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: Biggest Drop-off
+    prompt: >
+      The stage with the largest leak, the likely causes, and the
+      hypothesis for fixing it. This is where the visual should draw
+      the eye.
+    icon_suggestion: trending-down
+  - title: Benchmarks
+    prompt: >
+      How each stage's rate compares to a prior period and to an
+      industry benchmark, so the reader knows what "good" looks like.
+    icon_suggestion: gauge
+  - title: Actions
+    prompt: >
+      The prioritized experiments or fixes to lift conversion, each
+      tied to the stage it targets and the expected impact.
+    icon_suggestion: lightbulb
+    output_format: numbered_list
+export:
+  - html
+  - pdf
+  - markdown

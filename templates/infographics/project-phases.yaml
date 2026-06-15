@@ -1,0 +1,58 @@
+id: infographic-project-phases-v1
+name: Construction Project Phases
+type: infographic
+description: >
+  A horizontal construction-phase infographic from pre-construction to
+  closeout, with milestones, deliverables, and approvals per phase.
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: "#B45309"
+  secondary: "#1E3A8A"
+  accent: "#15803D"
+industry:
+  - construction
+profile:
+  - project-manager
+  - superintendent
+sections:
+  - title: Title and Project
+    prompt: >
+      The project name, the delivery method, and the overall duration
+      the phases span. State the milestone that closes the project.
+    icon_suggestion: hard-hat
+  - title: Pre-construction
+    prompt: >
+      Design development, permitting, estimating, and procurement of
+      long-lead items. The deliverables and approvals that must clear
+      before mobilization. Cite the schedule source.
+    icon_suggestion: ruler
+    required_sources:
+      - type: local
+        min: 1
+  - title: Site and Foundation
+    prompt: >
+      Mobilization, site work, excavation, and foundation. The key
+      inspections and the weather/permit dependencies that gate
+      progress.
+    icon_suggestion: shovel
+  - title: Structure and Envelope
+    prompt: >
+      Superstructure, envelope, and dry-in. The critical-path
+      activities and the trades whose coordination matters most here.
+    icon_suggestion: building-2
+  - title: Interiors and MEP
+    prompt: >
+      Rough-in and finishes for mechanical, electrical, plumbing, and
+      interiors, with the inspection milestones along the way.
+    icon_suggestion: wrench
+    output_format: table
+  - title: Commissioning and Closeout
+    prompt: >
+      Testing and commissioning, punch list, substantial completion,
+      final inspections, occupancy, and warranty/closeout documents.
+    icon_suggestion: clipboard-check
+export:
+  - html
+  - pdf
+  - markdown

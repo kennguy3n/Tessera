@@ -1,0 +1,58 @@
+id: infographic-roadmap-v1
+name: Roadmap Infographic
+type: infographic
+description: >
+  A now / next / later product or strategy roadmap visualised as
+  horizontal swimlanes, each with themed initiatives and outcomes.
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: "#2563EB"
+  secondary: "#14B8A6"
+  accent: "#F97316"
+profile:
+  - product-manager
+  - executive
+sections:
+  - title: Title and Horizon
+    prompt: >
+      The roadmap title, the owning team, and the time horizon each
+      lane represents (e.g. Now = this quarter, Next = next quarter,
+      Later = beyond). State that dates are directional, not commitments.
+    icon_suggestion: map
+  - title: Strategic Themes
+    prompt: >
+      The two to four themes the roadmap organizes around. Each theme:
+      a short label and the outcome it drives, so initiatives ladder up
+      to strategy rather than reading as a feature list.
+    icon_suggestion: target
+  - title: Now
+    prompt: >
+      Committed, in-flight initiatives for the current horizon. Per
+      item: the initiative, the theme it serves, the expected outcome,
+      and a confidence indicator. Cite the source plan.
+    icon_suggestion: play-circle
+    required_sources:
+      - type: local
+        min: 1
+  - title: Next
+    prompt: >
+      Initiatives planned for the following horizon, sequenced by
+      priority and dependency. Note what must finish in "Now" before
+      each can start.
+    icon_suggestion: arrow-right-circle
+  - title: Later
+    prompt: >
+      Directional bets and explorations beyond the near term. Frame as
+      problems to solve, not committed features, to keep flexibility.
+    icon_suggestion: telescope
+  - title: Dependencies and Risks
+    prompt: >
+      Cross-team dependencies and the top risks to the roadmap, each
+      with an owner and a one-line mitigation.
+    icon_suggestion: alert-triangle
+    output_format: table
+export:
+  - html
+  - pdf
+  - markdown

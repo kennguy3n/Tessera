@@ -1,0 +1,62 @@
+id: landing-medical-practice-v1
+name: Medical Practice / Clinic
+type: landing_page
+description: Clinic landing page — services, providers, insurance, patient trust, and a book-an-appointment CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#0E7490"
+  secondary: "#15803D"
+  accent: "#2563EB"
+industry:
+  - healthcare
+profile:
+  - practice-manager
+  - clinician
+sections:
+  - title: Hero — Practice and Promise
+    prompt: >
+      The practice name, the care promise (e.g. "Same-day primary care
+      for your whole family"), the location, and a "Book an
+      appointment" CTA. Add a phone number for accessibility.
+    icon_suggestion: stethoscope
+  - title: Services
+    prompt: >
+      The services and specialties offered, grouped clearly, each with
+      a one-line description so patients find what they need fast.
+    icon_suggestion: heart-pulse
+    output_format: bullets
+  - title: Meet the Providers
+    prompt: >
+      Each provider with photo, name, credentials, specialties, and
+      languages spoken. Pull details from the connected source. Keep
+      claims accurate and avoid any patient information.
+    icon_suggestion: user-round
+    required_sources:
+      - type: local
+        min: 1
+  - title: New Patients and Insurance
+    prompt: >
+      What new patients need to know: how to register, what to bring,
+      insurance and plans accepted, and self-pay options.
+    icon_suggestion: clipboard-list
+    output_format: table
+  - title: Patient Trust
+    prompt: >
+      Reviews and accreditations, presented without disclosing patient
+      identities. Note any awards or affiliations that build confidence.
+    icon_suggestion: shield-check
+  - title: Location and Hours
+    prompt: >
+      Address, map, parking/transit, hours including any urgent or
+      after-hours care, and the telehealth option if offered.
+    icon_suggestion: map-pin
+  - title: Book and Privacy
+    prompt: >
+      The appointment-request form, the patient-portal link, and a
+      clear note on privacy and how submitted information is handled in
+      line with applicable health-privacy rules.
+    icon_suggestion: calendar-check
+export:
+  - markdown
+  - html
+  - pdf

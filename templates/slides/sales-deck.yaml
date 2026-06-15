@@ -1,0 +1,63 @@
+id: sales-deck-v1
+name: B2B Sales Deck
+type: slides
+description: Outbound/closing sales deck — buyer pain, point of view, solution, proof, pricing, and a clear next step
+format: marp
+theme: gaia
+paginate: true
+profile:
+  - sales
+  - account-executive
+sections:
+  - title: Title and Agenda
+    prompt: >
+      Title slide with the prospect's company name, the seller's
+      company, the meeting date, and the names/roles of attendees on
+      both sides. Follow with a three-line agenda so the buyer knows
+      what to expect and how long it will take.
+  - title: Their World Today
+    prompt: >
+      Mirror the buyer's current situation in their own language:
+      the trigger that started this conversation, the workflow they
+      use now, and the cost of the status quo (time, money, risk).
+      Ground every claim in discovery notes or the connected sources.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Point of View
+    prompt: >
+      State the seller's contrarian, defensible point of view about
+      where the buyer's market is heading and why the status quo will
+      not hold. This is the "why change" before the "why us".
+  - title: Solution Overview
+    prompt: >
+      Map the solution to the two or three pains named above. For each
+      pain: the capability that addresses it and the outcome the buyer
+      gets. Avoid feature dumps — lead with the outcome.
+  - title: Proof
+    prompt: >
+      Strongest proof points: a named customer in the buyer's segment,
+      a quantified result (percentage or absolute), and a one-line
+      quote. Cite the case study or reference call it comes from.
+    output_format: table
+  - title: Pricing and Packaging
+    prompt: >
+      Present the recommended package, what is included, the
+      investment, and the expected payback period or ROI. Show the
+      assumptions so the buyer can defend the number internally.
+  - title: Mutual Action Plan
+    prompt: >
+      Lay out the path to a decision as a dated checklist: technical
+      validation, security review, stakeholder sign-offs, contracting,
+      and target go-live. Name the owner on each side for every step.
+    output_format: numbered_list
+  - title: Next Step
+    prompt: >
+      Close on one specific, low-friction next step (e.g. a scoping
+      workshop or a pilot), with a proposed date and the single
+      decision the buyer needs to make to get there.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

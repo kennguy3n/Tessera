@@ -1,0 +1,32 @@
+id: infographic-process-flow-v1-ja
+name: プロセスフロー
+type: infographic
+description: |-
+  3～5ステップのプロセスをフローとして可視化する横型インフォグラフィック：入力 → 中間ステップ → 成果。各ステップはアイコンと短い説明を持つ1つのセクションとする。（日本語版）
+locale: ja
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: ステップ1 — 入力
+  prompt: プロセスの入口を説明する：誰または何がそれを開始し、どのようなデータや入力が必要か。 日本語で回答してください。
+  icon_suggestion: log-in
+- title: ステップ2 — 処理
+  prompt: 中核となる処理ステップを説明する：何が入力を変換するか。 日本語で回答してください。
+  icon_suggestion: settings
+- title: ステップ3 — 判断
+  prompt: 分岐する結果を決定する判断またはルーティングのステップを説明する。 日本語で回答してください。
+  icon_suggestion: git-branch
+- title: ステップ4 — アクション
+  prompt: 判断が下された後に取られるアクションを説明する。 日本語で回答してください。
+  icon_suggestion: zap
+- title: ステップ5 — 成果
+  prompt: エンドユーザーに提供される最終的な結果を説明する。 日本語で回答してください。
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

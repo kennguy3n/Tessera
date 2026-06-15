@@ -1,0 +1,60 @@
+id: landing-fundraiser-v1
+name: Fundraiser Campaign
+type: landing_page
+description: Campaign donation page — urgent ask, goal thermometer, impact tiers, story, transparency, and donate CTA
+default_icon_set: lucide
+color_scheme:
+  primary: "#15803D"
+  secondary: "#0EA5E9"
+  accent: "#DC2626"
+industry:
+  - nonprofit
+profile:
+  - development-director
+  - communications
+sections:
+  - title: Hero — The Ask
+    prompt: >
+      The campaign name, a single urgent sentence on what's at stake
+      and the deadline, the goal amount, and a prominent "Donate" CTA.
+    icon_suggestion: megaphone
+  - title: Goal Progress
+    prompt: >
+      The fundraising goal, amount raised so far, number of donors, and
+      time remaining — the thermometer. Use real figures from the
+      connected source.
+    icon_suggestion: target
+    required_sources:
+      - type: local
+        min: 1
+    output_format: table
+  - title: The Story
+    prompt: >
+      The story behind the campaign: one concrete person or community,
+      the problem, and why now. Pair emotion with a verifiable fact.
+    icon_suggestion: book-open
+  - title: Impact Tiers
+    prompt: >
+      Suggested gift amounts, each mapped to a specific outcome ("$25
+      = a week of supplies"). Keep the conversions honest.
+    icon_suggestion: hand-coins
+    output_format: numbered_list
+  - title: Matching and Momentum
+    prompt: >
+      Any matching-gift offer and its cap, recent donor activity, and a
+      reason to give now rather than later.
+    icon_suggestion: trending-up
+  - title: Transparency
+    prompt: >
+      Where the money goes, the program/admin split, the organization's
+      legal status and tax-deductibility, and a link to financials.
+    icon_suggestion: shield-check
+  - title: Donate and Share
+    prompt: >
+      The donation form (one-time and recurring), other ways to give,
+      and easy share buttons so supporters can amplify the campaign.
+    icon_suggestion: heart
+export:
+  - markdown
+  - html
+  - pdf

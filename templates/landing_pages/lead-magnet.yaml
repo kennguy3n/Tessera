@@ -1,0 +1,53 @@
+id: landing-lead-magnet-v1
+name: Lead Magnet / Ebook
+type: landing_page
+description: Gated-content landing page — offer a guide/ebook/template in exchange for an email, with proof and a form
+default_icon_set: lucide
+color_scheme:
+  primary: "#4338CA"
+  secondary: "#0891B2"
+  accent: "#F59E0B"
+profile:
+  - demand-generation
+  - marketing
+sections:
+  - title: Hero — The Offer
+    prompt: >
+      The asset's title (guide, ebook, checklist, template), a
+      one-line promise of the outcome it delivers, a cover image, and
+      a "Get the free [asset]" CTA next to the form.
+    icon_suggestion: download
+  - title: Who It's For
+    prompt: >
+      The specific role and situation this asset helps, so the right
+      visitor self-qualifies and the wrong one doesn't bounce later.
+    icon_suggestion: user-check
+  - title: What's Inside
+    prompt: >
+      A bulleted table of contents or the key takeaways, with page
+      count or read time, so the value is tangible before download.
+    icon_suggestion: book-open
+    output_format: bullets
+  - title: Preview
+    prompt: >
+      A sample page, chart, or excerpt that proves the quality. Pull a
+      genuine snippet from the connected source asset.
+    icon_suggestion: image
+    required_sources:
+      - type: local
+        min: 1
+  - title: Social Proof
+    prompt: >
+      Download count, a testimonial about the asset, or the author's
+      credentials — evidence it's worth the email.
+    icon_suggestion: badge-check
+  - title: The Form
+    prompt: >
+      The minimum fields needed (email, maybe name/company), what
+      happens next (instant download / emailed link), and the privacy
+      and consent note for follow-up.
+    icon_suggestion: clipboard-list
+export:
+  - markdown
+  - html
+  - pdf

@@ -1,0 +1,47 @@
+id: product-launch-deck-v1-fr
+name: Lancement de produit / Go-to-Market
+type: slides
+description: |-
+  Présentation de lancement de produit — positionnement, segments cibles, messages, plan de lancement, habilitation et indicateurs de succès (version française)
+locale: fr
+format: marp
+theme: gaia
+paginate: true
+profile:
+- product-manager
+- product-marketing
+sections:
+- title: Accroche du lancement
+  prompt: |-
+    Diapositive de titre avec le nom du produit ou de la fonctionnalité, le niveau de lancement (majeur / mineur / silencieux), la date de lancement cible et une promesse en une ligne qui capture pourquoi cela compte pour les clients. Répondez en français.
+- title: Pourquoi maintenant
+  prompt: |-
+    Le changement de marché, la demande des clients ou l'écart concurrentiel qui fait de ce moment le bon pour lancer. Étayez-le par des recherches ou des données de pipeline issues des sources connectées. Répondez en français.
+  required_sources:
+  - type: local
+    min: 1
+- title: Positionnement et messages
+  prompt: |-
+    L'énoncé de positionnement (pour qui, la catégorie, le bénéfice clé, le différenciateur) et les trois piliers de message que les ventes et le marketing répéteront partout. Répondez en français.
+- title: Segments cibles et ICP
+  prompt: |-
+    Les segments primaire et secondaire, le profil de client idéal et les personas acheteur/utilisateur. Pour chacun : la douleur que ce lancement résout et le déclencheur qui les pousse à agir. Répondez en français.
+- title: Conditionnement et tarification
+  prompt: |-
+    Comment le produit est conditionné et tarifé, ce qui change pour les clients existants et tout plan de migration ou de maintien des conditions. Signalez les décisions de prix encore ouvertes. Répondez en français.
+- title: Plan et calendrier de lancement
+  prompt: |-
+    Le plan par phases : alpha, bêta, disponibilité générale et post-lancement. Par phase : les dates, les canaux (RP, contenu, e-mail, événements, in-app) et les critères de passage. Répondez en français.
+  output_format: table
+- title: Habilitation des ventes et du support
+  prompt: |-
+    Ce dont les ventes, le succès client et le support ont besoin pour être prêts : script de démo, battlecard, guide tarifaire, FAQ et la date de formation. Nommez le responsable de chaque ressource. Répondez en français.
+- title: Indicateurs de succès
+  prompt: |-
+    Le tableau de bord du lancement : adoption, pipeline influencé, revenus et un indicateur avancé pour les 30/60/90 premiers jours. Définissez comment chacun est mesuré et la cible. Répondez en français.
+  output_format: bullets
+export:
+- markdown
+- html
+- pptx
+- pdf

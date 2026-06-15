@@ -1,0 +1,48 @@
+id: infographic-roadmap-v1-es
+name: Infografía de hoja de ruta
+type: infographic
+description: |-
+  Una hoja de ruta de producto o estrategia de tipo ahora / siguiente / después, visualizada como carriles horizontales, cada uno con iniciativas temáticas y resultados. (versión en español)
+locale: es
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: Título y horizonte
+  prompt: |-
+    El título de la hoja de ruta, el equipo responsable y el horizonte temporal que representa cada carril (p. ej., Ahora = este trimestre, Siguiente = el próximo trimestre, Después = más allá). Indique que las fechas son orientativas, no compromisos. Responda en español.
+  icon_suggestion: map
+- title: Temas estratégicos
+  prompt: |-
+    Los dos a cuatro temas en torno a los cuales se organiza la hoja de ruta. Cada tema: una etiqueta breve y el resultado que impulsa, de modo que las iniciativas se alineen con la estrategia en lugar de leerse como una lista de funciones. Responda en español.
+  icon_suggestion: target
+- title: Ahora
+  prompt: |-
+    Iniciativas comprometidas y en curso para el horizonte actual. Por elemento: la iniciativa, el tema al que sirve, el resultado esperado y un indicador de confianza. Cite el plan de origen. Responda en español.
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: Siguiente
+  prompt: |-
+    Iniciativas planificadas para el horizonte siguiente, secuenciadas por prioridad y dependencia. Indique qué debe terminar en «Ahora» antes de que cada una pueda comenzar. Responda en español.
+  icon_suggestion: arrow-right-circle
+- title: Después
+  prompt: |-
+    Apuestas orientativas y exploraciones más allá del corto plazo. Plantéelas como problemas por resolver, no como funciones comprometidas, para mantener la flexibilidad. Responda en español.
+  icon_suggestion: telescope
+- title: Dependencias y riesgos
+  prompt: |-
+    Dependencias entre equipos y los principales riesgos de la hoja de ruta, cada uno con un responsable y una mitigación de una línea. Responda en español.
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown

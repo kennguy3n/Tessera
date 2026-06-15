@@ -1,0 +1,41 @@
+id: infographic-roadmap-v1-zh
+name: 路线图信息图
+type: infographic
+description: 以“现在／下一步／以后”划分的产品或战略路线图，呈现为横向泳道，每条泳道包含按主题组织的举措与成果。（中文版）
+locale: zh
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: 标题与时间范围
+  prompt: 路线图标题、负责团队，以及每条泳道所代表的时间范围（例如：现在＝本季度，下一步＝下季度，以后＝更远）。说明日期为方向性指引，而非承诺。 请用中文回答。
+  icon_suggestion: map
+- title: 战略主题
+  prompt: 路线图围绕的两到四个主题。每个主题：一个简短标签及其推动的成果，使各项举措向战略靠拢，而非读起来像功能清单。 请用中文回答。
+  icon_suggestion: target
+- title: 现在
+  prompt: 当前时间范围内已承诺且进行中的举措。每项包含：举措、所服务的主题、预期成果以及信心指标。注明来源计划。 请用中文回答。
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: 下一步
+  prompt: 为下一时间范围规划的举措，按优先级和依赖关系排序。注明每项在开始前必须在“现在”阶段完成的事项。 请用中文回答。
+  icon_suggestion: arrow-right-circle
+- title: 以后
+  prompt: 近期之外的方向性押注与探索。将其表述为有待解决的问题，而非已承诺的功能，以保持灵活性。 请用中文回答。
+  icon_suggestion: telescope
+- title: 依赖与风险
+  prompt: 跨团队依赖以及路线图面临的主要风险，每项附一名负责人和一行缓解措施。 请用中文回答。
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown

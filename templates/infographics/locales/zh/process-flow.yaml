@@ -1,0 +1,31 @@
+id: infographic-process-flow-v1-zh
+name: 流程图
+type: infographic
+description: 一张横向信息图，将 3 至 5 步的流程可视化为一条流：输入 → 中间步骤 → 结果。每个步骤为一个带图标和简短说明的版块。（中文版）
+locale: zh
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#7C3AED'
+  secondary: '#0EA5E9'
+  accent: '#F59E0B'
+sections:
+- title: 步骤 1 — 输入
+  prompt: 描述流程的入口：由谁或由什么触发，以及需要哪些数据或输入。 请用中文回答。
+  icon_suggestion: log-in
+- title: 步骤 2 — 处理
+  prompt: 描述核心处理步骤：是什么对输入进行转换。 请用中文回答。
+  icon_suggestion: settings
+- title: 步骤 3 — 决策
+  prompt: 描述决定分支结果的决策或路由步骤。 请用中文回答。
+  icon_suggestion: git-branch
+- title: 步骤 4 — 行动
+  prompt: 描述做出决策后所采取的行动。 请用中文回答。
+  icon_suggestion: zap
+- title: 步骤 5 — 结果
+  prompt: 描述交付给最终用户的最终结果。 请用中文回答。
+  icon_suggestion: check-circle
+export:
+- html
+- pdf
+- markdown

@@ -1,0 +1,47 @@
+id: product-launch-deck-v1-pt
+name: Lançamento de produto / Go-to-Market
+type: slides
+description: |-
+  Apresentação de lançamento de produto — posicionamento, segmentos-alvo, mensagens, plano de lançamento, capacitação e métricas de sucesso (versão em português)
+locale: pt
+format: marp
+theme: gaia
+paginate: true
+profile:
+- product-manager
+- product-marketing
+sections:
+- title: Manchete do lançamento
+  prompt: |-
+    Slide de título com o nome do produto ou funcionalidade, o nível do lançamento (maior / menor / silencioso), a data-alvo de lançamento e uma promessa de uma linha que capture por que isso importa para os clientes. Responda em português.
+- title: Por que agora
+  prompt: |-
+    A mudança de mercado, a demanda dos clientes ou a lacuna competitiva que torna este o momento certo para lançar. Fundamente em pesquisa ou dados de pipeline das fontes conectadas. Responda em português.
+  required_sources:
+  - type: local
+    min: 1
+- title: Posicionamento e mensagens
+  prompt: |-
+    A declaração de posicionamento (para quem, a categoria, o benefício principal, o diferencial) e os três pilares de mensagem que vendas e marketing repetirão em toda parte. Responda em português.
+- title: Segmentos-alvo e ICP
+  prompt: |-
+    Os segmentos primário e secundário, o perfil de cliente ideal e as personas de comprador/usuário. Para cada um: a dor que este lançamento resolve e o gatilho que os faz agir. Responda em português.
+- title: Empacotamento e preços
+  prompt: |-
+    Como o produto é empacotado e precificado, o que muda para os clientes existentes e qualquer plano de migração ou de manutenção de condições. Sinalize as decisões de preço ainda em aberto. Responda em português.
+- title: Plano e cronograma de lançamento
+  prompt: |-
+    O plano em fases: alfa, beta, disponibilidade geral e pós-lançamento. Por fase: as datas, os canais (RP, conteúdo, e-mail, eventos, no app) e os critérios para avançar. Responda em português.
+  output_format: table
+- title: Capacitação de vendas e suporte
+  prompt: |-
+    O que vendas, sucesso do cliente e suporte precisam ter prontos: roteiro de demonstração, battlecard, orientação de preços, FAQ e a data de treinamento. Nomeie o responsável por cada material. Responda em português.
+- title: Métricas de sucesso
+  prompt: |-
+    O placar do lançamento: adoção, pipeline influenciado, receita e um indicador antecedente para os primeiros 30/60/90 dias. Defina como cada um é medido e a meta. Responda em português.
+  output_format: bullets
+export:
+- markdown
+- html
+- pptx
+- pdf

@@ -1,0 +1,56 @@
+id: landing-webinar-v1-fr
+name: Inscription au webinaire
+type: landing_page
+description: |-
+  Page d'inscription au webinaire avec accroche du sujet, programme, intervenants, ce que vous apprendrez et un formulaire d'inscription (version française)
+locale: fr
+default_icon_set: lucide
+color_scheme:
+  primary: '#1D4ED8'
+  secondary: '#7C3AED'
+  accent: '#F59E0B'
+profile:
+- marketing
+- events
+sections:
+- title: Hero — Sujet et date
+  prompt: |-
+    Le titre du webinaire, la date et l'heure avec le fuseau horaire, le format (en direct / à la demande) et une CTA d'inscription (« Réserver ma place »). Une ligne sur les personnes qui devraient participer. Répondez en français.
+  icon_suggestion: calendar-clock
+- title: Pourquoi participer
+  prompt: |-
+    Le problème que la session aborde et la promesse de l'heure : ce que les participants sauront faire en repartant. Deux ou trois phrases. Répondez en français.
+  icon_suggestion: target
+- title: Ce que vous apprendrez
+  prompt: |-
+    De trois à cinq résultats d'apprentissage concrets sous forme de puces, chacun assez précis pour justifier une heure du temps du visiteur. Répondez en français.
+  icon_suggestion: graduation-cap
+  output_format: bullets
+- title: Programme
+  prompt: |-
+    Le déroulé avec des blocs de temps : introduction, segments principaux, démo et questions-réponses. Restez concis pour que la densité de valeur soit évidente. Répondez en français.
+  icon_suggestion: list-ordered
+  output_format: numbered_list
+- title: Intervenants
+  prompt: |-
+    Chaque intervenant avec photo, nom, fonction, entreprise et une référence en une ligne qui inspire confiance sur ce sujet. Tirez les biographies de la source connectée. Répondez en français.
+  icon_suggestion: mic
+  required_sources:
+  - type: local
+    min: 1
+- title: Preuve sociale
+  prompt: |-
+    Les chiffres de participation des sessions passées, un témoignage ou des logos de partenaires : la preuve que cette série vaut le temps investi. Répondez en français.
+  icon_suggestion: star
+- title: Inscription et logistique
+  prompt: |-
+    Les champs du formulaire d'inscription, ce qui se passe après l'inscription (invitation d'agenda, rappels, enregistrement) et la note de confidentialité sur l'usage de l'e-mail. Répondez en français.
+  icon_suggestion: ticket
+- title: FAQ
+  prompt: |-
+    Quatre questions fréquentes : sera-t-il enregistré, est-ce gratuit, que faire si je ne peux pas assister en direct, et comment poser des questions. Terminez par une CTA finale. Répondez en français.
+  icon_suggestion: help-circle
+export:
+- markdown
+- html
+- pdf

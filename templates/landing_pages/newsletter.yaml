@@ -1,0 +1,53 @@
+id: landing-newsletter-v1
+name: Newsletter Signup
+type: landing_page
+description: Newsletter subscribe page — value proposition, sample issue, social proof, and a low-friction email capture
+default_icon_set: lucide
+color_scheme:
+  primary: "#111827"
+  secondary: "#F59E0B"
+  accent: "#10B981"
+profile:
+  - creator
+  - communications
+sections:
+  - title: Hero — The Pitch
+    prompt: >
+      A headline stating who the newsletter is for and the one thing
+      subscribers get every issue, plus an email field and a "Subscribe"
+      button. Note cadence (weekly / monthly) and that it's free.
+    icon_suggestion: mail
+  - title: What You'll Get
+    prompt: >
+      A short bulleted list of the recurring value: the topics, the
+      format, and why it's worth inbox space. Be specific, not generic.
+    icon_suggestion: list-checks
+    output_format: bullets
+  - title: Sample Issue
+    prompt: >
+      A teaser of a real past issue — the subject line and a few
+      highlights — so visitors know exactly what they're signing up
+      for. Pull from the connected archive.
+    icon_suggestion: newspaper
+    required_sources:
+      - type: local
+        min: 1
+  - title: About the Author
+    prompt: >
+      Who writes it and why they're worth reading on this topic — a
+      one-paragraph bio with a credential or two.
+    icon_suggestion: pen-line
+  - title: Social Proof
+    prompt: >
+      Subscriber count, notable readers, or a reader testimonial. Use a
+      real figure and attribute any quote.
+    icon_suggestion: users
+  - title: Subscribe and Privacy
+    prompt: >
+      Restate the CTA, set expectations (no spam, unsubscribe anytime),
+      and add the privacy note on how the email is stored and used.
+    icon_suggestion: shield-check
+export:
+  - markdown
+  - html
+  - pdf

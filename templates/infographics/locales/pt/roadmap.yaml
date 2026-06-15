@@ -1,0 +1,48 @@
+id: infographic-roadmap-v1-pt
+name: Infográfico de roadmap
+type: infographic
+description: |-
+  Um roadmap de produto ou estratégia do tipo agora / próximo / depois, visualizado como raias horizontais, cada uma com iniciativas temáticas e resultados. (versão em português)
+locale: pt
+layout: horizontal
+default_icon_set: lucide
+color_scheme:
+  primary: '#2563EB'
+  secondary: '#14B8A6'
+  accent: '#F97316'
+profile:
+- product-manager
+- executive
+sections:
+- title: Título e horizonte
+  prompt: |-
+    O título do roadmap, a equipe responsável e o horizonte de tempo que cada raia representa (por exemplo, Agora = este trimestre, Próximo = próximo trimestre, Depois = além disso). Informe que as datas são direcionais, não compromissos. Responda em português.
+  icon_suggestion: map
+- title: Temas estratégicos
+  prompt: |-
+    Os dois a quatro temas em torno dos quais o roadmap se organiza. Cada tema: um rótulo curto e o resultado que impulsiona, para que as iniciativas se alinhem à estratégia em vez de parecerem uma lista de funcionalidades. Responda em português.
+  icon_suggestion: target
+- title: Agora
+  prompt: |-
+    Iniciativas comprometidas e em andamento para o horizonte atual. Por item: a iniciativa, o tema a que serve, o resultado esperado e um indicador de confiança. Cite o plano de origem. Responda em português.
+  icon_suggestion: play-circle
+  required_sources:
+  - type: local
+    min: 1
+- title: Próximo
+  prompt: |-
+    Iniciativas planejadas para o horizonte seguinte, sequenciadas por prioridade e dependência. Anote o que precisa terminar em «Agora» antes que cada uma possa começar. Responda em português.
+  icon_suggestion: arrow-right-circle
+- title: Depois
+  prompt: |-
+    Apostas direcionais e explorações além do curto prazo. Formule como problemas a resolver, não como funcionalidades comprometidas, para manter a flexibilidade. Responda em português.
+  icon_suggestion: telescope
+- title: Dependências e riscos
+  prompt: |-
+    Dependências entre equipes e os principais riscos do roadmap, cada um com um responsável e uma mitigação de uma linha. Responda em português.
+  icon_suggestion: alert-triangle
+  output_format: table
+export:
+- html
+- pdf
+- markdown
