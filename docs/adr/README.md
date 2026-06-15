@@ -35,3 +35,4 @@ the record stays verifiable).
 | [0021](0021-slide-visual-polish.md)                    | Slide visual polish — smart layouts, icons, aspect ratios      |
 | [0022](0022-slide-brand-pack.md)                       | Slide Brand Pack — portable export / import of a brand kit     |
 | [0023](0023-slide-user-templates.md)                   | User-authored slide templates + portable template files        |
+| [0024](0024-slide-branded-export.md)                   | Branded export fidelity — brand survives PPTX / PDF / HTML     |

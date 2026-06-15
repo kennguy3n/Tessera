@@ -339,7 +339,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
  */
 export function slidesToMarpMarkdown(
   slides: Slide[],
-  options?: { theme?: string },
+  options?: { theme?: string; brandCss?: string },
 ): string {
   const theme = options?.theme ?? "default";
   // `theme` originates from user-editable JSON (parsed.marp?.theme). Wrap it
@@ -351,8 +351,29 @@ export function slidesToMarpMarkdown(
     "marp: true",
     `theme: ${yamlSingleQuote(theme)}`,
     "paginate: true",
-    "---",
   ];
+  // Inject the active Brand Kit's CSS via Marp's `style:` GLOBAL directive
+  // (a YAML literal block). Marp applies `style:` to every slide WITHOUT
+  // requiring `--html`, so the brand's colours/fonts travel end-to-end to
+  // the Marp CLI for EVERY format (PPTX/PDF/HTML) with no IPC change. Only
+  // emitted when the caller resolved a brand kit; a deck with no brand kit
+  // produces byte-identical front-matter to before (legacy-safe):
+  // `--- / marp: true / theme: '…' / paginate: true / ---`.
+  //
+  // Security: every CSS line is indented INTO the literal block, so a `---`
+  // or `...` inside the brand CSS cannot terminate the YAML front-matter,
+  // and `</style` is neutralised via the shared {@link escapeStyleClose}
+  // escape so the CSS cannot break out of the `<style>` element Marp renders
+  // the directive into. Blank CSS lines stay blank (no trailing indent) so
+  // the literal block round-trips cleanly.
+  const brandCss = options?.brandCss?.trim();
+  if (brandCss) {
+    header.push("style: |");
+    for (const line of escapeStyleClose(brandCss).split("\n")) {
+      header.push(line.length > 0 ? `  ${line}` : "");
+    }
+  }
+  header.push("---");
   const body = slides.map((slide) => renderSlideAsMarp(slide));
   // Marp requires `---` horizontal rules between slides to delimit them.
   // The opening front-matter `---...---` block separates config from the
@@ -522,6 +543,26 @@ export function setFrontmatterTheme(src: string, theme: string): string {
 }
 
 /**
+ * Neutralise any `</style` sequence in raw CSS so it cannot close a
+ * `<style>` element early when the CSS is embedded into HTML / Marp output.
+ *
+ * We use the canonical CSS hex escape `\3c ` (= `<`, CSS Syntax §4.3.7)
+ * instead of a JS-style `\<` backslash escape. `\<` is silently dropped by
+ * the CSS parser so the rule containing the payload becomes malformed; `\3c `
+ * is a valid CSS character escape that preserves the rule's meaning while
+ * still preventing the HTML tokenizer from recognising `</style`. The
+ * trailing space after `\3c` is significant — it terminates the hex-digit
+ * run per the CSS Syntax production for IDENT escapes.
+ *
+ * Shared by the Shadow-DOM preview fallback ({@link applyMarpToShadow}) and
+ * the brand-CSS export injection ({@link slidesToMarpMarkdown}) so both use
+ * the identical, audited escape rather than duplicating the regex.
+ */
+export function escapeStyleClose(css: string): string {
+  return css.replace(/<\/style/gi, "\\3c /style");
+}
+
+/**
  * Apply Marp-emitted CSS + HTML to a Shadow DOM safely.
  *
  * Exported for unit testing of the CSS injection / `</style>` breakout
@@ -555,16 +596,8 @@ export function applyMarpToShadow(
   } else {
     // Sanitise `</style` so the HTML parser cannot close the stylesheet
     // early when the fallback path injects raw CSS via a `<style>` element.
-    //
-    // We use the canonical CSS hex escape `\3c ` (= `<`) defined in CSS
-    // Syntax §4.3.7, instead of the JS-style `\<` backslash escape that we
-    // previously emitted. `\<` is silently dropped by the CSS parser so the
-    // rule containing the payload becomes malformed; `\3c ` is a valid CSS
-    // character escape that preserves the rule meaning while still
-    // preventing the HTML tokenizer from recognising `</style`. The trailing
-    // space after `\3c` is significant — it terminates the hex-digit run
-    // per the CSS Syntax production for IDENT escapes.
-    const safeCss = css.replace(/<\/style/gi, "\\3c /style");
+    // See {@link escapeStyleClose} for the rationale behind the `\3c ` escape.
+    const safeCss = escapeStyleClose(css);
     let styleEl = shadow.querySelector<HTMLStyleElement>(
       ":scope > style[data-marp-fallback]",
     );

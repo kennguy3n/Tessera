@@ -22,14 +22,16 @@ import CitationPanel from "../components/CitationPanel";
 import { useTrackArtifactView } from "../hooks/useRecentlyViewedArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { notifyArtifactsChanged } from "../hooks/useArtifacts";
-import {
-  embedIcons,
-  iconsToTextPlaceholder,
-} from "../services/iconResolver";
+import { embedIcons, iconsToTextPlaceholder } from "../services/iconResolver";
 import {
   parseSlideContent,
   slidesToMarpMarkdown,
 } from "../editors/slideEditorHelpers";
+import {
+  brandCssForExport,
+  findBrandKit,
+  loadBrandKits,
+} from "../editors/slideBrandKit";
 import { marpThemeForSlideTheme } from "../editors/slideThemes";
 import {
   parseInfographicContent,
@@ -80,6 +82,19 @@ const ICON_TOKEN_ARTIFACT_TYPES = new Set(["document"]);
 // PPTX is intentionally NOT in BINARY_FORMATS — it does not flow through the
 // Rust exporter (which rejects pptx); it has a dedicated Marp-CLI path.
 const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx"]);
+
+// Slide decks render through the Marp CLI for every visual export format so
+// the deck exports as real slides — and an active Brand Kit's colours/fonts
+// survive — instead of being flattened through the generic Rust exporters
+// (PDF would line-dump the structured slide JSON; HTML would copy raw JSON to
+// the clipboard; neither carries the brand, and the Rust path rejects pptx
+// outright). The union is kept narrow and typed so it lines up exactly with
+// the `artifacts:exportMarp` IPC `format` field with no `as` cast.
+const SLIDE_MARP_FORMATS = ["pptx", "pdf", "html"] as const;
+type SlideMarpFormat = (typeof SLIDE_MARP_FORMATS)[number];
+function isSlideMarpFormat(format: string): format is SlideMarpFormat {
+  return (SLIDE_MARP_FORMATS as readonly string[]).includes(format);
+}
 
 /**
  * Display label for each supported export format. Centralised so the
@@ -335,21 +350,22 @@ export default function ArtifactEditorPage() {
         // draft. `embedIcons` is content-preserving when nothing resolves,
         // so the icon branch (above) and the draft branch (here) don't
         // conflict — whichever produced a meaningful override wins.
-        if (contentOverride === null && liveContent !== (artifact?.content ?? "")) {
+        if (
+          contentOverride === null &&
+          liveContent !== (artifact?.content ?? "")
+        ) {
           contentOverride = liveContent;
         }
 
-        // PPTX has its own dedicated pipeline: the Marp CLI consumes the
-        // raw Marp markdown directly. The generic Rust exporter rejects it,
-        // so we route the slide artifact's marp source through the
-        // `artifacts:exportMarp` IPC (which prompts the user via the native
-        // save dialog) rather than going through `exportArtifact`.
-        if (format === "pptx") {
-          if (artifact?.artifactType !== "slides") {
-            throw new Error(
-              "PPTX export is only available for slide artifacts",
-            );
-          }
+        // Slide decks have a dedicated Marp pipeline: the Marp CLI consumes
+        // the raw Marp markdown directly and renders the deck as real slides.
+        // We route PPTX/PDF/HTML through the `artifacts:exportMarp` IPC (which
+        // prompts the native save dialog) instead of the generic exporters,
+        // so all three carry the active Brand Kit AND export as slides rather
+        // than a flattened JSON dump (the generic Rust path rejects pptx, line
+        // -dumps the structured slide JSON for pdf, and only clipboard-copies
+        // raw JSON for html — none of which is a usable deck or branded).
+        if (artifact?.artifactType === "slides" && isSlideMarpFormat(format)) {
           const parsed = parseSlideContent(liveContent);
           // Resolve a single effective theme value up-front and reuse it
           // for both `slidesToMarpMarkdown(...)` AND `exportMarp({ theme })`
@@ -359,36 +375,43 @@ export default function ArtifactEditorPage() {
           // slides authored before Marp Mode shipped); the user-visible
           // default in that case is "default", matching what
           // `slidesToMarpMarkdown` would have fallen back to internally.
-          // Defaulting here (instead of inside each call site) is what
-          // keeps the two pipelines in sync — if a future caller forgets
-          // to default, they still get the consistent value.
           // Marp Mode owns its own explicit theme; a structured deck has
           // no `marp` block, so its curated `themeId` selects the closest
           // Marp built-in theme (see `slideThemes.ts`). This is what
-          // carries the user's chosen deck theme into the exported PPTX.
+          // carries the user's chosen deck theme into the export.
           const effectiveTheme =
             parsed.marpTheme ?? marpThemeForSlideTheme(parsed.themeId);
+          // Resolve the deck's active Brand Kit against the live store. An
+          // unknown / foreign / deleted id (or no id at all) resolves to
+          // `null` → no brand CSS is injected and the synthesised markdown is
+          // byte-identical to a legacy deck. The kit's colours/fonts are
+          // turned into a Marp-compatible `style:` directive by
+          // `brandCssForExport`, so the brand survives every format below.
+          const brandKit = findBrandKit(loadBrandKits(), parsed.brandKitId);
+          const brandCss = brandKit ? brandCssForExport(brandKit) : undefined;
           // When NOT in Marp Mode, we synthesise Marp Markdown from the
-          // structured slides. Pass the resolved theme through so the
-          // generated front-matter matches the `--theme` flag we send to
-          // the Marp CLI below.
+          // structured slides. User-authored Marp source (Marp Mode) is
+          // passed through verbatim — the brand re-skin layers onto the
+          // structured path the kit was designed against, and we never
+          // rewrite hand-authored source.
           const marpMarkdown = parsed.marpMode
             ? parsed.marpSource
             : slidesToMarpMarkdown(parsed.slides, {
                 theme: effectiveTheme,
+                brandCss,
               });
           if (!marpMarkdown.trim()) {
             throw new Error(
               "Slide artifact has no Marp content to export — add slides or enable Marp mode first",
             );
           }
-          const safeName = `${artifact?.title ?? "artifact"}.pptx`.replace(
+          const safeName = `${artifact?.title ?? "artifact"}.${format}`.replace(
             /[^A-Za-z0-9._-]/g,
             "_",
           );
           const written = await api.artifacts.exportMarp({
             markdown: marpMarkdown,
-            format: "pptx",
+            format,
             outputPath: safeName,
             theme: effectiveTheme,
           });
@@ -399,9 +422,16 @@ export default function ArtifactEditorPage() {
             setTimeout(() => setExportStatus(null), 3000);
             return;
           }
-          setExportStatus(`Exported as pptx → ${written}`);
+          setExportStatus(`Exported as ${format} → ${written}`);
           setTimeout(() => setExportStatus(null), 4000);
           return;
+        }
+        // PPTX is only meaningful for slide decks (handled above); the generic
+        // Rust exporter rejects it. Guard explicitly so a stray pptx request
+        // on a non-slide artifact fails loudly instead of silently falling
+        // through to `exportArtifact`.
+        if (format === "pptx") {
+          throw new Error("PPTX export is only available for slide artifacts");
         }
 
         if (BINARY_FORMATS.has(format)) {
@@ -411,10 +441,11 @@ export default function ArtifactEditorPage() {
           // path — or `null` if the user cancels, which we surface as a
           // neutral "Export cancelled" status (no file is written).
           const ext = format;
-          const suggestedName = `${artifact?.title ?? "artifact"}.${ext}`.replace(
-            /[^A-Za-z0-9._-]/g,
-            "_",
-          );
+          const suggestedName =
+            `${artifact?.title ?? "artifact"}.${ext}`.replace(
+              /[^A-Za-z0-9._-]/g,
+              "_",
+            );
           const written = await api.artifacts.exportToFile(
             id,
             format,
@@ -435,9 +466,7 @@ export default function ArtifactEditorPage() {
             contentOverride,
           );
           await navigator.clipboard.writeText(result.content);
-          setExportStatus(
-            `Exported as ${result.format} — copied to clipboard`,
-          );
+          setExportStatus(`Exported as ${result.format} — copied to clipboard`);
           setTimeout(() => setExportStatus(null), 3000);
         }
       } catch (e) {
@@ -461,10 +490,11 @@ export default function ArtifactEditorPage() {
     setExporting(true);
     setExportStatus(null);
     try {
-      const safeTitle = (artifact?.title ?? "evidence-pack")
-        .replace(/[^a-zA-Z0-9._-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "") || "evidence-pack";
+      const safeTitle =
+        (artifact?.title ?? "evidence-pack")
+          .replace(/[^a-zA-Z0-9._-]+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "") || "evidence-pack";
       const dialogResult = await api.dialog.showSaveDialog({
         title: "Export Evidence Pack",
         defaultPath: `${safeTitle}.zip`,
@@ -475,7 +505,10 @@ export default function ArtifactEditorPage() {
         setExporting(false);
         return;
       }
-      const outPath = await api.artifacts.exportEvidencePack(id, dialogResult.filePath);
+      const outPath = await api.artifacts.exportEvidencePack(
+        id,
+        dialogResult.filePath,
+      );
       setExportStatus(`Evidence pack exported to ${outPath}`);
       setTimeout(() => setExportStatus(null), 6000);
     } catch (e) {
@@ -539,7 +572,8 @@ export default function ArtifactEditorPage() {
     };
     const onDelete = async () => {
       if (!id) return;
-      if (!window.confirm("Delete this artifact? This cannot be undone.")) return;
+      if (!window.confirm("Delete this artifact? This cannot be undone."))
+        return;
       try {
         const api = window.tessera;
         if (!api) return;
@@ -609,8 +643,7 @@ export default function ArtifactEditorPage() {
         items={[
           { label: "Home", to: "/" },
           {
-            label:
-              artifact.title.length > 0 ? artifact.title : "(untitled)",
+            label: artifact.title.length > 0 ? artifact.title : "(untitled)",
           },
         ]}
       />
@@ -713,16 +746,16 @@ export default function ArtifactEditorPage() {
           onClose={() => setShareOpen(false)}
           artifactId={artifact.id}
           artifactTitle={artifact.title}
-          availableFormats={
-            availableExportFormats(artifact.artifactType).filter(
-              (f): f is KchatShareFormat =>
-                f === "markdown" ||
-                f === "html" ||
-                f === "pdf" ||
-                f === "docx" ||
-                f === "json",
-            )
-          }
+          availableFormats={availableExportFormats(
+            artifact.artifactType,
+          ).filter(
+            (f): f is KchatShareFormat =>
+              f === "markdown" ||
+              f === "html" ||
+              f === "pdf" ||
+              f === "docx" ||
+              f === "json",
+          )}
           defaultFormat={pickDefaultShareFormat(artifact.artifactType)}
         />
       )}
