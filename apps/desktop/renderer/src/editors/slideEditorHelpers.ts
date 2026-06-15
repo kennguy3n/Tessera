@@ -20,8 +20,9 @@ import {
   isKnownSlideThemeId,
 } from "./slideThemes";
 import { coerceBrandKitId } from "./slideBrandKit";
-import { getSlideLayout } from "./slideLayouts";
+import { getSlideLayout, resolveSlideLayout } from "./slideLayouts";
 import type { ChartData } from "./sheetCharts";
+import type { TemplateSlide } from "./slideTemplates";
 import type {
   Slide,
   SlideAspectRatio,
@@ -835,6 +836,72 @@ export function buildDeckFromTemplate(template: {
     notes: ts.notes ?? "",
     layout: ts.layout,
   }));
+}
+
+/**
+ * Deep-copy a list of already-validated slides, minting a fresh id for
+ * every slide and block while preserving every other field (title,
+ * notes, layout, background, and each block's type/content/alt/slot).
+ *
+ * Used when *applying a user-authored slide template*: the template's
+ * stored deck must be reproduced faithfully (unlike
+ * {@link buildDeckFromTemplate}, which materialises a stateless
+ * blueprint and intentionally drops per-slide backgrounds + per-block
+ * alt text), yet the applied copy must not share slide/block ids with
+ * the stored template — otherwise applying the same template twice, or
+ * editing the applied deck, would alias React keys across decks.
+ * Reissuing ids keeps every applied deck independent.
+ *
+ * Expects slides that have already passed through
+ * {@link backfillSlideIds} / `parseSlideContent` (so optional fields are
+ * either absent or valid); it copies fields verbatim and never mutates
+ * the input.
+ */
+export function cloneSlidesWithFreshIds(slides: readonly Slide[]): Slide[] {
+  return slides.map((slide) => {
+    const next: Slide = {
+      id: newSlideId("slide"),
+      title: slide.title,
+      blocks: slide.blocks.map((block) => {
+        const copy: SlideBlock = {
+          id: newSlideId("block"),
+          type: block.type,
+          content: block.content,
+        };
+        if (block.alt !== undefined) copy.alt = block.alt;
+        if (block.slot !== undefined) copy.slot = block.slot;
+        return copy;
+      }),
+      notes: slide.notes,
+    };
+    if (slide.layout !== undefined) next.layout = slide.layout;
+    if (slide.background !== undefined) next.background = slide.background;
+    return next;
+  });
+}
+
+/**
+ * Adapt a stored {@link Slide} into the stateless {@link TemplateSlide}
+ * blueprint shape that {@link SlideThumbnail} consumes, so the gallery
+ * can render a live preview of a user-authored template from its first
+ * slide. The slide's layout is resolved through {@link resolveSlideLayout}
+ * (inferring one from the block shape when the slide carries none), and
+ * only the fields the thumbnail reads (layout, title, block type /
+ * content / slot, notes) are projected — the data URL of an image block
+ * still flows through `content`, exactly as a built-in template's
+ * blueprint would.
+ */
+export function slideToTemplateSlide(slide: Slide): TemplateSlide {
+  return {
+    layout: resolveSlideLayout(slide),
+    title: slide.title,
+    blocks: slide.blocks.map((block) => ({
+      type: block.type,
+      content: block.content,
+      ...(block.slot !== undefined ? { slot: block.slot } : {}),
+    })),
+    notes: slide.notes,
+  };
 }
 
 /**
