@@ -109,6 +109,18 @@ rules:
   check only). Whether that id still resolves to a real kit is decided at
   render time against the live store, so an unknown/deleted id simply
   **degrades to "no brand kit"** and the deck renders on its plain theme.
+- **Brand kit is deck-scoped, not editor-scoped.** It lives in the
+  deck's `brandKitId`, so any operation that **replaces the whole deck**
+  re-establishes a coherent brand state rather than carrying the old skin
+  over: a version restore reads `brandKitId` from the incoming deck, and
+  applying a template or an AI-generated deck **detaches** the kit
+  (`brandKitId → undefined`). This keeps the invariant that a deck's
+  `themeId` matches its kit's `baseThemeId` — a template declares its own
+  `suggestedTheme`, so inheriting a kit authored against a different base
+  theme would both mismatch that invariant and let a later re-apply snap
+  the theme back. Detaching only removes the skin; the curated theme and
+  all slide content are preserved, and the kit (still in the store) is
+  one click away from being re-applied.
 
 UI integration is additive and reuses existing primitives:
 

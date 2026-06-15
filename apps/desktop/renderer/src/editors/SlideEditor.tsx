@@ -726,6 +726,16 @@ export default function SlideEditor({
       // setActiveIndex(0) above (same hazard as the restore path).
       setFindPanelOpen(false);
       setFindQuery("");
+      // Detach any active brand kit. A template is a fresh, self-contained
+      // design that declares its own `suggestedTheme`; carrying a kit
+      // authored against a different base theme would leave the deck in an
+      // inconsistent `themeId !== baseThemeId` state, and a later re-apply
+      // from the builder would silently snap the theme back. This mirrors
+      // the version-restore sync effect, which resets `brandKitId` from the
+      // incoming (brand-less) deck. The ref is cleared synchronously so the
+      // save below serialises the detach.
+      setBrandKitId(undefined);
+      brandKitIdRef.current = undefined;
       if (template.suggestedTheme) {
         setThemeId(template.suggestedTheme);
         themeIdRef.current = template.suggestedTheme;
@@ -781,6 +791,12 @@ export default function SlideEditor({
       // active slide away from the freshly-anchored slide 0.
       setFindPanelOpen(false);
       setFindQuery("");
+      // Detach any active brand kit — a generated deck is a wholesale
+      // replacement, so (like applyTemplate and the version-restore path)
+      // it starts brand-less rather than inheriting the previous deck's
+      // skin. The ref is cleared synchronously so the save serialises it.
+      setBrandKitId(undefined);
+      brandKitIdRef.current = undefined;
       debouncedSave(generated, {
         enabled: false,
         source: marpSource,
