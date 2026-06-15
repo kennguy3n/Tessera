@@ -7,6 +7,7 @@ import {
   type ChangeEvent,
 } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import { DOMSerializer } from "@tiptap/pm/model";
 import {
   Sparkles,
   Bold as BoldIcon,
@@ -39,6 +40,7 @@ import {
   Heading,
   TableCellsMerge,
   Trash2,
+  LayoutTemplate,
 } from "lucide-react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -111,6 +113,14 @@ import {
   normalizeCommentText,
   type DocumentComment,
 } from "./documentCommentsHelpers";
+import { DocumentTemplateGallery } from "./components/DocumentTemplateGallery";
+import { DocumentTemplateSaveModal } from "./components/DocumentTemplateSaveModal";
+import {
+  customDocumentTemplateToDraft,
+  emptyDocumentTemplateDraft,
+  type CustomDocumentTemplate,
+  type CustomDocumentTemplateDraft,
+} from "./customDocumentTemplates";
 import { FindReplacePanel } from "./components/FindReplacePanel";
 import { CommentsPanel } from "./components/CommentsPanel";
 import { SlashMenu } from "./components/SlashMenu";
@@ -268,6 +278,38 @@ const TEXT_ALIGNMENTS = [
   ["justify", AlignJustify, "Justify"],
 ] as const;
 
+// Leading tags that mark a serialized fragment as already block-level.
+// Intentionally the block-level subset of documentEditorHelpers'
+// TRUSTED_LEADING_TAGS: inline tags (span, mark, a, strong, em, img, …) are
+// excluded so an inline-only selection still gets wrapped in a paragraph by
+// selectionToBlockHtml — which is what keeps the captured HTML block-level
+// for parseDocumentContent's trusted-tag passthrough.
+const BLOCK_HTML_LEADING_TAG =
+  /^<(?:p|h[1-6]|ul|ol|li|blockquote|pre|table|hr|div|details)\b/i;
+
+/**
+ * Serialize the editor's current (non-empty) selection to block-level
+ * HTML, suitable as the seed for a saved template. Returns "" when the
+ * selection is empty.
+ *
+ * ProseMirror serializes a selection contained within a single text block
+ * as inline HTML (e.g. `bold <strong>text</strong>`); we wrap such a
+ * fragment in a paragraph so the captured content is always block-level —
+ * which keeps `parseDocumentContent` from treating it as untrusted and
+ * escaping the markup.
+ */
+function selectionToBlockHtml(editor: Editor): string {
+  const { from, to } = editor.state.selection;
+  if (from >= to) return "";
+  const slice = editor.state.doc.slice(from, to);
+  const serializer = DOMSerializer.fromSchema(editor.schema);
+  const container = document.createElement("div");
+  container.appendChild(serializer.serializeFragment(slice.content));
+  const html = container.innerHTML.trim();
+  if (!html) return "";
+  return BLOCK_HTML_LEADING_TAG.test(html) ? html : `<p>${html}</p>`;
+}
+
 export default function DocumentEditor({
   content,
   onSave,
@@ -311,6 +353,24 @@ export default function DocumentEditor({
 
   // Link editor popover. `null` = closed.
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
+
+  // Template gallery overlay visibility (toolbar "Templates" button).
+  const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
+
+  // Save / edit / import metadata modal. `null` = closed; otherwise it
+  // carries the seeded draft, dialog title, and optional hint for the
+  // active mode (save current / edit existing / review an import).
+  const [templateEditor, setTemplateEditor] = useState<{
+    draft: CustomDocumentTemplateDraft;
+    title: string;
+    hint?: string;
+  } | null>(null);
+
+  // When a save/edit/import modal is opened FROM the gallery, reopen the
+  // gallery once that modal closes. The gallery and the modal share the
+  // one-overlay-at-a-time focus-trap invariant, so they must never stack.
+  const [reopenGalleryAfterEditor, setReopenGalleryAfterEditor] =
+    useState(false);
 
   // Bumped on every TipTap `onUpdate` so memos that derive from the
   // editor's plain-text content (e.g. word count, outline headings)
@@ -662,6 +722,96 @@ export default function DocumentEditor({
     imageInputRef.current?.click();
   }, []);
 
+  // Stable open/close handlers for the template gallery. The gallery feeds
+  // onClose straight into useFocusTrap's effect deps, so an inline arrow here
+  // would re-arm the focus trap on every DocumentEditor re-render — its
+  // cleanup would move focus out of the gallery and overwrite the saved
+  // trigger, so focus would later be restored to the wrong element. Stable
+  // identities (setState setters are stable) avoid that churn.
+  const openTemplateGallery = useCallback(
+    () => setTemplateGalleryOpen(true),
+    [],
+  );
+  const closeTemplateGallery = useCallback(
+    () => setTemplateGalleryOpen(false),
+    [],
+  );
+
+  // Insert a template's HTML into the document. An empty document is
+  // replaced wholesale (so the starter *becomes* the document); otherwise
+  // the content is inserted at the cursor. Routing through
+  // parseDocumentContent yields a well-formed block-level HTML string, and
+  // TipTap's schema parse on insert drops anything the editor wouldn't
+  // itself emit — so a template can never inject foreign markup.
+  const applyTemplateContent = useCallback(
+    (templateContent: string) => {
+      if (!editor) return;
+      const html = parseDocumentContent(templateContent);
+      if (editor.isEmpty) {
+        editor.chain().focus().setContent(html).run();
+      } else {
+        editor.chain().focus().insertContent(html).run();
+      }
+      setTemplateGalleryOpen(false);
+    },
+    [editor],
+  );
+
+  // Open the save/edit/import modal. Every entry point is reached from
+  // inside the gallery, so remember to reopen the gallery on close.
+  const openTemplateEditor = useCallback(
+    (next: {
+      draft: CustomDocumentTemplateDraft;
+      title: string;
+      hint?: string;
+    }) => {
+      setTemplateGalleryOpen(false);
+      setReopenGalleryAfterEditor(true);
+      setTemplateEditor(next);
+    },
+    [],
+  );
+
+  const closeTemplateEditor = useCallback(() => {
+    setTemplateEditor(null);
+    if (reopenGalleryAfterEditor) {
+      setReopenGalleryAfterEditor(false);
+      setTemplateGalleryOpen(true);
+    }
+  }, [reopenGalleryAfterEditor]);
+
+  // Capture the current document — or just the selection, when one
+  // exists — as the seed for a new user template.
+  const saveCurrentAsTemplate = useCallback(() => {
+    if (!editor) return;
+    const selection = selectionToBlockHtml(editor);
+    const captured = selection || editor.getHTML();
+    openTemplateEditor({
+      draft: emptyDocumentTemplateDraft(captured),
+      title: "Save as template",
+      hint: selection
+        ? "Saves the selected content as a reusable template in your gallery."
+        : undefined,
+    });
+  }, [editor, openTemplateEditor]);
+
+  const editCustomTemplate = useCallback(
+    (template: CustomDocumentTemplate) => {
+      openTemplateEditor({
+        draft: customDocumentTemplateToDraft(template),
+        title: "Edit template",
+      });
+    },
+    [openTemplateEditor],
+  );
+
+  const importTemplateDraft = useCallback(
+    (draft: CustomDocumentTemplateDraft) => {
+      openTemplateEditor({ draft, title: "Import template" });
+    },
+    [openTemplateEditor],
+  );
+
   // Word/character counts derived from the editor's plain text. We
   // recompute on every render — TipTap's reactivity guarantees this
   // component re-renders on every doc change.
@@ -754,6 +904,7 @@ export default function DocumentEditor({
         onInsertImage={insertImageFromToolbar}
         onOpenFind={() => setFindOpen(true)}
         onOpenAi={() => openAi()}
+        onOpenTemplates={openTemplateGallery}
         onAddComment={addCommentFromToolbar}
         onToggleComments={() => setCommentsOpen((open) => !open)}
         commentsOpen={commentsOpen}
@@ -822,6 +973,24 @@ export default function DocumentEditor({
         onChange={onPickImage}
         aria-hidden="true"
       />
+      <DocumentTemplateGallery
+        isOpen={templateGalleryOpen}
+        onClose={closeTemplateGallery}
+        onApply={applyTemplateContent}
+        onSaveCurrent={saveCurrentAsTemplate}
+        onEditTemplate={editCustomTemplate}
+        onImportDraft={importTemplateDraft}
+      />
+      {templateEditor && (
+        <DocumentTemplateSaveModal
+          isOpen
+          initialDraft={templateEditor.draft}
+          title={templateEditor.title}
+          hint={templateEditor.hint}
+          onSaved={() => {}}
+          onClose={closeTemplateEditor}
+        />
+      )}
     </div>
   );
 }
@@ -998,6 +1167,7 @@ function Toolbar({
   onInsertImage,
   onOpenFind,
   onOpenAi,
+  onOpenTemplates,
   onAddComment,
   onToggleComments,
   commentsOpen,
@@ -1008,6 +1178,7 @@ function Toolbar({
   onInsertImage: () => void;
   onOpenFind: () => void;
   onOpenAi: () => void;
+  onOpenTemplates: () => void;
   onAddComment: () => void;
   onToggleComments: () => void;
   commentsOpen: boolean;
@@ -1272,6 +1443,17 @@ function Toolbar({
           <span className="toolbar-separator" />
         </>
       )}
+      <button
+        type="button"
+        className="toolbar-btn"
+        onClick={onOpenTemplates}
+        title="Insert a document template"
+        aria-label="Templates"
+        data-testid="document-templates-button"
+      >
+        <LayoutTemplate size={16} aria-hidden="true" />
+        <span className="toolbar-btn-label">Templates</span>
+      </button>
       <button
         type="button"
         className="toolbar-btn"
