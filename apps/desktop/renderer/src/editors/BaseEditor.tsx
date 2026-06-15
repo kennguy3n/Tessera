@@ -102,6 +102,7 @@ import {
   initialAppMode,
   isMeaningfulAppConfig,
   reconcileAppConfig,
+  removeFieldFromAppConfig,
   renameFieldInAppConfig,
 } from "./baseviews/appmode/appConfig";
 import { useVirtualRows } from "../hooks/useVirtualRows";
@@ -641,6 +642,22 @@ export default function BaseEditor({
         }),
       };
       updateData(updated);
+      // App-mode config. Mirror `renameField`: a form's chosen field
+      // subset and a widget's group/value references are keyed by field
+      // name on this table, so drop the now-gone field eagerly instead
+      // of leaving a dangling name until the next reconcile-on-load.
+      // `updateData` already advanced `docRef.current`, so this runs
+      // against the freshly-pruned schema.
+      const prevApp = docRef.current.app;
+      if (prevApp) {
+        const pruned = removeFieldFromAppConfig(
+          prevApp,
+          docRef.current,
+          docRef.current.activeTableId,
+          fieldName,
+        );
+        if (pruned !== prevApp) updateAppConfig(pruned);
+      }
       // Drop any view-state pointers (sort, filter, kanbanGroup,
       // calendarDate, …) that referenced the deleted field. Routes
       // through the same shared cleanup the import flows use so
@@ -649,7 +666,7 @@ export default function BaseEditor({
       // wired to `removeField`) inherits the same fix for free.
       dropStaleViewState(nextFields);
     },
-    [data, updateData, dropStaleViewState],
+    [data, updateData, updateAppConfig, dropStaleViewState],
   );
 
   // Move a field one slot up or down in `data.fields`. The grid /

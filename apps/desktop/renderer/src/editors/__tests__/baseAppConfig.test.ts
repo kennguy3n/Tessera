@@ -14,6 +14,7 @@ import {
   createForm,
   createWidget,
   renameFieldInAppConfig,
+  removeFieldFromAppConfig,
   DASHBOARD_PAGE_ID,
   dataPageId,
   formPageId,
@@ -535,5 +536,69 @@ describe("renameFieldInAppConfig", () => {
     };
     // Renaming People.Value must not touch the Tasks form.
     expect(renameFieldInAppConfig(a, md, "t1", "Value", "Amount")).toBe(a);
+  });
+});
+
+describe("removeFieldFromAppConfig", () => {
+  const doc = singleDoc();
+  const app: BaseAppConfig = {
+    forms: [
+      {
+        id: "f1",
+        name: "Intake",
+        tableId: "t1",
+        fieldNames: ["Name", "Value"],
+      },
+    ],
+    dashboard: {
+      widgets: [
+        {
+          id: "w1",
+          kind: "chart",
+          tableId: "t1",
+          groupByField: "Stage",
+          valueField: "Value",
+        },
+      ],
+    },
+  };
+
+  it("returns the same reference when the field is referenced nowhere", () => {
+    expect(removeFieldFromAppConfig(app, doc, "t1", "Missing")).toBe(app);
+  });
+
+  it("drops the field from form subsets and clears widget group/value refs", () => {
+    const out = removeFieldFromAppConfig(app, doc, "t1", "Value");
+    expect(out).not.toBe(app);
+    expect(out.forms[0].fieldNames).toEqual(["Name"]);
+    expect(out.dashboard.widgets[0].valueField).toBeUndefined();
+    // Unrelated ref untouched.
+    expect(out.dashboard.widgets[0].groupByField).toBe("Stage");
+  });
+
+  it("matches reconcile-on-load: deleting the last named field empties the subset (→ all fillable)", () => {
+    const a: BaseAppConfig = {
+      forms: [{ id: "f", name: "Only", tableId: "t1", fieldNames: ["Value"] }],
+      dashboard: { widgets: [] },
+    };
+    const out = removeFieldFromAppConfig(a, doc, "t1", "Value");
+    expect(out.forms[0].fieldNames).toEqual([]);
+    // The reconcile-on-load path yields the same empty subset for the
+    // (now field-less) form, so eager pruning and deferred pruning agree.
+    const reconciled = reconcileAppConfig(a, {
+      tables: [table("t1", "People", [{ name: "Name", type: "text" }])],
+      activeTableId: "t1",
+    });
+    expect(reconciled.forms[0].fieldNames).toEqual([]);
+  });
+
+  it("ignores fields on a different table", () => {
+    const md = multiDoc();
+    const a: BaseAppConfig = {
+      forms: [{ id: "f", name: "n", tableId: "t2", fieldNames: ["Title"] }],
+      dashboard: { widgets: [] },
+    };
+    // Deleting People.Value must not touch the Tasks form.
+    expect(removeFieldFromAppConfig(a, md, "t1", "Value")).toBe(a);
   });
 });

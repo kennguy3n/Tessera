@@ -455,6 +455,52 @@ export function renameFieldInAppConfig(
   };
 }
 
+/**
+ * Propagate a field deletion into the app config so a form's chosen field
+ * subset and a widget's group/value references drop the now-gone field
+ * eagerly, instead of waiting for the next load's {@link reconcileAppConfig}
+ * to prune it. Yields the exact end-state that reconcile-on-load produces
+ * (a form whose subset empties out falls back to "all fillable fields"; a
+ * widget ref pointing at the deleted field clears to `undefined`). Only
+ * forms / widgets whose table resolves to `tableId` are touched. Returns the
+ * same reference when nothing changed so callers can skip a write.
+ */
+export function removeFieldFromAppConfig(
+  app: BaseAppConfig,
+  doc: BaseDocument,
+  tableId: string,
+  fieldName: string,
+): BaseAppConfig {
+  let dirty = false;
+  const targets = (ref: string): boolean =>
+    resolveTableId(doc, ref) === tableId;
+
+  const forms = app.forms.map((f) => {
+    if (!targets(f.tableId) || !f.fieldNames.includes(fieldName)) return f;
+    dirty = true;
+    return {
+      ...f,
+      fieldNames: f.fieldNames.filter((n) => n !== fieldName),
+    };
+  });
+
+  const widgets = app.dashboard.widgets.map((w) => {
+    if (!targets(w.tableId)) return w;
+    const nextGroup = w.groupByField === fieldName ? undefined : w.groupByField;
+    const nextValue = w.valueField === fieldName ? undefined : w.valueField;
+    if (nextGroup === w.groupByField && nextValue === w.valueField) return w;
+    dirty = true;
+    return { ...w, groupByField: nextGroup, valueField: nextValue };
+  });
+
+  if (!dirty) return app;
+  return {
+    ...app,
+    forms,
+    dashboard: { ...app.dashboard, widgets },
+  };
+}
+
 /** A new form targeting `tableId` (shows every fillable field by default). */
 export function createForm(table: BaseTable, name?: string): BaseAppForm {
   return {
