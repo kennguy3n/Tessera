@@ -50,6 +50,7 @@ import {
 } from "./components/SlideBlockPreviews";
 import { SlideDesignCanvas } from "./components/SlideDesignCanvas";
 import { BrandKitBuilderModal } from "./components/BrandKitBuilderModal";
+import { BrandKitShareControls } from "./components/BrandKitShareControls";
 import { SlideThumbnail } from "./components/SlideThumbnail";
 import {
   SLIDE_THEMES,
@@ -58,7 +59,11 @@ import {
   DEFAULT_SLIDE_THEME_ID,
   type SlideBgStyle,
 } from "./slideThemes";
-import { brandKitCssVars, type BrandKit } from "./slideBrandKit";
+import {
+  brandKitCssVars,
+  type BrandKit,
+  type BrandKitDraft,
+} from "./slideBrandKit";
 import { useBrandKits } from "./useBrandKits";
 import { SLIDE_LAYOUTS, resolveSlideLayout } from "./slideLayouts";
 import { resolveIconComponent } from "../services/iconResolver";
@@ -263,6 +268,11 @@ export default function SlideEditor({
     () => initial.brandKitId,
   );
   const [brandBuilderOpen, setBrandBuilderOpen] = useState(false);
+  // A draft parsed from an imported Brand Pack, seeded into the builder so
+  // the user reviews it before saving. Id-less, so saving mints a fresh
+  // kit — an import can never overwrite an existing one. Cleared on close.
+  const [brandImportDraft, setBrandImportDraft] =
+    useState<BrandKitDraft | null>(null);
   const [deckGenOpen, setDeckGenOpen] = useState(false);
   const [deckRestyleOpen, setDeckRestyleOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
@@ -2112,6 +2122,18 @@ export default function SlideEditor({
             </button>
           )}
           {!marpMode && (
+            <BrandKitShareControls
+              activeKit={activeBrandKit}
+              onImported={(draft) => {
+                // Mirror the trigger: close any open popover, then open the
+                // builder pre-filled with the imported draft for review.
+                openExclusiveMenu(null);
+                setBrandImportDraft(draft);
+                setBrandBuilderOpen(true);
+              }}
+            />
+          )}
+          {!marpMode && (
             <div style={{ position: "relative", display: "inline-flex" }}>
               <button
                 ref={insertPresetTriggerRef}
@@ -2520,9 +2542,13 @@ export default function SlideEditor({
           isOpen
           deckThemeId={themeId}
           activeKitId={brandKitId}
+          initialDraft={brandImportDraft ?? undefined}
           onApply={applyBrandKit}
           onClear={clearBrandKit}
-          onClose={() => setBrandBuilderOpen(false)}
+          onClose={() => {
+            setBrandBuilderOpen(false);
+            setBrandImportDraft(null);
+          }}
         />
       )}
       {templatePickerOpen && (
