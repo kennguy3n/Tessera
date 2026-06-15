@@ -1,0 +1,43 @@
+id: volunteer-hours-log-v1
+name: Volunteer Hours Log
+type: sheet
+description: Volunteer hours log recording shifts by program and role with hours totals, in-kind value, and engagement and retention metrics
+industry:
+  - nonprofit
+profile:
+  - volunteer-coordinator
+  - program-manager
+  - development-manager
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the organization, the period, the programs volunteers
+      support, the standard in-kind hourly value used for reporting,
+      and the source (sign-in sheets, volunteer portal) of the data.
+  - title: Volunteer Shifts
+    prompt: >
+      For each shift capture: date, volunteer (with an ID), program or
+      activity, role, location, start and end time, and hours served.
+      Note whether hours are verified.
+    output_format: table
+  - title: Hours Summary
+    prompt: >
+      Total hours by volunteer, by program, and by month. Apply the
+      in-kind hourly value to estimate the contributed value for grant
+      and annual reporting.
+    output_format: table
+  - title: Engagement and Retention
+    prompt: >
+      Identify active, lapsed, and new volunteers, the average hours
+      per volunteer, and retention period over period. Flag highly
+      engaged volunteers for recognition and lapsed ones for
+      re-engagement.
+  - title: Compliance and Notes
+    prompt: >
+      Track required clearances, training, and agreements per
+      volunteer and flag any expired or missing. Record notes on
+      availability and preferences.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,48 @@
+id: program-outcomes-tracker-v1
+name: Program Outcomes Tracker
+type: sheet
+description: Program outcomes tracker linking activities to outputs and outcomes against targets in a logic-model framework for impact reporting
+industry:
+  - nonprofit
+  - government
+profile:
+  - program-director
+  - monitoring-evaluation
+  - grant-manager
+sections:
+  - title: Program Header
+    prompt: >
+      Identify the program, the reporting period, the theory of change
+      or logic model reference, the funder reporting requirements, and
+      the data sources behind the indicators.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Indicators and Targets
+    prompt: >
+      For each indicator capture: the logic-model level (output,
+      outcome, impact), the indicator definition, the unit, the
+      baseline, the target, and the data source and collection
+      method.
+    output_format: table
+  - title: Activities and Outputs
+    prompt: >
+      Record the activities delivered and the output measures
+      (sessions held, people reached, items distributed) for the
+      period against plan.
+    output_format: table
+  - title: Outcomes and Progress
+    prompt: >
+      Report the actual value for each outcome indicator against
+      target, the percentage of target achieved, and the trend versus
+      baseline and prior period. Disaggregate by group where required.
+    output_format: table
+  - title: Analysis and Learning
+    prompt: >
+      Explain the results: what drove over- or under-performance,
+      data-quality caveats, and the adjustments to the program. Note
+      stories or evidence that illustrate the outcomes.
+export:
+  - markdown
+  - csv
+  - xlsx

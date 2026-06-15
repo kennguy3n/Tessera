@@ -1,0 +1,48 @@
+id: vat-invoice-register-eu-v1
+name: VAT Invoice Register (EU)
+type: sheet
+description: EU VAT-compliant invoice register capturing the mandatory invoice particulars, VAT by rate, and reverse-charge and intra-community indicators
+industry:
+  - finance
+profile:
+  - accountant
+  - bookkeeper
+  - tax-manager
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the supplier, its VAT identification number, the member
+      state and period, and the sequential numbering used. Note the
+      EU VAT Directive invoice content requirements the register
+      enforces.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Invoice Particulars
+    prompt: >
+      For each invoice capture the mandatory details: sequential
+      invoice number, issue date, supply date, supplier and customer
+      name, address, and VAT numbers, and a description and quantity of
+      the goods or services.
+    output_format: table
+  - title: Amounts and VAT by Rate
+    prompt: >
+      For each invoice show the taxable amount per VAT rate, the rate
+      applied, the VAT amount, and the gross total. Where exempt or
+      zero-rated, record the reason.
+    output_format: table
+  - title: Reverse Charge and Cross-Border
+    prompt: >
+      Flag invoices under the reverse charge (with the mandatory
+      reference), intra-community supplies (with the customer VAT
+      number for the EC Sales List), and exports outside the EU.
+    output_format: table
+  - title: Register Totals and Controls
+    prompt: >
+      Total the taxable amounts and VAT by rate for the period to feed
+      the VAT return, confirm the invoice number sequence is
+      unbroken, and flag any invoice missing a mandatory particular.
+export:
+  - markdown
+  - csv
+  - xlsx

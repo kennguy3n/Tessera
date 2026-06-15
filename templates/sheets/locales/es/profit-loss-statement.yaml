@@ -1,0 +1,69 @@
+id: profit-loss-statement-v1-es
+name: Estado de Resultados
+type: sheet
+description: Estado de resultados (pérdidas y ganancias) con ingresos, costo de ventas, gastos operativos y márgenes a lo largo de los períodos, con desviación frente al presupuesto (versión en español)
+locale: es
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Encabezado del estado
+    prompt: >
+      Identifique la entidad, el período sobre el que se informa y los
+      comparativos (período actual, período anterior, acumulado del
+      año), la moneda, la base de preparación y los documentos fuente
+      (libro mayor, balance de comprobación) de los que provienen las
+      cifras. Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Ingresos
+    prompt: >
+      Desglose los ingresos por línea de negocio, producto o canal.
+      Muestre los ingresos brutos, las devoluciones y bonificaciones y
+      los ingresos netos del período actual, del período comparativo y
+      del presupuesto, con el porcentaje de crecimiento y la
+      desviación frente al presupuesto. Responda en español.
+    output_format: table
+  - title: Costo de ventas y utilidad bruta
+    prompt: >
+      Detalle el costo de los bienes o servicios vendidos (materiales,
+      mano de obra directa, cumplimiento y otros costos directos).
+      Calcule la utilidad bruta y el porcentaje de margen bruto para
+      cada período y frente al presupuesto. Responda en español.
+    output_format: table
+  - title: Gastos operativos
+    prompt: >
+      Enumere los gastos operativos por función (ventas y marketing,
+      investigación y desarrollo, generales y administrativos). Muestre
+      cada categoría para el período actual, el comparativo y el
+      presupuesto, con desviaciones y el gasto como porcentaje de los
+      ingresos. Responda en español.
+    output_format: table
+  - title: Resultado operativo y EBITDA
+    prompt: >
+      Calcule el resultado operativo (utilidad bruta menos gastos
+      operativos) y luego sume la depreciación y amortización para
+      mostrar el EBITDA. Presente el margen operativo y el margen de
+      EBITDA para cada período. Responda en español.
+  - title: Resultado neto
+    prompt: >
+      Transite del resultado operativo al resultado neto: intereses
+      netos, otros ingresos y gastos, e impuesto sobre la renta.
+      Muestre el resultado antes de impuestos, la tasa efectiva de
+      impuestos y el resultado neto con el margen neto. Responda en
+      español.
+  - title: Comentario de desviaciones
+    prompt: >
+      Explique las desviaciones más significativas frente al período
+      anterior y frente al presupuesto. Vincule cada desviación a un
+      factor del negocio (volumen, precio, mezcla, inflación de costos,
+      partidas no recurrentes) e indique cualquier medida correctiva.
+      Responda en español.
+export:
+  - markdown
+  - csv
+  - xlsx

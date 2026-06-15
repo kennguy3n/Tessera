@@ -1,0 +1,47 @@
+id: contract-register-v1
+name: Contract Register
+type: sheet
+description: Contract register tracking agreements with counterparty, value, key dates, renewal and notice terms, obligations, and risk for lifecycle management
+industry:
+  - legal
+profile:
+  - contract-manager
+  - general-counsel
+  - procurement
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the organization, the as-of date, the currency, the
+      contract-numbering scheme, and the repository or source system
+      the contracts are held in.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Contract Records
+    prompt: >
+      For each contract capture: contract ID, title, counterparty,
+      type (customer, supplier, NDA, lease, license, employment), the
+      internal owner, and the governing law.
+    output_format: table
+  - title: Value and Key Dates
+    prompt: >
+      Record the contract value or rate, the effective date, the
+      expiry or term, the renewal type (auto-renew, manual), and the
+      notice period and deadline to give notice. Flag contracts
+      approaching a notice or expiry date.
+    output_format: table
+  - title: Obligations and Compliance
+    prompt: >
+      Summarize the key obligations, service levels, and deliverables
+      to be monitored, and any compliance or regulatory clauses (data
+      protection, insurance, audit). Note the review status.
+    output_format: table
+  - title: Risk and Renewal Pipeline
+    prompt: >
+      Note the risk rating and any non-standard or onerous terms
+      (liability caps, indemnities, exclusivity), and lay out the
+      renewal and renegotiation pipeline by month with the owner.
+export:
+  - markdown
+  - csv
+  - xlsx

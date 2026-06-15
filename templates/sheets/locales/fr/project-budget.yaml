@@ -1,0 +1,69 @@
+id: project-budget-v1-fr
+name: Budget de Projet
+type: sheet
+description: Classeur de budget de projet avec structure de découpage du travail, coûts de main-d'œuvre et hors main-d'œuvre, provision pour aléas et suivi du prévu par rapport au réalisé selon les jalons (version française)
+locale: fr
+industry:
+  - finance
+  - construction
+profile:
+  - project-manager
+  - finance-analyst
+  - pmo
+sections:
+  - title: En-tête du projet
+    prompt: >
+      Identifiez le nom et le code du projet, le commanditaire et le
+      chef de projet, la période de planification et la date de fin, la
+      devise, la source de financement et le budget total approuvé par
+      rapport auquel le suivi est effectué. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Structure de découpage du travail et catégories de coûts
+    prompt: >
+      Découpez le projet en tâches ou phases de la structure de
+      découpage du travail. Pour chacune, indiquez la catégorie de coût
+      (main-d'œuvre, matériaux, équipements, sous-traitance,
+      déplacements, logiciels, autres) et le responsable. Répondez en
+      français.
+    output_format: table
+  - title: Budget de main-d'œuvre
+    prompt: >
+      Détaillez la main-d'œuvre prévue par rôle : heures, taux moyen et
+      coût. Consolidez par phase et indiquez le budget total de
+      main-d'œuvre. Précisez toute hypothèse sur le taux d'utilisation
+      ou le recours à des prestataires plutôt qu'au personnel interne.
+      Répondez en français.
+    output_format: table
+  - title: Budget hors main-d'œuvre
+    prompt: >
+      Détaillez les postes hors main-d'œuvre (matériaux, équipements,
+      licences, sous-traitances, déplacements) avec quantité, coût
+      unitaire et total. Identifiez le fournisseur ou la source lorsque
+      cela est connu. Répondez en français.
+    output_format: table
+  - title: Provision pour aléas et réserves
+    prompt: >
+      Indiquez la provision pour aléas (pourcentage et montant) et la
+      réserve de gestion, avec la justification de leur
+      dimensionnement. Expliquez les conditions dans lesquelles la
+      provision peut être mobilisée. Répondez en français.
+  - title: Suivi du prévu par rapport au réalisé
+    prompt: >
+      Réservez des colonnes pour les réalisations : budget, engagé,
+      dépense réelle, restant et écart (€ et %) par phase. Calculez la
+      performance des coûts par rapport au calendrier et signalez toute
+      phase tendant à dépasser le budget. Répondez en français.
+    output_format: table
+  - title: Risques budgétaires
+    prompt: >
+      Identifiez les risques de coût susceptibles de modifier le budget
+      (changement de périmètre, inflation des prix, dérive du
+      calendrier, exposition au change). Pour chacun, l'impact
+      potentiel et la mesure d'atténuation ou le déclencheur que
+      l'équipe surveillera. Répondez en français.
+export:
+  - markdown
+  - csv
+  - xlsx

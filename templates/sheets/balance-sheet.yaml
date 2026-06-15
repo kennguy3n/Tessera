@@ -1,0 +1,60 @@
+id: balance-sheet-v1
+name: Balance Sheet
+type: sheet
+description: Statement of financial position with assets, liabilities, and equity, proving the accounting equation and showing period-over-period movement
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - accountant
+sections:
+  - title: Statement Header
+    prompt: >
+      Identify the entity, the as-of date and the comparative date,
+      the reporting currency, the basis of preparation, and the
+      source documents (trial balance, general ledger) the figures
+      are drawn from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Current Assets
+    prompt: >
+      List current assets in order of liquidity: cash and cash
+      equivalents, short-term investments, accounts receivable (net
+      of allowance), inventory, prepaid expenses, and other current
+      assets. Show the balance at the current and comparative dates
+      with the movement.
+    output_format: table
+  - title: Non-Current Assets
+    prompt: >
+      List non-current assets: property, plant and equipment (net of
+      accumulated depreciation), intangible assets, goodwill, right-
+      of-use assets, long-term investments, and deferred tax assets.
+      Show current and comparative balances with movement.
+    output_format: table
+  - title: Liabilities
+    prompt: >
+      List current liabilities (accounts payable, accrued expenses,
+      short-term debt, current portion of long-term debt, deferred
+      revenue) and non-current liabilities (long-term debt, lease
+      liabilities, deferred tax, provisions). Show current and
+      comparative balances with movement.
+    output_format: table
+  - title: Equity
+    prompt: >
+      List equity components: share capital, additional paid-in
+      capital, retained earnings, treasury stock, and accumulated
+      other comprehensive income. Show current and comparative
+      balances with movement.
+    output_format: table
+  - title: Balance Check and Ratios
+    prompt: >
+      Prove that total assets equal total liabilities plus equity at
+      both dates. Compute the working-capital, current, and quick
+      ratios, the debt-to-equity ratio, and net debt. Comment on any
+      material change in the capital structure.
+export:
+  - markdown
+  - csv
+  - xlsx

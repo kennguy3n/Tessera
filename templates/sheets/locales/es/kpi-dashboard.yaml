@@ -1,0 +1,65 @@
+id: kpi-dashboard-v1-es
+name: Tablero de KPI
+type: sheet
+description: Tablero ejecutivo de KPI con definiciones de métricas, objetivos, valores reales, tendencias y estado RAG en las perspectivas financiera, de clientes, operativa y de personas (versión en español)
+locale: es
+industry:
+  - finance
+profile:
+  - executive
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: Encabezado del tablero
+    prompt: >
+      Identifique la organización o la unidad de negocio, el período y
+      la cadencia del reporte (semanal, mensual, trimestral), el
+      responsable del tablero y los sistemas de registro de los que se
+      extraen las métricas. Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Definiciones de métricas
+    prompt: >
+      Para cada KPI, documente la definición precisa, la fórmula, la
+      unidad, la fuente de datos, la cadencia de actualización y el
+      responsable. Definiciones inequívocas evitan que una misma
+      métrica se calcule de dos maneras distintas. Responda en español.
+    output_format: table
+  - title: Métricas financieras
+    prompt: >
+      Informe los KPI financieros (ingresos, margen bruto, EBITDA,
+      caja, consumo de caja, ARR o reservas según corresponda) con
+      objetivo, valor real, período anterior, desviación y un estado
+      rojo/ámbar/verde. Responda en español.
+    output_format: table
+  - title: Métricas de clientes
+    prompt: >
+      Informe los KPI de clientes (nuevos clientes, abandono,
+      retención, retención neta de ingresos, NPS, CAC, LTV) con
+      objetivo, valor real, período anterior, desviación y estado.
+      Responda en español.
+    output_format: table
+  - title: Métricas operativas
+    prompt: >
+      Informe los KPI operativos relevantes para el negocio
+      (rendimiento, tiempo de ciclo, entrega a tiempo, utilización,
+      tasa de defectos, cumplimiento de SLA) con objetivo, valor real,
+      período anterior y estado. Responda en español.
+    output_format: table
+  - title: Métricas de personas
+    prompt: >
+      Informe los KPI de personas (plantilla, vacantes abiertas, tiempo
+      de cobertura, rotación voluntaria, compromiso) con objetivo,
+      valor real y estado. Responda en español.
+    output_format: table
+  - title: Hallazgos y acciones
+    prompt: >
+      Resuma lo que indican los números este período: las dos o tres
+      métricas más desviadas, los factores probables y el responsable y
+      la fecha límite de la acción correctiva de cada una. Responda en
+      español.
+export:
+  - markdown
+  - csv
+  - xlsx

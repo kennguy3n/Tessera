@@ -1,0 +1,66 @@
+id: kpi-dashboard-v1-de
+name: KPI-Dashboard
+type: sheet
+description: Executive-KPI-Dashboard mit Kennzahlendefinitionen, Zielwerten, Ist-Werten, Trends und RAG-Status über die finanzielle, kundenbezogene, operative und personalbezogene Perspektive (deutsche Version)
+locale: de
+industry:
+  - finance
+profile:
+  - executive
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: Dashboard-Kopf
+    prompt: >
+      Bestimmen Sie die Organisation oder Geschäftseinheit, den
+      Berichtszeitraum und die Frequenz (wöchentlich, monatlich,
+      vierteljährlich), den Verantwortlichen des Dashboards und die
+      führenden Systeme, aus denen die Kennzahlen stammen. Antworten
+      Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Kennzahlendefinitionen
+    prompt: >
+      Dokumentieren Sie für jeden KPI die genaue Definition, die
+      Formel, die Einheit, die Datenquelle, die Aktualisierungsfrequenz
+      und den Verantwortlichen. Eindeutige Definitionen verhindern,
+      dass dieselbe Kennzahl auf zwei verschiedene Arten berechnet wird.
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Finanzkennzahlen
+    prompt: >
+      Berichten Sie die finanziellen KPIs (Umsatz, Bruttomarge, EBITDA,
+      Liquidität, Mittelabfluss, ARR oder Auftragseingang je nach
+      Relevanz) mit Ziel, Ist-Wert, Vorperiode, Abweichung und einem
+      Rot/Gelb/Grün-Status. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Kundenkennzahlen
+    prompt: >
+      Berichten Sie die Kunden-KPIs (Neukunden, Abwanderung, Bindung,
+      Nettoumsatzbindung, NPS, CAC, LTV) mit Ziel, Ist-Wert,
+      Vorperiode, Abweichung und Status. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Operative Kennzahlen
+    prompt: >
+      Berichten Sie die für das Geschäft relevanten operativen KPIs
+      (Durchsatz, Durchlaufzeit, termingerechte Lieferung, Auslastung,
+      Fehlerquote, SLA-Erfüllung) mit Ziel, Ist-Wert, Vorperiode und
+      Status. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Personalkennzahlen
+    prompt: >
+      Berichten Sie die Personal-KPIs (Personalbestand, offene Stellen,
+      Besetzungsdauer, freiwillige Fluktuation, Engagement) mit Ziel,
+      Ist-Wert und Status. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Erkenntnisse und Maßnahmen
+    prompt: >
+      Fassen Sie zusammen, was die Zahlen in dieser Periode aussagen:
+      die zwei oder drei am stärksten abweichenden Kennzahlen, die
+      wahrscheinlichen Ursachen sowie den Verantwortlichen und die Frist
+      für die jeweilige Korrekturmaßnahme. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,48 @@
+id: payroll-register-uk-v1
+name: Payroll Register (UK)
+type: sheet
+description: UK payroll register computing gross-to-net with PAYE income tax, National Insurance, pension auto-enrolment, and RTI-ready employer cost summary
+industry:
+  - finance
+profile:
+  - payroll-specialist
+  - hr-manager
+  - accountant
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the employer and PAYE reference, the tax period and pay
+      date, the pay frequency, and the source records. Note this
+      supports Real Time Information reporting to HMRC.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Earnings
+    prompt: >
+      For each employee capture: payroll ID, tax code, NI category,
+      basic pay, overtime, bonus, and other taxable pay, with the
+      gross for the period and year to date.
+    output_format: table
+  - title: PAYE and National Insurance
+    prompt: >
+      Compute PAYE income tax using the tax code and cumulative
+      thresholds, and employee National Insurance by category against
+      the primary threshold and upper earnings limit. Show year-to-
+      date figures.
+    output_format: table
+  - title: Pension and Deductions
+    prompt: >
+      Apply auto-enrolment pension contributions (employee and
+      employer) on qualifying earnings, student loan deductions by
+      plan type, and other deductions, to compute net pay.
+    output_format: table
+  - title: Employer Cost and Filing
+    prompt: >
+      Compute employer National Insurance and employer pension, apply
+      the Employment Allowance if eligible, and summarize the total
+      net pay, the PAYE and NIC due to HMRC, and the payment deadline
+      (the 22nd after the tax month).
+export:
+  - markdown
+  - csv
+  - xlsx

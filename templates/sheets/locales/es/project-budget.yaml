@@ -1,0 +1,70 @@
+id: project-budget-v1-es
+name: Presupuesto de Proyecto
+type: sheet
+description: Libro de presupuesto de proyecto con estructura de desglose del trabajo, costos de mano de obra y otros costos, contingencia y seguimiento de lo planificado frente a lo real por hitos (versión en español)
+locale: es
+industry:
+  - finance
+  - construction
+profile:
+  - project-manager
+  - finance-analyst
+  - pmo
+sections:
+  - title: Encabezado del proyecto
+    prompt: >
+      Identifique el nombre y el código del proyecto, el patrocinador
+      y el director del proyecto, el período de planificación y la
+      fecha de finalización, la moneda, la fuente de financiación y el
+      presupuesto total aprobado frente al cual se realiza el
+      seguimiento. Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Estructura de desglose del trabajo y categorías de costo
+    prompt: >
+      Divida el proyecto en tareas o fases de la estructura de desglose
+      del trabajo. Para cada una, registre la categoría de costo (mano
+      de obra, materiales, equipos, subcontrato, viajes, software,
+      otros) y el responsable. Responda en español.
+    output_format: table
+  - title: Presupuesto de mano de obra
+    prompt: >
+      Detalle la mano de obra planificada por rol: horas, tarifa
+      combinada y costo. Consolide por fase y muestre el presupuesto
+      total de mano de obra. Indique cualquier supuesto sobre
+      utilización o personal contratado frente a interno. Responda en
+      español.
+    output_format: table
+  - title: Presupuesto de costos distintos a mano de obra
+    prompt: >
+      Detalle las partidas distintas a la mano de obra (materiales,
+      equipos, licencias, subcontratos, viajes) con cantidad, costo
+      unitario y total. Identifique el proveedor o la fuente cuando se
+      conozca. Responda en español.
+    output_format: table
+  - title: Contingencia y reservas
+    prompt: >
+      Indique la reserva de contingencia (porcentaje e importe) y la
+      reserva de gestión, con la justificación de su dimensionamiento.
+      Explique las condiciones bajo las cuales puede utilizarse la
+      contingencia. Responda en español.
+  - title: Seguimiento de lo planificado frente a lo real
+    prompt: >
+      Reserve columnas para los valores reales: presupuesto,
+      comprometido, gasto real, restante y desviación ($ y %) por fase.
+      Calcule el desempeño de costos frente al cronograma y señale
+      cualquier fase con tendencia a superar el presupuesto. Responda
+      en español.
+    output_format: table
+  - title: Riesgos presupuestarios
+    prompt: >
+      Identifique los riesgos de costo que podrían alterar el
+      presupuesto (cambio de alcance, inflación de precios, retraso del
+      cronograma, exposición cambiaria). Para cada uno, el impacto
+      potencial y la mitigación o el disparador que el equipo vigilará.
+      Responda en español.
+export:
+  - markdown
+  - csv
+  - xlsx

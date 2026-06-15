@@ -1,0 +1,68 @@
+id: cash-flow-statement-v1-pt
+name: Demonstração dos Fluxos de Caixa
+type: sheet
+description: Demonstração dos fluxos de caixa com atividades operacionais, de investimento e de financiamento, conciliada com a variação de caixa e vinculada aos saldos inicial e final (versão em português)
+locale: pt
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Cabeçalho da demonstração
+    prompt: >
+      Identifique a entidade, o período do relatório (mês, trimestre
+      ou ano), a moeda de apresentação, a base de preparação (IFRS,
+      US GAAP ou normas locais), o método usado para o fluxo
+      operacional (direto ou indireto) e os documentos de origem dos
+      quais os valores são extraídos. Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Atividades operacionais
+    prompt: >
+      Construa o fluxo de caixa das operações. No método indireto,
+      parta do lucro líquido e ajuste por depreciação e amortização,
+      remuneração baseada em ações, impostos diferidos e outros itens
+      não monetários; em seguida, adicione as variações do capital de
+      giro (contas a receber, estoque, despesas antecipadas, contas a
+      pagar, passivos acumulados, receita diferida). Mostre cada linha
+      com o valor do período e o comparativo do período anterior.
+      Responda em português.
+    output_format: table
+  - title: Atividades de investimento
+    prompt: >
+      Liste o caixa usado ou gerado por atividades de investimento:
+      investimentos de capital, compras e vendas de imobilizado,
+      aquisições e alienações, compras e vencimentos de aplicações e
+      software capitalizado. Mostre cada item com os valores do período
+      e comparativo. Responda em português.
+    output_format: table
+  - title: Atividades de financiamento
+    prompt: >
+      Liste o caixa das atividades de financiamento: captação e
+      amortização de dívida, emissão e recompra de capital, dividendos
+      e distribuições pagos, pagamentos de principal de arrendamentos e
+      taxas de financiamento. Mostre cada item com os valores do
+      período e comparativo. Responda em português.
+    output_format: table
+  - title: Variação líquida e conciliação
+    prompt: >
+      Some as três seções de atividades para obter a variação líquida
+      de caixa, adicione o saldo inicial de caixa e comprove que o
+      saldo final concilia com o balanço patrimonial. Concilie
+      qualquer efeito cambial sobre o caixa mantido em outras moedas.
+      Responda em português.
+  - title: Fluxo de caixa livre e comentários
+    prompt: >
+      Calcule o fluxo de caixa livre (fluxo operacional menos
+      investimentos de capital) e o índice de conversão de caixa
+      (fluxo operacional dividido pelo lucro líquido). Comente os
+      principais fatores da movimentação de caixa do período e
+      sinalize qualquer preocupação de liquidez. Responda em
+      português.
+export:
+  - markdown
+  - csv
+  - xlsx

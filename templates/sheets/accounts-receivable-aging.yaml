@@ -1,0 +1,52 @@
+id: accounts-receivable-aging-v1
+name: Accounts Receivable Aging
+type: sheet
+description: AR aging report bucketing open customer invoices by days past due, with collection priority, reserve estimate, and DSO analysis
+industry:
+  - finance
+profile:
+  - controller
+  - ar-specialist
+  - credit-manager
+sections:
+  - title: Report Header
+    prompt: >
+      Identify the entity, the as-of date, the reporting currency,
+      and the source system (ERP / accounting package) the open-item
+      ledger was exported from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Open Invoices by Customer
+    prompt: >
+      For each open invoice capture: customer, invoice number,
+      invoice date, due date, original amount, amount paid, and
+      balance outstanding. Sort by customer and due date.
+    output_format: table
+  - title: Aging Buckets
+    prompt: >
+      Bucket each outstanding balance into current, 1-30, 31-60,
+      61-90, and 90+ days past due. Roll up the totals by customer
+      and produce the overall aging summary across all buckets.
+    output_format: table
+  - title: Collection Priority
+    prompt: >
+      Rank the accounts most in need of collection action by balance
+      and days overdue. For each, the recommended action (reminder,
+      call, dunning notice, hold, escalation) and the responsible
+      owner.
+  - title: Allowance and Write-offs
+    prompt: >
+      Estimate the allowance for doubtful accounts by applying a
+      reserve percentage to each aging bucket. Flag any balances that
+      should be proposed for write-off, with the rationale.
+  - title: DSO and Trend
+    prompt: >
+      Compute days sales outstanding for the period and compare to
+      the trailing trend and the target. Comment on whether
+      collections are improving or deteriorating and the principal
+      drivers.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,41 @@
+id: sales-pipeline-v1-ko
+name: 영업 파이프라인
+type: sheet
+description: 단계별 영업 기회, 가중 예측, 속도, 수주율 분석을 포함한 매출 예측용 영업 파이프라인 추적표 (한국어 버전)
+locale: ko
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: 파이프라인 머리말
+    prompt: >
+      팀 또는 영역, 예측 기간, 통화, 영업 단계의 정의와 그 기본 확률, 그리고 영업 기회를 내보내는 CRM을 식별하십시오. 한국어로 답해 주세요.
+    required_sources:
+      - type: local
+        min: 1
+  - title: 영업 기회
+    prompt: >
+      각 영업 기회에 대해 다음을 기록하십시오: 거래처, 기회명, 담당자, 단계, 거래 금액, 예상 종료일, 리드 출처, 그리고 다음 단계와 그 날짜입니다. 한국어로 답해 주세요.
+    output_format: table
+  - title: 가중 예측
+    prompt: >
+      각 거래 금액에 단계 확률을 적용하여 가중치가 반영된 값을 산출하고, 해당 기간의 확정 예측, 최상의 경우, 가중 파이프라인 예측을 할당량 대비 집계하십시오. 한국어로 답해 주세요.
+    output_format: table
+  - title: 단계 퍼널 및 속도
+    prompt: >
+      단계별 영업 기회의 건수와 금액, 각 단계의 평균 체류 일수, 그리고 전체 영업 주기 길이를 제시하십시오. 거래가 정체되는 단계를 식별하십시오. 한국어로 답해 주세요.
+    output_format: table
+  - title: 수주율 및 커버리지
+    prompt: >
+      수주율, 평균 거래 규모, 그리고 할당량 격차 대비 파이프라인 커버리지 비율을 계산하십시오. 목표를 달성하기에 충분한 파이프라인이 있는지 표시하십시오. 한국어로 답해 주세요.
+  - title: 위험 및 조치
+    prompt: >
+      위험이 가장 크고 지연되고 있는 대형 거래, 그 사유, 그리고 이를 진전시키거나 성사시키기 위한 조치와 담당자를 강조하십시오. 최근 활동이 없는 거래를 기재하십시오. 한국어로 답해 주세요.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,63 @@
+id: project-budget-v1
+name: Project Budget
+type: sheet
+description: Project budget workbook with work breakdown, labor and non-labor costs, contingency, and planned vs. actual tracking against milestones
+industry:
+  - finance
+  - construction
+profile:
+  - project-manager
+  - finance-analyst
+  - pmo
+sections:
+  - title: Project Header
+    prompt: >
+      Identify the project name and code, the sponsor and project
+      manager, the planning period and end date, the currency, the
+      funding source, and the approved total budget the workbook is
+      tracking against.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Work Breakdown and Cost Categories
+    prompt: >
+      Break the project into work-breakdown-structure tasks or
+      phases. For each, capture the cost category (labor, materials,
+      equipment, subcontract, travel, software, other) and the
+      responsible owner.
+    output_format: table
+  - title: Labor Budget
+    prompt: >
+      Detail planned labor by role: hours, blended rate, and cost.
+      Roll up by phase and show the total labor budget. Note any
+      assumptions about utilization or contractor versus internal
+      staff.
+    output_format: table
+  - title: Non-Labor Budget
+    prompt: >
+      Detail non-labor line items (materials, equipment, licenses,
+      subcontracts, travel) with quantity, unit cost, and total.
+      Identify the vendor or source where known.
+    output_format: table
+  - title: Contingency and Reserves
+    prompt: >
+      State the contingency reserve (percentage and amount) and the
+      management reserve, with the rationale for the sizing. Explain
+      the conditions under which contingency may be drawn down.
+  - title: Planned vs. Actual Tracking
+    prompt: >
+      Reserve columns for actuals: budget, committed, actual spend,
+      remaining, and variance ($ and %) by phase. Compute the cost
+      performance against the schedule and flag any phase trending
+      over budget.
+    output_format: table
+  - title: Budget Risks
+    prompt: >
+      Identify the cost risks that could move the budget (scope
+      change, price inflation, schedule slip, currency exposure). For
+      each, the potential impact and the mitigation or trigger the
+      team will monitor.
+export:
+  - markdown
+  - csv
+  - xlsx

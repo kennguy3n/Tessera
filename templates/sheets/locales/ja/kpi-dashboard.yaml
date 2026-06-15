@@ -1,0 +1,45 @@
+id: kpi-dashboard-v1-ja
+name: KPIダッシュボード
+type: sheet
+description: 指標の定義、目標値、実績値、トレンド、財務・顧客・業務・人材の各視点におけるRAGステータスを含む経営層向けKPIダッシュボード（日本語版）
+locale: ja
+industry:
+  - finance
+profile:
+  - executive
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: ダッシュボードヘッダー
+    prompt: >
+      組織または事業部門、報告期間と頻度（週次、月次、四半期）、ダッシュボードの責任者、そして指標の抽出元となる記録システムを特定してください。日本語で回答してください。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 指標の定義
+    prompt: >
+      各KPIについて、正確な定義、計算式、単位、データソース、更新頻度、責任者を記録してください。明確な定義により、同一の指標が二通りの方法で計算されることを防ぎます。日本語で回答してください。
+    output_format: table
+  - title: 財務指標
+    prompt: >
+      財務KPI（収益、売上総利益率、EBITDA、現金、資金燃焼、該当する場合はARRまたは受注高）を、目標、実績、前期、差異、および赤・黄・緑のステータスとともに報告してください。日本語で回答してください。
+    output_format: table
+  - title: 顧客指標
+    prompt: >
+      顧客KPI（新規顧客、解約、維持率、純収益維持率、NPS、CAC、LTV）を目標、実績、前期、差異、ステータスとともに報告してください。日本語で回答してください。
+    output_format: table
+  - title: 業務指標
+    prompt: >
+      事業に関連する業務KPI（スループット、サイクルタイム、納期遵守、稼働率、不良率、SLA達成）を目標、実績、前期、ステータスとともに報告してください。日本語で回答してください。
+    output_format: table
+  - title: 人材指標
+    prompt: >
+      人材KPI（人員数、未充足ポジション、充足までの時間、自発的離職、エンゲージメント）を目標、実績、ステータスとともに報告してください。日本語で回答してください。
+    output_format: table
+  - title: 考察とアクション
+    prompt: >
+      今期の数値が示す内容を要約してください：最も目標から外れている二つか三つの指標、考えられる要因、そしてそれぞれの是正措置の責任者と期限です。日本語で回答してください。
+export:
+  - markdown
+  - csv
+  - xlsx

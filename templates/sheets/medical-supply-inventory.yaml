@@ -1,0 +1,51 @@
+id: medical-supply-inventory-v1
+name: Medical Supply Inventory
+type: sheet
+description: Medical and consumable supply inventory with par levels, lot and expiry tracking, reorder points, and stock-out risk for clinical units
+industry:
+  - healthcare
+profile:
+  - supply-manager
+  - nurse-manager
+  - procurement
+sections:
+  - title: Inventory Header
+    prompt: >
+      Identify the facility, unit, or storeroom, the count date, the
+      person responsible, and the source system or last cycle count
+      the figures are reconciled to.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Stock Items
+    prompt: >
+      For each item capture: SKU or catalog number, description,
+      category (PPE, wound care, IV, pharmacy consumable, diagnostic),
+      unit of issue, storage location, and the preferred supplier.
+    output_format: table
+  - title: Quantities and Par Levels
+    prompt: >
+      Record the quantity on hand, the par (minimum) level, the
+      reorder point, the reorder quantity, and the quantity on order
+      for each item. Compute days of cover at current usage.
+    output_format: table
+  - title: Lot and Expiry
+    prompt: >
+      Track lot numbers and expiry dates for date-sensitive items.
+      Flag items expiring within the next ninety days and any expired
+      stock to be quarantined and removed.
+    output_format: table
+  - title: Reorder and Stock-out Risk
+    prompt: >
+      List items at or below the reorder point and items at risk of
+      stock-out before the next delivery. Recommend order quantities
+      and flag any critical item with no substitute.
+  - title: Usage and Cost
+    prompt: >
+      Summarize period usage and consumption cost by category, and
+      note any unusual usage spikes that warrant investigation or par
+      level adjustment.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,58 @@
+id: sales-pipeline-v1-pt
+name: Funil de Vendas
+type: sheet
+description: Acompanhamento do funil de vendas com oportunidades por estágio, previsão ponderada, velocidade e análise da taxa de conversão para a projeção de receita (versão em português)
+locale: pt
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: Cabeçalho do funil
+    prompt: >
+      Identifique a equipe ou território, o período de previsão, a
+      moeda, as definições dos estágios de venda e suas probabilidades
+      padrão, e o CRM do qual as oportunidades são exportadas. Responda
+      em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Oportunidades
+    prompt: >
+      Para cada oportunidade registre: conta, nome da oportunidade,
+      responsável, estágio, valor do negócio, data de fechamento
+      prevista, origem do lead e o próximo passo com sua data. Responda
+      em português.
+    output_format: table
+  - title: Previsão ponderada
+    prompt: >
+      Aplique a probabilidade do estágio ao valor de cada negócio para
+      produzir um valor ponderado, e consolide a previsão comprometida,
+      o melhor cenário e o funil ponderado para o período em relação à
+      meta. Responda em português.
+    output_format: table
+  - title: Funil por estágio e velocidade
+    prompt: >
+      Mostre a quantidade e o valor das oportunidades por estágio, a
+      média de dias em cada estágio e a duração total do ciclo de
+      vendas. Identifique os estágios em que os negócios estagnam.
+      Responda em português.
+    output_format: table
+  - title: Taxa de conversão e cobertura
+    prompt: >
+      Calcule a taxa de conversão, o tamanho médio do negócio e o
+      índice de cobertura do funil em relação à lacuna da meta. Sinalize
+      se há funil suficiente para atingir o número. Responda em
+      português.
+  - title: Riscos e ações
+    prompt: >
+      Destaque os maiores negócios em risco e que estão atrasando, os
+      motivos, e as ações e responsáveis para avançá-los ou fechá-los.
+      Aponte os negócios sem atividade recente. Responda em português.
+export:
+  - markdown
+  - csv
+  - xlsx

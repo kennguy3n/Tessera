@@ -1,0 +1,60 @@
+id: kpi-dashboard-v1
+name: KPI Dashboard
+type: sheet
+description: Executive KPI dashboard with metric definitions, targets, actuals, trends, and RAG status across financial, customer, operational, and people lenses
+industry:
+  - finance
+profile:
+  - executive
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: Dashboard Header
+    prompt: >
+      Identify the organization or business unit, the reporting
+      period and cadence (weekly, monthly, quarterly), the owner of
+      the dashboard, and the systems of record the metrics are pulled
+      from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Metric Definitions
+    prompt: >
+      For each KPI, document the precise definition, the formula, the
+      unit, the data source, the refresh cadence, and the owner.
+      Unambiguous definitions prevent the same metric being computed
+      two different ways.
+    output_format: table
+  - title: Financial Metrics
+    prompt: >
+      Report the financial KPIs (revenue, gross margin, EBITDA,
+      cash, burn, ARR or bookings as relevant) with target, actual,
+      prior period, variance, and a red/amber/green status.
+    output_format: table
+  - title: Customer Metrics
+    prompt: >
+      Report customer KPIs (new customers, churn, retention, net
+      revenue retention, NPS, CAC, LTV) with target, actual, prior
+      period, variance, and status.
+    output_format: table
+  - title: Operational Metrics
+    prompt: >
+      Report operational KPIs relevant to the business (throughput,
+      cycle time, on-time delivery, utilization, defect rate, SLA
+      attainment) with target, actual, prior period, and status.
+    output_format: table
+  - title: People Metrics
+    prompt: >
+      Report people KPIs (headcount, open roles, time-to-fill,
+      voluntary attrition, engagement) with target, actual, and
+      status.
+    output_format: table
+  - title: Insights and Actions
+    prompt: >
+      Summarize what the numbers say this period: the two or three
+      metrics most off-track, the likely drivers, and the owner and
+      deadline for the corrective action on each.
+export:
+  - markdown
+  - csv
+  - xlsx

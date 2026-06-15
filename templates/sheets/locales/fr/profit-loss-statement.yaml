@@ -1,0 +1,68 @@
+id: profit-loss-statement-v1-fr
+name: Compte de Résultat
+type: sheet
+description: Compte de résultat avec chiffre d'affaires, coût des ventes, charges d'exploitation et marges sur plusieurs périodes, avec écart par rapport au budget (version française)
+locale: fr
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: En-tête du compte
+    prompt: >
+      Identifiez l'entité, la période concernée et les comparatifs
+      (période en cours, période précédente, cumul annuel), la devise,
+      le référentiel comptable et les documents sources (grand livre,
+      balance) dont proviennent les chiffres. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Chiffre d'affaires
+    prompt: >
+      Ventilez le chiffre d'affaires par activité, produit ou canal.
+      Indiquez le chiffre d'affaires brut, les retours et remises et le
+      chiffre d'affaires net pour la période en cours, la période
+      comparative et le budget, avec le pourcentage de croissance et
+      l'écart par rapport au budget. Répondez en français.
+    output_format: table
+  - title: Coût des ventes et marge brute
+    prompt: >
+      Détaillez le coût des biens ou services vendus (matières,
+      main-d'œuvre directe, logistique et autres coûts directs).
+      Calculez la marge brute et le taux de marge brute pour chaque
+      période et par rapport au budget. Répondez en français.
+    output_format: table
+  - title: Charges d'exploitation
+    prompt: >
+      Énumérez les charges d'exploitation par fonction (ventes et
+      marketing, recherche et développement, frais généraux et
+      administratifs). Indiquez chaque catégorie pour la période en
+      cours, le comparatif et le budget, avec les écarts et la charge
+      en pourcentage du chiffre d'affaires. Répondez en français.
+    output_format: table
+  - title: Résultat d'exploitation et EBITDA
+    prompt: >
+      Calculez le résultat d'exploitation (marge brute moins charges
+      d'exploitation), puis réintégrez les amortissements et
+      dépréciations pour obtenir l'EBITDA. Présentez la marge
+      d'exploitation et la marge d'EBITDA pour chaque période. Répondez
+      en français.
+  - title: Résultat net
+    prompt: >
+      Passez du résultat d'exploitation au résultat net : intérêts
+      nets, autres produits et charges, et impôt sur les bénéfices.
+      Indiquez le résultat avant impôt, le taux d'impôt effectif et le
+      résultat net avec la marge nette. Répondez en français.
+  - title: Commentaire des écarts
+    prompt: >
+      Expliquez les écarts les plus significatifs par rapport à la
+      période précédente et au budget. Reliez chaque écart à un facteur
+      d'activité (volume, prix, mix, inflation des coûts, éléments
+      exceptionnels) et signalez toute action corrective. Répondez en
+      français.
+export:
+  - markdown
+  - csv
+  - xlsx

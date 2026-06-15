@@ -1,0 +1,52 @@
+id: grant-budget-v1
+name: Grant Budget
+type: sheet
+description: Grant budget mapping funder line items to costs with matching funds, indirect cost recovery, and budget-versus-actual burn for reporting
+industry:
+  - nonprofit
+profile:
+  - grant-manager
+  - finance-manager
+  - program-director
+sections:
+  - title: Grant Header
+    prompt: >
+      Identify the grant and funder, the program, the period of
+      performance, the total award, the currency, and the funder
+      budget categories and rules (allowable costs, indirect rate cap)
+      the budget must follow.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Budget by Line Item
+    prompt: >
+      Map costs to the funder's budget categories (personnel, fringe,
+      travel, equipment, supplies, contractual, other direct). For
+      each line show the basis of estimate and the budgeted amount.
+    output_format: table
+  - title: Personnel and Fringe
+    prompt: >
+      Detail funded staff: role, percent effort or level of effort,
+      salary basis, the amount charged to the grant, and the fringe
+      benefit calculation.
+    output_format: table
+  - title: Matching and Cost Share
+    prompt: >
+      Record any required matching or cost-share commitment, its
+      source (cash or in-kind), and how it will be documented. Show
+      the grant-funded and matched portions of each cost.
+  - title: Indirect Cost Recovery
+    prompt: >
+      Apply the negotiated indirect cost rate to the allowable base
+      and show the recovered indirect amount, respecting any funder
+      cap.
+  - title: Budget vs. Actual
+    prompt: >
+      Reserve columns for actual and committed spend by line item to
+      track burn against budget and the remaining balance. Flag lines
+      over or under spending against the period elapsed.
+    output_format: table
+export:
+  - markdown
+  - csv
+  - xlsx

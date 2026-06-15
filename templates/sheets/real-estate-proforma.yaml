@@ -1,0 +1,54 @@
+id: real-estate-proforma-v1
+name: Real Estate Pro Forma
+type: sheet
+description: Real estate investment pro forma projecting income, operating expenses, NOI, debt service, and cash flow with returns and sensitivity
+industry:
+  - real-estate
+  - finance
+profile:
+  - real-estate-analyst
+  - investor
+  - asset-manager
+sections:
+  - title: Deal Header
+    prompt: >
+      Identify the property, the hold period, the purchase price and
+      closing costs, the currency, the financing terms (loan amount,
+      rate, amortization), and the source assumptions behind the
+      model.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Income Projection
+    prompt: >
+      Project gross potential rent, other income, vacancy and credit
+      loss, and effective gross income for each year of the hold, with
+      the rent-growth and occupancy assumptions stated.
+    output_format: table
+  - title: Operating Expenses and NOI
+    prompt: >
+      Project operating expenses by category (taxes, insurance,
+      utilities, management, repairs, reserves) per year and compute
+      net operating income and the operating expense ratio.
+    output_format: table
+  - title: Debt Service and Cash Flow
+    prompt: >
+      Compute annual debt service, the debt-service coverage ratio,
+      and the cash flow after financing for each year. Show the
+      capital expenditure and reserve draws.
+    output_format: table
+  - title: Returns
+    prompt: >
+      Project the sale proceeds using an exit capitalization rate,
+      then compute the unlevered and levered internal rate of return,
+      the equity multiple, and the cash-on-cash return by year.
+  - title: Sensitivity
+    prompt: >
+      Show how the levered return and DSCR move with changes in exit
+      cap rate, rent growth, and interest rate. Identify the
+      assumption the deal is most sensitive to.
+    output_format: table
+export:
+  - markdown
+  - csv
+  - xlsx
