@@ -210,7 +210,13 @@ export function normalizeSlideContent(content: unknown): SlideContent {
   const parsed = parseSlideContent(json);
   const normalized: SlideContent = { slides: parsed.slides };
 
-  if (parsed.marpMode || parsed.marpSource.length > 0) {
+  // Carry the marp block whenever any part of it is meaningful — Marp on,
+  // a non-empty source, OR a chosen theme. The editor's own save path
+  // (`debouncedSave`) always persists `theme`, so dropping a dormant theme
+  // here (Marp off + empty source but a non-default theme picked earlier)
+  // would lose a setting the deck otherwise round-trips, breaking faithful
+  // reproduction the first time the user re-enables Marp.
+  if (parsed.marpMode || parsed.marpSource.length > 0 || parsed.marpTheme) {
     const marp: MarpModeState = {
       enabled: parsed.marpMode,
       source: parsed.marpSource,

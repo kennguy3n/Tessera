@@ -118,13 +118,24 @@ describe("normalizeSlideContent", () => {
     expect(normalized.themeId).toBe("aurora");
   });
 
-  it("only carries marp state when it is actually enabled / sourced", () => {
+  it("carries marp state when enabled, sourced, or themed", () => {
     expect(normalizeSlideContent(deck()).marp).toBeUndefined();
     const withMarp = normalizeSlideContent(
       deck({ marp: { enabled: true, source: "# Hi", theme: "default" } }),
     );
     expect(withMarp.marp?.enabled).toBe(true);
     expect(withMarp.marp?.source).toBe("# Hi");
+  });
+
+  it("preserves a dormant marp theme so the deck round-trips faithfully", () => {
+    // Marp off + empty source but a non-default theme chosen earlier: the
+    // editor persists this, so capturing the deck as a template must keep it.
+    const normalized = normalizeSlideContent(
+      deck({ marp: { enabled: false, source: "", theme: "gaia" } }),
+    );
+    expect(normalized.marp?.enabled).toBe(false);
+    expect(normalized.marp?.source).toBe("");
+    expect(normalized.marp?.theme).toBe("gaia");
   });
 
   it("preserves a brand-namespaced kit id and drops a foreign one", () => {
