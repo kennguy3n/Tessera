@@ -32,6 +32,7 @@ import {
   parseSlideChart,
   chartToMarkdownTable,
 } from "../editors/slideEditorHelpers";
+import { brandCssForExport, type BrandKit } from "../editors/slideBrandKit";
 import type {
   Slide,
   SlideBlock,
@@ -126,6 +127,93 @@ describe("slidesToMarpMarkdown", () => {
       { theme: "uncover" },
     );
     expect(out).toContain("theme: 'uncover'");
+  });
+
+  it("injects the brand CSS as an indented Marp `style:` literal block", () => {
+    const brandCss =
+      ":root {\n  --slide-accent: #7c3aed;\n}\n\nsection {\n  background-color: var(--slide-surface);\n}";
+    const out = slidesToMarpMarkdown(
+      [
+        {
+          id: "test-brand-1",
+          title: "T",
+          blocks: [{ id: "test-bb-1", type: "text", content: "x" }],
+          notes: "",
+        },
+      ],
+      { theme: "default", brandCss },
+    );
+    // The directive is added AFTER `paginate:` and renders as a YAML literal
+    // block (`style: |`) so Marp applies it globally without `--html`.
+    expect(out).toContain("paginate: true\nstyle: |\n");
+    // Every non-empty CSS line is indented two spaces INTO the literal block,
+    // so an existing two-space CSS indent shows up as four.
+    expect(out).toContain("  :root {");
+    expect(out).toContain("    --slide-accent: #7c3aed;");
+    expect(out).toContain("  section {");
+    // A blank line between CSS blocks stays blank (no trailing indent), so
+    // the literal block round-trips cleanly.
+    expect(out).toContain("  }\n\n  section {");
+    // The literal block ends and the front-matter still closes before the
+    // slide body, which carries the rendered title.
+    expect(out).toContain("  }\n---\n");
+    expect(out).toContain("# T");
+  });
+
+  it("is byte-identical to a legacy deck when no brand kit is resolved", () => {
+    const slides: Slide[] = [
+      {
+        id: "test-brand-2",
+        title: "T",
+        blocks: [{ id: "test-bb-2", type: "text", content: "x" }],
+        notes: "",
+      },
+    ];
+    const baseline = slidesToMarpMarkdown(slides, { theme: "gaia" });
+    // Front-matter is exactly today's four-line header — no `style:` line.
+    expect(baseline.slice(0, baseline.indexOf("\n\n"))).toBe(
+      "---\nmarp: true\ntheme: 'gaia'\npaginate: true\n---",
+    );
+    expect(baseline).not.toContain("style: |");
+    // Passing `brandCss: undefined`, or a blank/whitespace-only string, must
+    // never trigger injection — the output stays identical to the baseline.
+    expect(
+      slidesToMarpMarkdown(slides, { theme: "gaia", brandCss: undefined }),
+    ).toBe(baseline);
+    expect(
+      slidesToMarpMarkdown(slides, { theme: "gaia", brandCss: "   \n  " }),
+    ).toBe(baseline);
+  });
+
+  it("escapes a hostile `</style` brand value so it cannot break out of the block", () => {
+    // A BrandKit constructed directly bypasses buildBrandKit's hex
+    // validation, so a `</style>` breakout payload reaches the export
+    // serializer. Defence-in-depth: the embedding site must neutralise it
+    // even though the builder would have rejected it.
+    const hostile: BrandKit = {
+      id: "brand-hostile",
+      name: "Hostile",
+      colors: {
+        accent: "#7c3aed</style><script>alert(1)</script>",
+        surface: "#ffffff",
+        text: "#1e1b2e",
+      },
+    };
+    const out = slidesToMarpMarkdown(
+      [
+        {
+          id: "test-brand-3",
+          title: "T",
+          blocks: [{ id: "test-bb-3", type: "text", content: "x" }],
+          notes: "",
+        },
+      ],
+      { theme: "default", brandCss: brandCssForExport(hostile) },
+    );
+    // The raw closing tag must NOT survive anywhere in the markdown…
+    expect(out).not.toContain("</style");
+    // …it is replaced by the canonical CSS hex escape (`\3c ` = `<`).
+    expect(out).toContain("\\3c /style");
   });
 
   it("converts bullets, diagrams, and notes into Marp-friendly syntax", () => {
@@ -1878,7 +1966,15 @@ describe("parseSlideChart", () => {
   });
 
   it("honours every supported chart type, including the richer ones", () => {
-    for (const t of ["bar", "line", "area", "scatter", "combo", "pie", "donut"]) {
+    for (const t of [
+      "bar",
+      "line",
+      "area",
+      "scatter",
+      "combo",
+      "pie",
+      "donut",
+    ]) {
       expect(parseSlideChart(`type: ${t}\nlabels: A\nX: 1`)?.type).toBe(t);
     }
   });
