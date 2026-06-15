@@ -112,6 +112,11 @@ export function BrandKitBuilderModal({
     return active ? brandKitToDraft(active) : newDraftForTheme(deckThemeId);
   });
   const [errors, setErrors] = useState<string[]>([]);
+  // Whether the draft currently shown is still the freshly imported one.
+  // Drives the title: it must stop saying "Import brand kit" the moment the
+  // user navigates to a saved kit or starts a new draft, rather than tracking
+  // the (immutable) `initialDraft` prop for the modal's whole lifetime.
+  const [isImporting, setIsImporting] = useState<boolean>(() => !!initialDraft);
 
   const patch = (next: Partial<BrandKitDraft>) =>
     setDraft((d) => ({ ...d, ...next }));
@@ -121,10 +126,12 @@ export function BrandKitBuilderModal({
   const loadKit = (kit: BrandKit) => {
     setDraft(brandKitToDraft(kit));
     setErrors([]);
+    setIsImporting(false);
   };
   const startNew = () => {
     setDraft(newDraftForTheme(deckThemeId));
     setErrors([]);
+    setIsImporting(false);
   };
 
   const handleLogoFile = (event: ChangeEvent<HTMLInputElement>) => {
@@ -180,7 +187,7 @@ export function BrandKitBuilderModal({
       isOpen={isOpen}
       onClose={onClose}
       title={
-        initialDraft
+        isImporting
           ? "Import brand kit"
           : draft.id
             ? "Edit brand kit"

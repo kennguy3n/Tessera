@@ -3,6 +3,7 @@ import {
   BRAND_KIT_ID_PREFIX,
   BRAND_PACK_FORMAT,
   BRAND_PACK_VERSION,
+  MAX_LOGO_DATA_URL_LENGTH,
   brandPackFilename,
   buildBrandKit,
   emptyBrandKitDraft,
@@ -280,7 +281,7 @@ describe("parseBrandPack — rejections", () => {
     expect(result.error.length).toBeGreaterThan(0);
   });
 
-  it("rejects a kit whose logo is not an inline data: URL", () => {
+  it("rejects a kit whose logo is a remote link, not an inline image", () => {
     const blob = JSON.stringify({
       format: BRAND_PACK_FORMAT,
       version: BRAND_PACK_VERSION,
@@ -297,6 +298,28 @@ describe("parseBrandPack — rejections", () => {
     const result = parseBrandPack(blob);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/logo/i);
+    // A scheme problem must read as "not a link", never be misattributed to size.
+    expect(result.error).toMatch(/inline image file, not a link/i);
+    expect(result.error).not.toMatch(/too large/i);
+  });
+
+  it("rejects a kit whose inline logo exceeds the size cap", () => {
+    // A well-formed data:image URL longer than the cap: the rejection must
+    // blame size, not the scheme.
+    const oversized =
+      "data:image/png;base64," + "A".repeat(MAX_LOGO_DATA_URL_LENGTH);
+    const blob = JSON.stringify({
+      format: BRAND_PACK_FORMAT,
+      version: BRAND_PACK_VERSION,
+      brandKit: {
+        name: "Heavy Logo",
+        colors: { accent: "#7c3aed", surface: "#ffffff", text: "#1e1b2e" },
+        logo: { dataUrl: oversized, alt: "heavy", placement: "tl" },
+      },
+    });
+    const result = parseBrandPack(blob);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/too large/i);
   });
 });

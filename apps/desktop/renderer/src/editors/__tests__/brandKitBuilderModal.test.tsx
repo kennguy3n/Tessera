@@ -2,7 +2,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrandKitBuilderModal } from "../components/BrandKitBuilderModal";
-import { BRAND_KITS_STORAGE_KEY, type BrandKit } from "../slideBrandKit";
+import {
+  BRAND_KITS_STORAGE_KEY,
+  buildBrandKit,
+  emptyBrandKitDraft,
+  saveBrandKits,
+  type BrandKit,
+  type BrandKitDraft,
+} from "../slideBrandKit";
 import { __resetBrandKitsStoreForTests } from "../useBrandKits";
 
 beforeEach(() => {
@@ -120,6 +127,69 @@ describe("BrandKitBuilderModal", () => {
     expect(onApply).toHaveBeenCalledTimes(2);
     expect(onApply.mock.calls[1][0].id).toBe(id);
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops titling the modal an import once a saved kit is loaded", async () => {
+    const user = userEvent.setup();
+
+    // Seed a saved kit so the "Saved brand kits" list (and its
+    // "Load into the editor" action) renders inside the modal.
+    const seed = buildBrandKit(
+      {
+        ...emptyBrandKitDraft("aurora"),
+        name: "Existing Kit",
+        colors: {
+          accent: "#0f766e",
+          surface: "#f8fafc",
+          text: "#0b1320",
+          heading: "",
+          muted: "",
+        },
+      },
+      () => "brand-existing",
+    );
+    expect(seed.ok).toBe(true);
+    if (!seed.ok) return;
+    saveBrandKits([seed.brandKit]);
+    __resetBrandKitsStoreForTests();
+
+    // Open in import mode: the incoming draft carries no id.
+    const importDraft: BrandKitDraft = {
+      ...emptyBrandKitDraft("aurora"),
+      name: "Imported Brand",
+      colors: {
+        accent: "#7c3aed",
+        surface: "#ffffff",
+        text: "#1e1b2e",
+        heading: "",
+        muted: "",
+      },
+    };
+    render(
+      <BrandKitBuilderModal
+        isOpen
+        deckThemeId="aurora"
+        activeKitId={undefined}
+        initialDraft={importDraft}
+        onApply={vi.fn<[BrandKit], void>()}
+        onClear={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // It opens as an import…
+    expect(screen.getByText("Import brand kit")).toBeInTheDocument();
+
+    // …but loading a saved kit means we are now editing that kit, so the
+    // title must track the live draft, not the immutable `initialDraft`.
+    await user.click(
+      within(screen.getByTestId("brand-kit-saved-brand-existing")).getByRole(
+        "button",
+        { name: /^Existing Kit$/ },
+      ),
+    );
+    expect(screen.queryByText("Import brand kit")).not.toBeInTheDocument();
+    expect(screen.getByText("Edit brand kit")).toBeInTheDocument();
   });
 
   it("deletes a saved kit and clears it from the deck when it was active", async () => {

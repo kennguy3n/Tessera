@@ -341,6 +341,13 @@ export function isValidHexColor(raw: string | undefined | null): boolean {
 }
 
 /**
+ * Scheme prefix of an inline `data:image/<type>;…` URL, independent of
+ * length. Shared by {@link isInlineImageDataUrl} and {@link logoRejectionMessage}
+ * so a wrong-kind-of-value logo and an oversized one stay distinguishable.
+ */
+const IMAGE_DATA_URL_SCHEME = /^data:image\/[a-z0-9.+-]+;/i;
+
+/**
  * True iff `url` is a non-empty inline `data:image/*` URL within the
  * size cap. The brand logo must be a self-contained inline image; a
  * remote `http(s)` URL would defeat local-first and a non-image data URL
@@ -351,8 +358,23 @@ export function isInlineImageDataUrl(url: string | undefined | null): boolean {
     typeof url === "string" &&
     url.length > 0 &&
     url.length <= MAX_LOGO_DATA_URL_LENGTH &&
-    /^data:image\/[a-z0-9.+-]+;/i.test(url)
+    IMAGE_DATA_URL_SCHEME.test(url)
   );
+}
+
+/**
+ * Human-readable reason a non-blank logo value failed
+ * {@link isInlineImageDataUrl}. A well-formed inline image that merely exceeds
+ * the size cap is reported as too large; anything that is not an inline image
+ * at all (a remote link, a non-image data URL) is reported as the wrong kind
+ * of value, so the copy never blames size for a scheme problem.
+ */
+function logoRejectionMessage(url: string): string {
+  const oversizedImage =
+    IMAGE_DATA_URL_SCHEME.test(url) && url.length > MAX_LOGO_DATA_URL_LENGTH;
+  return oversizedImage
+    ? `Logo image is too large — choose a smaller image (under ~${MAX_LOGO_IMAGE_KB} KB).`
+    : "Logo must be an inline image file, not a link.";
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -444,9 +466,7 @@ export function buildBrandKit(
   let logo: BrandLogo | undefined;
   if (draft.logoDataUrl.trim()) {
     if (!isInlineImageDataUrl(draft.logoDataUrl)) {
-      errors.push(
-        `Logo image is too large — choose a smaller image (under ~${MAX_LOGO_IMAGE_KB} KB).`,
-      );
+      errors.push(logoRejectionMessage(draft.logoDataUrl));
     } else {
       logo = {
         dataUrl: draft.logoDataUrl,
