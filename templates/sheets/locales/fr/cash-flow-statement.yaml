@@ -1,0 +1,72 @@
+id: cash-flow-statement-v1-fr
+name: Tableau des Flux de Trésorerie
+type: sheet
+description: Tableau des flux de trésorerie présentant les activités opérationnelles, d'investissement et de financement, rapproché de la variation de trésorerie et relié aux soldes d'ouverture et de clôture (version française)
+locale: fr
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: En-tête du tableau
+    prompt: >
+      Identifiez l'entité, la période concernée (mois, trimestre ou
+      année), la devise de présentation, le référentiel comptable
+      (IFRS, US GAAP ou normes locales), la méthode utilisée pour le
+      flux opérationnel (directe ou indirecte) et les documents
+      sources dont proviennent les chiffres. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Activités opérationnelles
+    prompt: >
+      Construisez les flux de trésorerie liés à l'exploitation. Avec
+      la méthode indirecte, partez du résultat net et ajustez des
+      amortissements et dépréciations, de la rémunération en actions,
+      des impôts différés et des autres éléments sans effet de
+      trésorerie, puis ajoutez les variations du besoin en fonds de
+      roulement (créances clients, stocks, charges constatées
+      d'avance, dettes fournisseurs, charges à payer, produits
+      constatés d'avance). Indiquez chaque ligne avec sa valeur de la
+      période et le comparatif de la période précédente. Répondez en
+      français.
+    output_format: table
+  - title: Activités d'investissement
+    prompt: >
+      Énumérez la trésorerie utilisée ou générée par les activités
+      d'investissement : dépenses d'investissement, acquisitions et
+      cessions d'immobilisations, acquisitions et cessions
+      d'entreprises, achats et échéances de placements, et logiciels
+      capitalisés. Indiquez chaque poste avec les montants de la
+      période et le comparatif. Répondez en français.
+    output_format: table
+  - title: Activités de financement
+    prompt: >
+      Énumérez la trésorerie des activités de financement : émission
+      et remboursement d'emprunts, émission et rachat de capitaux
+      propres, dividendes et distributions versés, remboursements du
+      principal des contrats de location et frais de financement.
+      Indiquez chaque poste avec les montants de la période et le
+      comparatif. Répondez en français.
+    output_format: table
+  - title: Variation nette et rapprochement
+    prompt: >
+      Additionnez les trois sections d'activités pour obtenir la
+      variation nette de trésorerie, ajoutez le solde d'ouverture et
+      démontrez que le solde de clôture concorde avec le bilan.
+      Rapprochez tout effet de change sur la trésorerie détenue en
+      devises. Répondez en français.
+  - title: Flux de trésorerie disponible et commentaires
+    prompt: >
+      Calculez le flux de trésorerie disponible (flux opérationnel
+      moins dépenses d'investissement) et le taux de conversion de
+      trésorerie (flux opérationnel divisé par le résultat net).
+      Commentez les principaux facteurs du mouvement de trésorerie de
+      la période et signalez toute préoccupation de liquidité.
+      Répondez en français.
+export:
+  - markdown
+  - csv
+  - xlsx

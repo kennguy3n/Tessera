@@ -1,0 +1,55 @@
+id: vat-return-eu-v1
+name: VAT Return (EU)
+type: sheet
+description: EU VAT return worksheet computing output and input VAT with intra-community supplies and acquisitions, reverse charge, and OSS reporting
+industry:
+  - finance
+profile:
+  - bookkeeper
+  - accountant
+  - tax-manager
+sections:
+  - title: Return Header
+    prompt: >
+      Identify the business, the VAT identification number, the member
+      state and period, the filing frequency, and the source ledgers.
+      Note the applicable national rates, as VAT rates differ by member
+      state.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Output VAT on Domestic Supplies
+    prompt: >
+      Summarize domestic sales by the national VAT rates (standard,
+      reduced, super-reduced, zero, exempt) and compute output VAT.
+      State the rates used for the member state.
+    output_format: table
+  - title: Intra-Community Supplies and Acquisitions
+    prompt: >
+      Record intra-community supplies of goods and services (reported
+      in the recapitulative EC Sales List) and intra-community
+      acquisitions subject to the reverse charge, showing VAT due and
+      deductible.
+    output_format: table
+  - title: Input VAT and Deduction
+    prompt: >
+      Summarize deductible input VAT on purchases and imports, apply
+      any pro-rata deduction for mixed activity, and exclude
+      non-deductible items per national rules.
+    output_format: table
+  - title: Reverse Charge and Imports
+    prompt: >
+      Account for the reverse charge on received services and goods
+      and for import VAT, showing the self-assessed VAT and the
+      corresponding deduction.
+    output_format: table
+  - title: Net VAT, OSS, and Filing
+    prompt: >
+      Compute net VAT payable or refundable. Note any sales declared
+      under the One Stop Shop for cross-border B2C supplies, reconcile
+      to the VAT account, and state the national filing and payment
+      deadline.
+export:
+  - markdown
+  - csv
+  - xlsx

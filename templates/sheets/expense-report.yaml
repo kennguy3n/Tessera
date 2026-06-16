@@ -1,0 +1,44 @@
+id: expense-report-v1
+name: Expense Report
+type: sheet
+description: Employee expense report with itemized line items, category and policy checks, reimbursable vs. company-paid split, and approval trail
+industry:
+  - finance
+profile:
+  - employee
+  - finance-analyst
+  - manager
+sections:
+  - title: Report Header
+    prompt: >
+      Capture the employee name and ID, department and cost center,
+      the reporting period or trip, the business purpose, the
+      currency, and the manager who will approve the report.
+  - title: Expense Line Items
+    prompt: >
+      For each expense capture: date, merchant, category (airfare,
+      lodging, meals, ground transport, supplies, other), description,
+      amount, tax, payment method (personal card, corporate card,
+      cash), and whether a receipt is attached.
+    output_format: table
+  - title: Category Summary
+    prompt: >
+      Roll up the total by expense category and by day. Show the
+      reimbursable total (employee-paid) separately from amounts
+      already paid on a corporate card.
+    output_format: table
+  - title: Policy Compliance
+    prompt: >
+      Check each line against common policy limits (per-diem caps,
+      receipt thresholds, non-reimbursable categories such as
+      alcohol or personal items) and flag any line that needs an
+      exception note or manager justification.
+  - title: Approval and Reimbursement
+    prompt: >
+      State the total to be reimbursed, the approver and date, and
+      the payment method and expected reimbursement timing. Note any
+      lines held pending receipts or clarification.
+export:
+  - markdown
+  - csv
+  - xlsx

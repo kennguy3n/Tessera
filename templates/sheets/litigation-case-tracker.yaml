@@ -1,0 +1,47 @@
+id: litigation-case-tracker-v1
+name: Litigation Case Tracker
+type: sheet
+description: Litigation case tracker logging cases with court, parties, deadlines, discovery, exposure, and strategy status for active dispute management
+industry:
+  - legal
+profile:
+  - litigation-attorney
+  - general-counsel
+  - paralegal
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the firm or department, the reporting period, the
+      jurisdictions involved, and the source case-management system.
+      Note that the tracker holds privileged and confidential
+      information to be handled accordingly.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Case Records
+    prompt: >
+      For each case capture: case number, caption or short name, court
+      and jurisdiction, the parties and their counsel, the case type,
+      the lead attorney, and the filing date.
+    output_format: table
+  - title: Deadlines and Calendar
+    prompt: >
+      Record the key dates: discovery cutoff, motion deadlines,
+      hearings, mediation, and trial. Identify the next critical
+      deadline per case and flag those imminent.
+    output_format: table
+  - title: Discovery and Status
+    prompt: >
+      Track the procedural status and stage, the discovery progress
+      (requests, productions, depositions), and outstanding tasks per
+      case with the responsible owner.
+    output_format: table
+  - title: Exposure and Strategy
+    prompt: >
+      Record the estimated exposure or claim value, the reserve, the
+      settlement posture, and the current strategy and recommended
+      next step. Summarize the portfolio exposure across active cases.
+export:
+  - markdown
+  - csv
+  - xlsx

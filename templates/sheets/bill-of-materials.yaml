@@ -1,0 +1,46 @@
+id: bill-of-materials-v1
+name: Bill of Materials
+type: sheet
+description: Multi-level bill of materials listing components, quantities per assembly, unit costs, rolled-up cost, and sourcing for a manufactured product
+industry:
+  - manufacturing
+profile:
+  - manufacturing-engineer
+  - production-planner
+  - cost-accountant
+sections:
+  - title: Product Header
+    prompt: >
+      Identify the finished product, the part number and revision, the
+      unit of measure, the BOM type (engineering or manufacturing),
+      the effective date, and the source drawings or specifications.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Component Lines
+    prompt: >
+      For each component capture: level, part number, description,
+      quantity per parent, unit of measure, make-or-buy, supplier, and
+      lead time. Preserve the parent-child indentation so the
+      multi-level structure is clear.
+    output_format: table
+  - title: Cost Roll-up
+    prompt: >
+      Apply the unit cost to each component quantity and roll the cost
+      up through the levels to a total material cost for the finished
+      product. Add scrap and yield allowances where they apply.
+    output_format: table
+  - title: Sourcing and Risk
+    prompt: >
+      Flag single-sourced, long-lead, or end-of-life components and
+      any with minimum order quantities that affect batch sizing.
+      Recommend qualified alternates where the risk is high.
+  - title: Where-Used and Change Control
+    prompt: >
+      Note where shared components are used across other assemblies
+      and record the change-control reference for the current
+      revision, including what changed from the prior revision.
+export:
+  - markdown
+  - csv
+  - xlsx

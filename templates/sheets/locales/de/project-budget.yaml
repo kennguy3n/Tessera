@@ -1,0 +1,71 @@
+id: project-budget-v1-de
+name: Projektbudget
+type: sheet
+description: Projektbudget-Arbeitsmappe mit Projektstrukturplan, Personal- und Sachkosten, Reserve und Verfolgung von Plan gegen Ist entlang der Meilensteine (deutsche Version)
+locale: de
+industry:
+  - finance
+  - construction
+profile:
+  - project-manager
+  - finance-analyst
+  - pmo
+sections:
+  - title: Projektkopf
+    prompt: >
+      Bestimmen Sie Projektname und -code, Auftraggeber und
+      Projektleiter, den Planungszeitraum und das Enddatum, die
+      Währung, die Finanzierungsquelle und das genehmigte Gesamtbudget,
+      gegen das die Arbeitsmappe verfolgt wird. Antworten Sie auf
+      Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Projektstrukturplan und Kostenkategorien
+    prompt: >
+      Gliedern Sie das Projekt in Aufgaben oder Phasen des
+      Projektstrukturplans. Erfassen Sie für jede die Kostenkategorie
+      (Personal, Material, Ausrüstung, Subunternehmer, Reisen,
+      Software, Sonstiges) und den verantwortlichen Eigentümer.
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Personalbudget
+    prompt: >
+      Detaillieren Sie das geplante Personal nach Rolle: Stunden,
+      Mischsatz und Kosten. Aggregieren Sie nach Phase und zeigen Sie
+      das gesamte Personalbudget. Vermerken Sie Annahmen zur Auslastung
+      oder zu externen gegenüber internen Mitarbeitern. Antworten Sie
+      auf Deutsch.
+    output_format: table
+  - title: Sachkostenbudget
+    prompt: >
+      Detaillieren Sie die Sachkostenpositionen (Material, Ausrüstung,
+      Lizenzen, Subunternehmer, Reisen) mit Menge, Stückkosten und
+      Gesamtbetrag. Geben Sie den Lieferanten oder die Quelle an, sofern
+      bekannt. Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Reserve und Rückstellungen
+    prompt: >
+      Geben Sie die Risikoreserve (Prozentsatz und Betrag) und die
+      Managementreserve an, mit der Begründung für die Bemessung.
+      Erläutern Sie die Bedingungen, unter denen die Reserve in
+      Anspruch genommen werden darf. Antworten Sie auf Deutsch.
+  - title: Verfolgung von Plan gegen Ist
+    prompt: >
+      Reservieren Sie Spalten für Ist-Werte: Budget, Obligo,
+      tatsächliche Ausgaben, Rest und Abweichung (€ und %) je Phase.
+      Berechnen Sie die Kostenleistung gegenüber dem Zeitplan und
+      kennzeichnen Sie jede Phase mit Tendenz zur Budgetüberschreitung.
+      Antworten Sie auf Deutsch.
+    output_format: table
+  - title: Budgetrisiken
+    prompt: >
+      Identifizieren Sie die Kostenrisiken, die das Budget verändern
+      könnten (Umfangsänderung, Preisinflation, Terminverzug,
+      Währungsrisiko). Für jedes die potenzielle Auswirkung und die
+      Minderungsmaßnahme oder den Auslöser, den das Team überwacht.
+      Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - csv
+  - xlsx

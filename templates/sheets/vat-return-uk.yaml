@@ -1,0 +1,58 @@
+id: vat-return-uk-v1
+name: VAT Return (UK)
+type: sheet
+description: UK VAT return worksheet producing the nine HMRC boxes from sales and purchase records, MTD-ready, with reverse charge and EC adjustments
+industry:
+  - finance
+profile:
+  - bookkeeper
+  - accountant
+  - tax-manager
+sections:
+  - title: Return Header
+    prompt: >
+      Identify the business, the VAT registration number, the VAT
+      period and accounting scheme (standard, cash, flat rate, annual),
+      and the source records (sales day book, purchase day book) the
+      figures are drawn from. Note this supports Making Tax Digital
+      filing.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Output Tax on Sales
+    prompt: >
+      Summarize sales by VAT rate (standard 20%, reduced 5%, zero,
+      exempt, outside scope) and compute output VAT. Separate
+      domestic, Northern Ireland, and export or dispatch sales as
+      required.
+    output_format: table
+  - title: Input Tax on Purchases
+    prompt: >
+      Summarize purchases and expenses with recoverable input VAT,
+      excluding blocked items (business entertainment, most cars).
+      Apply any partial-exemption restriction and compute reclaimable
+      input VAT.
+    output_format: table
+  - title: Reverse Charge and Imports
+    prompt: >
+      Account for the domestic reverse charge (for example
+      construction services), postponed import VAT, and acquisitions,
+      showing the VAT due and the corresponding reclaim.
+    output_format: table
+  - title: VAT Return Boxes
+    prompt: >
+      Compute the nine boxes: Box 1 output VAT, Box 2 acquisition VAT,
+      Box 3 total VAT due, Box 4 input VAT reclaimed, Box 5 net VAT
+      payable or reclaimable, and Boxes 6 to 9 the net value of sales
+      and purchases. Show the workings tying to the boxes.
+    output_format: table
+  - title: Reconciliation and Filing
+    prompt: >
+      Reconcile the VAT return to the VAT control account and bank,
+      note any prior-period error adjustments within the threshold,
+      and state the filing and payment deadline (one month and seven
+      days after the period end).
+export:
+  - markdown
+  - csv
+  - xlsx

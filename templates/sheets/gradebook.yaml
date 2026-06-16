@@ -1,0 +1,47 @@
+id: gradebook-v1
+name: Gradebook
+type: sheet
+description: Class gradebook with weighted assessment categories, per-student scores, computed weighted grades, and distribution analysis
+industry:
+  - education
+profile:
+  - teacher
+  - instructor
+  - academic-coordinator
+sections:
+  - title: Class Header
+    prompt: >
+      Identify the course or class, the term, the instructor, the
+      number of students, the grading scale, and the syllabus or
+      assessment plan the weighting is drawn from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Assessment Categories and Weights
+    prompt: >
+      List the assessment categories (homework, quizzes, projects,
+      midterm, final, participation), the weight of each toward the
+      final grade, and the number of items in each category. Weights
+      should sum to one hundred percent.
+    output_format: table
+  - title: Student Scores
+    prompt: >
+      For each student capture the raw score and maximum for every
+      assessment item, organized by category. Use a student ID or
+      roster number alongside the name.
+    output_format: table
+  - title: Weighted Grades
+    prompt: >
+      Compute each student's category averages and the weighted
+      overall percentage and letter grade. Show the running grade so
+      students can see standing before the term ends.
+    output_format: table
+  - title: Distribution and At-Risk
+    prompt: >
+      Summarize the grade distribution (mean, median, range, and band
+      counts) and identify students at risk of failing or who have
+      missing assessments, with a recommended intervention.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,69 @@
+id: project-budget-v1-pt
+name: Orçamento de Projeto
+type: sheet
+description: Planilha de orçamento de projeto com estrutura analítica do trabalho, custos de mão de obra e não mão de obra, contingência e acompanhamento do planejado versus realizado por marcos (versão em português)
+locale: pt
+industry:
+  - finance
+  - construction
+profile:
+  - project-manager
+  - finance-analyst
+  - pmo
+sections:
+  - title: Cabeçalho do projeto
+    prompt: >
+      Identifique o nome e o código do projeto, o patrocinador e o
+      gerente do projeto, o período de planejamento e a data de
+      término, a moeda, a fonte de financiamento e o orçamento total
+      aprovado em relação ao qual o acompanhamento é feito. Responda em
+      português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Estrutura analítica do trabalho e categorias de custo
+    prompt: >
+      Divida o projeto em tarefas ou fases da estrutura analítica do
+      trabalho. Para cada uma, registre a categoria de custo (mão de
+      obra, materiais, equipamentos, subcontratação, viagens, software,
+      outros) e o responsável. Responda em português.
+    output_format: table
+  - title: Orçamento de mão de obra
+    prompt: >
+      Detalhe a mão de obra planejada por função: horas, taxa
+      combinada e custo. Consolide por fase e mostre o orçamento total
+      de mão de obra. Indique quaisquer premissas sobre utilização ou
+      pessoal terceirizado versus interno. Responda em português.
+    output_format: table
+  - title: Orçamento de itens não relacionados à mão de obra
+    prompt: >
+      Detalhe os itens não relacionados à mão de obra (materiais,
+      equipamentos, licenças, subcontratos, viagens) com quantidade,
+      custo unitário e total. Identifique o fornecedor ou a fonte
+      quando conhecido. Responda em português.
+    output_format: table
+  - title: Contingência e reservas
+    prompt: >
+      Indique a reserva de contingência (percentual e valor) e a
+      reserva de gestão, com a justificativa do dimensionamento.
+      Explique as condições sob as quais a contingência pode ser
+      utilizada. Responda em português.
+  - title: Acompanhamento do planejado versus realizado
+    prompt: >
+      Reserve colunas para os valores realizados: orçamento,
+      comprometido, gasto real, restante e variação (R$ e %) por fase.
+      Calcule o desempenho de custos em relação ao cronograma e
+      sinalize qualquer fase com tendência de estourar o orçamento.
+      Responda em português.
+    output_format: table
+  - title: Riscos orçamentários
+    prompt: >
+      Identifique os riscos de custo que poderiam alterar o orçamento
+      (mudança de escopo, inflação de preços, atraso no cronograma,
+      exposição cambial). Para cada um, o impacto potencial e a
+      mitigação ou o gatilho que a equipe monitorará. Responda em
+      português.
+export:
+  - markdown
+  - csv
+  - xlsx

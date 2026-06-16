@@ -1,0 +1,49 @@
+id: medication-administration-record-v1
+name: Medication Administration Record
+type: sheet
+description: Medication administration record (MAR) listing prescribed medications, dose, route, schedule, and administration sign-off with PRN and hold tracking
+industry:
+  - healthcare
+profile:
+  - nurse
+  - pharmacist
+  - care-coordinator
+sections:
+  - title: Record Header
+    prompt: >
+      Identify the facility or unit, the subject reference (ID or
+      initials, not full name), the date range covered, allergies and
+      alerts, and the source order set the record is built from. Keep
+      the record de-identified.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Prescribed Medications
+    prompt: >
+      For each medication capture: drug name and strength, dose,
+      route, frequency, scheduled times, start and stop dates, the
+      prescriber, and the indication.
+    output_format: table
+  - title: Administration Grid
+    prompt: >
+      Lay out a grid of scheduled administration times against each
+      medication with space to record the administering clinician's
+      initials, the actual time given, and the status (given, held,
+      refused, missed).
+    output_format: table
+  - title: PRN and As-Needed
+    prompt: >
+      Track as-needed (PRN) medications: the trigger or symptom, the
+      dose given, the time, the administering clinician, and the
+      effect assessed afterward.
+    output_format: table
+  - title: Holds, Omissions, and Reconciliation
+    prompt: >
+      Document any held or omitted doses with the reason and the
+      clinician, and reconcile the medication list against the latest
+      orders. Flag duplicate therapy or interaction concerns for
+      pharmacist review.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,46 @@
+id: quality-inspection-log-v1
+name: Quality Inspection Log
+type: sheet
+description: Incoming and in-process quality inspection log recording measurements against specification with disposition, defect codes, and accept rate
+industry:
+  - manufacturing
+profile:
+  - quality-inspector
+  - quality-manager
+  - production-supervisor
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the inspection point (incoming, in-process, final), the
+      product or part, the applicable specification or drawing, the
+      sampling plan and AQL, and the measurement equipment used.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Inspection Records
+    prompt: >
+      For each inspected lot or unit capture: date and time, lot or
+      serial number, inspector, quantity inspected, the characteristic
+      measured, the measurement, and the specification limits.
+    output_format: table
+  - title: Conformance and Defects
+    prompt: >
+      Compare each measurement to its specification and mark pass or
+      fail. For failures record the defect code and a short
+      description, and tally defects by code.
+    output_format: table
+  - title: Disposition
+    prompt: >
+      For each non-conforming lot record the disposition (accept, use
+      as is, rework, return to supplier, scrap) and the authorizing
+      role, with reference to any non-conformance report raised.
+    output_format: table
+  - title: Quality Metrics
+    prompt: >
+      Summarize the accept rate, defects per unit or PPM, and the
+      top defect Pareto for the period. Flag any trend breaching the
+      control limit or supplier requiring corrective action.
+export:
+  - markdown
+  - csv
+  - xlsx

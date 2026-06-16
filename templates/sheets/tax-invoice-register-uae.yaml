@@ -1,0 +1,50 @@
+id: tax-invoice-register-uae-v1
+name: Tax Invoice Register (UAE)
+type: sheet
+description: UAE VAT tax-invoice register capturing the FTA-required particulars, 5% standard, zero-rated and exempt supplies, and reverse charge in AED
+industry:
+  - finance
+profile:
+  - accountant
+  - bookkeeper
+  - tax-manager
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the supplier and its Tax Registration Number, the
+      period, and the invoice numbering. Note that amounts are in AED
+      and the standard VAT rate is 5%, per Federal Tax Authority
+      rules.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Invoice Particulars
+    prompt: >
+      For each tax invoice capture: invoice number, issue date and
+      supply date, supplier and customer name and address, the
+      customer TRN where registered, and a description of the goods or
+      services.
+    output_format: table
+  - title: Amounts and VAT
+    prompt: >
+      For each invoice show the taxable amount, the VAT at 5%, and the
+      gross in AED. Where a foreign currency is used, show the AED
+      equivalent at the exchange rate. Record zero-rated and exempt
+      supplies separately with the reason.
+    output_format: table
+  - title: Reverse Charge and Imports
+    prompt: >
+      Flag supplies under the reverse-charge mechanism (such as
+      imported services and concerned goods) and record the VAT due
+      and recoverable, as required for the VAT return.
+    output_format: table
+  - title: Register Totals and Return Mapping
+    prompt: >
+      Total the standard-rated, zero-rated, and exempt supplies and
+      output VAT for the period, map them to the VAT 201 return boxes,
+      and confirm the invoice sequence and required particulars are
+      complete.
+export:
+  - markdown
+  - csv
+  - xlsx

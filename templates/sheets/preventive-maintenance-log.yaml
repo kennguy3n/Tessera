@@ -1,0 +1,47 @@
+id: preventive-maintenance-log-v1
+name: Preventive Maintenance Log
+type: sheet
+description: Preventive maintenance log scheduling asset PM tasks by interval with completion, downtime, parts used, and compliance to plan
+industry:
+  - manufacturing
+profile:
+  - maintenance-manager
+  - reliability-engineer
+  - technician
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the facility or line, the period covered, the
+      maintenance planner, the asset register reference, and the
+      source of the PM schedule (CMMS, manufacturer recommendation).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Assets and PM Tasks
+    prompt: >
+      For each asset capture: asset ID, description, criticality, the
+      PM task, the interval (calendar or usage based), and the
+      responsible technician or team.
+    output_format: table
+  - title: Schedule and Completion
+    prompt: >
+      For each PM task record the due date, the completed date, the
+      status (scheduled, completed, overdue, skipped), and the labor
+      hours. Flag overdue and skipped tasks.
+    output_format: table
+  - title: Downtime and Parts
+    prompt: >
+      Record the downtime taken for each PM and the parts and
+      consumables used with quantities and cost, so maintenance cost
+      per asset can be tracked.
+    output_format: table
+  - title: Compliance and Findings
+    prompt: >
+      Compute PM compliance (completed on time divided by due) for the
+      period, list findings raised during PMs that need corrective
+      work orders, and recommend interval adjustments where failures
+      cluster.
+export:
+  - markdown
+  - csv
+  - xlsx

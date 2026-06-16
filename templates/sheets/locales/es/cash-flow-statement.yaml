@@ -1,0 +1,69 @@
+id: cash-flow-statement-v1-es
+name: Estado de Flujos de Efectivo
+type: sheet
+description: Estado de flujos de efectivo con actividades de operación, inversión y financiación, conciliado con la variación de efectivo y vinculado a los saldos inicial y final (versión en español)
+locale: es
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Encabezado del estado
+    prompt: >
+      Identifique la entidad, el período sobre el que se informa (mes,
+      trimestre o año), la moneda de presentación, la base de
+      preparación (NIIF, US GAAP o PCGA local), el método utilizado
+      para el flujo de operación (directo o indirecto) y los
+      documentos fuente de los que provienen las cifras. Responda en
+      español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Actividades de operación
+    prompt: >
+      Construya el flujo de efectivo de las operaciones. Con el método
+      indirecto, parta del resultado neto y ajuste por depreciación y
+      amortización, remuneración basada en acciones, impuestos
+      diferidos y otras partidas no monetarias; luego añada los
+      cambios en el capital de trabajo (cuentas por cobrar,
+      inventario, gastos pagados por anticipado, cuentas por pagar,
+      pasivos acumulados, ingresos diferidos). Muestre cada línea con
+      su valor del período y el comparativo del período anterior.
+      Responda en español.
+    output_format: table
+  - title: Actividades de inversión
+    prompt: >
+      Enumere el efectivo usado o generado por actividades de
+      inversión: gastos de capital, compras y ventas de propiedades y
+      equipo, adquisiciones y desinversiones, compras y vencimientos
+      de inversiones, y software capitalizado. Muestre cada partida
+      con los importes del período y comparativo. Responda en español.
+    output_format: table
+  - title: Actividades de financiación
+    prompt: >
+      Enumere el efectivo de actividades de financiación: obtención y
+      pago de deuda, emisión y recompra de capital, dividendos y
+      distribuciones pagados, pagos de principal de arrendamientos y
+      comisiones de financiación. Muestre cada partida con los
+      importes del período y comparativo. Responda en español.
+    output_format: table
+  - title: Variación neta y conciliación
+    prompt: >
+      Sume las tres secciones de actividades para obtener la variación
+      neta de efectivo, añada el saldo inicial de efectivo y demuestre
+      que el saldo final concuerda con el balance. Concilie cualquier
+      efecto de tipo de cambio sobre el efectivo en otras monedas.
+      Responda en español.
+  - title: Flujo de caja libre y comentarios
+    prompt: >
+      Calcule el flujo de caja libre (flujo de operación menos gastos
+      de capital) y el ratio de conversión de efectivo (flujo de
+      operación dividido por el resultado neto). Comente los
+      principales factores del movimiento de efectivo del período y
+      señale cualquier preocupación de liquidez. Responda en español.
+export:
+  - markdown
+  - csv
+  - xlsx

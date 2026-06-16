@@ -1,0 +1,44 @@
+id: foia-request-log-v1
+name: Public Records Request Log
+type: sheet
+description: Public records (FOIA) request log tracking requests through intake, search, review, and release with statutory deadlines, fees, and exemptions
+industry:
+  - government
+profile:
+  - records-officer
+  - compliance-officer
+  - public-information-officer
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the agency or department, the reporting period, the
+      governing statute and the statutory response window, the fee
+      schedule, and the source intake channels for requests.
+  - title: Request Intake
+    prompt: >
+      For each request capture: request ID, date received, channel,
+      requester type (media, citizen, business, attorney), a summary
+      of the records sought, and the assigned analyst.
+    output_format: table
+  - title: Processing and Deadlines
+    prompt: >
+      Record the statutory due date, any permitted extension, the
+      current stage (intake, search, review, redaction, release), and
+      the days remaining. Flag requests at risk of missing the
+      deadline.
+    output_format: table
+  - title: Exemptions and Redactions
+    prompt: >
+      Record the disposition (granted, partially granted, denied, no
+      records) and the exemptions applied to any withheld or redacted
+      material, with the statutory citation.
+    output_format: table
+  - title: Fees and Closure
+    prompt: >
+      Record fees estimated, charged, and collected, the release
+      format, the closure date, and any appeal filed. Summarize
+      on-time performance and the backlog for the period.
+export:
+  - markdown
+  - csv
+  - xlsx

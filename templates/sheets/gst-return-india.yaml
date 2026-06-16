@@ -1,0 +1,53 @@
+id: gst-return-india-v1
+name: GST Return GSTR-3B (India)
+type: sheet
+description: India GSTR-3B summary worksheet computing outward supplies, ITC, and net CGST, SGST, IGST, and cess payable with reconciliation to GSTR-1 and 2B
+industry:
+  - finance
+profile:
+  - accountant
+  - tax-manager
+  - bookkeeper
+sections:
+  - title: Return Header
+    prompt: >
+      Identify the legal name and GSTIN, the state, the tax period,
+      and the source records (sales register, purchase register). Note
+      that GSTR-3B is the monthly or quarterly summary return.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Outward Supplies (3.1)
+    prompt: >
+      Summarize outward supplies: taxable, zero-rated, nil-rated and
+      exempt, and inward supplies liable to reverse charge. For each,
+      the taxable value and the IGST, CGST, SGST, and cess.
+    output_format: table
+  - title: Inter-State Supplies (3.2)
+    prompt: >
+      Detail inter-state supplies made to unregistered persons,
+      composition taxable persons, and UIN holders, by place of supply
+      and the IGST amount, as required for the supplementary table.
+    output_format: table
+  - title: Input Tax Credit (4)
+    prompt: >
+      Compute ITC available (imports, reverse charge, ISD, others),
+      ITC reversed (rules 42 and 43, others), the net ITC, and
+      ineligible ITC. Reconcile available ITC to GSTR-2B.
+    output_format: table
+  - title: Tax Payment (6.1)
+    prompt: >
+      Compute the net tax payable by head (IGST, CGST, SGST, cess)
+      after setting off ITC in the permitted order, the cash required
+      from the electronic cash ledger, and any interest or late fee.
+    output_format: table
+  - title: Reconciliation and Filing
+    prompt: >
+      Reconcile outward supplies to GSTR-1 and ITC to GSTR-2B, explain
+      material differences, and state the filing and payment due date
+      (the 20th of the following month for monthly filers, or the QRMP
+      date).
+export:
+  - markdown
+  - csv
+  - xlsx

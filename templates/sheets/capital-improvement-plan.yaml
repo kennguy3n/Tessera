@@ -1,0 +1,49 @@
+id: capital-improvement-plan-v1
+name: Capital Improvement Plan
+type: sheet
+description: Public-sector capital improvement plan listing projects with multi-year funding, sources, phasing, and operating impact for budget adoption
+industry:
+  - government
+profile:
+  - budget-officer
+  - public-works-director
+  - city-manager
+sections:
+  - title: Plan Header
+    prompt: >
+      Identify the jurisdiction, the planning horizon (typically five
+      or six years), the currency, the adopted capital policy and debt
+      limits, and the source departmental requests the plan
+      consolidates.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Project List
+    prompt: >
+      For each project capture: project ID, title, department,
+      category (transportation, utilities, facilities, parks,
+      technology), a short description, and the priority or council
+      goal it supports.
+    output_format: table
+  - title: Cost and Phasing
+    prompt: >
+      For each project show the total cost and the phasing of spend by
+      fiscal year across the horizon, distinguishing planning, design,
+      and construction phases. Roll up the annual capital requirement.
+    output_format: table
+  - title: Funding Sources
+    prompt: >
+      Allocate each project's cost to funding sources (general fund,
+      bonds, grants, impact fees, enterprise revenue, state and
+      federal aid) and show the funded versus unfunded balance.
+    output_format: table
+  - title: Operating Impact and Prioritization
+    prompt: >
+      Estimate the recurring operating and maintenance impact of each
+      completed project on future budgets, rank projects against the
+      available funding, and identify the unfunded gap and the
+      trade-offs for decision-makers.
+export:
+  - markdown
+  - csv
+  - xlsx

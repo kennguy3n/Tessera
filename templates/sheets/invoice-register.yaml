@@ -1,0 +1,46 @@
+id: invoice-register-v1
+name: Invoice Register
+type: sheet
+description: Sales invoice register logging issued invoices with customer, amounts, tax, due dates, and payment status for revenue and receivables control
+industry:
+  - finance
+profile:
+  - accountant
+  - bookkeeper
+  - controller
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the entity, the period covered by the register, the
+      reporting currency, the invoice numbering scheme, and the
+      source system the invoices are issued from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Issued Invoices
+    prompt: >
+      For each invoice capture: invoice number, issue date, customer,
+      description or purchase order reference, net amount, tax amount,
+      gross total, and the payment terms.
+    output_format: table
+  - title: Tax Summary
+    prompt: >
+      Summarize the tax charged by rate (standard, reduced, zero,
+      exempt) so the totals can be reconciled to the tax return.
+      Show the net and tax totals for each rate.
+    output_format: table
+  - title: Payment Status
+    prompt: >
+      For each invoice show the amount received, the balance
+      outstanding, the due date, and the status (draft, sent, part-
+      paid, paid, overdue, written off). Highlight overdue invoices.
+    output_format: table
+  - title: Register Totals and Controls
+    prompt: >
+      Total the net, tax, and gross for the period and reconcile the
+      gross total to recorded revenue and to receivables. Note any
+      gaps in the invoice number sequence as a control check.
+export:
+  - markdown
+  - csv
+  - xlsx

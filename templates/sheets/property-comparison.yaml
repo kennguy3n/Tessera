@@ -1,0 +1,49 @@
+id: property-comparison-v1
+name: Property Comparison
+type: sheet
+description: Side-by-side property comparison scoring candidate properties on price, yield, condition, location, and risk to support an acquisition decision
+industry:
+  - real-estate
+profile:
+  - real-estate-analyst
+  - investor
+  - buyer-agent
+sections:
+  - title: Comparison Header
+    prompt: >
+      State the investment or purchase objective, the property type
+      and target market, the currency, the evaluation criteria and
+      their weights, and the source listings or data behind the
+      figures.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Property Profiles
+    prompt: >
+      For each candidate property capture: address or reference, type,
+      size, year built, asking price, current income, tenancy status,
+      and condition summary.
+    output_format: table
+  - title: Financial Comparison
+    prompt: >
+      Compare the properties on price per square unit, gross and net
+      yield, capitalization rate, projected cash-on-cash return, and
+      estimated operating expenses. Normalize so the comparison is
+      like for like.
+    output_format: table
+  - title: Qualitative Comparison
+    prompt: >
+      Score each property on location, accessibility, condition,
+      tenant quality, and upside potential using the weighted
+      criteria. Show the weighted total score and ranking.
+    output_format: table
+  - title: Risks and Recommendation
+    prompt: >
+      Note the key risks for each property (capex, vacancy, lease
+      rollover, market, regulatory) and recommend the preferred
+      property with the rationale and the conditions to verify in due
+      diligence.
+export:
+  - markdown
+  - csv
+  - xlsx

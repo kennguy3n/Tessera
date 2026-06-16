@@ -1,0 +1,44 @@
+id: permit-application-tracker-v1
+name: Permit Application Tracker
+type: sheet
+description: Permit application tracker following applications through intake, plan review, inspections, and issuance with statutory clocks and fees
+industry:
+  - government
+profile:
+  - permit-technician
+  - building-official
+  - planner
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the jurisdiction and department, the reporting period,
+      the permit types handled, the statutory review timeframes, and
+      the source permitting system.
+  - title: Applications
+    prompt: >
+      For each application capture: permit number, type (building,
+      electrical, plumbing, zoning, sign, demolition), the property or
+      project, the applicant, the submittal date, and the valuation.
+    output_format: table
+  - title: Review and Status
+    prompt: >
+      Track the review stage (intake, plan review, corrections,
+      approved, issued, expired), the assigned reviewer, the review
+      cycle count, and the days against the statutory clock. Flag
+      applications past the target.
+    output_format: table
+  - title: Inspections
+    prompt: >
+      For issued permits record the required inspections, their
+      scheduled and completed dates, results (pass, fail, partial),
+      and the final inspection and certificate of occupancy status.
+    output_format: table
+  - title: Fees and Performance
+    prompt: >
+      Record fees assessed, paid, and outstanding per permit, and
+      summarize throughput, average review time against target, and
+      the backlog for the period.
+export:
+  - markdown
+  - csv
+  - xlsx

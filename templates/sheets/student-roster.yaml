@@ -1,0 +1,45 @@
+id: student-roster-v1
+name: Student Roster
+type: sheet
+description: Class enrollment roster with student identifiers, contacts, enrollment status, and accommodation flags for class management
+industry:
+  - education
+profile:
+  - registrar
+  - teacher
+  - academic-coordinator
+sections:
+  - title: Roster Header
+    prompt: >
+      Identify the class or course, the term, the instructor, the
+      enrollment capacity, and the source system the roster is drawn
+      from. Note the data-handling expectations for student records.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Student Records
+    prompt: >
+      For each enrolled student capture: student ID, name, grade or
+      year, section, enrollment date, and status (enrolled, waitlist,
+      withdrawn, transferred).
+    output_format: table
+  - title: Contacts
+    prompt: >
+      Record the primary guardian or emergency contact and the
+      preferred contact method for each student. Handle this contact
+      information as sensitive and limit it to what the class needs.
+    output_format: table
+  - title: Accommodations and Flags
+    prompt: >
+      Note any learning accommodations, individualized plan
+      references, language support, or medical alerts relevant to the
+      classroom, recorded discreetly and shared only as required.
+  - title: Roster Summary
+    prompt: >
+      Summarize the enrolled, waitlisted, and withdrawn counts against
+      capacity and the demographic or section breakdown the school
+      tracks. Flag any data gaps to resolve with the registrar.
+export:
+  - markdown
+  - csv
+  - xlsx

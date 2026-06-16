@@ -1,0 +1,44 @@
+id: promotion-calendar-v1
+name: Promotion Calendar
+type: sheet
+description: Retail promotion calendar planning campaigns by period with mechanics, products, channels, budget, and uplift versus baseline analysis
+industry:
+  - retail
+profile:
+  - marketing-manager
+  - merchandiser
+  - category-manager
+sections:
+  - title: Calendar Header
+    prompt: >
+      Identify the retailer or category, the planning season, the
+      currency, the baseline sales reference, and the margin and
+      budget guardrails the promotions must respect.
+  - title: Promotion Plan
+    prompt: >
+      For each promotion capture: name, start and end date, mechanic
+      (percentage off, multibuy, bundle, loyalty points, markdown),
+      the products or categories included, and the channels (in-store,
+      online, app, email).
+    output_format: table
+  - title: Budget and Funding
+    prompt: >
+      Record the planned spend per promotion (markdown funding,
+      media, display) and any supplier or co-op funding offsetting it.
+      Roll up the total promotional investment by period.
+    output_format: table
+  - title: Forecast Uplift
+    prompt: >
+      Estimate the incremental units, revenue, and margin versus the
+      baseline for each promotion, and the return on the promotional
+      spend. Note cannibalization and pull-forward assumptions.
+    output_format: table
+  - title: Calendar Conflicts and Approvals
+    prompt: >
+      Check for overlapping or conflicting promotions on the same
+      products or channels, confirm margin stays within guardrails,
+      and record the approval owner and status for each promotion.
+export:
+  - markdown
+  - csv
+  - xlsx

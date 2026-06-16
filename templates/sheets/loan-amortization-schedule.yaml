@@ -1,0 +1,45 @@
+id: loan-amortization-schedule-v1
+name: Loan Amortization Schedule
+type: sheet
+description: Loan amortization schedule with per-period principal and interest split, running balance, and totals for term debt or mortgage analysis
+industry:
+  - finance
+profile:
+  - finance-analyst
+  - treasury
+  - accountant
+sections:
+  - title: Loan Terms
+    prompt: >
+      Capture the loan parameters: principal, annual interest rate,
+      compounding and payment frequency, term, first payment date,
+      payment type (fully amortizing, interest-only, balloon), and
+      any fees or points.
+  - title: Amortization Schedule
+    prompt: >
+      Produce the period-by-period schedule: payment number, payment
+      date, beginning balance, scheduled payment, interest portion,
+      principal portion, any extra principal, and ending balance.
+      Carry the balance to zero (or to the balloon) at the final
+      period.
+    output_format: table
+  - title: Annual Summary
+    prompt: >
+      Aggregate the schedule by year: total payments, total interest,
+      total principal repaid, and the year-end balance. This supports
+      interest-expense and tax planning.
+    output_format: table
+  - title: Totals and Effective Cost
+    prompt: >
+      Show the total of all payments, total interest paid over the
+      life of the loan, and the effective annual cost including fees
+      (APR). Compare against the nominal rate.
+  - title: Scenarios
+    prompt: >
+      Model the effect of an extra periodic principal payment and of
+      a one-time lump-sum prepayment on the total interest and the
+      payoff date. Note any prepayment penalty.
+export:
+  - markdown
+  - csv
+  - xlsx

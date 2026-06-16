@@ -1,0 +1,46 @@
+id: gst-bas-australia-v1
+name: Business Activity Statement (Australia)
+type: sheet
+description: Australian BAS worksheet computing GST on sales and purchases, PAYG withholding and instalments, and the net amount payable to the ATO
+industry:
+  - finance
+profile:
+  - bookkeeper
+  - accountant
+  - tax-manager
+sections:
+  - title: Statement Header
+    prompt: >
+      Identify the entity, the ABN, the reporting period and cycle
+      (monthly, quarterly), the accounting basis (cash or accruals),
+      and the source records. Note GST is charged at 10%.
+    required_sources:
+      - type: local
+        min: 1
+  - title: GST on Sales (G1-G9)
+    prompt: >
+      Summarize total sales (G1), exports (G2), other GST-free sales
+      (G3), and input-taxed sales (G4), then compute the GST on sales
+      (1A) at one eleventh of taxable sales.
+    output_format: table
+  - title: GST on Purchases (G10-G20)
+    prompt: >
+      Summarize capital (G10) and non-capital (G11) purchases, adjust
+      for input-taxed and private-use portions, and compute the GST
+      credits on purchases (1B).
+    output_format: table
+  - title: PAYG Withholding and Instalments
+    prompt: >
+      Record PAYG tax withheld from wages (W1, W2) and any PAYG income
+      tax instalment (T7) and FBT instalment, as applicable to the
+      activity statement.
+    output_format: table
+  - title: Net Amount and Filing
+    prompt: >
+      Compute the net amount payable to or refundable from the ATO by
+      combining GST (1A less 1B) with PAYG amounts. Reconcile to the
+      GST control account and state the lodgment and payment due date.
+export:
+  - markdown
+  - csv
+  - xlsx

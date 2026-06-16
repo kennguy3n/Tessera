@@ -1,0 +1,47 @@
+id: gst-invoice-register-india-v1
+name: GST Invoice Register (India)
+type: sheet
+description: India GST tax-invoice register capturing GSTIN, HSN/SAC, taxable value, and CGST, SGST, IGST, and cess with e-invoice and supply-type indicators
+industry:
+  - finance
+profile:
+  - accountant
+  - bookkeeper
+  - tax-manager
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the supplier legal name and GSTIN, the place of
+      business and state code, the period, and the invoice series.
+      Note the GST tax-invoice content rules and the e-invoicing
+      threshold the register supports.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Invoice Particulars
+    prompt: >
+      For each invoice capture: invoice number and date, customer name
+      and GSTIN (or unregistered), place of supply, the HSN or SAC
+      code, description, quantity, and taxable value.
+    output_format: table
+  - title: Tax by Head
+    prompt: >
+      Determine whether the supply is intra-state (CGST plus SGST) or
+      inter-state (IGST) from the place of supply, apply the rate, and
+      compute CGST, SGST, IGST, and cess and the invoice total.
+    output_format: table
+  - title: Supply Type and E-Invoice
+    prompt: >
+      Flag the supply type (B2B, B2C, export, SEZ, reverse charge,
+      nil-rated) and record the e-invoice IRN and e-way bill number
+      where applicable.
+    output_format: table
+  - title: Register Totals and GSTR-1 Mapping
+    prompt: >
+      Total taxable value and tax by head and by rate for the period,
+      map the totals to the GSTR-1 tables (B2B, B2C, exports, HSN
+      summary), and confirm the invoice sequence is complete.
+export:
+  - markdown
+  - csv
+  - xlsx

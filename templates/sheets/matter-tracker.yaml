@@ -1,0 +1,48 @@
+id: matter-tracker-v1
+name: Legal Matter Tracker
+type: sheet
+description: Legal matter tracker logging matters by practice area with responsible attorney, status, key dates, budget, and risk for caseload management
+industry:
+  - legal
+profile:
+  - general-counsel
+  - practice-manager
+  - attorney
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the firm or legal department, the reporting period, the
+      practice areas, the matter-numbering scheme, and the source
+      system the matters are drawn from. Note confidentiality
+      expectations for matter data.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Matter Records
+    prompt: >
+      For each matter capture: matter number, client, matter name,
+      practice area, type (advisory, transactional, litigation,
+      regulatory), the responsible attorney, and the open date.
+    output_format: table
+  - title: Status and Key Dates
+    prompt: >
+      Record the current status and stage, the next key date or
+      deadline, the statute-of-limitations or filing date where
+      relevant, and the priority. Flag matters with imminent
+      deadlines.
+    output_format: table
+  - title: Budget and Fees
+    prompt: >
+      Record the fee arrangement (hourly, fixed, contingency), the
+      budget or estimate, fees billed and collected to date, and the
+      write-offs. Flag matters over budget.
+    output_format: table
+  - title: Risk and Workload
+    prompt: >
+      Note the risk or exposure level of each matter and summarize the
+      caseload by attorney and practice area to surface capacity and
+      concentration issues.
+export:
+  - markdown
+  - csv
+  - xlsx

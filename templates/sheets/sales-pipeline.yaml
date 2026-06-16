@@ -1,0 +1,52 @@
+id: sales-pipeline-v1
+name: Sales Pipeline
+type: sheet
+description: Sales pipeline tracker with opportunities by stage, weighted forecast, velocity, and win-rate analysis for revenue forecasting
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: Pipeline Header
+    prompt: >
+      Identify the team or territory, the forecast period, the
+      currency, the sales-stage definitions and their default
+      probabilities, and the CRM the opportunities are exported from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Opportunities
+    prompt: >
+      For each opportunity capture: account, opportunity name, owner,
+      stage, deal amount, expected close date, lead source, and the
+      next step with its date.
+    output_format: table
+  - title: Weighted Forecast
+    prompt: >
+      Apply the stage probability to each deal amount to produce a
+      weighted value, and roll up the committed, best-case, and
+      weighted-pipeline forecast for the period against quota.
+    output_format: table
+  - title: Stage Funnel and Velocity
+    prompt: >
+      Show the count and value of opportunities by stage, the average
+      days in each stage, and the overall sales-cycle length.
+      Identify stages where deals stall.
+    output_format: table
+  - title: Win Rate and Coverage
+    prompt: >
+      Compute the win rate, average deal size, and pipeline coverage
+      ratio against the quota gap. Flag whether there is enough
+      pipeline to make the number.
+  - title: Risks and Actions
+    prompt: >
+      Highlight the largest at-risk and slipping deals, the reasons,
+      and the actions and owners to advance or close them. Note deals
+      with no recent activity.
+export:
+  - markdown
+  - csv
+  - xlsx

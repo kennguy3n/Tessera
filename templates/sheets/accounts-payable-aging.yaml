@@ -1,0 +1,51 @@
+id: accounts-payable-aging-v1
+name: Accounts Payable Aging
+type: sheet
+description: AP aging report bucketing open vendor bills by days outstanding, with payment prioritization, early-payment discounts, and cash requirement forecast
+industry:
+  - finance
+profile:
+  - controller
+  - ap-specialist
+  - treasury
+sections:
+  - title: Report Header
+    prompt: >
+      Identify the entity, the as-of date, the reporting currency,
+      and the source system the open payables ledger was exported
+      from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Open Bills by Vendor
+    prompt: >
+      For each open bill capture: vendor, bill number, bill date,
+      due date, payment terms, original amount, amount paid, and
+      balance outstanding. Sort by vendor and due date.
+    output_format: table
+  - title: Aging Buckets
+    prompt: >
+      Bucket each outstanding balance into current, 1-30, 31-60,
+      61-90, and 90+ days. Roll up totals by vendor and produce the
+      overall payables aging summary.
+    output_format: table
+  - title: Payment Prioritization
+    prompt: >
+      Recommend which bills to pay in the next cycle, balancing due
+      dates, early-payment discount windows, vendor criticality, and
+      available cash. Flag any bills at risk of late fees or service
+      interruption.
+  - title: Early-Payment Discounts
+    prompt: >
+      Identify bills with discount terms (e.g. 2/10 net 30), compute
+      the annualized return of taking each discount, and recommend
+      whether to capture or forgo it given the cash position.
+  - title: Cash Requirement Forecast
+    prompt: >
+      Project the cash required to clear payables over the next four
+      weeks by due-date week. Compute days payable outstanding and
+      compare to terms and the trailing trend.
+export:
+  - markdown
+  - csv
+  - xlsx

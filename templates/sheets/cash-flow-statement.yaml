@@ -1,0 +1,63 @@
+id: cash-flow-statement-v1
+name: Cash Flow Statement
+type: sheet
+description: Statement of cash flows with operating, investing, and financing activities, reconciled to the change in cash and tied to opening and closing balances
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Statement Header
+    prompt: >
+      Identify the entity, the reporting period (month, quarter, or
+      year), the reporting currency, the basis of preparation
+      (IFRS / US GAAP / local GAAP), the method used for operating
+      cash flow (direct or indirect), and the source documents the
+      figures are drawn from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Operating Activities
+    prompt: >
+      Build the cash flow from operations. If using the indirect
+      method, start from net income and adjust for depreciation and
+      amortization, stock-based compensation, deferred taxes, and
+      other non-cash items, then add the changes in working capital
+      (accounts receivable, inventory, prepaid expenses, accounts
+      payable, accrued liabilities, deferred revenue). Show each line
+      with its period value and the prior-period comparative.
+    output_format: table
+  - title: Investing Activities
+    prompt: >
+      List cash used in or provided by investing activities: capital
+      expenditure, purchases and sales of property and equipment,
+      acquisitions and divestitures, purchases and maturities of
+      investments, and capitalized software. Show each line item with
+      the period and comparative amounts.
+    output_format: table
+  - title: Financing Activities
+    prompt: >
+      List cash from financing activities: proceeds from and repayment
+      of debt, issuance and repurchase of equity, dividends and
+      distributions paid, lease principal payments, and any financing
+      fees. Show each line item with the period and comparative
+      amounts.
+    output_format: table
+  - title: Net Change and Reconciliation
+    prompt: >
+      Sum the three activity sections into the net change in cash,
+      add the opening cash balance, and prove the closing cash
+      balance ties to the balance sheet. Reconcile any foreign-
+      exchange effect on cash held in other currencies.
+  - title: Free Cash Flow and Commentary
+    prompt: >
+      Compute free cash flow (operating cash flow minus capital
+      expenditure) and the cash conversion ratio (operating cash
+      flow divided by net income). Comment on the principal drivers
+      of the period's cash movement and flag any liquidity concerns.
+export:
+  - markdown
+  - csv
+  - xlsx

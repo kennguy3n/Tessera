@@ -1,0 +1,51 @@
+id: rent-roll-v1
+name: Rent Roll
+type: sheet
+description: Property rent roll listing units, tenants, lease terms, current and market rent, occupancy, and arrears for income property management
+industry:
+  - real-estate
+profile:
+  - property-manager
+  - asset-manager
+  - real-estate-analyst
+sections:
+  - title: Property Header
+    prompt: >
+      Identify the property, the as-of date, the total unit or square
+      footage count, the currency, and the source records (lease
+      files, property-management system) the rent roll is built from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Units and Tenants
+    prompt: >
+      For each unit capture: unit number, type or size, tenant (with
+      an ID), lease start and end, renewal options, and occupancy
+      status (occupied, vacant, notice, holdover).
+    output_format: table
+  - title: Rent and Charges
+    prompt: >
+      For each unit record the current base rent, additional charges
+      (CAM, utilities, parking), the estimated market rent, and the
+      rent per square foot. Compute the loss-to-lease versus market.
+    output_format: table
+  - title: Occupancy and Lease Expiry
+    prompt: >
+      Compute physical and economic occupancy and lay out the lease-
+      expiry schedule by month or year so rollover risk is visible.
+      Highlight concentrations of expiries.
+    output_format: table
+  - title: Arrears and Deposits
+    prompt: >
+      Record outstanding balances and the arrears aging per tenant,
+      and the security deposit held. Flag tenants in material arrears
+      for action.
+  - title: Income Summary
+    prompt: >
+      Total scheduled rent, other income, vacancy and concession loss,
+      and effective gross income for the property, and compare to the
+      prior period.
+export:
+  - markdown
+  - csv
+  - xlsx

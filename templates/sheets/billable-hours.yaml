@@ -1,0 +1,42 @@
+id: billable-hours-v1
+name: Billable Hours Timesheet
+type: sheet
+description: Timekeeping sheet logging billable and non-billable time by matter and task code with rates, utilization, and realization for professional services
+industry:
+  - legal
+profile:
+  - attorney
+  - consultant
+  - practice-manager
+sections:
+  - title: Timesheet Header
+    prompt: >
+      Identify the timekeeper and role, the period, the standard
+      billing rate, the target billable hours, and the matter and
+      task-code scheme the entries map to.
+  - title: Time Entries
+    prompt: >
+      For each entry capture: date, matter or client, task or activity
+      code, a concise narrative of the work, the duration, and whether
+      it is billable or non-billable.
+    output_format: table
+  - title: Daily and Matter Summary
+    prompt: >
+      Roll up hours by day and by matter, splitting billable from
+      non-billable. Apply the rate to compute the billable value per
+      matter.
+    output_format: table
+  - title: Utilization and Targets
+    prompt: >
+      Compute billable hours against the target and the utilization
+      rate for the period. Compare to the trailing trend and flag
+      under-utilization or unsustainable overload.
+  - title: Realization and Write-downs
+    prompt: >
+      Where billed and collected amounts are known, compute the
+      realization rate (collected versus standard value) and list
+      write-downs by matter with reasons.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,46 @@
+id: rfi-log-v1
+name: RFI Log
+type: sheet
+description: Request for information log tracking construction RFIs through response with cost and schedule impact, ball-in-court, and aging
+industry:
+  - construction
+profile:
+  - project-manager
+  - contract-administrator
+  - site-engineer
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the project, the contract, the parties, the required
+      response time for RFIs, and the drawings and specifications the
+      questions reference.
+    required_sources:
+      - type: local
+        min: 1
+  - title: RFI Items
+    prompt: >
+      For each RFI capture: RFI number, date raised, originator, the
+      question, the discipline, the related drawing or specification
+      reference, and the suggested resolution if any.
+    output_format: table
+  - title: Response Tracking
+    prompt: >
+      Record the date sent to the design team, the response received
+      date, the response, and the status (open, answered, closed,
+      void). Track the ball-in-court party.
+    output_format: table
+  - title: Impact Assessment
+    prompt: >
+      For each RFI note whether it carries a cost or schedule impact
+      and whether it is likely to generate a change order. Cross-
+      reference the change-order log where applicable.
+    output_format: table
+  - title: Aging and Risk
+    prompt: >
+      Compute the days open for each RFI against the required response
+      time, flag overdue RFIs, and summarize the open RFIs that pose
+      the greatest risk to progress.
+export:
+  - markdown
+  - csv
+  - xlsx

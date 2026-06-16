@@ -1,0 +1,42 @@
+id: attendance-register-v1
+name: Attendance Register
+type: sheet
+description: Daily attendance register marking present, absent, late, and excused per student with attendance-rate rollups and chronic-absence flags
+industry:
+  - education
+profile:
+  - teacher
+  - registrar
+  - academic-coordinator
+sections:
+  - title: Register Header
+    prompt: >
+      Identify the class or group, the term and date range, the
+      teacher, the enrolled students, and the attendance codes in use
+      (present, absent, late, excused, remote).
+  - title: Daily Attendance Grid
+    prompt: >
+      Lay out a grid of dates against students with a cell for the
+      daily attendance code. Use a student ID alongside the name and
+      keep the codes consistent with the header definitions.
+    output_format: table
+  - title: Attendance Summary
+    prompt: >
+      For each student compute the days present, absent, late, and
+      excused, and the attendance rate for the period. Roll up the
+      class average attendance rate.
+    output_format: table
+  - title: Chronic Absence and Tardiness
+    prompt: >
+      Flag students below the attendance threshold (commonly ninety
+      percent) or with repeated tardies. Note any pattern by day of
+      week and the follow-up action or notification required.
+  - title: Notes and Exceptions
+    prompt: >
+      Record reasons for extended absences, approved leave, and any
+      data corrections, with the date and the person who authorized
+      the change.
+export:
+  - markdown
+  - csv
+  - xlsx

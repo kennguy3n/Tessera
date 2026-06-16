@@ -1,0 +1,41 @@
+id: sales-pipeline-v1-zh
+name: 销售管道
+type: sheet
+description: 销售管道跟踪表，包含按阶段划分的商机、加权预测、流速以及赢单率分析，用于收入预测（中文版）
+locale: zh
+industry:
+  - retail
+  - finance
+profile:
+  - sales-manager
+  - account-executive
+  - revenue-operations
+sections:
+  - title: 管道表头
+    prompt: >
+      确定团队或区域、预测期间、货币、销售阶段的定义及其默认概率，以及商机所导出的CRM系统。请用中文回答。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 商机
+    prompt: >
+      对每个商机记录：客户、商机名称、负责人、阶段、交易金额、预计成交日期、线索来源，以及下一步行动及其日期。请用中文回答。
+    output_format: table
+  - title: 加权预测
+    prompt: >
+      将阶段概率应用于每笔交易金额以得出加权值，并按配额汇总本期的承诺预测、最佳情形和加权管道预测。请用中文回答。
+    output_format: table
+  - title: 阶段漏斗与流速
+    prompt: >
+      列示按阶段划分的商机数量和金额、每个阶段的平均停留天数，以及整体销售周期长度。识别交易停滞的阶段。请用中文回答。
+    output_format: table
+  - title: 赢单率与覆盖率
+    prompt: >
+      计算赢单率、平均交易规模，以及相对于配额缺口的管道覆盖率。标明是否有足够的管道来完成目标。请用中文回答。
+  - title: 风险与行动
+    prompt: >
+      突出风险最高和正在拖延的最大交易、原因，以及推进或成交这些交易的行动和负责人。注明近期无活动的交易。请用中文回答。
+export:
+  - markdown
+  - csv
+  - xlsx

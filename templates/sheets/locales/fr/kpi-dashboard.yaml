@@ -1,0 +1,67 @@
+id: kpi-dashboard-v1-fr
+name: Tableau de Bord des KPI
+type: sheet
+description: Tableau de bord exécutif des KPI avec définitions des indicateurs, cibles, valeurs réelles, tendances et statut RAG selon les axes financier, client, opérationnel et humain (version française)
+locale: fr
+industry:
+  - finance
+profile:
+  - executive
+  - finance-analyst
+  - operations-manager
+sections:
+  - title: En-tête du tableau de bord
+    prompt: >
+      Identifiez l'organisation ou l'unité d'affaires, la période et la
+      cadence du reporting (hebdomadaire, mensuelle, trimestrielle), le
+      responsable du tableau de bord et les systèmes de référence d'où
+      proviennent les indicateurs. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Définitions des indicateurs
+    prompt: >
+      Pour chaque KPI, documentez la définition précise, la formule,
+      l'unité, la source de données, la cadence de rafraîchissement et
+      le responsable. Des définitions sans ambiguïté évitent qu'un même
+      indicateur soit calculé de deux manières différentes. Répondez en
+      français.
+    output_format: table
+  - title: Indicateurs financiers
+    prompt: >
+      Présentez les KPI financiers (chiffre d'affaires, marge brute,
+      EBITDA, trésorerie, consommation de trésorerie, ARR ou prises de
+      commandes selon le cas) avec cible, valeur réelle, période
+      précédente, écart et un statut rouge/orange/vert. Répondez en
+      français.
+    output_format: table
+  - title: Indicateurs clients
+    prompt: >
+      Présentez les KPI clients (nouveaux clients, attrition,
+      rétention, rétention nette du revenu, NPS, CAC, LTV) avec cible,
+      valeur réelle, période précédente, écart et statut. Répondez en
+      français.
+    output_format: table
+  - title: Indicateurs opérationnels
+    prompt: >
+      Présentez les KPI opérationnels pertinents pour l'activité (débit,
+      temps de cycle, livraison à temps, taux d'utilisation, taux de
+      défauts, respect des SLA) avec cible, valeur réelle, période
+      précédente et statut. Répondez en français.
+    output_format: table
+  - title: Indicateurs humains
+    prompt: >
+      Présentez les KPI humains (effectif, postes ouverts, délai de
+      recrutement, attrition volontaire, engagement) avec cible, valeur
+      réelle et statut. Répondez en français.
+    output_format: table
+  - title: Constats et actions
+    prompt: >
+      Résumez ce que disent les chiffres cette période : les deux ou
+      trois indicateurs les plus hors cible, les facteurs probables et
+      le responsable et l'échéance de l'action corrective pour chacun.
+      Répondez en français.
+export:
+  - markdown
+  - csv
+  - xlsx

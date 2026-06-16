@@ -1,0 +1,62 @@
+id: profit-loss-statement-v1
+name: Profit & Loss Statement
+type: sheet
+description: Profit and loss (income) statement with revenue, cost of sales, operating expenses, and margins across reporting periods with variance to budget
+industry:
+  - finance
+profile:
+  - cfo
+  - controller
+  - finance-analyst
+sections:
+  - title: Statement Header
+    prompt: >
+      Identify the entity, the reporting period and comparatives
+      (current period, prior period, year-to-date), the reporting
+      currency, the basis of preparation, and the source documents
+      (general ledger, trial balance) the figures are drawn from.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Revenue
+    prompt: >
+      Break down revenue by line of business, product, or channel.
+      Show gross revenue, returns and allowances, and net revenue
+      for the current period, the comparative period, and the budget,
+      with the percentage growth and the variance to budget.
+    output_format: table
+  - title: Cost of Sales and Gross Profit
+    prompt: >
+      Detail the cost of goods or services sold (materials, direct
+      labor, fulfilment, and other direct costs). Compute gross
+      profit and gross margin percentage for each period and against
+      budget.
+    output_format: table
+  - title: Operating Expenses
+    prompt: >
+      List operating expenses by function (sales and marketing,
+      research and development, general and administrative). Show each
+      category for the current period, comparative, and budget, with
+      variances and the expense as a percentage of revenue.
+    output_format: table
+  - title: Operating Income and EBITDA
+    prompt: >
+      Compute operating income (gross profit minus operating
+      expenses), then add back depreciation and amortization to show
+      EBITDA. Present operating margin and EBITDA margin for each
+      period.
+  - title: Net Income
+    prompt: >
+      Bridge from operating income to net income: net interest,
+      other income and expense, and income tax. Show pre-tax income,
+      the effective tax rate, and net income with net margin.
+  - title: Variance Commentary
+    prompt: >
+      Explain the most material variances versus the prior period and
+      versus budget. Tie each variance to a business driver (volume,
+      price, mix, cost inflation, one-time items) and note any
+      corrective action.
+export:
+  - markdown
+  - csv
+  - xlsx

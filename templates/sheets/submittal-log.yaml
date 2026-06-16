@@ -1,0 +1,47 @@
+id: submittal-log-v1
+name: Submittal Log
+type: sheet
+description: Construction submittal log tracking shop drawings and product data through review with ball-in-court, turnaround, and procurement lead time
+industry:
+  - construction
+profile:
+  - project-manager
+  - contract-administrator
+  - architect
+sections:
+  - title: Log Header
+    prompt: >
+      Identify the project, the contract, the design team and
+      contractor, the specified review turnaround, and the
+      specification sections the submittals correspond to.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Submittal Items
+    prompt: >
+      For each submittal capture: submittal number, specification
+      section, description, type (shop drawing, product data, sample,
+      mock-up), and the responsible subcontractor or supplier.
+    output_format: table
+  - title: Review Workflow
+    prompt: >
+      Record the dates submitted, received by reviewer, returned, and
+      the review action (approved, approved as noted, revise and
+      resubmit, rejected). Track the ball-in-court party and the
+      revision number.
+    output_format: table
+  - title: Turnaround and Aging
+    prompt: >
+      Compute the review turnaround for each submittal against the
+      specified duration and flag overdue reviews and resubmittals.
+      Identify the parties holding up the process.
+    output_format: table
+  - title: Procurement Impact
+    prompt: >
+      Link approved submittals to material lead time and the required
+      on-site date. Flag any submittal whose delay threatens
+      procurement and the construction schedule.
+export:
+  - markdown
+  - csv
+  - xlsx

@@ -1,0 +1,48 @@
+id: procurement-tracker-v1
+name: Procurement Tracker
+type: sheet
+description: Public procurement tracker following solicitations from requisition through award with method, timeline, bids, and compliance milestones
+industry:
+  - government
+profile:
+  - procurement-officer
+  - contract-administrator
+  - budget-officer
+sections:
+  - title: Tracker Header
+    prompt: >
+      Identify the agency, the reporting period, the currency, the
+      procurement thresholds and methods allowed (quote, RFP, IFB,
+      sole source), and the source requisition system.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Solicitations
+    prompt: >
+      For each procurement capture: requisition or solicitation
+      number, title, requesting department, estimated value, the
+      procurement method, and the funding source.
+    output_format: table
+  - title: Timeline and Milestones
+    prompt: >
+      Track the key milestones: requisition approved, solicitation
+      issued, questions due, bids due, evaluation complete, award, and
+      contract execution, with planned and actual dates. Flag stages
+      running late.
+    output_format: table
+  - title: Bids and Evaluation
+    prompt: >
+      Record the number of bids or proposals received, the responsive
+      bidders, the evaluation scores or low bid, and the recommended
+      awardee. Note protests or exceptions.
+    output_format: table
+  - title: Award and Compliance
+    prompt: >
+      Record the award amount and date, the contract number, the
+      vendor, and the compliance checks completed (insurance, debarment
+      check, approvals). Summarize cycle time and spend by method and
+      department.
+export:
+  - markdown
+  - csv
+  - xlsx

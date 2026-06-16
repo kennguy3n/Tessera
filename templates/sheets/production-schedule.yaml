@@ -1,0 +1,52 @@
+id: production-schedule-v1
+name: Production Schedule
+type: sheet
+description: Production schedule sequencing work orders across lines and shifts with capacity load, material readiness, and on-time completion tracking
+industry:
+  - manufacturing
+profile:
+  - production-planner
+  - plant-manager
+  - scheduler
+sections:
+  - title: Schedule Header
+    prompt: >
+      Identify the plant or line, the scheduling horizon, the shift
+      pattern and available hours, the planning unit (work order,
+      batch), and the source demand (orders, forecast) driving the
+      schedule.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Work Orders
+    prompt: >
+      For each work order capture: order number, product, quantity,
+      due date, priority, the routing or work centers required, and
+      the standard run time.
+    output_format: table
+  - title: Line and Shift Sequence
+    prompt: >
+      Sequence the work orders across lines and shifts with planned
+      start and finish times and changeover allowances. Show the
+      schedule as a grid of work centers against time.
+    output_format: table
+  - title: Capacity Load
+    prompt: >
+      Compute the loaded hours against available capacity per work
+      center and shift. Flag overloaded resources and idle capacity,
+      and compute the utilization.
+    output_format: table
+  - title: Material and Readiness
+    prompt: >
+      Check material and component availability against each work
+      order's requirement and flag shortages that would block the
+      start. Note tooling or labor constraints.
+  - title: Attainment and Risks
+    prompt: >
+      Reserve columns for actual start, finish, and quantity to track
+      schedule attainment and on-time completion. Summarize the risks
+      to the plan and the recovery actions.
+export:
+  - markdown
+  - csv
+  - xlsx

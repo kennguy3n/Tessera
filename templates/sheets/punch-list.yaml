@@ -1,0 +1,43 @@
+id: punch-list-v1
+name: Punch List
+type: sheet
+description: Construction punch list logging incomplete or defective work by location and trade with priority, responsibility, and closeout status
+industry:
+  - construction
+profile:
+  - project-manager
+  - site-superintendent
+  - architect
+sections:
+  - title: Punch List Header
+    prompt: >
+      Identify the project, the phase or area being closed out, the
+      inspection date and inspector, the substantial-completion target,
+      and the drawings or specifications the work is checked against.
+  - title: Punch Items
+    prompt: >
+      For each item capture: item number, location (building, floor,
+      room), trade, a clear description of the deficiency, and a
+      reference photo or drawing note.
+    output_format: table
+  - title: Responsibility and Priority
+    prompt: >
+      Assign each item to the responsible subcontractor or trade, set
+      a priority (life-safety, functional, cosmetic), and a target
+      completion date for the correction.
+    output_format: table
+  - title: Status and Verification
+    prompt: >
+      Track each item through open, in progress, ready for re-
+      inspection, and verified-closed, with the date and the person
+      who verified the correction.
+    output_format: table
+  - title: Closeout Summary
+    prompt: >
+      Summarize open versus closed items by trade and priority, the
+      items blocking substantial completion or occupancy, and the
+      projected closeout date.
+export:
+  - markdown
+  - csv
+  - xlsx
