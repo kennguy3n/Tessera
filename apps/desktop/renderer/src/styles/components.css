@@ -2883,23 +2883,58 @@
   gap: var(--spacing-sm);
 }
 
+/* Each block is a quiet card: its chrome (border / fill / toolbar) stays
+   recessed until the row is hovered or focused, so a slide full of
+   editable blocks reads as content first and editing controls second. */
+.slide-block {
+  position: relative;
+  padding: var(--spacing-xs);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.slide-block:hover,
+.slide-block:focus-within {
+  border-color: var(--color-border);
+  background: var(--color-bg-subtle);
+}
+
+.slide-block.is-dragging {
+  opacity: 0.5;
+}
+
 .slide-block-content {
   width: 100%;
-  min-height: 150px;
+  /* Grow with content so bullet lists are never clipped behind an
+     internal scrollbar (`field-sizing: content` ships in Chromium 123+,
+     and Electron 31 runs Chromium 126). `rows` remains as a graceful
+     fallback floor on engines without it; the min/max keep the box from
+     collapsing on empty blocks or running away on very long ones. */
+  field-sizing: content;
+  min-height: calc(1.6em * 3);
+  max-height: 60vh;
+  overflow-y: auto;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-bg-page);
   color: var(--color-text-body);
   font-family: var(--font-family);
   font-size: var(--font-size-base);
   line-height: 1.6;
   resize: vertical;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .slide-block-content:focus {
   outline: none;
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
 /* ── Table block: live preview of a `table` block's GFM source ──── */
@@ -2986,6 +3021,116 @@
   align-items: center;
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-xs);
+}
+
+/* Push the reorder / remove controls to the trailing edge so the type
+   picker anchors the left and the icon buttons group on the right. */
+.slide-block-toolbar button:first-of-type {
+  margin-left: auto;
+}
+
+/* The type <select> reads as a quiet inline label at rest (transparent
+   chrome) and reveals its bordered control affordance on hover / focus. Its
+   text stays full-strength `--color-text-body` at all times so the label
+   always meets WCAG AA contrast against the block background. */
+.slide-block-toolbar select {
+  height: 26px;
+  padding: 0 var(--spacing-xs);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.slide-block:hover .slide-block-toolbar select,
+.slide-block:focus-within .slide-block-toolbar select,
+.slide-block-toolbar select:hover {
+  border-color: var(--color-border);
+  background: var(--color-bg-page);
+}
+
+.slide-block-toolbar select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+
+/* Image block: give the upload / preview / alt-text controls the same
+   tidy field styling the textarea blocks get. */
+.slide-block-image {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.slide-block-image-preview {
+  max-width: 100%;
+  max-height: 320px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.slide-block-alt-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+}
+
+.slide-block-alt-input {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-body);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+.slide-block-alt-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+/* Full-width dashed "add" affordance for the Outline view, mirroring the
+   Design view's `.slide-design-add` so both editing surfaces match. */
+.slide-add-block {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  padding: var(--spacing-sm);
+  margin-top: var(--spacing-2xs);
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.slide-add-block:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+}
+
+.slide-add-block:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
 }
 
 .slide-notes {
@@ -3821,7 +3966,11 @@
    slide, not an input. Layout-specific slot rules (bigNumber / quote /
    caption) are more specific and keep their special typography. */
 .slide-thumb-canvas .slide-block-content {
+  /* Thumbnails are deterministic, scaled previews — keep fixed sizing so
+     the editor's `field-sizing: content` auto-grow doesn't reflow them. */
+  field-sizing: fixed;
   min-height: 0;
+  max-height: none;
   padding: 0;
   border: none;
   background: transparent;
@@ -3937,8 +4086,11 @@
 }
 
 /* --- title: centred, no body --- */
+/* Horizontal centring + centred type apply in both views; the *vertical*
+   centring is Design-view only (see the `.slide-canvas-design` rule
+   below) so the Outline editing surface top-aligns instead of stranding
+   the title and its editing chrome in a sea of empty space. */
 .slide-canvas[data-slide-layout="title"] {
-  justify-content: center;
   align-items: center;
   text-align: center;
 }
@@ -3950,7 +4102,6 @@
 
 /* --- sectionHeader: bold centred --- */
 .slide-canvas[data-slide-layout="sectionHeader"] {
-  justify-content: center;
   align-items: center;
   text-align: center;
 }
@@ -3991,7 +4142,6 @@
 
 /* --- bigNumber: hero stat + caption --- */
 .slide-canvas[data-slide-layout="bigNumber"] {
-  justify-content: center;
   align-items: center;
   text-align: center;
 }
@@ -4027,8 +4177,22 @@
 
 /* --- quote: centred quotation --- */
 .slide-canvas[data-slide-layout="quote"] {
-  justify-content: center;
   align-items: center;
+}
+
+/* Vertical centring for the centred layouts applies to the WYSIWYG
+   surfaces that render a true 16:9 slide — the Design view and the
+   read-only thumbnails — where centring reads correctly. The Outline
+   editing view keeps these same layouts top-aligned. */
+.slide-canvas-design[data-slide-layout="title"],
+.slide-canvas-design[data-slide-layout="sectionHeader"],
+.slide-canvas-design[data-slide-layout="bigNumber"],
+.slide-canvas-design[data-slide-layout="quote"],
+.slide-thumb-canvas[data-slide-layout="title"],
+.slide-thumb-canvas[data-slide-layout="sectionHeader"],
+.slide-thumb-canvas[data-slide-layout="bigNumber"],
+.slide-thumb-canvas[data-slide-layout="quote"] {
+  justify-content: center;
 }
 
 .slide-canvas[data-slide-layout="quote"] .slide-blocks {
@@ -4631,6 +4795,24 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-text-secondary);
+}
+
+/* Render the per-slide AI actions as legible chips rather than the bare
+   ghost `.btn-xs` text they fell back to, so the row reads as a toolbar
+   of buttons instead of a string of plain links. */
+.slide-ai-actions .btn-xs:not(.btn) {
+  height: 28px;
+  min-width: 0;
+  padding: 0 var(--spacing-sm);
+  background: var(--color-bg-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-body);
+}
+
+.slide-ai-actions .btn-xs:not(.btn):hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  border-color: var(--color-text-tertiary);
+  color: var(--color-text-body);
 }
 
 .slide-ai-image-suggestion {

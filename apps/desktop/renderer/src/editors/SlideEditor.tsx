@@ -2493,7 +2493,7 @@ export default function SlideEditor({
                 ))}
                 <button
                   type="button"
-                  className="btn-sm"
+                  className="slide-add-block"
                   onClick={() =>
                     onBlockAppend(
                       activeIndex,
