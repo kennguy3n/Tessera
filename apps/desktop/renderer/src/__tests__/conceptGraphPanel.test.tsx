@@ -362,7 +362,16 @@ describe("ConceptGraphPanel", () => {
     render(<ConceptGraphPanel memories={EVIDENCE} />);
     const svg = await screen.findByTestId("concept-graph-svg");
     const widthOf = (vb: string | null) => Number(vb?.split(/\s+/)[2]);
-    const fit = widthOf(svg.getAttribute("viewBox"));
+    // The graph loads asynchronously and re-fits the viewBox from the
+    // empty-canvas width to the node-bounding fit after the SVG first mounts,
+    // so sampling the raw initial attribute can race that commit. Snap to
+    // fit-to-view first to capture the settled baseline deterministically.
+    fireEvent.keyDown(svg, { key: "0" });
+    let fit = NaN;
+    await waitFor(() => {
+      fit = widthOf(svg.getAttribute("viewBox"));
+      expect(fit).toBeGreaterThan(0);
+    });
     // Zoom in (+) shrinks the viewBox width.
     fireEvent.keyDown(svg, { key: "+" });
     await waitFor(() =>
