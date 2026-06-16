@@ -41,7 +41,10 @@ margin up 150bps on an apparel mix shift. Each bullet carries a `[01-quarterly-s
 or `[02-key-accounts-and-deals.md]` citation. The deck is built with the slide editor's
 **layout engine** (a *Section Header* opener into *Title + Content* slides), wears the
 **Aurora** theme, and carries **speaker notes** on every slide for rehearsal in **present
-mode**. Source JSON:
+mode**. Before it goes to leadership, Marcus applies Northwind's **Brand Kit** — company
+colours, fonts, and logo — in one click; the brand re-skins every slide and **survives the
+PPTX / PDF export** so the deck looks on-brand wherever it's opened, and he saves it as a
+portable brand pack (`tessera.brandpack`) to reuse next quarter. Source JSON:
 [`outputs/qbr.json`](../artifacts/retail/outputs/qbr.json).
 
 ### The companion: a working CRM
@@ -59,6 +62,13 @@ total pipeline ARR. Opening a record brings up the **expand-record modal** with 
 timeline on the lead strategic account. It's a CRM the team can filter by health, group by
 owner, and actually work — not a static table. Source JSON:
 [`outputs/crm.json`](../artifacts/retail/outputs/crm.json).
+
+To hand it to the team, Marcus flips the base into **App mode**. The same records become a
+lightweight internal CRM app: an app-shell sidebar across Accounts and Sales Reps, a
+**record-detail page** a rep opens to read and update one account, a runtime **form** to add a
+new account or log a change without seeing the schema, and a **dashboard** of account counts
+and pipeline-ARR rollups by region. No export to a SaaS CRM and no schema migration — the same
+grounded base, now an app the team can operate.
 
 ## Why it matters
 

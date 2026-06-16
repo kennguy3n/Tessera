@@ -94,6 +94,15 @@ Opening a record expands it into a full **expand-record modal** with a **comment
 timeline** — here, the four-factor assessment discussion on INC-4471. Source JSON:
 [`outputs/incident-tracker.json`](../artifacts/healthcare/outputs/incident-tracker.json).
 
+Because a privacy office runs this process again and again, Maya doesn't stop at a grid. She
+flips the base into **App mode**: the same records become a small intake-and-triage app — an
+app-shell sidebar to move between Incidents and Owners, a **record-detail page** for working one
+incident at a time, a runtime **intake form** so a triage colleague can log a new incident
+without touching the schema, and a **dashboard** of open-incident counts and
+individuals-affected rollups. She then saves the configured tracker as a reusable
+**`tessera.basetemplate`**, so the next incident starts from her exact structure instead of a
+blank base — all still on her machine, no schema migration, the original grid untouched.
+
 ## Why it matters
 
 Maya's deliverable is a legal artifact. The value isn't "the AI wrote it" — it's that the

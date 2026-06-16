@@ -43,9 +43,16 @@ outline, inline comments, on-device AI writing assistant), a Google-Sheets-class
 (160+ formula functions, named ranges, data validation, rule-based conditional formatting,
 charts, and pivot tables), an Airtable-style multi-table base (cross-table linked records
 with lookup/rollup, six views including a fillable form, an expand-record modal with
-comments), and a Google-Slides-class deck builder (layout engine, themes, speaker notes,
+comments, and an **App mode** that turns the base into a lightweight internal app), and a
+Google-Slides-class deck builder (layout engine, themes, a **Brand Kit**, speaker notes,
 presenter mode) — all running on-device, alongside a catalog of **33 read-only,
 least-privilege connectors**.
+
+Every editor is also a template surface: each opens a built-in **template gallery**, lets you
+save the current artifact (or a selection) as a reusable template, and shares it as a portable
+file. And the AI behind every artifact is a **deliberate Skills engine** — multi-step skills
+with per-step deterministic checks, bounded auto-repair, and an output-format contract — which
+is how a small on-device model produces structured, reliable output rather than one-shot prose.
 
 Each story is framed around a real **job to be done** — not "play with an AI," but a concrete
 deliverable with a deadline, a reviewer, and a consequence for getting it wrong:

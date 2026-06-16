@@ -24,6 +24,16 @@ the machine.
 This showcase proves that claim with five personas across five markets, all four artifact
 types, and full input → prompt → output transparency.
 
+Behind those artifacts is the current editor surface: each of the four editors (document,
+slides, sheet, base) opens an in-editor **template gallery** and can save the current artifact
+as a reusable, portable template; bases add an **App mode** that turns a table into a
+lightweight internal app (app-shell nav, record detail, runtime data-entry forms, dashboard);
+slides carry **Brand Kits** with brand-faithful PPTX / PDF / HTML export; and every AI action
+runs through a deliberate multi-step **Skills engine** with per-step checks so a small
+on-device model produces structured output. The template library spans 287 English templates
+across all six artifact types (530 including the nine localized locales), ten industries, and
+country / jurisdiction variants.
+
 ## How the artifacts were generated
 
 - **Model:** **Ternary-Bonsai 4B** — Tessera's own design text model, the GGUF `Q1_0_g128`

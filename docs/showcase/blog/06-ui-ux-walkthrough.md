@@ -21,7 +21,7 @@ is one click.
 
 ![Create flow, intent step](../assets/screenshots/flow-02-create-intent.png)
 
-Create doesn't open onto 170+ templates. It opens onto a single question — *what do you need?*
+Create doesn't open onto all 287 templates at once. It opens onto a single question — *what do you need?*
 — with four large choices: write a document, make a presentation, track data in a
 spreadsheet, or build a database. This is intent-based progressive disclosure: the user
 declares the *shape* of the outcome before they're asked to choose among specifics.
@@ -32,10 +32,13 @@ declares the *shape* of the outcome before they're asked to choose among specifi
 
 Having picked an intent, the user sees a curated handful of templates for that artifact type —
 not the full library. PRD, Proposal, SOP, Report, Meeting Notes for documents; QBR, Strategy,
-Pitch for slides; and so on. A "Show all templates" affordance reveals the full 173 for power
-users who know exactly what they want. New users get a confident shortlist; experts keep the
-firehose. Each template is the same structured object the personas used — a set of sections,
-each with its own grounded prompt.
+Pitch for slides; and so on. A "Show all templates" affordance reveals the full catalog —
+**287 English templates** (530 including the nine localized locales) — for power users who know
+exactly what they want, with **industry, language, and country / jurisdiction filters** to
+narrow it fast. The whole gallery is **derived from the template registry**: dropping a new
+template YAML into the library surfaces a filterable card automatically, with no UI change. New
+users get a confident shortlist; experts keep the firehose. Each template is the same
+structured object the personas used — a set of sections, each with its own grounded prompt.
 
 ## Step 3 — choose sources
 
@@ -67,23 +70,34 @@ personas you've now seen all four:
   **reading-time** estimate, inline tables, resolvable **inline comments** (author,
   timestamp, resolved state, side panel), and an on-device **AI writing assistant**
   (rewrite / shorten / expand / change-tone / translate / continue, plus Ask-AI with a
-  word-diff preview). The outline is what makes a 12-section compliance report navigable.
+  word-diff preview). The outline is what makes a 12-section compliance report navigable. An
+  in-editor **template gallery** lets the author start from a structured starter and save the
+  finished structure back as a reusable template — a portable `tessera.doctemplate` file the
+  team can share.
 - **Sheet** (David's obligation tracker, Priya's projection) — *Google-Sheets level.* A
   spreadsheet grid with a real formula engine (**160+ functions**), **named ranges**, **data
   validation** (dropdown / checkbox), rule-based **conditional formatting**, **range-bound
   charts** (bar / line / pie), **pivot tables**, a virtual-scrolling grid that stays smooth
-  at 10K+ rows, CSV / XLSX import-export, and an AI assistant for NL→formula / explain / fix.
+  at 10K+ rows, **freeze panes**, **chart-from-selection**, locale-aware number formats,
+  CSV / XLSX import-export, an in-editor **template gallery** with save-as-template (portable
+  `tessera.sheettemplate`), and an AI assistant for NL→formula / explain / fix.
 - **Base** (Maya's incident tracker, Marcus's CRM) — *Airtable level.* A multi-table database
   with **cross-table linked records** carrying **lookup** and **rollup** fields, typed fields
   (text, date, number, checkbox, rating, **select dropdowns** with real option sets, formula),
   an **expand-record modal** with **comments + activity**, grid **group-by / row-height /
-  frozen-columns**, and Grid / Kanban / Calendar / Timeline / Gallery / Form views — plus
-  on-device AI for schema-gen / NL→formula / column-fill.
+  frozen-columns**, six views (Grid / Kanban / Calendar / Timeline / Gallery / Form), a
+  **template gallery** with save-as-template (portable `tessera.basetemplate`), and a
+  builder⇄**App mode** (covered below) — plus on-device AI for schema-gen / NL→formula /
+  column-fill.
 - **Slides** (Sofia's board deck, Marcus's QBR) — *Google-Slides / Gamma level.* A deck editor
-  with a **layout engine**, **deck templates** and insert-card presets, richer **themes** with
-  a visual picker, a slide navigator, per-slide content blocks, a WYSIWYG **Design** view, a
-  one-click **Restyle**, **speaker notes**, a **presenter mode** (a fullscreen second window
-  with notes), AI deck generation, and a raw Marp markdown mode.
+  with a smart **layout engine** (timeline / process / comparison / gallery / metric), a **deck
+  template gallery** + insert-card presets with save-as-template (portable
+  `tessera.slidetemplate`), richer **themes** with a visual picker, a **Brand Kit** that
+  re-skins the deck (colours / fonts / logo / background) and travels as a portable brand pack
+  (`tessera.brandpack`) — even **imported from an existing `.pptx`** — with the brand surviving
+  **PPTX / PDF / HTML** export, a slide navigator, per-slide content blocks, a WYSIWYG
+  **Design** view, a one-click **Restyle**, **speaker notes**, a **presenter mode** (a
+  fullscreen second window with notes), AI deck generation, and a raw Marp markdown mode.
 
 Every editor exports to the formats that matter for that artifact — Markdown / HTML / PDF /
 DOCX for documents, CSV / XLSX for sheets and bases, PPTX for slides. Documents and bases
@@ -91,6 +105,29 @@ also offer **Export Evidence Pack** (visible in the editor header above): a sing
 bundles the artifact, the source files it cited, and a **post-quantum provenance signature**
 (ML-DSA-65 / FIPS 204) so a recipient — a regulator, an auditor, a credit committee — can
 verify the package wasn't altered after it left the author's machine.
+
+## Base App mode — from table to internal app
+
+A base isn't only a grid to maintain — it's often the data behind a small internal tool. Every
+base now carries a builder⇄**App** toggle. Flip to **App** and the same records become a
+lightweight application: an **app-shell navigation** derived from the schema, a **record-detail
+page** for reading and editing one record at a time, runtime **data-entry forms** that create
+records (the fillable Form view, now a first-class entry surface), and a **summary dashboard**
+of counts and rollups over existing fields. It's renderer-only and additive — legacy bases open
+unchanged with no schema-version bump — so Maya's privacy-incident tracker becomes an
+intake-and-triage app, and Marcus's CRM becomes something the team can operate, not just edit.
+
+## The AI underneath — a deliberate Skills engine
+
+The generation in every persona story isn't a single prompt-and-pray call. Tessera runs AI as a
+**deliberate, multi-step Skills engine** built for small on-device models: each skill is an
+ordered sequence of steps, and every step carries a **deterministic output check** with
+**bounded auto-repair** (a failed check re-prompts a fixed number of times rather than shipping
+a bad section), **per-step model sampling**, and a **per-step output-format contract**. That is
+how a 1.7B–8B model produces a structured 12-section report or a typed base schema reliably
+instead of drifting. Skills are **user-authorable** — you can write your own multi-step skill
+with its own checks and formats — and **portable**, exported and imported as `tessera.skill`
+files so a team can standardize on the same deliberate workflow.
 
 ## The workspace — work two artifacts at once
 

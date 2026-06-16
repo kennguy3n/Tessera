@@ -1,22 +1,21 @@
 # Competitive Scorecard
 
-How Tessera stacks up after the parallel competitive-upgrade release
-**and the subsequent knowledge-substrate integration** (see
-[ADR-0011](adr/0011-knowledge-substrate-integration.md)),
-scored on the six dimensions from the prior critique. Tessera is a
-**local-first desktop app** (Electron + Rust core, single-file encrypted
-SQLite) with **KChat (Mattermost v4)** as its collaboration layer — it is
-deliberately *not* a SaaS, so it is compared to Notion, Coda, and Google
-Workspace on capability and engineering quality, not on cloud-hosted
-multi-tenant operations.
+How Tessera stacks up on the six dimensions from the original product
+critique. Tessera is a **local-first desktop app** (Electron + Rust core,
+single-file encrypted SQLite) with **KChat (Mattermost v4)** as its
+collaboration layer — it is deliberately *not* a SaaS, so it is compared to
+Notion, Coda, and Google Workspace on capability and engineering quality,
+not on cloud-hosted multi-tenant operations.
 
-Scores are 1–10. "Before" reflects the prior critique (6–8 across the
-board); "After" reflects this release.
+Scores are 1–10. "Baseline" reflects the original critique (6–8 across the
+board); "Tessera" reflects the product as it ships today, including the
+additive on-device knowledge substrate (encrypted sibling DBs; see
+[ADR-0011](adr/0011-knowledge-substrate-integration.md)).
 
-| Dimension | Before | After | What moved it |
+| Dimension | Baseline | Tessera | What moved it |
 |---|:---:|:---:|---|
 | Architecture | 7 | 9 | Versioned migration framework + typed errors + auto-sized read pool; **knowledge substrate as an additive native layer (encrypted sibling DBs)** |
-| Features | 7 | 9 | **Editor parity wave: Document callout/toggle/TOC blocks + outline/reading-time + AI writing assistant; Sheet 160+ formula functions + named ranges + data validation + conditional formatting + range-bound charts + pivot tables; Base multi-table linked records + lookup/rollup + expand-record modal + group-by + form view; Slide layout engine + deck templates + themes + speaker notes + presenter mode**; inline comments, task deps + Gantt, multi-step automations; observation extraction, decay-based memory, concept graph, **33 read-only connectors**, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) ships in the renderer |
+| Features | 7 | 9 | **Editor parity wave: Document callout/toggle/TOC blocks + outline/reading-time + AI writing assistant; Sheet 160+ formula functions + named ranges + data validation + conditional formatting + range-bound charts + pivot tables; Base multi-table linked records + lookup/rollup + expand-record modal + group-by + form view + App mode; Slide layout engine + deck templates + themes + speaker notes + presenter mode + Brand Kit; in-editor template galleries + save-as-template + portable template files across all four editors; a deliberate multi-step Skills engine; registry-derived Create + 287-template (530 with locales) library**; inline comments, task deps + Gantt, multi-step automations; observation extraction, decay-based memory, concept graph, **33 read-only connectors**, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) ships in the renderer |
 | Performance | 6 | 9 | Incremental IVF, 100K/500K benches, virtual scrolling, read-pool pre-warm, 3s cold-start CI gate |
 | Cost / install size | 7 | 8 | Symbol stripping, locale pruning, delta updates, resumable model downloads, sharper CI cache |
 | Security | 8 | 9 | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates; **XChaCha20-Poly1305 DEK wrapping, optional ML-KEM-768 KEM, ML-DSA-65 export signing** |
@@ -62,15 +61,41 @@ of Notion/Coda; parity-or-better on engineering rigor.
     tables**, plus AI NL→formula/explain/fix (`SheetAiPanel.tsx`).
   - **Base → Airtable level.** Multi-table bases with **cross-table
     linked records** carrying **lookup/rollup** fields, an
-    **expand-record modal** with comments + activity, and grid
-    group-by / row-height / frozen-columns; on-device AI for
-    schema-gen / NL→formula / column-fill (`baseEditorTypes.ts`,
-    base views incl. Gallery/Form).
-  - **Slide → Google-Slides/Gamma level.** A **layout engine**, **deck
+    **expand-record modal** with comments + activity, grid
+    group-by / row-height / frozen-columns, and **six views** (Grid /
+    Kanban / Calendar / Timeline / Gallery / Form); on-device AI for
+    schema-gen / NL→formula / column-fill (`baseEditorTypes.ts`). A
+    builder⇄**App mode** turns any base into a lightweight internal app —
+    app-shell nav, record-detail page, runtime data-entry forms, and a
+    summary dashboard over existing fields.
+  - **Slide → Google-Slides/Gamma level.** A smart **layout engine**
+    (timeline / process / comparison / gallery / metric), **deck
     templates** and insert-card presets (`slideTemplates.ts`), richer
-    themes with a visual picker, **speaker notes**, a **presenter mode**
+    themes with a visual picker, a **Brand Kit** (colours / fonts / logo /
+    background) with portable brand packs (`tessera.brandpack`),
+    **brand-faithful PPTX / PDF / HTML export**, **brand import from an
+    existing `.pptx`**, **speaker notes**, a **presenter mode**
     (fullscreen second window), and AI deck generation
     (`SlideAiPanel.tsx`).
+- **In-editor template galleries.** Every editor — Document, Sheet, Slide,
+  Base — opens a built-in template gallery: insert a starter, save the
+  current artifact (or a selection) as a reusable template, and import /
+  export portable template files (`tessera.doctemplate`,
+  `tessera.sheettemplate`, `tessera.slidetemplate`, `tessera.basetemplate`),
+  each guarded by a hardened envelope-version check that mints a fresh id on
+  import.
+- **Deliberate Skills engine.** AI actions run as ordered multi-step skills
+  with per-step deterministic output checks and bounded auto-repair, per-step
+  sampling, and a per-step output-format contract, so a small on-device model
+  produces structured, reliable output. Skills are wired into Slides, Sheets,
+  and Base, are user-authorable, and export / import as portable
+  `tessera.skill` files.
+- **Registry-derived Create + enriched library.** Create cards are derived
+  from the template registry, so dropping a template YAML surfaces a
+  filterable card (industry / language / country filters) with no
+  `CreatePage` edit. The library ships **287 English templates** across six
+  artifact types (**530 including nine non-English locales**), pre-tagged
+  across 10 industries with country / jurisdiction variants.
 - **Connectors.** A catalog of **33 read-only, least-privilege
   providers** (`connectorDescriptors.ts`) spanning storage (Drive,
   OneDrive, Dropbox, Box, SharePoint), docs/wikis (Notion, Confluence,

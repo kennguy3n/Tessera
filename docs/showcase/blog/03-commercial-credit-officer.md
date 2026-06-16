@@ -62,7 +62,10 @@ formula column (`=(B3-B2)/B2`), an **AVERAGE summary row** over every numeric se
 named **`Revenue`** range, a **frozen header**, and two **range-bound charts** — a *Revenue
 trajectory* line and an *EBITDA by period* bar — both bound to the model's own values and
 excluding the summary row. It's a grid the committee can edit and re-run assumptions
-against, not a static paragraph. Source JSON:
+against, not a static paragraph. Priya saves the finished model from the sheet editor's
+in-editor **template gallery** as a reusable `tessera.sheettemplate`, so the next borrower's
+projection starts from the same DSCR, debt-service, and charting structure rather than a blank
+grid. Source JSON:
 [`outputs/financial-projection.json`](../artifacts/finance/outputs/financial-projection.json).
 
 ## Why it matters
