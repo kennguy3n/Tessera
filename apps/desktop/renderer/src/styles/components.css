@@ -4179,13 +4179,18 @@
   align-items: center;
 }
 
-/* Vertical centring for the centred layouts is reserved for the WYSIWYG
-   Design view, which renders a true 16:9 slide where centring reads
-   correctly. In the Outline view these same layouts stay top-aligned. */
+/* Vertical centring for the centred layouts applies to the WYSIWYG
+   surfaces that render a true 16:9 slide — the Design view and the
+   read-only thumbnails — where centring reads correctly. The Outline
+   editing view keeps these same layouts top-aligned. */
 .slide-canvas-design[data-slide-layout="title"],
 .slide-canvas-design[data-slide-layout="sectionHeader"],
 .slide-canvas-design[data-slide-layout="bigNumber"],
-.slide-canvas-design[data-slide-layout="quote"] {
+.slide-canvas-design[data-slide-layout="quote"],
+.slide-thumb-canvas[data-slide-layout="title"],
+.slide-thumb-canvas[data-slide-layout="sectionHeader"],
+.slide-thumb-canvas[data-slide-layout="bigNumber"],
+.slide-thumb-canvas[data-slide-layout="quote"] {
   justify-content: center;
 }
 
