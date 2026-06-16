@@ -19,12 +19,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { TemplateInfo } from "../types/ipc";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual<typeof import("react-router-dom")>(
-    "react-router-dom",
-  );
+  const actual =
+    await vi.importActual<typeof import("react-router-dom")>(
+      "react-router-dom",
+    );
   return {
     ...actual,
     useNavigate: () => navigateMock,
@@ -42,26 +44,46 @@ vi.mock("../hooks/useTemplates", () => ({
         name: "Doc One",
         description: "first",
         artifactType: "document",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
+        industry: [],
+        locale: "en",
+        category: "documents",
       },
       {
         id: "doc-2",
         name: "Doc Two",
         description: "second",
         artifactType: "document",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
+        industry: [],
+        locale: "en",
+        category: "documents",
       },
       {
         id: "doc-3",
         name: "Doc Three",
         description: "third",
         artifactType: "document",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
+        industry: [],
+        locale: "en",
+        category: "documents",
       },
       {
         id: "deck-1",
         name: "Deck One",
         description: "fourth",
         artifactType: "slides",
+        sectionCount: 1,
+        exportFormats: ["pdf"],
+        industry: [],
+        locale: "en",
+        category: "slides",
       },
-    ],
+    ] satisfies TemplateInfo[],
     loading: false,
     refresh: vi.fn(),
   }),
