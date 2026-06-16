@@ -30,7 +30,13 @@ import {
   parseBaseContent,
   sanitizeBaseField,
 } from "./baseEditorHelpers";
+import {
+  isMeaningfulAppConfig,
+  reconcileAppConfig,
+  sanitizeAppConfig,
+} from "./baseviews/appmode/appConfig";
 import type {
+  BaseAppConfig,
   BaseContent,
   BaseDocument,
   BaseField,
@@ -74,8 +80,7 @@ function coerceTable(raw: unknown, fallbackName: string): BaseTable | null {
   // Trim the persisted name so a stored "  Tasks  " loads as "Tasks",
   // matching what `renameTable` writes — table names are always trimmed
   // on the way in, so the in-memory model never carries stray padding.
-  const trimmedName =
-    typeof obj.name === "string" ? obj.name.trim() : "";
+  const trimmedName = typeof obj.name === "string" ? obj.name.trim() : "";
   const name = trimmedName || fallbackName;
   return { id, name, fields, records: ensureRecordIds(rawRecords) };
 }
@@ -108,9 +113,13 @@ export function singleTableDocument(
  *      table, preserving every legacy default (Name+Status seed, etc.).
  */
 export function parseBaseDocument(content: string): BaseDocument {
+  let rawApp: unknown;
   if (content) {
     try {
-      const parsed = JSON.parse(content) as Partial<BaseDocument>;
+      const parsed = JSON.parse(content) as Partial<BaseDocument> & {
+        app?: unknown;
+      };
+      rawApp = parsed?.app;
       if (parsed && Array.isArray(parsed.tables)) {
         const tables: BaseTable[] = [];
         parsed.tables.forEach((t, i) => {
@@ -123,7 +132,7 @@ export function parseBaseDocument(content: string): BaseDocument {
             tables.some((t) => t.id === parsed.activeTableId)
               ? parsed.activeTableId
               : tables[0].id;
-          return { tables, activeTableId };
+          return withAppConfig({ tables, activeTableId }, rawApp);
         }
       }
     } catch {
@@ -132,8 +141,25 @@ export function parseBaseDocument(content: string): BaseDocument {
     }
   }
   // Legacy / empty / non-JSON path: reuse the existing parser verbatim
-  // so all of its normalisation + defaults are preserved.
-  return singleTableDocument(parseBaseContent(content));
+  // so all of its normalisation + defaults are preserved. A legacy body
+  // may still carry an additive `app` sibling alongside `fields`/`records`
+  // (see `serializeBaseDocument`), captured in `rawApp` above.
+  return withAppConfig(singleTableDocument(parseBaseContent(content)), rawApp);
+}
+
+/**
+ * Attach a sanitised + reconciled app config to a freshly-parsed
+ * document, but only when it carries real content. Anything else leaves
+ * `doc.app` undefined so the base opens in builder mode unchanged. The
+ * invariant after parse is therefore: `doc.app` is present IFF it is
+ * meaningful.
+ */
+function withAppConfig(doc: BaseDocument, rawApp: unknown): BaseDocument {
+  const sanitized = sanitizeAppConfig(rawApp);
+  if (!sanitized) return doc;
+  const reconciled = reconcileAppConfig(sanitized, doc);
+  if (!isMeaningfulAppConfig(reconciled)) return doc;
+  return { ...doc, app: reconciled };
 }
 
 /**
@@ -146,12 +172,33 @@ export function parseBaseDocument(content: string): BaseDocument {
  * full `{ tables, activeTableId }` shape.
  */
 export function serializeBaseDocument(doc: BaseDocument): string {
-  if (doc.tables.length === 1) {
+  const app = isMeaningfulAppConfig(doc.app) ? doc.app : undefined;
+  // A single-table base with no meaningful app config still round-trips
+  // byte-for-byte as the legacy `{ fields, records }` body — the whole
+  // point of the backward-compat contract above.
+  if (doc.tables.length === 1 && !app) {
     const t = doc.tables[0];
     const legacy: BaseContent = { fields: t.fields, records: t.records };
     return JSON.stringify(legacy);
   }
-  return JSON.stringify(doc);
+  // Once app config exists we always emit the full `{ tables, … }` shape
+  // even for a single table, so the table ids that forms/widgets
+  // reference are persisted and stay stable across reloads (a
+  // single-table legacy body drops its id, which would orphan those
+  // references). `app` is appended additively; consumers that only read
+  // `fields`/`records` (multi-table is already non-legacy for them) are
+  // unaffected, and unknown keys are ignored on the Rust side.
+  if (app) {
+    return JSON.stringify({
+      tables: doc.tables,
+      activeTableId: doc.activeTableId,
+      app,
+    });
+  }
+  return JSON.stringify({
+    tables: doc.tables,
+    activeTableId: doc.activeTableId,
+  });
 }
 
 /** Look up the active table; falls back to the first table if the
@@ -159,9 +206,7 @@ export function serializeBaseDocument(doc: BaseDocument): string {
  *  consistent, but in-memory mutations route through the helpers below
  *  which also keep it consistent). */
 export function getActiveTable(doc: BaseDocument): BaseTable {
-  return (
-    doc.tables.find((t) => t.id === doc.activeTableId) ?? doc.tables[0]
-  );
+  return doc.tables.find((t) => t.id === doc.activeTableId) ?? doc.tables[0];
 }
 
 /**
@@ -212,7 +257,11 @@ export function addTable(doc: BaseDocument, name?: string): BaseDocument {
     fields: [{ name: "Name", type: "text" }],
     records: [],
   };
-  return { tables: [...doc.tables, table], activeTableId: id };
+  // Spread `doc` so the optional `app` config (forms, widgets, app name,
+  // default mode) survives the add. Appending a table can never orphan an
+  // existing form/widget reference — every prior table still exists — so
+  // no reconciliation is needed here, only preservation.
+  return { ...doc, tables: [...doc.tables, table], activeTableId: id };
 }
 
 /** Rename a table. No-op (same reference) when the name is unchanged,
@@ -269,7 +318,37 @@ export function removeTable(doc: BaseDocument, tableId: string): BaseDocument {
   const safeActive = scrubbed.some((t) => t.id === activeTableId)
     ? activeTableId
     : scrubbed[0].id;
-  return { tables: scrubbed, activeTableId: safeActive };
+  const stripped: BaseDocument = {
+    ...doc,
+    tables: scrubbed,
+    activeTableId: safeActive,
+  };
+  // Deleting a table can orphan an app form/widget that referenced it.
+  // Reconcile the (preserved) app config against the surviving tables
+  // here so the helper is self-contained and EVERY caller is safe — not
+  // just one that remembers to compensate. When the reconcile leaves
+  // nothing meaningful, drop the block so the legacy byte-compatibility
+  // invariant (no `app` key ⇒ serialize as `{ fields, records }`) holds.
+  if (!doc.app) return stripped;
+  // A form/widget that targeted the *removed* table must be dropped, not
+  // silently healed onto a survivor. `resolveTableId`'s single-table
+  // healing exists for load-time id re-minting (a legacy single-table base
+  // regenerates its table id each load), not for genuine deletion — so
+  // prune references to the deleted table here, before reconciling what
+  // remains against the surviving tables.
+  const prunedApp: BaseAppConfig = {
+    ...doc.app,
+    forms: doc.app.forms.filter((f) => f.tableId !== tableId),
+    dashboard: {
+      ...doc.app.dashboard,
+      widgets: doc.app.dashboard.widgets.filter((w) => w.tableId !== tableId),
+    },
+  };
+  const reconciled = reconcileAppConfig(prunedApp, stripped);
+  return {
+    ...stripped,
+    app: isMeaningfulAppConfig(reconciled) ? reconciled : undefined,
+  };
 }
 
 /** Switch the active table. No-op when already active or unknown. */
@@ -331,7 +410,10 @@ function scrubLinksToTable(
 }
 
 function stripLinkedTableId(field: BaseField): BaseField {
-  if (field.linkedTableId === undefined && field.linkedDisplayField === undefined)
+  if (
+    field.linkedTableId === undefined &&
+    field.linkedDisplayField === undefined
+  )
     return field;
   const next = { ...field };
   delete next.linkedTableId;

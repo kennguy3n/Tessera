@@ -1,4 +1,10 @@
-import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useMemo,
+} from "react";
 import KanbanView from "./baseviews/KanbanView";
 import CalendarView from "./baseviews/CalendarView";
 import TimelineView from "./baseviews/TimelineView";
@@ -79,6 +85,8 @@ import {
   parseJsonToBase,
 } from "./baseImportExport";
 import type {
+  BaseAppConfig,
+  BaseAppMode,
   BaseField,
   BaseContent,
   BaseDocument,
@@ -87,13 +95,25 @@ import type {
   FieldType,
   RollupAggregation,
 } from "./baseEditorTypes";
+import { RECORD_CREATED_KEY, RECORD_MODIFIED_KEY } from "./baseEditorTypes";
+import AppShell from "./baseviews/appmode/AppShell";
 import {
-  RECORD_CREATED_KEY,
-  RECORD_MODIFIED_KEY,
-} from "./baseEditorTypes";
+  emptyAppConfig,
+  initialAppMode,
+  isMeaningfulAppConfig,
+  reconcileAppConfig,
+  removeFieldFromAppConfig,
+  renameFieldInAppConfig,
+} from "./baseviews/appmode/appConfig";
 import { useVirtualRows } from "../hooks/useVirtualRows";
+import { BaseTemplateGallery } from "./components/BaseTemplateGallery";
 
-export type { FieldType, BaseField, BaseContent, BaseRecord } from "./baseEditorTypes";
+export type {
+  FieldType,
+  BaseField,
+  BaseContent,
+  BaseRecord,
+} from "./baseEditorTypes";
 export type { BaseViewConfig, BaseViewKind } from "./baseviews/types";
 
 /**
@@ -169,9 +189,7 @@ export default function BaseEditor({
   // header checkbox toggles all *currently visible* (post-filter)
   // rows so a filter narrows what "select all" means without the
   // user re-clicking each one.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   // Field-management dialog state. Drives the "Manage Fields" modal
   // where the user can reorder rows (move-up / move-down) and rename
   // them in-place. Kept here rather than in a sibling component so a
@@ -192,9 +210,7 @@ export default function BaseEditor({
   // trigger from a hidden `<input type="file">` ref because tests
   // need to inject the file contents directly; instead a small modal
   // accepts a paste of the file body, with file-pick on top.
-  const [importDialog, setImportDialog] = useState<
-    "csv" | "json" | null
-  >(null);
+  const [importDialog, setImportDialog] = useState<"csv" | "json" | null>(null);
   // Keyed by record `id` AND field `name` (NOT by `BaseField` ref or
   // array index). The record id guards against shifting indices when
   // another record is deleted while the modal is open. The field
@@ -203,15 +219,14 @@ export default function BaseEditor({
   // open — storing a reference would otherwise let the modal render
   // against a field that no longer exists in `data.fields`, allowing
   // an edit to write back a key with no corresponding column.
-  const [expandedCell, setExpandedCell] = useState<
-    { recordId: string; fieldName: string } | null
-  >(null);
+  const [expandedCell, setExpandedCell] = useState<{
+    recordId: string;
+    fieldName: string;
+  } | null>(null);
   // Stable id of the record shown in the full expand-record modal (all
   // fields + activity/comments). Tracked by id (not index) so other
   // rows being added / removed / reordered never drift the target.
-  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(
-    null,
-  );
+  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
   // Active view kind plus per-view config (which field drives kanban
   // columns, which date drives the calendar, etc.). Both are
   // renderer concerns: they're NOT serialized into the artifact
@@ -222,6 +237,26 @@ export default function BaseEditor({
   // call, no ID drift.
   const [viewConfig, setViewConfig] = useState<BaseViewConfig>(() =>
     defaultViewConfig(data.fields),
+  );
+  // Builder ⇄ app "usage" mode. Like `view`/`viewConfig` the CURRENT
+  // mode is a renderer concern and is NOT serialized — only the app
+  // config's `defaultMode` persists (so a legacy base always opens in
+  // builder mode). A base with `defaultMode: "app"` opens straight into
+  // the app shell.
+  const [appMode, setAppMode] = useState<BaseAppMode>(() =>
+    initialAppMode(doc),
+  );
+  // Base template gallery (pick a starter, save/import/export). Purely a
+  // renderer concern — open state is never serialized.
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  // The live app config, always reconciled against the current document
+  // so forms/widgets never reference a table/field that has since been
+  // renamed or removed. An app-less (legacy) base yields an empty config
+  // that — while it stays empty — is never serialized back (see
+  // `serializeBaseDocument` / `isMeaningfulAppConfig`).
+  const appConfig = useMemo<BaseAppConfig>(
+    () => reconcileAppConfig(doc.app ?? emptyAppConfig(), doc),
+    [doc],
   );
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
@@ -280,6 +315,21 @@ export default function BaseEditor({
     [debouncedSave],
   );
 
+  // Commit an app-config change (forms / widgets / app name / default
+  // mode). Stored on the document so it serializes additively; an empty
+  // config is dropped on serialize, preserving byte-compatibility for
+  // legacy bases that merely toggled into app mode and back.
+  const updateAppConfig = useCallback(
+    (next: BaseAppConfig) => {
+      const reconciled = reconcileAppConfig(next, docRef.current);
+      updateDoc({
+        ...docRef.current,
+        app: isMeaningfulAppConfig(reconciled) ? reconciled : undefined,
+      });
+    },
+    [updateDoc],
+  );
+
   // Commit a change to the ACTIVE table's `{ fields, records }`. Folds
   // the new content into the document (preserving every other table)
   // and persists. Keeping this signature identical to the old
@@ -316,6 +366,25 @@ export default function BaseEditor({
     [updateDoc, resetViewStateForTable],
   );
 
+  // Replace the entire base with a template (built-in starter or saved
+  // user template). The incoming doc is already re-normalised by the
+  // gallery, so here we only swap it in and reset every renderer-only
+  // concern (view kind / per-view config / selection / app mode) to the
+  // new document's defaults — the old pointers reference a schema that no
+  // longer exists. `initialAppMode` honours the template's `defaultMode`
+  // (unset on the built-ins, so a template opens in builder mode).
+  const handleApplyTemplate = useCallback(
+    (nextDoc: BaseDocument) => {
+      updateDoc(nextDoc);
+      resetViewStateForTable(getActiveTable(nextDoc));
+      setExpandedRecordId(null);
+      setView("grid");
+      setAppMode(initialAppMode(nextDoc));
+      setTemplatesOpen(false);
+    },
+    [updateDoc, resetViewStateForTable],
+  );
+
   const handleAddTable = useCallback(() => {
     const nextDoc = addTable(docRef.current);
     updateDoc(nextDoc);
@@ -336,6 +405,10 @@ export default function BaseEditor({
       // no-ops on the last one. Guard here too so the UI never offers a
       // delete that would empty the base.
       if (prev.tables.length <= 1) return;
+      // `removeTable` is self-contained: it preserves the app config and
+      // reconciles it against the surviving tables (dropping forms/widgets
+      // that pointed at the deleted table), so no compensation is needed
+      // here.
       const nextDoc = removeTable(prev, tableId);
       updateDoc(nextDoc);
       // Removing the active table moves activeId; always re-sync view
@@ -569,6 +642,22 @@ export default function BaseEditor({
         }),
       };
       updateData(updated);
+      // App-mode config. Mirror `renameField`: a form's chosen field
+      // subset and a widget's group/value references are keyed by field
+      // name on this table, so drop the now-gone field eagerly instead
+      // of leaving a dangling name until the next reconcile-on-load.
+      // `updateData` already advanced `docRef.current`, so this runs
+      // against the freshly-pruned schema.
+      const prevApp = docRef.current.app;
+      if (prevApp) {
+        const pruned = removeFieldFromAppConfig(
+          prevApp,
+          docRef.current,
+          docRef.current.activeTableId,
+          fieldName,
+        );
+        if (pruned !== prevApp) updateAppConfig(pruned);
+      }
       // Drop any view-state pointers (sort, filter, kanbanGroup,
       // calendarDate, …) that referenced the deleted field. Routes
       // through the same shared cleanup the import flows use so
@@ -577,7 +666,7 @@ export default function BaseEditor({
       // wired to `removeField`) inherits the same fix for free.
       dropStaleViewState(nextFields);
     },
-    [data, updateData, dropStaleViewState],
+    [data, updateData, updateAppConfig, dropStaleViewState],
   );
 
   // Move a field one slot up or down in `data.fields`. The grid /
@@ -662,6 +751,23 @@ export default function BaseEditor({
         return { ...rest, [trimmed]: carried } as BaseRecord;
       });
       updateData({ fields: nextFields, records: nextRecords });
+      // (3b) App-mode config. A form's chosen field subset and a
+      // widget's group/value references are keyed by field name on this
+      // table; remap them so the rename doesn't silently drop a user's
+      // selection (reconcile-on-load would otherwise prune the stale
+      // name). `updateData` already advanced `docRef.current`, so this
+      // reconciles against the freshly-renamed schema.
+      const prevApp = docRef.current.app;
+      if (prevApp) {
+        const remapped = renameFieldInAppConfig(
+          prevApp,
+          docRef.current,
+          docRef.current.activeTableId,
+          oldName,
+          trimmed,
+        );
+        if (remapped !== prevApp) updateAppConfig(remapped);
+      }
       // (4) Sort + filter state. The sort is now an ordered list, so
       // rewrite the renamed field across every level it appears in.
       setSorts((prev) => renameSortField(prev, oldName, trimmed));
@@ -700,7 +806,7 @@ export default function BaseEditor({
       });
       return { ok: true };
     },
-    [data, updateData],
+    [data, updateData, updateAppConfig],
   );
 
   const addRecord = useCallback(() => {
@@ -915,9 +1021,7 @@ export default function BaseEditor({
           // `touchModified` refreshes `__modified` (and backfills a
           // missing `__created`) so the `modified_time` field type
           // reflects the edit.
-          i === recordIndex
-            ? touchModified({ ...r, [fieldName]: value })
-            : r,
+          i === recordIndex ? touchModified({ ...r, [fieldName]: value }) : r,
         ),
       };
       updateData(updated);
@@ -981,10 +1085,7 @@ export default function BaseEditor({
     // matching the cell render path, which is the visual the user
     // is filtering against.
     const displayCache = new Map<string, Map<string, string>>();
-    const getDisplay = (
-      field: BaseField,
-      record: BaseRecord,
-    ): string => {
+    const getDisplay = (field: BaseField, record: BaseRecord): string => {
       let perRecord = displayCache.get(record.id);
       if (perRecord === undefined) {
         perRecord = new Map<string, string>();
@@ -1069,7 +1170,11 @@ export default function BaseEditor({
       if (def === undefined) return "";
       if (def.type === "created_time" || def.type === "modified_time") {
         const iso =
-          r[def.type === "created_time" ? RECORD_CREATED_KEY : RECORD_MODIFIED_KEY];
+          r[
+            def.type === "created_time"
+              ? RECORD_CREATED_KEY
+              : RECORD_MODIFIED_KEY
+          ];
         return typeof iso === "string" ? iso : "";
       }
       if (isComputedFieldType(def.type)) {
@@ -1156,9 +1261,7 @@ export default function BaseEditor({
   const removeSelectedRecords = useCallback(() => {
     if (visibleSelectedIds.size === 0) return;
     const toRemove = visibleSelectedIds;
-    const linkedFields = data.fields.filter(
-      (f) => f.type === "linked_record",
-    );
+    const linkedFields = data.fields.filter((f) => f.type === "linked_record");
     const survivors = data.records.filter((r) => !toRemove.has(r.id));
     const cleaned =
       linkedFields.length > 0
@@ -1265,7 +1368,11 @@ export default function BaseEditor({
       return plan;
     }
     if (rowTopPad > 0) {
-      plan.push({ type: "spacer", key: "base-virtual-top-pad", height: rowTopPad });
+      plan.push({
+        type: "spacer",
+        key: "base-virtual-top-pad",
+        height: rowTopPad,
+      });
     }
     for (let i = rowWindowStart; i <= rowWindowEnd; i++) {
       plan.push({ type: "row", ri: i });
@@ -1304,7 +1411,9 @@ export default function BaseEditor({
   // is the index into `frozenOffsets` (0 = select, 1 = row-num,
   // 2.. = frozen data columns). Returns `undefined` when the column
   // isn't frozen, leaving the cell with its normal flow layout.
-  const frozenCellStyle = (colIndex: number): React.CSSProperties | undefined => {
+  const frozenCellStyle = (
+    colIndex: number,
+  ): React.CSSProperties | undefined => {
     if (frozenCount <= 0 || colIndex >= frozenOffsets.length) return undefined;
     const isLast = colIndex === frozenOffsets.length - 1;
     return {
@@ -1318,9 +1427,7 @@ export default function BaseEditor({
         : {}),
       background: "var(--color-bg, #fff)",
       // A subtle divider on the last frozen column hints at the seam.
-      ...(isLast
-        ? { boxShadow: "1px 0 0 var(--color-border, #e5e7eb)" }
-        : {}),
+      ...(isLast ? { boxShadow: "1px 0 0 var(--color-border, #e5e7eb)" } : {}),
     };
   };
 
@@ -1451,599 +1558,715 @@ export default function BaseEditor({
       className="base-editor"
       style={{ display: "flex", flexDirection: "column", height: "100%" }}
     >
-      <TableTabs
-        tables={doc.tables}
-        activeTableId={doc.activeTableId}
-        onSwitch={handleSwitchTable}
-        onAdd={handleAddTable}
-        onRename={handleRenameTable}
-        onRemove={handleRemoveTable}
-      />
-      <div
-        className="base-toolbar"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.5rem",
-          padding: "0.5rem",
-          borderBottom: "1px solid var(--color-border, #e5e7eb)",
-        }}
-      >
-        <button type="button" className="btn-sm" onClick={addRecord}>
-          + Record
-        </button>
-        <button type="button" className="btn-sm" onClick={() => setShowAddField(true)}>
-          + Field
-        </button>
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={() => setShowManageFields(true)}
-        >
-          Manage Fields
-        </button>
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={() => setShowAiAssistant(true)}
-          title="AI assistant (on-device)"
-        >
-          ✦ AI
-        </button>
-        {visibleSelectedIds.size > 0 && (
-          <button
-            type="button"
-            className="btn-sm danger"
-            onClick={removeSelectedRecords}
-            aria-label={`Delete ${visibleSelectedIds.size} selected`}
-          >
-            Delete {visibleSelectedIds.size} selected
-          </button>
-        )}
-        <span
-          aria-hidden="true"
-          style={{
-            display: "inline-block",
-            width: "1px",
-            height: "1.25rem",
-            background: "var(--color-border, #e5e7eb)",
-            margin: "0 0.25rem",
-          }}
-        />
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={handleExportCsv}
-          title="Download all records as CSV"
-        >
-          Export CSV
-        </button>
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={handleExportJson}
-          title="Download all records as JSON"
-        >
-          Export JSON
-        </button>
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={() => setImportDialog("csv")}
-          title="Replace records with a CSV"
-        >
-          Import CSV
-        </button>
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={() => setImportDialog("json")}
-          title="Replace records with a JSON"
-        >
-          Import JSON
-        </button>
-        <div style={{ flex: 1 }} />
-        <div
-          role="tablist"
-          aria-label="Base view"
-          style={{ display: "flex", gap: "0.25rem" }}
-        >
-          {(
-            [
-              ["grid", "Grid"],
-              ["kanban", "Kanban"],
-              ["calendar", "Calendar"],
-              ["timeline", "Timeline"],
-              ["gallery", "Gallery"],
-              ["form", "Form"],
-            ] as [BaseViewKind, string][]
-          ).map(([v, label]) => (
-            <button
-              key={v}
-              type="button"
-              role="tab"
-              aria-selected={view === v}
-              className="btn-sm"
-              onClick={() => setView(v)}
-              style={{
-                fontWeight: view === v ? 600 : 400,
-                background:
-                  view === v
-                    ? "var(--color-primary-soft, #ede9fe)"
-                    : "transparent",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {showAddField && (
-        <AddFieldDialog
-          existingFields={data.fields}
-          tables={doc.tables}
+      {appMode === "app" ? (
+        <AppShell
+          doc={doc}
+          app={appConfig}
           activeTableId={doc.activeTableId}
-          onAdd={addField}
-          onCancel={() => setShowAddField(false)}
+          data={data}
+          resolver={tableResolver}
+          onSwitchTable={handleSwitchTable}
+          onUpdateCell={updateCell}
+          onAddRecordWith={addRecordWith}
+          onRemoveRecord={removeRecord}
+          onAppConfigChange={updateAppConfig}
+          onExitAppMode={() => setAppMode("builder")}
         />
-      )}
-
-      {showManageFields && (
-        <ManageFieldsDialog
-          fields={data.fields}
-          onRename={renameField}
-          onReorder={reorderField}
-          onRemove={removeField}
-          onClose={() => setShowManageFields(false)}
-        />
-      )}
-
-      {importDialog !== null && (
-        <ImportDialog
-          kind={importDialog}
-          recordCount={data.records.length}
-          onImport={importDialog === "csv" ? handleImportCsv : handleImportJson}
-          onCancel={() => setImportDialog(null)}
-        />
-      )}
-
-      {view === "kanban" && <KanbanView {...viewProps} />}
-      {view === "calendar" && <CalendarView {...viewProps} />}
-      {view === "timeline" && <TimelineView {...viewProps} />}
-      {view === "gallery" && <GalleryView {...viewProps} />}
-      {view === "form" && <FormView {...viewProps} />}
-
-      {view === "grid" && (
-      <>
-      <div
-        className="base-grid-options"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          flexWrap: "wrap",
-          padding: "0.4rem 0.5rem",
-          borderBottom: "1px solid var(--color-border, #e5e7eb)",
-          fontSize: "0.8rem",
-        }}
-      >
-        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-          Row height
-          <select
-            className="input"
-            aria-label="Row height"
-            value={viewConfig.gridRowHeight}
-            onChange={(e) =>
-              setViewConfig((prev) => ({
-                ...prev,
-                gridRowHeight: e.target.value as GridRowHeight,
-              }))
-            }
-          >
-            <option value="short">Short</option>
-            <option value="medium">Medium</option>
-            <option value="tall">Tall</option>
-          </select>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-          Group by
-          <select
-            className="input"
-            aria-label="Group by"
-            value={viewConfig.gridGroupField ?? ""}
-            onChange={(e) => {
-              const next = e.target.value === "" ? null : e.target.value;
-              // Group keys are scoped to the previous field's values, so
-              // discard the old collapse set when the field changes (and
-              // when grouping is turned off) to avoid stale, surprising
-              // collapse state on a different field.
-              if (next !== viewConfig.gridGroupField) {
-                setCollapsedGroups(new Set());
-              }
-              setViewConfig((prev) => ({
-                ...prev,
-                gridGroupField: next,
-              }));
+      ) : (
+        <>
+          <TableTabs
+            tables={doc.tables}
+            activeTableId={doc.activeTableId}
+            onSwitch={handleSwitchTable}
+            onAdd={handleAddTable}
+            onRename={handleRenameTable}
+            onRemove={handleRemoveTable}
+          />
+          <div
+            className="base-toolbar"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.5rem",
+              borderBottom: "1px solid var(--color-border, #e5e7eb)",
             }}
           >
-            <option value="">None</option>
-            {data.fields.map((f) => (
-              <option key={f.name} value={f.name}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-          Color by
-          <select
-            className="input"
-            aria-label="Color by"
-            value={viewConfig.gridColorField ?? ""}
-            onChange={(e) =>
-              setViewConfig((prev) => ({
-                ...prev,
-                gridColorField: e.target.value === "" ? null : e.target.value,
-              }))
-            }
-          >
-            <option value="">None</option>
-            {data.fields.map((f) => (
-              <option key={f.name} value={f.name}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-          Frozen
-          <select
-            className="input"
-            aria-label="Frozen columns"
-            value={String(frozenCount)}
-            onChange={(e) =>
-              setViewConfig((prev) => ({
-                ...prev,
-                gridFrozenCount: Number(e.target.value),
-              }))
-            }
-          >
-            <option value="0">0</option>
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-          </select>
-        </label>
-      </div>
-      <div
-        className="base-grid-wrapper"
-        ref={gridScrollRef}
-        onScroll={onGridScroll}
-        style={{ flex: 1, minHeight: 0, overflow: "auto" }}
-      >
-        <table className="base-grid">
-          <thead>
-            <tr>
-              <th className="base-select-cell">
-                {/* Select-all checks/unchecks every record currently
+            <button type="button" className="btn-sm" onClick={addRecord}>
+              + Record
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setShowAddField(true)}
+            >
+              + Field
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setShowManageFields(true)}
+            >
+              Manage Fields
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setShowAiAssistant(true)}
+              title="AI assistant (on-device)"
+            >
+              ✦ AI
+            </button>
+            {visibleSelectedIds.size > 0 && (
+              <button
+                type="button"
+                className="btn-sm danger"
+                onClick={removeSelectedRecords}
+                aria-label={`Delete ${visibleSelectedIds.size} selected`}
+              >
+                Delete {visibleSelectedIds.size} selected
+              </button>
+            )}
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: "1px",
+                height: "1.25rem",
+                background: "var(--color-border, #e5e7eb)",
+                margin: "0 0.25rem",
+              }}
+            />
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={handleExportCsv}
+              title="Download all records as CSV"
+            >
+              Export CSV
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={handleExportJson}
+              title="Download all records as JSON"
+            >
+              Export JSON
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setImportDialog("csv")}
+              title="Replace records with a CSV"
+            >
+              Import CSV
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setImportDialog("json")}
+              title="Replace records with a JSON"
+            >
+              Import JSON
+            </button>
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: "1px",
+                height: "1.25rem",
+                background: "var(--color-border, #e5e7eb)",
+                margin: "0 0.25rem",
+              }}
+            />
+            <button
+              type="button"
+              className="btn-sm"
+              data-testid="base-mode-app"
+              onClick={() => setAppMode("app")}
+              title="Use this base as an app"
+            >
+              ▦ App mode
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              data-testid="base-templates-open"
+              onClick={() => setTemplatesOpen(true)}
+              title="Start from a template, or save this base as one"
+            >
+              ▦ Templates
+            </button>
+            <div style={{ flex: 1 }} />
+            <div
+              role="tablist"
+              aria-label="Base view"
+              style={{ display: "flex", gap: "0.25rem" }}
+            >
+              {(
+                [
+                  ["grid", "Grid"],
+                  ["kanban", "Kanban"],
+                  ["calendar", "Calendar"],
+                  ["timeline", "Timeline"],
+                  ["gallery", "Gallery"],
+                  ["form", "Form"],
+                ] as [BaseViewKind, string][]
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === v}
+                  className="btn-sm"
+                  onClick={() => setView(v)}
+                  style={{
+                    fontWeight: view === v ? 600 : 400,
+                    background:
+                      view === v
+                        ? "var(--color-primary-soft, #ede9fe)"
+                        : "transparent",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {showAddField && (
+            <AddFieldDialog
+              existingFields={data.fields}
+              tables={doc.tables}
+              activeTableId={doc.activeTableId}
+              onAdd={addField}
+              onCancel={() => setShowAddField(false)}
+            />
+          )}
+
+          {showManageFields && (
+            <ManageFieldsDialog
+              fields={data.fields}
+              onRename={renameField}
+              onReorder={reorderField}
+              onRemove={removeField}
+              onClose={() => setShowManageFields(false)}
+            />
+          )}
+
+          {importDialog !== null && (
+            <ImportDialog
+              kind={importDialog}
+              recordCount={data.records.length}
+              onImport={
+                importDialog === "csv" ? handleImportCsv : handleImportJson
+              }
+              onCancel={() => setImportDialog(null)}
+            />
+          )}
+
+          {view === "kanban" && <KanbanView {...viewProps} />}
+          {view === "calendar" && <CalendarView {...viewProps} />}
+          {view === "timeline" && <TimelineView {...viewProps} />}
+          {view === "gallery" && <GalleryView {...viewProps} />}
+          {view === "form" && <FormView {...viewProps} />}
+
+          {view === "grid" && (
+            <>
+              <div
+                className="base-grid-options"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                  flexWrap: "wrap",
+                  padding: "0.4rem 0.5rem",
+                  borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                  fontSize: "0.8rem",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                  }}
+                >
+                  Row height
+                  <select
+                    className="input"
+                    aria-label="Row height"
+                    value={viewConfig.gridRowHeight}
+                    onChange={(e) =>
+                      setViewConfig((prev) => ({
+                        ...prev,
+                        gridRowHeight: e.target.value as GridRowHeight,
+                      }))
+                    }
+                  >
+                    <option value="short">Short</option>
+                    <option value="medium">Medium</option>
+                    <option value="tall">Tall</option>
+                  </select>
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                  }}
+                >
+                  Group by
+                  <select
+                    className="input"
+                    aria-label="Group by"
+                    value={viewConfig.gridGroupField ?? ""}
+                    onChange={(e) => {
+                      const next =
+                        e.target.value === "" ? null : e.target.value;
+                      // Group keys are scoped to the previous field's values, so
+                      // discard the old collapse set when the field changes (and
+                      // when grouping is turned off) to avoid stale, surprising
+                      // collapse state on a different field.
+                      if (next !== viewConfig.gridGroupField) {
+                        setCollapsedGroups(new Set());
+                      }
+                      setViewConfig((prev) => ({
+                        ...prev,
+                        gridGroupField: next,
+                      }));
+                    }}
+                  >
+                    <option value="">None</option>
+                    {data.fields.map((f) => (
+                      <option key={f.name} value={f.name}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                  }}
+                >
+                  Color by
+                  <select
+                    className="input"
+                    aria-label="Color by"
+                    value={viewConfig.gridColorField ?? ""}
+                    onChange={(e) =>
+                      setViewConfig((prev) => ({
+                        ...prev,
+                        gridColorField:
+                          e.target.value === "" ? null : e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">None</option>
+                    {data.fields.map((f) => (
+                      <option key={f.name} value={f.name}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                  }}
+                >
+                  Frozen
+                  <select
+                    className="input"
+                    aria-label="Frozen columns"
+                    value={String(frozenCount)}
+                    onChange={(e) =>
+                      setViewConfig((prev) => ({
+                        ...prev,
+                        gridFrozenCount: Number(e.target.value),
+                      }))
+                    }
+                  >
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                  </select>
+                </label>
+              </div>
+              <div
+                className="base-grid-wrapper"
+                ref={gridScrollRef}
+                onScroll={onGridScroll}
+                style={{ flex: 1, minHeight: 0, overflow: "auto" }}
+              >
+                <table className="base-grid">
+                  <thead>
+                    <tr>
+                      <th className="base-select-cell">
+                        {/* Select-all checks/unchecks every record currently
                     visible after the active filter, not every record
                     in the table — matches what a spreadsheet's
                     select-all-in-filter-view does. */}
-                <input
-                  type="checkbox"
-                  aria-label="Select all visible records"
-                  checked={
-                    filteredAndSorted.length > 0 &&
-                    filteredAndSorted.every((r) => selectedIds.has(r.id))
-                  }
-                  ref={(el) => {
-                    if (!el) return;
-                    const some = filteredAndSorted.some((r) =>
-                      selectedIds.has(r.id),
-                    );
-                    const all =
-                      filteredAndSorted.length > 0 &&
-                      filteredAndSorted.every((r) => selectedIds.has(r.id));
-                    el.indeterminate = some && !all;
-                  }}
-                  onChange={(e) => {
-                    setSelectedIds((prev) => {
-                      const next = new Set(prev);
-                      if (e.target.checked) {
-                        for (const r of filteredAndSorted) next.add(r.id);
-                      } else {
-                        for (const r of filteredAndSorted) next.delete(r.id);
-                      }
-                      return next;
-                    });
-                  }}
-                />
-              </th>
-              <th className="base-row-num">#</th>
-              {data.fields.map((field) => {
-                const sortIdx = sorts.findIndex(
-                  (s) => s.field === field.name,
-                );
-                const sortRule = sortIdx >= 0 ? sorts[sortIdx] : null;
-                return (
-                <th key={field.name} className="base-col-header">
-                  <div className="base-col-header-content">
-                    <button
-                      type="button"
-                      className="base-col-sort"
-                      onClick={(e) =>
-                        handleSort(
-                          field.name,
-                          e.shiftKey || e.metaKey || e.ctrlKey,
-                        )
-                      }
-                      title="Click to sort. Shift- or Cmd-click to add a secondary sort level."
-                    >
-                      {field.name}
-                      {sortRule && (
-                        <span
-                          className="base-col-sort-ind"
-                          aria-label={`sorted ${
-                            sortRule.dir === "asc" ? "ascending" : "descending"
-                          }${sorts.length > 1 ? `, level ${sortIdx + 1}` : ""}`}
-                        >
-                          {sortRule.dir === "asc" ? " ▲" : " ▼"}
-                          {sorts.length > 1 ? sortIdx + 1 : ""}
-                        </span>
-                      )}
-                    </button>
-                    <span className="base-col-type">({field.type})</span>
-                    <button
-                      type="button"
-                      className="base-col-remove"
-                      onClick={() => removeField(field.name)}
-                      title="Remove field"
-                    >
-                      x
-                    </button>
-                  </div>
-                  <input
-                    className="base-filter-input"
-                    placeholder={filterPlaceholderForType(field.type)}
-                    value={filters[field.name] ?? ""}
-                    onChange={(e) =>
-                      setFilters((prev) => ({ ...prev, [field.name]: e.target.value }))
-                    }
-                  />
-                </th>
-                );
-              })}
-              <th className="base-actions-header">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {gridGroupField === null
-              ? // Flat (ungrouped) body — unchanged virtualized path.
-                rowRenderPlan.map((item) => {
-                  if (item.type === "spacer") {
-                    return (
-                      <tr
-                        key={item.key}
-                        data-testid={item.key}
-                        aria-hidden="true"
-                      >
-                        <td
-                          colSpan={data.fields.length + 3}
-                          style={{
-                            height: item.height,
-                            padding: 0,
-                            border: "none",
+                        <input
+                          type="checkbox"
+                          aria-label="Select all visible records"
+                          checked={
+                            filteredAndSorted.length > 0 &&
+                            filteredAndSorted.every((r) =>
+                              selectedIds.has(r.id),
+                            )
+                          }
+                          ref={(el) => {
+                            if (!el) return;
+                            const some = filteredAndSorted.some((r) =>
+                              selectedIds.has(r.id),
+                            );
+                            const all =
+                              filteredAndSorted.length > 0 &&
+                              filteredAndSorted.every((r) =>
+                                selectedIds.has(r.id),
+                              );
+                            el.indeterminate = some && !all;
+                          }}
+                          onChange={(e) => {
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) {
+                                for (const r of filteredAndSorted)
+                                  next.add(r.id);
+                              } else {
+                                for (const r of filteredAndSorted)
+                                  next.delete(r.id);
+                              }
+                              return next;
+                            });
                           }}
                         />
-                      </tr>
-                    );
-                  }
-                  return renderDataRow(
-                    filteredAndSorted[item.ri],
-                    item.ri + 1,
-                  );
-                })
-              : // Grouped body — collapsible group headers with a
-                // continuous 1-based row numbering across groups.
-                (() => {
-                  const groups = buildGroups(filteredAndSorted, gridGroupField);
-                  const rows: React.ReactNode[] = [];
-                  let runningNumber = 0;
-                  for (const group of groups) {
-                    const collapsed = collapsedGroups.has(group.key);
-                    const groupColor = rowColor(
-                      group.records[0] ?? { id: "" },
-                      gridColorField,
-                    );
-                    rows.push(
-                      <tr
-                        key={`group-${group.key}`}
-                        className="base-group-header"
-                        data-testid={`base-group-${group.key}`}
-                      >
-                        <td
-                          colSpan={data.fields.length + 3}
-                          style={{
-                            background: "var(--color-bg-secondary, #f3f4f6)",
-                            fontWeight: 600,
-                            padding: "0.35rem 0.5rem",
-                            borderTop: "1px solid var(--color-border, #e5e7eb)",
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="btn-sm"
-                            aria-expanded={!collapsed}
-                            onClick={() =>
-                              setCollapsedGroups((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(group.key)) next.delete(group.key);
-                                else next.add(group.key);
-                                return next;
-                              })
-                            }
-                            style={{ marginRight: "0.4rem" }}
-                          >
-                            {collapsed ? "▸" : "▾"}
-                          </button>
-                          {groupColor && (
-                            <span
-                              aria-hidden="true"
-                              style={{
-                                display: "inline-block",
-                                width: 8,
-                                height: 8,
-                                borderRadius: 2,
-                                background: groupColor,
-                                marginRight: "0.4rem",
-                              }}
+                      </th>
+                      <th className="base-row-num">#</th>
+                      {data.fields.map((field) => {
+                        const sortIdx = sorts.findIndex(
+                          (s) => s.field === field.name,
+                        );
+                        const sortRule = sortIdx >= 0 ? sorts[sortIdx] : null;
+                        return (
+                          <th key={field.name} className="base-col-header">
+                            <div className="base-col-header-content">
+                              <button
+                                type="button"
+                                className="base-col-sort"
+                                onClick={(e) =>
+                                  handleSort(
+                                    field.name,
+                                    e.shiftKey || e.metaKey || e.ctrlKey,
+                                  )
+                                }
+                                title="Click to sort. Shift- or Cmd-click to add a secondary sort level."
+                              >
+                                {field.name}
+                                {sortRule && (
+                                  <span
+                                    className="base-col-sort-ind"
+                                    aria-label={`sorted ${
+                                      sortRule.dir === "asc"
+                                        ? "ascending"
+                                        : "descending"
+                                    }${sorts.length > 1 ? `, level ${sortIdx + 1}` : ""}`}
+                                  >
+                                    {sortRule.dir === "asc" ? " ▲" : " ▼"}
+                                    {sorts.length > 1 ? sortIdx + 1 : ""}
+                                  </span>
+                                )}
+                              </button>
+                              <span className="base-col-type">
+                                ({field.type})
+                              </span>
+                              <button
+                                type="button"
+                                className="base-col-remove"
+                                onClick={() => removeField(field.name)}
+                                title="Remove field"
+                              >
+                                x
+                              </button>
+                            </div>
+                            <input
+                              className="base-filter-input"
+                              placeholder={filterPlaceholderForType(field.type)}
+                              value={filters[field.name] ?? ""}
+                              onChange={(e) =>
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  [field.name]: e.target.value,
+                                }))
+                              }
                             />
-                          )}
-                          {group.label || "(all)"}
-                          <span
-                            style={{
-                              marginLeft: "0.4rem",
-                              fontWeight: 400,
-                              color: "var(--color-text-secondary, #6b7280)",
-                            }}
-                          >
-                            {group.records.length}
-                          </span>
-                        </td>
-                      </tr>,
-                    );
-                    if (!collapsed) {
-                      for (const record of group.records) {
-                        runningNumber += 1;
-                        rows.push(renderDataRow(record, runningNumber));
-                      }
-                    } else {
-                      runningNumber += group.records.length;
-                    }
-                  }
-                  return rows;
-                })()}
-          </tbody>
-          <tfoot>
-            {/* Airtable-style summary bar: a per-column aggregation
+                          </th>
+                        );
+                      })}
+                      <th className="base-actions-header">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gridGroupField === null
+                      ? // Flat (ungrouped) body — unchanged virtualized path.
+                        rowRenderPlan.map((item) => {
+                          if (item.type === "spacer") {
+                            return (
+                              <tr
+                                key={item.key}
+                                data-testid={item.key}
+                                aria-hidden="true"
+                              >
+                                <td
+                                  colSpan={data.fields.length + 3}
+                                  style={{
+                                    height: item.height,
+                                    padding: 0,
+                                    border: "none",
+                                  }}
+                                />
+                              </tr>
+                            );
+                          }
+                          return renderDataRow(
+                            filteredAndSorted[item.ri],
+                            item.ri + 1,
+                          );
+                        })
+                      : // Grouped body — collapsible group headers with a
+                        // continuous 1-based row numbering across groups.
+                        (() => {
+                          const groups = buildGroups(
+                            filteredAndSorted,
+                            gridGroupField,
+                          );
+                          const rows: React.ReactNode[] = [];
+                          let runningNumber = 0;
+                          for (const group of groups) {
+                            const collapsed = collapsedGroups.has(group.key);
+                            const groupColor = rowColor(
+                              group.records[0] ?? { id: "" },
+                              gridColorField,
+                            );
+                            rows.push(
+                              <tr
+                                key={`group-${group.key}`}
+                                className="base-group-header"
+                                data-testid={`base-group-${group.key}`}
+                              >
+                                <td
+                                  colSpan={data.fields.length + 3}
+                                  style={{
+                                    background:
+                                      "var(--color-bg-secondary, #f3f4f6)",
+                                    fontWeight: 600,
+                                    padding: "0.35rem 0.5rem",
+                                    borderTop:
+                                      "1px solid var(--color-border, #e5e7eb)",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className="btn-sm"
+                                    aria-expanded={!collapsed}
+                                    onClick={() =>
+                                      setCollapsedGroups((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(group.key))
+                                          next.delete(group.key);
+                                        else next.add(group.key);
+                                        return next;
+                                      })
+                                    }
+                                    style={{ marginRight: "0.4rem" }}
+                                  >
+                                    {collapsed ? "▸" : "▾"}
+                                  </button>
+                                  {groupColor && (
+                                    <span
+                                      aria-hidden="true"
+                                      style={{
+                                        display: "inline-block",
+                                        width: 8,
+                                        height: 8,
+                                        borderRadius: 2,
+                                        background: groupColor,
+                                        marginRight: "0.4rem",
+                                      }}
+                                    />
+                                  )}
+                                  {group.label || "(all)"}
+                                  <span
+                                    style={{
+                                      marginLeft: "0.4rem",
+                                      fontWeight: 400,
+                                      color:
+                                        "var(--color-text-secondary, #6b7280)",
+                                    }}
+                                  >
+                                    {group.records.length}
+                                  </span>
+                                </td>
+                              </tr>,
+                            );
+                            if (!collapsed) {
+                              for (const record of group.records) {
+                                runningNumber += 1;
+                                rows.push(renderDataRow(record, runningNumber));
+                              }
+                            } else {
+                              runningNumber += group.records.length;
+                            }
+                          }
+                          return rows;
+                        })()}
+                  </tbody>
+                  <tfoot>
+                    {/* Airtable-style summary bar: a per-column aggregation
                 selector + value, pinned to the bottom of the scroll
                 viewport. Each cell offers COUNT ("Filled") for any
                 field plus SUM/AVG/MIN/MAX for numeric types. The value
                 reflects the currently filtered rows. */}
-            <tr className="base-grid-summary-row">
-              <td className="base-grid-summary-cell" style={footerCellStyle(0)} />
-              <td className="base-grid-summary-cell" style={footerCellStyle(1)} />
-              {data.fields.map((field, fi) => {
-                const kinds = summaryKindsForFieldType(field.type);
-                const hasSummary = Object.prototype.hasOwnProperty.call(
-                  viewConfig.gridColumnSummaries,
-                  field.name,
-                );
-                const current = hasSummary
-                  ? viewConfig.gridColumnSummaries[field.name]
-                  : "";
-                return (
-                  <td
-                    key={field.name}
-                    className="base-grid-summary-cell"
-                    style={footerCellStyle(fi + 2)}
-                  >
-                    <select
-                      className="base-grid-summary-select"
-                      aria-label={`${field.name} column summary`}
-                      value={current}
-                      onChange={(e) =>
-                        setColumnSummary(
+                    <tr className="base-grid-summary-row">
+                      <td
+                        className="base-grid-summary-cell"
+                        style={footerCellStyle(0)}
+                      />
+                      <td
+                        className="base-grid-summary-cell"
+                        style={footerCellStyle(1)}
+                      />
+                      {data.fields.map((field, fi) => {
+                        const kinds = summaryKindsForFieldType(field.type);
+                        const hasSummary = Object.prototype.hasOwnProperty.call(
+                          viewConfig.gridColumnSummaries,
                           field.name,
-                          e.target.value === ""
-                            ? null
-                            : (e.target.value as RollupAggregation),
-                        )
-                      }
-                    >
-                      <option value="">Summary…</option>
-                      {kinds.map((k) => (
-                        <option key={k} value={k}>
-                          {summaryLabel(k, field.type)}
-                        </option>
-                      ))}
-                    </select>
-                    {hasSummary && (
-                      <span className="base-grid-summary-value">
-                        {columnSummaries[field.name] ?? ""}
-                      </span>
-                    )}
-                  </td>
-                );
-              })}
-              <td
-                className="base-grid-summary-cell base-actions-cell"
-                style={footerCellStyle(data.fields.length + 2)}
-              />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      </>
+                        );
+                        const current = hasSummary
+                          ? viewConfig.gridColumnSummaries[field.name]
+                          : "";
+                        return (
+                          <td
+                            key={field.name}
+                            className="base-grid-summary-cell"
+                            style={footerCellStyle(fi + 2)}
+                          >
+                            <select
+                              className="base-grid-summary-select"
+                              aria-label={`${field.name} column summary`}
+                              value={current}
+                              onChange={(e) =>
+                                setColumnSummary(
+                                  field.name,
+                                  e.target.value === ""
+                                    ? null
+                                    : (e.target.value as RollupAggregation),
+                                )
+                              }
+                            >
+                              <option value="">Summary…</option>
+                              {kinds.map((k) => (
+                                <option key={k} value={k}>
+                                  {summaryLabel(k, field.type)}
+                                </option>
+                              ))}
+                            </select>
+                            {hasSummary && (
+                              <span className="base-grid-summary-value">
+                                {columnSummaries[field.name] ?? ""}
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td
+                        className="base-grid-summary-cell base-actions-cell"
+                        style={footerCellStyle(data.fields.length + 2)}
+                      />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </>
+          )}
+
+          {expandedCell &&
+            (() => {
+              // Resolve the live record AND the live field by stable
+              // identifiers on every render so deletes / reorderings of
+              // OTHER records or fields don't drift the target.
+              const expandedIndex = data.records.findIndex(
+                (r) => r.id === expandedCell.recordId,
+              );
+              const expandedField = data.fields.find(
+                (f) => f.name === expandedCell.fieldName,
+              );
+              if (expandedIndex === -1 || !expandedField) {
+                // Target record or field was deleted out from under us —
+                // close the modal silently rather than write to nothing.
+                return null;
+              }
+              return (
+                <LongTextModal
+                  field={expandedField}
+                  value={data.records[expandedIndex]?.[expandedField.name]}
+                  onChange={(val) =>
+                    updateCell(expandedIndex, expandedField.name, val)
+                  }
+                  onClose={() => setExpandedCell(null)}
+                />
+              );
+            })()}
+
+          {expandedRecordId !== null &&
+            (() => {
+              // Resolve the record by stable id every render; if it was
+              // deleted out from under the modal, close silently.
+              const idx = data.records.findIndex(
+                (r) => r.id === expandedRecordId,
+              );
+              if (idx === -1) return null;
+              return (
+                <RecordModal
+                  record={data.records[idx]}
+                  recordIndex={idx}
+                  fields={data.fields}
+                  allRecords={data.records}
+                  resolver={tableResolver}
+                  onUpdateCell={updateCell}
+                  onAddComment={handleAddComment}
+                  onRemoveComment={handleRemoveComment}
+                  onClose={() => setExpandedRecordId(null)}
+                />
+              );
+            })()}
+
+          {showAiAssistant && (
+            <BaseAiAssistant
+              fields={data.fields}
+              records={data.records}
+              selectedIds={selectedIds}
+              onCreateTable={createTableWithFields}
+              onAddFields={addFields}
+              onApplyCellValues={applyCellValues}
+              onClose={() => setShowAiAssistant(false)}
+            />
+          )}
+        </>
       )}
-
-      {expandedCell && (() => {
-        // Resolve the live record AND the live field by stable
-        // identifiers on every render so deletes / reorderings of
-        // OTHER records or fields don't drift the target.
-        const expandedIndex = data.records.findIndex(
-          (r) => r.id === expandedCell.recordId,
-        );
-        const expandedField = data.fields.find(
-          (f) => f.name === expandedCell.fieldName,
-        );
-        if (expandedIndex === -1 || !expandedField) {
-          // Target record or field was deleted out from under us —
-          // close the modal silently rather than write to nothing.
-          return null;
-        }
-        return (
-          <LongTextModal
-            field={expandedField}
-            value={data.records[expandedIndex]?.[expandedField.name]}
-            onChange={(val) =>
-              updateCell(expandedIndex, expandedField.name, val)
-            }
-            onClose={() => setExpandedCell(null)}
-          />
-        );
-      })()}
-
-      {expandedRecordId !== null && (() => {
-        // Resolve the record by stable id every render; if it was
-        // deleted out from under the modal, close silently.
-        const idx = data.records.findIndex((r) => r.id === expandedRecordId);
-        if (idx === -1) return null;
-        return (
-          <RecordModal
-            record={data.records[idx]}
-            recordIndex={idx}
-            fields={data.fields}
-            allRecords={data.records}
-            resolver={tableResolver}
-            onUpdateCell={updateCell}
-            onAddComment={handleAddComment}
-            onRemoveComment={handleRemoveComment}
-            onClose={() => setExpandedRecordId(null)}
-          />
-        );
-      })()}
-
-      {showAiAssistant && (
-        <BaseAiAssistant
-          fields={data.fields}
-          records={data.records}
-          selectedIds={selectedIds}
-          onCreateTable={createTableWithFields}
-          onAddFields={addFields}
-          onApplyCellValues={applyCellValues}
-          onClose={() => setShowAiAssistant(false)}
+      {templatesOpen && (
+        <BaseTemplateGallery
+          isOpen
+          currentDoc={doc}
+          onApply={handleApplyTemplate}
+          onClose={() => setTemplatesOpen(false)}
         />
       )}
     </div>
@@ -2219,7 +2442,11 @@ function RecordModal({
   fields: BaseField[];
   allRecords: BaseRecord[];
   resolver: BaseTableResolver;
-  onUpdateCell: (recordIndex: number, fieldName: string, value: unknown) => void;
+  onUpdateCell: (
+    recordIndex: number,
+    fieldName: string,
+    value: unknown,
+  ) => void;
   onAddComment: (recordId: string, text: string, author: string) => void;
   onRemoveComment: (recordId: string, commentId: string) => void;
   onClose: () => void;
@@ -2307,7 +2534,11 @@ function RecordModal({
           {fields.map((field) => (
             <div
               key={field.name}
-              style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.2rem",
+              }}
             >
               <label
                 style={{
@@ -2505,7 +2736,7 @@ function useClickOutside(
 // editable types render an input or a custom widget.
 // ──────────────────────────────────────────────────────────────────────
 
-interface CellInputProps {
+export interface CellInputProps {
   field: BaseField;
   value: unknown;
   record: BaseRecord;
@@ -2532,7 +2763,7 @@ interface CellInputProps {
   ariaLabel?: string;
 }
 
-function CellInput(props: CellInputProps) {
+export function CellInput(props: CellInputProps) {
   const { field } = props;
   // Each editable cell needs its own accessible name (the column header
   // doesn't name the native control). Compute it once here and thread a
@@ -2638,11 +2869,7 @@ function DateCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   const raw = value != null ? String(value) : "";
   if (includeTime) {
     const local =
-      raw === ""
-        ? ""
-        : raw.includes("T")
-          ? raw.slice(0, 16)
-          : `${raw}T00:00`;
+      raw === "" ? "" : raw.includes("T") ? raw.slice(0, 16) : `${raw}T00:00`;
     return (
       <input
         type="datetime-local"
@@ -2691,7 +2918,8 @@ function TimestampCell({
   record,
   which,
 }: CellInputProps & { which: "created" | "modified" }) {
-  const iso = record[which === "created" ? RECORD_CREATED_KEY : RECORD_MODIFIED_KEY];
+  const iso =
+    record[which === "created" ? RECORD_CREATED_KEY : RECORD_MODIFIED_KEY];
   const text =
     typeof iso === "string" && iso !== ""
       ? formatTimestamp(iso, field.dateIncludeTime === true)
@@ -2767,7 +2995,10 @@ function PhoneCell({ value, onChange, ariaLabel }: CellInputProps) {
 function CurrencyCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   const symbol = field.currencySymbol ?? "$";
   return (
-    <div className="base-cell-currency" style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
+    <div
+      className="base-cell-currency"
+      style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+    >
       <span className="base-cell-currency-symbol">{symbol}</span>
       <input
         type="number"
@@ -2775,7 +3006,9 @@ function CurrencyCell({ field, value, onChange, ariaLabel }: CellInputProps) {
         className="base-cell-input"
         aria-label={ariaLabel}
         value={value != null ? String(value) : ""}
-        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+        onChange={(e) =>
+          onChange(e.target.value ? Number(e.target.value) : null)
+        }
       />
     </div>
   );
@@ -2799,7 +3032,10 @@ function PercentCell({ field, value, onChange, ariaLabel }: CellInputProps) {
   // multiplied/divided on entry.
   const displayed = numeric != null ? (numeric * 100).toFixed(precision) : "";
   return (
-    <div className="base-cell-percent" style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
+    <div
+      className="base-cell-percent"
+      style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}
+    >
       <input
         type="number"
         step={1 / Math.pow(10, precision)}
@@ -2816,7 +3052,8 @@ function PercentCell({ field, value, onChange, ariaLabel }: CellInputProps) {
 }
 
 function RatingCell({ value, onChange, ariaLabel }: CellInputProps) {
-  const rating = typeof value === "number" ? Math.max(0, Math.min(5, value)) : 0;
+  const rating =
+    typeof value === "number" ? Math.max(0, Math.min(5, value)) : 0;
   return (
     <div
       className="base-cell-rating"
@@ -2912,7 +3149,12 @@ function AutoNumberCell({ recordIndex }: CellInputProps) {
   );
 }
 
-function MultiSelectCell({ field, value, onChange, ariaLabel }: CellInputProps) {
+function MultiSelectCell({
+  field,
+  value,
+  onChange,
+  ariaLabel,
+}: CellInputProps) {
   const selected: string[] = Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
@@ -2949,7 +3191,9 @@ function MultiSelectCell({ field, value, onChange, ariaLabel }: CellInputProps) 
         {selected.length === 0 ? (
           <span style={{ color: "#9ca3af" }}>—</span>
         ) : (
-          <span style={{ display: "inline-flex", gap: "0.25rem", flexWrap: "wrap" }}>
+          <span
+            style={{ display: "inline-flex", gap: "0.25rem", flexWrap: "wrap" }}
+          >
             {selected.map((s) => (
               <span
                 key={s}
@@ -3062,10 +3306,8 @@ function LinkedRecordCell({
   const close = useCallback(() => setOpen(false), []);
   useClickOutside(rootRef, open, close);
 
-  const removeLink = (id: string) =>
-    onChange(links.filter((l) => l !== id));
-  const addLink = (id: string) =>
-    onChange(Array.from(new Set([...links, id])));
+  const removeLink = (id: string) => onChange(links.filter((l) => l !== id));
+  const addLink = (id: string) => onChange(Array.from(new Set([...links, id])));
 
   return (
     <div
@@ -3094,7 +3336,11 @@ function LinkedRecordCell({
               gap: "0.25rem",
             }}
           >
-            <span>{display && r[display] != null ? String(r[display]) : r.id.slice(0, 6)}</span>
+            <span>
+              {display && r[display] != null
+                ? String(r[display])
+                : r.id.slice(0, 6)}
+            </span>
             <button
               type="button"
               onClick={() => removeLink(r.id)}
@@ -3154,8 +3400,7 @@ function LinkedRecordCell({
             // population is a different table).
             .filter(
               (r) =>
-                (isCrossTable || r.id !== record.id) &&
-                !links.includes(r.id),
+                (isCrossTable || r.id !== record.id) && !links.includes(r.id),
             )
             .map((r) => (
               <button
@@ -3357,7 +3602,13 @@ function AttachmentCell({ value, onChange, ariaLabel }: CellInputProps) {
   );
 }
 
-function LongTextCell({ value, onChange, onExpand, isExpanded, ariaLabel }: CellInputProps) {
+function LongTextCell({
+  value,
+  onChange,
+  onExpand,
+  isExpanded,
+  ariaLabel,
+}: CellInputProps) {
   // When the LongTextModal is open over this cell, lock the inline
   // surface. The modal's `draft` state is initialized once from
   // `value` on mount and only flushes to the record on Save — so if
@@ -3391,7 +3642,9 @@ function LongTextCell({ value, onChange, onExpand, isExpanded, ariaLabel }: Cell
         type="button"
         className="btn-sm"
         title={isExpanded ? "Already open" : "Expand"}
-        aria-label={isExpanded ? "Already expanded" : `Expand ${ariaLabel ?? "cell"}`}
+        aria-label={
+          isExpanded ? "Already expanded" : `Expand ${ariaLabel ?? "cell"}`
+        }
         onClick={onExpand}
         disabled={isExpanded}
         style={{ fontSize: "0.75rem", padding: "0 0.3rem" }}
@@ -3407,7 +3660,7 @@ function LongTextCell({ value, onChange, onExpand, isExpanded, ariaLabel }: Cell
 // basic Markdown preview pane.
 // ──────────────────────────────────────────────────────────────────────
 
-function LongTextModal({
+export function LongTextModal({
   field,
   value,
   onChange,
@@ -3418,7 +3671,9 @@ function LongTextModal({
   onChange: (val: unknown) => void;
   onClose: () => void;
 }) {
-  const [draft, setDraft] = useState<string>(value != null ? String(value) : "");
+  const [draft, setDraft] = useState<string>(
+    value != null ? String(value) : "",
+  );
   const [showPreview, setShowPreview] = useState(false);
 
   return (
@@ -3452,7 +3707,13 @@ function LongTextModal({
           overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
           <h3 style={{ margin: 0 }}>{field.name}</h3>
           <div style={{ display: "flex", gap: "0.25rem" }}>
             <button
@@ -3480,7 +3741,11 @@ function LongTextModal({
         {showPreview ? (
           <div
             className="base-longtext-preview"
-            style={{ overflowY: "auto", padding: "0.5rem", border: "1px solid #e5e7eb" }}
+            style={{
+              overflowY: "auto",
+              padding: "0.5rem",
+              border: "1px solid #e5e7eb",
+            }}
           >
             <MarkdownPreview source={draft} />
           </div>
@@ -3509,11 +3774,18 @@ function MarkdownPreview({ source }: { source: string }) {
   return (
     <div>
       {lines.map((line, i) => {
-        if (line.startsWith("# ")) return <h1 key={i}>{renderInline(line.slice(2))}</h1>;
-        if (line.startsWith("## ")) return <h2 key={i}>{renderInline(line.slice(3))}</h2>;
-        if (line.startsWith("### ")) return <h3 key={i}>{renderInline(line.slice(4))}</h3>;
+        if (line.startsWith("# "))
+          return <h1 key={i}>{renderInline(line.slice(2))}</h1>;
+        if (line.startsWith("## "))
+          return <h2 key={i}>{renderInline(line.slice(3))}</h2>;
+        if (line.startsWith("### "))
+          return <h3 key={i}>{renderInline(line.slice(4))}</h3>;
         if (line.trim() === "") return <br key={i} />;
-        return <p key={i} style={{ margin: "0.25rem 0" }}>{renderInline(line)}</p>;
+        return (
+          <p key={i} style={{ margin: "0.25rem 0" }}>
+            {renderInline(line)}
+          </p>
+        );
       })}
     </div>
   );
@@ -3638,7 +3910,9 @@ function AddFieldDialog({
     // every linked_record / rollup / lookup depends on; shadowing it
     // would orphan every link on the next reload).
     if (isReservedFieldName(trimmed)) {
-      setNameError(`"${trimmed}" is reserved and cannot be used as a field name`);
+      setNameError(
+        `"${trimmed}" is reserved and cannot be used as a field name`,
+      );
       return;
     }
     // Two fields with the same name would both read/write the same
@@ -3658,7 +3932,8 @@ function AddFieldDialog({
     }
     if (type === "formula") field.formula = formulaSrc;
     if (type === "linked_record") {
-      if (linkedDisplayField.trim()) field.linkedDisplayField = linkedDisplayField.trim();
+      if (linkedDisplayField.trim())
+        field.linkedDisplayField = linkedDisplayField.trim();
       // Only persist `linkedTableId` for a genuine cross-table link.
       // A same-table link omits it so single-table bases serialize
       // byte-for-byte as before.
@@ -3671,7 +3946,12 @@ function AddFieldDialog({
       if (targetField.trim()) field.targetField = targetField.trim();
       if (type === "rollup") field.aggregation = aggregation;
     }
-    if ((type === "date" || type === "created_time" || type === "modified_time") && dateIncludeTime) {
+    if (
+      (type === "date" ||
+        type === "created_time" ||
+        type === "modified_time") &&
+      dateIncludeTime
+    ) {
       field.dateIncludeTime = true;
     }
     if (type === "currency") field.currencySymbol = currencySymbol || "$";
@@ -3685,9 +3965,22 @@ function AddFieldDialog({
   return (
     <div
       className="base-add-field-dialog"
-      style={{ padding: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem", border: "1px solid var(--color-border, #e5e7eb)" }}
+      style={{
+        padding: "0.5rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.4rem",
+        border: "1px solid var(--color-border, #e5e7eb)",
+      }}
     >
-      <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.4rem",
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
         <input
           className="input"
           placeholder="Field name"
@@ -3823,7 +4116,9 @@ function AddFieldDialog({
             <select
               className="input"
               value={aggregation}
-              onChange={(e) => setAggregation(e.target.value as RollupAggregation)}
+              onChange={(e) =>
+                setAggregation(e.target.value as RollupAggregation)
+              }
             >
               <option value="SUM">SUM</option>
               <option value="AVG">AVG</option>
@@ -3857,9 +4152,16 @@ function AddFieldDialog({
         />
       )}
 
-      {(type === "date" || type === "created_time" || type === "modified_time") && (
+      {(type === "date" ||
+        type === "created_time" ||
+        type === "modified_time") && (
         <label
-          style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontSize: "0.85rem",
+          }}
         >
           <input
             type="checkbox"
@@ -4292,11 +4594,7 @@ function ImportDialog({
           <button type="button" className="btn-sm" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            type="button"
-            className="btn-sm primary"
-            onClick={submit}
-          >
+          <button type="button" className="btn-sm primary" onClick={submit}>
             Import
           </button>
         </div>

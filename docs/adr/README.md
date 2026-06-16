@@ -39,4 +39,5 @@ the record stays verifiable).
 | [0025](0025-slide-pptx-brand-import.md)                | Slide brand import — extract a Brand Kit from a .pptx           |
 | [0026](0026-document-template-library.md)              | Document template library — in-editor gallery + portable files |
 | [0027](0027-sheet-template-library.md)                 | Sheet template library, toolbar discoverability, locale formats |
+| [0028](0028-base-app-mode.md)                          | Base app-usage mode + Base template gallery                    |
 | [0029](0029-template-surfacing-registry.md)            | Surface template cards from the registry, not a hardcoded list  |
