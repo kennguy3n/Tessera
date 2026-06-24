@@ -329,8 +329,8 @@ export function platformLabel(p: Platform): string {
   }
 }
 
-export function preferredFormatFor(p: Platform): ModelFormat {
-  return p === "macos-apple-silicon" ? "mlx" : "gguf";
+export function preferredFormatFor(_p: Platform): ModelFormat {
+  return "gguf";
 }
 
 export function totalRamGb(): number {

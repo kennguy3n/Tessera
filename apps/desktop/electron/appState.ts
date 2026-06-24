@@ -473,6 +473,16 @@ export interface NativeBridge {
   bridgeLogSettingsChanged(setting: string, value: string): void;
   bridgeLogModelStarted(modelId: string): void;
   bridgeLogModelStopped(reason: string): void;
+  // --- In-process inference (llama-cpp-2) ---
+  bridgeLoadModel(modelPath: string): void;
+  bridgeUnloadModel(): void;
+  bridgeIsModelLoaded(): boolean;
+  bridgeGenerateText(
+    prompt: string,
+    maxTokens: number,
+    temperature: number,
+    onToken: (token: { token: string; done: boolean }) => void,
+  ): Promise<string>;
   bridgeLogConnectorConnected(provider: string): void;
   bridgeLogConnectorSynced(
     provider: string,

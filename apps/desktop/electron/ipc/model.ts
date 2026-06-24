@@ -13,9 +13,7 @@ import { access } from "fs/promises";
 import { idempotentHandle } from "./register";
 import {
   enforceSidecarExclusivity,
-  ensureModelSidecar,
   getBridge,
-  getModelSidecar,
 } from "../appState";
 import { isBatteryLow } from "../batteryMonitor";
 import type { ModelStatus } from "../../shared/types";
@@ -125,13 +123,12 @@ export function _resetActiveGenerationControllerForTests(): void {
 
 export function registerModelHandlers(): void {
   idempotentHandle("model:status", async () => {
-    const sidecar = getModelSidecar();
-    if (sidecar && sidecar.isRunning) {
-      const healthy = await sidecar.healthCheck();
+    const bridge = getBridge();
+    if (bridge && bridge.bridgeIsModelLoaded()) {
       return {
         available: true,
         modelName: "Ternary-Bonsai",
-        status: healthy ? "running" : "loading",
+        status: "running",
       } as ModelStatus;
     }
     return {
@@ -143,83 +140,29 @@ export function registerModelHandlers(): void {
 
   idempotentHandle("model:start", async (_event, modelPath: unknown) => {
     const validated = assertString(modelPath, "modelPath", { maxLen: 4096 });
-    // LW-1: lazily construct the text sidecar on first start instead
-    // of at boot. Returns null only in fallback mode (bridge down).
-    const sidecar = ensureModelSidecar();
-    if (!sidecar) throw new Error("Model sidecar not initialized");
-    if (sidecar.isRunning) return;
-    // Validate the GGUF actually exists on disk BEFORE enforcing
-    // single-sidecar exclusivity. Without this, a `model:start` with a
-    // stale/bad path would, in lightweight mode, stop the user's running
-    // vision / diffusion sidecar and THEN fail `waitForReady()` —
-    // leaving them with no sidecar at all. Validating first means a
-    // doomed start is a clean no-op that never disturbs the resident
-    // sidecar. Mirrors the validate-then-enforce ordering in
-    // `ensureVisionSidecarRunning` (mmproj access check) and
-    // `ensureDiffusionSidecarRunning` (capability / model-record checks).
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    if (bridge.bridgeIsModelLoaded()) return;
     try {
       await access(validated);
     } catch {
       throw new Error(`Model file not found on disk: ${validated}`);
     }
-    // LW-2: in lightweight mode, starting text stops any running
-    // vision / diffusion sidecar so only one model is resident at a
-    // time. No-op in performance mode.
     await enforceSidecarExclusivity("text");
-    sidecar.setModelPath(validated);
-    await sidecar.start(true);
-    // Block until llama-server's HTTP listener is up so the very
-    // next `model:generate` doesn't race the bind. See
-    // ModelSidecar.waitForReady JSDoc. The audit log below also
-    // benefits — we only record "model started" once the sidecar
-    // is actually reachable, not just after spawn().
-    const ready = await sidecar.waitForReady();
-    if (!ready) {
-      // Drop the half-started sidecar so the next `model:start`
-      // re-spawns from a known-clean state. start() flips
-      // _isRunning=true the moment spawn() returns, but if the
-      // HTTP listener never bound (slow disk, OOM during model
-      // load, lost SIGCHLD) the early-return at line 137 would
-      // silently no-op the next attempt — masking the readiness
-      // failure as "model already started" while the bridge call
-      // races ECONNREFUSED. Matches the corresponding guard in
-      // `ensureVisionSidecarRunning` / `ensureDiffusionSidecarRunning`.
-      await sidecar.stop().catch(() => {
-        // stop() is best-effort: if the llama-server process is
-        // already dead (spawn crashed) or the SIGTERM fails, the
-        // OS reaper will collect it. The user-visible failure is
-        // the readiness timeout, not the stop failure.
-      });
-      throw new Error(
-        "Text sidecar failed to become ready within the startup window",
-      );
-    }
-    // audit the local model lifecycle. The
-    // `validated` model path is what was loaded, so an auditor can
-    // correlate "model started" with the GGUF the sidecar
-    // actually pointed at. The bridge audit pass-through is
-    // best-effort; we wrap the call so an unavailable bridge (the
-    // sidecar can start before `initAppState()` finishes when the
-    // user's last session left a model selected) never breaks
-    // model startup.
+    bridge.bridgeLoadModel(validated);
     try {
-      getBridge()?.bridgeLogModelStarted(validated);
+      bridge.bridgeLogModelStarted(validated);
     } catch {
-      // best-effort — audit failure must not break model startup
+      // best-effort
     }
   });
 
   idempotentHandle("model:stop", async () => {
-    const sidecar = getModelSidecar();
-    if (sidecar && sidecar.isRunning) {
-      await sidecar.stop();
-      // The IPC channel is only reachable from the renderer, so a
-      // call here is always user-initiated (window close goes
-      // through `before-quit`, not this IPC). Tag the audit reason
-      // accordingly so an auditor can distinguish manual stops
-      // from app-shutdown stops once that path is also wired.
+    const bridge = getBridge();
+    if (bridge && bridge.bridgeIsModelLoaded()) {
+      bridge.bridgeUnloadModel();
       try {
-        getBridge()?.bridgeLogModelStopped("user-requested");
+        bridge.bridgeLogModelStopped("user-requested");
       } catch {
         // best-effort
       }
@@ -443,80 +386,26 @@ export function registerModelHandlers(): void {
       return;
     }
 
-    const sidecar = getModelSidecar();
-    if (!sidecar || !sidecar.isRunning) {
+    const bridge = getBridge();
+    if (!bridge || !bridge.bridgeIsModelLoaded()) {
       if (activeGenerationController === controller) {
         activeGenerationController = null;
       }
       sendToken({ token: "", done: true });
       throw new Error("Model runtime not running — start a model first");
     }
-    sidecar.markGenerationActive();
-    const endpoint = sidecar.endpoint;
-    const body = {
-      prompt: parsed.prompt,
-      n_predict: parsed.maxTokens ?? 2048,
-      temperature: parsed.temperature ?? 0.7,
-      stream: true,
-    };
 
     try {
-      const resp = await fetch(`${endpoint}/completion`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`Generation failed: HTTP ${resp.status} — ${text}`);
-      }
-
-      const reader = resp.body?.getReader();
-      if (!reader) throw new Error("No response body");
-
-      const decoder = new TextDecoder();
-      let lineBuffer = "";
-      let streamDone = false;
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done || streamDone) break;
-        sidecar.recordActivity();
-        lineBuffer += decoder.decode(value, { stream: true });
-        const lines = lineBuffer.split("\n");
-        lineBuffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") {
-            sendToken({ token: "", done: true });
-            sentDone = true;
-            streamDone = true;
-            break;
-          }
-          try {
-            const parsedChunk = JSON.parse(data) as {
-              content?: string;
-              stop?: boolean;
-            };
-            sendToken({
-              token: parsedChunk.content ?? "",
-              done: parsedChunk.stop ?? false,
-            });
-            if (parsedChunk.stop) {
-              sentDone = true;
-              streamDone = true;
-              break;
-            }
-          } catch {
-            // skip unparseable SSE lines
-          }
-        }
-      }
+      await bridge.bridgeGenerateText(
+        parsed.prompt,
+        parsed.maxTokens ?? 2048,
+        parsed.temperature ?? 0.7,
+        (tok) => {
+          sendToken({ token: tok.token, done: tok.done });
+          if (tok.done) sentDone = true;
+        },
+      );
     } finally {
-      sidecar.markGenerationIdle();
       if (activeGenerationController === controller) {
         activeGenerationController = null;
       }

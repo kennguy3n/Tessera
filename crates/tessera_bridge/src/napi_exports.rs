@@ -2208,6 +2208,70 @@ fn disambiguate_labels(path_a: &str, path_b: &str) -> (String, String) {
     )
 }
 
+// --- In-process inference (llama-cpp-2) ---
+
+/// Load a GGUF model file into memory for in-process inference,
+/// replacing the llama-server sidecar. If a model is already loaded,
+/// it is replaced atomically.
+#[napi]
+pub fn bridge_load_model(model_path: String) -> napi::Result<()> {
+    crate::inference::load_model(&model_path)
+        .map_err(|e| napi::Error::from_reason(e))
+}
+
+/// Unload the current model, freeing memory.
+#[napi]
+pub fn bridge_unload_model() -> napi::Result<()> {
+    crate::inference::unload_model();
+    Ok(())
+}
+
+/// Check whether a model is currently loaded in-process.
+#[napi]
+pub fn bridge_is_model_loaded() -> napi::Result<bool> {
+    Ok(crate::inference::is_model_loaded())
+}
+
+/// A single generated token streamed back to JS via the
+/// `on_token` callback in `bridge_generate_text`.
+#[napi(object)]
+pub struct BridgeGeneratedToken {
+    /// The decoded text fragment for this token (may be empty).
+    pub token: String,
+    /// `true` when this is the final token (EOS or max reached).
+    pub done: bool,
+}
+
+/// Generate text from the loaded model. The `on_token` callback is
+/// invoked synchronously for each token produced, enabling streaming
+/// to the renderer. Returns the full completion text.
+#[napi]
+pub fn bridge_generate_text(
+    prompt: String,
+    max_tokens: i32,
+    temperature: f64,
+    on_token: napi::threadsafe_function::ThreadsafeFunction<
+        BridgeGeneratedToken,
+        napi::threadsafe_function::ErrorStrategy::Fatal,
+    >,
+) -> napi::Result<String> {
+    let params = crate::inference::GenerateParams {
+        prompt,
+        max_tokens,
+        temperature: temperature as f32,
+    };
+    crate::inference::generate(params, |tok| {
+        let _ = on_token.call(
+            BridgeGeneratedToken {
+                token: tok.token,
+                done: tok.done,
+            },
+            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+        );
+    })
+    .map_err(|e| napi::Error::from_reason(e))
+}
+
 #[cfg(test)]
 mod compare_label_tests {
     use super::{disambiguate_labels, friendly_source_label, friendly_source_label_n};

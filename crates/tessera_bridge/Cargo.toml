@@ -149,6 +149,11 @@ uuid = { workspace = true }
 regex = { workspace = true }
 napi = { version = "2", features = ["napi6", "serde-json"] }
 napi-derive = "2"
+llama-cpp-2 = { version = "0.1", default-features = false }
+encoding_rs = "0.8"
+
+[target.'cfg(all(target_os = "macos", any(target_arch = "aarch64", target_arch = "arm64")))'.dependencies]
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal"] }
 
 
 [build-dependencies]
