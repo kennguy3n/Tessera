@@ -28,8 +28,12 @@
   box-shadow: var(--focus-ring);
 }
 
+.btn:hover:not(:disabled) {
+  transform: scale(1.02);
+}
+
 .btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.98);
 }
 
 .btn:disabled {
@@ -87,11 +91,20 @@
   border-radius: var(--radius-card);
   padding: var(--spacing-lg);
   box-shadow: var(--shadow-card);
-  transition: box-shadow var(--transition-normal);
+  transition:
+    box-shadow var(--transition-normal),
+    transform var(--transition-fast);
 }
 
 .card:hover {
   box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card:hover {
+    transform: none;
+  }
 }
 
 .card-title {
@@ -3043,7 +3056,9 @@
   font-family: var(--font-family);
   font-size: var(--font-size-xs);
   cursor: pointer;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
 }
 
 .slide-block:hover .slide-block-toolbar select,

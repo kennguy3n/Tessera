@@ -8,11 +8,12 @@ import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
 import OnboardingWizard from "../components/OnboardingWizard";
 import BackupStatusIndicator from "../components/BackupStatusIndicator";
-import ContextMenu, {
-  type ContextMenuItem,
-} from "../components/ContextMenu";
+import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { useContextMenu } from "../hooks/useContextMenu";
-import { notifyArtifactsChanged, useRecentArtifacts } from "../hooks/useArtifacts";
+import {
+  notifyArtifactsChanged,
+  useRecentArtifacts,
+} from "../hooks/useArtifacts";
 import { usePinnedArtifacts } from "../hooks/usePinnedArtifacts";
 import { useSourceList } from "../hooks/useSources";
 import { useSettings } from "../hooks/useSettings";
@@ -80,8 +81,11 @@ export default function HomePage() {
   const navigate = useNavigate();
   const { recent, loading: artifactsLoading } = useRecentArtifacts();
   const { sources, loading: sourcesLoading } = useSourceList();
-  const { settings, loading: settingsLoading, refresh: refreshSettings } =
-    useSettings();
+  const {
+    settings,
+    loading: settingsLoading,
+    refresh: refreshSettings,
+  } = useSettings();
   // Local optimistic flag so a successful Skip / Finish closes the
   // wizard immediately even if `refreshSettings()` is still in flight.
   // The IPC write has already succeeded by the time `onDismiss` fires
@@ -152,8 +156,8 @@ export default function HomePage() {
         )}
         <EmptyState
           icon={<Rocket size={48} strokeWidth={1.5} aria-hidden="true" />}
-          title="Welcome to Tessera"
-          message="Get started by adding your first source — a local folder or file — then create artifacts from your data."
+          title="Your workspace is ready"
+          message="Add a source folder or file, then create documents, slides, spreadsheets, and databases — all grounded in your own data."
           action={
             <div style={{ display: "flex", gap: "0.5rem" }}>
               <Button onClick={() => navigate("/sources")}>Add Source</Button>
@@ -296,7 +300,9 @@ export default function HomePage() {
 
       {hasArtifacts && (
         <section aria-label="Recent artifacts">
-          <h2 style={{ marginBottom: "var(--spacing-md)" }}>Recent Artifacts</h2>
+          <h2 style={{ marginBottom: "var(--spacing-md)" }}>
+            Recent Artifacts
+          </h2>
           <div
             style={{
               display: "grid",
@@ -357,14 +363,13 @@ function KnowledgeInsightsCard({
     );
   }
 
-  const isEmpty =
-    insights.totalMemories === 0 && insights.conceptCount === 0;
+  const isEmpty = insights.totalMemories === 0 && insights.conceptCount === 0;
   if (isEmpty) {
     return (
       <Card data-testid="knowledge-insights-empty">
         <div className="card-description">
-          No knowledge extracted yet. Tessera builds memories and concepts as
-          it indexes your sources — open a source and run{" "}
+          No knowledge extracted yet. Tessera builds memories and concepts as it
+          indexes your sources — open a source and run{" "}
           <strong>Extract Tasks &amp; Decisions</strong> to seed the substrate.
         </div>
       </Card>
@@ -414,9 +419,7 @@ function KnowledgeInsightsCard({
             Top reinforced memories
           </div>
           {insights.topReinforced.length === 0 ? (
-            <div className="card-description">
-              No active memories yet.
-            </div>
+            <div className="card-description">No active memories yet.</div>
           ) : (
             <ul
               data-testid="knowledge-top-memories"

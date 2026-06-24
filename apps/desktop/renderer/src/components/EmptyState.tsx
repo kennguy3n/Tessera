@@ -56,29 +56,37 @@ export default function EmptyState({
           padding: var(--spacing-2xl);
           text-align: center;
           animation: empty-state-in var(--duration-normal) var(--ease-out);
+          background: var(--color-bg-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-card);
+          box-shadow: var(--shadow-xs);
         }
         .empty-state-icon {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 4rem;
-          height: 4rem;
+          width: 5rem;
+          height: 5rem;
           margin-bottom: var(--spacing-md);
           border-radius: var(--radius-full);
-          background-color: var(--color-primary-light);
+          background: linear-gradient(
+            135deg,
+            var(--color-primary-light) 0%,
+            var(--color-bg-page) 100%
+          );
           color: var(--color-primary);
-          font-size: 1.75rem;
+          font-size: 2rem;
         }
         .empty-state-title {
           color: var(--color-text-headline);
-          font-size: var(--font-size-lg);
+          font-size: var(--font-size-xl);
           margin-bottom: var(--spacing-sm);
         }
         .empty-state-message {
           color: var(--color-text-secondary);
-          font-size: var(--font-size-sm);
+          font-size: var(--font-size-base);
           line-height: var(--line-height-relaxed);
-          max-width: 400px;
+          max-width: 440px;
           margin-bottom: var(--spacing-lg);
         }
         @keyframes empty-state-in {

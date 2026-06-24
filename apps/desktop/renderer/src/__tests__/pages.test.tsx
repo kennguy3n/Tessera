@@ -52,7 +52,7 @@ describe("HomePage", () => {
       </MemoryRouter>,
     );
     await waitFor(() => {
-      expect(screen.getByText("Welcome to Tessera")).toBeInTheDocument();
+      expect(screen.getByText("Your workspace is ready")).toBeInTheDocument();
     });
   });
 

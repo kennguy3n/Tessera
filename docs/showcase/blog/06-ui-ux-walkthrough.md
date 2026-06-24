@@ -1,30 +1,43 @@
 # From blank screen to source-cited artifact: the Create flow and editors
 
-*Part 6 of the Tessera showcase series — UI/UX.*
+_Part 6 of the Tessera showcase series — UI/UX._
 
 The five persona stories all share the same path through the product. This post walks that
 path — from the home screen to a finished, source-cited artifact — and shows why each step is
 designed the way it is.
 
+Tessera's interface has been rebuilt around a single, familiar design language: **KChat's**
+confident, low-friction look and feel. The palette is built on KChat's soft lavender page
+surface, warm near-black text, and a deep purple accent that carries every primary action. The
+result is a workspace that feels closer to a polished consumer app than a power-user tool —
+which matters when the user is a clinical privacy officer, a paralegal, or a sales-ops lead who
+needs to get work done, not learn a new UI.
+
 ## The home screen
 
 ![Tessera home screen](../assets/screenshots/flow-01-home.png)
 
-The sidebar is deliberately short. After a recent progressive-disclosure pass, the primary
-navigation is just **Home, Sources, Create, and Settings** — the four things a new user needs
-— with power-user tools (Templates, Tasks, Automations, Vision) tucked under an expandable
-"More tools" section. A non-technical SME shouldn't have to parse eight nav items to make
-their first document. Recent and pinned artifacts sit on the home screen so returning to work
-is one click.
+The sidebar is deliberately short. The primary navigation is just **Home, Sources, Create, and
+Settings** — the four things a new user needs — with power-user tools (Templates, Tasks,
+Automations, Vision, Memory) tucked under an expandable **"More tools"** section. A non-technical
+SME shouldn't have to parse eight nav items to make their first document.
+
+The page header is now a contained hero card: a soft surface with rounded corners and a clear
+primary action, so the user always knows what to do next. Recent and pinned artifacts sit on the
+home screen so returning to work is one click. A fresh install sees a welcoming empty state with
+a large, friendly icon and a direct "Add Source" / "Explore Templates" choice — no dead ends.
 
 ## Step 1 — "What do you need?"
 
 ![Create flow, intent step](../assets/screenshots/flow-02-create-intent.png)
 
-Create doesn't open onto all 287 templates at once. It opens onto a single question — *what do you need?*
-— with four large choices: write a document, make a presentation, track data in a
-spreadsheet, or build a database. This is intent-based progressive disclosure: the user
-declares the *shape* of the outcome before they're asked to choose among specifics.
+Create doesn't open onto all 287 templates at once. It opens onto a single question — _what do you need?_
+— with four large, rounded cards: write a document, make a presentation, track data in a
+spreadsheet, or build a database. Each card is a clear intent, not a technical artifact type.
+
+This is intent-based progressive disclosure: the user declares the _shape_ of the outcome before
+they're asked to choose among specifics. The KChat-inspired card surfaces, pill-shaped buttons,
+and generous spacing keep the screen calm even though the underlying template library is large.
 
 ## Step 2 — a curated shortlist
 
@@ -35,17 +48,19 @@ not the full library. PRD, Proposal, SOP, Report, Meeting Notes for documents; Q
 Pitch for slides; and so on. A "Show all templates" affordance reveals the full catalog —
 **287 English templates** (530 including the nine localized locales) — for power users who know
 exactly what they want, with **industry, language, and country / jurisdiction filters** to
-narrow it fast. The whole gallery is **derived from the template registry**: dropping a new
-template YAML into the library surfaces a filterable card automatically, with no UI change. New
-users get a confident shortlist; experts keep the firehose. Each template is the same
-structured object the personas used — a set of sections, each with its own grounded prompt.
+narrow it fast.
+
+The whole gallery is **derived from the template registry**: dropping a new template YAML into
+the library surfaces a filterable card automatically, with no UI change. New users get a
+confident shortlist; experts keep the firehose. Each template is the same structured object the
+personas used — a set of sections, each with its own grounded prompt.
 
 ## Step 3 — choose sources
 
 ![Sources page](../assets/screenshots/flow-04-sources.png)
 
 This is the step that makes Tessera Tessera. Before anything is generated, the user chooses
-*what the model is allowed to see* — local folders that have been indexed, and any explicitly
+_what the model is allowed to see_ — local folders that have been indexed, and any explicitly
 connected cloud sources from a catalog of **33 read-only, least-privilege connectors** (Google
 Drive, OneDrive/SharePoint, Dropbox, Box, Notion, Confluence, Jira, Linear, Asana, ClickUp,
 GitHub/GitLab, HubSpot, Salesforce, Zendesk, ServiceNow, Intercom, Figma, Miro, Slack, Teams,
@@ -57,7 +72,7 @@ deliberately select.
 
 This is also the local-first guarantee made visible: the index is on the machine, the model
 runs on the machine, and the sources are folders the user pointed at. For Maya's PHI and
-Priya's borrower financials, this screen *is* the compliance story.
+Priya's borrower financials, this screen _is_ the compliance story.
 
 ## Step 4 — the editor
 
@@ -65,7 +80,7 @@ Once generated, the artifact opens in a real editor matched to its type. Across 
 personas you've now seen all four:
 
 - **Document** (Maya's HIPAA report, David's contract summary, Priya's credit memo, Sofia's
-  grant proposal) — *Google-Docs / Notion level.* A rich-text editor with **callout**,
+  grant proposal) — _Google-Docs / Notion level._ A rich-text editor with **callout**,
   **toggle**, and **table-of-contents** blocks, a scroll-tracked **outline panel** with a
   **reading-time** estimate, inline tables, resolvable **inline comments** (author,
   timestamp, resolved state, side panel), and an on-device **AI writing assistant**
@@ -74,14 +89,14 @@ personas you've now seen all four:
   in-editor **template gallery** lets the author start from a structured starter and save the
   finished structure back as a reusable template — a portable `tessera.doctemplate` file the
   team can share.
-- **Sheet** (David's obligation tracker, Priya's projection) — *Google-Sheets level.* A
+- **Sheet** (David's obligation tracker, Priya's projection) — _Google-Sheets level._ A
   spreadsheet grid with a real formula engine (**160+ functions**), **named ranges**, **data
   validation** (dropdown / checkbox), rule-based **conditional formatting**, **range-bound
   charts** (bar / line / pie), **pivot tables**, a virtual-scrolling grid that stays smooth
   at 10K+ rows, **freeze panes**, **chart-from-selection**, locale-aware number formats,
   CSV / XLSX import-export, an in-editor **template gallery** with save-as-template (portable
   `tessera.sheettemplate`), and an AI assistant for NL→formula / explain / fix.
-- **Base** (Maya's incident tracker, Marcus's CRM) — *Airtable level.* A multi-table database
+- **Base** (Maya's incident tracker, Marcus's CRM) — _Airtable level._ A multi-table database
   with **cross-table linked records** carrying **lookup** and **rollup** fields, typed fields
   (text, date, number, checkbox, rating, **select dropdowns** with real option sets, formula),
   an **expand-record modal** with **comments + activity**, grid **group-by / row-height /
@@ -89,7 +104,7 @@ personas you've now seen all four:
   **template gallery** with save-as-template (portable `tessera.basetemplate`), and a
   builder⇄**App mode** (covered below) — plus on-device AI for schema-gen / NL→formula /
   column-fill.
-- **Slides** (Sofia's board deck, Marcus's QBR) — *Google-Slides / Gamma level.* A deck editor
+- **Slides** (Sofia's board deck, Marcus's QBR) — _Google-Slides / Gamma level._ A deck editor
   with a smart **layout engine** (timeline / process / comparison / gallery / metric), a **deck
   template gallery** + insert-card presets with save-as-template (portable
   `tessera.slidetemplate`), richer **themes** with a visual picker, a **Brand Kit** that
@@ -126,7 +141,7 @@ ordered sequence of steps, and every step carries a **deterministic output check
 a bad section), **per-step model sampling**, and a **per-step output-format contract**. That is
 how a 1.7B–8B model produces a structured 12-section report or a typed base schema reliably
 instead of drifting. Skills are **user-authorable** — you can write your own multi-step skill
-with its own checks and formats — and **portable**, exported and imported as `tessera.skill`
+with your own checks and formats — and **portable**, exported and imported as `tessera.skill`
 files so a team can standardize on the same deliberate workflow.
 
 ## The workspace — work two artifacts at once
@@ -151,8 +166,8 @@ you can see and control today.
 **Search you can tune.** Settings → Search exposes how retrieval ranks hits: a **hybrid**
 toggle that blends lexical (BM25) and semantic (vector) scoring, and a **temporal decay**
 control with an adjustable recency half-life so freshly-edited sources outrank stale ones at
-equal content relevance. The embedding model that powers semantic search is selectable in
-the same screen — a zero-download lexical embedder for offline/privacy-strict setups, or a
+equal content relevance. The embedding model that powers semantic search is selectable in the
+same screen — a zero-download lexical embedder for offline/privacy-strict setups, or a
 downloadable multilingual model when the corpus isn't pure English.
 
 ![Settings — hybrid search, recency decay, and embedding-model controls](../assets/screenshots/flow-05-settings-search.png)
@@ -181,9 +196,10 @@ Those aren't decoration — they're Tessera citing the source file behind each c
 with the "choose sources" step, this closes the loop that most AI tools leave open: you
 control exactly what the model can see, and the output tells you exactly what it used.
 
-That's the whole arc — *what do you need → from which sources → here's the draft, and here's
-where every line came from* — and it's the same arc whether you're filing a breach assessment
-or building a sales QBR.
+That's the whole arc — _what do you need → from which sources → here's the draft, and here's
+where every line came from_ — and it's the same arc whether you're filing a breach assessment
+or building a sales QBR. The KChat theme just makes the journey feel as approachable as the
+product is serious.
 
 ---
 

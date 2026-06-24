@@ -17,7 +17,9 @@ export default function PageHeader({
     <div className="page-header">
       <div className="page-header-text">
         <h1>{title}</h1>
-        {description && <p className="page-header-description">{description}</p>}
+        {description && (
+          <p className="page-header-description">{description}</p>
+        )}
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}
       <style nonce={cspNonce}>{`
@@ -25,7 +27,13 @@ export default function PageHeader({
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
+          gap: var(--spacing-md);
           margin-bottom: var(--spacing-xl);
+          padding: var(--spacing-lg);
+          background: var(--color-bg-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-card);
+          box-shadow: var(--shadow-xs);
         }
         .page-header-description {
           color: var(--color-text-secondary);
@@ -36,6 +44,7 @@ export default function PageHeader({
           display: flex;
           gap: var(--spacing-sm);
           flex-shrink: 0;
+          align-items: center;
         }
       `}</style>
     </div>

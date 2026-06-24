@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { ACCENT_COLORS, type AccentColor } from "../types/ipc";
 import { useSettings } from "./useSettings";
 
-const DEFAULT_ACCENT: AccentColor = "violet";
+const DEFAULT_ACCENT: AccentColor = "kchat";
 const ACCENT_SET: ReadonlySet<string> = new Set(ACCENT_COLORS);
 
 /**

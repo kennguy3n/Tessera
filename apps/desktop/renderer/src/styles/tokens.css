@@ -8,31 +8,31 @@
    * active theme (light by default; the dark scopes below flip it), so
    * `--color-primary*` and the link/focus tokens all re-derive from a
    * single source. The ramp itself is selected by the `[data-accent]`
-   * attribute (set by `useTheme`); the values here are the violet
+   * attribute (set by `useTheme`); the values here are the KChat
    * default used when no attribute is present. */
-  --accent-light: #7c3aed;
-  --accent-dark: #a78bfa;
+  --accent-light: #553bd8;
+  --accent-dark: #bab2ff;
   --accent: var(--accent-light);
 
   --color-primary: var(--accent);
   --color-primary-hover: color-mix(in srgb, var(--accent) 86%, #000000);
   --color-primary-active: color-mix(in srgb, var(--accent) 74%, #000000);
   --color-primary-light: color-mix(in srgb, var(--accent) 12%, #ffffff);
-  --color-bg-page: #ffffff;
-  --color-bg-surface: #f5f3ff;
-  --color-bg-sidebar: #faf9ff;
-  --color-text-headline: #111827;
-  --color-text-body: #4b5563;
-  /* gray-500 (#6b7280) only reached ~4.0–4.4:1 on the app's tinted/elevated
-     surfaces (accent-tinted page bg, selected rows, muted chips), just under
-     the 4.5:1 AA floor for the small text that uses it. Darkened so secondary
-     text clears AA everywhere while staying lighter than body. */
-  --color-text-secondary: #5d6470;
-  --color-text-tertiary: #9ca3af;
+  /* KChat-inspired surface: soft lavender page, warm near-black text, and
+   * a deep purple accent that passes WCAG AA against white text. */
+  --color-bg-page: #f6f5ff;
+  --color-bg-surface: #eeecff;
+  --color-bg-sidebar: #f6f5ff;
+  --color-text-headline: #191919;
+  --color-text-body: #4d495f;
+  /* KChat gray-700 (#6e688d) clears AA on the lavender page and elevated
+     surfaces while staying lighter than the body text. */
+  --color-text-secondary: #6e688d;
+  --color-text-tertiary: #9e9ebc;
   --color-text-on-primary: #ffffff;
-  --color-border: #e5e7eb;
-  --color-border-light: #f3f4f6;
-  --color-border-strong: #d1d5db;
+  --color-border: #ddd9ff;
+  --color-border-light: #eeecff;
+  --color-border-strong: #bdbdd3;
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
@@ -50,7 +50,7 @@
 
   /* Scrim behind modals / dialogs. A near-black tint with alpha so the
    * page shows through; the dark scopes deepen it. */
-  --color-overlay: color-mix(in srgb, #111827 55%, transparent);
+  --color-overlay: color-mix(in srgb, #191919 55%, transparent);
 
   --font-family:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -93,11 +93,11 @@
 
   --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-card: 12px;
-  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-card: 16px;
+  --radius-lg: 20px;
   --radius-button: 9999px;
-  --radius-input: 8px;
+  --radius-input: 10px;
   --radius-full: 9999px;
 
   /* Elevation scale. The legacy `--shadow-card*` / `--shadow-modal`
@@ -142,7 +142,7 @@
   --transition-fast: var(--duration-fast) var(--ease-standard);
   --transition-normal: var(--duration-normal) var(--ease-standard);
 
-  --color-bg-secondary: #f3f4f6;
+  --color-bg-secondary: #eeecff;
   --color-danger: #ef4444;
 
   /* Alias tokens.
@@ -178,7 +178,7 @@
    * hex literals that don't flip in dark mode. The light values
    * match the historic `.badge-warning` bare hex (#fef3c7 bg /
    * #92400e fg) for visual continuity; the dark overrides below
-   * pick amber values calibrated for `--color-bg-page` (#111827).
+   * pick amber values calibrated for `--color-bg-page` (#191919).
    * Per Devin Review PR #55 ANALYSIS_0003. (Pass 5 ANALYSIS_0002:
    * dropped a speculative `--color-warning-subtle` variant that
    * had no consumer — we add `-subtle` tokens only when a
@@ -214,7 +214,11 @@
  * scopes) picks which one is live. Light bases are chosen to pass WCAG
  * AA (>= 4.5:1) against white text for use as a button background;
  * dark bases are lighter tints that pass AA as text/links on the dark
- * page surface (#111827). `violet` is also the `:root` default. */
+ * page surface (#191919). `kchat` is the default brand ramp. */
+[data-accent="kchat"] {
+  --accent-light: #553bd8;
+  --accent-dark: #bab2ff;
+}
 [data-accent="violet"] {
   --accent-light: #7c3aed;
   --accent-dark: #a78bfa;
@@ -273,20 +277,20 @@
     var(--accent) 22%,
     var(--color-bg-page)
   );
-  --color-bg-page: #111827;
-  --color-bg-surface: #1f2937;
-  --color-bg-sidebar: #0f172a;
-  --color-bg-secondary: #374151;
-  --color-text-headline: #f9fafb;
-  --color-text-body: #d1d5db;
-  /* gray-400 (#9ca3af) dipped to ~4.05:1 on elevated dark surfaces (#374151).
-     Lightened so secondary text clears AA on every dark surface. */
-  --color-text-secondary: #b0b7c2;
-  --color-text-tertiary: #6b7280;
-  --color-text-on-primary: #111827;
-  --color-border: #374151;
-  --color-border-light: #1f2937;
-  --color-border-strong: #4b5563;
+  /* KChat dark palette: core-black page with deep-purple surfaces. */
+  --color-bg-page: #191919;
+  --color-bg-surface: #322f3c;
+  --color-bg-sidebar: #191919;
+  --color-bg-secondary: #322f3c;
+  --color-text-headline: #f6f5ff;
+  --color-text-body: #d8d8e5;
+  /* KChat gray-300 (#bdbdd3) clears AA on elevated dark surfaces (#322f3c). */
+  --color-text-secondary: #bdbdd3;
+  --color-text-tertiary: #6e688d;
+  --color-text-on-primary: #191919;
+  --color-border: #322f3c;
+  --color-border-light: #191919;
+  --color-border-strong: #4d495f;
   --color-overlay: color-mix(in srgb, #000000 66%, transparent);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -334,18 +338,18 @@
       var(--accent) 22%,
       var(--color-bg-page)
     );
-    --color-bg-page: #111827;
-    --color-bg-surface: #1f2937;
-    --color-bg-sidebar: #0f172a;
-    --color-bg-secondary: #374151;
-    --color-text-headline: #f9fafb;
-    --color-text-body: #d1d5db;
-    --color-text-secondary: #b0b7c2;
-    --color-text-tertiary: #6b7280;
-    --color-text-on-primary: #111827;
-    --color-border: #374151;
-    --color-border-light: #1f2937;
-    --color-border-strong: #4b5563;
+    --color-bg-page: #191919;
+    --color-bg-surface: #322f3c;
+    --color-bg-sidebar: #191919;
+    --color-bg-secondary: #322f3c;
+    --color-text-headline: #f6f5ff;
+    --color-text-body: #d8d8e5;
+    --color-text-secondary: #bdbdd3;
+    --color-text-tertiary: #6e688d;
+    --color-text-on-primary: #191919;
+    --color-border: #322f3c;
+    --color-border-light: #191919;
+    --color-border-strong: #4d495f;
     --color-overlay: color-mix(in srgb, #000000 66%, transparent);
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.5);

@@ -24,6 +24,11 @@ the machine.
 This showcase proves that claim with five personas across five markets, all four artifact
 types, and full input → prompt → output transparency.
 
+The interface has been polished around the **KChat** design language — a soft lavender surface,
+warm near-black text, deep purple accents, rounded cards, and a clear progressive-disclosure flow
+so that non-technical SMEs and mass users feel confident from the first screen. Every screenshot
+in this showcase is a real capture of the live renderer in that theme.
+
 Behind those artifacts is the current editor surface: each of the four editors (document,
 slides, sheet, base) opens an in-editor **template gallery** and can save the current artifact
 as a reusable, portable template; bases add an **App mode** that turns a table into a
@@ -43,7 +48,7 @@ country / jurisdiction variants.
   ([`scripts/showcase/generate.py`](../../scripts/showcase/generate.py)) hard-fails on any
   model id that is not a design text model in the registry, so an off-design stand-in model
   can never silently produce these artifacts.
-- **Prompts:** the *verbatim* section prompts from Tessera's real template library
+- **Prompts:** the _verbatim_ section prompts from Tessera's real template library
   (`templates/documents/*.yaml`, `templates/slides/*.yaml`, etc.). The prompt logs in each
   persona's `prompts/` folder quote them directly.
 - **Grounding:** each section was generated against that persona's source files only. The
@@ -64,13 +69,13 @@ country / jurisdiction variants.
 
 ## The five personas
 
-| # | Persona | Market | Artifacts |
-|---|---------|--------|-----------|
-| 1 | **Maya Okonkwo** — Clinical Privacy Officer | Healthcare (regional health system) | HIPAA incident report (document) + privacy incident tracker (base) |
-| 2 | **David Reyes** — Corporate Paralegal | Legal (mid-size corporate firm) | Contract summary (document) + obligation & renewal tracker (sheet) |
-| 3 | **Priya Nair** — Commercial Credit Officer | Finance (regional commercial bank) | Credit memo (document) + 3-year projection (sheet) |
-| 4 | **Sofia Alvarez** — Development Director | Nonprofit (community services) | Grant proposal (document) + board update (slides) |
-| 5 | **Marcus Chen** — Sales Operations Lead | Retail / consumer goods | QBR deck (slides) + CRM (base) |
+| #   | Persona                                     | Market                              | Artifacts                                                          |
+| --- | ------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------ |
+| 1   | **Maya Okonkwo** — Clinical Privacy Officer | Healthcare (regional health system) | HIPAA incident report (document) + privacy incident tracker (base) |
+| 2   | **David Reyes** — Corporate Paralegal       | Legal (mid-size corporate firm)     | Contract summary (document) + obligation & renewal tracker (sheet) |
+| 3   | **Priya Nair** — Commercial Credit Officer  | Finance (regional commercial bank)  | Credit memo (document) + 3-year projection (sheet)                 |
+| 4   | **Sofia Alvarez** — Development Director    | Nonprofit (community services)      | Grant proposal (document) + board update (slides)                  |
+| 5   | **Marcus Chen** — Sales Operations Lead     | Retail / consumer goods             | QBR deck (slides) + CRM (base)                                     |
 
 Across the five, every artifact type is represented: **document, slides, sheet, base.**
 

@@ -60,6 +60,7 @@ const THEME_LABELS: Record<Theme, string> = {
 };
 
 const ACCENT_LABELS: Record<AccentColor, string> = {
+  kchat: "KChat",
   violet: "Violet",
   blue: "Blue",
   teal: "Teal",
@@ -181,10 +182,21 @@ export default function SettingsPage() {
         actions={<Button onClick={handleSave}>Save</Button>}
       />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-lg)" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--spacing-lg)",
+        }}
+      >
         <div id="appearance" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
         <Card>
-          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>General</h2>
+          <h2
+            className="section-title"
+            style={{ marginBottom: "var(--spacing-md)" }}
+          >
+            General
+          </h2>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
               htmlFor={themeId}
@@ -250,7 +262,10 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>
+          <h2
+            className="section-title"
+            style={{ marginBottom: "var(--spacing-md)" }}
+          >
             Navigation &amp; setup
           </h2>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
@@ -374,7 +389,12 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Sources</h2>
+          <h2
+            className="section-title"
+            style={{ marginBottom: "var(--spacing-md)" }}
+          >
+            Sources
+          </h2>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
               htmlFor={watchPatternsId}
@@ -419,9 +439,17 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        <div id="performance" style={{ scrollMarginTop: "var(--spacing-lg)" }} />
+        <div
+          id="performance"
+          style={{ scrollMarginTop: "var(--spacing-lg)" }}
+        />
         <Card>
-          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Performance</h2>
+          <h2
+            className="section-title"
+            style={{ marginBottom: "var(--spacing-md)" }}
+          >
+            Performance
+          </h2>
           <div style={{ marginBottom: "var(--spacing-lg)" }}>
             <label
               htmlFor={resourceModeId}
@@ -440,9 +468,7 @@ export default function SettingsPage() {
               className="input"
               value={resourceMode}
               data-testid="settings-resource-mode"
-              onChange={(e) =>
-                setResourceMode(e.target.value as ResourceMode)
-              }
+              onChange={(e) => setResourceMode(e.target.value as ResourceMode)}
             >
               {RESOURCE_MODES.map((mode) => (
                 <option key={mode} value={mode}>
@@ -457,18 +483,17 @@ export default function SettingsPage() {
                 marginTop: "var(--spacing-xs)",
               }}
             >
-              <strong>Lightweight</strong> keeps the idle footprint
-              minimal: only one local model (text, vision, or image
-              generation) runs at a time — starting one stops the
-              others — and background work is gated more aggressively.{" "}
-              <strong>Performance</strong> allows text and vision models
-              to run concurrently for workflows that interleave them, at
-              the cost of higher memory use. Image generation never
-              starts automatically in either mode. Switching to
-              Lightweight while several models are already running does
-              not stop the extras immediately — the single-model limit
-              applies the next time a model starts, so an in-progress
-              generation is never interrupted.
+              <strong>Lightweight</strong> keeps the idle footprint minimal:
+              only one local model (text, vision, or image generation) runs at a
+              time — starting one stops the others — and background work is
+              gated more aggressively. <strong>Performance</strong> allows text
+              and vision models to run concurrently for workflows that
+              interleave them, at the cost of higher memory use. Image
+              generation never starts automatically in either mode. Switching to
+              Lightweight while several models are already running does not stop
+              the extras immediately — the single-model limit applies the next
+              time a model starts, so an in-progress generation is never
+              interrupted.
             </p>
           </div>
           <div>
@@ -488,9 +513,7 @@ export default function SettingsPage() {
               id={modelIdleTimeoutId}
               className="input"
               value={modelIdleTimeoutSecs}
-              onChange={(e) =>
-                setModelIdleTimeoutSecs(Number(e.target.value))
-              }
+              onChange={(e) => setModelIdleTimeoutSecs(Number(e.target.value))}
             >
               {/*
                * follow-up: if the persisted
@@ -509,10 +532,7 @@ export default function SettingsPage() {
               {!MODEL_IDLE_TIMEOUT_BUCKETS.some(
                 (b) => b.value === modelIdleTimeoutSecs,
               ) && (
-                <option
-                  key="custom"
-                  value={modelIdleTimeoutSecs}
-                >
+                <option key="custom" value={modelIdleTimeoutSecs}>
                   Custom ({modelIdleTimeoutSecs} seconds)
                 </option>
               )}
@@ -529,13 +549,12 @@ export default function SettingsPage() {
                 marginTop: "var(--spacing-xs)",
               }}
             >
-              How long the local text / vision / image-generation
-              sidecars stay loaded after the last request. Lower
-              values free RAM faster; higher values avoid reload
-              latency on the next call. On memory-constrained GPUs
-              (≤ 8 GB), the <strong>30 seconds</strong> bucket
-              matches the pre-unification diffusion default and
-              reduces peak GPU VRAM hold time.
+              How long the local text / vision / image-generation sidecars stay
+              loaded after the last request. Lower values free RAM faster;
+              higher values avoid reload latency on the next call. On
+              memory-constrained GPUs (≤ 8 GB), the <strong>30 seconds</strong>{" "}
+              bucket matches the pre-unification diffusion default and reduces
+              peak GPU VRAM hold time.
             </p>
           </div>
         </Card>
@@ -585,7 +604,12 @@ export default function SettingsPage() {
         <BackupSettingsCard />
 
         <Card>
-          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Export</h2>
+          <h2
+            className="section-title"
+            style={{ marginBottom: "var(--spacing-md)" }}
+          >
+            Export
+          </h2>
           <div>
             <label
               htmlFor={exportFormatId}
@@ -617,8 +641,18 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>About</h2>
-          <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)" }}>
+          <h2
+            className="section-title"
+            style={{ marginBottom: "var(--spacing-md)" }}
+          >
+            About
+          </h2>
+          <div
+            style={{
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             <p>
               <strong>Tessera</strong> v0.1.0
             </p>

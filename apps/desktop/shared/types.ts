@@ -324,12 +324,7 @@ export interface KchatAclMemberInfo {
  * every other outcome the counts are zero (no shred happened).
  */
 export interface KchatAclRefreshOutcomeInfo {
-  outcome:
-    | "granted"
-    | "regranted"
-    | "revoked"
-    | "unlinked"
-    | "no_principal";
+  outcome: "granted" | "regranted" | "revoked" | "unlinked" | "no_principal";
   memberCount: number;
   principalPresent: boolean;
   /** Block B Task 4: count of chunk rows scrubbed by the inline
@@ -1041,10 +1036,11 @@ export type Theme = (typeof THEMES)[number];
  * value so the IPC zod schemas, the on-disk config schema, and the
  * Settings page picker all pull from a single declaration — the
  * same single-source-of-truth pattern as `THEMES`/`EXPORT_FORMATS`.
- * `"violet"` is the historic brand default and the `:root` fallback
+ * `"kchat"` is the brand default and the `:root` fallback
  * when no `data-accent` attribute is present.
  */
 export const ACCENT_COLORS = [
+  "kchat",
   "violet",
   "blue",
   "teal",
@@ -2069,7 +2065,12 @@ export interface DrivePickerSelection extends DrivePickerItem {
  * declaration. Adding a new column means adding a value here and
  * nothing else.
  */
-export const TASK_STATUSES = ["todo", "in_progress", "done", "blocked"] as const;
+export const TASK_STATUSES = [
+  "todo",
+  "in_progress",
+  "done",
+  "blocked",
+] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const TASK_PRIORITIES = ["low", "medium", "high", "critical"] as const;
@@ -2354,9 +2355,7 @@ export interface SourceApi {
    * embedding for the active model. Idempotent. Pass `batchSize`
    * to override the bridge default (used by tests).
    */
-  backfillEmbeddings: (
-    batchSize?: number,
-  ) => Promise<BackfillEmbeddingsResult>;
+  backfillEmbeddings: (batchSize?: number) => Promise<BackfillEmbeddingsResult>;
   /** Lightweight poll for the active backfill pass. */
   getEmbeddingProgress: () => Promise<EmbeddingProgressInfo>;
   /**
@@ -2656,9 +2655,7 @@ export interface ModelApi {
   status: () => Promise<ModelStatus>;
   start: (modelPath: string) => Promise<void>;
   stop: () => Promise<void>;
-  generate: (
-    request: GenerateRequest,
-  ) => Promise<void | GenerateBatteryGated>;
+  generate: (request: GenerateRequest) => Promise<void | GenerateBatteryGated>;
   cancelJob: () => Promise<void>;
   onToken: (callback: (chunk: GenerateChunk) => void) => () => void;
 }
@@ -2920,9 +2917,7 @@ export interface ConnectorApi {
    * triggers a refresh, never mutates anything. Safe to call on
    * every connector card mount and on every settings page load.
    */
-  inspectScopes: (
-    provider: string,
-  ) => Promise<ConnectorScopeComparison | null>;
+  inspectScopes: (provider: string) => Promise<ConnectorScopeComparison | null>;
 }
 
 /**
@@ -3066,9 +3061,7 @@ export interface SubstrateApi {
   /** Recompute retention and apply decay transitions. */
   runDecaySweep: () => Promise<SubstrateDecayReportInfo>;
   /** Produce and persist a deterministic synthesis for a scope. */
-  triggerSynthesis: (
-    scope?: string | null,
-  ) => Promise<SubstrateSynthesisInfo>;
+  triggerSynthesis: (scope?: string | null) => Promise<SubstrateSynthesisInfo>;
 }
 
 export interface AutomationApi {
@@ -3089,7 +3082,9 @@ export interface DialogApi {
    * `{ canceled: true, filePath: null }` if the user dismissed the
    * dialog, otherwise `{ canceled: false, filePath: <absolute path> }`.
    */
-  pickImage: (options?: OpenImageDialogOptions) => Promise<OpenImageDialogResult>;
+  pickImage: (
+    options?: OpenImageDialogOptions,
+  ) => Promise<OpenImageDialogResult>;
   /**
    * Open a native folder picker (Settings → Backup "choose folder").
    * Returns `{ canceled: true, filePath: null }` if dismissed, else
@@ -3508,9 +3503,7 @@ export interface AppLockApi {
   changePin: (oldPin: string, newPin: string) => Promise<void>;
   removePin: (pin: string) => Promise<void>;
   attemptUnlock: (pin: string) => Promise<AppLockUnlockResult>;
-  attemptBiometric: (
-    reason?: string,
-  ) => Promise<{ success: boolean }>;
+  attemptBiometric: (reason?: string) => Promise<{ success: boolean }>;
   /**
    * Options the renderer hands to `navigator.credentials.create()`
    * to register a new FIDO2 authenticator. The challenge is
@@ -4087,9 +4080,7 @@ export interface KchatApi {
    * handler returns the current watermark and a status
    * discriminator the renderer maps to a progress bar.
    */
-  backfillProgress: (
-    channelId: string,
-  ) => Promise<KchatBackfillProgressView>;
+  backfillProgress: (channelId: string) => Promise<KchatBackfillProgressView>;
   /**
    * Subscribe to KChat connection-state changes surfaced by the
    * main process. The callback fires once on every successful

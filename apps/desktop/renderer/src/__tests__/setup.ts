@@ -2,6 +2,34 @@ import "@testing-library/jest-dom/vitest";
 import { beforeEach, vi } from "vitest";
 import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 
+// Vitest's jsdom environment on some Node versions (notably Node 20) does not
+// provide a functional `window.localStorage`. Several tests call
+// `localStorage.clear()` or read/write keys, so provide a minimal in-memory
+// stub before any test runs.
+if (typeof window !== "undefined" && typeof window.localStorage === "undefined") {
+  const store = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    value: {
+      getItem: (key: string): string | null => store.get(key) ?? null,
+      setItem: (key: string, value: string): void => {
+        store.set(key, String(value));
+      },
+      removeItem: (key: string): void => {
+        store.delete(key);
+      },
+      clear: (): void => {
+        store.clear();
+      },
+      key: (index: number): string | null => Array.from(store.keys())[index] ?? null,
+      get length(): number {
+        return store.size;
+      },
+    },
+    writable: true,
+    configurable: true,
+  });
+}
+
 // jsdom does not implement SVG layout APIs; mermaid and other diagram
 // libraries call getBBox/getComputedTextLength/getCTM during render. Stub
 // just enough to let the layout pass complete.
