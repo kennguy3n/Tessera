@@ -13,7 +13,6 @@ Tessera runs each template section prompt below against the source files, ground
 
 > One-paragraph executive summary of the suspected or confirmed incident. State whether it has been classified as an Incident (still under investigation) or a Breach (45 CFR §164.402 determination complete), the discovery method, the affected systems, and the current containment status.
 
-
 ### Section 2: Discovery and Timeline
 
 **Template section prompt (verbatim from `templates/documents/hipaa-incident-report.yaml`):**
@@ -22,13 +21,11 @@ Tessera runs each template section prompt below against the source files, ground
 
 **Output format:** `numbered_list`
 
-
 ### Section 3: Affected Individuals and PHI Categories
 
 **Template section prompt (verbatim from `templates/documents/hipaa-incident-report.yaml`):**
 
 > State the count of affected individuals (or the upper-bound estimate during ongoing investigation). Categorize the PHI involved: demographic, medical history, lab/imaging results, prescriptions, billing/insurance, mental health, substance use (42 CFR Part 2), genetic, or other sensitive categories. Note whether the data was encrypted, paper, electronic, or in-transit.
-
 
 ### Section 4: Risk Assessment (45 CFR §164.402)
 
@@ -36,13 +33,11 @@ Tessera runs each template section prompt below against the source files, ground
 
 > Document the four-factor risk assessment required by the HITECH Act: (1) the nature and extent of the PHI involved, including types of identifiers and likelihood of re-identification; (2) the unauthorized person who used or received the PHI; (3) whether the PHI was actually acquired or viewed; (4) the extent to which risk has been mitigated. Conclude with the breach-vs-incident determination and the rationale.
 
-
 ### Section 5: Root Cause Analysis
 
 **Template section prompt (verbatim from `templates/documents/hipaa-incident-report.yaml`):**
 
 > Identify the root cause(s): technical (misconfiguration, vulnerability), human (training gap, malicious insider, social engineering), process (missing workflow, weak access controls), or third party (business associate failure). Use a 5-Whys or fishbone analysis.
-
 
 ### Section 6: Containment and Remediation Actions
 
@@ -52,7 +47,6 @@ Tessera runs each template section prompt below against the source files, ground
 
 **Output format:** `bullets`
 
-
 ### Section 7: Notification Requirements and Status
 
 **Template section prompt (verbatim from `templates/documents/hipaa-incident-report.yaml`):**
@@ -61,17 +55,14 @@ Tessera runs each template section prompt below against the source files, ground
 
 **Output format:** `table`
 
-
 ### Section 8: Lessons Learned and Policy Updates
 
 **Template section prompt (verbatim from `templates/documents/hipaa-incident-report.yaml`):**
 
 > Capture what the incident teaches the organization about its controls, training, monitoring, and incident response. List specific policy, procedure, or technology changes resulting from the incident. Tie each change to the root cause it addresses.
 
-
 ### Section 9: Approval and Closure
 
 **Template section prompt (verbatim from `templates/documents/hipaa-incident-report.yaml`):**
 
 > Record sign-off from the Privacy Officer, Security Officer, and (where applicable) General Counsel. State the closure criteria, the actual closure date, and the retention period for the incident record (typically 6 years from creation or last modification under HIPAA).
-

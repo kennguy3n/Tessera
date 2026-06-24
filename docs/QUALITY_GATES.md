@@ -6,13 +6,13 @@ three drive the **showcase-enabled production bundle** (`build:qa` →
 shipped renderer against deterministic, seeded persona data — never
 production data paths.
 
-| Gate | What it covers | Local command | CI |
-| --- | --- | --- | --- |
-| Cold-start perf | Electron boot → first paint | `npm run perf:cold-start` | `cold-start` job |
-| Interaction perf budgets | Heavy in-app surfaces (editors, concept-graph Canvas) | `npm run perf:budgets` | `quality-gates` job |
-| Accessibility (jsdom) | All 10 pages + interactive surfaces, axe-core | `npm run test --workspace=apps/desktop` | `typescript` job |
-| Accessibility (browser) | Same surfaces in light/dark/accent — colour-contrast + ARIA | `npm run qa:a11y --workspace=apps/desktop` | `quality-gates` job |
-| Visual regression | Screenshot snapshots of every surface × theme | `npm run qa:visual --workspace=apps/desktop` | `quality-gates` job |
+| Gate                     | What it covers                                              | Local command                                | CI                  |
+| ------------------------ | ----------------------------------------------------------- | -------------------------------------------- | ------------------- |
+| Cold-start perf          | Electron boot → first paint                                 | `npm run perf:cold-start`                    | `cold-start` job    |
+| Interaction perf budgets | Heavy in-app surfaces (editors, concept-graph Canvas)       | `npm run perf:budgets`                       | `quality-gates` job |
+| Accessibility (jsdom)    | All 10 pages + interactive surfaces, axe-core               | `npm run test --workspace=apps/desktop`      | `typescript` job    |
+| Accessibility (browser)  | Same surfaces in light/dark/accent — colour-contrast + ARIA | `npm run qa:a11y --workspace=apps/desktop`   | `quality-gates` job |
+| Visual regression        | Screenshot snapshots of every surface × theme               | `npm run qa:visual --workspace=apps/desktop` | `quality-gates` job |
 
 The `quality-gates` CI job runs in the pinned Playwright container
 (`mcr.microsoft.com/playwright:v1.60.0-jammy`) so the browser, OS libraries
@@ -31,17 +31,18 @@ All budgets live in [`apps/desktop/qa/perf-budgets.json`](../apps/desktop/qa/per
 
 ```jsonc
 {
-  "coldStartMs": 2000,        // boot → first paint (scripts/coldStartGate.cjs)
-  "graphScale": 300,          // concept-graph node count for the Canvas path
-  "samples": 5,               // measured runs per surface (median is compared)
-  "warmup": 1,                // discarded warmup runs before sampling
-  "interaction": {            // render-to-ready ceilings, ms (scripts/perfBudgets.mjs)
+  "coldStartMs": 2000, // boot → first paint (scripts/coldStartGate.cjs)
+  "graphScale": 300, // concept-graph node count for the Canvas path
+  "samples": 5, // measured runs per surface (median is compared)
+  "warmup": 1, // discarded warmup runs before sampling
+  "interaction": {
+    // render-to-ready ceilings, ms (scripts/perfBudgets.mjs)
     "editor-document": 1200,
     "editor-sheet": 1050,
     "editor-base": 950,
     "editor-slides": 1100,
-    "graph-canvas": 950
-  }
+    "graph-canvas": 950,
+  },
 }
 ```
 

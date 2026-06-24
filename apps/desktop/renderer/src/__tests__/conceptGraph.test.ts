@@ -37,18 +37,72 @@ function sampleGraph(): ConceptGraphView {
   return parseConceptGraph(
     JSON.stringify({
       nodes: [
-        { id: "a", label: "Atlas", state: "canonical", scope_id: "s1", connections_count: 2 },
-        { id: "b", label: "Beacon", state: "candidate", scope_id: "s1", connections_count: 3 },
-        { id: "c", label: "Cosmos", state: "candidate", scope_id: "s1", connections_count: 2 },
-        { id: "d", label: "Delta", state: "superseded", scope_id: "s1", connections_count: 2 },
-        { id: "e", label: "Echo", state: "contradicted", scope_id: "s1", connections_count: 1 },
+        {
+          id: "a",
+          label: "Atlas",
+          state: "canonical",
+          scope_id: "s1",
+          connections_count: 2,
+        },
+        {
+          id: "b",
+          label: "Beacon",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 3,
+        },
+        {
+          id: "c",
+          label: "Cosmos",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 2,
+        },
+        {
+          id: "d",
+          label: "Delta",
+          state: "superseded",
+          scope_id: "s1",
+          connections_count: 2,
+        },
+        {
+          id: "e",
+          label: "Echo",
+          state: "contradicted",
+          scope_id: "s1",
+          connections_count: 1,
+        },
       ],
       edges: [
         { id: "ab", from: "a", to: "b", relation_type: "is_a", scope_id: "s1" },
-        { id: "bc", from: "b", to: "c", relation_type: "part_of", scope_id: "s1" },
-        { id: "cd", from: "c", to: "d", relation_type: "supersedes", scope_id: "s1" },
-        { id: "be", from: "b", to: "e", relation_type: "part_of", scope_id: "s1" },
-        { id: "da", from: "d", to: "a", relation_type: "contradicts", scope_id: "s1" },
+        {
+          id: "bc",
+          from: "b",
+          to: "c",
+          relation_type: "part_of",
+          scope_id: "s1",
+        },
+        {
+          id: "cd",
+          from: "c",
+          to: "d",
+          relation_type: "supersedes",
+          scope_id: "s1",
+        },
+        {
+          id: "be",
+          from: "b",
+          to: "e",
+          relation_type: "part_of",
+          scope_id: "s1",
+        },
+        {
+          id: "da",
+          from: "d",
+          to: "a",
+          relation_type: "contradicts",
+          scope_id: "s1",
+        },
       ],
       scope_filter: [],
       depth: 2,
@@ -86,7 +140,13 @@ describe("parseConceptGraph", () => {
   it("returns a deeply-frozen, immutable view (nodes/edges arrays + elements)", () => {
     const json = JSON.stringify({
       nodes: [
-        { id: "a", label: "Atlas", state: "canonical", scope_id: "s1", connections_count: 1 },
+        {
+          id: "a",
+          label: "Atlas",
+          state: "canonical",
+          scope_id: "s1",
+          connections_count: 1,
+        },
       ],
       edges: [
         { id: "e1", from: "a", to: "a", relation_type: "is_a", scope_id: "s1" },
@@ -111,8 +171,20 @@ describe("parseConceptGraph", () => {
   it("normalizes PascalCase node state and snake_case relation_type", () => {
     const json = JSON.stringify({
       nodes: [
-        { id: "a", label: "Atlas", state: "Canonical", scope_id: "s1", connections_count: 2 },
-        { id: "b", label: "Beacon", state: "Superseded", scope_id: "s1", connections_count: 1 },
+        {
+          id: "a",
+          label: "Atlas",
+          state: "Canonical",
+          scope_id: "s1",
+          connections_count: 2,
+        },
+        {
+          id: "b",
+          label: "Beacon",
+          state: "Superseded",
+          scope_id: "s1",
+          connections_count: 1,
+        },
       ],
       edges: [
         { id: "e1", from: "a", to: "b", relation_type: "is_a", scope_id: "s1" },
@@ -131,11 +203,29 @@ describe("parseConceptGraph", () => {
   it("maps unknown states/relations/truncation to the forward-compat fallback", () => {
     const json = JSON.stringify({
       nodes: [
-        { id: "a", label: "A", state: "FutureState", scope_id: "s1", connections_count: 0 },
-        { id: "b", label: "B", state: "candidate", scope_id: "s1", connections_count: 0 },
+        {
+          id: "a",
+          label: "A",
+          state: "FutureState",
+          scope_id: "s1",
+          connections_count: 0,
+        },
+        {
+          id: "b",
+          label: "B",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 0,
+        },
       ],
       edges: [
-        { id: "e1", from: "a", to: "b", relation_type: "telepathically_linked", scope_id: "s1" },
+        {
+          id: "e1",
+          from: "a",
+          to: "b",
+          relation_type: "telepathically_linked",
+          scope_id: "s1",
+        },
       ],
       truncation: "some_new_reason",
     });
@@ -150,12 +240,35 @@ describe("parseConceptGraph", () => {
   it("drops nodes without an id and edges referencing missing nodes", () => {
     const json = JSON.stringify({
       nodes: [
-        { label: "no id", state: "candidate", scope_id: "s1", connections_count: 0 },
-        { id: "a", label: "A", state: "candidate", scope_id: "s1", connections_count: 1 },
+        {
+          label: "no id",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 0,
+        },
+        {
+          id: "a",
+          label: "A",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 1,
+        },
       ],
       edges: [
-        { id: "e1", from: "a", to: "ghost", relation_type: "is_a", scope_id: "s1" },
-        { id: "e2", from: "a", to: "a", relation_type: "part_of", scope_id: "s1" },
+        {
+          id: "e1",
+          from: "a",
+          to: "ghost",
+          relation_type: "is_a",
+          scope_id: "s1",
+        },
+        {
+          id: "e2",
+          from: "a",
+          to: "a",
+          relation_type: "part_of",
+          scope_id: "s1",
+        },
       ],
     });
     const view = parseConceptGraph(json);
@@ -167,8 +280,20 @@ describe("parseConceptGraph", () => {
   it("clamps negative / non-finite numeric fields", () => {
     const json = JSON.stringify({
       nodes: [
-        { id: "a", label: "A", state: "candidate", scope_id: "s1", connections_count: -5 },
-        { id: "b", label: "B", state: "candidate", scope_id: "s1", connections_count: 3.9 },
+        {
+          id: "a",
+          label: "A",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: -5,
+        },
+        {
+          id: "b",
+          label: "B",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 3.9,
+        },
       ],
       edges: [],
       depth: -2,
@@ -184,14 +309,50 @@ describe("computeRadialLayout", () => {
   const view: ConceptGraphView = parseConceptGraph(
     JSON.stringify({
       nodes: [
-        { id: "hub", label: "Hub", state: "canonical", scope_id: "s1", connections_count: 4 },
-        { id: "n1", label: "N1", state: "candidate", scope_id: "s1", connections_count: 1 },
-        { id: "n2", label: "N2", state: "candidate", scope_id: "s1", connections_count: 1 },
-        { id: "n3", label: "N3", state: "candidate", scope_id: "s1", connections_count: 0 },
+        {
+          id: "hub",
+          label: "Hub",
+          state: "canonical",
+          scope_id: "s1",
+          connections_count: 4,
+        },
+        {
+          id: "n1",
+          label: "N1",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 1,
+        },
+        {
+          id: "n2",
+          label: "N2",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 1,
+        },
+        {
+          id: "n3",
+          label: "N3",
+          state: "candidate",
+          scope_id: "s1",
+          connections_count: 0,
+        },
       ],
       edges: [
-        { id: "e1", from: "hub", to: "n1", relation_type: "is_a", scope_id: "s1" },
-        { id: "e2", from: "hub", to: "n2", relation_type: "part_of", scope_id: "s1" },
+        {
+          id: "e1",
+          from: "hub",
+          to: "n1",
+          relation_type: "is_a",
+          scope_id: "s1",
+        },
+        {
+          id: "e2",
+          from: "hub",
+          to: "n2",
+          relation_type: "part_of",
+          scope_id: "s1",
+        },
       ],
     }),
   );
@@ -241,12 +402,36 @@ describe("computeDegrees", () => {
     const view = parseConceptGraph(
       JSON.stringify({
         nodes: [
-          { id: "a", label: "A", state: "candidate", scope_id: "s", connections_count: 0 },
-          { id: "b", label: "B", state: "candidate", scope_id: "s", connections_count: 0 },
+          {
+            id: "a",
+            label: "A",
+            state: "candidate",
+            scope_id: "s",
+            connections_count: 0,
+          },
+          {
+            id: "b",
+            label: "B",
+            state: "candidate",
+            scope_id: "s",
+            connections_count: 0,
+          },
         ],
         edges: [
-          { id: "ab", from: "a", to: "b", relation_type: "is_a", scope_id: "s" },
-          { id: "aa", from: "a", to: "a", relation_type: "part_of", scope_id: "s" },
+          {
+            id: "ab",
+            from: "a",
+            to: "b",
+            relation_type: "is_a",
+            scope_id: "s",
+          },
+          {
+            id: "aa",
+            from: "a",
+            to: "a",
+            relation_type: "part_of",
+            scope_id: "s",
+          },
         ],
       }),
     );
@@ -258,7 +443,15 @@ describe("computeDegrees", () => {
   it("reports zero for isolated nodes", () => {
     const view = parseConceptGraph(
       JSON.stringify({
-        nodes: [{ id: "x", label: "X", state: "candidate", scope_id: "s", connections_count: 9 }],
+        nodes: [
+          {
+            id: "x",
+            label: "X",
+            state: "candidate",
+            scope_id: "s",
+            connections_count: 9,
+          },
+        ],
         edges: [],
       }),
     );
@@ -276,8 +469,24 @@ describe("buildAdjacency / incidentTo", () => {
   it("excludes self loops from the neighbor set", () => {
     const view = parseConceptGraph(
       JSON.stringify({
-        nodes: [{ id: "a", label: "A", state: "candidate", scope_id: "s", connections_count: 0 }],
-        edges: [{ id: "aa", from: "a", to: "a", relation_type: "is_a", scope_id: "s" }],
+        nodes: [
+          {
+            id: "a",
+            label: "A",
+            state: "candidate",
+            scope_id: "s",
+            connections_count: 0,
+          },
+        ],
+        edges: [
+          {
+            id: "aa",
+            from: "a",
+            to: "a",
+            relation_type: "is_a",
+            scope_id: "s",
+          },
+        ],
       }),
     );
     const adj = buildAdjacency(view);
@@ -401,7 +610,15 @@ describe("computeForceLayout", () => {
   it("centers a single node and never produces NaN", () => {
     const single = parseConceptGraph(
       JSON.stringify({
-        nodes: [{ id: "solo", label: "Solo", state: "candidate", scope_id: "s", connections_count: 0 }],
+        nodes: [
+          {
+            id: "solo",
+            label: "Solo",
+            state: "candidate",
+            scope_id: "s",
+            connections_count: 0,
+          },
+        ],
         edges: [],
       }),
     );
@@ -430,7 +647,9 @@ describe("computeForceLayout", () => {
       }),
     );
     const layout = computeForceLayout(many, { width: 700, height: 500 });
-    expect(layout.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
+    expect(
+      layout.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)),
+    ).toBe(true);
   });
 
   it("stays finite and deterministic for a large graph using the adaptive default", () => {
@@ -453,8 +672,12 @@ describe("computeForceLayout", () => {
     );
     const a = computeForceLayout(big, { width: 700, height: 500 });
     const b = computeForceLayout(big, { width: 700, height: 500 });
-    expect(a.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
-    expect(a.nodes.map((n) => [n.x, n.y])).toEqual(b.nodes.map((n) => [n.x, n.y]));
+    expect(
+      a.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)),
+    ).toBe(true);
+    expect(a.nodes.map((n) => [n.x, n.y])).toEqual(
+      b.nodes.map((n) => [n.x, n.y]),
+    );
   });
 });
 
@@ -466,7 +689,9 @@ describe("adaptiveIterations", () => {
     expect(adaptiveIterations(300)).toBeLessThan(320);
     expect(adaptiveIterations(300)).toBeGreaterThanOrEqual(60);
     // …monotonically non-increasing, and never below the floor.
-    expect(adaptiveIterations(600)).toBeLessThanOrEqual(adaptiveIterations(300));
+    expect(adaptiveIterations(600)).toBeLessThanOrEqual(
+      adaptiveIterations(300),
+    );
     expect(adaptiveIterations(600)).toBe(60);
     expect(adaptiveIterations(100000)).toBe(60);
   });
@@ -474,8 +699,12 @@ describe("adaptiveIterations", () => {
   it("holds work flat while the ∝1/n² schedule is active (before the floor)", () => {
     const baseline = 150 * 150 * adaptiveIterations(150);
     // 200 and 300 are still above MIN_ITERATIONS, so work tracks ~baseline.
-    expect(200 * 200 * adaptiveIterations(200)).toBeLessThanOrEqual(baseline * 1.05);
-    expect(300 * 300 * adaptiveIterations(300)).toBeLessThanOrEqual(baseline * 1.05);
+    expect(200 * 200 * adaptiveIterations(200)).toBeLessThanOrEqual(
+      baseline * 1.05,
+    );
+    expect(300 * 300 * adaptiveIterations(300)).toBeLessThanOrEqual(
+      baseline * 1.05,
+    );
   });
 
   it("keeps work far below a naive fixed-320 layout at large node counts", () => {
@@ -497,7 +726,10 @@ describe("computeFitBox", () => {
   });
 
   it("bounds every node (with radius) inside the box", () => {
-    const layout = computeForceLayout(sampleGraph(), { width: 600, height: 400 });
+    const layout = computeForceLayout(sampleGraph(), {
+      width: 600,
+      height: 400,
+    });
     const box = computeFitBox(layout, { padding: 20, labelPadding: 10 });
     for (const n of layout.nodes) {
       expect(n.x - n.radius).toBeGreaterThanOrEqual(box.x);
@@ -632,12 +864,19 @@ describe("computeEdgeCurves (parallel / reciprocal separation)", () => {
 
   it("gives a lone edge a single gentle bow", () => {
     const curves = computeEdgeCurves([edge("e1", "a", "b")], 20);
-    expect(curves.get("e1")).toEqual({ offset: 10, selfLoop: false, loopIndex: 0 });
+    expect(curves.get("e1")).toEqual({
+      offset: 10,
+      selfLoop: false,
+      loopIndex: 0,
+    });
   });
 
   it("splits two edges of the same pair to opposite sides (sum to zero)", () => {
     // a→b and b→a share the unordered pair → spread symmetrically.
-    const curves = computeEdgeCurves([edge("e1", "a", "b"), edge("e2", "b", "a")], 20);
+    const curves = computeEdgeCurves(
+      [edge("e1", "a", "b"), edge("e2", "b", "a")],
+      20,
+    );
     const o1 = curves.get("e1")!.offset;
     const o2 = curves.get("e2")!.offset;
     expect(o1 + o2).toBeCloseTo(0);
@@ -646,17 +885,22 @@ describe("computeEdgeCurves (parallel / reciprocal separation)", () => {
   });
 
   it("puts the middle of three parallel edges straight", () => {
-    const offsets = [...computeEdgeCurves(
-      [edge("e1", "a", "b"), edge("e2", "a", "b"), edge("e3", "a", "b")],
-      20,
-    ).values()]
+    const offsets = [
+      ...computeEdgeCurves(
+        [edge("e1", "a", "b"), edge("e2", "a", "b"), edge("e3", "a", "b")],
+        20,
+      ).values(),
+    ]
       .map((c) => c.offset)
       .sort((x, y) => x - y);
     expect(offsets).toEqual([-20, 0, 20]);
   });
 
   it("flags self-loops and fans them by index", () => {
-    const curves = computeEdgeCurves([edge("e1", "a", "a"), edge("e2", "a", "a")]);
+    const curves = computeEdgeCurves([
+      edge("e1", "a", "a"),
+      edge("e2", "a", "a"),
+    ]);
     expect(curves.get("e1")!.selfLoop).toBe(true);
     expect(curves.get("e2")!.selfLoop).toBe(true);
     expect(curves.get("e1")!.loopIndex).toBe(0);
@@ -664,8 +908,14 @@ describe("computeEdgeCurves (parallel / reciprocal separation)", () => {
   });
 
   it("is deterministic regardless of input edge order", () => {
-    const a = computeEdgeCurves([edge("e2", "a", "b"), edge("e1", "a", "b")], 20);
-    const b = computeEdgeCurves([edge("e1", "a", "b"), edge("e2", "a", "b")], 20);
+    const a = computeEdgeCurves(
+      [edge("e2", "a", "b"), edge("e1", "a", "b")],
+      20,
+    );
+    const b = computeEdgeCurves(
+      [edge("e1", "a", "b"), edge("e2", "a", "b")],
+      20,
+    );
     expect(a.get("e1")!.offset).toBe(b.get("e1")!.offset);
     expect(a.get("e2")!.offset).toBe(b.get("e2")!.offset);
   });
@@ -679,9 +929,9 @@ describe("quadraticControlPoint / quadraticEdgePath", () => {
     expect(c.x).toBeCloseTo(50);
     expect(c.y).toBeCloseTo(20);
     // A negative offset mirrors to the other side.
-    expect(quadraticControlPoint({ x: 0, y: 0 }, { x: 100, y: 0 }, -20).y).toBeCloseTo(
-      -20,
-    );
+    expect(
+      quadraticControlPoint({ x: 0, y: 0 }, { x: 100, y: 0 }, -20).y,
+    ).toBeCloseTo(-20);
   });
 
   it("never produces NaN for coincident endpoints", () => {
@@ -705,8 +955,16 @@ describe("quadraticControlPoint / quadraticEdgePath", () => {
 
   it("label anchor is identical whichever direction the edge is drawn", () => {
     const control = { x: 50, y: -20 };
-    const forward = quadraticEdgePath({ x: 0, y: 0 }, { x: 100, y: 0 }, control);
-    const reverse = quadraticEdgePath({ x: 100, y: 0 }, { x: 0, y: 0 }, control);
+    const forward = quadraticEdgePath(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      control,
+    );
+    const reverse = quadraticEdgePath(
+      { x: 100, y: 0 },
+      { x: 0, y: 0 },
+      control,
+    );
     expect(reverse.labelPoint).toEqual(forward.labelPoint);
   });
 
@@ -721,7 +979,10 @@ describe("quadraticControlPoint / quadraticEdgePath", () => {
     expect(mid).toEqual({ x: 50, y: -10 });
     expect(mid.y).not.toBeCloseTo(control.y);
     // A straight edge (control on the segment) collapses to the geometric mid.
-    expect(quadraticMidpoint(from, to, { x: 50, y: 0 })).toEqual({ x: 50, y: 0 });
+    expect(quadraticMidpoint(from, to, { x: 50, y: 0 })).toEqual({
+      x: 50,
+      y: 0,
+    });
   });
 });
 

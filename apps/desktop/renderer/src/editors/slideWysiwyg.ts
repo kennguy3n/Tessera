@@ -119,11 +119,7 @@ export function mergeBulletForward(
   const current = lines[index] ?? "";
   const nextLine = lines[index + 1] ?? "";
   const merged = current + nextLine;
-  const next = [
-    ...lines.slice(0, index),
-    merged,
-    ...lines.slice(index + 2),
-  ];
+  const next = [...lines.slice(0, index), merged, ...lines.slice(index + 2)];
   return { lines: next, focusIndex: index, focusCaret: current.length };
 }
 

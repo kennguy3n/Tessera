@@ -128,7 +128,9 @@ function startsWithTrustedTag(content: string): boolean {
  *     the plain-text branch is escaped so the user's text reads
  *     literally in the editor, not as live HTML.
  */
-export function parseDocumentContent(content: string | null | undefined): string {
+export function parseDocumentContent(
+  content: string | null | undefined,
+): string {
   if (!content) return "<p></p>";
   if (startsWithTrustedTag(content)) return content;
   return content
@@ -512,7 +514,9 @@ export function replaceOne(
   match: FindMatch,
   replacement: string,
 ): string {
-  return haystack.slice(0, match.start) + replacement + haystack.slice(match.end);
+  return (
+    haystack.slice(0, match.start) + replacement + haystack.slice(match.end)
+  );
 }
 
 /**

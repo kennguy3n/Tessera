@@ -217,14 +217,22 @@ export function tokenize(input: string): Token[] {
     // (sheet name) and a cell reference. The parser checks the
     // surrounding tokens; the tokenizer just classifies.
     if (ch === "!") {
-      tokens.push({ type: "BANG", text: "!", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "BANG",
+        text: "!",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     // Number literal — `12`, `12.5`, `.5`, `1e3`, `1.5E-3`.
     // (Negative numbers are produced by the parser via unary minus,
     // so the tokenizer never consumes a leading `-`.)
-    if (isDigit(ch) || (ch === "." && i + 1 < src.length && isDigit(src[i + 1]))) {
+    if (
+      isDigit(ch) ||
+      (ch === "." && i + 1 < src.length && isDigit(src[i + 1]))
+    ) {
       const numStart = i;
       while (i < src.length && isDigit(src[i])) i++;
       if (src[i] === ".") {
@@ -359,53 +367,103 @@ export function tokenize(input: string): Token[] {
     }
     // Punctuation
     if (ch === "(") {
-      tokens.push({ type: "LPAREN", text: "(", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "LPAREN",
+        text: "(",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     if (ch === ")") {
-      tokens.push({ type: "RPAREN", text: ")", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "RPAREN",
+        text: ")",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     if (ch === ",") {
-      tokens.push({ type: "COMMA", text: ",", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "COMMA",
+        text: ",",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     if (ch === ":") {
-      tokens.push({ type: "COLON", text: ":", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "COLON",
+        text: ":",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     if (ch === "%") {
-      tokens.push({ type: "PERCENT", text: "%", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "PERCENT",
+        text: "%",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     // Multi-character operators
     if (ch === "<") {
       if (src[i + 1] === "=") {
-        tokens.push({ type: "OPERATOR", text: "<=", start: absStart, end: absStart + 2 });
+        tokens.push({
+          type: "OPERATOR",
+          text: "<=",
+          start: absStart,
+          end: absStart + 2,
+        });
         i += 2;
         continue;
       }
       if (src[i + 1] === ">") {
-        tokens.push({ type: "OPERATOR", text: "<>", start: absStart, end: absStart + 2 });
+        tokens.push({
+          type: "OPERATOR",
+          text: "<>",
+          start: absStart,
+          end: absStart + 2,
+        });
         i += 2;
         continue;
       }
-      tokens.push({ type: "OPERATOR", text: "<", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "OPERATOR",
+        text: "<",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
     if (ch === ">") {
       if (src[i + 1] === "=") {
-        tokens.push({ type: "OPERATOR", text: ">=", start: absStart, end: absStart + 2 });
+        tokens.push({
+          type: "OPERATOR",
+          text: ">=",
+          start: absStart,
+          end: absStart + 2,
+        });
         i += 2;
         continue;
       }
-      tokens.push({ type: "OPERATOR", text: ">", start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "OPERATOR",
+        text: ">",
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }
@@ -418,7 +476,12 @@ export function tokenize(input: string): Token[] {
       ch === "&" ||
       ch === "="
     ) {
-      tokens.push({ type: "OPERATOR", text: ch, start: absStart, end: absStart + 1 });
+      tokens.push({
+        type: "OPERATOR",
+        text: ch,
+        start: absStart,
+        end: absStart + 1,
+      });
       i++;
       continue;
     }

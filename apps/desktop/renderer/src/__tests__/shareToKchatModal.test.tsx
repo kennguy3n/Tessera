@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ShareToKchatModal from "../components/ShareToKchatModal";
 import { ToastProvider } from "../components/Toast";
 
@@ -14,17 +9,39 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     status: vi.fn().mockResolvedValue({ state: "connected" }),
     connect: vi.fn(),
     disconnect: vi.fn(),
-    listTeams: vi.fn().mockResolvedValue([
-      { id: "team-1", name: "t1", display_name: "T1", type: "O" },
-    ]),
+    listTeams: vi
+      .fn()
+      .mockResolvedValue([
+        { id: "team-1", name: "t1", display_name: "T1", type: "O" },
+      ]),
     listChannels: vi.fn().mockResolvedValue([
-      { id: "chan-1", team_id: "team-1", name: "general", display_name: "General", type: "O" },
-      { id: "chan-2", team_id: "team-1", name: "priv", display_name: "Private", type: "P" },
-      { id: "chan-3", team_id: "team-1", name: "dm", display_name: "DM", type: "D" },
+      {
+        id: "chan-1",
+        team_id: "team-1",
+        name: "general",
+        display_name: "General",
+        type: "O",
+      },
+      {
+        id: "chan-2",
+        team_id: "team-1",
+        name: "priv",
+        display_name: "Private",
+        type: "P",
+      },
+      {
+        id: "chan-3",
+        team_id: "team-1",
+        name: "dm",
+        display_name: "DM",
+        type: "D",
+      },
     ]),
     listMembers: vi.fn(),
     listChannelFiles: vi.fn().mockResolvedValue([]),
-    shareArtifact: vi.fn().mockResolvedValue({ fileId: "file-1", fileName: "x.pdf" }),
+    shareArtifact: vi
+      .fn()
+      .mockResolvedValue({ fileId: "file-1", fileName: "x.pdf" }),
     addChannelSource: vi.fn(),
     onStatusChange: vi.fn().mockReturnValue(() => {}),
     onEvent: vi.fn().mockReturnValue(() => {}),

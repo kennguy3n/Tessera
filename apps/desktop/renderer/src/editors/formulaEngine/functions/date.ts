@@ -46,11 +46,7 @@ import {
   type EvaluationContext,
   type FunctionImpl,
 } from "../evaluator";
-import {
-  isFormulaError,
-  makeError,
-  type FormulaError,
-} from "../types";
+import { isFormulaError, makeError, type FormulaError } from "../types";
 
 /**
  * Origin = 1899-12-30 UTC. Excel's quirk: serial `60` is the fictitious
@@ -128,7 +124,8 @@ const DATE: FunctionImpl = (args, ctx) => {
   // Excel/Google Sheets quirk: 0..1899 → 1900..3799 (adds 1900).
   // Negative years and >=10000 are #NUM!.
   let year = Math.trunc(y);
-  if (year < 0 || year >= 10000) return makeError("#NUM!", "DATE year out of range");
+  if (year < 0 || year >= 10000)
+    return makeError("#NUM!", "DATE year out of range");
   if (year < 1900) year += 1900;
   // `Date.UTC` happily overflows month/day so DATE(2024, 13, 1) ==
   // 2025-01-01 — matches Excel's "rolling" behaviour.
@@ -223,7 +220,11 @@ function ydDifference(start: Date, end: Date): number {
   let diff = (end.getTime() - candidate.getTime()) / DAY_MS;
   if (diff < 0) {
     const prior = new Date(
-      Date.UTC(end.getUTCFullYear() - 1, start.getUTCMonth(), start.getUTCDate()),
+      Date.UTC(
+        end.getUTCFullYear() - 1,
+        start.getUTCMonth(),
+        start.getUTCDate(),
+      ),
     );
     diff = (end.getTime() - prior.getTime()) / DAY_MS;
   }
@@ -256,9 +257,10 @@ const DATEVALUE: FunctionImpl = (args, ctx) => {
 
 function parseDateString(text: string): Date | null {
   // ISO `YYYY-MM-DD` (optionally `YYYY-MM-DDTHH:MM:SS`).
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/.exec(
-    text,
-  );
+  let m =
+    /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/.exec(
+      text,
+    );
   if (m) {
     return new Date(
       Date.UTC(
@@ -330,7 +332,8 @@ const TIME: FunctionImpl = (args, ctx) => {
   if (isFormulaError(m)) return m;
   const s = singleNumber(args[2], ctx);
   if (isFormulaError(s)) return s;
-  const totalSeconds = Math.trunc(h) * 3600 + Math.trunc(m) * 60 + Math.trunc(s);
+  const totalSeconds =
+    Math.trunc(h) * 3600 + Math.trunc(m) * 60 + Math.trunc(s);
   // TIME wraps modulo 24h and is always a positive fraction of a day,
   // matching Excel (TIME(25,0,0) == TIME(1,0,0)).
   const dayFraction = ((totalSeconds % 86400) + 86400) % 86400;
@@ -420,8 +423,7 @@ const WEEKNUM: FunctionImpl = (args, ctx) => {
   const year = date.getUTCFullYear();
   const jan1 = new Date(Date.UTC(year, 0, 1));
   const jan1Dow = jan1.getUTCDay();
-  const dayOfYear =
-    Math.floor((date.getTime() - jan1.getTime()) / DAY_MS) + 1;
+  const dayOfYear = Math.floor((date.getTime() - jan1.getTime()) / DAY_MS) + 1;
   const offset = (jan1Dow - weekStart + 7) % 7;
   return Math.floor((dayOfYear + offset - 1) / 7) + 1;
 };
@@ -432,11 +434,14 @@ const EDATE: FunctionImpl = (args, ctx) => {
   if (isFormulaError(s)) return s;
   const months = singleNumber(args[1], ctx);
   if (isFormulaError(months)) return months;
-  return Math.trunc(dateToSerial(addMonths(serialToDate(Math.floor(s)), Math.trunc(months))));
+  return Math.trunc(
+    dateToSerial(addMonths(serialToDate(Math.floor(s)), Math.trunc(months))),
+  );
 };
 
 const EOMONTH: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "EOMONTH expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "EOMONTH expects 2 arguments");
   const s = singleNumber(args[0], ctx);
   if (isFormulaError(s)) return s;
   const months = singleNumber(args[1], ctx);
@@ -444,7 +449,11 @@ const EOMONTH: FunctionImpl = (args, ctx) => {
   const base = serialToDate(Math.floor(s));
   // Day 0 of (month + months + 1) is the last day of (month + months).
   const eom = new Date(
-    Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + Math.trunc(months) + 1, 0),
+    Date.UTC(
+      base.getUTCFullYear(),
+      base.getUTCMonth() + Math.trunc(months) + 1,
+      0,
+    ),
   );
   return Math.trunc(dateToSerial(eom));
 };

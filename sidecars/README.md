@@ -41,24 +41,24 @@ sidecars/
 
 The manifest lists supported models with metadata:
 
-| Field            | Description                          |
-|------------------|--------------------------------------|
-| `id`             | Unique model identifier              |
-| `name`           | Human-readable name                  |
-| `parameters`     | Model parameter count                |
-| `quantization`   | GGUF quantization level              |
-| `required_ram_gb`| Minimum RAM for inference            |
-| `download_size_mb`| Download size in megabytes          |
-| `context_length` | Maximum context window               |
-| `tier`           | Device tier: `low`, `medium`, `high` |
-| `url`            | Model GGUF download URL              |
-| `checksum`       | SHA-256 checksum (`sha256:<hash>`)   |
+| Field              | Description                          |
+| ------------------ | ------------------------------------ |
+| `id`               | Unique model identifier              |
+| `name`             | Human-readable name                  |
+| `parameters`       | Model parameter count                |
+| `quantization`     | GGUF quantization level              |
+| `required_ram_gb`  | Minimum RAM for inference            |
+| `download_size_mb` | Download size in megabytes           |
+| `context_length`   | Maximum context window               |
+| `tier`             | Device tier: `low`, `medium`, `high` |
+| `url`              | Model GGUF download URL              |
+| `checksum`         | SHA-256 checksum (`sha256:<hash>`)   |
 
 ## Environment Variables
 
-| Variable             | Default  | Description                        |
-|----------------------|----------|------------------------------------|
-| `LLAMA_CPP_VERSION`  | `b4546`  | llama.cpp release version to fetch |
+| Variable            | Default | Description                        |
+| ------------------- | ------- | ---------------------------------- |
+| `LLAMA_CPP_VERSION` | `b4546` | llama.cpp release version to fetch |
 
 ## Packaging
 

@@ -10,10 +10,7 @@
  * height (`rowCount * rowHeight`), so the scrollbar never jumps.
  */
 import { describe, it, expect } from "vitest";
-import {
-  computeVirtualWindow,
-  DEFAULT_OVERSCAN,
-} from "../gridVirtualization";
+import { computeVirtualWindow, DEFAULT_OVERSCAN } from "../gridVirtualization";
 
 /** Rendered-row span (inclusive) implied by a window result. */
 function renderedRowCount(start: number, end: number): number {
@@ -217,9 +214,7 @@ describe("computeVirtualWindow — variable row heights (rowOffsets)", () => {
 
   it("preserves the exact-height invariant for non-uniform rows", () => {
     // Heights vary per row so the uniform model would drift.
-    const heights = Array.from({ length: 500 }, (_, i) =>
-      20 + (i % 7) * 6,
-    );
+    const heights = Array.from({ length: 500 }, (_, i) => 20 + (i % 7) * 6);
     const rowOffsets = offsetsFromHeights(heights);
     const total = rowOffsets[heights.length];
     const w = computeVirtualWindow({

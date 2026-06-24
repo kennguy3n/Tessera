@@ -71,7 +71,9 @@ describe("BackupSettingsCard number inputs", () => {
   it("does not fire configure while typing — only on blur", async () => {
     const api = makeApi();
     await renderCard(api);
-    const interval = screen.getByLabelText(/Back up every/i) as HTMLInputElement;
+    const interval = screen.getByLabelText(
+      /Back up every/i,
+    ) as HTMLInputElement;
 
     fireEvent.change(interval, { target: { value: "4" } });
     fireEvent.change(interval, { target: { value: "48" } });
@@ -89,7 +91,9 @@ describe("BackupSettingsCard number inputs", () => {
   it("reverts an empty draft on blur without calling configure", async () => {
     const api = makeApi();
     await renderCard(api);
-    const interval = screen.getByLabelText(/Back up every/i) as HTMLInputElement;
+    const interval = screen.getByLabelText(
+      /Back up every/i,
+    ) as HTMLInputElement;
 
     fireEvent.change(interval, { target: { value: "" } });
     expect(api.configure).not.toHaveBeenCalled();
@@ -103,7 +107,9 @@ describe("BackupSettingsCard number inputs", () => {
   it("clamps an over-max interval before persisting", async () => {
     const api = makeApi();
     await renderCard(api);
-    const interval = screen.getByLabelText(/Back up every/i) as HTMLInputElement;
+    const interval = screen.getByLabelText(
+      /Back up every/i,
+    ) as HTMLInputElement;
 
     fireEvent.change(interval, { target: { value: "9999" } });
     fireEvent.blur(interval);
@@ -151,7 +157,9 @@ describe("BackupSettingsCard number inputs", () => {
   it("commits on Enter via blur", async () => {
     const api = makeApi();
     await renderCard(api);
-    const interval = screen.getByLabelText(/Back up every/i) as HTMLInputElement;
+    const interval = screen.getByLabelText(
+      /Back up every/i,
+    ) as HTMLInputElement;
 
     fireEvent.change(interval, { target: { value: "12" } });
     fireEvent.keyDown(interval, { key: "Enter" });

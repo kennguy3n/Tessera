@@ -50,7 +50,9 @@ describe("scoreQuickItem", () => {
     expect(r).not.toBeNull();
     expect(r!.matchedIndices.length).toBeGreaterThan(0);
     // every highlighted index points at a char of the query, in order
-    expect(r!.matchedIndices).toEqual([...r!.matchedIndices].sort((a, b) => a - b));
+    expect(r!.matchedIndices).toEqual(
+      [...r!.matchedIndices].sort((a, b) => a - b),
+    );
   });
 
   it("scores an aux-only match but highlights nothing in the title", () => {
@@ -104,7 +106,11 @@ describe("rankQuickSwitchItems — empty query", () => {
   });
 
   it("never highlights anything on an empty query", () => {
-    const ranked = rankQuickSwitchItems({ items, query: "", recentKeys: ["a"] });
+    const ranked = rankQuickSwitchItems({
+      items,
+      query: "",
+      recentKeys: ["a"],
+    });
     expect(ranked.every((r) => r.matchedIndices.length === 0)).toBe(true);
   });
 
@@ -137,10 +143,7 @@ describe("rankQuickSwitchItems — non-empty query", () => {
   });
 
   it("applies a recency boost so a recent match outranks a cold equal match", () => {
-    const items = [
-      artifact("cold", "Report"),
-      artifact("warm", "Report"),
-    ];
+    const items = [artifact("cold", "Report"), artifact("warm", "Report")];
     // Same title => same textual score; the recency boost on "warm"
     // (rank 0) must break the tie in its favour.
     const ranked = rankQuickSwitchItems({

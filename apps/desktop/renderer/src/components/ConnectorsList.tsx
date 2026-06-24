@@ -76,7 +76,11 @@ async function safeInspectScopes(
  * audit the data surface before authorising. Uses a native
  * `<details>`/`<summary>` so it is keyboard-operable for free.
  */
-function ScopeTransparency({ descriptor }: { descriptor: ConnectorDescriptor }) {
+function ScopeTransparency({
+  descriptor,
+}: {
+  descriptor: ConnectorDescriptor;
+}) {
   const reads = descriptor.reads ?? [];
   const neverTouches = descriptor.neverTouches ?? [];
   if (reads.length === 0 && neverTouches.length === 0) return null;
@@ -118,13 +122,10 @@ export default function ConnectorsList({
   // Memoising on a sorted-joined string lets us deduplicate cheaply
   // without forcing parent components to also memo.
   const excludeKey = (excludeProviders ?? []).slice().sort().join("|");
-  const descriptors = useMemo(
-    () => {
-      const excluded = new Set(excludeKey ? excludeKey.split("|") : []);
-      return CONNECTOR_DESCRIPTORS.filter((d) => !excluded.has(d.provider));
-    },
-    [excludeKey],
-  );
+  const descriptors = useMemo(() => {
+    const excluded = new Set(excludeKey ? excludeKey.split("|") : []);
+    return CONNECTOR_DESCRIPTORS.filter((d) => !excluded.has(d.provider));
+  }, [excludeKey]);
   const [statuses, setStatuses] = useState<Record<string, ConnectorStatusInfo>>(
     {},
   );
@@ -168,9 +169,10 @@ export default function ConnectorsList({
   // value, because the most common reason for that guessed value to
   // be wrong is exactly the case the user is about to act on
   // (registering a redirect URI in the provider's developer console).
-  const [redirectUris, setRedirectUris] = useState<
-    Record<string, string> | null
-  >(null);
+  const [redirectUris, setRedirectUris] = useState<Record<
+    string,
+    string
+  > | null>(null);
 
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -258,7 +260,10 @@ export default function ConnectorsList({
   const fieldErrors = useMemo(() => {
     const errors: Record<string, string | undefined> = {};
     for (const field of connectSpec?.configFields ?? []) {
-      const result = validateConnectorField(field, configValues[field.key] ?? "");
+      const result = validateConnectorField(
+        field,
+        configValues[field.key] ?? "",
+      );
       if (!result.valid) errors[field.key] = result.error;
     }
     return errors;
@@ -574,9 +579,7 @@ export default function ConnectorsList({
           setAuthError(null);
           setTestResult(null);
         }}
-        title={
-          descriptor ? `Connect ${descriptor.label}` : "Connect provider"
-        }
+        title={descriptor ? `Connect ${descriptor.label}` : "Connect provider"}
       >
         {descriptor && (
           <>
@@ -637,10 +640,7 @@ export default function ConnectorsList({
                 : undefined;
               const errorId = `connector-field-error-${field.key}`;
               return (
-                <div
-                  key={field.key}
-                  style={{ marginTop: "var(--spacing-sm)" }}
-                >
+                <div key={field.key} style={{ marginTop: "var(--spacing-sm)" }}>
                   <input
                     className="input"
                     placeholder={
@@ -657,13 +657,19 @@ export default function ConnectorsList({
                         ...prev,
                         [field.key]: value,
                       }));
-                      setTouchedFields((prev) => ({ ...prev, [field.key]: true }));
+                      setTouchedFields((prev) => ({
+                        ...prev,
+                        [field.key]: true,
+                      }));
                       // The typed value diverged from whatever was last
                       // probed, so the stale result no longer applies.
                       setTestResult(null);
                     }}
                     onBlur={() =>
-                      setTouchedFields((prev) => ({ ...prev, [field.key]: true }))
+                      setTouchedFields((prev) => ({
+                        ...prev,
+                        [field.key]: true,
+                      }))
                     }
                     aria-label={field.label}
                     aria-invalid={fieldError ? true : undefined}

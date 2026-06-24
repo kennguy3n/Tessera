@@ -94,8 +94,7 @@ export function validatePortFile(parsed: unknown): PortFileResult {
       detail: `token must be at least ${MIN_TOKEN_LENGTH} characters`,
     };
   }
-  const startedAt =
-    typeof obj.startedAt === "string" ? obj.startedAt : "";
+  const startedAt = typeof obj.startedAt === "string" ? obj.startedAt : "";
   const pid = typeof obj.pid === "number" ? obj.pid : 0;
   return {
     ok: true,

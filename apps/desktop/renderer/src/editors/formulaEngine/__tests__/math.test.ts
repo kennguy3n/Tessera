@@ -169,7 +169,9 @@ describe("array aggregations", () => {
     expect(evalFormula("=SUMPRODUCT(A1:A3)", GRID)).toBe(6);
   });
   it("SUMPRODUCT rejects mismatched shapes", () => {
-    expect(code(evalFormula("=SUMPRODUCT(A1:A3, B1:B2)", GRID))).toBe("#VALUE!");
+    expect(code(evalFormula("=SUMPRODUCT(A1:A3, B1:B2)", GRID))).toBe(
+      "#VALUE!",
+    );
   });
 });
 
@@ -179,9 +181,14 @@ describe("RAND / RANDBETWEEN determinism", () => {
     const parsed = parseFormula("=RANDBETWEEN(1, 6)");
     if (!parsed.ok) throw new Error("parse failed");
     // random()=0 → low endpoint, random()→1⁻ → high endpoint.
-    expect(evaluate(parsed.ast, defaultContext(resolver, { random: () => 0 }))).toBe(1);
     expect(
-      evaluate(parsed.ast, defaultContext(resolver, { random: () => 0.999999 })),
+      evaluate(parsed.ast, defaultContext(resolver, { random: () => 0 })),
+    ).toBe(1);
+    expect(
+      evaluate(
+        parsed.ast,
+        defaultContext(resolver, { random: () => 0.999999 }),
+      ),
     ).toBe(6);
     expect(code(evalFormula("=RANDBETWEEN(6, 1)"))).toBe("#NUM!");
   });

@@ -45,7 +45,8 @@ function evalWithNames(
   ranges: { name: string; range: string }[],
 ): FormulaValue {
   const parsed = parseFormula(expr);
-  if (!parsed.ok) return { kind: "error", code: parsed.code, message: parsed.message };
+  if (!parsed.ok)
+    return { kind: "error", code: parsed.code, message: parsed.message };
   const ctx = defaultContext(makeResolver(grid), {
     names: buildNamesMap(ranges),
   });
@@ -162,7 +163,9 @@ describe("conditional aggregation over a named range", () => {
 
   it("SUMIF tests every cell of a named criteria/sum range", () => {
     // paid rows are 10 + 30 + 40 = 80; the named-range and literal forms agree.
-    expect(evalWithNames('=SUMIF(Status,"paid",Amount)', GRID, RANGES)).toBe(80);
+    expect(evalWithNames('=SUMIF(Status,"paid",Amount)', GRID, RANGES)).toBe(
+      80,
+    );
     expect(evalWithNames('=SUMIF(A1:A4,"paid",B1:B4)', GRID, RANGES)).toBe(80);
   });
   it("SUMIF with a numeric criterion over a named range", () => {

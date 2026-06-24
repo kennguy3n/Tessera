@@ -246,7 +246,9 @@ export default function QuickSwitcher({ isOpen, onClose }: QuickSwitcherProps) {
           return;
         case "ArrowDown":
           e.preventDefault();
-          setActiveIndex((i) => Math.max(0, Math.min(ranked.length - 1, i + 1)));
+          setActiveIndex((i) =>
+            Math.max(0, Math.min(ranked.length - 1, i + 1)),
+          );
           return;
         case "ArrowUp":
           e.preventDefault();

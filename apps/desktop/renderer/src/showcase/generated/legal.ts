@@ -4,12 +4,23 @@ import type { ShowcaseDataset } from "../types";
 
 export const legalDataset: ShowcaseDataset = {
   id: "legal",
-  persona: {"name": "David Reyes", "role": "Corporate Paralegal", "org": "Hartwell & Cho LLP", "market": "Legal (mid-size corporate firm)", "blurb": "David abstracts inbound commercial contracts for the firm's corporate group. Partners want a consistent one-page summary of parties, key terms, obligations and risks \u2014 plus a tracker of renewal and notice deadlines so nothing lapses.\n"},
-  sourceFiles: ["01-master-saas-agreement.md", "02-reviewer-notes-and-redlines.md"],
+  persona: {
+    name: "David Reyes",
+    role: "Corporate Paralegal",
+    org: "Hartwell & Cho LLP",
+    market: "Legal (mid-size corporate firm)",
+    blurb:
+      "David abstracts inbound commercial contracts for the firm's corporate group. Partners want a consistent one-page summary of parties, key terms, obligations and risks \u2014 plus a tracker of renewal and notice deadlines so nothing lapses.\n",
+  },
+  sourceFiles: [
+    "01-master-saas-agreement.md",
+    "02-reviewer-notes-and-redlines.md",
+  ],
   artifacts: [
     {
       slug: "contract-summary",
-      title: "Contract Summary \u2014 Master SaaS Agreement (Northwind \u00d7 Acme)",
+      title:
+        "Contract Summary \u2014 Master SaaS Agreement (Northwind \u00d7 Acme)",
       type: "document",
       templateId: "contract-summary-v1",
       templateName: "Contract Summary",

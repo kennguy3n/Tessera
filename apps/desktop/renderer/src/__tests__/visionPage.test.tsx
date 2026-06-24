@@ -85,12 +85,12 @@ describe("VisionPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("vision-unavailable")).toBeInTheDocument();
     });
-    expect(
-      screen.queryByTestId("vision-pick-image"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("vision-pick-image")).not.toBeInTheDocument();
     // The Settings button is rendered with a real label so a
     // future a11y / link-rename refactor catches it.
-    expect(screen.getByRole("button", { name: /go to settings/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /go to settings/i }),
+    ).toBeInTheDocument();
   });
 
   it("treats an isAvailable() rejection as 'unavailable' so a broken IPC doesn't leave the page in a stuck-checking state", async () => {
@@ -313,8 +313,7 @@ describe("VisionPage", () => {
     // The update should carry the formatted Markdown body —
     // assert the title + content show up, not the literal
     // (which is brittle due to formatting choices).
-    const updateArgs = vi.mocked(window.tessera.artifacts.update).mock
-      .calls[0];
+    const updateArgs = vi.mocked(window.tessera.artifacts.update).mock.calls[0];
     expect(updateArgs[0]).toBe("art-7");
     expect(updateArgs[1]).toMatch(/# Vision: Describe — poster\.jpg/);
     expect(updateArgs[1]).toMatch(/A vintage travel poster of Lake Tahoe\./);
@@ -390,8 +389,7 @@ describe("VisionPage", () => {
         "document",
       );
     });
-    const updateArgs = vi.mocked(window.tessera.artifacts.update).mock
-      .calls[0];
+    const updateArgs = vi.mocked(window.tessera.artifacts.update).mock.calls[0];
     expect(updateArgs[1]).toMatch(/# Vision: Describe — snapshot\.png/);
     // The provenance header must record the analysis-time
     // maxTokens, NOT the live slider value the user nudged
@@ -420,7 +418,9 @@ describe("VisionPage", () => {
     expect(out.markdown).toContain("**Source image:** `photo.png`");
     expect(out.markdown).toContain("**Mode:** OCR");
     expect(out.markdown).toContain("**Tokens predicted:** 8 of 256");
-    expect(out.markdown).toContain("**Tokens evaluated (prompt + image):** 130");
+    expect(out.markdown).toContain(
+      "**Tokens evaluated (prompt + image):** 130",
+    );
     expect(out.markdown).toContain("EXIT 5 — STATE ST.");
     // Truncation banner must NOT appear when stop === true.
     expect(out.markdown).not.toContain("truncated");

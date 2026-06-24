@@ -143,7 +143,7 @@ describe("passwordVault — derivation and caching", () => {
     const returned = await deriveAndCacheKey("hunter2");
     const blob = encryptWithPasswordKey("payload");
     // Tamper with the returned copy.
-    returned.fill(0xFF);
+    returned.fill(0xff);
     // Cache must be untouched: round-trip still works.
     expect(decryptWithPasswordKey(blob)).toBe("payload");
   });
@@ -196,7 +196,10 @@ describe("passwordVault — derivation and caching", () => {
     await deriveAndCacheKey("hunter2");
     const saltFile = path.join(tmpDir, "vault-salt.bin");
     const tmpFile = `${saltFile}.tmp`;
-    expect(fs.existsSync(saltFile), "salt file must exist after derivation").toBe(true);
+    expect(
+      fs.existsSync(saltFile),
+      "salt file must exist after derivation",
+    ).toBe(true);
     expect(
       fs.existsSync(tmpFile),
       "`.tmp` sidecar file must NOT exist after successful atomic rename",
@@ -264,7 +267,10 @@ describe("passwordVault — encryption round-trip", () => {
 
   it("decrypting a structurally invalid blob throws plain Error (not WrongVaultPasswordError)", async () => {
     await deriveAndCacheKey("hunter2");
-    const bogus = Buffer.from("garbage-not-a-tspv-blob-but-long-enough-to-pass-the-length-gate", "utf-8");
+    const bogus = Buffer.from(
+      "garbage-not-a-tspv-blob-but-long-enough-to-pass-the-length-gate",
+      "utf-8",
+    );
     try {
       decryptWithPasswordKey(bogus);
       throw new Error("should have thrown");
@@ -324,7 +330,7 @@ describe("passwordVault — blob sniffing", () => {
 
 describe("passwordVault — direct key override (test-only)", () => {
   it("_setCachedKeyForTests bypasses derivation for fast unit tests", () => {
-    const fakeKey = Buffer.alloc(32, 0xAB);
+    const fakeKey = Buffer.alloc(32, 0xab);
     _setCachedKeyForTests(fakeKey);
     expect(passwordVaultActive()).toBe(true);
     const blob = encryptWithPasswordKey("hi");
@@ -453,7 +459,9 @@ describe("passwordVault — prompt HTML contract", () => {
       confirmRequired: false,
     });
     expect(withoutConfirm).not.toContain("Confirm password");
-    expect(withoutConfirm).not.toMatch(/p !== document\.getElementById\('confirm'\)/);
+    expect(withoutConfirm).not.toMatch(
+      /p !== document\.getElementById\('confirm'\)/,
+    );
   });
 
   it("exports the fixed channel names the preload binds to", () => {
@@ -497,7 +505,10 @@ describe("passwordVault — IPC-boundary defense in depth", () => {
     const onSubmitMatch = source.match(
       /const onSubmit\s*=\s*\([\s\S]*?\n {4}\};/,
     );
-    expect(onSubmitMatch, "could not locate onSubmit handler in passwordVault.ts").toBeTruthy();
+    expect(
+      onSubmitMatch,
+      "could not locate onSubmit handler in passwordVault.ts",
+    ).toBeTruthy();
     if (!onSubmitMatch) return;
     const body = onSubmitMatch[0];
     // The body must contain a strict empty-string check that
@@ -505,7 +516,7 @@ describe("passwordVault — IPC-boundary defense in depth", () => {
     // sequence. Match the literal check.
     expect(
       body,
-      "onSubmit handler must reject empty-string passwords with `if (password === \"\")` (defense-in-depth against compromised renderer)",
+      'onSubmit handler must reject empty-string passwords with `if (password === "")` (defense-in-depth against compromised renderer)',
     ).toMatch(/if\s*\(\s*password\s*===\s*""\s*\)\s*\{[\s\S]*?return\s*;/);
     // And the empty-string check must occur BEFORE settled = true
     // and before any reference to deriveAndCacheKey or pbkdf2.
@@ -575,9 +586,7 @@ describe("passwordVault — TOCTOU sentinel contract", () => {
     );
     // And there must be NO inline literal comparison anywhere — the
     // anti-pattern this regression test guards against.
-    expect(mainSource).not.toMatch(
-      /===\s*"safeStorage is available"/,
-    );
+    expect(mainSource).not.toMatch(/===\s*"safeStorage is available"/);
   });
 });
 
@@ -617,9 +626,7 @@ describe("passwordVault — docstring caller attribution", () => {
     expect(PASSWORD_VAULT_SRC).not.toMatch(/appState\.ts/);
     expect(PASSWORD_VAULT_SRC).not.toMatch(/appState\.initAppState/);
     // Specifically the canonical wrong phrase from the earlier draft.
-    expect(PASSWORD_VAULT_SRC).not.toMatch(
-      /called from\s+`appState/,
-    );
+    expect(PASSWORD_VAULT_SRC).not.toMatch(/called from\s+`appState/);
   });
 
   // JSDoc orphan detection: a `/** ... */` block must immediately
@@ -644,12 +651,10 @@ describe("passwordVault — docstring caller attribution", () => {
     expect(
       matches,
       matches
-        ? `Orphaned JSDoc detected: a /** ... */ block is immediately followed by another /** ... */, meaning the first one documents nothing. Found near:\n${PASSWORD_VAULT_SRC
-            .slice(
-              Math.max(0, (matches.index ?? 0) - 80),
-              (matches.index ?? 0) + 120,
-            )
-            .trim()}`
+        ? `Orphaned JSDoc detected: a /** ... */ block is immediately followed by another /** ... */, meaning the first one documents nothing. Found near:\n${PASSWORD_VAULT_SRC.slice(
+            Math.max(0, (matches.index ?? 0) - 80),
+            (matches.index ?? 0) + 120,
+          ).trim()}`
         : undefined,
     ).toBeNull();
   });

@@ -59,8 +59,6 @@ interface LandingPageEditorProps {
   artifactId?: string;
 }
 
-
-
 export default function LandingPageEditor({
   content,
   onSave,
@@ -402,7 +400,11 @@ export default function LandingPageEditor({
             </button>
           </div>
         ))}
-        <button type="button" onClick={addTestimonial} aria-label="Add testimonial">
+        <button
+          type="button"
+          onClick={addTestimonial}
+          aria-label="Add testimonial"
+        >
           <Plus size={16} /> Add testimonial
         </button>
 

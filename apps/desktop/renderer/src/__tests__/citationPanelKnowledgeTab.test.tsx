@@ -66,7 +66,9 @@ function memory(over: Partial<SubstrateMemoryInfo> = {}): SubstrateMemoryInfo {
   };
 }
 
-function concept(over: Partial<SubstrateConceptInfo> = {}): SubstrateConceptInfo {
+function concept(
+  over: Partial<SubstrateConceptInfo> = {},
+): SubstrateConceptInfo {
   return {
     id: "44444444-4444-4444-8444-444444444444",
     label: "Acme Corp",
@@ -77,7 +79,9 @@ function concept(over: Partial<SubstrateConceptInfo> = {}): SubstrateConceptInfo
   };
 }
 
-function enriched(over: Partial<EnrichedSearchResult> = {}): EnrichedSearchResult {
+function enriched(
+  over: Partial<EnrichedSearchResult> = {},
+): EnrichedSearchResult {
   return {
     hits: [],
     entities: [memory({ content: "Acme Corp", observationType: "entity" })],

@@ -21,12 +21,7 @@ import type {
 
 const BOX: FitBox = { x: 0, y: 0, width: 100, height: 100 };
 
-function node(
-  id: string,
-  x: number,
-  y: number,
-  radius = 8,
-): PositionedNode {
+function node(id: string, x: number, y: number, radius = 8): PositionedNode {
   return {
     id,
     label: id,
@@ -203,9 +198,9 @@ describe("hitTestNode", () => {
   it("uses the live position override when supplied", () => {
     const override = new Map([["a", { x: 100, y: 100 }]]);
     // 'a' has been dragged to (100,100); a hit there resolves to 'a'.
-    expect(hitTestNode(nodes, { x: 101, y: 100 }, (id) => override.get(id))).toBe(
-      "a",
-    );
+    expect(
+      hitTestNode(nodes, { x: 101, y: 100 }, (id) => override.get(id)),
+    ).toBe("a");
     // Its old spot no longer hits 'a'.
     expect(
       hitTestNode(nodes, { x: 10, y: 10 }, (id) => override.get(id)),

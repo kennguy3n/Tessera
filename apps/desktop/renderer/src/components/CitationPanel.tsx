@@ -148,7 +148,11 @@ interface CitationPanelProps {
 
 type FreshnessMap = Record<string, CitationFreshness>;
 
-export default function CitationPanel({ artifactId, isOpen, onClose }: CitationPanelProps) {
+export default function CitationPanel({
+  artifactId,
+  isOpen,
+  onClose,
+}: CitationPanelProps) {
   const [citations, setCitations] = useState<CitationInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -169,7 +173,9 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
       const entries = await Promise.all(
         list.map(async (citation): Promise<[string, CitationFreshness]> => {
           try {
-            const status = await api.citations.checkFreshness(citation.citationId);
+            const status = await api.citations.checkFreshness(
+              citation.citationId,
+            );
             return [citation.citationId, status];
           } catch {
             return [citation.citationId, "changed"];
@@ -278,9 +284,7 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
     if (!api) return;
     const result = await api.citations.replace(req);
     setCitations((prev) =>
-      prev.map((c) =>
-        c.citationId === req.citationId ? result.citation : c,
-      ),
+      prev.map((c) => (c.citationId === req.citationId ? result.citation : c)),
     );
     setFreshness((prev) => ({
       ...prev,
@@ -292,11 +296,7 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
   if (!isOpen) return null;
 
   return (
-    <div
-      className="citation-panel"
-      role="region"
-      aria-label="Citations panel"
-    >
+    <div className="citation-panel" role="region" aria-label="Citations panel">
       <div className="citation-panel-header">
         <h3>Citations ({citations.length})</h3>
         <div style={{ display: "flex", gap: "var(--spacing-xs)" }}>
@@ -320,7 +320,9 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
       {loading ? (
         <p className="citation-loading">Loading citations...</p>
       ) : citations.length === 0 ? (
-        <p className="citation-empty">No citations attached to this artifact.</p>
+        <p className="citation-empty">
+          No citations attached to this artifact.
+        </p>
       ) : (
         <ul className="citation-list" aria-label="Citation list">
           {citations.map((citation) => {
@@ -385,7 +387,9 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
                   <div className="citation-page">Page {citation.page}</div>
                 )}
                 <div className="citation-meta">
-                  <span>Confidence: {(citation.confidence * 100).toFixed(0)}%</span>
+                  <span>
+                    Confidence: {(citation.confidence * 100).toFixed(0)}%
+                  </span>
                   <span>Used for: {citation.usedFor || "—"}</span>
                 </div>
                 <div className="citation-actions">
@@ -607,14 +611,17 @@ function knowledgeCount(k: EnrichedSearchResult): number {
  * unlike the "Sources" tab these rows are not selectable as citations
  * (entities/concepts have no single chunk hash to attribute).
  */
-function KnowledgeResultsView({ knowledge }: { knowledge: EnrichedSearchResult }) {
+function KnowledgeResultsView({
+  knowledge,
+}: {
+  knowledge: EnrichedSearchResult;
+}) {
   const total = knowledgeCount(knowledge);
   if (total === 0) {
     return (
       <p className="citation-knowledge-empty">
         No entities, facts, or concepts found for this query. Run the
-        observation pipeline on your sources to populate the knowledge
-        layer.
+        observation pipeline on your sources to populate the knowledge layer.
       </p>
     );
   }
@@ -635,10 +642,7 @@ function KnowledgeResultsView({ knowledge }: { knowledge: EnrichedSearchResult }
         />
       )}
       {knowledge.concepts.length > 0 && (
-        <section
-          className="citation-knowledge-section"
-          aria-label="Concepts"
-        >
+        <section className="citation-knowledge-section" aria-label="Concepts">
           <h5 className="citation-knowledge-heading">
             Concepts ({knowledge.concepts.length})
           </h5>
@@ -828,7 +832,11 @@ function AddCitationDialog({
   };
 
   return (
-    <div className="citation-add-dialog" role="dialog" aria-label="Add citation">
+    <div
+      className="citation-add-dialog"
+      role="dialog"
+      aria-label="Add citation"
+    >
       <h4>Add Citation from Sources</h4>
       <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
         <input
@@ -1016,8 +1024,8 @@ function ConfirmRemoveDialog({
     >
       <h4>Remove citation?</h4>
       <p>
-        Removing only unlinks the provenance — the cited text stays
-        in the artifact.
+        Removing only unlinks the provenance — the cited text stays in the
+        artifact.
       </p>
       <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
         <Button variant="danger" onClick={onConfirm} autoFocus>

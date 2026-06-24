@@ -89,9 +89,7 @@ function readExisting(filePath: string): RendererCrashReport[] {
     // missing one) instead of persisting it verbatim. Entries this module
     // wrote are already normalized, so normalization is a no-op for them.
     const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-    return entries
-      .filter(isReportShaped)
-      .map((e) => normalizeCrashReport(e));
+    return entries.filter(isReportShaped).map((e) => normalizeCrashReport(e));
   } catch {
     // Missing or corrupt file — start fresh.
   }

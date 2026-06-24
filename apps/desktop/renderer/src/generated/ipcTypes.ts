@@ -69,6 +69,7 @@ export type CreateAutomationInput = {
 export type SettingsUpdateInput = {
   theme?: "light" | "dark" | "system" | undefined;
   accentColor?:
+    | "kchat"
     | "violet"
     | "blue"
     | "teal"

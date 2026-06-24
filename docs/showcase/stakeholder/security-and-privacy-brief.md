@@ -1,6 +1,6 @@
 # Tessera — Security & Privacy Brief
 
-*For security reviewers, IT, compliance, and privacy officers evaluating Tessera.*
+_For security reviewers, IT, compliance, and privacy officers evaluating Tessera._
 
 ## Summary
 
@@ -38,7 +38,7 @@ Local folders / files ──▶ Local index (on device)
 
 ## Why this matters for regulated work
 
-The personas in this showcase are not incidental — they're the workloads that *can't* use a
+The personas in this showcase are not incidental — they're the workloads that _can't_ use a
 cloud AI assistant:
 
 - **Healthcare (PHI):** a HIPAA breach assessment is built from the most sensitive data in

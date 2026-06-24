@@ -32,7 +32,10 @@ export function readTabDrag(e: ReactDragEvent): TabDragData | null {
       typeof (parsed as TabDragData).paneId === "string" &&
       typeof (parsed as TabDragData).tabId === "string"
     ) {
-      return { paneId: (parsed as TabDragData).paneId, tabId: (parsed as TabDragData).tabId };
+      return {
+        paneId: (parsed as TabDragData).paneId,
+        tabId: (parsed as TabDragData).tabId,
+      };
     }
   } catch {
     // Not our payload.

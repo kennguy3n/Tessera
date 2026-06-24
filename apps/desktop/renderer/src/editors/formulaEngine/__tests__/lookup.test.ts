@@ -133,16 +133,11 @@ describe("MATCH", () => {
 
 describe("XLOOKUP", () => {
   it("exact match returns the parallel cell in return range", () => {
-    expect(
-      evalFormula('=XLOOKUP("pear", B1:B3, C1:C3)', PRICE_TABLE),
-    ).toBe(20);
+    expect(evalFormula('=XLOOKUP("pear", B1:B3, C1:C3)', PRICE_TABLE)).toBe(20);
   });
   it("returns the not_found fallback when missing", () => {
     expect(
-      evalFormula(
-        '=XLOOKUP("kiwi", B1:B3, C1:C3, "n/a")',
-        PRICE_TABLE,
-      ),
+      evalFormula('=XLOOKUP("kiwi", B1:B3, C1:C3, "n/a")', PRICE_TABLE),
     ).toBe("n/a");
   });
   it("match_mode = 2 supports wildcards", () => {
@@ -155,10 +150,7 @@ describe("XLOOKUP", () => {
     // Add a duplicate "apple" at the bottom and search reverse.
     const dup = [...PRICE_TABLE, ["4", "apple", "99"]];
     expect(
-      evalFormula(
-        '=XLOOKUP("apple", B1:B4, C1:C4, "miss", 0, -1)',
-        dup,
-      ),
+      evalFormula('=XLOOKUP("apple", B1:B4, C1:C4, "miss", 0, -1)', dup),
     ).toBe(99);
   });
 });

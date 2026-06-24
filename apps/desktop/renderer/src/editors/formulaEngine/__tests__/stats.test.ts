@@ -148,8 +148,8 @@ describe("COUNTBLANK / COUNTUNIQUE", () => {
   it("COUNTUNIQUE counts distinct non-blank values, case-insensitively", () => {
     expect(evalFormula("=COUNTUNIQUE(A1:A5)", MIXED)).toBe(2);
   });
-  it("COUNTUNIQUE distinguishes number 1 from string \"1\"", () => {
-    expect(evalFormula("=COUNTUNIQUE(1, \"1\", 1)", [])).toBe(2);
+  it('COUNTUNIQUE distinguishes number 1 from string "1"', () => {
+    expect(evalFormula('=COUNTUNIQUE(1, "1", 1)', [])).toBe(2);
   });
 });
 
@@ -174,7 +174,9 @@ describe("LARGE / SMALL", () => {
     expect(evalFormula("=SMALL(A1:A8, 2)", DATA)).toBe(4);
   });
   it("rejects out-of-range k", () => {
-    expect(isFormulaError(evalFormula("=LARGE(A1:A8, 0)", DATA)) && true).toBe(true);
+    expect(isFormulaError(evalFormula("=LARGE(A1:A8, 0)", DATA)) && true).toBe(
+      true,
+    );
     const v = evalFormula("=SMALL(A1:A8, 99)", DATA);
     expect(isFormulaError(v) && v.code).toBe("#NUM!");
   });

@@ -16,9 +16,7 @@ describe("useSourceList", () => {
         fileCount: 5,
       },
     ];
-    window.tessera.sources.listSources = vi
-      .fn()
-      .mockResolvedValue(mockSources);
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue(mockSources);
 
     const { result } = renderHook(() => useSourceList());
 

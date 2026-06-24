@@ -111,7 +111,9 @@ describe("dbKey", () => {
     expect(() => getOrCreateDbKey()).toThrow(EncryptionUnavailableError);
     expect(() => getOrCreateDbKey()).toThrow(/Encryption not available/);
     // And we did not write a key file on the failure path.
-    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(false);
+    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(
+      false,
+    );
   });
 
   it("getOrCreateDbKey error message does NOT mention the password-vault recovery path", () => {
@@ -162,7 +164,10 @@ describe("dbKey", () => {
     // this unlikely in practice, but a corrupted FS could still
     // produce one. We must NOT silently regenerate because that
     // would render the matching tessera.db permanently unreadable.
-    fs.writeFileSync(path.join(hoisted.userData.value, "db.key"), Buffer.alloc(0));
+    fs.writeFileSync(
+      path.join(hoisted.userData.value, "db.key"),
+      Buffer.alloc(0),
+    );
     expect(() => getOrCreateDbKey()).toThrow(/empty/);
     expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
     expect(safeStorageMock.decryptString).not.toHaveBeenCalled();
@@ -249,9 +254,13 @@ describe("dbKey", () => {
 
   it("_deleteDbKeyForTests removes the on-disk key file", () => {
     getOrCreateDbKey();
-    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(true);
+    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(
+      true,
+    );
     _deleteDbKeyForTests();
-    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(false);
+    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(
+      false,
+    );
     // And the next getOrCreateDbKey call generates a fresh key.
     const k2 = getOrCreateDbKey();
     expect(k2).toHaveLength(DB_KEY_HEX_LEN);
@@ -263,7 +272,9 @@ describe("dbKey", () => {
     fs.rmSync(hoisted.userData.value, { recursive: true });
     expect(fs.existsSync(hoisted.userData.value)).toBe(false);
     getOrCreateDbKey();
-    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(true);
+    expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(
+      true,
+    );
   });
 
   it("DB_KEY_HEX_LEN matches the Rust side constant", () => {
@@ -377,9 +388,8 @@ describe("getOrCreateDbKeyAsync (vault-aware path)", () => {
   it("throws EncryptionUnavailableError when neither safeStorage nor vault is available AND db.key is absent", async () => {
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
     // Vault deliberately NOT activated.
-    const { getOrCreateDbKeyAsync, EncryptionUnavailableError } = await import(
-      "../dbKey"
-    );
+    const { getOrCreateDbKeyAsync, EncryptionUnavailableError } =
+      await import("../dbKey");
     await expect(getOrCreateDbKeyAsync()).rejects.toBeInstanceOf(
       EncryptionUnavailableError,
     );
@@ -418,9 +428,8 @@ describe("getOrCreateDbKeyAsync (vault-aware path)", () => {
   it("re-throws WrongVaultPasswordError as a plain Error so appState refuses the unencrypted fallback", async () => {
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
     await activateVault();
-    const { getOrCreateDbKeyAsync, EncryptionUnavailableError } = await import(
-      "../dbKey"
-    );
+    const { getOrCreateDbKeyAsync, EncryptionUnavailableError } =
+      await import("../dbKey");
     // Seed a vault-wrapped key using the test vault key.
     await getOrCreateDbKeyAsync();
     // Now swap the cached vault key for a different one — the

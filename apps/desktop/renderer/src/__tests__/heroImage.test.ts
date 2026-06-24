@@ -157,8 +157,7 @@ describe("sanitizeHeroImage", () => {
       expect(
         sanitizeHeroImage({
           ...valid,
-          assetUrl:
-            "tessera-asset://generated-images/artifact-42/hero.png",
+          assetUrl: "tessera-asset://generated-images/artifact-42/hero.png",
         }),
       ).toEqual({
         ...valid,

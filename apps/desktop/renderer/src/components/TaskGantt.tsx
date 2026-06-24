@@ -65,7 +65,10 @@ export default function TaskGantt({ tasks }: TaskGanttProps) {
             markerHeight="7"
             orient="auto-start-reverse"
           >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-text-secondary)" />
+            <path
+              d="M 0 0 L 10 5 L 0 10 z"
+              fill="var(--color-text-secondary)"
+            />
           </marker>
         </defs>
 
@@ -127,7 +130,9 @@ export default function TaskGantt({ tasks }: TaskGanttProps) {
             >
               <title>
                 {`${row.task.title} — ${row.task.status}`}
-                {row.task.dueDate ? ` (due ${formatGanttTick(row.dateMs)})` : ""}
+                {row.task.dueDate
+                  ? ` (due ${formatGanttTick(row.dateMs)})`
+                  : ""}
               </title>
             </rect>
           </g>

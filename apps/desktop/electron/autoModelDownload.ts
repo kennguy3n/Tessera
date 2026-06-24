@@ -81,7 +81,10 @@ export type AutoDownloadOutcome =
  * may run on locked-down networks and treat unexpected outbound DNS as a
  * red flag.
  */
-async function defaultIsOnline(host: string, timeoutMs = 3000): Promise<boolean> {
+async function defaultIsOnline(
+  host: string,
+  timeoutMs = 3000,
+): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(

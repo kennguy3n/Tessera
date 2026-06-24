@@ -12,11 +12,7 @@
 export type TesseraSourceKind = "kchat-channel" | "kchat-thread";
 
 /** Indexing state reported by Tessera for a single KChat source. */
-export type TesseraSourceState =
-  | "idle"
-  | "ingesting"
-  | "ready"
-  | "error";
+export type TesseraSourceState = "idle" | "ingesting" | "ready" | "error";
 
 /**
  * One row in `GET /api/sources`. The extension's rightbar view renders

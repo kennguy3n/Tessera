@@ -178,7 +178,7 @@ this UI was built-and-tested but unmounted).
   a trust tier: `enforced-by-os` (macOS Keychain, Code-Signing-pinned
   bundle ID), `user-scoped` (Windows DPAPI; Linux gnome-libsecret /
   kwallet), `none` (Linux `basic_text` — XOR with a hardcoded key,
-  *not* real encryption). When the active backend is `basic_text`
+  _not_ real encryption). When the active backend is `basic_text`
   the policy refuses to encrypt secrets by default; Settings →
   Security surfaces the active tier. On macOS the
   `keychain-access-groups` entitlement pins the access group to
@@ -703,7 +703,7 @@ First release-ready cut of Tessera.
 
 - Ternary-Bonsai 1.7B / 4B / 8B selected automatically from device
   tier and platform.
-- **MLX 2-bit** on Apple Silicon; **GGUF Q1\_0\_g128** (PrismML
+- **MLX 2-bit** on Apple Silicon; **GGUF Q1_0_g128** (PrismML
   llama.cpp ternary repack) on Windows / Linux / macOS Intel.
 - CPU acceleration — AVX2 minimum, AVX-VNNI / AVX-512 VNNI, ARM
   NEON / dotprod.

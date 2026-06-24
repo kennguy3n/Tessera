@@ -21,7 +21,7 @@ storage.
 ## Decision
 
 Use **SQLCipher** as the storage engine via rusqlite's
-`bundled-sqlcipher-vendored-openssl` feature, so the bundled SQLite *is*
+`bundled-sqlcipher-vendored-openssl` feature, so the bundled SQLite _is_
 SQLCipher and no system library is required.
 
 Key handling (`apps/desktop/electron/dbKey.ts` and

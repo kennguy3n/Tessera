@@ -424,76 +424,66 @@ describe("handleWillQuit", () => {
     ]);
   });
 
-  it(
-    "calls app.quit() even when stopKchatLocalApi rejects (errors swallowed)",
-    async () => {
-      const errSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
-      const stopKchatLocalApi = vi
-        .fn()
-        .mockRejectedValue(new Error("local API hung on socket close"));
-      const detachKchatDeeplinkBridge = vi.fn();
-      const quit = vi.fn();
+  it("calls app.quit() even when stopKchatLocalApi rejects (errors swallowed)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stopKchatLocalApi = vi
+      .fn()
+      .mockRejectedValue(new Error("local API hung on socket close"));
+    const detachKchatDeeplinkBridge = vi.fn();
+    const quit = vi.fn();
 
-      const { event } = makeEvent();
-      await handleWillQuit(event, {
-        stopScheduler: vi.fn().mockResolvedValue(undefined),
-        stopAllSidecars: vi.fn().mockResolvedValue(undefined),
-        stopKchatLocalApi,
-        detachKchatDeeplinkBridge,
-        quit,
-      });
+    const { event } = makeEvent();
+    await handleWillQuit(event, {
+      stopScheduler: vi.fn().mockResolvedValue(undefined),
+      stopAllSidecars: vi.fn().mockResolvedValue(undefined),
+      stopKchatLocalApi,
+      detachKchatDeeplinkBridge,
+      quit,
+    });
 
-      // The local-API shutdown failure MUST NOT skip the deeplink
-      // detach OR the outer `app.quit()`. The two new steps each
-      // own a `try/catch` and share the outer `finally` with the
-      // existing steps, so the doomsday "every step throws" case
-      // still terminates the process.
-      expect(stopKchatLocalApi).toHaveBeenCalledTimes(1);
-      expect(detachKchatDeeplinkBridge).toHaveBeenCalledTimes(1);
-      expect(quit).toHaveBeenCalledTimes(1);
-      expect(errSpy).toHaveBeenCalled();
-      const allCalls = errSpy.mock.calls
-        .map((c) => c.map((v) => String(v)).join(" "))
-        .join("\n");
-      expect(allCalls).toContain("kchatLocalApi shutdown failed");
-      expect(allCalls).toContain("local API hung on socket close");
-    },
-  );
+    // The local-API shutdown failure MUST NOT skip the deeplink
+    // detach OR the outer `app.quit()`. The two new steps each
+    // own a `try/catch` and share the outer `finally` with the
+    // existing steps, so the doomsday "every step throws" case
+    // still terminates the process.
+    expect(stopKchatLocalApi).toHaveBeenCalledTimes(1);
+    expect(detachKchatDeeplinkBridge).toHaveBeenCalledTimes(1);
+    expect(quit).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalled();
+    const allCalls = errSpy.mock.calls
+      .map((c) => c.map((v) => String(v)).join(" "))
+      .join("\n");
+    expect(allCalls).toContain("kchatLocalApi shutdown failed");
+    expect(allCalls).toContain("local API hung on socket close");
+  });
 
-  it(
-    "calls app.quit() even when detachKchatDeeplinkBridge throws (errors swallowed)",
-    async () => {
-      const errSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
-      const detachKchatDeeplinkBridge = vi.fn().mockImplementation(() => {
-        throw new Error("deeplink removeListener threw");
-      });
-      const quit = vi.fn();
+  it("calls app.quit() even when detachKchatDeeplinkBridge throws (errors swallowed)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const detachKchatDeeplinkBridge = vi.fn().mockImplementation(() => {
+      throw new Error("deeplink removeListener threw");
+    });
+    const quit = vi.fn();
 
-      const { event } = makeEvent();
-      await handleWillQuit(event, {
-        stopScheduler: vi.fn().mockResolvedValue(undefined),
-        stopAllSidecars: vi.fn().mockResolvedValue(undefined),
-        stopKchatLocalApi: vi.fn().mockResolvedValue(undefined),
-        detachKchatDeeplinkBridge,
-        quit,
-      });
+    const { event } = makeEvent();
+    await handleWillQuit(event, {
+      stopScheduler: vi.fn().mockResolvedValue(undefined),
+      stopAllSidecars: vi.fn().mockResolvedValue(undefined),
+      stopKchatLocalApi: vi.fn().mockResolvedValue(undefined),
+      detachKchatDeeplinkBridge,
+      quit,
+    });
 
-      // The deeplink detach is the LAST inner step, so a throw
-      // from it must still let the outer `finally` fire `quit()`.
-      expect(detachKchatDeeplinkBridge).toHaveBeenCalledTimes(1);
-      expect(quit).toHaveBeenCalledTimes(1);
-      expect(errSpy).toHaveBeenCalled();
-      const allCalls = errSpy.mock.calls
-        .map((c) => c.map((v) => String(v)).join(" "))
-        .join("\n");
-      expect(allCalls).toContain("kchatDeeplink detach failed");
-      expect(allCalls).toContain("deeplink removeListener threw");
-    },
-  );
+    // The deeplink detach is the LAST inner step, so a throw
+    // from it must still let the outer `finally` fire `quit()`.
+    expect(detachKchatDeeplinkBridge).toHaveBeenCalledTimes(1);
+    expect(quit).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalled();
+    const allCalls = errSpy.mock.calls
+      .map((c) => c.map((v) => String(v)).join(" "))
+      .join("\n");
+    expect(allCalls).toContain("kchatDeeplink detach failed");
+    expect(allCalls).toContain("deeplink removeListener threw");
+  });
 
   it("calls preventDefault SYNCHRONOUSLY so Electron defers the quit", async () => {
     // The Electron docs require preventDefault to be called from the
@@ -648,11 +638,9 @@ describe("handleWillQuit", () => {
 
     // Make the FIRST `console.error` call throw — this is the
     // pathological-logger case.
-    const errSpy = vi
-      .spyOn(console, "error")
-      .mockImplementationOnce(() => {
-        throw new Error("logger broke during scheduler error reporting");
-      });
+    const errSpy = vi.spyOn(console, "error").mockImplementationOnce(() => {
+      throw new Error("logger broke during scheduler error reporting");
+    });
 
     const { event } = makeEvent();
     // `handleWillQuit` WILL reject with the logger's error — JS

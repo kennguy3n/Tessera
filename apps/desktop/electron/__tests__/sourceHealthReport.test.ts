@@ -58,7 +58,9 @@ import type {
   SourceDetailInfo,
 } from "../../shared/types";
 
-function getHandler(channel: string): (event: unknown, ...args: unknown[]) => unknown {
+function getHandler(
+  channel: string,
+): (event: unknown, ...args: unknown[]) => unknown {
   const call = handleMock.mock.calls.find((c) => c[0] === channel);
   if (!call) throw new Error(`No handler registered for ${channel}`);
   return call[1] as (event: unknown, ...args: unknown[]) => unknown;
@@ -112,9 +114,11 @@ describe("sources:healthReport", () => {
     fs.writeFileSync(f2, "y".repeat(250));
 
     stubBridge = {
-      bridgeListSources: vi.fn().mockReturnValue([
-        makeSource({ id: "src-1", path: userDataDir, status: "indexed" }),
-      ]),
+      bridgeListSources: vi
+        .fn()
+        .mockReturnValue([
+          makeSource({ id: "src-1", path: userDataDir, status: "indexed" }),
+        ]),
       bridgeGetSourceDetail: vi.fn().mockReturnValue({
         source: makeSource({ id: "src-1" }),
         files: [
@@ -141,9 +145,9 @@ describe("sources:healthReport", () => {
     const missing = path.join(userDataDir, "missing.md");
 
     stubBridge = {
-      bridgeListSources: vi.fn().mockReturnValue([
-        makeSource({ id: "src-stale", path: userDataDir }),
-      ]),
+      bridgeListSources: vi
+        .fn()
+        .mockReturnValue([makeSource({ id: "src-stale", path: userDataDir })]),
       bridgeGetSourceDetail: vi.fn().mockReturnValue({
         source: makeSource({ id: "src-stale" }),
         files: [
@@ -189,9 +193,11 @@ describe("sources:healthReport", () => {
 
   it("classifies indexing sources as warning", async () => {
     stubBridge = {
-      bridgeListSources: vi.fn().mockReturnValue([
-        makeSource({ id: "ix", status: "indexing", path: userDataDir }),
-      ]),
+      bridgeListSources: vi
+        .fn()
+        .mockReturnValue([
+          makeSource({ id: "ix", status: "indexing", path: userDataDir }),
+        ]),
       bridgeGetSourceDetail: vi.fn().mockReturnValue({
         source: makeSource({ id: "ix" }),
         files: [],
@@ -232,10 +238,12 @@ describe("sources:healthReport", () => {
 
     let callCount = 0;
     stubBridge = {
-      bridgeListSources: vi.fn().mockReturnValue([
-        makeSource({ id: "good", path: userDataDir }),
-        makeSource({ id: "bad", path: userDataDir }),
-      ]),
+      bridgeListSources: vi
+        .fn()
+        .mockReturnValue([
+          makeSource({ id: "good", path: userDataDir }),
+          makeSource({ id: "bad", path: userDataDir }),
+        ]),
       bridgeGetSourceDetail: vi.fn((id: string) => {
         callCount += 1;
         if (id === "bad") {

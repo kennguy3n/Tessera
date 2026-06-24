@@ -122,7 +122,8 @@ const PERCENTILE: FunctionImpl = (args, ctx) => {
   if (isFormulaError(pV)) return pV;
   const p = toNumber(pV);
   if (isFormulaError(p)) return p;
-  if (p < 0 || p > 1) return makeError("#NUM!", "PERCENTILE p must be in [0,1]");
+  if (p < 0 || p > 1)
+    return makeError("#NUM!", "PERCENTILE p must be in [0,1]");
   const sorted = [...xs].sort((a, b) => a - b);
   // Excel's PERCENTILE.INC: rank = p * (N-1); interpolate between
   // sorted[floor] and sorted[ceil].
@@ -187,7 +188,9 @@ const COUNTUNIQUE: FunctionImpl = (args, ctx) => {
       if (v === null) continue;
       // Tag the value with its type so the number 1 and the string
       // "1" are counted as distinct, matching Google Sheets.
-      seen.add(`${typeof v}:${typeof v === "string" ? v.toLowerCase() : String(v)}`);
+      seen.add(
+        `${typeof v}:${typeof v === "string" ? v.toLowerCase() : String(v)}`,
+      );
     }
   }
   return seen.size;

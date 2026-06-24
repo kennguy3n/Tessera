@@ -36,10 +36,13 @@ describe("buildLandingPreviewHtml", () => {
   it("renders hero, features, and final CTA", () => {
     const html = buildLandingPreviewHtml({
       title: "Test Landing",
-      hero: { headline: "Hello", subheadline: "World", cta: "Sign up", ctaUrl: "#" },
-      features: [
-        { icon: "lucide:zap", title: "Fast", description: "Very" },
-      ],
+      hero: {
+        headline: "Hello",
+        subheadline: "World",
+        cta: "Sign up",
+        ctaUrl: "#",
+      },
+      features: [{ icon: "lucide:zap", title: "Fast", description: "Very" }],
       stats: [{ value: "99%", label: "uptime" }],
       testimonials: [{ quote: "Great", name: "Alice", company: "Acme" }],
       cta: { headline: "Ready?", buttonText: "Go", buttonUrl: "#go" },
@@ -113,7 +116,9 @@ describe("buildLandingPreviewHtml", () => {
     // Both hrefs should have been neutralised to "#".
     const heroHrefMatches = html.match(/landing-hero-cta" href="([^"]*)"/);
     expect(heroHrefMatches?.[1]).toBe("#");
-    const finalHrefMatches = html.match(/landing-final-cta-button" href="([^"]*)"/);
+    const finalHrefMatches = html.match(
+      /landing-final-cta-button" href="([^"]*)"/,
+    );
     expect(finalHrefMatches?.[1]).toBe("#");
   });
 
@@ -173,9 +178,7 @@ describe("LandingPageEditor", () => {
     vi.useFakeTimers();
     const onSave = vi.fn();
     try {
-      render(
-        <LandingPageEditor content="" onSave={onSave} autoSaveMs={50} />,
-      );
+      render(<LandingPageEditor content="" onSave={onSave} autoSaveMs={50} />);
       fireEvent.change(screen.getByLabelText("Hero headline"), {
         target: { value: "Brand new headline" },
       });
@@ -326,8 +329,7 @@ describe("LandingPageEditor hero image", () => {
         headline: "H",
         subheadline: "S",
         image: {
-          assetUrl:
-            "tessera-asset://generated-images/landing-004/old-hero.png",
+          assetUrl: "tessera-asset://generated-images/landing-004/old-hero.png",
           prompt: "Old prompt",
           seed: 3,
           width: 1024,

@@ -10,7 +10,7 @@ Tessera transforms a user's personal and connected knowledge into
 structured artifacts. That input is sensitive (private notes, company
 documents, connector data), and users want ownership, offline
 availability, and privacy rather than handing everything to a SaaS
-backend. Tessera is explicitly *not* a cloud service.
+backend. Tessera is explicitly _not_ a cloud service.
 
 ## Decision
 

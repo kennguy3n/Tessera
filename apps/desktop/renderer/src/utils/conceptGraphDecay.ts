@@ -100,7 +100,9 @@ export function buildConceptDecayMap(
       pinCount += mem.pinCount;
       if (Number.isFinite(mem.createdAt)) {
         createdAt =
-          createdAt === null ? mem.createdAt : Math.min(createdAt, mem.createdAt);
+          createdAt === null
+            ? mem.createdAt
+            : Math.min(createdAt, mem.createdAt);
       }
       if (Number.isFinite(mem.lastAccessedAt)) {
         lastAccessedAt =
@@ -120,7 +122,14 @@ export function buildConceptDecayMap(
       node.id,
       memoryCount === 0
         ? TIMELESS_DECAY
-        : { createdAt, lastAccessedAt, retention, bucket, pinCount, memoryCount },
+        : {
+            createdAt,
+            lastAccessedAt,
+            retention,
+            bucket,
+            pinCount,
+            memoryCount,
+          },
     );
   }
   return map;
@@ -146,7 +155,8 @@ export function computeTimeBounds(
   let min: number | null = null;
   let max: number | null = null;
   for (const d of decay.values()) {
-    if (d.createdAt !== null) min = min === null ? d.createdAt : Math.min(min, d.createdAt);
+    if (d.createdAt !== null)
+      min = min === null ? d.createdAt : Math.min(min, d.createdAt);
     if (d.lastAccessedAt !== null) {
       max = max === null ? d.lastAccessedAt : Math.max(max, d.lastAccessedAt);
     }
@@ -187,7 +197,11 @@ export function recencyFraction(
   asOf: number,
   bounds: TimeBounds,
 ): number | null {
-  if (decay.lastAccessedAt === null || bounds.min === null || bounds.max === null) {
+  if (
+    decay.lastAccessedAt === null ||
+    bounds.min === null ||
+    bounds.max === null
+  ) {
     return null;
   }
   const span = bounds.max - bounds.min;

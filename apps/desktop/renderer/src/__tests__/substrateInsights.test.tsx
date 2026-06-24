@@ -33,7 +33,12 @@ function memory(overrides: Partial<SubstrateMemoryInfo>): SubstrateMemoryInfo {
 describe("useSubstrateInsights pure helpers", () => {
   describe("isActiveMemoryState", () => {
     it("treats working-set states as active and retired states as inactive", () => {
-      for (const s of ["candidate", "reinforced", "consolidated", "canonical"]) {
+      for (const s of [
+        "candidate",
+        "reinforced",
+        "consolidated",
+        "canonical",
+      ]) {
         expect(isActiveMemoryState(s)).toBe(true);
         expect(isActiveMemoryState(s.toUpperCase())).toBe(true);
       }
@@ -83,9 +88,7 @@ describe("useSubstrateInsights pure helpers", () => {
         parseConceptNodes(
           JSON.stringify({ nodes: [{ label: "no id" }, { id: "ok" }] }),
         ),
-      ).toEqual([
-        { id: "ok", label: "", state: "", connectionsCount: 0 },
-      ]);
+      ).toEqual([{ id: "ok", label: "", state: "", connectionsCount: 0 }]);
     });
   });
 
@@ -284,7 +287,9 @@ describe("SourceDetailPage knowledge section", () => {
     const list = await screen.findByTestId("source-knowledge-list");
     expect(list).toHaveTextContent("Contract renews annually");
     expect(list).not.toHaveTextContent("Belongs to a different source");
-    expect(within(list).getAllByTestId("source-knowledge-item")).toHaveLength(1);
+    expect(within(list).getAllByTestId("source-knowledge-item")).toHaveLength(
+      1,
+    );
   });
 
   it("shows a graceful error when the substrate read rejects", async () => {

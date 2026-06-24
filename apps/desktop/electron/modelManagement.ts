@@ -418,7 +418,10 @@ export function hasVulkan(): boolean {
       : process.platform === "win32"
         ? ["C:\\Windows\\System32\\vulkan-1.dll"]
         : process.platform === "darwin"
-          ? ["/usr/local/lib/libvulkan.dylib", "/opt/homebrew/lib/libvulkan.dylib"]
+          ? [
+              "/usr/local/lib/libvulkan.dylib",
+              "/opt/homebrew/lib/libvulkan.dylib",
+            ]
           : [];
   cachedHasVulkan = candidates.some((p) => fs.existsSync(p));
   return cachedHasVulkan;
@@ -648,10 +651,7 @@ export class ManifestValidationError extends Error {
  * the caller's `loadManifest` propagates a clear error instead of
  * caching a half-valid object.
  */
-const KNOWN_MODEL_FORMATS: ReadonlySet<ModelFormat> = new Set([
-  "gguf",
-  "mlx",
-]);
+const KNOWN_MODEL_FORMATS: ReadonlySet<ModelFormat> = new Set(["gguf", "mlx"]);
 
 const KNOWN_DEVICE_TIERS: ReadonlySet<DeviceTier> = new Set([
   "low",
@@ -669,9 +669,7 @@ const MANIFEST_PLATFORM_WILDCARDS: ReadonlySet<string> = new Set([
 ]);
 
 function isValidManifestPlatform(s: string): boolean {
-  return (
-    parsePlatform(s) !== null || MANIFEST_PLATFORM_WILDCARDS.has(s)
-  );
+  return parsePlatform(s) !== null || MANIFEST_PLATFORM_WILDCARDS.has(s);
 }
 
 function validateManifest(manifest: ModelManifest): ModelManifest {
@@ -758,7 +756,10 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
         ).join(", ")}`,
       );
     }
-    if (typeof m.platform !== "string" || !isValidManifestPlatform(m.platform)) {
+    if (
+      typeof m.platform !== "string" ||
+      !isValidManifestPlatform(m.platform)
+    ) {
       errors.push(
         `models[${i}].platform="${String(
           m.platform,
@@ -825,7 +826,8 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
     // mystery.
     const hasMmprojFilename =
       typeof m.mmprojFilename === "string" && m.mmprojFilename.length > 0;
-    const hasMmprojUrl = typeof m.mmprojUrl === "string" && m.mmprojUrl.length > 0;
+    const hasMmprojUrl =
+      typeof m.mmprojUrl === "string" && m.mmprojUrl.length > 0;
     if (hasMmprojFilename !== hasMmprojUrl) {
       errors.push(
         `models[${i}] has mismatched mmproj descriptor: mmprojFilename=${hasMmprojFilename}, mmprojUrl=${hasMmprojUrl}. Both must be present together.`,
@@ -965,7 +967,10 @@ function formatLabel(entry: ManifestModel): string {
   return `${fmt} ${entry.quantization}`;
 }
 
-function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel {
+function toResolvedModel(
+  entry: ManifestModel,
+  target: Platform,
+): ResolvedModel {
   const resolved: ResolvedModel = {
     id: entry.id,
     name: entry.name,
@@ -1308,7 +1313,8 @@ async function runLegacyMigration(userDataDir: string): Promise<void> {
     // the legacy location AND the new location is free. Both
     // conditions allow the migration to be idempotent if a previous
     // attempt half-completed.
-    const inLegacy = oldArtifactPath.startsWith(legacyDir + path.sep) ||
+    const inLegacy =
+      oldArtifactPath.startsWith(legacyDir + path.sep) ||
       oldArtifactPath === legacyDir;
     if (inLegacy) {
       try {
@@ -1350,9 +1356,7 @@ async function runLegacyMigration(userDataDir: string): Promise<void> {
     // Roll back the artifact move so retrying the migration on the
     // next call still finds a coherent legacy layout.
     if (artifactMoved) {
-      await fsp
-        .rename(newArtifactPath, oldArtifactPath)
-        .catch(() => undefined);
+      await fsp.rename(newArtifactPath, oldArtifactPath).catch(() => undefined);
     }
     legacyMigrationCache.delete(userDataDir);
     return;
@@ -2430,9 +2434,9 @@ async function downloadModelLocked(
   // weights, half projector" — visually defensible for the rare
   // synthetic-test code path that hits this branch.
   const mmprojBytes = requested.mmprojUrl
-    ? (typeof requested.mmprojSizeMb === "number" && requested.mmprojSizeMb > 0
-        ? requested.mmprojSizeMb * 1024 * 1024
-        : mainBytes)
+    ? typeof requested.mmprojSizeMb === "number" && requested.mmprojSizeMb > 0
+      ? requested.mmprojSizeMb * 1024 * 1024
+      : mainBytes
     : 0;
   const combinedBytes = mainBytes + mmprojBytes;
   // Stream the download into a `.partial` sibling so the final filename
@@ -2452,11 +2456,7 @@ async function downloadModelLocked(
         // Use the combined target if we're downloading mmproj too,
         // otherwise fall back to whatever the fetcher reported.
         const totalForReport =
-          combinedBytes > 0
-            ? combinedBytes
-            : total > 0
-              ? total
-              : mainBytes;
+          combinedBytes > 0 ? combinedBytes : total > 0 ? total : mainBytes;
         const totalMb = totalForReport / (1024 * 1024);
         const downloadedMb = mainPart / (1024 * 1024);
         const percent =
@@ -2507,8 +2507,11 @@ async function downloadModelLocked(
   // half-installed. The cleanup of `dest` is best-effort (logged on
   // failure) because the primary error from the projector download
   // is what the user actually needs to see.
-  let mmprojResult: { path: string; sha256: string | null; sizeMb: number | undefined } | null =
-    null;
+  let mmprojResult: {
+    path: string;
+    sha256: string | null;
+    sizeMb: number | undefined;
+  } | null = null;
   if (requested.mmprojUrl && requested.mmprojFilename) {
     const mmprojDest = path.join(dir, requested.mmprojFilename);
     const mmprojPartial = `${mmprojDest}.partial`;
@@ -2583,7 +2586,6 @@ async function downloadModelLocked(
       throw err;
     }
   }
-
 
   // MLX models ship as `.tar.gz` archives that expand into a directory
   // (config.json, weights/, tokenizer, etc.) consumed by the MLX adapter.

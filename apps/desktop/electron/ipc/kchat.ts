@@ -51,10 +51,7 @@ import {
   assertString,
 } from "./validate";
 import { KchatNameCache } from "../kchat/kchatNameCache";
-import {
-  KchatRequestError,
-  isKchatObjectId,
-} from "../kchat/kchatClient";
+import { KchatRequestError, isKchatObjectId } from "../kchat/kchatClient";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
 import {
@@ -79,10 +76,7 @@ import {
 } from "../kchat/kchatOfflineQueue";
 import { selectShareDelivery } from "../kchat/kchatShareFormat";
 import { buildDeeplink } from "../kchat/kchatDeeplinkBridge";
-import {
-  formatTaskForKchat,
-  type TaskForKchat,
-} from "../kchat/kchatTaskSync";
+import { formatTaskForKchat, type TaskForKchat } from "../kchat/kchatTaskSync";
 import { TASK_PRIORITIES, TASK_STATUSES } from "../../shared/types";
 
 /** Subset of `KchatTeam` the renderer is allowed to read. */
@@ -213,13 +207,7 @@ function assertTaskForKchat(value: unknown): TaskForKchat {
 // either layer would have otherwise let server-side deletions
 // and WS-driven writes desynchronise the manifest.
 
-const VALID_FORMATS = new Set([
-  "markdown",
-  "html",
-  "pdf",
-  "docx",
-  "json",
-]);
+const VALID_FORMATS = new Set(["markdown", "html", "pdf", "docx", "json"]);
 
 function sanitizeTeam(t: KchatTeam): RendererTeam {
   return {
@@ -284,7 +272,9 @@ function sanitizeFile(f: KchatFileInfo): RendererFileInfo {
 function assertKchatId(val: unknown, name: string): string {
   const s = assertString(val, name, { maxLen: 64 });
   if (!/^[a-z0-9]{20,32}$/.test(s)) {
-    throw new Error(`${name} must be a KChat object id (20–32 lowercase chars)`);
+    throw new Error(
+      `${name} must be a KChat object id (20–32 lowercase chars)`,
+    );
   }
   return s;
 }
@@ -641,16 +631,11 @@ async function enrichKchatPostHits(
           // preservation of the documented best-effort contract.
           try {
             const results = await Promise.allSettled(
-              Array.from(missingChannelIds).map((id) =>
-                client.getChannel(id),
-              ),
+              Array.from(missingChannelIds).map((id) => client.getChannel(id)),
             );
             for (const r of results) {
               if (r.status === "fulfilled") {
-                KCHAT_CHANNEL_NAME_CACHE.set(
-                  r.value.id,
-                  r.value.display_name,
-                );
+                KCHAT_CHANNEL_NAME_CACHE.set(r.value.id, r.value.display_name);
               }
             }
           } catch {
@@ -744,16 +729,11 @@ async function enrichKchatThreadContextMessages(
       ? (async () => {
           try {
             const results = await Promise.allSettled(
-              Array.from(missingChannelIds).map((id) =>
-                client.getChannel(id),
-              ),
+              Array.from(missingChannelIds).map((id) => client.getChannel(id)),
             );
             for (const r of results) {
               if (r.status === "fulfilled") {
-                KCHAT_CHANNEL_NAME_CACHE.set(
-                  r.value.id,
-                  r.value.display_name,
-                );
+                KCHAT_CHANNEL_NAME_CACHE.set(r.value.id, r.value.display_name);
               }
             }
           } catch {
@@ -871,10 +851,7 @@ export function registerKchatHandlers(): void {
           try {
             bridge.bridgeSetKchatPrincipal(user.id);
           } catch (err) {
-            console.error(
-              "[kchat] bridgeSetKchatPrincipal failed:",
-              err,
-            );
+            console.error("[kchat] bridgeSetKchatPrincipal failed:", err);
           }
         }
         // Sanitised user view (no roles bitfield, no last_picture_update —
@@ -911,10 +888,7 @@ export function registerKchatHandlers(): void {
         try {
           bridge.bridgeClearKchatPrincipal();
         } catch (err) {
-          console.error(
-            "[kchat] bridgeClearKchatPrincipal failed:",
-            err,
-          );
+          console.error("[kchat] bridgeClearKchatPrincipal failed:", err);
         }
       }
     }
@@ -1221,12 +1195,18 @@ export function registerKchatHandlers(): void {
       perPage: unknown,
     ): Promise<RendererFileInfo[]> => {
       const id = assertKchatId(channelId, "channelId");
-      const p = page === undefined || page === null
-        ? 0
-        : assertNumber(page, "page", { integer: true, min: 0, max: 1_000 });
-      const per = perPage === undefined || perPage === null
-        ? 60
-        : assertNumber(perPage, "perPage", { integer: true, min: 1, max: 200 });
+      const p =
+        page === undefined || page === null
+          ? 0
+          : assertNumber(page, "page", { integer: true, min: 0, max: 1_000 });
+      const per =
+        perPage === undefined || perPage === null
+          ? 60
+          : assertNumber(perPage, "perPage", {
+              integer: true,
+              min: 1,
+              max: 200,
+            });
       const svc = getKchatAuthService();
       try {
         const client = svc.getClient();
@@ -1304,10 +1284,7 @@ export function registerKchatHandlers(): void {
           `format must be one of: ${[...VALID_FORMATS].join(", ")}`,
         );
       }
-      const wantCitations = assertBoolean(
-        includeCitations,
-        "includeCitations",
-      );
+      const wantCitations = assertBoolean(includeCitations, "includeCitations");
       const wantEvidence = assertBoolean(
         includeEvidencePack,
         "includeEvidencePack",
@@ -1567,11 +1544,7 @@ export function registerKchatHandlers(): void {
             // rejection) so operators can see exactly which
             // server-supplied name escaped, then continue to the
             // next file rather than aborting the whole sync.
-            bridge.bridgeLogKchatFileDownloaded(
-              id,
-              result.finalName ?? "",
-              0,
-            );
+            bridge.bridgeLogKchatFileDownloaded(id, result.finalName ?? "", 0);
             continue;
           }
           currentFiles[fi.id] = result.finalName;
@@ -1605,9 +1578,7 @@ export function registerKchatHandlers(): void {
       const namesClaimedByCurrentSync = new Set<string>(
         Object.values(currentFiles),
       );
-      for (const [oldId, oldName] of Object.entries(
-        previousManifest.files,
-      )) {
+      for (const [oldId, oldName] of Object.entries(previousManifest.files)) {
         if (seenServerIds.has(oldId)) continue;
         if (currentFiles[oldId]) continue;
         if (typeof oldName !== "string" || oldName.length === 0) continue;
@@ -1734,9 +1705,10 @@ export function registerKchatHandlers(): void {
       }> =>
         p.catch(async (err) => {
           if (isOfflineError(err)) {
-            const queueId = await getKchatOfflineQueue().enqueueIngestChannel(
-              { channelId: id, channelName: name },
-            );
+            const queueId = await getKchatOfflineQueue().enqueueIngestChannel({
+              channelId: id,
+              channelName: name,
+            });
             return { sourceId: "", cacheDir: "", queued: true, queueId };
           }
           throw err;
@@ -2214,10 +2186,7 @@ export function registerKchatHandlers(): void {
 
   idempotentHandle(
     "sources:backfillKchatChannel",
-    async (
-      _event,
-      channelId: unknown,
-    ): Promise<KchatBackfillRunOutcome> => {
+    async (_event, channelId: unknown): Promise<KchatBackfillRunOutcome> => {
       const id = assertKchatId(channelId, "channelId");
       const existing = inFlightBackfillKchatChannel.get(id);
       if (existing) return existing;
@@ -2439,8 +2408,7 @@ export function registerKchatHandlers(): void {
       const svc = getKchatAuthService();
       const connState = svc.getState();
       const serverUrl =
-        (connState.state === "connected" ||
-          connState.state === "connecting") &&
+        (connState.state === "connected" || connState.state === "connecting") &&
         connState.serverUrl
           ? connState.serverUrl
           : null;
@@ -2537,10 +2505,7 @@ export function registerKchatHandlers(): void {
         // already succeeded — breaking the user's search because
         // the audit logger is poisoned would be the wrong
         // trade-off.
-        console.error(
-          "[kchat] bridgeLogKchatPostSearchExecuted failed:",
-          err,
-        );
+        console.error("[kchat] bridgeLogKchatPostSearchExecuted failed:", err);
       }
 
       return hits;
@@ -2617,10 +2582,7 @@ export function registerKchatHandlers(): void {
       const connState = svc.getState();
       if (messages.length > 0 && connState.state === "connected") {
         try {
-          await enrichKchatThreadContextMessages(
-            messages,
-            svc.getClient(),
-          );
+          await enrichKchatThreadContextMessages(messages, svc.getClient());
         } catch {
           // Same best-effort posture as search enrichment.
         }

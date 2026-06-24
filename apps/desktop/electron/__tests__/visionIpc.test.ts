@@ -94,9 +94,8 @@ vi.mock("fs/promises", async () => {
   // filesystem. Anything in `accessiblePaths` resolves; anything
   // else rejects with an ENOENT-shaped error so the handler's
   // catch-block path executes exactly as it would in production.
-  const actual = await vi.importActual<typeof import("fs/promises")>(
-    "fs/promises",
-  );
+  const actual =
+    await vi.importActual<typeof import("fs/promises")>("fs/promises");
   return {
     ...actual,
     access: vi.fn(async (p: string) => {
@@ -109,9 +108,10 @@ vi.mock("fs/promises", async () => {
 });
 
 vi.mock("../modelManagement", async () => {
-  const actual = await vi.importActual<
-    typeof import("../modelManagement")
-  >("../modelManagement");
+  const actual =
+    await vi.importActual<typeof import("../modelManagement")>(
+      "../modelManagement",
+    );
   return {
     ...actual,
     getInstalledModel: (...args: unknown[]) => getInstalledModelMock(...args),
@@ -126,7 +126,9 @@ import {
 } from "../ipc/vision";
 import { defaultRateLimiter } from "../ipc/rateLimiter";
 
-function getHandler(channel: string): (event: unknown, ...args: unknown[]) => unknown {
+function getHandler(
+  channel: string,
+): (event: unknown, ...args: unknown[]) => unknown {
   const call = handleMock.mock.calls.find((c) => c[0] === channel);
   if (!call) throw new Error(`No handler registered for ${channel}`);
   return call[1] as (event: unknown, ...args: unknown[]) => unknown;
@@ -152,7 +154,10 @@ describe("buildVisionExtraArgs", () => {
     ]);
     // Zero / negative / null all suppress --ctx-size (defer to GGUF default).
     expect(buildVisionExtraArgs("/p", "high", 0)).toEqual(["--mmproj", "/p"]);
-    expect(buildVisionExtraArgs("/p", "high", null)).toEqual(["--mmproj", "/p"]);
+    expect(buildVisionExtraArgs("/p", "high", null)).toEqual([
+      "--mmproj",
+      "/p",
+    ]);
     expect(buildVisionExtraArgs("/p", "high", undefined)).toEqual([
       "--mmproj",
       "/p",
@@ -542,10 +547,7 @@ describe("vision IPC handlers", () => {
     it("rejects extra fields (strict-mode schema)", async () => {
       const handler = getHandler("vision:describe");
       await expect(
-        handler(
-          {},
-          { imagePath: "/i", mode: "describe", quality: "high" },
-        ),
+        handler({}, { imagePath: "/i", mode: "describe", quality: "high" }),
       ).rejects.toThrow();
     });
 

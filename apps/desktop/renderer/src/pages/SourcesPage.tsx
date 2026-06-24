@@ -12,7 +12,11 @@ import ConnectorStatus from "../components/ConnectorStatus";
 import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
-import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
+import {
+  useSourceList,
+  useAddSource,
+  useRemoveSource,
+} from "../hooks/useSources";
 import { useScrollToHash } from "../hooks/useScrollToHash";
 // (Task 11 review-pass fix, on
 // f7c8dd1): import from the shared utility module instead of from
@@ -103,7 +107,11 @@ export default function SourcesPage() {
       const next = await api.connectors.status("google_drive");
       setDriveStatus(next);
     } catch {
-      setDriveStatus({ provider: "google_drive", connected: false, status: "error" });
+      setDriveStatus({
+        provider: "google_drive",
+        connected: false,
+        status: "error",
+      });
     }
   }, []);
 
@@ -283,7 +291,9 @@ export default function SourcesPage() {
               onClick={() => setDriveAuthOpen(true)}
               data-testid="connect-google-drive"
             >
-              {driveStatus.connected ? "Manage Google Drive" : "Connect Google Drive"}
+              {driveStatus.connected
+                ? "Manage Google Drive"
+                : "Connect Google Drive"}
             </Button>
             {driveStatus.connected && (
               <Button
@@ -344,7 +354,10 @@ export default function SourcesPage() {
             excluded here because the dedicated `ConnectorStatus`
             above already renders it (and owns the Drive file-picker
             flow attached to this page). */}
-        <ConnectorsList onChange={refresh} excludeProviders={EXCLUDED_FROM_LIST} />
+        <ConnectorsList
+          onChange={refresh}
+          excludeProviders={EXCLUDED_FROM_LIST}
+        />
       </div>
 
       {compareError && (
@@ -394,77 +407,83 @@ export default function SourcesPage() {
           {sources.map((source) => {
             const typeIcon = sourceTypeIcon(source.sourceType);
             return (
-            <Card key={source.id}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--spacing-sm)" }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(source.id)}
-                    onChange={() => toggleSelected(source.id)}
-                    data-testid={`source-select-${source.id}`}
-                    aria-label={`Select ${source.path}`}
-                    style={{ marginTop: 6 }}
-                  />
-                  <div>
+              <Card key={source.id}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                  }}
+                >
                   <div
                     style={{
                       display: "flex",
-                      alignItems: "center",
+                      alignItems: "flex-start",
                       gap: "var(--spacing-sm)",
-                      marginBottom: "var(--spacing-xs)",
                     }}
                   >
-                    {typeIcon.glyph && (
-                      <span
-                        role="img"
-                        aria-label={typeIcon.ariaLabel}
-                        data-testid={`source-icon-${source.id}`}
-                        data-source-type={source.sourceType}
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(source.id)}
+                      onChange={() => toggleSelected(source.id)}
+                      data-testid={`source-select-${source.id}`}
+                      aria-label={`Select ${source.path}`}
+                      style={{ marginTop: 6 }}
+                    />
+                    <div>
+                      <div
                         style={{
-                          fontSize: "1.1em",
-                          lineHeight: 1,
-                          flexShrink: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "var(--spacing-sm)",
+                          marginBottom: "var(--spacing-xs)",
                         }}
                       >
-                        {typeIcon.glyph}
-                      </span>
-                    )}
-                    <span
-                      className="card-title"
-                      style={{ margin: 0, cursor: "pointer" }}
-                      onClick={() => navigate(`/sources/${source.id}`)}
-                    >
-                      {source.path}
-                    </span>
-                    <StatusBadge status={source.status} />
+                        {typeIcon.glyph && (
+                          <span
+                            role="img"
+                            aria-label={typeIcon.ariaLabel}
+                            data-testid={`source-icon-${source.id}`}
+                            data-source-type={source.sourceType}
+                            style={{
+                              fontSize: "1.1em",
+                              lineHeight: 1,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {typeIcon.glyph}
+                          </span>
+                        )}
+                        <span
+                          className="card-title"
+                          style={{ margin: 0, cursor: "pointer" }}
+                          onClick={() => navigate(`/sources/${source.id}`)}
+                        >
+                          {source.path}
+                        </span>
+                        <StatusBadge status={source.status} />
+                      </div>
+                      <div className="card-description">
+                        {formatSourceTypeLabel(source.sourceType)} &middot;{" "}
+                        {source.fileCount} files
+                        {source.lastIndexed && (
+                          <>
+                            {" "}
+                            &middot; Last indexed:{" "}
+                            {new Date(source.lastIndexed).toLocaleString()}
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="card-description">
-                    {formatSourceTypeLabel(source.sourceType)}{" "}
-                    &middot; {source.fileCount} files
-                    {source.lastIndexed && (
-                      <>
-                        {" "}
-                        &middot; Last indexed:{" "}
-                        {new Date(source.lastIndexed).toLocaleString()}
-                      </>
-                    )}
-                  </div>
-                  </div>
+                  <Button
+                    variant="danger"
+                    onClick={() => setConfirmRemove(source.id)}
+                  >
+                    Remove
+                  </Button>
                 </div>
-                <Button
-                  variant="danger"
-                  onClick={() => setConfirmRemove(source.id)}
-                >
-                  Remove
-                </Button>
-              </div>
-            </Card>
+              </Card>
             );
           })}
         </div>
@@ -475,7 +494,13 @@ export default function SourcesPage() {
         onClose={() => setModalOpen(false)}
         title="Add Source"
       >
-        <div style={{ display: "flex", gap: "var(--spacing-sm)", marginBottom: "var(--spacing-md)" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--spacing-sm)",
+            marginBottom: "var(--spacing-md)",
+          }}
+        >
           <Button
             variant={addMode === "folder" ? "primary" : "secondary"}
             onClick={() => setAddMode("folder")}
@@ -527,9 +552,15 @@ export default function SourcesPage() {
         }}
         title="Connect Google Drive"
       >
-        <p style={{ marginBottom: "var(--spacing-md)", fontSize: "var(--font-size-sm)" }}>
-          Provide an OAuth client created in Google Cloud Console (Desktop app type).
-          Tessera stores the resulting refresh token encrypted in the platform keystore.
+        <p
+          style={{
+            marginBottom: "var(--spacing-md)",
+            fontSize: "var(--font-size-sm)",
+          }}
+        >
+          Provide an OAuth client created in Google Cloud Console (Desktop app
+          type). Tessera stores the resulting refresh token encrypted in the
+          platform keystore.
         </p>
         <input
           className="input"
@@ -576,7 +607,11 @@ export default function SourcesPage() {
           </Button>
           <Button
             onClick={handleAuthenticateDrive}
-            disabled={driveAuthBusy || !driveAuthClientId.trim() || !driveAuthClientSecret.trim()}
+            disabled={
+              driveAuthBusy ||
+              !driveAuthClientId.trim() ||
+              !driveAuthClientSecret.trim()
+            }
           >
             {driveAuthBusy ? "Authenticating…" : "Authenticate"}
           </Button>

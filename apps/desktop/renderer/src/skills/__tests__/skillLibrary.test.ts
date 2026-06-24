@@ -34,7 +34,9 @@ describe("built-in skill library", () => {
   });
 
   it("getSkillById resolves known ids and rejects unknown", () => {
-    expect(getSkillById("document-deliberate-draft")).toBe(DOCUMENT_DELIBERATE_DRAFT);
+    expect(getSkillById("document-deliberate-draft")).toBe(
+      DOCUMENT_DELIBERATE_DRAFT,
+    );
     expect(getSkillById("nope")).toBeUndefined();
   });
 
@@ -57,7 +59,9 @@ describe("document-deliberate-draft", () => {
     const draft = DOCUMENT_DELIBERATE_DRAFT.steps[1];
     expect(draft.inputsFrom).toContain("outline");
     const revise = DOCUMENT_DELIBERATE_DRAFT.steps[3];
-    expect(revise.inputsFrom).toEqual(expect.arrayContaining(["draft_text", "critique"]));
+    expect(revise.inputsFrom).toEqual(
+      expect.arrayContaining(["draft_text", "critique"]),
+    );
     expect(revise.output).toBe("final_text");
   });
 
@@ -81,6 +85,8 @@ describe("sheet-intent-formula-selfcheck", () => {
     expect(skill).toBeDefined();
     const last = skill!.steps[skill!.steps.length - 1];
     expect(last.output).toBe("formula_final");
-    expect(last.inputsFrom).toEqual(expect.arrayContaining(["formula", "formula_check"]));
+    expect(last.inputsFrom).toEqual(
+      expect.arrayContaining(["formula", "formula_check"]),
+    );
   });
 });

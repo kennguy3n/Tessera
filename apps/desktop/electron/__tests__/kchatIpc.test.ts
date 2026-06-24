@@ -312,10 +312,7 @@ import {
 // Mocked (see `vi.mock("../appState")` above): these are the
 // persistent-intent setters the watch-list / auto-create handlers
 // now delegate to, so tests assert the handler routes through them.
-import {
-  setKchatAutoCreateTasks,
-  setKchatWatchedChannels,
-} from "../appState";
+import { setKchatAutoCreateTasks, setKchatWatchedChannels } from "../appState";
 import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
 import * as ssrfGuardModule from "../kchat/ssrfGuard";
 import type { KchatBackfillRunOutcome } from "../../shared/types";
@@ -323,10 +320,7 @@ import type { KchatBackfillRunOutcome } from "../../shared/types";
 function handler(channel: string) {
   const c = handleMock.mock.calls.find((x) => x[0] === channel);
   if (!c) throw new Error(`No handler registered for ${channel}`);
-  return c[1] as (
-    event: unknown,
-    ...args: unknown[]
-  ) => Promise<unknown>;
+  return c[1] as (event: unknown, ...args: unknown[]) => Promise<unknown>;
 }
 
 const EVENT = { sender: { id: 1 } } as unknown;
@@ -563,7 +557,10 @@ describe("kchat:connect", () => {
       "user1234567890abcdefgh",
     );
     expect(JSON.stringify(out)).not.toContain("PAT-secret");
-    expect(out).toMatchObject({ id: "user1234567890abcdefgh", username: "ken" });
+    expect(out).toMatchObject({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+    });
   });
 
   it("rejects non-http(s) server URLs before touching the service", async () => {
@@ -597,9 +594,9 @@ describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
   ];
   for (const u of internalUrls) {
     it(`rejects ${u} as a private/loopback target before touching the service`, async () => {
-      await expect(
-        handler("kchat:connect")(EVENT, "PAT", u),
-      ).rejects.toThrow(/private|loopback|link-local/i);
+      await expect(handler("kchat:connect")(EVENT, "PAT", u)).rejects.toThrow(
+        /private|loopback|link-local/i,
+      );
       expect(serviceMock.connect).not.toHaveBeenCalled();
       expect(bridgeMock.bridgeLogKchatConnected).not.toHaveBeenCalled();
     });
@@ -729,7 +726,7 @@ describe("SSRF guard dev-opt-out (direct injection)", () => {
     ).rejects.toThrow(/private, loopback, or link-local/);
   });
 
-  it("allows internal URLs when no opts and readEnv returns \"1\" (env-set)", async () => {
+  it('allows internal URLs when no opts and readEnv returns "1" (env-set)', async () => {
     // Symmetric coverage of the env-set production-default branch:
     // no `opts.allowInternal`, `readEnv` simulates the documented
     // dev-opt-out `TESSERA_KCHAT_ALLOW_INTERNAL=1`. This is the
@@ -742,7 +739,7 @@ describe("SSRF guard dev-opt-out (direct injection)", () => {
     expect(out.hostname).toBe("127.0.0.1");
   });
 
-  it("treats readEnv values other than \"1\" as not-set (strict equality)", async () => {
+  it('treats readEnv values other than "1" as not-set (strict equality)', async () => {
     // Pins the strict `=== "1"` comparison in the guard. A future
     // refactor that loosens this (e.g. `=== "true"` or truthy
     // coercion) would silently widen the bypass surface — e.g.
@@ -759,7 +756,7 @@ describe("SSRF guard dev-opt-out (direct injection)", () => {
     }
   });
 
-  it("explicit allowInternal=false overrides readEnv=\"1\" (nullish-coalescing precedence)", async () => {
+  it('explicit allowInternal=false overrides readEnv="1" (nullish-coalescing precedence)', async () => {
     // Pins the `??` (nullish-coalescing) precedence: when both
     // `opts.allowInternal` and the env are set, the explicit
     // caller-supplied value wins. The prior IPC-level test
@@ -911,9 +908,11 @@ describe("kchat:connect — DNS error fail-closed posture (ninth-pass invariant)
         first_name: "K",
         last_name: "U",
       });
-      const out = await handler(
-        "kchat:connect",
-      )(EVENT, "PAT", "https://nope.invalid/");
+      const out = await handler("kchat:connect")(
+        EVENT,
+        "PAT",
+        "https://nope.invalid/",
+      );
       expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
       expect(serviceMock.connect).toHaveBeenCalledWith(
         "PAT",
@@ -924,7 +923,12 @@ describe("kchat:connect — DNS error fail-closed posture (ninth-pass invariant)
     }
   });
 
-  const failClosedCodes = ["ETIMEOUT", "EAI_AGAIN", "ESERVFAIL", "ECONNREFUSED"];
+  const failClosedCodes = [
+    "ETIMEOUT",
+    "EAI_AGAIN",
+    "ESERVFAIL",
+    "ECONNREFUSED",
+  ];
   for (const code of failClosedCodes) {
     it(`fails closed on DNS error '${code}' (does not call the service)`, async () => {
       const spy = vi.spyOn(dnsPromises, "lookup").mockImplementation(() => {
@@ -947,11 +951,9 @@ describe("kchat:connect — DNS error fail-closed posture (ninth-pass invariant)
   }
 
   it("fails closed on an unexpected non-coded DNS error", async () => {
-    const spy = vi
-      .spyOn(dnsPromises, "lookup")
-      .mockImplementation(() => {
-        throw new Error("DNS layer exploded");
-      });
+    const spy = vi.spyOn(dnsPromises, "lookup").mockImplementation(() => {
+      throw new Error("DNS layer exploded");
+    });
     try {
       await expect(
         handler("kchat:connect")(EVENT, "PAT", "https://kchat.example.com/"),
@@ -992,13 +994,11 @@ describe("kchat:connect — SSRF guard catches non-dotted-decimal IPv4 forms (el
       // which is exactly the defense-in-depth gap we want to close.
       const spy = vi
         .spyOn(dnsPromises, "lookup")
-        .mockResolvedValue([
-          { address: "93.184.216.34", family: 4 },
-        ] as never);
+        .mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
       try {
-        await expect(
-          handler("kchat:connect")(EVENT, "PAT", u),
-        ).rejects.toThrow(/private|loopback|link-local/i);
+        await expect(handler("kchat:connect")(EVENT, "PAT", u)).rejects.toThrow(
+          /private|loopback|link-local/i,
+        );
         expect(serviceMock.connect).not.toHaveBeenCalled();
         expect(spy).not.toHaveBeenCalled();
       } finally {
@@ -1059,13 +1059,11 @@ describe("kchat:connect — SSRF guard catches hex-form IPv4-mapped IPv6 literal
       // exactly the defense-in-depth gap we want to close.
       const spy = vi
         .spyOn(dnsPromises, "lookup")
-        .mockResolvedValue([
-          { address: "93.184.216.34", family: 4 },
-        ] as never);
+        .mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
       try {
-        await expect(
-          handler("kchat:connect")(EVENT, "PAT", u),
-        ).rejects.toThrow(/private|loopback|link-local/i);
+        await expect(handler("kchat:connect")(EVENT, "PAT", u)).rejects.toThrow(
+          /private|loopback|link-local/i,
+        );
         expect(serviceMock.connect).not.toHaveBeenCalled();
         expect(spy).not.toHaveBeenCalled();
       } finally {
@@ -1078,9 +1076,7 @@ describe("kchat:connect — SSRF guard catches hex-form IPv4-mapped IPv6 literal
     // `::ffff:5db8:d822` → 93.184.216.34 (example.com)
     const spy = vi
       .spyOn(dnsPromises, "lookup")
-      .mockResolvedValue([
-        { address: "93.184.216.34", family: 4 },
-      ] as never);
+      .mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
     try {
       serviceMock.connect.mockResolvedValue({
         id: "user1234567890abcdefgh",
@@ -1173,10 +1169,9 @@ describe("toIpcError redaction", () => {
   // (the rendered message contains `[REDACTED]`, not the token).
   it("runs error messages through KchatClient.scrubMessage before throwing across IPC", async () => {
     clientMock.scrubMessage.mockImplementation((m: string) =>
-      m.replace(/PAT-secret-token/g, "[REDACTED]").replace(
-        /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
-        "Bearer [REDACTED]",
-      ),
+      m
+        .replace(/PAT-secret-token/g, "[REDACTED]")
+        .replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]"),
     );
     // Simulate a low-level network error that embedded the PAT in
     // its message (the most realistic path through which a token
@@ -1321,9 +1316,9 @@ describe("kchat:setAutoCreateTasks", () => {
     await expect(
       handler("kchat:setAutoCreateTasks")(EVENT, "yes"),
     ).rejects.toThrow(/boolean/);
-    await expect(
-      handler("kchat:setAutoCreateTasks")(EVENT, 1),
-    ).rejects.toThrow(/boolean/);
+    await expect(handler("kchat:setAutoCreateTasks")(EVENT, 1)).rejects.toThrow(
+      /boolean/,
+    );
     expect(vi.mocked(setKchatAutoCreateTasks)).not.toHaveBeenCalled();
   });
 });
@@ -1633,7 +1628,9 @@ describe("sources:addKchatChannel — path-traversal hardening", () => {
     )) as { sourceId: string; cacheDir: string };
 
     // Both files end up inside the per-channel cache dir.
-    expect(out.cacheDir).toMatch(/kchat-channels[\\/]chid0000000000000000abcd$/);
+    expect(out.cacheDir).toMatch(
+      /kchat-channels[\\/]chid0000000000000000abcd$/,
+    );
     const entries = await readCacheDir(out.cacheDir);
     // The traversal-bearing entry is rewritten to `passwd` (basename
     // strips `../../../etc/`); the safe entry survives unchanged.
@@ -1730,7 +1727,9 @@ describe("sources:addKchatChannel — path-traversal hardening", () => {
     // lands as `kchat-file-______________etc_passwd` inside the
     // per-channel cache.
     expect(
-      entries.some((e) => e.startsWith("kchat-file-") && e.includes("etc_passwd")),
+      entries.some(
+        (e) => e.startsWith("kchat-file-") && e.includes("etc_passwd"),
+      ),
     ).toBe(true);
     // Defence-in-depth: no `etc` sibling directory should exist.
     const siblings = await readCacheDir(path.dirname(out.cacheDir));
@@ -2391,9 +2390,7 @@ describe("sources:addKchatChannel — convergent sync via download manifest", ()
       const manifestPath = `${out.cacheDir}.manifest.json`;
       const manifestStat = await fs.stat(manifestPath);
       expect(manifestStat.isFile()).toBe(true);
-      const manifestJson = JSON.parse(
-        await fs.readFile(manifestPath, "utf-8"),
-      );
+      const manifestJson = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
       expect(manifestJson).toEqual({
         version: 1,
         channelId: "chidconvsync555five555a",
@@ -2719,9 +2716,7 @@ describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pas
 
     const fs = await import("fs/promises");
     await fs.rm(a.cacheDir, { recursive: true, force: true });
-    await fs
-      .rm(`${a.cacheDir}.manifest.json`, { force: true })
-      .catch(() => {});
+    await fs.rm(`${a.cacheDir}.manifest.json`, { force: true }).catch(() => {});
   });
 
   it("does NOT block calls for a different channelId — both syncs run independently and in parallel", async () => {
@@ -2924,7 +2919,10 @@ describe("sources:backfillKchatChannel — orchestrator", () => {
         ),
       )
       .mockResolvedValueOnce(
-        makePage([makePost("postnewa00000000000000000c", "oldest", 1000)], null),
+        makePage(
+          [makePost("postnewa00000000000000000c", "oldest", 1000)],
+          null,
+        ),
       );
 
     bridgeMock.bridgeIngestKchatBackfillPage
@@ -3338,8 +3336,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       relevanceScore: 0.5,
       // Trailing slash on serverUrl is stripped, then redirect form
       // is composed.
-      permalink:
-        "https://kchat.example.com/_redirect/pl/post-abc",
+      permalink: "https://kchat.example.com/_redirect/pl/post-abc",
     });
     expect(out[1]).toMatchObject({
       postId: "post-def",
@@ -3370,8 +3367,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(bridgeMock.bridgeLogKchatPostSearchExecuted).toHaveBeenCalledTimes(
       1,
     );
-    const args =
-      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0];
+    const args = bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0];
     const [queryHash, hits, sourcesTouched, latencyMs] = args;
     // 16 hex chars (= 64 bits of SHA-256).
     expect(queryHash).toMatch(/^[0-9a-f]{16}$/);
@@ -3391,12 +3387,9 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     await handler("kchat:searchPosts")(EVENT, "hello world", 10);
     await handler("kchat:searchPosts")(EVENT, "different query", 10);
 
-    const h1 =
-      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0][0];
-    const h2 =
-      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[1][0];
-    const h3 =
-      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[2][0];
+    const h1 = bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0][0];
+    const h2 = bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[1][0];
+    const h3 = bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[2][0];
     expect(h1).toBe(h2); // whitespace-normalised before hashing
     expect(h1).not.toBe(h3);
   });
@@ -3426,9 +3419,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     });
     // Silence the expected console.error noise from the
     // best-effort audit failure path.
-    const consoleErr = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const out = (await handler("kchat:searchPosts")(
       EVENT,
@@ -3441,17 +3432,17 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   });
 
   it("rejects malformed query (non-string) without touching the bridge", async () => {
-    await expect(
-      handler("kchat:searchPosts")(EVENT, 42, 10),
-    ).rejects.toThrow(/query/);
+    await expect(handler("kchat:searchPosts")(EVENT, 42, 10)).rejects.toThrow(
+      /query/,
+    );
     expect(bridgeMock.bridgeSearchKchatPosts).not.toHaveBeenCalled();
     expect(bridgeMock.bridgeLogKchatPostSearchExecuted).not.toHaveBeenCalled();
   });
 
   it("rejects out-of-range limit", async () => {
-    await expect(
-      handler("kchat:searchPosts")(EVENT, "Q3", 0),
-    ).rejects.toThrow(/limit/);
+    await expect(handler("kchat:searchPosts")(EVENT, "Q3", 0)).rejects.toThrow(
+      /limit/,
+    );
     await expect(
       handler("kchat:searchPosts")(EVENT, "Q3", 1_000_000),
     ).rejects.toThrow(/limit/);
@@ -3562,11 +3553,9 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       display_name: "Engineering",
     });
 
-    const out = (await handler("kchat:searchPosts")(
-      EVENT,
-      "Q3",
-      10,
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchPosts")(EVENT, "Q3", 10)) as Array<
+      Record<string, unknown>
+    >;
 
     expect(out).toHaveLength(3);
     expect(out[0].senderUsername).toBe("ken");
@@ -3638,18 +3627,14 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     ]);
     // Both lookups fail. The IPC handler MUST still return the
     // hit — the renderer falls back to displaying raw ids.
-    clientMock.getUsersByIds.mockRejectedValueOnce(
-      new Error("transient 503"),
-    );
+    clientMock.getUsersByIds.mockRejectedValueOnce(new Error("transient 503"));
     clientMock.getChannel.mockRejectedValueOnce(
       new Error("network unreachable"),
     );
 
-    const out = (await handler("kchat:searchPosts")(
-      EVENT,
-      "Q3",
-      10,
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchPosts")(EVENT, "Q3", 10)) as Array<
+      Record<string, unknown>
+    >;
 
     expect(out).toHaveLength(1);
     expect(out[0].senderUsername).toBeNull();
@@ -3694,11 +3679,9 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       }),
     ]);
 
-    const out = (await handler("kchat:searchPosts")(
-      EVENT,
-      "Q3",
-      10,
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchPosts")(EVENT, "Q3", 10)) as Array<
+      Record<string, unknown>
+    >;
 
     expect(out).toHaveLength(1);
     // Disconnected: permalink is null and enrichment is skipped
@@ -3731,15 +3714,11 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     clientMock.getUsersByIds.mockResolvedValueOnce([
       { id: VALID_USER_ID, username: "ken" },
     ]);
-    clientMock.getChannel.mockRejectedValueOnce(
-      new Error("403 forbidden"),
-    );
+    clientMock.getChannel.mockRejectedValueOnce(new Error("403 forbidden"));
 
-    const out = (await handler("kchat:searchPosts")(
-      EVENT,
-      "Q3",
-      10,
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchPosts")(EVENT, "Q3", 10)) as Array<
+      Record<string, unknown>
+    >;
 
     expect(out[0].senderUsername).toBe("ken");
     expect(out[0].channelDisplayName).toBeNull();
@@ -3779,11 +3758,9 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       display_name: "Engineering",
     });
 
-    const out = (await handler("kchat:searchPosts")(
-      EVENT,
-      "Q3",
-      10,
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchPosts")(EVENT, "Q3", 10)) as Array<
+      Record<string, unknown>
+    >;
 
     expect(out).toHaveLength(2);
     expect(out[0].senderUsername).toBe("ken");
@@ -3824,11 +3801,9 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       display_name: id === VALID_CHANNEL_ID ? "Engineering" : "Product",
     }));
 
-    const out = (await handler("kchat:searchPosts")(
-      EVENT,
-      "Q3",
-      10,
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchPosts")(EVENT, "Q3", 10)) as Array<
+      Record<string, unknown>
+    >;
 
     expect(out[0].channelDisplayName).toBe("Engineering");
     expect(out[1].channelDisplayName).toBe("Product");
@@ -4320,10 +4295,9 @@ describe("kchat:searchUsers — @mention typeahead (Task 2)", () => {
         last_name: "Liddell",
       },
     ]);
-    const out = (await handler("kchat:searchUsers")(
-      EVENT,
-      "ali",
-    )) as Array<Record<string, unknown>>;
+    const out = (await handler("kchat:searchUsers")(EVENT, "ali")) as Array<
+      Record<string, unknown>
+    >;
     expect(out).toEqual([
       { id: "u".repeat(26), username: "alice", displayName: "Alice Liddell" },
     ]);
@@ -4338,9 +4312,9 @@ describe("kchat:searchUsers — @mention typeahead (Task 2)", () => {
     for (let i = 0; i < 12; i++) {
       await handler("kchat:searchUsers")(EVENT, `q${i}`);
     }
-    await expect(
-      handler("kchat:searchUsers")(EVENT, "q13"),
-    ).rejects.toThrow(/Rate limit/i);
+    await expect(handler("kchat:searchUsers")(EVENT, "q13")).rejects.toThrow(
+      /Rate limit/i,
+    );
   });
 });
 
@@ -4469,7 +4443,8 @@ describe("kchat:backfillProgress — progress projection IPC", () => {
     // `idle` even after a successful completion.
     await handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID);
     expect(bridgeMock.bridgeGetKchatBackfillState).toHaveBeenCalledTimes(1);
-    const arg = bridgeMock.bridgeGetKchatBackfillState.mock.calls[0][0] as string;
+    const arg = bridgeMock.bridgeGetKchatBackfillState.mock
+      .calls[0][0] as string;
     expect(arg).toContain(PROGRESS_CHANNEL_ID);
     expect(arg).toMatch(/kchat-channels/);
   });
@@ -4765,7 +4740,12 @@ describe("kchat:listChannelFiles — uploader enrichment", () => {
     clientMock.getUsersByIds.mockResolvedValueOnce([
       { id: VALID_FILE_USER_ID, username: "alice" },
     ]);
-    await handler("kchat:listChannelFiles")(EVENT, VALID_FILE_CHANNEL_ID, 0, 50);
+    await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    );
     expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
 
     // Second call resolves from cache — no second REST round trip.
@@ -4958,14 +4938,22 @@ describe("kchat:fetchThreadContext", () => {
 
   it("rejects malformed sourceId (shell metachar) without touching the bridge", async () => {
     await expect(
-      handler("kchat:fetchThreadContext")(EVENT, "../../etc/passwd", VALID_POST_ID),
+      handler("kchat:fetchThreadContext")(
+        EVENT,
+        "../../etc/passwd",
+        VALID_POST_ID,
+      ),
     ).rejects.toThrow(/sourceId/);
     expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
   });
 
   it("rejects malformed postId (uppercase / special chars) without touching the bridge", async () => {
     await expect(
-      handler("kchat:fetchThreadContext")(EVENT, VALID_SOURCE_ID, "INVALID-POST-ID!!"),
+      handler("kchat:fetchThreadContext")(
+        EVENT,
+        VALID_SOURCE_ID,
+        "INVALID-POST-ID!!",
+      ),
     ).rejects.toThrow(/postId/);
     expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
   });

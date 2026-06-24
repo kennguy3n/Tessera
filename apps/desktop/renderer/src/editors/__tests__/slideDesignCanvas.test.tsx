@@ -157,7 +157,9 @@ describe("SlideDesignCanvas — block controls", () => {
 
 describe("SlideDesignCanvas — image block", () => {
   it("routes a picked file and edits alt text", () => {
-    const slide = makeSlide([{ id: "b0", type: "image", content: "", alt: "" }]);
+    const slide = makeSlide([
+      { id: "b0", type: "image", content: "", alt: "" },
+    ]);
     const { onImageFile, onChangeBlockAlt, container } = renderCanvas(slide);
 
     const file = new File(["x"], "pic.png", { type: "image/png" });
@@ -185,6 +187,9 @@ describe("SlideDesignCanvas — DSL blocks", () => {
       /Table \(Markdown\) source/i,
     ) as HTMLTextAreaElement;
     fireEvent.change(source, { target: { value: "| A | B |\n| 1 | 2 |" } });
-    expect(onChangeBlockContent).toHaveBeenCalledWith(0, "| A | B |\n| 1 | 2 |");
+    expect(onChangeBlockContent).toHaveBeenCalledWith(
+      0,
+      "| A | B |\n| 1 | 2 |",
+    );
   });
 });

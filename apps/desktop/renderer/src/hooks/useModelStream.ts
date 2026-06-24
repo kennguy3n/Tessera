@@ -102,7 +102,9 @@ export function useModelStream(): UseModelStream {
       opts: { maxTokens?: number; temperature?: number } = {},
     ): Promise<string> => {
       if (settleRef.current) {
-        return Promise.reject(new Error("A generation is already in progress."));
+        return Promise.reject(
+          new Error("A generation is already in progress."),
+        );
       }
       const model =
         typeof window !== "undefined" ? window.tessera?.model : undefined;

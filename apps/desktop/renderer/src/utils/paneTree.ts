@@ -193,10 +193,7 @@ export function countLeaves(node: WorkspaceNode): number {
 }
 
 /** Find a leaf by id, or `null`. */
-export function findLeaf(
-  node: WorkspaceNode,
-  paneId: string,
-): LeafPane | null {
+export function findLeaf(node: WorkspaceNode, paneId: string): LeafPane | null {
   if (node.type === "leaf") return node.id === paneId ? node : null;
   for (const child of node.children) {
     const found = findLeaf(child, paneId);
@@ -286,7 +283,12 @@ function normalizeTree(node: WorkspaceNode): WorkspaceNode {
     }
   });
   if (children.length === 1) return children[0];
-  return { ...node, direction: node.direction, children, sizes: normalizeSizes(sizes) };
+  return {
+    ...node,
+    direction: node.direction,
+    children,
+    sizes: normalizeSizes(sizes),
+  };
 }
 
 /**
@@ -371,7 +373,10 @@ function carryMaximize(
   return { ...next, maximizedPaneId: id };
 }
 
-function withActiveTab(leaf: LeafPane, tabs: readonly WorkspaceTab[]): LeafPane {
+function withActiveTab(
+  leaf: LeafPane,
+  tabs: readonly WorkspaceTab[],
+): LeafPane {
   const activeStillThere = tabs.some((t) => t.id === leaf.activeTabId);
   return {
     ...leaf,
@@ -673,9 +678,7 @@ export function splitPane(
     const sourceTabs = movingExisting
       ? leaf.tabs.filter((t) => t.id !== newTab.id)
       : leaf.tabs;
-    const sourceLeaf = movingExisting
-      ? withActiveTab(leaf, sourceTabs)
-      : leaf;
+    const sourceLeaf = movingExisting ? withActiveTab(leaf, sourceTabs) : leaf;
     const newLeaf: LeafPane = {
       type: "leaf",
       id: ids.newPaneId,
@@ -876,13 +879,17 @@ export function splitWithTab(
     tabs: [moving],
     activeTabId: moving.id,
   };
-  const wrapped = rebuild(removed, targetPaneId, (leaf): WorkspaceNode => ({
-    type: "split",
-    id: ids.newSplitId,
-    direction,
-    children: opts.before ? [newLeaf, leaf] : [leaf, newLeaf],
-    sizes: [0.5, 0.5],
-  }));
+  const wrapped = rebuild(
+    removed,
+    targetPaneId,
+    (leaf): WorkspaceNode => ({
+      type: "split",
+      id: ids.newSplitId,
+      direction,
+      children: opts.before ? [newLeaf, leaf] : [leaf, newLeaf],
+      sizes: [0.5, 0.5],
+    }),
+  );
   if (!wrapped) return state;
   const normalized = normalizeTree(wrapped);
   return pruneStaleLinks(ensureFocus(normalized, ids.newPaneId));
@@ -1186,10 +1193,7 @@ function migratePersisted(
  * any structural violation so the whole layout is rejected (and the
  * default is used) rather than silently loading a half-valid tree.
  */
-function parseNode(
-  value: unknown,
-  seenIds: Set<string>,
-): WorkspaceNode | null {
+function parseNode(value: unknown, seenIds: Set<string>): WorkspaceNode | null {
   if (!isRecord(value)) return null;
   if (value.type === "leaf") {
     if (typeof value.id !== "string" || seenIds.has(value.id)) return null;
@@ -1247,7 +1251,13 @@ function parseNode(
       rawSizes.every((s) => typeof s === "number")
         ? normalizeSizes(rawSizes as number[])
         : children.map(() => 1 / children.length);
-    return { type: "split", id: value.id, direction: value.direction, children, sizes };
+    return {
+      type: "split",
+      id: value.id,
+      direction: value.direction,
+      children,
+      sizes,
+    };
   }
   return null;
 }

@@ -61,28 +61,28 @@ vi.mock("../modelManagement", () => {
     }
   }
   return {
-  ALL_MODEL_CAPABILITIES: ["text", "vision", "imagegen"],
-  DownloadAbortedError: FakeAbortedError,
-  isDownloadAbortedError: (err: unknown) =>
-    err instanceof FakeAbortedError ||
-    (typeof err === "object" &&
-      err !== null &&
-      (err as { name?: unknown }).name === "AbortError"),
-  parseModelCapability: (s: string) =>
-    s === "text" || s === "vision" || s === "imagegen" ? s : null,
-  detectPlatformInfo: () => ({ platform: "linux-x64", tier: "mid" }),
-  detectComputeBackends: () => [],
-  loadManifest: () => ({ models: [RESOLVED] }),
-  resetManifestCache: () => undefined,
-  recommendModel: (...args: unknown[]) => recommendModelMock(...args),
-  downloadModel: (...args: unknown[]) => downloadModelMock(...args),
-  deleteCurrentModel: vi.fn(),
-  getInstalledModel: vi.fn(),
-  getInstalledModels: vi.fn(),
-  isCapabilityAvailable: vi.fn(),
-  isModelInstalled: (...args: unknown[]) => isModelInstalledMock(...args),
-  listModelsForPlatform: () => [],
-  planDownload: vi.fn(),
+    ALL_MODEL_CAPABILITIES: ["text", "vision", "imagegen"],
+    DownloadAbortedError: FakeAbortedError,
+    isDownloadAbortedError: (err: unknown) =>
+      err instanceof FakeAbortedError ||
+      (typeof err === "object" &&
+        err !== null &&
+        (err as { name?: unknown }).name === "AbortError"),
+    parseModelCapability: (s: string) =>
+      s === "text" || s === "vision" || s === "imagegen" ? s : null,
+    detectPlatformInfo: () => ({ platform: "linux-x64", tier: "mid" }),
+    detectComputeBackends: () => [],
+    loadManifest: () => ({ models: [RESOLVED] }),
+    resetManifestCache: () => undefined,
+    recommendModel: (...args: unknown[]) => recommendModelMock(...args),
+    downloadModel: (...args: unknown[]) => downloadModelMock(...args),
+    deleteCurrentModel: vi.fn(),
+    getInstalledModel: vi.fn(),
+    getInstalledModels: vi.fn(),
+    isCapabilityAvailable: vi.fn(),
+    isModelInstalled: (...args: unknown[]) => isModelInstalledMock(...args),
+    listModelsForPlatform: () => [],
+    planDownload: vi.fn(),
   };
 });
 
@@ -156,7 +156,12 @@ describe("downloadRecommendedModel — cancellation registry lifecycle", () => {
   it("registers an AbortController for the slot during the transfer and deregisters after", async () => {
     let capturedSignal: AbortSignal | undefined;
     downloadModelMock.mockImplementation(
-      async (_dir: string, _model: unknown, _emit: unknown, deps: { signal?: AbortSignal }) => {
+      async (
+        _dir: string,
+        _model: unknown,
+        _emit: unknown,
+        deps: { signal?: AbortSignal },
+      ) => {
         capturedSignal = deps.signal;
         // Mid-transfer: the slot is active and the signal is live.
         expect(downloadCancellations.isActive("text")).toBe(true);
@@ -198,7 +203,11 @@ describe("downloadRecommendedModel — cancellation registry lifecycle", () => {
       },
     );
 
-    const promise = downloadRecommendedModel("text", () => {}, RESOLVED as never);
+    const promise = downloadRecommendedModel(
+      "text",
+      () => {},
+      RESOLVED as never,
+    );
 
     // The slot is already active while the probe is still pending.
     expect(downloadCancellations.isActive("text")).toBe(true);
@@ -226,7 +235,12 @@ describe("downloadRecommendedModel — cancellation registry lifecycle", () => {
   it("aborting via the registry signals the in-flight download", async () => {
     let sawAbort = false;
     downloadModelMock.mockImplementation(
-      async (_dir: string, _model: unknown, _emit: unknown, deps: { signal?: AbortSignal }) => {
+      async (
+        _dir: string,
+        _model: unknown,
+        _emit: unknown,
+        deps: { signal?: AbortSignal },
+      ) => {
         // Simulate a user clicking Skip mid-transfer.
         const cancelled = downloadCancellations.cancel("text");
         expect(cancelled).toBe(true);

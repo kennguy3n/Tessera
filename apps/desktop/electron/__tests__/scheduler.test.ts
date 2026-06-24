@@ -22,10 +22,7 @@ vi.mock("../appState", () => ({
 
 import type { NativeBridge, AutomationInfo } from "../appState";
 import { getKchatBackfillImpl } from "../appState";
-import {
-  setAppSuspended,
-  _resetAppSuspensionForTests,
-} from "../appSuspension";
+import { setAppSuspended, _resetAppSuspensionForTests } from "../appSuspension";
 import {
   tick,
   runNow,
@@ -39,10 +36,7 @@ import {
   __setBatteryStatusForTests,
   stopBatteryMonitor,
 } from "../batteryMonitor";
-import {
-  startMemoryWatchdog,
-  stopMemoryWatchdog,
-} from "../memoryWatchdog";
+import { startMemoryWatchdog, stopMemoryWatchdog } from "../memoryWatchdog";
 
 /** MiB helper for legible RSS sampler values in the memory-gate tests. */
 const MiB = 1024 * 1024;
@@ -107,10 +101,7 @@ describe("scheduler.tick", () => {
   it("dispatches each due automation and records ok", async () => {
     const bridge = newBridge();
     bridge.bridgeDueScheduledAutomations.mockReturnValue([
-      fakeAutomation(
-        "a1",
-        '{"kind":"reindex_source","source_id":"src-1"}',
-      ),
+      fakeAutomation("a1", '{"kind":"reindex_source","source_id":"src-1"}'),
       fakeAutomation(
         "a2",
         '{"kind":"generate_from_template","template_id":"prd-v1","source_ids":["s1","s2"]}',
@@ -120,10 +111,10 @@ describe("scheduler.tick", () => {
     await tick(bridge as unknown as NativeBridge);
 
     expect(bridge.bridgeReindexSource).toHaveBeenCalledWith("src-1");
-    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith(
-      "prd-v1",
-      ["s1", "s2"],
-    );
+    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith("prd-v1", [
+      "s1",
+      "s2",
+    ]);
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("a1", "ok");
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("a2", "ok");
 
@@ -529,10 +520,7 @@ describe("scheduler.dispatchOnGenerate", () => {
   it("only dispatches automations whose trigger matches the template id", async () => {
     const bridge = newBridge();
     bridge.bridgeMatchingOnGenerateAutomations.mockReturnValue([
-      fakeAutomation(
-        "og1",
-        '{"kind":"reindex_source","source_id":"src-A"}',
-      ),
+      fakeAutomation("og1", '{"kind":"reindex_source","source_id":"src-A"}'),
     ]);
 
     await dispatchOnGenerate("prd-v1", bridge as unknown as NativeBridge);
@@ -619,10 +607,7 @@ describe("scheduler.tick — backfill_kchat_channel action", () => {
     const backfillSpy = vi.fn();
     mockedGetKchatBackfillImpl.mockReturnValue(backfillSpy);
     bridge.bridgeDueScheduledAutomations.mockReturnValue([
-      fakeAutomation(
-        "bf-noid",
-        '{"kind":"backfill_kchat_channel"}',
-      ),
+      fakeAutomation("bf-noid", '{"kind":"backfill_kchat_channel"}'),
     ]);
 
     await tick(bridge as unknown as NativeBridge);
@@ -635,9 +620,9 @@ describe("scheduler.tick — backfill_kchat_channel action", () => {
 
   it("records failed when backfill impl throws", async () => {
     const bridge = newBridge();
-    const backfillSpy = vi.fn().mockRejectedValue(
-      new Error("REST 403: user removed from channel"),
-    );
+    const backfillSpy = vi
+      .fn()
+      .mockRejectedValue(new Error("REST 403: user removed from channel"));
     mockedGetKchatBackfillImpl.mockReturnValue(backfillSpy);
     bridge.bridgeDueScheduledAutomations.mockReturnValue([
       fakeAutomation(
@@ -698,14 +683,17 @@ describe("scheduler.dispatchKchatMessage", () => {
   it("runs every automation the bridge reports as matching", async () => {
     const bridge = newBridge();
     bridge.bridgeMatchingKchatMessageAutomations.mockReturnValue([
-      fakeAutomation(
-        "km1",
-        '{"kind":"reindex_source","source_id":"src-km"}',
-        { triggerJson: '{"kind":"on_kchat_message_match","channel_id":"c1","regex":"deploy"}' },
-      ),
+      fakeAutomation("km1", '{"kind":"reindex_source","source_id":"src-km"}', {
+        triggerJson:
+          '{"kind":"on_kchat_message_match","channel_id":"c1","regex":"deploy"}',
+      }),
     ]);
 
-    await dispatchKchatMessage("c1", "please deploy now", bridge as unknown as NativeBridge);
+    await dispatchKchatMessage(
+      "c1",
+      "please deploy now",
+      bridge as unknown as NativeBridge,
+    );
 
     expect(bridge.bridgeMatchingKchatMessageAutomations).toHaveBeenCalledWith(
       "c1",
@@ -717,7 +705,11 @@ describe("scheduler.dispatchKchatMessage", () => {
 
   it("is a no-op when the channel id is empty (never calls the bridge)", async () => {
     const bridge = newBridge();
-    await dispatchKchatMessage("", "anything", bridge as unknown as NativeBridge);
+    await dispatchKchatMessage(
+      "",
+      "anything",
+      bridge as unknown as NativeBridge,
+    );
     expect(bridge.bridgeMatchingKchatMessageAutomations).not.toHaveBeenCalled();
     expect(bridge.bridgeRecordAutomationRun).not.toHaveBeenCalled();
   });
@@ -749,7 +741,11 @@ describe("scheduler — multi-step sequence actions", () => {
           actions: [
             { kind: "reindex_source", source_id: "s1" },
             { kind: "reindex_source", source_id: "s2" },
-            { kind: "generate_from_template", template_id: "t1", source_ids: ["s3"] },
+            {
+              kind: "generate_from_template",
+              template_id: "t1",
+              source_ids: ["s3"],
+            },
           ],
         }),
       ),
@@ -758,8 +754,13 @@ describe("scheduler — multi-step sequence actions", () => {
     await tick(bridge as unknown as NativeBridge);
 
     expect(bridge.bridgeReindexSource.mock.calls).toEqual([["s1"], ["s2"]]);
-    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith("t1", ["s3"]);
-    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("seq-ok", "ok");
+    expect(bridge.bridgeGenerateFromTemplate).toHaveBeenCalledWith("t1", [
+      "s3",
+    ]);
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
+      "seq-ok",
+      "ok",
+    );
   });
 
   it("continues past a failing step and aggregates failures in the status", async () => {
@@ -817,7 +818,11 @@ describe("scheduler — multi-step sequence actions", () => {
 
     await tick(bridge as unknown as NativeBridge);
 
-    expect(bridge.bridgeReindexSource.mock.calls).toEqual([["a"], ["b"], ["c"]]);
+    expect(bridge.bridgeReindexSource.mock.calls).toEqual([
+      ["a"],
+      ["b"],
+      ["c"],
+    ]);
     expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
       "seq-nested",
       "ok",
@@ -842,7 +847,11 @@ describe("scheduler — multi-step sequence actions", () => {
           kind: "sequence",
           actions: [
             { kind: "reindex_source", source_id: "s1" },
-            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+            {
+              kind: "generate_from_template",
+              template_id: "t1",
+              source_ids: [],
+            },
           ],
         }),
       ),
@@ -880,7 +889,11 @@ describe("scheduler — multi-step sequence actions", () => {
           kind: "sequence",
           actions: [
             { kind: "reindex_source", source_id: "boom" },
-            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+            {
+              kind: "generate_from_template",
+              template_id: "t1",
+              source_ids: [],
+            },
             { kind: "reindex_source", source_id: "ok" },
           ],
         }),
@@ -943,7 +956,11 @@ describe("scheduler — multi-step sequence actions", () => {
           kind: "sequence",
           actions: [
             { kind: "reindex_source", source_id: "s1" },
-            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+            {
+              kind: "generate_from_template",
+              template_id: "t1",
+              source_ids: [],
+            },
           ],
         }),
       ),
@@ -979,7 +996,11 @@ describe("scheduler — multi-step sequence actions", () => {
           kind: "sequence",
           actions: [
             { kind: "reindex_source", source_id: "s1" },
-            { kind: "generate_from_template", template_id: "t1", source_ids: [] },
+            {
+              kind: "generate_from_template",
+              template_id: "t1",
+              source_ids: [],
+            },
           ],
         }),
       ),

@@ -46,9 +46,17 @@ const INTENT_CATEGORIES: IntentCategory[] = [
     description: "Drafts, plans, and write-ups grounded in your sources",
     Icon: FileText,
     templates: [
-      { id: "prd-v1", name: "PRD", description: "Product Requirements Document" },
+      {
+        id: "prd-v1",
+        name: "PRD",
+        description: "Product Requirements Document",
+      },
       { id: "proposal-v1", name: "Proposal", description: "Business proposal" },
-      { id: "sop-v1", name: "SOP", description: "Standard Operating Procedure" },
+      {
+        id: "sop-v1",
+        name: "SOP",
+        description: "Standard Operating Procedure",
+      },
       {
         id: "report-v1",
         name: "Report",
@@ -68,8 +76,16 @@ const INTENT_CATEGORIES: IntentCategory[] = [
     Icon: Presentation,
     templates: [
       { id: "qbr-v1", name: "QBR", description: "Quarterly Business Review" },
-      { id: "strategy-v1", name: "Strategy Deck", description: "Strategy deck" },
-      { id: "pitch-v1", name: "Pitch Deck", description: "Investor / sales pitch" },
+      {
+        id: "strategy-v1",
+        name: "Strategy Deck",
+        description: "Strategy deck",
+      },
+      {
+        id: "pitch-v1",
+        name: "Pitch Deck",
+        description: "Investor / sales pitch",
+      },
       {
         id: "training-v1",
         name: "Training Deck",
@@ -161,7 +177,12 @@ export default function IntentPicker({
         {/* Step heading sits directly under the page `<h1>` (Create) or
             the wizard dialog title, so it is an `<h2>` — h1 → h2 with no
             skipped level. */}
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>What do you need?</h2>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-md)" }}
+        >
+          What do you need?
+        </h2>
         <div
           style={{
             display: "grid",
@@ -205,7 +226,9 @@ export default function IntentPicker({
         <Button variant="secondary" onClick={() => setIntentId(null)}>
           Back
         </Button>
-        <h2 className="section-title" style={{ margin: 0 }}>What's it for?</h2>
+        <h2 className="section-title" style={{ margin: 0 }}>
+          What's it for?
+        </h2>
       </div>
       <div
         style={{

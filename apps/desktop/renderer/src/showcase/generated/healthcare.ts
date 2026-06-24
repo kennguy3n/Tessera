@@ -4,8 +4,20 @@ import type { ShowcaseDataset } from "../types";
 
 export const healthcareDataset: ShowcaseDataset = {
   id: "healthcare",
-  persona: {"name": "Maya Okonkwo", "role": "Clinical Privacy Officer", "org": "Mercy Ridge Health", "market": "Healthcare (regional health system)", "blurb": "Maya runs HIPAA privacy compliance for a 410-bed health system. When a device goes missing she has 5 business days to produce a defensible four-factor breach risk assessment \u2014 and the source material is the most sensitive data in the building (PHI), which is exactly why it can never leave her laptop.\n"},
-  sourceFiles: ["01-helpdesk-ticket-INC-4471.md", "02-endpoint-mdm-report.md", "03-ehr-export-log.md", "04-policy-and-context.md"],
+  persona: {
+    name: "Maya Okonkwo",
+    role: "Clinical Privacy Officer",
+    org: "Mercy Ridge Health",
+    market: "Healthcare (regional health system)",
+    blurb:
+      "Maya runs HIPAA privacy compliance for a 410-bed health system. When a device goes missing she has 5 business days to produce a defensible four-factor breach risk assessment \u2014 and the source material is the most sensitive data in the building (PHI), which is exactly why it can never leave her laptop.\n",
+  },
+  sourceFiles: [
+    "01-helpdesk-ticket-INC-4471.md",
+    "02-endpoint-mdm-report.md",
+    "03-ehr-export-log.md",
+    "04-policy-and-context.md",
+  ],
   artifacts: [
     {
       slug: "hipaa-incident-report",

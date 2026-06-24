@@ -29,7 +29,14 @@ function installPendingModel() {
   const generate = vi.fn(async () => undefined);
   const cancelJob = vi.fn().mockResolvedValue(undefined);
   const api = window.tessera as unknown as { model: unknown };
-  api.model = { status: vi.fn(), start: vi.fn(), stop: vi.fn(), generate, cancelJob, onToken };
+  api.model = {
+    status: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    generate,
+    cancelJob,
+    onToken,
+  };
   return { generate, cancelJob };
 }
 

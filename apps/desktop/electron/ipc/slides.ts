@@ -103,7 +103,9 @@ export function normalizePresentation(
   return {
     slides: input.slides,
     startIndex,
-    deckTitle: input.deckTitle?.trim() ? input.deckTitle.trim() : "Presentation",
+    deckTitle: input.deckTitle?.trim()
+      ? input.deckTitle.trim()
+      : "Presentation",
   };
 }
 

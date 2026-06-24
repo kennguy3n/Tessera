@@ -62,9 +62,7 @@ describe("StopGenerationButton", () => {
     act(() => {
       notifyGenerationStarted();
     });
-    expect(
-      screen.getByTestId("stop-generation-button"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("stop-generation-button")).toBeInTheDocument();
   });
 
   it("removes the button when a done:true token arrives", () => {

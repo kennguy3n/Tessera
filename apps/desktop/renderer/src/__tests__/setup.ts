@@ -6,7 +6,10 @@ import { __resetSettingsStoreForTests } from "../hooks/useSettings";
 // provide a functional `window.localStorage`. Several tests call
 // `localStorage.clear()` or read/write keys, so provide a minimal in-memory
 // stub before any test runs.
-if (typeof window !== "undefined" && typeof window.localStorage === "undefined") {
+if (
+  typeof window !== "undefined" &&
+  typeof window.localStorage === "undefined"
+) {
   const store = new Map<string, string>();
   Object.defineProperty(window, "localStorage", {
     value: {
@@ -20,7 +23,8 @@ if (typeof window !== "undefined" && typeof window.localStorage === "undefined")
       clear: (): void => {
         store.clear();
       },
-      key: (index: number): string | null => Array.from(store.keys())[index] ?? null,
+      key: (index: number): string | null =>
+        Array.from(store.keys())[index] ?? null,
       get length(): number {
         return store.size;
       },
@@ -37,8 +41,22 @@ if (typeof SVGElement !== "undefined") {
   const proto = SVGElement.prototype as unknown as {
     getBBox?: () => { x: number; y: number; width: number; height: number };
     getComputedTextLength?: () => number;
-    getCTM?: () => { a: number; b: number; c: number; d: number; e: number; f: number };
-    getScreenCTM?: () => { a: number; b: number; c: number; d: number; e: number; f: number };
+    getCTM?: () => {
+      a: number;
+      b: number;
+      c: number;
+      d: number;
+      e: number;
+      f: number;
+    };
+    getScreenCTM?: () => {
+      a: number;
+      b: number;
+      c: number;
+      d: number;
+      e: number;
+      f: number;
+    };
   };
   if (!proto.getBBox) {
     proto.getBBox = () => ({ x: 0, y: 0, width: 100, height: 20 });
@@ -491,16 +509,13 @@ const mockApi = {
     }),
     set: vi.fn().mockImplementation(async (provider, apiKey) => ({
       ...provider,
-      hasApiKey:
-        apiKey === null ? false : apiKey === "" ? false : true,
+      hasApiKey: apiKey === null ? false : apiKey === "" ? false : true,
     })),
     test: vi.fn().mockResolvedValue({ ok: true, latencyMs: 42 }),
-    listModels: vi
-      .fn()
-      .mockResolvedValue({
-        ok: true,
-        models: ["gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
-      }),
+    listModels: vi.fn().mockResolvedValue({
+      ok: true,
+      models: ["gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
+    }),
     getTokenUsage: vi.fn().mockResolvedValue({
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
@@ -528,17 +543,13 @@ const mockApi = {
     showSaveDialog: vi.fn().mockResolvedValue({ canceled: true }),
     // Default mock: file picker is cancelled. Tests that need
     // a specific image path flip this with `vi.spyOn`.
-    pickImage: vi
-      .fn()
-      .mockResolvedValue({ canceled: true, filePath: null }),
+    pickImage: vi.fn().mockResolvedValue({ canceled: true, filePath: null }),
   },
   slides: {
     // Default mock: presentation "opens" with whatever slide count
     // the caller passed. Tests that assert on the request payload
     // inspect this spy's calls.
-    startPresentation: vi
-      .fn()
-      .mockResolvedValue({ ok: true, slideCount: 0 }),
+    startPresentation: vi.fn().mockResolvedValue({ ok: true, slideCount: 0 }),
   },
   tasks: {
     create: vi.fn().mockResolvedValue({
@@ -728,9 +739,7 @@ const mockApi = {
       portFilePath: "/tmp/test/tessera-kchat-port.json",
       lastExtensionContactAt: null,
     }),
-    openInDesktop: vi
-      .fn()
-      .mockResolvedValue({ opened: true, url: "kchat://" }),
+    openInDesktop: vi.fn().mockResolvedValue({ opened: true, url: "kchat://" }),
     openDesktopExtensions: vi
       .fn()
       .mockResolvedValue({ opened: true, url: "kchat://" }),

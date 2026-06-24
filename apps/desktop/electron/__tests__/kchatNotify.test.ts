@@ -9,7 +9,9 @@ import {
   type PostNotificationInput,
 } from "../kchat/kchatNotify";
 
-function input(over: Partial<PostNotificationInput> = {}): PostNotificationInput {
+function input(
+  over: Partial<PostNotificationInput> = {},
+): PostNotificationInput {
   return {
     channelId: "c1",
     channelName: "general",

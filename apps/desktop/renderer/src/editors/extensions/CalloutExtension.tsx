@@ -18,7 +18,11 @@
  * pre-existing limitation shared by all rich blocks.
  */
 import { Node, mergeAttributes, type CommandProps } from "@tiptap/core";
-import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from "@tiptap/react";
+import {
+  ReactNodeViewRenderer,
+  NodeViewWrapper,
+  NodeViewContent,
+} from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 
 export type CalloutVariant = "info" | "success" | "warning" | "danger" | "note";

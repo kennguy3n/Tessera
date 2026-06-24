@@ -57,7 +57,9 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
     const importLines = source
       .split("\n")
       .map((line, idx) => ({ line: line.trim(), idx: idx + 1 }))
-      .filter(({ line }) => /^\s*import\b/.test(line) && !line.startsWith("//"));
+      .filter(
+        ({ line }) => /^\s*import\b/.test(line) && !line.startsWith("//"),
+      );
     expect(
       importLines,
       `passwordPromptChannels.ts must have zero imports — found:\n${importLines
@@ -78,8 +80,12 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
     // Match every `export const NAME = "..."` line. Any non-string
     // export (object literal, function, computed value) could
     // theoretically pull in Node APIs through its construction.
-    const allExports = [...source.matchAll(/^\s*export\s+(const|let|var|function|class)\b.*$/gm)];
-    expect(allExports.length, "must have at least one export").toBeGreaterThan(0);
+    const allExports = [
+      ...source.matchAll(/^\s*export\s+(const|let|var|function|class)\b.*$/gm),
+    ];
+    expect(allExports.length, "must have at least one export").toBeGreaterThan(
+      0,
+    );
     for (const match of allExports) {
       const line = match[0];
       expect(
@@ -158,7 +164,10 @@ function stripJsComments(src: string): string {
   );
   const seen = new Set<string>();
   const ranges: Array<{ pos: number; end: number }> = [];
-  const collect = (pos: number, ranges_: ts.CommentRange[] | undefined): void => {
+  const collect = (
+    pos: number,
+    ranges_: ts.CommentRange[] | undefined,
+  ): void => {
     if (!ranges_) return;
     for (const r of ranges_) {
       const key = `${r.pos}:${r.end}`;
@@ -197,11 +206,14 @@ describe("CSP session handler hoist: main.ts", () => {
   const source = stripJsComments(rawSource);
 
   it("defines `installContentSecurityPolicy` as a module-level function", () => {
-    expect(source).toMatch(/function\s+installContentSecurityPolicy\s*\(\s*\)\s*:\s*void/);
+    expect(source).toMatch(
+      /function\s+installContentSecurityPolicy\s*\(\s*\)\s*:\s*void/,
+    );
   });
 
   it("calls `installContentSecurityPolicy()` exactly once, from app.whenReady", () => {
-    const calls = source.match(/\binstallContentSecurityPolicy\s*\(\s*\)/g) ?? [];
+    const calls =
+      source.match(/\binstallContentSecurityPolicy\s*\(\s*\)/g) ?? [];
     // Two matches: the definition's name lookup is matched by a different
     // regex (`function installContentSecurityPolicy(): void` has trailing
     // `: void` so the call-site pattern above with `()` only matches
@@ -228,7 +240,9 @@ describe("CSP session handler hoist: main.ts", () => {
     );
     expect(whenReadyBlock, "could not find app.whenReady block").toBeTruthy();
     if (!whenReadyBlock) return;
-    expect(whenReadyBlock[0]).toMatch(/\binstallContentSecurityPolicy\s*\(\s*\)/);
+    expect(whenReadyBlock[0]).toMatch(
+      /\binstallContentSecurityPolicy\s*\(\s*\)/,
+    );
   });
 
   it("does NOT call session.defaultSession.webRequest.onHeadersReceived inside createWindow", () => {
@@ -241,7 +255,9 @@ describe("CSP session handler hoist: main.ts", () => {
     // endings — a naive `\n\}` here would fail on Windows CI.
     // Normalise to LF for the body extraction so the test is
     // platform-independent.
-    const createWindowBody = source.match(/function\s+createWindow\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?\n\}\n/);
+    const createWindowBody = source.match(
+      /function\s+createWindow\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?\n\}\n/,
+    );
     expect(createWindowBody, "could not find createWindow body").toBeTruthy();
     if (!createWindowBody) return;
     expect(createWindowBody[0]).not.toMatch(/onHeadersReceived/);
@@ -264,11 +280,23 @@ describe("CSP session handler hoist: main.ts", () => {
     // would clip at the first inner `});` and miss the
     // `await maybeInitPasswordVault()` call.
     const whenReadyIdx = source.indexOf("app.whenReady()");
-    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
-    const cspIdx = source.indexOf("installContentSecurityPolicy()", whenReadyIdx);
+    expect(
+      whenReadyIdx,
+      "could not find app.whenReady() in main.ts",
+    ).toBeGreaterThan(-1);
+    const cspIdx = source.indexOf(
+      "installContentSecurityPolicy()",
+      whenReadyIdx,
+    );
     const promptIdx = source.indexOf("maybeInitPasswordVault()", whenReadyIdx);
-    expect(cspIdx, "could not find installContentSecurityPolicy() after app.whenReady()").toBeGreaterThan(-1);
-    expect(promptIdx, "could not find maybeInitPasswordVault() after app.whenReady()").toBeGreaterThan(-1);
+    expect(
+      cspIdx,
+      "could not find installContentSecurityPolicy() after app.whenReady()",
+    ).toBeGreaterThan(-1);
+    expect(
+      promptIdx,
+      "could not find maybeInitPasswordVault() after app.whenReady()",
+    ).toBeGreaterThan(-1);
     expect(
       cspIdx,
       "installContentSecurityPolicy() must be called BEFORE maybeInitPasswordVault() so the CSP is in place before any window opens",
@@ -299,14 +327,26 @@ describe("CSP session handler hoist: main.ts", () => {
     // `await maybeInitPasswordVault()` line. Using `source.indexOf`
     // directly is robust to future nested arrow-function bodies.
     const whenReadyIdx = source.indexOf("app.whenReady()");
-    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    expect(
+      whenReadyIdx,
+      "could not find app.whenReady() in main.ts",
+    ).toBeGreaterThan(-1);
     const activateIdx = source.indexOf('app.on("activate"', whenReadyIdx);
-    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
-    expect(activateIdx, "could not find app.on('activate', ...) after app.whenReady()").toBeGreaterThan(-1);
-    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    const awaitPromptIdx = source.indexOf(
+      "await maybeInitPasswordVault()",
+      whenReadyIdx,
+    );
     expect(
       activateIdx,
-      "app.on(\"activate\", ...) must be registered BEFORE await maybeInitPasswordVault() so a dock click during the password prompt is not silently dropped on macOS",
+      "could not find app.on('activate', ...) after app.whenReady()",
+    ).toBeGreaterThan(-1);
+    expect(
+      awaitPromptIdx,
+      "could not find 'await maybeInitPasswordVault()' after app.whenReady()",
+    ).toBeGreaterThan(-1);
+    expect(
+      activateIdx,
+      'app.on("activate", ...) must be registered BEFORE await maybeInitPasswordVault() so a dock click during the password prompt is not silently dropped on macOS',
     ).toBeLessThan(awaitPromptIdx);
   });
 
@@ -332,11 +372,23 @@ describe("CSP session handler hoist: main.ts", () => {
     // vault prompt does not break the "vault is ready before
     // handler runs" invariant.
     const whenReadyIdx = source.indexOf("app.whenReady()");
-    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    expect(
+      whenReadyIdx,
+      "could not find app.whenReady() in main.ts",
+    ).toBeGreaterThan(-1);
     const registerIdx = source.indexOf("registerIpcHandlers()", whenReadyIdx);
-    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
-    expect(registerIdx, "could not find registerIpcHandlers() after app.whenReady()").toBeGreaterThan(-1);
-    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    const awaitPromptIdx = source.indexOf(
+      "await maybeInitPasswordVault()",
+      whenReadyIdx,
+    );
+    expect(
+      registerIdx,
+      "could not find registerIpcHandlers() after app.whenReady()",
+    ).toBeGreaterThan(-1);
+    expect(
+      awaitPromptIdx,
+      "could not find 'await maybeInitPasswordVault()' after app.whenReady()",
+    ).toBeGreaterThan(-1);
     expect(
       registerIdx,
       "registerIpcHandlers() must run BEFORE await maybeInitPasswordVault() so a renderer loaded via the early-activate path finds every IPC channel already wired",
@@ -360,14 +412,26 @@ describe("CSP session handler hoist: main.ts", () => {
     // that moves the handler registration after window creation would
     // silently break the mount-time invoke; this assertion catches it.
     const whenReadyIdx = source.indexOf("app.whenReady()");
-    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
-    const handlerIdx = source.indexOf("ipcMain.handle(BRIDGE_STATE_GET_CHANNEL", whenReadyIdx);
-    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
+    expect(
+      whenReadyIdx,
+      "could not find app.whenReady() in main.ts",
+    ).toBeGreaterThan(-1);
+    const handlerIdx = source.indexOf(
+      "ipcMain.handle(BRIDGE_STATE_GET_CHANNEL",
+      whenReadyIdx,
+    );
+    const awaitPromptIdx = source.indexOf(
+      "await maybeInitPasswordVault()",
+      whenReadyIdx,
+    );
     expect(
       handlerIdx,
       "could not find ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...) after app.whenReady()",
     ).toBeGreaterThan(-1);
-    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    expect(
+      awaitPromptIdx,
+      "could not find 'await maybeInitPasswordVault()' after app.whenReady()",
+    ).toBeGreaterThan(-1);
     expect(
       handlerIdx,
       "ipcMain.handle(BRIDGE_STATE_GET_CHANNEL, ...) must be registered BEFORE await maybeInitPasswordVault() so the renderer's mount-time getBridgeState() invoke always finds a live handler, even on the early-activate createWindow() path",
@@ -382,7 +446,9 @@ describe("CSP session handler hoist: main.ts", () => {
     // function's idempotency is what makes this safe: regressing it
     // would let a duplicate main window appear on the recovery
     // path. Pin the guard by source-shape match.
-    const createWindowBody = source.match(/function\s+createWindow\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?\n\}\n/);
+    const createWindowBody = source.match(
+      /function\s+createWindow\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?\n\}\n/,
+    );
     expect(createWindowBody, "could not find createWindow body").toBeTruthy();
     if (!createWindowBody) return;
     const body = createWindowBody[0];
@@ -396,7 +462,9 @@ describe("CSP session handler hoist: main.ts", () => {
     // And the guard must precede the `new BrowserWindow(` call, not
     // come after it, so the early-return actually short-circuits
     // window creation.
-    const guardIdx = body.search(/mainWindow\s*!==\s*null\s*&&\s*!mainWindow\.isDestroyed\(\)/);
+    const guardIdx = body.search(
+      /mainWindow\s*!==\s*null\s*&&\s*!mainWindow\.isDestroyed\(\)/,
+    );
     const newWindowIdx = body.indexOf("new BrowserWindow(");
     expect(guardIdx).toBeGreaterThan(-1);
     expect(newWindowIdx).toBeGreaterThan(-1);
@@ -434,7 +502,7 @@ describe("CSP session handler hoist: main.ts", () => {
     const endIdx = source.indexOf('setBridgeState("ready")', startIdx);
     expect(
       endIdx,
-      "could not find the setBridgeState(\"ready\") terminal of initBridgeAndServices",
+      'could not find the setBridgeState("ready") terminal of initBridgeAndServices',
     ).toBeGreaterThan(startIdx);
     const body = source.slice(startIdx, endIdx);
     expect(

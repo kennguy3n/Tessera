@@ -157,9 +157,9 @@ describe("resolveBackupDir", () => {
   });
 
   it("honours an explicit backupDir", () => {
-    expect(
-      resolveBackupDir(fakeConfig({ backupDir: "/custom/dir" })),
-    ).toBe("/custom/dir");
+    expect(resolveBackupDir(fakeConfig({ backupDir: "/custom/dir" }))).toBe(
+      "/custom/dir",
+    );
   });
 
   it("treats a whitespace-only backupDir as the default sentinel", () => {

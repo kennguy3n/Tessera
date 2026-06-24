@@ -122,7 +122,11 @@ describe("bridge lifecycle state", () => {
         },
       },
     });
-    fakeWindows.push(makeWin("a", false), makeWin("b", true), makeWin("c", false));
+    fakeWindows.push(
+      makeWin("a", false),
+      makeWin("b", true),
+      makeWin("c", false),
+    );
 
     // No `broadcast` override → exercises the real broadcastToAllWindows.
     expect(() => setBridgeState("ready")).not.toThrow();

@@ -355,7 +355,7 @@ describe("summaryKindsForFieldType", () => {
 });
 
 describe("summaryLabel", () => {
-  it("labels a checkbox COUNT as \"Checked\", not the generic \"Filled\"", () => {
+  it('labels a checkbox COUNT as "Checked", not the generic "Filled"', () => {
     expect(summaryLabel("COUNT", "checkbox")).toBe("Checked");
   });
 
@@ -420,9 +420,9 @@ describe("formatSummaryValue", () => {
   // column's cells (Devin Review #179 — a SUM of "50%" + "30%" cells
   // should show "80%", not the raw fraction "0.8").
   it("formats a currency aggregation with the field symbol", () => {
-    expect(
-      formatSummaryValue("SUM", "1234.5", { type: "currency" }),
-    ).toBe("$1,234.50");
+    expect(formatSummaryValue("SUM", "1234.5", { type: "currency" })).toBe(
+      "$1,234.50",
+    );
     expect(
       formatSummaryValue("SUM", "1234.5", {
         type: "currency",
@@ -444,7 +444,9 @@ describe("formatSummaryValue", () => {
   it("formats a duration aggregation as h:mm", () => {
     expect(formatSummaryValue("SUM", "150", { type: "duration" })).toBe("2:30");
     // A fractional AVG floors to whole minutes.
-    expect(formatSummaryValue("AVG", "90.5", { type: "duration" })).toBe("1:30");
+    expect(formatSummaryValue("AVG", "90.5", { type: "duration" })).toBe(
+      "1:30",
+    );
   });
 
   it("never type-formats COUNT — a filled-cell count stays a bare integer", () => {
@@ -493,9 +495,9 @@ describe("pruneColumnSummaries", () => {
 
 describe("renameColumnSummaryKey", () => {
   it("moves the summary onto the renamed key", () => {
-    expect(renameColumnSummaryKey({ Old: "SUM", B: "COUNT" }, "Old", "New")).toEqual(
-      { B: "COUNT", New: "SUM" },
-    );
+    expect(
+      renameColumnSummaryKey({ Old: "SUM", B: "COUNT" }, "Old", "New"),
+    ).toEqual({ B: "COUNT", New: "SUM" });
   });
 
   it("returns the same reference when the field had no summary", () => {

@@ -55,10 +55,14 @@ describe("renderContextTable", () => {
 });
 
 describe("prompt builders", () => {
-  const ctx = buildContext(["Item", "Status", "Amount"], [["a", "paid", "10"]], {
-    activeCellRef: "D2",
-    selectionRef: "A1:C10",
-  });
+  const ctx = buildContext(
+    ["Item", "Status", "Amount"],
+    [["a", "paid", "10"]],
+    {
+      activeCellRef: "D2",
+      selectionRef: "A1:C10",
+    },
+  );
   it("formula prompt embeds request, context and the bare-formula rule", () => {
     const p = buildFormulaPrompt("sum amount where status is paid", ctx);
     expect(p).toContain("sum amount where status is paid");
@@ -95,7 +99,7 @@ describe("extractFormula", () => {
     expect(extractFormula("```excel\n=A1*B1\n```")).toBe("=A1*B1");
   });
   it("skips leading prose and finds the formula line", () => {
-    const out = "Here is the formula you asked for:\n=SUMIF(C:C,\"paid\",B:B)";
+    const out = 'Here is the formula you asked for:\n=SUMIF(C:C,"paid",B:B)';
     expect(extractFormula(out)).toBe('=SUMIF(C:C,"paid",B:B)');
   });
   it("prepends = to a bare expression answer", () => {

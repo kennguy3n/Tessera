@@ -117,7 +117,9 @@ async function listTeams(accessToken: string): Promise<FigmaTeam[]> {
   // directly; instead we read the user's recent files and follow
   // their team metadata. As a fallback, the renderer can supply a
   // team_id explicitly via the sync ctx.
-  const resp = await fetch(`${FIGMA_API}/me`, { headers: figmaHeaders(accessToken) });
+  const resp = await fetch(`${FIGMA_API}/me`, {
+    headers: figmaHeaders(accessToken),
+  });
   if (!resp.ok) return [];
   const data = (await resp.json()) as { teams?: FigmaTeam[] };
   return data.teams ?? [];
@@ -157,10 +159,7 @@ async function listProjectFiles(
   return data.files;
 }
 
-async function getFile(
-  key: string,
-  accessToken: string,
-): Promise<FigmaFile> {
+async function getFile(key: string, accessToken: string): Promise<FigmaFile> {
   // depth=4 keeps the response tractable; we mainly need TEXT
   // nodes which sit close to the leaves but skipping artboards
   // entirely would lose component naming context.
@@ -393,7 +392,10 @@ export async function syncFigma(ctx: {
   let nextWatermark = state.lastSyncIso;
 
   const succeededIds = new Set<string>();
-  const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
+  const failedThisPass: Array<{
+    remoteId: string;
+    remoteModifiedAt: string | null;
+  }> = [];
   // Parallel index over `failedThisPass.remoteId` so the Phase-2
   // dedup check is O(1) instead of O(n) per file. For a Figma
   // account with many teams and a noisy Phase 1 (transient 5xx on
@@ -402,7 +404,10 @@ export async function syncFigma(ctx: {
   // INVARIANT: every push to `failedThisPass` MUST also add to this
   // set — the `recordFailure` helper below is the only call site.
   const failedThisPassIds = new Set<string>();
-  const recordFailure = (remoteId: string, remoteModifiedAt: string | null): void => {
+  const recordFailure = (
+    remoteId: string,
+    remoteModifiedAt: string | null,
+  ): void => {
     failedThisPass.push({ remoteId, remoteModifiedAt });
     failedThisPassIds.add(remoteId);
   };
@@ -618,7 +623,10 @@ export async function syncFigma(ctx: {
           // O(1) dedup via the parallel Set; the legacy O(n) linear
           // `failedThisPass.some(...)` made the outer loop quadratic
           // on accounts with noisy Phase 1 retries.
-          if (succeededIds.has(summary.key) || failedThisPassIds.has(summary.key)) {
+          if (
+            succeededIds.has(summary.key) ||
+            failedThisPassIds.has(summary.key)
+          ) {
             // Already handled in Phase 1; skip the duplicate fetch.
             continue;
           }

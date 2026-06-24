@@ -87,9 +87,15 @@ interface JiraSearchResponse {
 async function listAccessibleResources(
   accessToken: string,
 ): Promise<JiraAccessibleResource[]> {
-  const resp = await fetch(`${ATLASSIAN_API}/oauth/token/accessible-resources`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-  });
+  const resp = await fetch(
+    `${ATLASSIAN_API}/oauth/token/accessible-resources`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    },
+  );
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(
@@ -166,7 +172,10 @@ async function searchIssues(
     "summary,status,assignee,reporter,priority,issuetype,project,description,updated,comment",
   );
   const resp = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
   });
   if (!resp.ok) {
     const text = await resp.text();
@@ -337,14 +346,20 @@ export async function syncJira(ctx: {
   let removed = 0;
   let watermark = state.lastSyncIso;
   const succeededIds = new Set<string>();
-  const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
+  const failedThisPass: Array<{
+    remoteId: string;
+    remoteModifiedAt: string | null;
+  }> = [];
   // Parallel index over `failedThisPass.remoteId` so the post-loop
   // dedup check is O(1) instead of O(n) per retry key.
   // architectural symmetry). INVARIANT: every push to
   // `failedThisPass` MUST also add to this set — the `recordFailure`
   // helper below is the only call site.
   const failedThisPassIds = new Set<string>();
-  const recordFailure = (remoteId: string, remoteModifiedAt: string | null): void => {
+  const recordFailure = (
+    remoteId: string,
+    remoteModifiedAt: string | null,
+  ): void => {
     failedThisPass.push({ remoteId, remoteModifiedAt });
     failedThisPassIds.add(remoteId);
   };
@@ -378,11 +393,11 @@ export async function syncJira(ctx: {
   // state.json. The watermark is always re-derived from issue
   // updates within the same pass, so the next save will restore it.
   const safeWatermark = sanitiseJqlWatermark(watermark);
-  const watermarkClause = safeWatermark ? `updated >= "${safeWatermark}"` : null;
+  const watermarkClause = safeWatermark
+    ? `updated >= "${safeWatermark}"`
+    : null;
   const retryClause =
-    retryKeys.length > 0
-      ? `key in (${retryKeys.join(",")})`
-      : null;
+    retryKeys.length > 0 ? `key in (${retryKeys.join(",")})` : null;
   // JQL composition. The four cases:
   // 1. Valid watermark + retries → `(updated >= W) OR (key in K)`,
   //    so newly-updated issues AND carry-forward retry keys are both
@@ -451,10 +466,7 @@ export async function syncJira(ctx: {
           recordFailure(issue.key, updated);
           continue;
         }
-        const localPath = path.join(
-          dir,
-          `${sanitiseRemoteId(issue.key)}.md`,
-        );
+        const localPath = path.join(dir, `${sanitiseRemoteId(issue.key)}.md`);
         try {
           await fsp.writeFile(localPath, body, "utf8");
         } catch {

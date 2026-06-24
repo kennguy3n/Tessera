@@ -135,9 +135,7 @@ describe("inferLayoutFromBlocks", () => {
 
   it("infers 'bigNumber' for a single short numeric text", () => {
     expect(
-      inferLayoutFromBlocks(
-        slide("Stat", [{ type: "text", content: "42%" }]),
-      ),
+      inferLayoutFromBlocks(slide("Stat", [{ type: "text", content: "42%" }])),
     ).toBe("bigNumber");
   });
 
@@ -179,8 +177,8 @@ describe("resolveSlideLayout", () => {
   });
 
   it("infers layout when layout is unknown", () => {
-    expect(
-      resolveSlideLayout(slide("X", [], "bogus" as SlideLayout)),
-    ).toBe("title");
+    expect(resolveSlideLayout(slide("X", [], "bogus" as SlideLayout))).toBe(
+      "title",
+    );
   });
 });

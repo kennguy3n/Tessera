@@ -584,7 +584,9 @@ export const GdriveSelectedItemsSchema = z
     }),
   )
   .max(10_000);
-export type GdriveSelectedItemsInput = z.infer<typeof GdriveSelectedItemsSchema>;
+export type GdriveSelectedItemsInput = z.infer<
+  typeof GdriveSelectedItemsSchema
+>;
 
 // --- Native save dialog ---
 //
@@ -794,17 +796,13 @@ export type BackupRestoreInput = z.infer<typeof BackupRestoreSchema>;
 // `backup:exportBundle` — write a full `.tessera-backup` archive to the
 // user-chosen path. The handler assembles the sidecar entries (config
 // JSON, etc.) itself; the renderer only supplies the destination.
-export const BundleExportSchema = z
-  .object({ outPath: BackupPath })
-  .strict();
+export const BundleExportSchema = z.object({ outPath: BackupPath }).strict();
 export type BundleExportInput = z.infer<typeof BundleExportSchema>;
 
 // `backup:importBundle` — verify + stage a `.tessera-backup` archive.
 // The handler supplies the sidecar restore targets; the renderer only
 // supplies the source archive path.
-export const BundleImportSchema = z
-  .object({ bundlePath: BackupPath })
-  .strict();
+export const BundleImportSchema = z.object({ bundlePath: BackupPath }).strict();
 export type BundleImportInput = z.infer<typeof BundleImportSchema>;
 
 // `dialog:openDirectory` — native folder picker used by the Settings →

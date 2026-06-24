@@ -38,10 +38,7 @@ export const SHARE_DELIVERIES = ["attachment", "deeplink"] as const;
 export type KchatShareDelivery = (typeof SHARE_DELIVERIES)[number];
 
 /** Formats that produce binary (non-text) bytes. */
-const BINARY_FORMATS: ReadonlySet<KchatShareFormat> = new Set([
-  "pdf",
-  "docx",
-]);
+const BINARY_FORMATS: ReadonlySet<KchatShareFormat> = new Set(["pdf", "docx"]);
 
 export interface ShareDeliveryPlan {
   delivery: KchatShareDelivery;

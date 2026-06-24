@@ -10,10 +10,7 @@
  */
 import { useMemo, useState } from "react";
 
-import {
-  parseListValues,
-  setColumnValidation,
-} from "../sheetDataValidation";
+import { parseListValues, setColumnValidation } from "../sheetDataValidation";
 import type { DataValidation, ValidationMap } from "../sheetEditorTypes";
 
 export interface DataValidationPanelProps {
@@ -52,8 +49,7 @@ export function DataValidationPanel({
   );
 
   const parsedDraft = parseListValues(draftValues);
-  const canAdd =
-    draftKind === "checkbox" || parsedDraft.length > 0;
+  const canAdd = draftKind === "checkbox" || parsedDraft.length > 0;
 
   const apply = (col: number, rule: DataValidation | null) => {
     onChange(setColumnValidation(validations, col, rule));
@@ -90,8 +86,8 @@ export function DataValidationPanel({
       {entries.length === 0 ? (
         <p className="sheet-cf-empty" data-testid="sheet-dv-empty">
           No data-validation rules yet. Make a column a dropdown (e.g.{" "}
-          <code>Paid, Unpaid, Pending</code>) or a checkbox to constrain
-          what can be entered.
+          <code>Paid, Unpaid, Pending</code>) or a checkbox to constrain what
+          can be entered.
         </p>
       ) : (
         <ul className="sheet-cf-list">

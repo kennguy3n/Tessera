@@ -71,7 +71,8 @@ function gpuLabel(backends: string[]): string {
 }
 
 export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
-  const tessera = api ?? (typeof window !== "undefined" ? window.tessera : undefined);
+  const tessera =
+    api ?? (typeof window !== "undefined" ? window.tessera : undefined);
   const [state, setState] = useState<State>(initialState);
 
   const refresh = useCallback(async () => {
@@ -96,13 +97,14 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
       // `model.start(visionPath)` against the text sidecar or
       // `deleteModel()` (text-default) against the actual text slot.
       // Scoping to `"text"` here closes the leak at the boundary.
-      const [platform, models, recommended, current, status] = await Promise.all([
-        tessera.runtime.detectPlatform(),
-        tessera.runtime.listModels("text"),
-        tessera.runtime.recommendModel("text"),
-        tessera.runtime.getCurrentModel("text"),
-        tessera.model.status(),
-      ]);
+      const [platform, models, recommended, current, status] =
+        await Promise.all([
+          tessera.runtime.detectPlatform(),
+          tessera.runtime.listModels("text"),
+          tessera.runtime.recommendModel("text"),
+          tessera.runtime.getCurrentModel("text"),
+          tessera.model.status(),
+        ]);
       setState((s) => ({
         ...s,
         loading: false,
@@ -223,7 +225,12 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   const performDownload = useCallback(
     async (modelId: string) => {
       if (!tessera) return;
-      setState((s) => ({ ...s, busyModelId: modelId, error: null, progress: null }));
+      setState((s) => ({
+        ...s,
+        busyModelId: modelId,
+        error: null,
+        progress: null,
+      }));
       try {
         // `runtime:downloadModel` handles both fresh-install and swap. The
         // main process stops the sidecar before evicting any old model,
@@ -431,7 +438,12 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   if (!tessera) {
     return (
       <Card>
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h2>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-md)" }}
+        >
+          Model Runtime
+        </h2>
         <p style={{ color: "var(--color-text-secondary)" }}>
           Tessera bridge not available in this context.
         </p>
@@ -441,7 +453,12 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
 
   return (
     <Card>
-      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h2>
+      <h2
+        className="section-title"
+        style={{ marginBottom: "var(--spacing-md)" }}
+      >
+        Model Runtime
+      </h2>
 
       {state.loading && <p>Detecting hardware…</p>}
       {state.error && (
@@ -464,7 +481,8 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           <strong>{state.platform.platformLabel}</strong>
           <span>RAM:</span>
           <strong>
-            {state.platform.totalRamGb.toFixed(1)} GB ({state.platform.tierLabel})
+            {state.platform.totalRamGb.toFixed(1)} GB (
+            {state.platform.tierLabel})
           </strong>
           <span>GPU:</span>
           <strong>{gpuLabel(state.platform.computeBackends)}</strong>
@@ -481,7 +499,8 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           data-testid="model-runtime-recommended"
         >
           Recommended: <strong>{state.recommended.name}</strong> (
-          {state.recommended.formatLabel}, ~{state.recommended.downloadSizeMb} MB)
+          {state.recommended.formatLabel}, ~{state.recommended.downloadSizeMb}{" "}
+          MB)
         </p>
       )}
 
@@ -494,10 +513,21 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
             Installed: <strong>{state.current.modelId}</strong> (
             {state.current.downloadSizeMb} MB)
           </p>
-          <p style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>
+          <p
+            style={{
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             {state.current.path}
           </p>
-          <div style={{ display: "flex", gap: "var(--spacing-sm)", marginTop: "var(--spacing-sm)" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "var(--spacing-sm)",
+              marginTop: "var(--spacing-sm)",
+            }}
+          >
             {state.status?.status === "running" ? (
               <Button onClick={handleStop}>Stop</Button>
             ) : (
@@ -536,10 +566,15 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           data-testid="model-runtime-progress"
         >
           <p style={{ fontSize: "var(--font-size-sm)" }}>
-            {state.progress.filename} — {state.progress.downloadedMb.toFixed(1)} /{" "}
-            {state.progress.totalMb.toFixed(1)} MB ({state.progress.percent.toFixed(0)}%)
+            {state.progress.filename} — {state.progress.downloadedMb.toFixed(1)}{" "}
+            / {state.progress.totalMb.toFixed(1)} MB (
+            {state.progress.percent.toFixed(0)}%)
           </p>
-          <progress value={state.progress.percent} max={100} style={{ width: "100%" }} />
+          <progress
+            value={state.progress.percent}
+            max={100}
+            style={{ width: "100%" }}
+          />
         </div>
       )}
 
@@ -560,7 +595,13 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           {state.showAll ? "Hide" : "Show"} all available models
         </button>
         {state.showAll && (
-          <ul style={{ listStyle: "none", padding: 0, marginTop: "var(--spacing-sm)" }}>
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              marginTop: "var(--spacing-sm)",
+            }}
+          >
             {state.models.map((m) => {
               const isCurrent = state.current?.modelId === m.id;
               const isBusy = state.busyModelId === m.id;
@@ -576,11 +617,13 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
                   }}
                 >
                   <span>
-                    <strong>{m.name}</strong> · {m.parameters} · {m.formatLabel} ·{" "}
-                    {m.downloadSizeMb} MB
+                    <strong>{m.name}</strong> · {m.parameters} · {m.formatLabel}{" "}
+                    · {m.downloadSizeMb} MB
                   </span>
                   {isCurrent ? (
-                    <em style={{ fontSize: "var(--font-size-xs)" }}>installed</em>
+                    <em style={{ fontSize: "var(--font-size-xs)" }}>
+                      installed
+                    </em>
                   ) : (
                     <Button
                       variant="secondary"

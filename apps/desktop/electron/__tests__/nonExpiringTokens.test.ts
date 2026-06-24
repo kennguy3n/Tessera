@@ -152,10 +152,7 @@ describe("getValidAccessToken — non-expiring providers (Notion)", () => {
           scopes: [],
         },
       });
-      const token = await getValidAccessTokenForProvider(
-        ctx,
-        "google_drive",
-      );
+      const token = await getValidAccessTokenForProvider(ctx, "google_drive");
       expect(token).toBe("ya29.gdrive_token");
       expect(deletes).toEqual([]);
     },

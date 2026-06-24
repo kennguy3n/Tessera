@@ -115,9 +115,7 @@ describe("secureDeleteChannelArtifacts", () => {
     // still return cleanly. This is the substrate-revoke
     // contract: a re-revoke on an already-scrubbed channel
     // re-invokes the helper, which must not fail.
-    await expect(
-      secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toEqual({
+    await expect(secureDeleteChannelArtifacts(cacheDir)).resolves.toEqual({
       cacheDirRemoved: true,
       manifestRemoved: true,
     });
@@ -125,9 +123,7 @@ describe("secureDeleteChannelArtifacts", () => {
     // Second call (after a first scrub on a path that was
     // already missing) still resolves with the success shape
     // (idempotent on missing paths via `force: true`).
-    await expect(
-      secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toEqual({
+    await expect(secureDeleteChannelArtifacts(cacheDir)).resolves.toEqual({
       cacheDirRemoved: true,
       manifestRemoved: true,
     });
@@ -150,9 +146,7 @@ describe("secureDeleteChannelArtifacts", () => {
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeFile(path.join(cacheDir, "lone.txt"), "lone");
 
-    await expect(
-      secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toEqual({
+    await expect(secureDeleteChannelArtifacts(cacheDir)).resolves.toEqual({
       cacheDirRemoved: true,
       manifestRemoved: true,
     });
@@ -171,9 +165,7 @@ describe("secureDeleteChannelArtifacts", () => {
       JSON.stringify({ version: 1, channelId: "chan-only-sidecar", files: {} }),
     );
 
-    await expect(
-      secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toEqual({
+    await expect(secureDeleteChannelArtifacts(cacheDir)).resolves.toEqual({
       cacheDirRemoved: true,
       manifestRemoved: true,
     });

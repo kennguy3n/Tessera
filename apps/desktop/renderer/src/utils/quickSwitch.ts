@@ -84,13 +84,14 @@ export const QUICK_SWITCH_KIND_ORDER: readonly QuickSwitchKind[] = [
   "page",
 ];
 
-const KIND_RANK: Record<QuickSwitchKind, number> = QUICK_SWITCH_KIND_ORDER.reduce(
-  (acc, kind, i) => {
-    acc[kind] = i;
-    return acc;
-  },
-  {} as Record<QuickSwitchKind, number>,
-);
+const KIND_RANK: Record<QuickSwitchKind, number> =
+  QUICK_SWITCH_KIND_ORDER.reduce(
+    (acc, kind, i) => {
+      acc[kind] = i;
+      return acc;
+    },
+    {} as Record<QuickSwitchKind, number>,
+  );
 
 /**
  * Title fuzzy score is the dominant signal; a match found only in the
@@ -184,9 +185,7 @@ export function rankQuickSwitchItems({
     const recent: QuickSwitchItem[] = [];
     const rest: QuickSwitchItem[] = [];
     for (const item of items) {
-      const rank = item.recentKey
-        ? recentRank.get(item.recentKey)
-        : undefined;
+      const rank = item.recentKey ? recentRank.get(item.recentKey) : undefined;
       if (rank !== undefined) recent.push(item);
       else rest.push(item);
     }
@@ -233,7 +232,10 @@ export function rankQuickSwitchItems({
     .map(({ item, matchedIndices }) => ({ item, matchedIndices }));
 }
 
-function compareByKindThenTitle(a: QuickSwitchItem, b: QuickSwitchItem): number {
+function compareByKindThenTitle(
+  a: QuickSwitchItem,
+  b: QuickSwitchItem,
+): number {
   const kindDelta = KIND_RANK[a.kind] - KIND_RANK[b.kind];
   if (kindDelta !== 0) return kindDelta;
   return a.title.localeCompare(b.title);

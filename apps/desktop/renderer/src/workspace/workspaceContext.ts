@@ -1,9 +1,9 @@
 import { createContext, useContext } from "react";
-import type { NavigateFunction, Navigator as RRNavigator } from "react-router-dom";
 import type {
-  SplitDirection,
-  WorkspaceState,
-} from "../utils/paneTree";
+  NavigateFunction,
+  Navigator as RRNavigator,
+} from "react-router-dom";
+import type { SplitDirection, WorkspaceState } from "../utils/paneTree";
 
 /**
  * Imperative + reactive API exposed by {@link WorkspaceProvider}.

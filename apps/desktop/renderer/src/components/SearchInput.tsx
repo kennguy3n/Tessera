@@ -1,7 +1,9 @@
 import { InputHTMLAttributes } from "react";
 
-interface SearchInputProps
-  extends Omit<InputHTMLAttributes<HTMLInputElement>, "type"> {
+interface SearchInputProps extends Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  "type"
+> {
   onSearch?: (value: string) => void;
 }
 

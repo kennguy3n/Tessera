@@ -243,9 +243,7 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
   // A background text-model download is "in progress" when we've seen
   // a sub-100% progress event and the slot isn't ready yet.
   const modelDownloading =
-    modelReady !== true &&
-    downloadPercent !== null &&
-    downloadPercent < 100;
+    modelReady !== true && downloadPercent !== null && downloadPercent < 100;
   // Final-step wording adapts to model state: ready → AI available;
   // still downloading → AI will finish in the background; otherwise
   // the generic ready copy.
@@ -289,11 +287,7 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
           <Button onClick={onPrimary} autoFocus disabled={disabled}>
             {copy.primaryLabel}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={handleClose}
-            disabled={disabled}
-          >
+          <Button variant="secondary" onClick={handleClose} disabled={disabled}>
             {step === 2 ? "Close" : "Skip"}
           </Button>
         </div>

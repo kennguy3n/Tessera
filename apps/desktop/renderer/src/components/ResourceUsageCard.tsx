@@ -1,10 +1,7 @@
 import Card from "./Card";
 import { useResourceUsage } from "../hooks/useResourceUsage";
 import { RESOURCE_MODE_LABELS } from "../constants/resourceMode";
-import type {
-  ResourceUsage,
-  ResourceUsageSlm,
-} from "../types/ipc";
+import type { ResourceUsage, ResourceUsageSlm } from "../types/ipc";
 
 /**
  * LW-12: the Settings → Performance "Resource usage" dashboard.
@@ -122,7 +119,12 @@ export default function ResourceUsageCard() {
 
   return (
     <Card>
-      <h2 className="section-title" style={{ marginBottom: "var(--spacing-xs)" }}>Resource usage</h2>
+      <h2
+        className="section-title"
+        style={{ marginBottom: "var(--spacing-xs)" }}
+      >
+        Resource usage
+      </h2>
       <p
         style={{
           fontSize: "var(--font-size-xs)",

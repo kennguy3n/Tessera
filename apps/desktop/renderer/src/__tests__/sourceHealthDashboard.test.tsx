@@ -12,10 +12,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import SourceHealthDashboard from "../components/SourceHealthDashboard";
-import type {
-  SourceApi,
-  SourceHealthReport,
-} from "../../../shared/types";
+import type { SourceApi, SourceHealthReport } from "../../../shared/types";
 
 function makeReport(
   overrides: Partial<SourceHealthReport["sources"][number]>[],
@@ -63,9 +60,7 @@ describe("SourceHealthDashboard", () => {
     const api = makeApi(makeReport([]));
     render(<SourceHealthDashboard api={api} />);
     await waitFor(() => {
-      expect(
-        screen.getByText(/No sources connected yet/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/No sources connected yet/i)).toBeInTheDocument();
     });
     expect(api.healthReport).toHaveBeenCalledTimes(1);
   });
@@ -101,9 +96,7 @@ describe("SourceHealthDashboard", () => {
     );
     render(<SourceHealthDashboard api={api} />);
     await waitFor(() => {
-      expect(
-        screen.getByTestId("source-health-row-src-h"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("source-health-row-src-h")).toBeInTheDocument();
     });
     expect(
       screen.getByTestId("source-health-badge-healthy"),
@@ -111,9 +104,7 @@ describe("SourceHealthDashboard", () => {
     expect(
       screen.getByTestId("source-health-badge-warning"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByTestId("source-health-badge-error"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("source-health-badge-error")).toBeInTheDocument();
     // The error row reports "Never" for its missing lastIndexed.
     const errorRow = screen.getByTestId("source-health-row-src-e");
     expect(errorRow).toHaveTextContent(/Never/);
@@ -215,13 +206,14 @@ describe("SourceHealthDashboard", () => {
       .fn()
       .mockResolvedValueOnce(initialReport)
       .mockRejectedValueOnce(new Error("refresh boom"));
-    const api = { ...makeApi(initialReport), healthReport } as unknown as SourceApi;
+    const api = {
+      ...makeApi(initialReport),
+      healthReport,
+    } as unknown as SourceApi;
     render(<SourceHealthDashboard api={api} />);
     // Wait for the initial successful load to render the row.
     await waitFor(() => {
-      expect(
-        screen.getByTestId("source-health-row-src-1"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("source-health-row-src-1")).toBeInTheDocument();
     });
     expect(screen.queryByRole("alert")).toBeNull();
     // The table is fresh on first paint — not yet marked stale.
@@ -236,9 +228,7 @@ describe("SourceHealthDashboard", () => {
         /Failed to refresh source health: refresh boom\. Showing data from/i,
       );
     });
-    expect(
-      screen.getByTestId("source-health-row-src-1"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("source-health-row-src-1")).toBeInTheDocument();
     const tableStale = screen.getByRole("table");
     expect(tableStale.getAttribute("data-stale")).toBe("true");
     expect(tableStale.getAttribute("aria-describedby")).toBe(
@@ -331,9 +321,9 @@ describe("SourceHealthDashboard", () => {
         },
       ]);
       const lateApi = makeApi(report);
-      (
-        window as unknown as { tessera: { sources: SourceApi } }
-      ).tessera = { sources: lateApi };
+      (window as unknown as { tessera: { sources: SourceApi } }).tessera = {
+        sources: lateApi,
+      };
       // User clicks Refresh — fix makes the next call pick up the
       // newly-defined `window.tessera.sources` instead of using a
       // stale `undefined` closure.
@@ -346,9 +336,7 @@ describe("SourceHealthDashboard", () => {
       await waitFor(() => {
         expect(screen.queryByRole("alert")).toBeNull();
       });
-      expect(
-        screen.getByText("/docs/late-bridge-source"),
-      ).toBeInTheDocument();
+      expect(screen.getByText("/docs/late-bridge-source")).toBeInTheDocument();
       expect(
         screen.getByTestId("source-health-row-src-late"),
       ).toBeInTheDocument();

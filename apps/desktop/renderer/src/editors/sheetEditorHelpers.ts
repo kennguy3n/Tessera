@@ -214,7 +214,9 @@ export function fromWorkbook(
   baseContent?: SheetContent,
 ): SheetContent {
   const active =
-    workbook.sheets[Math.min(workbook.activeSheetIndex, workbook.sheets.length - 1)];
+    workbook.sheets[
+      Math.min(workbook.activeSheetIndex, workbook.sheets.length - 1)
+    ];
   const out: SheetContent = {
     ...(baseContent ?? {}),
     columns: [...active.columns],
@@ -574,7 +576,9 @@ export function evaluateAllWorkbookFormulas(
  * Returns the populated graph; callers manage further updates via
  * `graph.setDependencies()` as individual cells change.
  */
-export function buildSheetDependencyGraph(sheet: SheetContent): DependencyGraph {
+export function buildSheetDependencyGraph(
+  sheet: SheetContent,
+): DependencyGraph {
   const graph = new DependencyGraph();
   const names = buildNamesMap(sheet.namedRanges);
   for (let r = 0; r < sheet.rows.length; r++) {
@@ -929,9 +933,7 @@ export function incrementalRecalc(
   // one hop downstream of the deleted cell) is fine because
   // `recalcOrder` walks `usedBy` from the seeds themselves.
   const allSeeds: Iterable<string> =
-    extraSeeds.size === 0
-      ? dirtyKeys
-      : new Set([...dirtyKeys, ...extraSeeds]);
+    extraSeeds.size === 0 ? dirtyKeys : new Set([...dirtyKeys, ...extraSeeds]);
   const { order: dependentOrder, cyclic } = graph.recalcOrder(allSeeds);
   // The `extraSeeds` are dependents themselves (one hop downstream
   // of the deleted cells), so their cached values must also be
@@ -1045,9 +1047,7 @@ export type { AstNode };
  * Exported for unit-test coverage; this is the canonical place
  * cell references are decoded inside the sheet editor.
  */
-export function parseCellRef(
-  ref: string,
-): { row: number; col: number } | null {
+export function parseCellRef(ref: string): { row: number; col: number } | null {
   const match = ref.match(/^([A-Z]+)(\d+)$/);
   if (!match) return null;
   const col =

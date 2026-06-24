@@ -36,7 +36,10 @@ export default function CalendarView({
   // Index records by their YYYY-MM-DD key so day-cell lookups are
   // O(1) instead of scanning every record per cell.
   const recordsByDay = useMemo(() => {
-    const map = new Map<string, { record: Record<string, unknown>; index: number }[]>();
+    const map = new Map<
+      string,
+      { record: Record<string, unknown>; index: number }[]
+    >();
     if (!dateField) return map;
     for (let i = 0; i < data.records.length; i++) {
       const r = data.records[i];
@@ -102,9 +105,7 @@ export default function CalendarView({
           recordsByDay={recordsByDay}
           titleField={config.titleField}
           dateField={dateField}
-          onAddOnDay={(key) =>
-            onAddRecordWith({ [dateField.name]: key })
-          }
+          onAddOnDay={(key) => onAddRecordWith({ [dateField.name]: key })}
           onMoveRecord={(recordIndex, newKey) =>
             onUpdateCell(recordIndex, dateField.name, newKey)
           }
@@ -116,9 +117,7 @@ export default function CalendarView({
           recordsByDay={recordsByDay}
           titleField={config.titleField}
           dateField={dateField}
-          onAddOnDay={(key) =>
-            onAddRecordWith({ [dateField.name]: key })
-          }
+          onAddOnDay={(key) => onAddRecordWith({ [dateField.name]: key })}
         />
       )}
       {mode === "day" && (
@@ -127,9 +126,7 @@ export default function CalendarView({
           recordsByDay={recordsByDay}
           titleField={config.titleField}
           dateField={dateField}
-          onAddOnDay={(key) =>
-            onAddRecordWith({ [dateField.name]: key })
-          }
+          onAddOnDay={(key) => onAddRecordWith({ [dateField.name]: key })}
         />
       )}
     </div>
@@ -176,7 +173,9 @@ function Toolbar({
       <button type="button" className="btn-sm" onClick={onNext}>
         →
       </button>
-      <strong style={{ marginLeft: "0.5rem" }}>{formatHeader(anchor, mode)}</strong>
+      <strong style={{ marginLeft: "0.5rem" }}>
+        {formatHeader(anchor, mode)}
+      </strong>
       <div style={{ flex: 1 }} />
       <label
         style={{
@@ -228,7 +227,10 @@ function MonthGrid({
   onMoveRecord,
 }: {
   anchor: Date;
-  recordsByDay: Map<string, { record: Record<string, unknown>; index: number }[]>;
+  recordsByDay: Map<
+    string,
+    { record: Record<string, unknown>; index: number }[]
+  >;
   titleField: string | null;
   dateField: BaseField;
   onAddOnDay: (key: string) => void;
@@ -367,7 +369,10 @@ function WeekStrip({
   dateField,
 }: {
   anchor: Date;
-  recordsByDay: Map<string, { record: Record<string, unknown>; index: number }[]>;
+  recordsByDay: Map<
+    string,
+    { record: Record<string, unknown>; index: number }[]
+  >;
   titleField: string | null;
   onAddOnDay: (key: string) => void;
   dateField: BaseField;
@@ -469,7 +474,10 @@ function DayPane({
   dateField,
 }: {
   anchor: Date;
-  recordsByDay: Map<string, { record: Record<string, unknown>; index: number }[]>;
+  recordsByDay: Map<
+    string,
+    { record: Record<string, unknown>; index: number }[]
+  >;
   titleField: string | null;
   onAddOnDay: (key: string) => void;
   dateField: BaseField;
@@ -504,7 +512,9 @@ function DayPane({
           No records for this day.
         </div>
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}
+      >
         {recs.map(({ record, index }) => (
           <div
             key={index}

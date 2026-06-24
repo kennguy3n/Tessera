@@ -44,7 +44,8 @@ describe("MemoryWatchdog", () => {
     const changes: Array<{ paused: boolean; rss: number }> = [];
     const wd = new MemoryWatchdog({
       sampleRssBytes: () => rss,
-      onPressureChange: (paused, rssBytes) => changes.push({ paused, rss: rssBytes }),
+      onPressureChange: (paused, rssBytes) =>
+        changes.push({ paused, rss: rssBytes }),
     });
 
     expect(wd.poll()).toBe(false); // 100 MB: calm
@@ -110,7 +111,10 @@ describe("MemoryWatchdog", () => {
     vi.useFakeTimers();
     try {
       const sample = vi.fn(() => 100 * MB);
-      const wd = new MemoryWatchdog({ sampleRssBytes: sample, pollIntervalMs: 1000 });
+      const wd = new MemoryWatchdog({
+        sampleRssBytes: sample,
+        pollIntervalMs: 1000,
+      });
       wd.start(); // one immediate priming poll + arms the interval
       wd.start(); // second call must NOT prime again or install a 2nd interval
       vi.advanceTimersByTime(3000);

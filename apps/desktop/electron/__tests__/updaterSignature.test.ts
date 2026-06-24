@@ -51,10 +51,7 @@ function generateTestKeypair(): {
  * Sign `payload` with `privateKey` using detached Ed25519 (no
  * pre-hash; the algorithm's internal SHA-512 handles that).
  */
-function signPayload(
-  payload: Buffer,
-  privateKey: crypto.KeyObject,
-): Buffer {
+function signPayload(payload: Buffer, privateKey: crypto.KeyObject): Buffer {
   return crypto.sign(null, payload, privateKey);
 }
 
@@ -104,7 +101,9 @@ describe("verifyUpdateSignatureFromBuffers — happy path", () => {
   it("accepts a signature from anchor #1 when both #1 and #2 are trusted (backward compat during rollout)", () => {
     const oldKey = generateTestKeypair();
     const newKey = generateTestKeypair();
-    const payload = Buffer.from("older client receiving update signed with retired key");
+    const payload = Buffer.from(
+      "older client receiving update signed with retired key",
+    );
     const sig = signPayload(payload, oldKey.privateKey);
 
     const result = verifyUpdateSignatureFromBuffers(payload, sig, {

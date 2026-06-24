@@ -53,13 +53,7 @@ describe("parseScopeString", () => {
   });
 
   it("splits on mixed whitespace + comma + newline + tab", () => {
-    expect(parseScopeString("a b,c\nd\te")).toEqual([
-      "a",
-      "b",
-      "c",
-      "d",
-      "e",
-    ]);
+    expect(parseScopeString("a b,c\nd\te")).toEqual(["a", "b", "c", "d", "e"]);
   });
 
   it("drops empty fragments from consecutive delimiters", () => {

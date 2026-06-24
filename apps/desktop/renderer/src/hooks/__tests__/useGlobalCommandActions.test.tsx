@@ -13,9 +13,10 @@ import { useGlobalCommandActions } from "../useGlobalCommandActions";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual<typeof import("react-router-dom")>(
-    "react-router-dom",
-  );
+  const actual =
+    await vi.importActual<typeof import("react-router-dom")>(
+      "react-router-dom",
+    );
   return { ...actual, useNavigate: () => navigateMock };
 });
 
@@ -55,9 +56,7 @@ function mount() {
 }
 
 function fire(type: string, detail?: unknown) {
-  window.dispatchEvent(
-    new CustomEvent(type, detail ? { detail } : undefined),
-  );
+  window.dispatchEvent(new CustomEvent(type, detail ? { detail } : undefined));
 }
 
 beforeEach(() => {
@@ -106,7 +105,9 @@ describe("useGlobalCommandActions", () => {
     });
     mount();
     fire("tessera:run-decay-sweep");
-    await waitFor(() => expect(bridge().substrate.runDecaySweep).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(bridge().substrate.runDecaySweep).toHaveBeenCalled(),
+    );
     await waitFor(() =>
       expect(addToast).toHaveBeenCalledWith(
         expect.stringContaining("12 scored, 4 archived"),

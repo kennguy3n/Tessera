@@ -20,10 +20,10 @@ describe("sheetSelection", () => {
   });
 
   it("extendSelection moves the head while preserving the anchor", () => {
-    const sel = extendSelection(
-      selectionFromCell({ row: 1, col: 1 }),
-      { row: 4, col: 5 },
-    );
+    const sel = extendSelection(selectionFromCell({ row: 1, col: 1 }), {
+      row: 4,
+      col: 5,
+    });
     expect(sel.anchor).toEqual({ row: 1, col: 1 });
     expect(sel.primary.start).toEqual({ row: 1, col: 1 });
     expect(sel.primary.end).toEqual({ row: 4, col: 5 });
@@ -45,10 +45,10 @@ describe("sheetSelection", () => {
   });
 
   it("addSelection appends a disjoint single-cell extra range", () => {
-    const sel = addSelection(
-      selectionFromCell({ row: 0, col: 0 }),
-      { row: 5, col: 5 },
-    );
+    const sel = addSelection(selectionFromCell({ row: 0, col: 0 }), {
+      row: 5,
+      col: 5,
+    });
     expect(sel.extras).toHaveLength(1);
     expect(sel.extras[0].start).toEqual({ row: 5, col: 5 });
     expect(sel.extras[0].end).toEqual({ row: 5, col: 5 });

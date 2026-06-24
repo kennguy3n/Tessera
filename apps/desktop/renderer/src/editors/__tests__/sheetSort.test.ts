@@ -90,7 +90,14 @@ describe("sortSheetByColumn", () => {
     const rows = [["b"], ["a"], ["c"]];
     // 40px on "b" (row 0 -> new row 1); 20px on "a" (row 1 -> new row 0).
     const rowHeights = [40, 20, undefined];
-    const result = sortSheetByColumn(rows, undefined, 0, true, undefined, rowHeights);
+    const result = sortSheetByColumn(
+      rows,
+      undefined,
+      0,
+      true,
+      undefined,
+      rowHeights,
+    );
     expect(result.rows).toEqual([["a"], ["b"], ["c"]]);
     expect(result.rowHeights).toEqual([20, 40]);
   });
@@ -99,7 +106,14 @@ describe("sortSheetByColumn", () => {
     const rows = [["b"], ["a"]];
     const formats: Record<string, CellFormat> = { "0,0": { bold: true } };
     const rowHeights = [40, undefined];
-    const result = sortSheetByColumn(rows, formats, 0, true, undefined, rowHeights);
+    const result = sortSheetByColumn(
+      rows,
+      formats,
+      0,
+      true,
+      undefined,
+      rowHeights,
+    );
     // "b" moved from row 0 to row 1: both its bold format and 40px height
     // travel together to row 1.
     expect(result.rows).toEqual([["a"], ["b"]]);

@@ -222,24 +222,22 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // whole stack — a user pressing Escape in a confirmation modal
   // would also dismiss any open toasts otherwise).
   const handleKeyDown = useCallback(
-    (id: number) =>
-      (event: KeyboardEvent<HTMLDivElement>) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          dismissToast(id);
-        }
-      },
+    (id: number) => (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        dismissToast(id);
+      }
+    },
     [dismissToast],
   );
 
   const handleDismissClick = useCallback(
-    (id: number) =>
-      (event: MouseEvent<HTMLButtonElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        dismissToast(id);
-      },
+    (id: number) => (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissToast(id);
+    },
     [dismissToast],
   );
 

@@ -95,14 +95,12 @@ describe("ComparisonResultModal", () => {
       screen.getByText("Comparison: docs-a vs docs-b"),
     ).toBeInTheDocument();
     // Similarity rendered as percentage (not raw 0-1 float).
-    expect(
-      screen.getByTestId("comparison-modal-similarity"),
-    ).toHaveTextContent("42%");
+    expect(screen.getByTestId("comparison-modal-similarity")).toHaveTextContent(
+      "42%",
+    );
     // All three theme groups render with frequency annotations.
     expect(
-      screen.getByTestId(
-        "comparison-modal-common-item-architecture decisions",
-      ),
+      screen.getByTestId("comparison-modal-common-item-architecture decisions"),
     ).toHaveTextContent("(8)");
     expect(
       screen.getByTestId("comparison-modal-common-item-rollout plan"),
@@ -143,9 +141,9 @@ describe("ComparisonResultModal", () => {
     expect(
       screen.getByTestId("comparison-modal-unique-b-empty"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByTestId("comparison-modal-similarity"),
-    ).toHaveTextContent("0%");
+    expect(screen.getByTestId("comparison-modal-similarity")).toHaveTextContent(
+      "0%",
+    );
   });
 
   it("invokes onClose and navigates to the artifact when Open artifact is clicked", () => {
@@ -223,10 +221,10 @@ describe("ComparisonResultModal", () => {
       expect(createSpy).toHaveBeenCalledTimes(1);
       expect(revokeSpy).toHaveBeenCalledTimes(1);
       expect(lastAnchor).not.toBeNull();
-      expect(lastAnchor!.download).toBe(
-        "comparison-docs-a-vs-docs-b.md",
-      );
-      expect((lastAnchor!.click as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+      expect(lastAnchor!.download).toBe("comparison-docs-a-vs-docs-b.md");
+      expect(
+        lastAnchor!.click as ReturnType<typeof vi.fn>,
+      ).toHaveBeenCalledTimes(1);
     } finally {
       createElSpy.mockRestore();
       createSpy.mockRestore();

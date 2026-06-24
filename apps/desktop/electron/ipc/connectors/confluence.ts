@@ -109,9 +109,15 @@ interface SpacesResponse {
 async function listAccessibleResources(
   accessToken: string,
 ): Promise<ConfluenceResource[]> {
-  const resp = await fetch(`${ATLASSIAN_API}/oauth/token/accessible-resources`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-  });
+  const resp = await fetch(
+    `${ATLASSIAN_API}/oauth/token/accessible-resources`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    },
+  );
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(
@@ -126,10 +132,14 @@ async function listAllSpaces(
   accessToken: string,
 ): Promise<ConfluenceSpace[]> {
   const spaces: ConfluenceSpace[] = [];
-  let url: string | undefined = `${ATLASSIAN_API}/ex/confluence/${cloudId}/wiki/api/v2/spaces?limit=${PAGE_LIMIT}`;
+  let url: string | undefined =
+    `${ATLASSIAN_API}/ex/confluence/${cloudId}/wiki/api/v2/spaces?limit=${PAGE_LIMIT}`;
   while (url) {
     const resp: Response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
     });
     if (!resp.ok) {
       const text = await resp.text();
@@ -187,7 +197,10 @@ async function listPagesInSpace(
   let url: string | undefined = base.toString();
   while (url) {
     const resp: Response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
     });
     if (!resp.ok) {
       const text = await resp.text();
@@ -372,7 +385,10 @@ async function loadState(userDataDir: string): Promise<ConfluenceState> {
   }
 }
 
-async function saveState(userDataDir: string, s: ConfluenceState): Promise<void> {
+async function saveState(
+  userDataDir: string,
+  s: ConfluenceState,
+): Promise<void> {
   await fsp.mkdir(syncDirFor(userDataDir, "confluence"), { recursive: true });
   await fsp.writeFile(statePath(userDataDir), JSON.stringify(s), "utf8");
 }

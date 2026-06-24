@@ -160,9 +160,7 @@ describe("startup performance", () => {
       // unambiguous — if a second one appears, revisit this test.
       expect(loadMatches).toHaveLength(1);
 
-      const initStart = source.indexOf(
-        "export async function initAppState",
-      );
+      const initStart = source.indexOf("export async function initAppState");
       const ensureStart = source.indexOf(
         "export async function ensureDiffusionSidecar",
       );
@@ -260,7 +258,9 @@ describe("startup performance", () => {
       );
       // …and NOT on the last (background) mark — bridge-init ended later
       // but must not inflate the cold-start number.
-      expect(latestEnd).toBeGreaterThan((windowShow as { endMs: number }).endMs);
+      expect(latestEnd).toBeGreaterThan(
+        (windowShow as { endMs: number }).endMs,
+      );
       expect(total as number).toBeLessThan(latestEnd - earliestStart);
     });
 

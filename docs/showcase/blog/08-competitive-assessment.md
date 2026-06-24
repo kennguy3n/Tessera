@@ -1,6 +1,6 @@
 # An honest assessment: Tessera vs. the alternatives
 
-*Part 8 of the Tessera showcase series — competitive reality check.*
+_Part 8 of the Tessera showcase series — competitive reality check._
 
 A showcase that only lists strengths isn't evidence, it's a brochure. This post does the
 opposite: it puts Tessera next to the tools a buyer is actually weighing, says plainly where
@@ -20,26 +20,26 @@ decisions in [`docs/adr/`](../../docs/adr).
    Reor, Obsidian with AI plugins.
 4. **DIY** — run a local model yourself and prompt it by hand.
 
-Tessera lives in category 3 by architecture, but it's bought *against* categories 1 and 2,
+Tessera lives in category 3 by architecture, but it's bought _against_ categories 1 and 2,
 because that's where the buyer's budget and habits already are.
 
 ## The honest comparison table
 
-| Dimension | Cloud assistant | Cloud workspace + AI | Local RAG tools | **Tessera** |
-|-----------|-----------------|----------------------|-----------------|-------------|
-| Data location | Vendor cloud | Vendor cloud | **Your device** | **Your device** |
-| Inference location | Vendor cloud | Vendor cloud | **Your device** | **Your device** |
-| Usable with PHI / privileged / NPI | Usually blocked by policy | Usually blocked | Yes | **Yes — the design point** |
-| Raw model quality (prose) | **Best (frontier)** | **Strong** | Varies | Good, small on-device model |
-| Structured deliverables (doc/slides/sheet/base) | Chat text | **Native + AI add-on** | Mostly chat/notes | **Four parity-level editors (Docs/Sheets/Slides/Airtable-class) with in-editor templates + Base App mode** |
-| Source grounding | You paste context | Workspace-scoped | **Yes (RAG)** | **You select sources; output cites them** |
-| Inline per-claim citations | Rare | Limited | Sometimes | **Built-in, per-section** |
-| Structure enforcement | None | Some | None | **Template sections + a deliberate multi-step Skills engine** |
-| Real-time multi-user collaboration | N/A | **Excellent** | No | **No (KChat for async)** |
-| Ecosystem / integrations breadth | **Large** | **Large** | Small | 33 read-only connectors (still smaller) |
-| Verifiable export provenance | No | No | Rare | **PQC-signed evidence pack** |
-| Cost model | Per-seat + usage | Per-seat | Free/OSS | **OSS, no per-token cost** |
-| Auditability | Closed | Closed | Varies | **MIT-licensed, inspectable** |
+| Dimension                                       | Cloud assistant           | Cloud workspace + AI   | Local RAG tools   | **Tessera**                                                                                                |
+| ----------------------------------------------- | ------------------------- | ---------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Data location                                   | Vendor cloud              | Vendor cloud           | **Your device**   | **Your device**                                                                                            |
+| Inference location                              | Vendor cloud              | Vendor cloud           | **Your device**   | **Your device**                                                                                            |
+| Usable with PHI / privileged / NPI              | Usually blocked by policy | Usually blocked        | Yes               | **Yes — the design point**                                                                                 |
+| Raw model quality (prose)                       | **Best (frontier)**       | **Strong**             | Varies            | Good, small on-device model                                                                                |
+| Structured deliverables (doc/slides/sheet/base) | Chat text                 | **Native + AI add-on** | Mostly chat/notes | **Four parity-level editors (Docs/Sheets/Slides/Airtable-class) with in-editor templates + Base App mode** |
+| Source grounding                                | You paste context         | Workspace-scoped       | **Yes (RAG)**     | **You select sources; output cites them**                                                                  |
+| Inline per-claim citations                      | Rare                      | Limited                | Sometimes         | **Built-in, per-section**                                                                                  |
+| Structure enforcement                           | None                      | Some                   | None              | **Template sections + a deliberate multi-step Skills engine**                                              |
+| Real-time multi-user collaboration              | N/A                       | **Excellent**          | No                | **No (KChat for async)**                                                                                   |
+| Ecosystem / integrations breadth                | **Large**                 | **Large**              | Small             | 33 read-only connectors (still smaller)                                                                    |
+| Verifiable export provenance                    | No                        | No                     | Rare              | **PQC-signed evidence pack**                                                                               |
+| Cost model                                      | Per-seat + usage          | Per-seat               | Free/OSS          | **OSS, no per-token cost**                                                                                 |
+| Auditability                                    | Closed                    | Closed                 | Varies            | **MIT-licensed, inspectable**                                                                              |
 
 ## Where the competition is genuinely better
 
@@ -47,7 +47,7 @@ because that's where the buyer's budget and habits already are.
 hosted model writes more fluent, more capable prose than Tessera's small on-device
 Ternary-Bonsai model, and handles open-ended reasoning Tessera doesn't attempt. **Claude
 Projects** and **NotebookLM** in particular do grounded, cited Q&A over uploaded documents very
-well. If your data is *not* sensitive and you want the best possible draft from a chat box,
+well. If your data is _not_ sensitive and you want the best possible draft from a chat box,
 they're hard to beat — and they require zero install. Tessera's bet is only worth it when the
 data can't go to their cloud.
 
@@ -68,12 +68,12 @@ the wrong call for a tinkerer who wants full control of the stack.
 
 **It's usable on the data the others can't touch.** PHI, privileged contracts, borrower NPI,
 unpublished financials — the work in posts 1–5 is precisely the work a cloud assistant is
-blocked from by policy. Local-first isn't a privacy *nicety* here; it's the precondition for
+blocked from by policy. Local-first isn't a privacy _nicety_ here; it's the precondition for
 using an AI tool at all. The index is local, the model is local, and nothing leaves the machine
 without an explicit, visible export.
 
 **Structure and provenance are built in, not bolted on.** A cloud assistant gives you a
-transcript; Notion AI gives you a paragraph in a doc. Tessera gives you a *deliverable* —
+transcript; Notion AI gives you a paragraph in a doc. Tessera gives you a _deliverable_ —
 a 12-section HIPAA report, a credit memo, a QBR deck — whose structure is enforced by a template
 (you can't accidentally skip the four-factor analysis) and whose every section **cites the
 source file it drew from**. For regulated work, "where did this number come from?" is the whole
@@ -107,7 +107,7 @@ and generation work.
 
 - **Model quality ceiling.** The on-device model is small by necessity. For pure draft fluency
   on non-sensitive text, a frontier cloud model is better. Tessera's structure + grounding
-  narrow the gap for *deliverables*, but they don't erase it for open-ended writing.
+  narrow the gap for _deliverables_, but they don't erase it for open-ended writing.
 - **No real-time collaboration.** No live co-editing or presence. Teams that need that will keep
   a cloud workspace alongside Tessera.
 - **Ecosystem breadth.** The connector catalog spans **33 read-only, least-privilege
@@ -118,8 +118,8 @@ and generation work.
 
 ## Who should (and shouldn't) choose Tessera
 
-**Choose Tessera if** you're an individual professional or a small team turning *sensitive*
-source material into *structured, defensible* deliverables — compliance, legal, credit,
+**Choose Tessera if** you're an individual professional or a small team turning _sensitive_
+source material into _structured, defensible_ deliverables — compliance, legal, credit,
 grants, ops — and "it can't go to the cloud" is a hard constraint. The local-first architecture,
 enforced structure, per-claim citations, and signed export are built for exactly that.
 

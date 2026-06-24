@@ -13,13 +13,11 @@ Tessera runs each template section prompt below against the source files, ground
 
 > Applicant organization, project title, funding opportunity and CFDA / FOA number, requested amount, project period, principal investigator / project director, authorizing official, and a 250-word abstract usable in the public award announcement.
 
-
 ### Section 2: Statement of Need
 
 **Template section prompt (verbatim from `templates/documents/grant-proposal.yaml`):**
 
 > Establish the problem the project addresses: who is affected, the scale and severity of the need, supporting data and citations, and the gap in existing services or knowledge. Tie the need directly to the funder's stated priorities.
-
 
 ### Section 3: Project Description and Goals
 
@@ -27,13 +25,11 @@ Tessera runs each template section prompt below against the source files, ground
 
 > State the project's overarching goal, specific objectives (SMART format), the target population and inclusion criteria, the geographic service area, and the project's theory of change connecting activities to outcomes.
 
-
 ### Section 4: Methodology and Activities
 
 **Template section prompt (verbatim from `templates/documents/grant-proposal.yaml`):**
 
 > Describe the planned activities, why they are evidence-based (cite the supporting research or prior pilots), the staffing model, partner organizations, and how the project will reach the target population.
-
 
 ### Section 5: Work Plan and Timeline
 
@@ -43,20 +39,17 @@ Tessera runs each template section prompt below against the source files, ground
 
 **Output format:** `table`
 
-
 ### Section 6: Organizational Capacity
 
 **Template section prompt (verbatim from `templates/documents/grant-proposal.yaml`):**
 
 > Describe the applicant organization's mission, history, relevant prior projects, key personnel qualifications, and organizational infrastructure (financial systems, HR, reporting). Address any capacity gaps and how they will be filled.
 
-
 ### Section 7: Evaluation Plan
 
 **Template section prompt (verbatim from `templates/documents/grant-proposal.yaml`):**
 
 > Logic model linking inputs → activities → outputs → outcomes → impact. Identify the performance measures (process and outcome), data collection methods, frequency, the evaluator (internal or third-party), and how findings will be used for continuous improvement.
-
 
 ### Section 8: Budget and Budget Justification
 
@@ -66,13 +59,11 @@ Tessera runs each template section prompt below against the source files, ground
 
 **Output format:** `table`
 
-
 ### Section 9: Sustainability Plan
 
 **Template section prompt (verbatim from `templates/documents/grant-proposal.yaml`):**
 
 > How the project will be sustained beyond the grant period: diversified funding strategy, fee-for-service revenue, partnerships, policy advocacy for ongoing public support, and which project elements will continue versus sunset.
-
 
 ### Section 10: Required Attachments
 
@@ -81,4 +72,3 @@ Tessera runs each template section prompt below against the source files, ground
 > Checklist of required attachments per the funding opportunity: letters of support, MOUs / MOAs with partners, IRS determination letter, audited financials, board roster, indirect-cost rate agreement, biosketches for key personnel, and any data-management plan.
 
 **Output format:** `bullets`
-

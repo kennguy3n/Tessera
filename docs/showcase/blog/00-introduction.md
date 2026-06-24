@@ -1,6 +1,6 @@
 # The work is the proof: five professionals, five markets, one local-first workspace
 
-*Part 0 of the Tessera showcase series.*
+_Part 0 of the Tessera showcase series._
 
 Every AI productivity tool promises the same thing: describe what you want, get a polished
 result. The demos all look the same too — a clean prompt box, a confident answer, and a
@@ -8,7 +8,7 @@ quiet request that you not look too hard at the space in between.
 
 Tessera is built on the opposite bet. **The space in between is the product.** You bring
 the sources. Tessera structures the work into the sections a real deliverable needs. A
-language model drafts each section *against your material*. Every claim links back to where
+language model drafts each section _against your material_. Every claim links back to where
 it came from. And none of it leaves your machine.
 
 This series puts that bet on the table with evidence. We followed five professionals across
@@ -57,13 +57,13 @@ is how a small on-device model produces structured, reliable output rather than 
 Each story is framed around a real **job to be done** — not "play with an AI," but a concrete
 deliverable with a deadline, a reviewer, and a consequence for getting it wrong:
 
-| Persona | Job to be done | The deliverable's stakes |
-|---------|----------------|--------------------------|
-| Maya (healthcare) | File a defensible HIPAA breach risk assessment in 5 days | A regulator and General Counsel will read it |
-| David (legal) | Abstract a 40-page SaaS contract so no deadline lapses | Partners sign off; a missed renewal is malpractice-adjacent |
-| Priya (finance) | Tie a borrower's financials and risks to a credit recommendation | A credit committee will interrogate every number |
-| Sofia (nonprofit) | Turn program data into a funder-ready proposal and board deck | Funding and board confidence ride on it |
-| Marcus (retail) | Consolidate pipeline and account health into a QBR | Leadership makes resourcing calls from it |
+| Persona           | Job to be done                                                   | The deliverable's stakes                                    |
+| ----------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
+| Maya (healthcare) | File a defensible HIPAA breach risk assessment in 5 days         | A regulator and General Counsel will read it                |
+| David (legal)     | Abstract a 40-page SaaS contract so no deadline lapses           | Partners sign off; a missed renewal is malpractice-adjacent |
+| Priya (finance)   | Tie a borrower's financials and risks to a credit recommendation | A credit committee will interrogate every number            |
+| Sofia (nonprofit) | Turn program data into a funder-ready proposal and board deck    | Funding and board confidence ride on it                     |
+| Marcus (retail)   | Consolidate pipeline and account health into a QBR               | Leadership makes resourcing calls from it                   |
 
 ### Going deeper
 
@@ -83,13 +83,14 @@ Beyond the five journeys, three posts open the hood:
 **1. The artifacts are genuinely generated, not written.**
 Every output in this series came out of Tessera's own on-device model — **Ternary-Bonsai 4B**
 (the GGUF `Q1_0_g128` build from Tessera's model registry, running on Tessera's PrismML
-llama.cpp runtime) — prompted with the *verbatim* section prompts from Tessera's real
+llama.cpp runtime) — prompted with the _verbatim_ section prompts from Tessera's real
 template library, grounded only in each persona's source files. We did not edit the model's
 prose. Where it hedges, repeats, or leans on a citation, you see exactly that — because that
 is what source-backed, on-device generation actually looks like.
 
 **2. You can inspect every step.**
 For each persona, the [`artifacts/`](../artifacts) folder contains:
+
 - `inputs/` — the raw source material (helpdesk tickets, contracts, financials, program
   notes, sales exports).
 - `prompts/` — a log quoting each template section's prompt verbatim, plus the model's

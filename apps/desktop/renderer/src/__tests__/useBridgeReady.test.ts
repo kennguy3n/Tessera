@@ -52,7 +52,9 @@ afterEach(() => {
 describe("useBridgeReady", () => {
   it("starts on the skeleton (initializing) while the snapshot is pending", () => {
     // A snapshot that never resolves keeps us in initializing.
-    installLifecycle({ snapshot: () => new Promise<BridgeStateView>(() => {}) });
+    installLifecycle({
+      snapshot: () => new Promise<BridgeStateView>(() => {}),
+    });
     const { result } = renderHook(() => useBridgeReady());
     expect(result.current.state).toBe("initializing");
     expect(result.current.isReady).toBe(false);

@@ -51,7 +51,10 @@ export function CommentsPanel({
       <div className="comments-panel-header">
         <span className="comments-panel-title">
           Comments{" "}
-          <span className="comments-panel-count" data-testid="comments-open-count">
+          <span
+            className="comments-panel-count"
+            data-testid="comments-open-count"
+          >
             {openCount} open
           </span>
         </span>

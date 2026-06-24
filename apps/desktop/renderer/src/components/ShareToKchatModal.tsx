@@ -31,10 +31,7 @@ import {
   getStoredDefaultTeamId,
   setStoredDefaultTeamId,
 } from "./kchatSettingsHelpers";
-import type {
-  KchatChannelView,
-  KchatTeamView,
-} from "../../../shared/types";
+import type { KchatChannelView, KchatTeamView } from "../../../shared/types";
 
 export type KchatShareFormat = "markdown" | "html" | "pdf" | "docx" | "json";
 
@@ -147,9 +144,7 @@ export default function ShareToKchatModal({
         // — drop direct-message ("D") + group-DM ("G") channels.
         // Sharing into a DM bypasses the channel-membership audit
         // trail and is intentionally not supported.
-        const sharable = list.filter(
-          (c) => c.type === "O" || c.type === "P",
-        );
+        const sharable = list.filter((c) => c.type === "O" || c.type === "P");
         setChannels(sharable);
         if (sharable[0]) setChannelId(sharable[0].id);
       } catch (err) {
@@ -213,12 +208,22 @@ export default function ShareToKchatModal({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Share to KChat">
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}>
-        <p style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)" }}>
-          Upload <strong>{artifactTitle}</strong> as a file to a KChat
-          channel. Channel members will be able to download and
-          preview the export directly in KChat. The KChat token never
-          leaves the main process.
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--spacing-md)",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "var(--font-size-sm)",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          Upload <strong>{artifactTitle}</strong> as a file to a KChat channel.
+          Channel members will be able to download and preview the export
+          directly in KChat. The KChat token never leaves the main process.
         </p>
 
         <div>
@@ -267,8 +272,7 @@ export default function ShareToKchatModal({
             ) : (
               channels.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {(c.type === "P" ? "🔒 " : "# ") +
-                    (c.display_name || c.name)}
+                  {(c.type === "P" ? "🔒 " : "# ") + (c.display_name || c.name)}
                 </option>
               ))
             )}
@@ -295,7 +299,13 @@ export default function ShareToKchatModal({
           </select>
         </div>
 
-        <label style={{ display: "flex", alignItems: "center", gap: "var(--spacing-xs)" }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-xs)",
+          }}
+        >
           <input
             id={citationsId}
             type="checkbox"
@@ -309,7 +319,13 @@ export default function ShareToKchatModal({
           </span>
         </label>
 
-        <label style={{ display: "flex", alignItems: "center", gap: "var(--spacing-xs)" }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-xs)",
+          }}
+        >
           <input
             id={evidenceId}
             type="checkbox"
@@ -326,14 +342,23 @@ export default function ShareToKchatModal({
         {error && (
           <p
             role="alert"
-            style={{ fontSize: "var(--font-size-sm)", color: "var(--color-error, #c00)" }}
+            style={{
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-error, #c00)",
+            }}
             data-testid="kchat-share-error"
           >
             {error}
           </p>
         )}
 
-        <div style={{ display: "flex", gap: "var(--spacing-sm)", justifyContent: "flex-end" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--spacing-sm)",
+            justifyContent: "flex-end",
+          }}
+        >
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>

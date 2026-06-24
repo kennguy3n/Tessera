@@ -32,9 +32,7 @@ describe("sanitiseRemoteId", () => {
   });
 
   it("is a no-op for opaque base-62 file keys (Figma / Drive)", () => {
-    expect(sanitiseRemoteId("aBcDeF0123_xyz-456")).toBe(
-      "aBcDeF0123_xyz-456",
-    );
+    expect(sanitiseRemoteId("aBcDeF0123_xyz-456")).toBe("aBcDeF0123_xyz-456");
   });
 
   it("disambiguates ids that differ ONLY by an unsafe character", () => {

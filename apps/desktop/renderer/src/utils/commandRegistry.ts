@@ -175,10 +175,7 @@ function buildSidebarCommands(): Command[] {
       title: `Go to ${item.label}`,
       description: `Navigate to the ${item.label} page`,
       category: "Navigation",
-      chord:
-        idx <= 9
-          ? { mod: true, key: String(idx) }
-          : null,
+      chord: idx <= 9 ? { mod: true, key: String(idx) } : null,
       keywords: [item.label.toLowerCase()],
       kind: "navigate",
       to: item.to,
@@ -610,14 +607,22 @@ export function buildCommandRegistry(): readonly Command[] {
       description: "Recompute retention and apply decay transitions now",
       category: "Actions",
       chord: null,
-      keywords: ["decay", "memory", "retention", "sweep", "substrate", "forget"],
+      keywords: [
+        "decay",
+        "memory",
+        "retention",
+        "sweep",
+        "substrate",
+        "forget",
+      ],
       kind: "dispatch",
       event: "tessera:run-decay-sweep",
     },
     {
       id: "substrate:triggerSynthesis",
       title: "Synthesize memory",
-      description: "Produce and persist a deterministic synthesis for the workspace",
+      description:
+        "Produce and persist a deterministic synthesis for the workspace",
       category: "Actions",
       chord: null,
       keywords: ["synthesis", "synthesize", "summary", "memory", "substrate"],
@@ -742,10 +747,7 @@ function formatKey(key: string): string {
  *   - `key` — case-insensitive match against `event.key`. Special
  *     keys like `"Escape"` / `"Backspace"` match verbatim.
  */
-export function chordMatchesEvent(
-  chord: Chord,
-  event: KeyboardEvent,
-): boolean {
+export function chordMatchesEvent(chord: Chord, event: KeyboardEvent): boolean {
   if (chord.mod !== (event.metaKey || event.ctrlKey)) return false;
   if ((chord.shift ?? false) !== event.shiftKey) return false;
   if ((chord.alt ?? false) !== event.altKey) return false;

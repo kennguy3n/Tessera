@@ -109,7 +109,7 @@ In `crates/tessera_bridge/Cargo.toml`:
   ```
 
 The upstream `connectors` crate compiles every vendor impl regardless
-(it has no per-connector features), so this gate controls the *exposed*
+(it has no per-connector features), so this gate controls the _exposed_
 surface, not codegen.
 
 ### 3. TypeScript — allowlist
@@ -125,14 +125,14 @@ matching entry — a compile error until you finish the steps below.
 In `apps/desktop/electron/ipc/connectors/providerOAuth.ts`, add a
 `PROVIDER_OAUTH_CONFIGS["<provider>"]` entry. Required fields:
 
-| field | notes |
-| --- | --- |
-| `authUrl`, `tokenUrl` | provider's documented OAuth endpoints (constants, never runtime config) |
-| `scope` | **least-privilege read-only** scopes — see [Security checklist](#security-checklist) |
-| `redirectPort` | next free loopback port (the existing set runs 9876–988x; pick the next integer and keep it unique) |
-| `supportsRefresh` | `true` only if the flow issues a refresh token; otherwise the UI surfaces a "reconnect" prompt on expiry |
-| `usePkce` | `true` for public/desktop clients that support PKCE |
-| `extraAuthorizeParams` | e.g. Dropbox needs `token_access_type: "offline"` to get a refresh token |
+| field                  | notes                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| `authUrl`, `tokenUrl`  | provider's documented OAuth endpoints (constants, never runtime config)                                  |
+| `scope`                | **least-privilege read-only** scopes — see [Security checklist](#security-checklist)                     |
+| `redirectPort`         | next free loopback port (the existing set runs 9876–988x; pick the next integer and keep it unique)      |
+| `supportsRefresh`      | `true` only if the flow issues a refresh token; otherwise the UI surfaces a "reconnect" prompt on expiry |
+| `usePkce`              | `true` for public/desktop clients that support PKCE                                                      |
+| `extraAuthorizeParams` | e.g. Dropbox needs `token_access_type: "offline"` to get a refresh token                                 |
 
 The `getRedirectUriMap` IPC is the single source of truth for the
 redirect URI shown in the connect modal — do **not** hardcode it in the
@@ -232,29 +232,29 @@ uphold the read-only, least-privilege contract:
 ## Providers that need extra config
 
 Some upstream connectors require per-instance configuration to scope a
-sync (they are *not* whole-account), and some authenticate with a pasted
+sync (they are _not_ whole-account), and some authenticate with a pasted
 long-lived credential rather than a browser OAuth2 grant. The 2025
 tranche (**Asana, GitLab, Microsoft Teams, Trello**) was added following
 this path and is the reference diff. The required inputs (confirmed
 against the upstream `connectors` crate's `auth_config_json` reads) are:
 
-| Provider | Connect method | Inputs (`auth_config_json` key) |
-| --- | --- | --- |
-| Asana | `oauth2` | `project` (gid); optional `api_base_url` |
-| Microsoft Teams | `oauth2` | `team_id`, `channel_id` |
-| GitLab | `token` | `personal_access_token` (→ bearer), `project_id`; optional `api_base_url` |
-| Trello | `token` | `key`, `token` (→ bearer), `board_id` |
+| Provider        | Connect method | Inputs (`auth_config_json` key)                                           |
+| --------------- | -------------- | ------------------------------------------------------------------------- |
+| Asana           | `oauth2`       | `project` (gid); optional `api_base_url`                                  |
+| Microsoft Teams | `oauth2`       | `team_id`, `channel_id`                                                   |
+| GitLab          | `token`        | `personal_access_token` (→ bearer), `project_id`; optional `api_base_url` |
+| Trello          | `token`        | `key`, `token` (→ bearer), `board_id`                                     |
 
 The 2026 tranche (**Discord, Bitbucket, Airtable, Monday.com**) extends
 the same seam with the next batch of per-target / per-resource
 connectors:
 
-| Provider | Connect method | Inputs (`auth_config_json` key) |
-| --- | --- | --- |
-| Discord | `token` | `bot_token` (→ bearer, `Bot` scheme), `channel_id`; optional `api_base_url` |
-| Bitbucket | `token` | `access_token` (→ bearer), `workspace`, `repo_slug`; optional `api_base_url` |
-| Airtable | `token` | `personal_access_token` (→ bearer), `base_id`, `table`; optional `api_base_url` |
-| Monday.com | `oauth2` | `board_id` |
+| Provider   | Connect method | Inputs (`auth_config_json` key)                                                 |
+| ---------- | -------------- | ------------------------------------------------------------------------------- |
+| Discord    | `token`        | `bot_token` (→ bearer, `Bot` scheme), `channel_id`; optional `api_base_url`     |
+| Bitbucket  | `token`        | `access_token` (→ bearer), `workspace`, `repo_slug`; optional `api_base_url`    |
+| Airtable   | `token`        | `personal_access_token` (→ bearer), `base_id`, `table`; optional `api_base_url` |
+| Monday.com | `oauth2`       | `board_id`                                                                      |
 
 Discord is the one provider whose stored credential is **not** sent with
 the default `Bearer` scheme: a bot token must travel as `Authorization:
@@ -266,11 +266,11 @@ The 2026 support / CRM tranche (**ClickUp, Intercom, Salesforce**)
 surfaces three more upstream `connectors`-crate impls. All three use the
 **read-only OAuth2 browser grant** (loopback ports 9904–9906):
 
-| Provider | Connect method | Inputs (`auth_config_json` key) | Scope | Port |
-| --- | --- | --- | --- | --- |
-| ClickUp | `oauth2` | `team_id` (Workspace ID); optional `api_base_url` | *(scope-less — workspace-bound)* | 9904 |
-| Intercom | `oauth2` | optional `api_base_url` (EU/AU host) | *(scope-less — app-configured)* | 9905 |
-| Salesforce | `oauth2` | `api_base_url` (My Domain instance URL, **required**) | `api refresh_token` | 9906 |
+| Provider   | Connect method | Inputs (`auth_config_json` key)                       | Scope                            | Port |
+| ---------- | -------------- | ----------------------------------------------------- | -------------------------------- | ---- |
+| ClickUp    | `oauth2`       | `team_id` (Workspace ID); optional `api_base_url`     | _(scope-less — workspace-bound)_ | 9904 |
+| Intercom   | `oauth2`       | optional `api_base_url` (EU/AU host)                  | _(scope-less — app-configured)_  | 9905 |
+| Salesforce | `oauth2`       | `api_base_url` (My Domain instance URL, **required**) | `api refresh_token`              | 9906 |
 
 Notes on this tranche:
 
@@ -303,10 +303,10 @@ instance host (`https://<subdomain>.zendesk.com/oauth/...`,
 **per-instance OAuth URL seam** described below (loopback ports
 9907–9908):
 
-| Provider | Connect method | Inputs (`auth_config_json` key) | Scope | Port |
-| --- | --- | --- | --- | --- |
-| Zendesk | `oauth2` | `subdomain` (single 2–63 char DNS label, e.g. `acme`) | `read` | 9907 |
-| ServiceNow | `oauth2` | `subdomain` (instance id, e.g. `dev12345`) | *(scope-less — role-based ACLs)* | 9908 |
+| Provider   | Connect method | Inputs (`auth_config_json` key)                       | Scope                            | Port |
+| ---------- | -------------- | ----------------------------------------------------- | -------------------------------- | ---- |
+| Zendesk    | `oauth2`       | `subdomain` (single 2–63 char DNS label, e.g. `acme`) | `read`                           | 9907 |
+| ServiceNow | `oauth2`       | `subdomain` (instance id, e.g. `dev12345`)            | _(scope-less — role-based ACLs)_ | 9908 |
 
 Notes on this tranche:
 
@@ -331,7 +331,7 @@ Notes on this tranche:
   parameter — while still keeping the query parameter for Google's
   documented revoke form (`revokeProviderToken`).
 
-**Audited but skipped — Freshdesk.** Freshdesk *is* implemented upstream
+**Audited but skipped — Freshdesk.** Freshdesk _is_ implemented upstream
 and is per-domain (`https://<domain>.freshdesk.com`), but unlike Zendesk
 /ServiceNow it has **no verified, stable per-subdomain OAuth
 authorize/token URL pair** (its app auth goes through the Freshworks
@@ -411,7 +411,7 @@ The seam is the single source of truth in
 imported by **both** the Electron main process and the renderer:
 
 1. **Declare the connect spec** in `CONNECTOR_CONNECT_SPECS`: the
-   `connectMethod` (`"oauth2"` for a browser grant that *also* needs
+   `connectMethod` (`"oauth2"` for a browser grant that _also_ needs
    target ids, `"token"` for a pasted credential), the ordered
    `configFields` (each `key` **must** equal the exact `auth_config_json`
    field name the upstream connector reads — e.g. `.get("project")`,
@@ -419,7 +419,7 @@ imported by **both** the Electron main process and the renderer:
    `tokenField` whose value becomes the connector's bearer token.
 2. **Injection is automatic.** `buildAuthConfig`
    (`connectorsV2.ts`) calls `authConfigFields(provider)` to inject every
-   declared field *except* the `tokenField` (which travels as
+   declared field _except_ the `tokenField` (which travels as
    `TokenWire.access_token`) into the `auth_config_json` bag. Empty
    optional values are skipped so the connector's own "field is required"
    error surfaces clearly.

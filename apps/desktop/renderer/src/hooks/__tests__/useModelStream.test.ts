@@ -8,7 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useModelStream } from "../useModelStream";
 
-type TokenCb = (chunk: { token: string; done: boolean; error?: string }) => void;
+type TokenCb = (chunk: {
+  token: string;
+  done: boolean;
+  error?: string;
+}) => void;
 
 function installModel(generate: ReturnType<typeof vi.fn>) {
   const cbs: TokenCb[] = [];

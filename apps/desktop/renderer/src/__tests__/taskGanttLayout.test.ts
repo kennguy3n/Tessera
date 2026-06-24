@@ -72,13 +72,17 @@ describe("orderTasksTopologically", () => {
       task("b", { dependsOn: ["a"] }),
       task("c"),
     ];
-    const ordered = orderTasksTopologically(tasks).map((t) => t.id).sort();
+    const ordered = orderTasksTopologically(tasks)
+      .map((t) => t.id)
+      .sort();
     expect(ordered).toEqual(["a", "b", "c"]);
   });
 
   it("ignores dependency ids that don't exist", () => {
     const tasks = [task("a", { dependsOn: ["ghost"] }), task("b")];
-    const ordered = orderTasksTopologically(tasks).map((t) => t.id).sort();
+    const ordered = orderTasksTopologically(tasks)
+      .map((t) => t.id)
+      .sort();
     expect(ordered).toEqual(["a", "b"]);
   });
 });

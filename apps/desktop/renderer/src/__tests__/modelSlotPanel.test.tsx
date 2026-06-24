@@ -375,7 +375,9 @@ describe("ModelSlotPanel — onDownloadProgress filtering by capability", () => 
     });
     // Give React a chance to schedule a render if the filter is broken.
     await new Promise((r) => setTimeout(r, 30));
-    expect(screen.queryByTestId("vision-slot-progress")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vision-slot-progress"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -511,7 +513,9 @@ describe("ModelSlotPanel — settled-boundary re-fetch of getCurrentModel", () =
       expect(deleteMock).toHaveBeenCalledWith("vision");
     });
     await waitFor(() => {
-      expect(screen.queryByTestId("vision-slot-current")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("vision-slot-current"),
+      ).not.toBeInTheDocument();
     });
   });
 });

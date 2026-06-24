@@ -30,8 +30,7 @@ const handleMock = vi.fn((channel: string, listener: IpcListener) => {
 
 vi.mock("electron", () => ({
   ipcMain: {
-    removeHandler: (...args: unknown[]) =>
-      removeHandlerMock(args[0] as string),
+    removeHandler: (...args: unknown[]) => removeHandlerMock(args[0] as string),
     handle: (...args: unknown[]) =>
       handleMock(args[0] as string, args[1] as IpcListener),
   },

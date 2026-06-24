@@ -181,10 +181,7 @@ export default function VisionPage() {
         maxTokens: resultMeta.maxTokens,
         result,
       });
-      const artifact = await window.tessera.artifacts.create(
-        title,
-        "document",
-      );
+      const artifact = await window.tessera.artifacts.create(title, "document");
       await window.tessera.artifacts.update(artifact.id, markdown);
       // PR #87: broadcast so every
       // live `useArtifactList()` consumer picks up the newly
@@ -226,9 +223,9 @@ export default function VisionPage() {
           >
             <h2>Vision is unavailable on this host</h2>
             <p>
-              No vision-capability model is installed (or the native
-              bridge failed to load). Open Settings → Models to install
-              a vision model, then return here.
+              No vision-capability model is installed (or the native bridge
+              failed to load). Open Settings → Models to install a vision model,
+              then return here.
             </p>
             <Button onClick={() => navigate("/settings")}>
               Go to Settings
@@ -330,8 +327,7 @@ export default function VisionPage() {
               />
               <p className="vision-hint">
                 Higher values let chart-extract / long OCR finish without
-                truncation, but cost more memory + time. 512 is a safe
-                default.
+                truncation, but cost more memory + time. 512 is a safe default.
               </p>
             </div>
 

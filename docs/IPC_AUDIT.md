@@ -22,12 +22,12 @@ drift.
 
 The validation strategy for each channel is one of:
 
-| Strategy        | What it means                                                                                                                          |
-|-----------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| **scalar-helper** | Single primitive arg, validated by one of the typed `assert*` helpers from `ipc/validate.ts`: `assertString`, `assertOptionalString`, `assertUuid`, `assertId`, `assertProvider`, `assertSafePath`, `assertNumber`, `assertBoolean`, `assertStringArray`. The row's parenthetical (e.g. `scalar-helper (boolean)`) flags the specific type. |
-| **zod-schema**    | Object arg validated by a `zod` schema in `ipc/schemas.ts`                                                                            |
-| **no-input**      | Handler takes no arguments — nothing to validate                                                                                     |
-| **renderer-typed**| Arg is a renderer-supplied typed buffer / `unknown` cast that is shape-checked at the call site inside the handler (legacy pattern). Should migrate to `zod-schema`. |
+| Strategy           | What it means                                                                                                                                                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **scalar-helper**  | Single primitive arg, validated by one of the typed `assert*` helpers from `ipc/validate.ts`: `assertString`, `assertOptionalString`, `assertUuid`, `assertId`, `assertProvider`, `assertSafePath`, `assertNumber`, `assertBoolean`, `assertStringArray`. The row's parenthetical (e.g. `scalar-helper (boolean)`) flags the specific type. |
+| **zod-schema**     | Object arg validated by a `zod` schema in `ipc/schemas.ts`                                                                                                                                                                                                                                                                                  |
+| **no-input**       | Handler takes no arguments — nothing to validate                                                                                                                                                                                                                                                                                            |
+| **renderer-typed** | Arg is a renderer-supplied typed buffer / `unknown` cast that is shape-checked at the call site inside the handler (legacy pattern). Should migrate to `zod-schema`.                                                                                                                                                                        |
 
 The "Auth" column flags channels whose payload touches authentication
 state (OAuth tokens, API keys, password vault). These are the ones a
@@ -36,16 +36,16 @@ extra scrutiny.
 
 ## Sources
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `sources:addLocalFolder`              | scalar-helper   |      |
-| `sources:addLocalFile`                | scalar-helper   |      |
-| `sources:list`                        | no-input        |      |
-| `sources:remove`                      | scalar-helper   |      |
-| `sources:search`                      | scalar-helper   |      |
-| `sources:getDetail`                   | scalar-helper   |      |
-| `sources:reindex`                     | scalar-helper   |      |
-| `sources:getIndexingProgress`         | scalar-helper   |      |
+| Channel                       | Strategy      | Auth |
+| ----------------------------- | ------------- | ---- |
+| `sources:addLocalFolder`      | scalar-helper |      |
+| `sources:addLocalFile`        | scalar-helper |      |
+| `sources:list`                | no-input      |      |
+| `sources:remove`              | scalar-helper |      |
+| `sources:search`              | scalar-helper |      |
+| `sources:getDetail`           | scalar-helper |      |
+| `sources:reindex`             | scalar-helper |      |
+| `sources:getIndexingProgress` | scalar-helper |      |
 
 The KChat-specific `sources:*` channels —
 `sources:addKchatChannel` and `sources:backfillKchatChannel` —
@@ -56,23 +56,23 @@ master list authoritative (it matches `EXPECTED_KCHAT_CHANNELS` in
 
 ## Artifacts
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `artifacts:create`                    | scalar-helper   |      |
-| `artifacts:update`                    | scalar-helper   |      |
-| `artifacts:list`                      | no-input        |      |
-| `artifacts:get`                       | scalar-helper   |      |
-| `artifacts:remove`                    | scalar-helper   |      |
-| `artifacts:export`                    | scalar-helper   |      |
-| `artifacts:exportToFile`              | scalar-helper   |      |
-| `artifacts:exportTypst`               | zod-schema (`TypstExportSchema`)   |  |
-| `artifacts:exportMarp`                | zod-schema (`MarpExportSchema`)    |  |
-| `artifacts:listVersions`              | scalar-helper   |      |
-| `artifacts:restoreVersion`            | scalar-helper   |      |
-| `artifacts:generateFromTemplate`      | scalar-helper   |      |
-| `artifacts:extractTasksDecisions`     | scalar-helper   |      |
-| `artifacts:compareSources`            | scalar-helper   |      |
-| `artifacts:exportEvidencePack`        | scalar-helper   |      |
+| Channel                           | Strategy                         | Auth |
+| --------------------------------- | -------------------------------- | ---- |
+| `artifacts:create`                | scalar-helper                    |      |
+| `artifacts:update`                | scalar-helper                    |      |
+| `artifacts:list`                  | no-input                         |      |
+| `artifacts:get`                   | scalar-helper                    |      |
+| `artifacts:remove`                | scalar-helper                    |      |
+| `artifacts:export`                | scalar-helper                    |      |
+| `artifacts:exportToFile`          | scalar-helper                    |      |
+| `artifacts:exportTypst`           | zod-schema (`TypstExportSchema`) |      |
+| `artifacts:exportMarp`            | zod-schema (`MarpExportSchema`)  |      |
+| `artifacts:listVersions`          | scalar-helper                    |      |
+| `artifacts:restoreVersion`        | scalar-helper                    |      |
+| `artifacts:generateFromTemplate`  | scalar-helper                    |      |
+| `artifacts:extractTasksDecisions` | scalar-helper                    |      |
+| `artifacts:compareSources`        | scalar-helper                    |      |
+| `artifacts:exportEvidencePack`    | scalar-helper                    |      |
 
 The four file-emitting channels — `artifacts:exportToFile`,
 `artifacts:exportTypst`, `artifacts:exportMarp`,
@@ -89,91 +89,91 @@ rejected through `path.resolve` normalisation.
 
 ## Templates
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `templates:list`                      | no-input        |      |
-| `templates:get`                       | scalar-helper   |      |
+| Channel          | Strategy      | Auth |
+| ---------------- | ------------- | ---- |
+| `templates:list` | no-input      |      |
+| `templates:get`  | scalar-helper |      |
 
 ## Citations
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `citations:list`                      | scalar-helper   |      |
-| `citations:add`                       | zod-schema (`AddCitationSchema`)         |  |
-| `citations:replace`                   | zod-schema (`ReplaceCitationSchema`)     |  |
-| `citations:remove`                    | scalar-helper   |      |
-| `citations:checkChanged`              | scalar-helper   |      |
-| `citations:checkFreshness`            | scalar-helper   |      |
+| Channel                    | Strategy                             | Auth |
+| -------------------------- | ------------------------------------ | ---- |
+| `citations:list`           | scalar-helper                        |      |
+| `citations:add`            | zod-schema (`AddCitationSchema`)     |      |
+| `citations:replace`        | zod-schema (`ReplaceCitationSchema`) |      |
+| `citations:remove`         | scalar-helper                        |      |
+| `citations:checkChanged`   | scalar-helper                        |      |
+| `citations:checkFreshness` | scalar-helper                        |      |
 
 ## Settings & External Provider
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `settings:get`                        | no-input        |      |
-| `settings:update`                     | zod-schema (`SettingsUpdateSchema`)       |  |
-| `externalProvider:get`                | no-input        | ✓ (returns redacted) |
-| `externalProvider:set`                | zod-schema (`ExternalProviderConfigSchema` + `ExternalProviderApiKeySchema`) | ✓ |
-| `externalProvider:test`               | no-input        | ✓ (uses cached key) |
+| Channel                 | Strategy                                                                     | Auth                 |
+| ----------------------- | ---------------------------------------------------------------------------- | -------------------- |
+| `settings:get`          | no-input                                                                     |                      |
+| `settings:update`       | zod-schema (`SettingsUpdateSchema`)                                          |                      |
+| `externalProvider:get`  | no-input                                                                     | ✓ (returns redacted) |
+| `externalProvider:set`  | zod-schema (`ExternalProviderConfigSchema` + `ExternalProviderApiKeySchema`) | ✓                    |
+| `externalProvider:test` | no-input                                                                     | ✓ (uses cached key)  |
 
 ## Model & Runtime
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `model:status`                        | no-input        |      |
-| `model:start`                         | scalar-helper   |      |
-| `model:stop`                          | no-input        |      |
-| `model:generate`                      | zod-schema (`GenerateRequestSchema`) |  |
-| `model:cancelJob`                     | no-input        |      |
-| `runtime:detectPlatform`              | no-input        |      |
-| `runtime:recommendModel`              | no-input        |      |
-| `runtime:listModels`                  | no-input        |      |
-| `runtime:getCurrentModel`             | no-input        |      |
-| `runtime:planDownload`                | scalar-helper   |      |
-| `runtime:downloadModel`               | scalar-helper   |      |
-| `runtime:deleteModel`                 | no-input        |      |
+| Channel                   | Strategy                             | Auth |
+| ------------------------- | ------------------------------------ | ---- |
+| `model:status`            | no-input                             |      |
+| `model:start`             | scalar-helper                        |      |
+| `model:stop`              | no-input                             |      |
+| `model:generate`          | zod-schema (`GenerateRequestSchema`) |      |
+| `model:cancelJob`         | no-input                             |      |
+| `runtime:detectPlatform`  | no-input                             |      |
+| `runtime:recommendModel`  | no-input                             |      |
+| `runtime:listModels`      | no-input                             |      |
+| `runtime:getCurrentModel` | no-input                             |      |
+| `runtime:planDownload`    | scalar-helper                        |      |
+| `runtime:downloadModel`   | scalar-helper                        |      |
+| `runtime:deleteModel`     | no-input                             |      |
 
 ## Connectors
 
-| Channel                               | Strategy                                                  | Auth |
-|---------------------------------------|-----------------------------------------------------------|------|
-| `connectors:authenticate`             | scalar-helper (provider) + renderer-typed `AuthConfig`    | ✓ — stores OAuth tokens via `tokenVault` |
-| `connectors:disconnect`               | scalar-helper                                             | ✓    |
-| `connectors:status`                   | scalar-helper                                             |      |
-| `connectors:getRedirectUri`           | scalar-helper                                             |      |
-| `connectors:getAllRedirectUris`       | no-input                                                  |      |
-| `connectors:sync`                     | scalar-helper                                             |      |
-| `connectors:gdrive:listFiles`         | scalar-helper                                             |      |
-| `connectors:gdrive:selectItems`       | zod-schema (`GdriveSelectedItemsSchema`)                  |      |
-| `connectors:gdrive:sync`              | no-input                                                  |      |
+| Channel                         | Strategy                                               | Auth                                     |
+| ------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
+| `connectors:authenticate`       | scalar-helper (provider) + renderer-typed `AuthConfig` | ✓ — stores OAuth tokens via `tokenVault` |
+| `connectors:disconnect`         | scalar-helper                                          | ✓                                        |
+| `connectors:status`             | scalar-helper                                          |                                          |
+| `connectors:getRedirectUri`     | scalar-helper                                          |                                          |
+| `connectors:getAllRedirectUris` | no-input                                               |                                          |
+| `connectors:sync`               | scalar-helper                                          |                                          |
+| `connectors:gdrive:listFiles`   | scalar-helper                                          |                                          |
+| `connectors:gdrive:selectItems` | zod-schema (`GdriveSelectedItemsSchema`)               |                                          |
+| `connectors:gdrive:sync`        | no-input                                               |                                          |
 
 ## Tasks
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `tasks:list`                          | no-input        |      |
-| `tasks:get`                           | scalar-helper   |      |
-| `tasks:create`                        | zod-schema (`CreateTaskSchema`)   |  |
-| `tasks:update`                        | zod-schema (`UpdateTaskSchema`)   |  |
-| `tasks:delete`                        | scalar-helper   |      |
-| `tasks:reorder`                       | scalar-helper   |      |
+| Channel         | Strategy                        | Auth |
+| --------------- | ------------------------------- | ---- |
+| `tasks:list`    | no-input                        |      |
+| `tasks:get`     | scalar-helper                   |      |
+| `tasks:create`  | zod-schema (`CreateTaskSchema`) |      |
+| `tasks:update`  | zod-schema (`UpdateTaskSchema`) |      |
+| `tasks:delete`  | scalar-helper                   |      |
+| `tasks:reorder` | scalar-helper                   |      |
 
 ## Automations
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `automations:list`                    | no-input        |      |
-| `automations:get`                     | scalar-helper   |      |
-| `automations:create`                  | zod-schema (`CreateAutomationSchema`) |  |
-| `automations:setEnabled`              | scalar-helper   |      |
-| `automations:delete`                  | scalar-helper   |      |
-| `automations:schedulerStatus`         | no-input        |      |
-| `automations:runNow`                  | no-input        |      |
+| Channel                       | Strategy                              | Auth |
+| ----------------------------- | ------------------------------------- | ---- |
+| `automations:list`            | no-input                              |      |
+| `automations:get`             | scalar-helper                         |      |
+| `automations:create`          | zod-schema (`CreateAutomationSchema`) |      |
+| `automations:setEnabled`      | scalar-helper                         |      |
+| `automations:delete`          | scalar-helper                         |      |
+| `automations:schedulerStatus` | no-input                              |      |
+| `automations:runNow`          | no-input                              |      |
 
 ## Dialog
 
-| Channel                               | Strategy                                  | Auth |
-|---------------------------------------|-------------------------------------------|------|
-| `dialog:showSaveDialog`               | zod-schema (`SaveDialogOptionsSchema`)    |      |
+| Channel                 | Strategy                               | Auth |
+| ----------------------- | -------------------------------------- | ---- |
+| `dialog:showSaveDialog` | zod-schema (`SaveDialogOptionsSchema`) |      |
 
 ## Slides
 
@@ -190,9 +190,9 @@ rendered with `textContent` (never `innerHTML`) and the embedded deck
 JSON is `<`/`>`/`&`-escaped, so deck content can never inject markup
 into the presentation windows.
 
-| Channel                               | Strategy                                  | Auth |
-|---------------------------------------|-------------------------------------------|------|
-| `slides:startPresentation`            | zod-schema (`StartPresentationSchema`)    |      |
+| Channel                    | Strategy                               | Auth |
+| -------------------------- | -------------------------------------- | ---- |
+| `slides:startPresentation` | zod-schema (`StartPresentationSchema`) |      |
 
 ## KChat
 
@@ -207,25 +207,25 @@ sanitised `KchatUserView`; `kchat:status` and every other read
 returns connection state with no token field. The renderer hides
 the entire KChat UI when `kchat:isAvailable` returns `false`.
 
-| Channel                               | Strategy                                                  | Auth |
-|---------------------------------------|-----------------------------------------------------------|------|
-| `kchat:isAvailable`                   | no-input                                                  |      |
-| `kchat:status`                        | no-input                                                  | ✓ — surfaces connection state (no token) |
-| `kchat:connect`                       | scalar-helper (token + URL)                               | ✓ — writes PAT to vault, verifies via `/users/me` |
-| `kchat:disconnect`                    | no-input                                                  | ✓ — clears vault entry, stops WebSocket |
-| `kchat:listTeams`                     | no-input                                                  |      |
-| `kchat:listChannels`                  | scalar-helper (KChat-id)                                  |      |
-| `kchat:listMembers`                   | scalar-helper (KChat-id)                                  |      |
-| `kchat:listChannelFiles`              | scalar-helper (KChat-id + paging ints)                    |      |
-| `kchat:shareArtifact`                 | scalar-helper (artifact-id + KChat-id + format + bool×2)  | ✓ — uploads bytes via KChat token |
-| `kchat:searchPosts`                   | scalar-helper (query + limit)                             | ✓ — AEAD-verifies post bodies; rate-limited 10/s burst 20 |
-| `kchat:fetchThreadContext`            | scalar-helper (source UUID + KChat post-id)               | ✓ — returns the thread root + up to 2 earlier replies (chronological); AEAD-verifies parent bodies; name enrichment reuses the shared LRU caches; rate-limited 5/s burst 10 (legitimate caller fires this once per expand-click) |
-| `kchat:openInDesktop`                 | scalar-helper (KChat channel-id)                          | ✓ — constructs a `kchat://app/conversation/<id>` URL and invokes `shell.openExternal()`; shares a single rate-limiter bucket with `kchat:openDesktopExtensions` (key `kchat:openInDesktop`, 5/s burst 10) so a runaway renderer cannot multiply the OS-shell budget by opening N channels in parallel |
-| `kchat:openDesktopExtensions`         | no-input                                                  | ✓ — constructs a `kchat://app/settings/extensions` URL and invokes `shell.openExternal()`; shares the rate-limiter bucket above |
-| `kchat:desktopBridgeStatus`           | no-input                                                  | ✓ — returns `{ detected: boolean, lastHeartbeatAt: number \| null }` based on the loopback API's last bearer-authed request timestamp (90 s freshness window); pure read of in-memory state; rate-limited 5/s burst 10 (Settings card polls at 10 s + sidebar polls at 10 s) |
-| `kchat:backfillProgress`              | scalar-helper (KChat-id)                                  | ✓ — pure read of substrate state; rate-limited 2/s burst 5 |
-| `sources:backfillKchatChannel`        | scalar-helper (KChat-id)                                  | ✓ — historical-walk over `kchat:posts` REST surface |
-| `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — uses the KChat token from the vault to fan-out channel-file downloads into the source vault |
+| Channel                        | Strategy                                                 | Auth                                                                                                                                                                                                                                                                                                  |
+| ------------------------------ | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kchat:isAvailable`            | no-input                                                 |                                                                                                                                                                                                                                                                                                       |
+| `kchat:status`                 | no-input                                                 | ✓ — surfaces connection state (no token)                                                                                                                                                                                                                                                              |
+| `kchat:connect`                | scalar-helper (token + URL)                              | ✓ — writes PAT to vault, verifies via `/users/me`                                                                                                                                                                                                                                                     |
+| `kchat:disconnect`             | no-input                                                 | ✓ — clears vault entry, stops WebSocket                                                                                                                                                                                                                                                               |
+| `kchat:listTeams`              | no-input                                                 |                                                                                                                                                                                                                                                                                                       |
+| `kchat:listChannels`           | scalar-helper (KChat-id)                                 |                                                                                                                                                                                                                                                                                                       |
+| `kchat:listMembers`            | scalar-helper (KChat-id)                                 |                                                                                                                                                                                                                                                                                                       |
+| `kchat:listChannelFiles`       | scalar-helper (KChat-id + paging ints)                   |                                                                                                                                                                                                                                                                                                       |
+| `kchat:shareArtifact`          | scalar-helper (artifact-id + KChat-id + format + bool×2) | ✓ — uploads bytes via KChat token                                                                                                                                                                                                                                                                     |
+| `kchat:searchPosts`            | scalar-helper (query + limit)                            | ✓ — AEAD-verifies post bodies; rate-limited 10/s burst 20                                                                                                                                                                                                                                             |
+| `kchat:fetchThreadContext`     | scalar-helper (source UUID + KChat post-id)              | ✓ — returns the thread root + up to 2 earlier replies (chronological); AEAD-verifies parent bodies; name enrichment reuses the shared LRU caches; rate-limited 5/s burst 10 (legitimate caller fires this once per expand-click)                                                                      |
+| `kchat:openInDesktop`          | scalar-helper (KChat channel-id)                         | ✓ — constructs a `kchat://app/conversation/<id>` URL and invokes `shell.openExternal()`; shares a single rate-limiter bucket with `kchat:openDesktopExtensions` (key `kchat:openInDesktop`, 5/s burst 10) so a runaway renderer cannot multiply the OS-shell budget by opening N channels in parallel |
+| `kchat:openDesktopExtensions`  | no-input                                                 | ✓ — constructs a `kchat://app/settings/extensions` URL and invokes `shell.openExternal()`; shares the rate-limiter bucket above                                                                                                                                                                       |
+| `kchat:desktopBridgeStatus`    | no-input                                                 | ✓ — returns `{ detected: boolean, lastHeartbeatAt: number \| null }` based on the loopback API's last bearer-authed request timestamp (90 s freshness window); pure read of in-memory state; rate-limited 5/s burst 10 (Settings card polls at 10 s + sidebar polls at 10 s)                          |
+| `kchat:backfillProgress`       | scalar-helper (KChat-id)                                 | ✓ — pure read of substrate state; rate-limited 2/s burst 5                                                                                                                                                                                                                                            |
+| `sources:backfillKchatChannel` | scalar-helper (KChat-id)                                 | ✓ — historical-walk over `kchat:posts` REST surface                                                                                                                                                                                                                                                   |
+| `sources:addKchatChannel`      | scalar-helper (KChat-id + display-name)                  | ✓ — uses the KChat token from the vault to fan-out channel-file downloads into the source vault                                                                                                                                                                                                       |
 
 ### Trust model for the KChat-Desktop integration surface
 
@@ -288,9 +288,9 @@ inside main-process IPC handlers, so the renderer cannot forge a
 row. The reader clamps `limit` to `[1, 500]` so a renderer bug
 cannot OOM the main process.
 
-| Channel                               | Strategy                                                  | Auth |
-|---------------------------------------|-----------------------------------------------------------|------|
-| `audit:listRecent`                    | scalar-helper (`limit?`, `offset?` — both clamped ints)   |      |
+| Channel            | Strategy                                                | Auth |
+| ------------------ | ------------------------------------------------------- | ---- |
+| `audit:listRecent` | scalar-helper (`limit?`, `offset?` — both clamped ints) |      |
 
 ## Updates (auto-updater)
 
@@ -301,17 +301,17 @@ renderer subscribes to `updates:status` events emitted via
 see the [Renderer-bound emit channels](#renderer-bound-emit-channels-one-way-main--renderer)
 section below for the push side of that channel. `updates:status` is
 dual-purpose: the row in this table covers the `ipcMain.handle`
-*pull* endpoint (returning the cached last status), and the
+_pull_ endpoint (returning the cached last status), and the
 corresponding entry in the emit-channels table covers the
-`webContents.send` *push* broadcast.
+`webContents.send` _push_ broadcast.
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `updates:status`                      | no-input (pull only; also emitted as push — see emit table) |      |
-| `updates:check`                       | no-input        |      |
-| `updates:install`                     | no-input        |      |
-| `updates:getAutoUpdateEnabled`        | no-input        |      |
-| `updates:setAutoUpdateEnabled`        | scalar-helper (boolean) |      |
+| Channel                        | Strategy                                                    | Auth |
+| ------------------------------ | ----------------------------------------------------------- | ---- |
+| `updates:status`               | no-input (pull only; also emitted as push — see emit table) |      |
+| `updates:check`                | no-input                                                    |      |
+| `updates:install`              | no-input                                                    |      |
+| `updates:getAutoUpdateEnabled` | no-input                                                    |      |
+| `updates:setAutoUpdateEnabled` | scalar-helper (boolean)                                     |      |
 
 ## Password Vault (ephemeral prompt window)
 
@@ -327,14 +327,14 @@ test harness) is preserved. The prompt loads via
 `data:text/html;charset=utf-8,…` (no `file://` or `http(s)://`), and
 its preload (`passwordPromptPreload.ts`) only exposes a single
 `tesseraPasswordPrompt` API that forwards the user input to these
-two channels. The renderer for the *main* app window cannot reach
+two channels. The renderer for the _main_ app window cannot reach
 these channels because they are not registered while the main window
 is open.
 
-| Channel                               | Strategy        | Auth |
-|---------------------------------------|-----------------|------|
-| `password-vault:submit`               | renderer-typed (`{ password: string }`, shape-checked at the call site; the password string is treated as opaque material — no length / charset assertions at the IPC boundary because the vault accepts any string) | ✓ — supplies the AES-256-GCM key-derivation input for the password vault |
-| `password-vault:cancel`               | no-input        | ✓ — user-initiated abort; the in-flight `promptForVaultPassword` promise rejects and `maybeInitPasswordVault` falls through to "no password cached" |
+| Channel                 | Strategy                                                                                                                                                                                                             | Auth                                                                                                                                                |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `password-vault:submit` | renderer-typed (`{ password: string }`, shape-checked at the call site; the password string is treated as opaque material — no length / charset assertions at the IPC boundary because the vault accepts any string) | ✓ — supplies the AES-256-GCM key-derivation input for the password vault                                                                            |
+| `password-vault:cancel` | no-input                                                                                                                                                                                                             | ✓ — user-initiated abort; the in-flight `promptForVaultPassword` promise rejects and `maybeInitPasswordVault` falls through to "no password cached" |
 
 **Invariant note (vault-specific).** The prompt's preload script is
 the only renderer surface allowed to send on these two channels. The
@@ -350,11 +350,11 @@ These are `webContents.send(...)` channels rather than
 `ipcMain.handle` channels, but they're documented here for
 completeness:
 
-| Channel                       | Producer                       | Purpose                                 |
-|-------------------------------|--------------------------------|-----------------------------------------|
-| `model:token`                 | `model:generate` SSE stream    | Per-token streaming chunks              |
-| `runtime:downloadProgress`    | `runtime:downloadModel`        | Download bytes-progress updates         |
-| `updates:status`              | `autoUpdater.ts` `broadcast()` (driven by the underlying `electron-updater` events) | Auto-update lifecycle notifications (`checking`, `available`, `not-available`, `downloading`, `downloaded`, `error`) for the ambient toast UX. Also exposed as a pull endpoint — see [Updates (auto-updater)](#updates-auto-updater). |
+| Channel                    | Producer                                                                            | Purpose                                                                                                                                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model:token`              | `model:generate` SSE stream                                                         | Per-token streaming chunks                                                                                                                                                                                                            |
+| `runtime:downloadProgress` | `runtime:downloadModel`                                                             | Download bytes-progress updates                                                                                                                                                                                                       |
+| `updates:status`           | `autoUpdater.ts` `broadcast()` (driven by the underlying `electron-updater` events) | Auto-update lifecycle notifications (`checking`, `available`, `not-available`, `downloading`, `downloaded`, `error`) for the ambient toast UX. Also exposed as a pull endpoint — see [Updates (auto-updater)](#updates-auto-updater). |
 
 ## Invariants
 
@@ -386,7 +386,7 @@ The following invariants must hold for every channel in this doc:
    exfiltrate it via IPC.
 
 5. **OAuth tokens are write-only from the renderer.** The renderer
-   can call `connectors:authenticate` to *cause* tokens to be stored
+   can call `connectors:authenticate` to _cause_ tokens to be stored
    (after going through the OAuth flow) but cannot read tokens back.
    `tokenVault` is only exposed to main-process modules.
 

@@ -156,11 +156,7 @@ export function registerAppLockHandlers(): void {
 
   idempotentHandle(
     "appLock:changePin",
-    async (
-      _event,
-      oldPinRaw: unknown,
-      newPinRaw: unknown,
-    ): Promise<void> => {
+    async (_event, oldPinRaw: unknown, newPinRaw: unknown): Promise<void> => {
       // Rate-limit before any policy validation or scrypt work.
       // This channel invokes scrypt twice (once via
       // attemptUnlock(old) and once via setPin(new)) so it's the
@@ -184,10 +180,9 @@ export function registerAppLockHandlers(): void {
         // Bubble up the exact failure kind so the renderer can
         // render "wrong PIN" vs. "locked out" with the same UX
         // it uses for normal unlock.
-        throw Object.assign(
-          new Error("Current PIN verification failed"),
-          { result: verify },
-        );
+        throw Object.assign(new Error("Current PIN verification failed"), {
+          result: verify,
+        });
       }
       await setPin(newPinRaw);
     },
@@ -283,10 +278,7 @@ export function registerAppLockHandlers(): void {
 
   idempotentHandle(
     "appLock:attemptBiometric",
-    async (
-      _event,
-      reasonRaw: unknown,
-    ): Promise<{ success: boolean }> => {
+    async (_event, reasonRaw: unknown): Promise<{ success: boolean }> => {
       // Rate-limit parity with `appLock:attemptUnlock`. The biometric
       // path is the user's *other* unlock channel; a renderer
       // compromised into a tight loop could otherwise spam

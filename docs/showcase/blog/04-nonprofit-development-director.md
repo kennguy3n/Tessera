@@ -1,6 +1,6 @@
 # Sofia turns messy program notes into a funder-ready grant proposal
 
-*Part 4 of the Tessera showcase series — Nonprofit.*
+_Part 4 of the Tessera showcase series — Nonprofit._
 
 > **Persona:** Sofia Alvarez, Development Director, Riverside Youth Coalition
 > **The task:** turn scattered program notes and outcomes data into a funder-ready grant
@@ -59,7 +59,7 @@ run through a **slides** template, becomes a board deck:
 Ten slides — Title, Executive Summary, Quarterly Performance, Financial Detail, Strategic
 Progress, Product & Customer, Talent & Organization, Risks & Mitigations, Asks & Decisions
 Required, and Appendix. The deck runs through the slide editor's **layout engine** (a
-*Section Header* opener followed by *Title + Content* layouts), wears the **Editorial**
+_Section Header_ opener followed by _Title + Content_ layouts), wears the **Editorial**
 theme, and carries **speaker notes** on every slide — so Sofia can rehearse in **present
 mode** (a fullscreen second window with her notes) straight from the generated deck. With a
 **Brand Kit** she applies the organization's colours, fonts, and logo in one click — the brand
@@ -71,7 +71,7 @@ JSON: [`outputs/board-update.json`](../artifacts/nonprofit/outputs/board-update.
 
 For a small development team, the bottleneck isn't ideas — it's turnaround. Tessera takes the
 outcomes data Sofia already has and shapes it into both the long-form proposal a funder
-requires *and* the short-form deck a board expects, from the same grounded sources. The
+requires _and_ the short-form deck a board expects, from the same grounded sources. The
 budget tables and SMART goals are structured by the template, so the proposal is complete on
 the first pass instead of bouncing back for missing sections.
 

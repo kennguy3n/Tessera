@@ -4,9 +4,7 @@ import { sanitizeIconSpec } from "../utils/iconSpec";
 describe("sanitizeIconSpec", () => {
   it("accepts well-formed lucide specs", () => {
     expect(sanitizeIconSpec("lucide:home")).toBe("lucide:home");
-    expect(sanitizeIconSpec("lucide:check-circle")).toBe(
-      "lucide:check-circle",
-    );
+    expect(sanitizeIconSpec("lucide:check-circle")).toBe("lucide:check-circle");
     expect(sanitizeIconSpec("lucide:TrendingUp")).toBe("lucide:TrendingUp");
     expect(sanitizeIconSpec("lucide:3d-printer")).toBe("lucide:3d-printer");
   });

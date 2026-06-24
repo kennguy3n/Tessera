@@ -127,7 +127,8 @@ export default function BackupSettingsCard({
   const commitInterval = useCallback(() => {
     const parsed = Number(intervalDraft);
     if (!Number.isFinite(parsed) || intervalDraft.trim() === "") {
-      if (statusInterval !== undefined) setIntervalDraft(String(statusInterval));
+      if (statusInterval !== undefined)
+        setIntervalDraft(String(statusInterval));
       return;
     }
     const clamped = Math.max(
@@ -178,7 +179,9 @@ export default function BackupSettingsCard({
     setNotice(null);
     try {
       const info = await backup.create();
-      setNotice(`Backed up — ${info.fileName} (${formatBytes(info.sizeBytes)})`);
+      setNotice(
+        `Backed up — ${info.fileName} (${formatBytes(info.sizeBytes)})`,
+      );
       setError(null);
       await refresh();
     } catch (err) {
@@ -274,7 +277,12 @@ export default function BackupSettingsCard({
   if (!backup) {
     return (
       <Card>
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Backup &amp; Recovery</h2>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-md)" }}
+        >
+          Backup &amp; Recovery
+        </h2>
         <p style={{ color: "var(--color-text-secondary)" }}>
           Backup is unavailable in this environment.
         </p>
@@ -286,7 +294,12 @@ export default function BackupSettingsCard({
 
   return (
     <Card>
-      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Backup &amp; Recovery</h2>
+      <h2
+        className="section-title"
+        style={{ marginBottom: "var(--spacing-md)" }}
+      >
+        Backup &amp; Recovery
+      </h2>
 
       {error && (
         <p role="alert" style={{ color: "var(--color-danger)" }}>
@@ -438,7 +451,9 @@ export default function BackupSettingsCard({
               newest.sizeBytes,
             )}`
           : "No backups yet."}
-        {status?.lastBackupError ? ` · Last error: ${status.lastBackupError}` : ""}
+        {status?.lastBackupError
+          ? ` · Last error: ${status.lastBackupError}`
+          : ""}
       </div>
 
       {/* Recent backups list */}
@@ -474,7 +489,8 @@ export default function BackupSettingsCard({
                       fontSize: "0.8em",
                     }}
                   >
-                    {formatRelativeTime(b.createdAtMs)} · {formatBytes(b.sizeBytes)}
+                    {formatRelativeTime(b.createdAtMs)} ·{" "}
+                    {formatBytes(b.sizeBytes)}
                   </span>
                 </span>
                 <Button

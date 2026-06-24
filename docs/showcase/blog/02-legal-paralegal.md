@@ -1,6 +1,6 @@
 # David abstracts a SaaS agreement partners will actually trust
 
-*Part 2 of the Tessera showcase series — Legal.*
+_Part 2 of the Tessera showcase series — Legal._
 
 > **Persona:** David Reyes, Corporate Paralegal, Hartwell & Cho LLP (mid-size corporate firm)
 > **The task:** abstract an inbound commercial contract into a consistent one-page summary
@@ -59,7 +59,7 @@ The risks are only useful if someone acts on them in time. The same sources, run
 Every obligation gets a row — the responsible party, the triggering clause (§1.2, §4.3,
 §3.2 …), a due date, a priority, and a status — and the sheet is a real spreadsheet, not a
 static table. **Data validation** turns Responsible Party, Priority, and Status into
-dropdowns; **conditional formatting** paints High-priority clauses red and *Under Review*
+dropdowns; **conditional formatting** paints High-priority clauses red and _Under Review_
 rows amber; a **named range** (`Obligations`) anchors the column; and a **formula** column
 (`=IF(Status="Under Review","REVIEW","")`) auto-flags anything still in negotiation — the
 §5.1 liability-cap rows light up exactly as you'd want. The toolbar exposes the full

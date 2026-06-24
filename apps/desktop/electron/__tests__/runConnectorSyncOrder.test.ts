@@ -114,9 +114,11 @@ describe("runConnectorSync — rate-limit ordering", () => {
     async () => {
       const { ctx, rateLimiter } = makeCtx();
       // Pretend the user IS connected (token vault returns valid token).
-      (ctx.tokenVault as unknown as {
-        getTokens: ReturnType<typeof vi.fn>;
-      }).getTokens.mockReturnValue({
+      (
+        ctx.tokenVault as unknown as {
+          getTokens: ReturnType<typeof vi.fn>;
+        }
+      ).getTokens.mockReturnValue({
         accessToken: "AT",
         refreshToken: null,
         expiresAt: Date.now() + 60 * 60 * 1000,
@@ -159,9 +161,11 @@ describe("runConnectorSync — token refresh offline path", () => {
       // Pretend the user IS connected but their access token is
       // expired AND they have a refresh token — i.e. we will take
       // the `refreshProviderToken` branch.
-      (ctx.tokenVault as unknown as {
-        getTokens: ReturnType<typeof vi.fn>;
-      }).getTokens.mockReturnValue({
+      (
+        ctx.tokenVault as unknown as {
+          getTokens: ReturnType<typeof vi.fn>;
+        }
+      ).getTokens.mockReturnValue({
         accessToken: "AT_OLD",
         refreshToken: "RT",
         // Force the expiry check at line 245 to fail so we fall
@@ -177,9 +181,12 @@ describe("runConnectorSync — token refresh offline path", () => {
       // when DNS resolution fails for a hostname.
       const originalFetch = globalThis.fetch;
       const fetchErr = Object.assign(new TypeError("fetch failed"), {
-        cause: Object.assign(new Error("getaddrinfo ENOTFOUND auth.atlassian.com"), {
-          code: "ENOTFOUND",
-        }),
+        cause: Object.assign(
+          new Error("getaddrinfo ENOTFOUND auth.atlassian.com"),
+          {
+            code: "ENOTFOUND",
+          },
+        ),
       });
       globalThis.fetch = vi.fn().mockRejectedValue(fetchErr) as typeof fetch;
 
@@ -203,9 +210,11 @@ describe("runConnectorSync — token refresh offline path", () => {
       "can prompt re-authentication",
     async () => {
       const { ctx } = makeCtx();
-      (ctx.tokenVault as unknown as {
-        getTokens: ReturnType<typeof vi.fn>;
-      }).getTokens.mockReturnValue({
+      (
+        ctx.tokenVault as unknown as {
+          getTokens: ReturnType<typeof vi.fn>;
+        }
+      ).getTokens.mockReturnValue({
         accessToken: "AT_OLD",
         refreshToken: "RT",
         expiresAt: Date.now() - 60_000,
@@ -253,9 +262,11 @@ describe("runConnectorSync — audit emission site", () => {
     const { ctx } = makeCtx({ bridge });
     // Pretend the user is connected so we don't trip
     // NotConnectedError before reaching the audit site.
-    (ctx.tokenVault as unknown as {
-      getTokens: ReturnType<typeof vi.fn>;
-    }).getTokens.mockReturnValue({
+    (
+      ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }
+    ).getTokens.mockReturnValue({
       accessToken: "AT",
       refreshToken: null,
       expiresAt: Date.now() + 60 * 60 * 1000,
@@ -289,9 +300,11 @@ describe("runConnectorSync — audit emission site", () => {
       bridgeLogConnectorSynced: vi.fn(),
     };
     const { ctx } = makeCtx({ bridge });
-    (ctx.tokenVault as unknown as {
-      getTokens: ReturnType<typeof vi.fn>;
-    }).getTokens.mockReturnValue({
+    (
+      ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }
+    ).getTokens.mockReturnValue({
       accessToken: "AT",
       refreshToken: null,
       expiresAt: Date.now() + 60 * 60 * 1000,
@@ -327,9 +340,11 @@ describe("runConnectorSync — audit emission site", () => {
       }),
     };
     const { ctx } = makeCtx({ bridge });
-    (ctx.tokenVault as unknown as {
-      getTokens: ReturnType<typeof vi.fn>;
-    }).getTokens.mockReturnValue({
+    (
+      ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }
+    ).getTokens.mockReturnValue({
       accessToken: "AT",
       refreshToken: null,
       expiresAt: Date.now() + 60 * 60 * 1000,
@@ -424,9 +439,11 @@ describe("runConnectorSync — token refresh failure-state recording", () => {
         ],
       });
       const { ctx } = makeCtx({ bridge });
-      (ctx.tokenVault as unknown as {
-        getTokens: ReturnType<typeof vi.fn>;
-      }).getTokens.mockReturnValue({
+      (
+        ctx.tokenVault as unknown as {
+          getTokens: ReturnType<typeof vi.fn>;
+        }
+      ).getTokens.mockReturnValue({
         accessToken: "AT_OLD",
         refreshToken: "RT",
         // Force the expiry check to fail so we take the refresh path.
@@ -486,9 +503,11 @@ describe("runConnectorSync — token refresh failure-state recording", () => {
       // No tokens stored → `getValidAccessToken` throws
       // NotConnectedError immediately. `classifyConnectorError` maps
       // that to `permanent`.
-      (ctx.tokenVault as unknown as {
-        getTokens: ReturnType<typeof vi.fn>;
-      }).getTokens.mockReturnValue(null);
+      (
+        ctx.tokenVault as unknown as {
+          getTokens: ReturnType<typeof vi.fn>;
+        }
+      ).getTokens.mockReturnValue(null);
 
       await expect(runConnectorSync(ctx, "jira")).rejects.toBeInstanceOf(
         NotConnectedError,
@@ -526,9 +545,11 @@ describe("runConnectorSync — token refresh failure-state recording", () => {
         bridgeRecordSourceSyncSuccess: vi.fn(),
       };
       const { ctx } = makeCtx({ bridge });
-      (ctx.tokenVault as unknown as {
-        getTokens: ReturnType<typeof vi.fn>;
-      }).getTokens.mockReturnValue(null);
+      (
+        ctx.tokenVault as unknown as {
+          getTokens: ReturnType<typeof vi.fn>;
+        }
+      ).getTokens.mockReturnValue(null);
 
       // Caller still gets the NotConnectedError, NOT a "DB locked"
       // error — recording is best-effort and must not mask the real

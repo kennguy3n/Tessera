@@ -121,8 +121,24 @@ describe("conceptMentionMatcher", () => {
 describe("computeTimeBounds", () => {
   it("spans the earliest creation and the latest access", () => {
     const map = new Map<string, ConceptDecay>([
-      ["a", { ...TIMELESS_DECAY, createdAt: 100, lastAccessedAt: 400, memoryCount: 1 }],
-      ["b", { ...TIMELESS_DECAY, createdAt: 50, lastAccessedAt: 900, memoryCount: 1 }],
+      [
+        "a",
+        {
+          ...TIMELESS_DECAY,
+          createdAt: 100,
+          lastAccessedAt: 400,
+          memoryCount: 1,
+        },
+      ],
+      [
+        "b",
+        {
+          ...TIMELESS_DECAY,
+          createdAt: 50,
+          lastAccessedAt: 900,
+          memoryCount: 1,
+        },
+      ],
     ]);
     expect(computeTimeBounds(map)).toEqual({ min: 50, max: 900 });
   });
@@ -138,7 +154,11 @@ describe("isPresentAsOf", () => {
     expect(isPresentAsOf(TIMELESS_DECAY, 0)).toBe(true);
   });
   it("includes a concept only once it has been created", () => {
-    const d: ConceptDecay = { ...TIMELESS_DECAY, createdAt: 500, memoryCount: 1 };
+    const d: ConceptDecay = {
+      ...TIMELESS_DECAY,
+      createdAt: 500,
+      memoryCount: 1,
+    };
     expect(isPresentAsOf(d, 499)).toBe(false);
     expect(isPresentAsOf(d, 500)).toBe(true);
     expect(isPresentAsOf(d, 600)).toBe(true);

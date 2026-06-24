@@ -156,9 +156,8 @@ export default class ErrorBoundary extends Component<Props, State> {
             marginBottom: "var(--spacing-md)",
           }}
         >
-          Tessera ran into an unexpected error. Your last saved
-          artifact has not been lost — Tessera autosaves and keeps
-          a local crash log.
+          Tessera ran into an unexpected error. Your last saved artifact has not
+          been lost — Tessera autosaves and keeps a local crash log.
         </p>
         <pre
           style={{

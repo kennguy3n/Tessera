@@ -31,9 +31,7 @@ function snapshot(overrides: Partial<ResourceUsage> = {}): ResourceUsage {
 }
 
 afterEach(() => {
-  window.tessera.resources.getUsage = vi
-    .fn()
-    .mockResolvedValue(snapshot());
+  window.tessera.resources.getUsage = vi.fn().mockResolvedValue(snapshot());
 });
 
 describe("ResourceUsageCard", () => {
@@ -46,9 +44,7 @@ describe("ResourceUsageCard", () => {
   });
 
   it("renders the idle lightweight snapshot", async () => {
-    window.tessera.resources.getUsage = vi
-      .fn()
-      .mockResolvedValue(snapshot());
+    window.tessera.resources.getUsage = vi.fn().mockResolvedValue(snapshot());
     render(<ResourceUsageCard />);
     await waitFor(() =>
       expect(screen.getByTestId("resource-usage-body")).toBeInTheDocument(),
@@ -62,12 +58,12 @@ describe("ResourceUsageCard", () => {
     expect(screen.getByTestId("resource-usage-slm-text")).toHaveTextContent(
       "Not loaded",
     );
-    expect(
-      screen.getByTestId("resource-usage-slm-imagegen"),
-    ).toHaveTextContent("Not loaded");
-    expect(
-      screen.getByTestId("resource-usage-connections"),
-    ).toHaveTextContent("1 writer + 2 readers");
+    expect(screen.getByTestId("resource-usage-slm-imagegen")).toHaveTextContent(
+      "Not loaded",
+    );
+    expect(screen.getByTestId("resource-usage-connections")).toHaveTextContent(
+      "1 writer + 2 readers",
+    );
     expect(screen.getByTestId("resource-usage-indexing")).toHaveTextContent(
       "Idle",
     );
@@ -131,16 +127,16 @@ describe("ResourceUsageCard", () => {
     // `readPoolSize()` is `min(parallelism, MAX_READ_POOL_SIZE)`, so a
     // single-core machine (or the `availableParallelism()` fallback)
     // reports 1 reader — the label must read "1 reader", not "1 readers".
-    window.tessera.resources.getUsage = vi.fn().mockResolvedValue(
-      snapshot({ connections: { writers: 1, readers: 1 } }),
-    );
+    window.tessera.resources.getUsage = vi
+      .fn()
+      .mockResolvedValue(snapshot({ connections: { writers: 1, readers: 1 } }));
     render(<ResourceUsageCard />);
     await waitFor(() =>
       expect(screen.getByTestId("resource-usage-body")).toBeInTheDocument(),
     );
-    expect(
-      screen.getByTestId("resource-usage-connections"),
-    ).toHaveTextContent("1 writer + 1 reader");
+    expect(screen.getByTestId("resource-usage-connections")).toHaveTextContent(
+      "1 writer + 1 reader",
+    );
   });
 
   it("explains active battery gating", async () => {
@@ -182,9 +178,9 @@ describe("ResourceUsageCard", () => {
     );
     render(<ResourceUsageCard />);
     await waitFor(() =>
-      expect(
-        screen.getByTestId("resource-usage-indexing"),
-      ).toHaveTextContent("Paused (memory pressure)"),
+      expect(screen.getByTestId("resource-usage-indexing")).toHaveTextContent(
+        "Paused (memory pressure)",
+      ),
     );
   });
 });

@@ -85,8 +85,7 @@ export function parseLandingPageContent(content: string): LandingPageContent {
         cta: parsed.cta ?? fallback.cta,
         colorScheme: {
           primary: parsed.colorScheme?.primary ?? DEFAULT_LANDING_PRIMARY,
-          secondary:
-            parsed.colorScheme?.secondary ?? DEFAULT_LANDING_SECONDARY,
+          secondary: parsed.colorScheme?.secondary ?? DEFAULT_LANDING_SECONDARY,
           accent: parsed.colorScheme?.accent ?? DEFAULT_LANDING_ACCENT,
         },
       };

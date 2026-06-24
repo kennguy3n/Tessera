@@ -19,7 +19,14 @@
     },
     "type": {
       "type": "string",
-      "enum": ["document", "slides", "sheet", "base", "infographic", "landing_page"],
+      "enum": [
+        "document",
+        "slides",
+        "sheet",
+        "base",
+        "infographic",
+        "landing_page"
+      ],
       "description": "Artifact type this template produces"
     },
     "description": {
@@ -41,7 +48,16 @@
       "minItems": 1,
       "items": {
         "type": "string",
-        "enum": ["markdown", "html", "csv", "json", "pdf", "docx", "pptx", "xlsx"]
+        "enum": [
+          "markdown",
+          "html",
+          "csv",
+          "json",
+          "pdf",
+          "docx",
+          "pptx",
+          "xlsx"
+        ]
       },
       "description": "Supported export formats for artifacts created from this template"
     },

@@ -15,7 +15,12 @@
  * `qa/a11y.spec.ts`. This suite owns the structural contract.
  */
 import { describe, it, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, type RenderResult } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  type RenderResult,
+} from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import type { ReactElement, ReactNode } from "react";
 
@@ -120,7 +125,9 @@ describe("Accessibility — top-level pages", () => {
   });
 
   it("Templates (/templates) has no structural a11y violations", async () => {
-    const { container } = renderPage(<TemplatesPage />, { route: "/templates" });
+    const { container } = renderPage(<TemplatesPage />, {
+      route: "/templates",
+    });
     await waitForSettled();
     await expectNoA11yViolations(container);
   });

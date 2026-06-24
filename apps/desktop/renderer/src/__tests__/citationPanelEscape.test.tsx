@@ -33,9 +33,9 @@ function citation(over: Partial<CitationInfo> = {}): CitationInfo {
 }
 
 beforeEach(() => {
-  (window.tessera.citations.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-    citation(),
-  ]);
+  (window.tessera.citations.list as ReturnType<typeof vi.fn>).mockResolvedValue(
+    [citation()],
+  );
   (
     window.tessera.citations.checkFreshness as ReturnType<typeof vi.fn>
   ).mockResolvedValue("fresh");
@@ -56,14 +56,18 @@ describe("CitationPanel Escape precedence", () => {
       screen.getByRole("button", { name: /remove citation from acme\.md/i }),
     );
     expect(
-      await screen.findByRole("alertdialog", { name: /confirm citation removal/i }),
+      await screen.findByRole("alertdialog", {
+        name: /confirm citation removal/i,
+      }),
     ).toBeInTheDocument();
 
     // First Escape: dismiss only the inner dialog; panel stays open.
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
       expect(
-        screen.queryByRole("alertdialog", { name: /confirm citation removal/i }),
+        screen.queryByRole("alertdialog", {
+          name: /confirm citation removal/i,
+        }),
       ).not.toBeInTheDocument(),
     );
     expect(onClose).not.toHaveBeenCalled();
@@ -80,7 +84,9 @@ describe("CitationPanel Escape precedence", () => {
     const onClose = vi.fn();
     await renderOpenPanel(onClose);
 
-    fireEvent.click(screen.getByRole("button", { name: /add a new citation/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /add a new citation/i }),
+    );
     expect(
       await screen.findByRole("dialog", { name: /add citation/i }),
     ).toBeInTheDocument();

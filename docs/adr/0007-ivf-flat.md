@@ -37,7 +37,7 @@ quantisation") index in `crates/tessera_sources/src/vector_index.rs`:
 - Below `IVF_BRUTE_FORCE_THRESHOLD = 1024` chunks, fall back to
   brute-force, where constant factors make IVF not worth building.
 - The index is cached as an `Arc<IvfIndex>` keyed by `(model_id,
-  generation)`; the `SourceStore` owns the freshness/invalidation
+generation)`; the `SourceStore` owns the freshness/invalidation
   contract and calls `IvfIndex::build` on a cache miss.
 
 ## Consequences

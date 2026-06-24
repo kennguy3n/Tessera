@@ -3,18 +3,18 @@
 ## Cover Page and Abstract
 
 **Riverside Youth Coalition (RYC)**  
-Project Title: *BrightPath After-School STEM Enrichment Program*  
+Project Title: _BrightPath After-School STEM Enrichment Program_  
 Funding Opportunity: Halverson Family Foundation Community Fund (CFDA/FOA #CFDA-2024-0078)  
 Requested Amount: $185,000 over 18 months  
 Project Period: October 2024 – May 2026  
 Principal Investigator: Sofia Alvarez, Development Director  
-Authorizing Official: [Board of Directors, Riverside Youth Coalition]  
+Authorizing Official: [Board of Directors, Riverside Youth Coalition]
 
-BrightPath is a proven, scalable after-school STEM enrichment program serving students in grades 4–8 at three Title I schools in Riverside. The program delivers hands-on robotics, coding, and applied-math labs, supported by homework assistance and a healthy snack, and is staffed by 2 full-time coordinators and 11 part-time instructors, many of whom are local college STEM graduates. In 2024–2025, 214 students enrolled, with an average daily attendance of 78% and a 62% free/reduced lunch eligibility rate. Program outcomes included a 11-point improvement in math proficiency on the district benchmark compared to matched non-participants, a 95% increase in school-day attendance, and 89% of caregivers reporting their child was "more interested in school." The program also supported 7 students advancing to the regional FIRST LEGO League tournament, with one team placing second. These results are grounded in program evaluation data and direct participant and caregiver feedback.  
+BrightPath is a proven, scalable after-school STEM enrichment program serving students in grades 4–8 at three Title I schools in Riverside. The program delivers hands-on robotics, coding, and applied-math labs, supported by homework assistance and a healthy snack, and is staffed by 2 full-time coordinators and 11 part-time instructors, many of whom are local college STEM graduates. In 2024–2025, 214 students enrolled, with an average daily attendance of 78% and a 62% free/reduced lunch eligibility rate. Program outcomes included a 11-point improvement in math proficiency on the district benchmark compared to matched non-participants, a 95% increase in school-day attendance, and 89% of caregivers reporting their child was "more interested in school." The program also supported 7 students advancing to the regional FIRST LEGO League tournament, with one team placing second. These results are grounded in program evaluation data and direct participant and caregiver feedback.
 
-This request seeks to expand BrightPath to five schools, increasing student capacity by ~150 slots, hiring one additional full-time coordinator and six part-time instructors, and purchasing five robotics kits and classroom refresh laptops. The proposed investment is fully aligned with the Halverson Family Foundation’s priority to close the STEM opportunity gap among low-income students. RYC will match 20% of the requested funds from its reserves and contribute to a corporate sponsor (Northwind Outdoor Co.) through its community fund. The program’s outcomes are measurable, transparent, and tied to a clear logic model and sustainability plan. With a 18-month implementation period, BrightPath is designed for long-term impact, ensuring continued access and academic engagement in underserved communities.  
+This request seeks to expand BrightPath to five schools, increasing student capacity by ~150 slots, hiring one additional full-time coordinator and six part-time instructors, and purchasing five robotics kits and classroom refresh laptops. The proposed investment is fully aligned with the Halverson Family Foundation’s priority to close the STEM opportunity gap among low-income students. RYC will match 20% of the requested funds from its reserves and contribute to a corporate sponsor (Northwind Outdoor Co.) through its community fund. The program’s outcomes are measurable, transparent, and tied to a clear logic model and sustainability plan. With a 18-month implementation period, BrightPath is designed for long-term impact, ensuring continued access and academic engagement in underserved communities.
 
-The expansion will build on the program’s demonstrated effectiveness, including a 95% school-day attendance rate among participants and a 11-point math proficiency gain. By increasing access to STEM through local, trained staff and accessible materials, BrightPath directly supports the board’s strategic focus on "deepening STEM access" as a top-3 priority. The project is supported by a diversified funder mix and includes a sustainability plan that ensures program continuity beyond the grant period. RYC has a track record of closing 71% of its grant pipeline by dollar value in FY2025, and this proposal represents the largest single open opportunity in its development pipeline. The request is structured to meet the foundation’s requirements for credible outcomes, a robust evaluation plan, and a clear path to long-term sustainability.  
+The expansion will build on the program’s demonstrated effectiveness, including a 95% school-day attendance rate among participants and a 11-point math proficiency gain. By increasing access to STEM through local, trained staff and accessible materials, BrightPath directly supports the board’s strategic focus on "deepening STEM access" as a top-3 priority. The project is supported by a diversified funder mix and includes a sustainability plan that ensures program continuity beyond the grant period. RYC has a track record of closing 71% of its grant pipeline by dollar value in FY2025, and this proposal represents the largest single open opportunity in its development pipeline. The request is structured to meet the foundation’s requirements for credible outcomes, a robust evaluation plan, and a clear path to long-term sustainability.
 
 [01-program-notes-and-outcomes.md]  
 [02-funder-rfp-and-board-context.md]
@@ -43,21 +43,21 @@ The program reaches students through a targeted enrollment process at three Titl
 
 ## Work Plan and Timeline
 
-| Quarter | Activity | Milestone | Deliverable | Responsible Role | Dependencies |
-| --- | --- | --- | --- | --- | --- |
-| Q1 2025 | Finalize program logic model and evaluation framework | Complete logic model aligned with funder requirements | Logic model submitted to Halverson Family Foundation | Sofia Alvarez, Development Director | [02-funder-rfp-and-board-context.md] |
-| Q1 2025 | Conduct stakeholder interviews with parents, teachers, and students | Gather feedback on current BrightPath program effectiveness | Summary report of parent and teacher input | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md] |
-| Q2 2025 | Begin outreach to prospective school partners | Identify 3 new Title I schools for BrightPath expansion | School partnership agreements signed | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md] |
-| Q2 2025 | Hire 1 full-time coordinator and 6 part-time instructors | Onboard new staff members | Staff onboarding completed and verified | Human Resources Lead, Sofia Alvarez | [01-program-notes-and-outcomes.md] |
-| Q3 2025 | Launch pilot program at 2 new schools | Achieve 78% average daily attendance at pilot sites | Attendance data collected and analyzed | Program Coordinators, Sofia Alvarez | [01-program-notes-and-outcomes.md] |
-| Q4 2025 | Deliver first evaluation report with outcome metrics | Publish evaluation report with math proficiency gains and attendance trends | Evaluation report submitted to Halverson Family Foundation | Evaluation Lead, Sofia Alvarez | [01-program-notes-and-outcomes.md] |
-| Q1 2026 | Expand to 3 additional schools | Reach enrollment capacity at new schools | Enrollment confirmed at 3 new schools | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md] |
-| Q2 2026 | Complete full-scale program expansion | Enroll students at 5 schools | Total student enrollment reaches 214 (current) + 150 (new) = 364 | Program Coordinators, Sofia Alvarez | [01-program-notes-and-outcomes.md] |
-| Q3 2026 | Finalize sustainability plan and funding alignment | Develop multi-year sustainability strategy with matching fund integration | Sustainability plan submitted to board and funders | Sofia Alvarez, Development Director | [02-funder-rfp-and-board-context.md] |
-| Q4 2026 | Present final project close-out and outcomes summary to board | Present findings on STEM access, attendance, and caregiver interest | Board-approved close-out report and sustainability roadmap | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md], [02-funder-rfp-and-board-context.md] |
-| Total |  |  | **Total requested funding: $185,000 over 18 months** |  |  |
+| Quarter | Activity                                                            | Milestone                                                                   | Deliverable                                                      | Responsible Role                    | Dependencies                                                             |
+| ------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------ |
+| Q1 2025 | Finalize program logic model and evaluation framework               | Complete logic model aligned with funder requirements                       | Logic model submitted to Halverson Family Foundation             | Sofia Alvarez, Development Director | [02-funder-rfp-and-board-context.md]                                     |
+| Q1 2025 | Conduct stakeholder interviews with parents, teachers, and students | Gather feedback on current BrightPath program effectiveness                 | Summary report of parent and teacher input                       | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md]                                       |
+| Q2 2025 | Begin outreach to prospective school partners                       | Identify 3 new Title I schools for BrightPath expansion                     | School partnership agreements signed                             | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md]                                       |
+| Q2 2025 | Hire 1 full-time coordinator and 6 part-time instructors            | Onboard new staff members                                                   | Staff onboarding completed and verified                          | Human Resources Lead, Sofia Alvarez | [01-program-notes-and-outcomes.md]                                       |
+| Q3 2025 | Launch pilot program at 2 new schools                               | Achieve 78% average daily attendance at pilot sites                         | Attendance data collected and analyzed                           | Program Coordinators, Sofia Alvarez | [01-program-notes-and-outcomes.md]                                       |
+| Q4 2025 | Deliver first evaluation report with outcome metrics                | Publish evaluation report with math proficiency gains and attendance trends | Evaluation report submitted to Halverson Family Foundation       | Evaluation Lead, Sofia Alvarez      | [01-program-notes-and-outcomes.md]                                       |
+| Q1 2026 | Expand to 3 additional schools                                      | Reach enrollment capacity at new schools                                    | Enrollment confirmed at 3 new schools                            | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md]                                       |
+| Q2 2026 | Complete full-scale program expansion                               | Enroll students at 5 schools                                                | Total student enrollment reaches 214 (current) + 150 (new) = 364 | Program Coordinators, Sofia Alvarez | [01-program-notes-and-outcomes.md]                                       |
+| Q3 2026 | Finalize sustainability plan and funding alignment                  | Develop multi-year sustainability strategy with matching fund integration   | Sustainability plan submitted to board and funders               | Sofia Alvarez, Development Director | [02-funder-rfp-and-board-context.md]                                     |
+| Q4 2026 | Present final project close-out and outcomes summary to board       | Present findings on STEM access, attendance, and caregiver interest         | Board-approved close-out report and sustainability roadmap       | Sofia Alvarez, Development Director | [01-program-notes-and-outcomes.md], [02-funder-rfp-and-board-context.md] |
+| Total   |                                                                     |                                                                             | **Total requested funding: $185,000 over 18 months**             |                                     |                                                                          |
 
-*Note: The total funding requested is derived from the program ask in [01-program-notes-and-outcomes.md] and aligned with the 18-month duration. All financial values are in USD and reflect the stated total request. No additional funding beyond the ask is included in this work plan.
+\*Note: The total funding requested is derived from the program ask in [01-program-notes-and-outcomes.md] and aligned with the 18-month duration. All financial values are in USD and reflect the stated total request. No additional funding beyond the ask is included in this work plan.
 
 ## Organizational Capacity
 
@@ -77,14 +77,14 @@ Findings from the evaluation will be used to refine program design, staffing all
 
 ## Budget and Budget Justification
 
-| Category | Amount ($000s) | Justification |
-| --- | --- | --- |
-| Personnel | 118 | FTE × salary × months; 2 full-time coordinators and 11 part-time instructors are required to support expanded BrightPath sessions at 5 schools, with a 18-month duration and a 10% fringe rate applied to part-time staff [01-program-notes-and-outcomes.md] |
-| Equipment & materials | 32 | Purchase of 5 robotics kits and classroom refresh laptops to support expanded STEM activities and ensure consistent access to hands-on learning tools [01-program-notes-and-outcomes.md] |
-| Transportation (late bus) | 18 | Funds for 18 months of late bus transportation for students attending BrightPath sessions, covering 10% of the total transportation cost per student per month [01-program-notes-and-outcomes.md] |
-| Evaluation & data | 9 | Support for data collection, outcome tracking, and baseline assessments to measure STEM access and student engagement improvements [01-program-notes-and-outcomes.md] |
-| Indirect | 8 | 8% of total program spend allocated to indirect costs such as office supplies, administrative support, and professional development for staff [01-program-notes-and-outcomes.md] |
-| **Total** | **185** | |
+| Category                  | Amount ($000s) | Justification                                                                                                                                                                                                                                                |
+| ------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Personnel                 | 118            | FTE × salary × months; 2 full-time coordinators and 11 part-time instructors are required to support expanded BrightPath sessions at 5 schools, with a 18-month duration and a 10% fringe rate applied to part-time staff [01-program-notes-and-outcomes.md] |
+| Equipment & materials     | 32             | Purchase of 5 robotics kits and classroom refresh laptops to support expanded STEM activities and ensure consistent access to hands-on learning tools [01-program-notes-and-outcomes.md]                                                                     |
+| Transportation (late bus) | 18             | Funds for 18 months of late bus transportation for students attending BrightPath sessions, covering 10% of the total transportation cost per student per month [01-program-notes-and-outcomes.md]                                                            |
+| Evaluation & data         | 9              | Support for data collection, outcome tracking, and baseline assessments to measure STEM access and student engagement improvements [01-program-notes-and-outcomes.md]                                                                                        |
+| Indirect                  | 8              | 8% of total program spend allocated to indirect costs such as office supplies, administrative support, and professional development for staff [01-program-notes-and-outcomes.md]                                                                             |
+| **Total**                 | **185**        |                                                                                                                                                                                                                                                              |
 
 ## Sustainability Plan
 
@@ -96,11 +96,11 @@ Project elements will be continued year-round with a focus on core components: h
 
 ## Required Attachments
 
-- Letters of support from key stakeholders, including school administrators, parents, and STEM educators  
-- Memoranda of Understanding (MOUs) or Memoranda of Agreement (MOAs) with partner organizations and community partners  
-- IRS determination letter confirming the nonprofit status and tax-exempt status of Riverside Youth Coalition  
-- Audited financial statements for the most recent fiscal year (FY2025)  
-- Board roster with current board members and leadership details  
-- Indirect-cost rate agreement outlining the methodology and justification for indirect expenses  
-- Biosketches for key personnel, including Sofia Alvarez, Development Director, and the full-time coordinators and part-time instructors  
+- Letters of support from key stakeholders, including school administrators, parents, and STEM educators
+- Memoranda of Understanding (MOUs) or Memoranda of Agreement (MOAs) with partner organizations and community partners
+- IRS determination letter confirming the nonprofit status and tax-exempt status of Riverside Youth Coalition
+- Audited financial statements for the most recent fiscal year (FY2025)
+- Board roster with current board members and leadership details
+- Indirect-cost rate agreement outlining the methodology and justification for indirect expenses
+- Biosketches for key personnel, including Sofia Alvarez, Development Director, and the full-time coordinators and part-time instructors
 - Data-management plan detailing how student outcomes, attendance, and program metrics will be collected, stored, and analyzed

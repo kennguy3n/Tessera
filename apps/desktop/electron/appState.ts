@@ -620,10 +620,7 @@ export interface NativeBridge {
    * `channel_deleted`, or `principal_missing_from_roster` (a
    * routine refresh returned `Revoked`).
    */
-  bridgeLogKchatChannelAccessRevoked(
-    channelId: string,
-    reason: string,
-  ): void;
+  bridgeLogKchatChannelAccessRevoked(channelId: string, reason: string): void;
   /**
    * No-throw audit append called by `KchatEventForwarder` /
    * `kchat:disconnect` immediately after a revoke transition
@@ -1214,9 +1211,8 @@ let kchatDeeplinkTeardown: (() => void) | null = null;
 // that would result from `appState.ts` importing the IPC module
 // directly (the IPC module already imports `getKchatAuthService`
 // and `getBridge` from this file).
-let kchatChannelResyncImpl:
-  | ((channelId: string) => Promise<void>)
-  | null = null;
+let kchatChannelResyncImpl: ((channelId: string) => Promise<void>) | null =
+  null;
 export function setKchatChannelResyncImpl(
   next: ((channelId: string) => Promise<void>) | null,
 ): void {
@@ -1244,9 +1240,7 @@ let kchatBackfillImpl:
   | ((channelId: string) => Promise<KchatBackfillRunOutcome>)
   | null = null;
 export function setKchatBackfillImpl(
-  next:
-    | ((channelId: string) => Promise<KchatBackfillRunOutcome>)
-    | null,
+  next: ((channelId: string) => Promise<KchatBackfillRunOutcome>) | null,
 ): void {
   kchatBackfillImpl = next;
 }
@@ -1295,11 +1289,7 @@ let diffusionSidecar: DiffusionSidecar | null = null;
 // layer can render the right error. The raw nullable accessor stays
 // for the shutdown path which only cares "is there a process to
 // stop?".
-type DiffusionSidecarState =
-  | "unloaded"
-  | "loading"
-  | "loaded"
-  | "failed";
+type DiffusionSidecarState = "unloaded" | "loading" | "loaded" | "failed";
 let diffusionSidecarState: DiffusionSidecarState = "unloaded";
 let diffusionSidecarLoadError: Error | null = null;
 // follow-up: track the in-flight
@@ -1373,7 +1363,8 @@ export async function initAppState(): Promise<boolean> {
     // coerce to the literal string "undefined" — a silently wrong env var.
     // The fallback keeps the addon defaulting to the safe low-footprint
     // profile regardless.
-    process.env.TESSERA_RESOURCE_MODE = loadConfig().resourceMode ?? "lightweight";
+    process.env.TESSERA_RESOURCE_MODE =
+      loadConfig().resourceMode ?? "lightweight";
   } catch {
     process.env.TESSERA_RESOURCE_MODE = "lightweight";
   }
@@ -1655,15 +1646,11 @@ export type SidecarKind = "text" | "vision" | "diffusion";
 export async function enforceSidecarExclusivity(
   starting: SidecarKind,
 ): Promise<void> {
-  await stopOtherSidecarsForExclusivity(
-    starting,
-    loadConfig().resourceMode,
-    [
-      { kind: "text", sidecar: modelSidecar },
-      { kind: "vision", sidecar: visionSidecar },
-      { kind: "diffusion", sidecar: diffusionSidecar },
-    ],
-  );
+  await stopOtherSidecarsForExclusivity(starting, loadConfig().resourceMode, [
+    { kind: "text", sidecar: modelSidecar },
+    { kind: "vision", sidecar: visionSidecar },
+    { kind: "diffusion", sidecar: diffusionSidecar },
+  ]);
 }
 
 /**
@@ -1695,7 +1682,9 @@ export async function stopOtherSidecarsForExclusivity(
   await Promise.all(
     slots
       .filter(
-        (e): e is {
+        (
+          e,
+        ): e is {
           kind: SidecarKind;
           sidecar: { isRunning: boolean; stop(): Promise<void> };
         } => e.kind !== starting && e.sidecar !== null && e.sidecar.isRunning,
@@ -1897,11 +1886,12 @@ export function normalizeModelIdleTimeoutSecsToMs(
   return Math.max(0, Math.floor(idleTimeoutSecs)) * 1000;
 }
 
-export function applyModelIdleTimeoutToSidecars(
-  idleTimeoutSecs: number,
-): void {
+export function applyModelIdleTimeoutToSidecars(idleTimeoutSecs: number): void {
   const idleUnloadMs = normalizeModelIdleTimeoutSecsToMs(idleTimeoutSecs);
-  const sidecars: Array<{ name: string; sidecar: { setIdleUnloadMs: (ms: number) => void } | null }> = [
+  const sidecars: Array<{
+    name: string;
+    sidecar: { setIdleUnloadMs: (ms: number) => void } | null;
+  }> = [
     { name: "text", sidecar: modelSidecar },
     { name: "vision", sidecar: visionSidecar },
     { name: "diffusion", sidecar: diffusionSidecar },
@@ -2354,25 +2344,19 @@ let localApiShareArtifactHandler:
   | null = null;
 
 export function setLocalApiSourcesProvider(
-  fn:
-    | (() => Promise<readonly TesseraKchatSourceRow[]>)
-    | null,
+  fn: (() => Promise<readonly TesseraKchatSourceRow[]>) | null,
 ): void {
   localApiSourcesProvider = fn;
 }
 
 export function setLocalApiIngestChannelHandler(
-  fn:
-    | ((req: IngestChannelRequest) => Promise<IngestChannelResponse>)
-    | null,
+  fn: ((req: IngestChannelRequest) => Promise<IngestChannelResponse>) | null,
 ): void {
   localApiIngestChannelHandler = fn;
 }
 
 export function setLocalApiShareArtifactHandler(
-  fn:
-    | ((req: ShareArtifactRequest) => Promise<ShareArtifactResponse>)
-    | null,
+  fn: ((req: ShareArtifactRequest) => Promise<ShareArtifactResponse>) | null,
 ): void {
   localApiShareArtifactHandler = fn;
 }
@@ -2559,8 +2543,9 @@ export async function stopSidecarsList(
 ): Promise<void> {
   await Promise.all(
     entries
-      .filter((e): e is { label: string; sidecar: { stop(): Promise<void> } } =>
-        e.sidecar !== null,
+      .filter(
+        (e): e is { label: string; sidecar: { stop(): Promise<void> } } =>
+          e.sidecar !== null,
       )
       .map((e) =>
         e.sidecar.stop().catch((err) => {

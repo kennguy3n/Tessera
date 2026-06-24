@@ -29,7 +29,12 @@
  * OnGenerate is reserved for *user-initiated* generations going through
  * `artifacts:generateFromTemplate`.
  */
-import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo } from "./appState";
+import {
+  getBridge,
+  getKchatBackfillImpl,
+  type NativeBridge,
+  type AutomationInfo,
+} from "./appState";
 import { isBatteryLow } from "./batteryMonitor";
 import { isIndexingDeferredForMemory } from "./memoryWatchdog";
 import { isAppSuspended } from "./appSuspension";
@@ -475,7 +480,10 @@ async function runAutomation(
         } else {
           const msg = e instanceof Error ? e.message : String(e);
           status = `failed: ${msg}`;
-          console.error(`[scheduler] automation ${a.id} (${a.name}) failed:`, e);
+          console.error(
+            `[scheduler] automation ${a.id} (${a.name}) failed:`,
+            e,
+          );
         }
       }
     } else {
@@ -523,11 +531,19 @@ async function runAutomation(
       // deterministic and a battery-only sequence reads exactly as it did
       // before LW-7.
       const skipParenParts: string[] = [];
-      if (batterySkipped > 0) skipParenParts.push(`${batterySkipped} skipped: battery_low`);
-      if (memorySkipped > 0) skipParenParts.push(`${memorySkipped} skipped: memory_pressure`);
+      if (batterySkipped > 0)
+        skipParenParts.push(`${batterySkipped} skipped: battery_low`);
+      if (memorySkipped > 0)
+        skipParenParts.push(`${memorySkipped} skipped: memory_pressure`);
       const skipStatusParts: string[] = [];
-      if (batterySkipped > 0) skipStatusParts.push(`battery_low (${batterySkipped}/${steps.length} steps)`);
-      if (memorySkipped > 0) skipStatusParts.push(`memory_pressure (${memorySkipped}/${steps.length} steps)`);
+      if (batterySkipped > 0)
+        skipStatusParts.push(
+          `battery_low (${batterySkipped}/${steps.length} steps)`,
+        );
+      if (memorySkipped > 0)
+        skipStatusParts.push(
+          `memory_pressure (${memorySkipped}/${steps.length} steps)`,
+        );
       if (failures.length > 0 && skipParenParts.length > 0) {
         // A sequence can both fail some steps AND defer others. Report
         // both so the count is honest: surfacing only the failures would
@@ -547,10 +563,7 @@ async function runAutomation(
     // per-step loop above already isolates execution errors).
     const msg = e instanceof Error ? e.message : String(e);
     status = `failed: ${msg}`;
-    console.error(
-      `[scheduler] automation ${a.id} (${a.name}) failed:`,
-      e,
-    );
+    console.error(`[scheduler] automation ${a.id} (${a.name}) failed:`, e);
   }
   try {
     bridge.bridgeRecordAutomationRun(a.id, status);
@@ -560,10 +573,7 @@ async function runAutomation(
     // same automation on the next tick because `last_run_at` is
     // unchanged. Log and continue — better to have a duplicate run
     // than to stall the whole scheduler.
-    console.error(
-      `[scheduler] failed to record run for ${a.id}:`,
-      e,
-    );
+    console.error(`[scheduler] failed to record run for ${a.id}:`, e);
   }
 }
 
@@ -572,7 +582,9 @@ function parseAction(json: string): AutomationAction {
   try {
     parsed = JSON.parse(json);
   } catch (e) {
-    throw new Error(`action JSON parse failed: ${e instanceof Error ? e.message : e}`);
+    throw new Error(
+      `action JSON parse failed: ${e instanceof Error ? e.message : e}`,
+    );
   }
   if (!parsed || typeof parsed !== "object" || !("kind" in parsed)) {
     throw new Error("action JSON missing `kind` discriminator");

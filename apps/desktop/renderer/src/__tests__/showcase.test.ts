@@ -9,7 +9,10 @@ import {
   installShowcaseBridge,
   showcasePersonaFromQuery,
 } from "../showcase";
-import { parseBaseDocument, linkTargetRecords } from "../editors/baseDocumentHelpers";
+import {
+  parseBaseDocument,
+  linkTargetRecords,
+} from "../editors/baseDocumentHelpers";
 import {
   resolveLinkedRecords,
   aggregateValues,
@@ -32,10 +35,12 @@ import type { BaseField, BaseRecord } from "../editors/baseEditorTypes";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODELS_JSON = resolve(HERE, "../../../../../sidecars/models.json");
 const DESIGN_TEXT_MODEL_IDS = new Set<string>(
-  (JSON.parse(readFileSync(MODELS_JSON, "utf8")).models as Array<{
-    id: string;
-    capability: string;
-  }>)
+  (
+    JSON.parse(readFileSync(MODELS_JSON, "utf8")).models as Array<{
+      id: string;
+      capability: string;
+    }>
+  )
     .filter((m) => m.capability === "text")
     .map((m) => m.id),
 );
@@ -47,7 +52,13 @@ const DESIGN_TEXT_MODEL_IDS = new Set<string>(
  * `TesseraApi` (the editors call the mock exactly as they call the real bridge).
  */
 
-const PERSONAS = ["healthcare", "legal", "finance", "nonprofit", "retail"] as const;
+const PERSONAS = [
+  "healthcare",
+  "legal",
+  "finance",
+  "nonprofit",
+  "retail",
+] as const;
 
 // Valid lifecycle vocabularies, mirrored from the Rust enums (substrate
 // `MemoryState` for observations, concept_graph `NodeState` for concept nodes)
@@ -90,12 +101,21 @@ type ConceptGraph = {
 };
 type Api = {
   settings: { get: () => Promise<{ onboardingCompleted: boolean }> };
-  artifacts: { list: () => Promise<Array<{ id: string; version: number; artifactType: string }>> };
+  artifacts: {
+    list: () => Promise<
+      Array<{ id: string; version: number; artifactType: string }>
+    >;
+  };
   sources: { listSources: () => Promise<Array<{ id: string }>> };
-  citations: { list: (artifactId: string) => Promise<Array<{ citationId: string }>> };
+  citations: {
+    list: (artifactId: string) => Promise<Array<{ citationId: string }>>;
+  };
   substrate: {
     getMemories: () => Promise<Memory[]>;
-    getConceptGraph: (scope?: string | null, maxNodes?: number | null) => Promise<string>;
+    getConceptGraph: (
+      scope?: string | null,
+      maxNodes?: number | null,
+    ) => Promise<string>;
   };
   runtime: {
     onDownloadProgress: () => () => void;
@@ -150,25 +170,28 @@ describe("buildShowcaseApi", () => {
     },
   );
 
-  it.each(PERSONAS)("exposes a working mock surface for %s", async (persona) => {
-    const api = buildShowcaseApi(persona) as Api;
+  it.each(PERSONAS)(
+    "exposes a working mock surface for %s",
+    async (persona) => {
+      const api = buildShowcaseApi(persona) as Api;
 
-    const settings = await api.settings.get();
-    expect(settings.onboardingCompleted).toBe(true);
+      const settings = await api.settings.get();
+      expect(settings.onboardingCompleted).toBe(true);
 
-    const sources = await api.sources.listSources();
-    expect(sources).toHaveLength(1);
+      const sources = await api.sources.listSources();
+      expect(sources).toHaveLength(1);
 
-    const artifacts = await api.artifacts.list();
-    expect(artifacts.length).toBeGreaterThan(0);
-    // Each artifact is an independent entity at its first revision.
-    expect(artifacts.every((a) => a.version === 1)).toBe(true);
+      const artifacts = await api.artifacts.list();
+      expect(artifacts.length).toBeGreaterThan(0);
+      // Each artifact is an independent entity at its first revision.
+      expect(artifacts.every((a) => a.version === 1)).toBe(true);
 
-    // Citations are surfaced for a real artifact so the provenance panel is
-    // never empty in a capture.
-    const citations = await api.citations.list(artifacts[0].id);
-    expect(citations.length).toBeGreaterThan(0);
-  });
+      // Citations are surfaced for a real artifact so the provenance panel is
+      // never empty in a capture.
+      const citations = await api.citations.list(artifacts[0].id);
+      expect(citations.length).toBeGreaterThan(0);
+    },
+  );
 
   it.each(PERSONAS)(
     "serves only valid observation decay states for %s",
@@ -191,7 +214,9 @@ describe("buildShowcaseApi", () => {
     "serves a concept graph with valid node states and typed edges for %s",
     async (persona) => {
       const api = buildShowcaseApi(persona) as Api;
-      const graph = JSON.parse(await api.substrate.getConceptGraph()) as ConceptGraph;
+      const graph = JSON.parse(
+        await api.substrate.getConceptGraph(),
+      ) as ConceptGraph;
       const ids = new Set(graph.nodes.map((n) => n.id));
       for (const n of graph.nodes) {
         expect(
@@ -213,19 +238,25 @@ describe("buildShowcaseApi", () => {
 
   it("emits the explicit typed concept-graph relations for healthcare", async () => {
     const api = buildShowcaseApi("healthcare") as Api;
-    const graph = JSON.parse(await api.substrate.getConceptGraph()) as ConceptGraph;
+    const graph = JSON.parse(
+      await api.substrate.getConceptGraph(),
+    ) as ConceptGraph;
     // The enriched healthcare plane ships all four headline relation types so
     // the captured graph demonstrates the shipped typed-edge rendering.
     const present = new Set(graph.edges.map((e) => e.relation_type));
     for (const t of ["is_a", "part_of", "supersedes", "contradicts"]) {
-      expect(present.has(t), `healthcare graph missing relation ${t}`).toBe(true);
+      expect(present.has(t), `healthcare graph missing relation ${t}`).toBe(
+        true,
+      );
     }
     expect(graph.truncation).toBe("complete");
   });
 
   it("truncates the concept graph to its most-connected subgraph under a node cap", async () => {
     const api = buildShowcaseApi("healthcare") as Api;
-    const full = JSON.parse(await api.substrate.getConceptGraph(null)) as ConceptGraph;
+    const full = JSON.parse(
+      await api.substrate.getConceptGraph(null),
+    ) as ConceptGraph;
     // The densely-linked spine (the `INC-4471` incident hub) by connectivity.
     const hub = [...full.nodes].sort(
       (a, b) => b.connections_count - a.connections_count,
@@ -265,12 +296,17 @@ describe("buildShowcaseApi Proxy semantics", () => {
   it("keeps namespaces non-thenable so `await api.<ns>` yields the proxy", async () => {
     const api = buildShowcaseApi("retail") as Api;
     // If a namespace were thenable, awaiting it would resolve to undefined.
-    const awaited = (await (api.sources as unknown as Promise<typeof api.sources>)) as typeof api.sources;
+    const awaited = (await (api.sources as unknown as Promise<
+      typeof api.sources
+    >)) as typeof api.sources;
     expect(typeof awaited.listSources).toBe("function");
   });
 
   it("guards symbol property access (e.g. DevTools' Symbol.toStringTag)", () => {
-    const api = buildShowcaseApi("retail") as unknown as Record<symbol, unknown>;
+    const api = buildShowcaseApi("retail") as unknown as Record<
+      symbol,
+      unknown
+    >;
     expect(Object.prototype.toString.call(api)).toBe("[object Object]");
     expect(api[Symbol.toStringTag]).toBeUndefined();
   });
@@ -320,8 +356,13 @@ describe("seeded artifacts exercise the shipped editor capabilities", () => {
             sawLinked = true;
             // Every link target id resolves to a real record in the target table.
             const target = resolver(field.linkedTableId);
-            expect(target, `${persona}: link target ${field.linkedTableId} missing`).toBeDefined();
-            const targetIds = new Set((target!.records as BaseRecord[]).map((r) => r.id));
+            expect(
+              target,
+              `${persona}: link target ${field.linkedTableId} missing`,
+            ).toBeDefined();
+            const targetIds = new Set(
+              (target!.records as BaseRecord[]).map((r) => r.id),
+            );
             for (const rec of table.records as BaseRecord[]) {
               const ids = rec[field.name];
               if (Array.isArray(ids)) {
@@ -348,13 +389,18 @@ describe("seeded artifacts exercise the shipped editor capabilities", () => {
           const linkedDef = (table.fields as BaseField[]).find(
             (f) => f.name === field.linkedField,
           );
-          expect(linkedDef?.type, `${persona}: ${field.name} bad linkedField`).toBe(
-            "linked_record",
-          );
+          expect(
+            linkedDef?.type,
+            `${persona}: ${field.name} bad linkedField`,
+          ).toBe("linked_record");
           const computed = (table.records as BaseRecord[]).map((rec) => {
             const linked = resolveLinkedRecords(
               rec[field.linkedField!],
-              linkTargetRecords(linkedDef!, table.records as BaseRecord[], resolver),
+              linkTargetRecords(
+                linkedDef!,
+                table.records as BaseRecord[],
+                resolver,
+              ),
             );
             const values = linked.map((r) => r[field.targetField!]);
             return field.type === "rollup"
@@ -375,7 +421,10 @@ describe("seeded artifacts exercise the shipped editor capabilities", () => {
           (r) => Array.isArray(r.__comments) && r.__comments.length > 0,
         ),
       );
-      expect(hasComments, `${persona}: no record with a comments timeline`).toBe(true);
+      expect(
+        hasComments,
+        `${persona}: no record with a comments timeline`,
+      ).toBe(true);
     },
   );
 
@@ -394,13 +443,19 @@ describe("seeded artifacts exercise the shipped editor capabilities", () => {
       const formulaCells = content.rows
         .flat()
         .filter((c) => typeof c === "string" && c.startsWith("="));
-      expect(formulaCells.length, `${persona}: no formula cells`).toBeGreaterThan(0);
+      expect(
+        formulaCells.length,
+        `${persona}: no formula cells`,
+      ).toBeGreaterThan(0);
 
       // Named ranges round-trip and every chart binds to a parseable A1 range.
       expect((content.namedRanges ?? []).length).toBeGreaterThan(0);
       for (const chart of content.charts ?? []) {
         const rect = parseA1Range(chart.range);
-        expect(rect, `${persona}: chart ${chart.id} bad range ${chart.range}`).not.toBeNull();
+        expect(
+          rect,
+          `${persona}: chart ${chart.id} bad range ${chart.range}`,
+        ).not.toBeNull();
         expect(rect!.r2).toBeLessThan(rowCount);
         expect(rect!.c2).toBeLessThan(colCount);
         if (chart.labelRange) {

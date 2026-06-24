@@ -70,7 +70,13 @@ describe("applyAiResult — apply modes", () => {
     const editor = makeEditor("<p>Para one</p><p>Para two</p>");
     editor.commands.setTextSelection({ from: 2, to: 5 });
     const ctx = captureAiContext(editor);
-    const ok = applyAiResult(editor, ctx.range, "insert-below", "Inserted", "summarize");
+    const ok = applyAiResult(
+      editor,
+      ctx.range,
+      "insert-below",
+      "Inserted",
+      "summarize",
+    );
     expect(ok).toBe(true);
     expect(editor.getText()).toContain("Inserted");
   });

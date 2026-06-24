@@ -137,10 +137,7 @@ import {
   KCHAT_EVENT_CHANNEL,
   KCHAT_STATUS_CHANNEL,
 } from "../kchat/kchatEventForwarder";
-import {
-  manifestPathFor,
-  writeManifest,
-} from "../kchat/kchatChannelSyncer";
+import { manifestPathFor, writeManifest } from "../kchat/kchatChannelSyncer";
 import type { PostNotification } from "../kchat/kchatNotify";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import type {
@@ -200,8 +197,8 @@ class FakeClient {
     };
   });
 
-  downloadFile = vi.fn(async (_fileId: string) =>
-    new Uint8Array([0x6f, 0x6b, 0x21, 0x0a]),
+  downloadFile = vi.fn(
+    async (_fileId: string) => new Uint8Array([0x6f, 0x6b, 0x21, 0x0a]),
   );
 
   // the forwarder's
@@ -320,9 +317,7 @@ async function waitForCondition(
   while (true) {
     if (predicate()) return;
     if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(
-        `waitForCondition timed out after ${timeoutMs}ms`,
-      );
+      throw new Error(`waitForCondition timed out after ${timeoutMs}ms`);
     }
     await new Promise((r) => setTimeout(r, 5));
   }
@@ -577,9 +572,9 @@ describe("KchatEventForwarder", () => {
     await Promise.resolve();
     expect(w1.sends).toHaveLength(RING_BUFFER_CAP);
     expect((w1.sends[0].payload as { seq: number }).seq).toBe(overage);
-    expect(
-      (w1.sends[w1.sends.length - 1].payload as { seq: number }).seq,
-    ).toBe(RING_BUFFER_CAP + overage - 1);
+    expect((w1.sends[w1.sends.length - 1].payload as { seq: number }).seq).toBe(
+      RING_BUFFER_CAP + overage - 1,
+    );
     fwd.dispose();
   });
 
@@ -642,9 +637,12 @@ describe("KchatEventForwarder", () => {
     // microtask, then the call-site `.catch(...)` adds another.
     // Yielding 5 times covers any extra hop the syncer adds.
     for (let i = 0; i < 5; i++) await Promise.resolve();
-    expect(
-      bridgeMock!.bridgeLogKchatFileEventReceived,
-    ).toHaveBeenCalledWith("file_added", "chan-A", "file-XYZ", false);
+    expect(bridgeMock!.bridgeLogKchatFileEventReceived).toHaveBeenCalledWith(
+      "file_added",
+      "chan-A",
+      "file-XYZ",
+      false,
+    );
     // The forwarder MUST NOT have called the REST client for
     // an unlinked channel (the bridge linked-check is the
     // fast-path early exit).
@@ -695,9 +693,12 @@ describe("KchatEventForwarder", () => {
     );
     await Promise.resolve();
     await Promise.resolve();
-    expect(
-      bridgeMock!.bridgeLogKchatFileEventReceived,
-    ).toHaveBeenCalledWith("file_added", null, "file-ABC", false);
+    expect(bridgeMock!.bridgeLogKchatFileEventReceived).toHaveBeenCalledWith(
+      "file_added",
+      null,
+      "file-ABC",
+      false,
+    );
     fwd.dispose();
   });
 
@@ -903,23 +904,22 @@ describe("KchatEventForwarder", () => {
     expect(client.getFileInfo).toHaveBeenCalledWith("file-NEW-001");
     expect(client.downloadFile).toHaveBeenCalledWith("file-NEW-001");
     expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(1);
-    const [cacheDir, basename] =
-      bridgeMock!.bridgeIndexKchatFile.mock.calls[0];
+    const [cacheDir, basename] = bridgeMock!.bridgeIndexKchatFile.mock.calls[0];
     expect(cacheDir).toContain("chan-linked-1");
     expect(basename).toBe("file-NEW-001.txt");
     // Audit row reflects the successful index.
-    expect(
-      bridgeMock!.bridgeLogKchatFileEventReceived,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatFileEventReceived).toHaveBeenCalledWith(
       "file_added",
       "chan-linked-1",
       "file-NEW-001",
       true,
     );
     // Per-file download audit row also lands.
-    expect(
-      bridgeMock!.bridgeLogKchatFileDownloaded,
-    ).toHaveBeenCalledWith("chan-linked-1", "file-NEW-001.txt", 4);
+    expect(bridgeMock!.bridgeLogKchatFileDownloaded).toHaveBeenCalledWith(
+      "chan-linked-1",
+      "file-NEW-001.txt",
+      4,
+    );
     fwd.dispose();
   });
 
@@ -960,9 +960,7 @@ describe("KchatEventForwarder", () => {
     // The download and index calls still ran; the audit row
     // reflects the indexer's decision (no acceptance).
     expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(1);
-    expect(
-      bridgeMock!.bridgeLogKchatFileEventReceived,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatFileEventReceived).toHaveBeenCalledWith(
       "file_added",
       "chan-linked-2",
       "file-DEDUPED-001",
@@ -1007,9 +1005,7 @@ describe("KchatEventForwarder", () => {
     // failed before the index step.
     expect(bridgeMock!.bridgeIndexKchatFile).not.toHaveBeenCalled();
     // Audit row reflects the failure (triggered_reindex=false).
-    expect(
-      bridgeMock!.bridgeLogKchatFileEventReceived,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatFileEventReceived).toHaveBeenCalledWith(
       "file_added",
       "chan-linked-3",
       "file-NETWORK-001",
@@ -1160,8 +1156,7 @@ describe("KchatEventForwarder", () => {
     // The bridge was called with the legitimate sanitised
     // basename — NEVER the tampered escaping path.
     expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(1);
-    const [, basename] =
-      bridgeMock!.bridgeIndexKchatFile.mock.calls[0];
+    const [, basename] = bridgeMock!.bridgeIndexKchatFile.mock.calls[0];
     expect(basename).toBe("file-TAMPER-001.txt");
     expect(basename).not.toContain("..");
     expect(basename).not.toContain("/");
@@ -1171,9 +1166,7 @@ describe("KchatEventForwarder", () => {
     const finalManifest = JSON.parse(
       await nodeFs.promises.readFile(manifestPathFor(cacheDir), "utf-8"),
     ) as { files: Record<string, string> };
-    expect(finalManifest.files["file-TAMPER-001"]).toBe(
-      "file-TAMPER-001.txt",
-    );
+    expect(finalManifest.files["file-TAMPER-001"]).toBe("file-TAMPER-001.txt");
     fwd.dispose();
   });
 
@@ -1235,9 +1228,7 @@ describe("KchatEventForwarder", () => {
       const [cacheDir, members] =
         bridgeMock!.bridgeRefreshKchatAcl.mock.calls[0];
       expect(cacheDir).toContain("chan-acl-1");
-      expect(members).toEqual([
-        { userId: "principal", role: "channel_user" },
-      ]);
+      expect(members).toEqual([{ userId: "principal", role: "channel_user" }]);
 
       // Audit row fires with the projection outcome (event name
       // is folded into the outcome short-code).
@@ -1304,9 +1295,7 @@ describe("KchatEventForwarder", () => {
       false,
       "revoked:user_removed",
     );
-    expect(
-      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatChannelAccessRevoked).toHaveBeenCalledWith(
       "chan-acl-revoke",
       "principal_missing_from_roster",
     );
@@ -1314,9 +1303,7 @@ describe("KchatEventForwarder", () => {
     // with substrate-authoritative counts (chunks_dropped=5,
     // files_dropped=2). The reason matches the sibling
     // access-revoked row so an operator's grep can correlate.
-    expect(
-      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatSourceCryptoshredded).toHaveBeenCalledWith(
       "chan-acl-revoke",
       "principal_missing_from_roster",
       5,
@@ -1378,9 +1365,7 @@ describe("KchatEventForwarder", () => {
         seq: 11,
       }),
     );
-    await waitForCondition(
-      () => scheduleResync.mock.calls.length > 0,
-    );
+    await waitForCondition(() => scheduleResync.mock.calls.length > 0);
 
     expect(scheduleResync).toHaveBeenCalledTimes(1);
     expect(scheduleResync).toHaveBeenCalledWith("chan-acl-regrant");
@@ -1533,13 +1518,11 @@ describe("KchatEventForwarder", () => {
       // guarantees the whole handler has run.
       await waitForCondition(
         () =>
-          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls
-            .length > 0,
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
       );
 
       expect(bridgeMock!.bridgeRevokeKchatSource).toHaveBeenCalledTimes(1);
-      const [cacheDir] =
-        bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+      const [cacheDir] = bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
       expect(cacheDir).toContain("chan-gone");
       expect(
         bridgeMock!.bridgeLogKchatChannelAccessRevoked,
@@ -1657,21 +1640,19 @@ describe("KchatEventForwarder", () => {
     // this file uses the same waitForCondition signal.
     await waitForCondition(
       () =>
-        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
-        0,
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
     );
 
     // Access-revoked audit row still fires — operators want to
     // see the repeat event.
-    expect(
-      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
-    ).toHaveBeenCalledWith("chan-re-archive", "channel_archived");
+    expect(bridgeMock!.bridgeLogKchatChannelAccessRevoked).toHaveBeenCalledWith(
+      "chan-re-archive",
+      "channel_archived",
+    );
     // Shred audit row also fires, but with zero counts — the
     // operator-visible signal that the source was previously
     // scrubbed and the re-revoke found nothing to do.
-    expect(
-      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatSourceCryptoshredded).toHaveBeenCalledWith(
       "chan-re-archive",
       "channel_archived",
       0,
@@ -1744,9 +1725,10 @@ describe("KchatEventForwarder", () => {
         bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
     );
 
-    expect(
-      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
-    ).toHaveBeenCalledWith("chan-never-linked", "channel_deleted");
+    expect(bridgeMock!.bridgeLogKchatChannelAccessRevoked).toHaveBeenCalledWith(
+      "chan-never-linked",
+      "channel_deleted",
+    );
     expect(
       bridgeMock!.bridgeLogKchatSourceCryptoshredded,
     ).not.toHaveBeenCalled();
@@ -1783,9 +1765,7 @@ describe("KchatEventForwarder", () => {
 
     // Sanity: artifacts exist before the revoke.
     await expect(nodeFs.promises.access(cacheDir)).resolves.toBeUndefined();
-    await expect(
-      nodeFs.promises.access(manifestPath),
-    ).resolves.toBeUndefined();
+    await expect(nodeFs.promises.access(manifestPath)).resolves.toBeUndefined();
 
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
@@ -1899,8 +1879,7 @@ describe("KchatEventForwarder", () => {
           bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
       );
 
-      const call =
-        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls[0];
+      const call = bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls[0];
       // Args: (channelId, reason, chunksDropped, filesDropped,
       //        postsDropped, dekDropped,
       //        fsScrubSucceeded, fsScrubError,
@@ -1994,15 +1973,14 @@ describe("KchatEventForwarder", () => {
     // fires normally — proving the VACUUM failure does NOT cause
     // the forwarder to fall through to its catch block and emit
     // outcome=unlinked.
-    expect(
-      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
-    ).toHaveBeenCalledWith("chan-vacuum-failed", "channel_deleted");
+    expect(bridgeMock!.bridgeLogKchatChannelAccessRevoked).toHaveBeenCalledWith(
+      "chan-vacuum-failed",
+      "channel_deleted",
+    );
 
     // The cryptoshred row carries the substrate's row-level
     // counts AND the VACUUM-failure observability fields.
-    expect(
-      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
-    ).toHaveBeenCalledWith(
+    expect(bridgeMock!.bridgeLogKchatSourceCryptoshredded).toHaveBeenCalledWith(
       "chan-vacuum-failed",
       "channel_deleted",
       9,
@@ -2059,7 +2037,8 @@ describe("KchatEventForwarder", () => {
   it("dispatches posted into bridgeIngestKchatPost and audits the outcome", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
@@ -2107,7 +2086,8 @@ describe("KchatEventForwarder", () => {
       chunkCount: 2,
     });
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
@@ -2150,7 +2130,8 @@ describe("KchatEventForwarder", () => {
       chunksDropped: 3,
     });
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
@@ -2190,7 +2171,8 @@ describe("KchatEventForwarder", () => {
   it("short-circuits unlinked channels on posted without invoking the bridge", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(false);
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
@@ -2228,7 +2210,8 @@ describe("KchatEventForwarder", () => {
   it("audits no_post when posted carries a malformed payload", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
@@ -2328,13 +2311,11 @@ describe("KchatEventForwarder", () => {
       );
       await waitForCondition(
         () =>
-          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
-          0,
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
       );
 
       expect(seenChannelIds).toContain("chan-injected");
-      const [cacheDir] =
-        bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+      const [cacheDir] = bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
       expect(cacheDir).toBe(
         nodePath.join(customCacheRoot, "kchat-channels", "chan-injected"),
       );
@@ -2382,12 +2363,10 @@ describe("KchatEventForwarder", () => {
     );
     await waitForCondition(
       () =>
-        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
-        0,
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
     );
 
-    const [cacheDir] =
-      bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+    const [cacheDir] = bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
     expect(cacheDir).toBe(
       nodePath.join(
         TEST_HOME,
@@ -2398,7 +2377,6 @@ describe("KchatEventForwarder", () => {
     );
     fwd.dispose();
   });
-
 });
 
 describe("KchatEventForwarder watched-channel notifications (Task 3)", () => {
@@ -2562,7 +2540,8 @@ describe("KchatEventForwarder inbound task auto-create (Task 6)", () => {
 
   function makeForwarder(): KchatEventForwarder {
     return new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
       notify: () => {},
       resolveChannelName: () => "general",
@@ -2675,7 +2654,8 @@ describe("KchatEventForwarder dispose() clears session-scoped state", () => {
 
   it("clears the watched-channel set and auto-create toggle", () => {
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
       notify: () => {},
       resolveChannelName: () => "general",
@@ -2699,7 +2679,8 @@ describe("KchatEventForwarder dispose() clears session-scoped state", () => {
   it("clears the username cache so a re-start re-resolves the same id", async () => {
     const notifications: PostNotification[] = [];
     const fwd = new KchatEventForwarder({
-      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      listWindows: () =>
+        [new FakeWindow()] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
       notify: (n) => notifications.push(n),
       resolveChannelName: () => "general",

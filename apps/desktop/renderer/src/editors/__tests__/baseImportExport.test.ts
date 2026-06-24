@@ -223,14 +223,9 @@ describe("formatValueForCsv — per-field-type formatters", () => {
       { id: "id_beta", Title: "Beta", Refs: [] },
       { id: "id_gamma", Title: "Gamma", Refs: ["id_alpha", "id_beta"] },
     ];
-    expect(
-      formatValueForCsv(
-        fields[1],
-        records[2],
-        records,
-        fields,
-      ),
-    ).toBe("Alpha; Beta");
+    expect(formatValueForCsv(fields[1], records[2], records, fields)).toBe(
+      "Alpha; Beta",
+    );
   });
 
   it("linked_record falls back to id slice if no display field configured", () => {
@@ -351,9 +346,7 @@ describe("exportBaseCsv — full base → CSV serialization", () => {
       ],
     };
     const csv = exportBaseCsv(data);
-    expect(csv).toBe(
-      '"Field, comma","Field ""quote"""\r\n"a, b","say ""hi"""',
-    );
+    expect(csv).toBe('"Field, comma","Field ""quote"""\r\n"a, b","say ""hi"""');
   });
 });
 
@@ -696,7 +689,12 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
     (result.fields[0].options as string[]).push("purple");
     expect(schema[0].options).toEqual(["red", "green", "blue"]);
     schema[0].options.push("orange");
-    expect(result.fields[0].options).toEqual(["red", "green", "blue", "purple"]);
+    expect(result.fields[0].options).toEqual([
+      "red",
+      "green",
+      "blue",
+      "purple",
+    ]);
   });
 
   // Devin Review PR #82 (ANALYSIS_…_0005): `parseCsvToBase` reuses

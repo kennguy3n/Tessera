@@ -134,59 +134,53 @@ export function registerArtifactsHandlers(): void {
   // separate handler means a renderer that doesn't know about
   // recovery just doesn't call this channel and pays no cost — and
   // the `artifacts:get` IPC shape stays unchanged for older callers.
-  idempotentHandle(
-    "artifacts:checkRecovery",
-    async (_event, id: unknown) => {
-      const aId = assertId(id, "artifactId");
-      const env = await loadRecovery(aId);
-      if (env === null) return null;
-      const bridge = getBridge();
-      if (!bridge) {
-        // No bridge means we can't compare against the DB row, so
-        // we conservatively return the envelope and let the
-        // renderer decide. In practice this only fires in tests
-        // and headless harnesses.
-        return env;
-      }
-      // The bridge's `bridgeGetArtifact` returns the canonical row
-      // including `updatedAt` in ISO-8601 form. We compare against
-      // the sidecar's epoch-ms `timestamp` and only surface the
-      // envelope if the sidecar is STRICTLY newer — a sidecar
-      // older than the DB row indicates the save succeeded and we
-      // missed the post-save cleanup (the recovery is stale).
-      let dbUpdatedAtMs: number | null = null;
-      try {
-        const artifact = bridge.bridgeGetArtifact(aId);
-        if (artifact && typeof artifact.updatedAt === "string") {
-          const parsed = Date.parse(artifact.updatedAt);
-          if (!Number.isNaN(parsed)) dbUpdatedAtMs = parsed;
-        }
-      } catch {
-        // Unknown artifact id — fall through and surface the
-        // envelope; the renderer will reject if the id is bogus.
-      }
-      if (dbUpdatedAtMs !== null && env.timestamp <= dbUpdatedAtMs) {
-        // DB row caught up; clear the stale sidecar so the next
-        // open doesn't have to make this decision again.
-        await clearRecovery(aId).catch(() => undefined);
-        return null;
-      }
+  idempotentHandle("artifacts:checkRecovery", async (_event, id: unknown) => {
+    const aId = assertId(id, "artifactId");
+    const env = await loadRecovery(aId);
+    if (env === null) return null;
+    const bridge = getBridge();
+    if (!bridge) {
+      // No bridge means we can't compare against the DB row, so
+      // we conservatively return the envelope and let the
+      // renderer decide. In practice this only fires in tests
+      // and headless harnesses.
       return env;
-    },
-  );
+    }
+    // The bridge's `bridgeGetArtifact` returns the canonical row
+    // including `updatedAt` in ISO-8601 form. We compare against
+    // the sidecar's epoch-ms `timestamp` and only surface the
+    // envelope if the sidecar is STRICTLY newer — a sidecar
+    // older than the DB row indicates the save succeeded and we
+    // missed the post-save cleanup (the recovery is stale).
+    let dbUpdatedAtMs: number | null = null;
+    try {
+      const artifact = bridge.bridgeGetArtifact(aId);
+      if (artifact && typeof artifact.updatedAt === "string") {
+        const parsed = Date.parse(artifact.updatedAt);
+        if (!Number.isNaN(parsed)) dbUpdatedAtMs = parsed;
+      }
+    } catch {
+      // Unknown artifact id — fall through and surface the
+      // envelope; the renderer will reject if the id is bogus.
+    }
+    if (dbUpdatedAtMs !== null && env.timestamp <= dbUpdatedAtMs) {
+      // DB row caught up; clear the stale sidecar so the next
+      // open doesn't have to make this decision again.
+      await clearRecovery(aId).catch(() => undefined);
+      return null;
+    }
+    return env;
+  });
 
   // explicit-discard entrypoint. Renderer calls
   // this when the user clicks "Discard" on the restore prompt.
   // Idempotent (the underlying `clearRecovery` swallows `ENOENT`),
   // so a duplicate click is harmless.
-  idempotentHandle(
-    "artifacts:discardRecovery",
-    async (_event, id: unknown) => {
-      const aId = assertId(id, "artifactId");
-      await clearRecovery(aId);
-      return true;
-    },
-  );
+  idempotentHandle("artifacts:discardRecovery", async (_event, id: unknown) => {
+    const aId = assertId(id, "artifactId");
+    await clearRecovery(aId);
+    return true;
+  });
 
   idempotentHandle("artifacts:list", async () => {
     const bridge = getBridge();
@@ -216,12 +210,7 @@ export function registerArtifactsHandlers(): void {
 
   idempotentHandle(
     "artifacts:export",
-    async (
-      _event,
-      id: unknown,
-      format: unknown,
-      contentOverride?: unknown,
-    ) => {
+    async (_event, id: unknown, format: unknown, contentOverride?: unknown) => {
       const aId = assertId(id, "artifactId");
       const fmt = assertString(format, "format", { maxLen: 32 });
       const co =
@@ -484,7 +473,13 @@ export function registerArtifactsHandlers(): void {
     // `runTypstExport`'s temp-file default (which uses `os.tmpdir()`,
     // itself in the allowlist).
     if (parsed.outputPath && path.isAbsolute(parsed.outputPath)) {
-      if (!isSafeExportPath(parsed.outputPath, getSafeExportRoots(), getDenyExportRoots())) {
+      if (
+        !isSafeExportPath(
+          parsed.outputPath,
+          getSafeExportRoots(),
+          getDenyExportRoots(),
+        )
+      ) {
         throw new Error(
           `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${parsed.outputPath}`,
         );
@@ -502,7 +497,13 @@ export function registerArtifactsHandlers(): void {
     const parsed = MarpExportSchema.parse(req);
     let resolvedPath: string;
     if (path.isAbsolute(parsed.outputPath)) {
-      if (!isSafeExportPath(parsed.outputPath, getSafeExportRoots(), getDenyExportRoots())) {
+      if (
+        !isSafeExportPath(
+          parsed.outputPath,
+          getSafeExportRoots(),
+          getDenyExportRoots(),
+        )
+      ) {
         throw new Error(
           `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${parsed.outputPath}`,
         );

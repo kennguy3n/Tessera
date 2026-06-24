@@ -552,15 +552,18 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
           // Shift+Arrow pans the canvas.
           const vb = viewBox;
           if (direction === "up") panBy(0, -vb.height * KEYBOARD_PAN_STEP);
-          else if (direction === "down") panBy(0, vb.height * KEYBOARD_PAN_STEP);
-          else if (direction === "left") panBy(-vb.width * KEYBOARD_PAN_STEP, 0);
+          else if (direction === "down")
+            panBy(0, vb.height * KEYBOARD_PAN_STEP);
+          else if (direction === "left")
+            panBy(-vb.width * KEYBOARD_PAN_STEP, 0);
           else panBy(vb.width * KEYBOARD_PAN_STEP, 0);
           return;
         }
         // Plain Arrow traverses the graph spatially. If the roving target is
         // absent from the (possibly scrubber-filtered) node set, seed from the
         // first visible node instead of silently stalling.
-        const present = rovingId !== null && nodes.some((n) => n.id === rovingId);
+        const present =
+          rovingId !== null && nodes.some((n) => n.id === rovingId);
         if (!present) {
           moveRoving(nodes[0]?.id ?? null);
           return;
@@ -639,7 +642,11 @@ export default function ConceptGraphCanvas(props: ConceptGraphCanvasProps) {
       aria-label={ariaLabel}
       tabIndex={0}
       data-testid={testId ?? "concept-graph-canvas"}
-      style={{ aspectRatio: `${width} / ${height}`, width: "100%", touchAction: "none" }}
+      style={{
+        aspectRatio: `${width} / ${height}`,
+        width: "100%",
+        touchAction: "none",
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endPointer}

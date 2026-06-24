@@ -261,7 +261,10 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
       ctx.requireBridge().bridgeRemoveSource(id);
     },
     listSources: () =>
-      ctx.requireBridge().bridgeListSources().map((s) => ({ id: s.id, path: s.path })),
+      ctx
+        .requireBridge()
+        .bridgeListSources()
+        .map((s) => ({ id: s.id, path: s.path })),
   };
 }
 
@@ -288,7 +291,10 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
  * operator can diagnose a chronically-failing audit pipeline
  * without it manifesting as a user-facing error.
  */
-function safeAudit(ctx: IpcContext, fn: (b: ReturnType<IpcContext["requireBridge"]>) => void): void {
+function safeAudit(
+  ctx: IpcContext,
+  fn: (b: ReturnType<IpcContext["requireBridge"]>) => void,
+): void {
   try {
     fn(ctx.requireBridge());
   } catch (err) {
@@ -408,7 +414,9 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
 export function classifyConnectorError(err: unknown): FailureKind {
   if (err == null) return "transient";
   if (typeof err === "object") {
-    if ((err as { isNotConnectedError?: boolean }).isNotConnectedError === true) {
+    if (
+      (err as { isNotConnectedError?: boolean }).isNotConnectedError === true
+    ) {
       return "permanent";
     }
     // `isNetworkError` flag is the explicit transient marker —
@@ -489,7 +497,10 @@ export function classifyConnectorError(err: unknown): FailureKind {
  * just saw their sync succeed — we must not turn that into a
  * thrown error because a downstream DB write hiccuped.
  */
-function clearAllProviderFailureStates(ctx: IpcContext, provider: ProviderId): void {
+function clearAllProviderFailureStates(
+  ctx: IpcContext,
+  provider: ProviderId,
+): void {
   const targetType = PROVIDER_TO_SOURCE_TYPE[provider];
   if (targetType == null) return;
   try {
@@ -534,7 +545,11 @@ function recordAllProviderFailures(
   if (targetType == null) return;
   const kind = classifyConnectorError(err);
   const message =
-    err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : String(err);
   try {
     const bridge = ctx.requireBridge();
     const sources = bridge.bridgeListSources();
@@ -822,7 +837,8 @@ async function runSync(
   // when there's >60s left and only hits the network when truly
   // expired, so the per-iteration cost is a vault read + a
   // millisecond comparison in the common case.
-  const getAccessToken = (): Promise<string> => getValidAccessToken(ctx, provider);
+  const getAccessToken = (): Promise<string> =>
+    getValidAccessToken(ctx, provider);
 
   // v2 path: when `useV2Connectors` is on (default) AND the native
   // addon exposes the v2 functions AND this provider is compiled into
@@ -877,7 +893,10 @@ async function runSync(
 
   if (useV2 && !hasSelection) {
     const nativeBridge = ctx.requireBridge();
-    if (v2BridgeAvailable(nativeBridge) && isV2Supported(nativeBridge, provider)) {
+    if (
+      v2BridgeAvailable(nativeBridge) &&
+      isV2Supported(nativeBridge, provider)
+    ) {
       return runProviderV2Sync(ctx, provider, userDataDir);
     }
     // Substrate-only providers have no legacy fallback. If the v2
@@ -913,7 +932,12 @@ async function runSync(
     case "jira":
       return syncJira({ accessToken, getAccessToken, userDataDir, bridge });
     case "confluence":
-      return syncConfluence({ accessToken, getAccessToken, userDataDir, bridge });
+      return syncConfluence({
+        accessToken,
+        getAccessToken,
+        userDataDir,
+        bridge,
+      });
     case "figma":
       return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
     case "hubspot":
@@ -1152,7 +1176,13 @@ async function runConnectorSyncInner(
     throw err;
   }
   try {
-    const result = await runSync(ctx, provider, token, ctx.userDataDir(), options);
+    const result = await runSync(
+      ctx,
+      provider,
+      token,
+      ctx.userDataDir(),
+      options,
+    );
     // log the sync delta counts on the `"synced"`
     // path only. The `"offline"` status returned below reflects a
     // transient network failure (no actual sync work happened) so an
@@ -1556,7 +1586,12 @@ async function probeConnection(
     return { provider, ok: false, message: (err as Error).message };
   }
   try {
-    const outcome = await runV2Probe({ provider, bridge, tokens, scopeId: null });
+    const outcome = await runV2Probe({
+      provider,
+      bridge,
+      tokens,
+      scopeId: null,
+    });
     ctx.log.info("connector probe succeeded", {
       provider,
       observedEvents: outcome.observed_events,
@@ -1681,8 +1716,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // store the whole comma-joined string as a single scope and
       // every sync would flag false missing-scope errors.
       const requestedScopes = getRequestedScopes(config);
-      const persistedScopes =
-        tokens.grantedScopes ?? requestedScopes;
+      const persistedScopes = tokens.grantedScopes ?? requestedScopes;
       ctx.tokenVault.storeTokens(provider, {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -1834,7 +1868,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         });
       }
       ctx.log.info("connector disconnected", { provider, filesRemoved });
-      safeAudit(ctx, (b) => b.bridgeLogConnectorDisconnected(provider, filesRemoved));
+      safeAudit(ctx, (b) =>
+        b.bridgeLogConnectorDisconnected(provider, filesRemoved),
+      );
       return { provider, connected: false, status: "disconnected" };
     },
   );
@@ -1900,10 +1936,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
   // (no refresh, no provider API call). Renderers can poll cheaply.
   idempotentHandle(
     "connectors:inspectScopes",
-    async (
-      _event,
-      providerRaw: unknown,
-    ): Promise<ScopeComparison | null> => {
+    async (_event, providerRaw: unknown): Promise<ScopeComparison | null> => {
       const provider = assertProvider(providerRaw, "provider");
       const stored = ctx.tokenVault.getTokens(provider);
       if (!stored) return null;

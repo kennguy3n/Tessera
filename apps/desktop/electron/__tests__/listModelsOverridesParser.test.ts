@@ -23,8 +23,9 @@ describe("parseListModelsOverrides — happy paths", () => {
   });
 
   it("extracts providerType when the value is a known type", () => {
-    expect(parseListModelsOverrides({ providerType: "openai_compatible" }))
-      .toEqual({ providerType: "openai_compatible" });
+    expect(
+      parseListModelsOverrides({ providerType: "openai_compatible" }),
+    ).toEqual({ providerType: "openai_compatible" });
     expect(parseListModelsOverrides({ providerType: "anthropic" })).toEqual({
       providerType: "anthropic",
     });
@@ -99,8 +100,9 @@ describe("parseListModelsOverrides — defensive paths", () => {
     // the field is silently dropped and the handler falls back to
     // the persisted providerType for that field. This is the
     // forward-compat path documented in the parser.
-    expect(parseListModelsOverrides({ providerType: "future_provider" }))
-      .toEqual({});
+    expect(
+      parseListModelsOverrides({ providerType: "future_provider" }),
+    ).toEqual({});
     expect(parseListModelsOverrides({ providerType: 1 })).toEqual({});
     expect(parseListModelsOverrides({ providerType: null })).toEqual({});
   });

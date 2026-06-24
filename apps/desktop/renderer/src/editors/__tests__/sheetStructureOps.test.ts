@@ -50,7 +50,9 @@ describe("removeColumnAt", () => {
       "1,0": { underline: true },
     });
     // validations: col 0 dropped, col 2 → col 1.
-    expect(next.validations).toEqual({ "1": { kind: "list", values: ["x", "y"] } });
+    expect(next.validations).toEqual({
+      "1": { kind: "list", values: ["x", "y"] },
+    });
     // conditional rule targeting col 2 → col 1; the "all" rule survives.
     expect(next.conditionalRules).toEqual([
       { id: "r-all", column: null, operator: "gt", value: "0", style: {} },

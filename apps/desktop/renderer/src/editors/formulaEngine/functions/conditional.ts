@@ -53,7 +53,9 @@ interface ParsedCriterion {
  * out the operator and apply it; everything else is a textual
  * match-with-wildcards (case-insensitive).
  */
-function compileCriterion(rawCriterion: FormulaValue): ParsedCriterion | FormulaError {
+function compileCriterion(
+  rawCriterion: FormulaValue,
+): ParsedCriterion | FormulaError {
   if (isFormulaError(rawCriterion)) return rawCriterion;
   if (typeof rawCriterion === "number") {
     return { predicate: (v) => valueMatchesNumberEq(v, rawCriterion) };
@@ -90,7 +92,8 @@ function compileCriterion(rawCriterion: FormulaValue): ParsedCriterion | Formula
 
 function makeNumericPredicate(op: string, rhs: number): Predicate {
   return (v) => {
-    if (v === null) return op === "=" ? rhs === 0 : op === "<>" ? rhs !== 0 : false;
+    if (v === null)
+      return op === "=" ? rhs === 0 : op === "<>" ? rhs !== 0 : false;
     if (typeof v !== "number") {
       if (typeof v === "string") {
         const n = Number(v);
@@ -206,7 +209,10 @@ function escapeRegex(ch: string): string {
   return ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function expandRange(arg: AstNode, ctx: EvaluationContext): FormulaValue[] | FormulaError {
+function expandRange(
+  arg: AstNode,
+  ctx: EvaluationContext,
+): FormulaValue[] | FormulaError {
   // A literal range OR a named range that resolves to one is expanded
   // across every cell, so `SUMIF(Revenue, ">0")` (Revenue = A1:A10)
   // tests all ten cells rather than collapsing to A1 via implicit
@@ -232,7 +238,8 @@ const SUMIF: FunctionImpl = (args, ctx) => {
   }
   const criteriaRange = expandRange(args[0], ctx);
   if (isFormulaError(criteriaRange)) return criteriaRange;
-  const sumRange = args.length === 3 ? expandRange(args[2], ctx) : criteriaRange;
+  const sumRange =
+    args.length === 3 ? expandRange(args[2], ctx) : criteriaRange;
   if (isFormulaError(sumRange)) return sumRange;
   if (sumRange.length !== criteriaRange.length) {
     return makeError("#VALUE!", "SUMIF range shape mismatch");
@@ -252,7 +259,8 @@ const SUMIF: FunctionImpl = (args, ctx) => {
 };
 
 const COUNTIF: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "COUNTIF expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "COUNTIF expects 2 arguments");
   const range = expandRange(args[0], ctx);
   if (isFormulaError(range)) return range;
   const criterion = compileCriterion(evaluate(args[1], ctx));
@@ -270,7 +278,8 @@ const AVERAGEIF: FunctionImpl = (args, ctx) => {
   }
   const criteriaRange = expandRange(args[0], ctx);
   if (isFormulaError(criteriaRange)) return criteriaRange;
-  const avgRange = args.length === 3 ? expandRange(args[2], ctx) : criteriaRange;
+  const avgRange =
+    args.length === 3 ? expandRange(args[2], ctx) : criteriaRange;
   if (isFormulaError(avgRange)) return avgRange;
   if (avgRange.length !== criteriaRange.length) {
     return makeError("#VALUE!", "AVERAGEIF range shape mismatch");
@@ -288,7 +297,8 @@ const AVERAGEIF: FunctionImpl = (args, ctx) => {
     sum += n;
     count++;
   }
-  if (count === 0) return makeError("#DIV/0!", "AVERAGEIF matched no numeric cells");
+  if (count === 0)
+    return makeError("#DIV/0!", "AVERAGEIF matched no numeric cells");
   return sum / count;
 };
 
@@ -296,11 +306,13 @@ function evalCriteriaPairs(
   args: AstNode[],
   ctx: EvaluationContext,
   startIndex: number,
-): {
-  ranges: FormulaValue[][];
-  criteria: ParsedCriterion[];
-  length: number;
-} | FormulaError {
+):
+  | {
+      ranges: FormulaValue[][];
+      criteria: ParsedCriterion[];
+      length: number;
+    }
+  | FormulaError {
   // After `startIndex`, args come in pairs: (range, criterion).
   if ((args.length - startIndex) % 2 !== 0) {
     return makeError("#ERR!", "criteria range/criterion args must pair up");
@@ -325,7 +337,10 @@ function evalCriteriaPairs(
 
 const SUMIFS: FunctionImpl = (args, ctx) => {
   if (args.length < 3 || args.length % 2 === 0) {
-    return makeError("#ERR!", "SUMIFS expects sum_range + (range, criterion) pairs");
+    return makeError(
+      "#ERR!",
+      "SUMIFS expects sum_range + (range, criterion) pairs",
+    );
   }
   const sumRange = expandRange(args[0], ctx);
   if (isFormulaError(sumRange)) return sumRange;
@@ -336,7 +351,8 @@ const SUMIFS: FunctionImpl = (args, ctx) => {
   }
   let sum = 0;
   for (let i = 0; i < pairs.length; i++) {
-    if (!pairs.criteria.every((c, k) => c.predicate(pairs.ranges[k][i]))) continue;
+    if (!pairs.criteria.every((c, k) => c.predicate(pairs.ranges[k][i])))
+      continue;
     const v = sumRange[i];
     if (isFormulaError(v)) return v;
     const n = toNumber(v);
@@ -354,14 +370,18 @@ const COUNTIFS: FunctionImpl = (args, ctx) => {
   if (isFormulaError(pairs)) return pairs;
   let count = 0;
   for (let i = 0; i < pairs.length; i++) {
-    if (pairs.criteria.every((c, k) => c.predicate(pairs.ranges[k][i]))) count++;
+    if (pairs.criteria.every((c, k) => c.predicate(pairs.ranges[k][i])))
+      count++;
   }
   return count;
 };
 
 const AVERAGEIFS: FunctionImpl = (args, ctx) => {
   if (args.length < 3 || args.length % 2 === 0) {
-    return makeError("#ERR!", "AVERAGEIFS expects avg_range + (range, criterion) pairs");
+    return makeError(
+      "#ERR!",
+      "AVERAGEIFS expects avg_range + (range, criterion) pairs",
+    );
   }
   const avgRange = expandRange(args[0], ctx);
   if (isFormulaError(avgRange)) return avgRange;
@@ -373,7 +393,8 @@ const AVERAGEIFS: FunctionImpl = (args, ctx) => {
   let sum = 0;
   let count = 0;
   for (let i = 0; i < pairs.length; i++) {
-    if (!pairs.criteria.every((c, k) => c.predicate(pairs.ranges[k][i]))) continue;
+    if (!pairs.criteria.every((c, k) => c.predicate(pairs.ranges[k][i])))
+      continue;
     const v = avgRange[i];
     if (isFormulaError(v)) return v;
     const n = toNumber(v);
@@ -381,7 +402,8 @@ const AVERAGEIFS: FunctionImpl = (args, ctx) => {
     sum += n;
     count++;
   }
-  if (count === 0) return makeError("#DIV/0!", "AVERAGEIFS matched no numeric cells");
+  if (count === 0)
+    return makeError("#DIV/0!", "AVERAGEIFS matched no numeric cells");
   return sum / count;
 };
 

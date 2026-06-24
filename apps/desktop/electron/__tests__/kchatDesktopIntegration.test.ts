@@ -289,8 +289,7 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
     // does NOT bypass the production code path — `start()`
     // still calls `this.fsWriter.writeAtomic`, we're just
     // pointing it at a non-throwing implementation now.
-    (server as unknown as { fsWriter: PortFileWriter }).fsWriter =
-      noopWriter;
+    (server as unknown as { fsWriter: PortFileWriter }).fsWriter = noopWriter;
     const second = await server.start();
     expect(second.port).toBeGreaterThan(0);
     await server.stop();
@@ -321,9 +320,9 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
       join(tmpdir(), "tessera-localapi-null-addr-"),
     );
     let capturedPort = 0;
-    const wrappingCreateServer = ((requestHandler: Parameters<
-      typeof createNodeHttpServer
-    >[0]) => {
+    const wrappingCreateServer = ((
+      requestHandler: Parameters<typeof createNodeHttpServer>[0],
+    ) => {
       const real = createNodeHttpServer(requestHandler);
       const realAddress = real.address.bind(real);
       const realListen = real.listen.bind(real);
@@ -789,9 +788,7 @@ describe("Deeplinks — tessera:// parsing + building", () => {
   });
 
   it("parses an ingest deeplink with optional team", () => {
-    const r = parseDeeplink(
-      "tessera://ingest?channel=chan-1&team=team-1",
-    );
+    const r = parseDeeplink("tessera://ingest?channel=chan-1&team=team-1");
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.route).toEqual({
@@ -902,9 +899,7 @@ describe("DeeplinkBridge — consumer lifecycle + parking", () => {
     bridge.setConsumer((r) => {
       seen.push(r);
     });
-    expect(seen).toEqual([
-      { kind: "source", sourceId: "parked-after-clear" },
-    ]);
+    expect(seen).toEqual([{ kind: "source", sourceId: "parked-after-clear" }]);
   });
 
   it("extractUrlFromArgv finds the first tessera URL", () => {

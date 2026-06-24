@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
 import { ToastProvider } from "../components/Toast";
 
@@ -14,9 +9,11 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     status: vi.fn().mockResolvedValue({ state: "connected" }),
     connect: vi.fn(),
     disconnect: vi.fn(),
-    listTeams: vi.fn().mockResolvedValue([
-      { id: "team-1", name: "t1", display_name: "T1", type: "O" },
-    ]),
+    listTeams: vi
+      .fn()
+      .mockResolvedValue([
+        { id: "team-1", name: "t1", display_name: "T1", type: "O" },
+      ]),
     listChannels: vi.fn().mockResolvedValue([
       {
         id: "chan-1",
@@ -61,16 +58,14 @@ beforeEach(() => {
 describe("KchatChannelSourcePicker", () => {
   it("renders teams, channels, and a file preview", async () => {
     const api = makeApi();
-    wrap(
-      <KchatChannelSourcePicker
-        isOpen
-        onClose={() => {}}
-        api={api}
-      />,
-    );
+    wrap(<KchatChannelSourcePicker isOpen onClose={() => {}} api={api} />);
     expect(await screen.findByTestId("kchat-source-team")).toBeInTheDocument();
-    await waitFor(() => expect(api.listChannels).toHaveBeenCalledWith("team-1"));
-    await waitFor(() => expect(api.listChannelFiles).toHaveBeenCalledWith("chan-1", 0, 50));
+    await waitFor(() =>
+      expect(api.listChannels).toHaveBeenCalledWith("team-1"),
+    );
+    await waitFor(() =>
+      expect(api.listChannelFiles).toHaveBeenCalledWith("chan-1", 0, 50),
+    );
     const list = await screen.findByTestId("kchat-source-file-list");
     expect(list).toHaveTextContent("spec.pdf");
   });
@@ -118,13 +113,9 @@ describe("KchatChannelSourcePicker", () => {
 
   it("surfaces an add-source error inline", async () => {
     const api = makeApi({
-      addChannelSource: vi
-        .fn()
-        .mockRejectedValue(new Error("network error")),
+      addChannelSource: vi.fn().mockRejectedValue(new Error("network error")),
     });
-    wrap(
-      <KchatChannelSourcePicker isOpen onClose={() => {}} api={api} />,
-    );
+    wrap(<KchatChannelSourcePicker isOpen onClose={() => {}} api={api} />);
     await screen.findByTestId("kchat-source-add");
     // Same settle-chain wait as the success-path test above — the
     // Add button is disabled until `selectedChannel` commits, and a
@@ -252,8 +243,7 @@ describe("KchatChannelSourcePicker", () => {
       // version). We assert the rendered text node is non-empty
       // and matches the expected family-defining character.
       expect(
-        (await screen.findByTestId("kchat-source-file-img-1-icon"))
-          .textContent,
+        (await screen.findByTestId("kchat-source-file-img-1-icon")).textContent,
       ).toContain("🖼");
       expect(
         screen.getByTestId("kchat-source-file-vid-1-icon").textContent,

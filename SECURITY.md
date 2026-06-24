@@ -2,9 +2,9 @@
 
 ## Supported versions
 
-| Version | Supported |
-|---|---|
-| Latest `main` | Yes |
+| Version        | Supported   |
+| -------------- | ----------- |
+| Latest `main`  | Yes         |
 | Older releases | Best effort |
 
 Tessera is pre-1.0 software. Security fixes are applied to the latest `main` branch. Once stable releases begin, this table will track supported release branches.
@@ -32,12 +32,12 @@ Send a detailed report to **ken@uney.com** with:
 
 ### Response timeline
 
-| Action | Timeline |
-|---|---|
-| Acknowledgment | Within 48 hours |
-| Initial assessment | Within 7 days |
-| Fix or mitigation plan | Within 30 days |
-| Public disclosure | After fix is released (coordinated) |
+| Action                 | Timeline                            |
+| ---------------------- | ----------------------------------- |
+| Acknowledgment         | Within 48 hours                     |
+| Initial assessment     | Within 7 days                       |
+| Fix or mitigation plan | Within 30 days                      |
+| Public disclosure      | After fix is released (coordinated) |
 
 ---
 
@@ -81,10 +81,10 @@ Tessera integrates the knowledge `crypto` substrate (FIPS 203 ML-KEM-768, FIPS 2
 
 The per-source DEK is wrapped under the app master key with an authenticated, scheme-versioned envelope. The scheme is self-describing via the wrap **nonce length**, which doubles as a zero-overhead discriminator — no extra version column is needed:
 
-| Scheme | AEAD | Wrap nonce | Status |
-|---|---|---|---|
-| `v1` (legacy) | AES-256-GCM + HKDF-SHA256 | 12 bytes | read-only, decrypt-only |
-| `v2` (current) | XChaCha20-Poly1305 + HKDF-SHA256 | 24 bytes | default for all new writes |
+| Scheme         | AEAD                             | Wrap nonce | Status                     |
+| -------------- | -------------------------------- | ---------- | -------------------------- |
+| `v1` (legacy)  | AES-256-GCM + HKDF-SHA256        | 12 bytes   | read-only, decrypt-only    |
+| `v2` (current) | XChaCha20-Poly1305 + HKDF-SHA256 | 24 bytes   | default for all new writes |
 
 - **New DEKs** are always wrapped with `v2`.
 - **Reads** dispatch on the stored nonce length, so legacy `v1` DEKs and `v1` chunk ciphertext keep decrypting with no user action.
@@ -95,12 +95,12 @@ The per-source DEK is wrapped under the app master key with an authenticated, sc
 `tessera_migrate` provides `detect_scheme()` and `upgrade_dek_wrapping()` (migration `0006_kchat_crypto_scheme`). The upgrade:
 
 - **Re-wraps** each legacy `v1` DEK envelope to `v2` under the same master key, inside a single transaction (atomic; rolls back on any failure, e.g. wrong master key).
-- Does **not** re-encrypt stored content. The DEK *value* is unchanged — only its wrapper is upgraded — so existing chunks remain readable while large databases avoid an O(total-evidence) rewrite. Re-wrapping is O(number of sources), typically completing in milliseconds.
+- Does **not** re-encrypt stored content. The DEK _value_ is unchanged — only its wrapper is upgraded — so existing chunks remain readable while large databases avoid an O(total-evidence) rewrite. Re-wrapping is O(number of sources), typically completing in milliseconds.
 - Records progress in the `kchat_crypto_scheme` bookkeeping row and is idempotent (re-running is a no-op once all rows are `v2`).
 
 #### Optional hybrid post-quantum KEM (`pqc` feature, experimental)
 
-`tessera_core` exposes a hybrid **X25519 + ML-KEM-768** KEM (concatenate-then-KDF combiner over HKDF-SHA256) that can wrap the SQLCipher database key, so a captured database file is protected against future quantum decryption of the wrapped key. This is gated behind the `pqc` cargo feature and is **OFF by default** (experimental). When the feature is disabled there is no behavioural or on-disk change. The hybrid construction means security holds as long as *either* X25519 *or* ML-KEM-768 remains unbroken.
+`tessera_core` exposes a hybrid **X25519 + ML-KEM-768** KEM (concatenate-then-KDF combiner over HKDF-SHA256) that can wrap the SQLCipher database key, so a captured database file is protected against future quantum decryption of the wrapped key. This is gated behind the `pqc` cargo feature and is **OFF by default** (experimental). When the feature is disabled there is no behavioural or on-disk change. The hybrid construction means security holds as long as _either_ X25519 _or_ ML-KEM-768 remains unbroken.
 
 #### Export provenance signatures (ML-DSA-65)
 
@@ -118,17 +118,17 @@ The Electron renderer (React UI) operates in a sandboxed context with:
 
 ### Strict process separation
 
-| Process | Access |
-|---|---|
-| Renderer (React) | UI only — no file system, no tokens, no database |
-| Main (Electron) | IPC routing, window management, OS integration |
-| Rust core (N-API) | File indexing, storage, search, export, audit |
-| Sidecar (llama-server) | Model inference on loopback only |
+| Process                | Access                                           |
+| ---------------------- | ------------------------------------------------ |
+| Renderer (React)       | UI only — no file system, no tokens, no database |
+| Main (Electron)        | IPC routing, window management, OS integration   |
+| Rust core (N-API)      | File indexing, storage, search, export, audit    |
+| Sidecar (llama-server) | Model inference on loopback only                 |
 
 ### Token and credential handling
 
 - OAuth tokens for remote connectors are stored in the OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret / GNOME Keyring / KWallet) via Electron's `safeStorage`, never in plaintext files or the renderer.
-- A **per-app keychain ACL** policy classifies the active `safeStorage` backend into a trust tier (`enforced-by-os` for macOS Keychain with a Code-Signing-pinned bundle ID; `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet; `none` for Linux `basic_text` fallback, which is XOR with a hardcoded key — *not* real encryption). When the active backend is `basic_text`, the policy refuses to encrypt secrets by default; in enforce mode it **blocks secret writes** outright, and mid-session backend drift (e.g. a kwallet daemon crash) is detected and logged before the refusal.
+- A **per-app keychain ACL** policy classifies the active `safeStorage` backend into a trust tier (`enforced-by-os` for macOS Keychain with a Code-Signing-pinned bundle ID; `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet; `none` for Linux `basic_text` fallback, which is XOR with a hardcoded key — _not_ real encryption). When the active backend is `basic_text`, the policy refuses to encrypt secrets by default; in enforce mode it **blocks secret writes** outright, and mid-session backend drift (e.g. a kwallet daemon crash) is detected and logged before the refusal.
 - On headless Linux or any environment without a reachable keyring, Tessera falls back to a **password vault** that derives a 256-bit key from a user passphrase via PBKDF2-SHA256 (600 000 iterations) and wraps the DB key + OAuth tokens + API keys with AES-256-GCM.
 - Tokens are never exposed to the renderer process.
 - **OAuth scope governance**: granted scopes are inspected on every connector sync. If the consent screen has been narrowed since the last grant, the renderer receives a precise list of missing scopes and a re-auth CTA instead of opaque 403s.
@@ -190,12 +190,12 @@ CI enforces two supply-chain gates on every pull request: `cargo vet` audits the
 
 Tessera uses well-maintained dependencies with known security properties:
 
-| Dependency | Purpose | Security note |
-|---|---|---|
-| SQLCipher (via rusqlite) | Encrypted local storage | AES-256 page-level encryption |
-| BLAKE3 | Content hashing | Cryptographic hash function |
-| knowledge `crypto` | DEK wrapping, KEM, signatures | XChaCha20-Poly1305 AEAD, ML-KEM-768 (FIPS 203), ML-DSA-65 (FIPS 204) |
-| Electron | Desktop shell | Chromium sandbox + process isolation |
-| napi-rs | Rust ↔ Node.js bridge | No serialization vulnerabilities |
+| Dependency               | Purpose                       | Security note                                                        |
+| ------------------------ | ----------------------------- | -------------------------------------------------------------------- |
+| SQLCipher (via rusqlite) | Encrypted local storage       | AES-256 page-level encryption                                        |
+| BLAKE3                   | Content hashing               | Cryptographic hash function                                          |
+| knowledge `crypto`       | DEK wrapping, KEM, signatures | XChaCha20-Poly1305 AEAD, ML-KEM-768 (FIPS 203), ML-DSA-65 (FIPS 204) |
+| Electron                 | Desktop shell                 | Chromium sandbox + process isolation                                 |
+| napi-rs                  | Rust ↔ Node.js bridge         | No serialization vulnerabilities                                     |
 
 We monitor dependencies for known vulnerabilities and update promptly.

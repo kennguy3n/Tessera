@@ -57,10 +57,7 @@ import * as path from "path";
 import type { TaskForKchat } from "./kchatTaskSync";
 
 /** Discriminator for a queued operation. */
-export type KchatQueuedOpType =
-  | "shareArtifact"
-  | "ingestChannel"
-  | "postTask";
+export type KchatQueuedOpType = "shareArtifact" | "ingestChannel" | "postTask";
 
 /** Persisted request envelope for a deferred `shareArtifact`. */
 export interface KchatShareArtifactRequest {
@@ -665,9 +662,7 @@ function sanitizePayload(
       format: rec.format,
       includeCitations: rec.includeCitations === true,
       includeEvidencePack: rec.includeEvidencePack === true,
-      ...(typeof rec.delivery === "string"
-        ? { delivery: rec.delivery }
-        : {}),
+      ...(typeof rec.delivery === "string" ? { delivery: rec.delivery } : {}),
     };
   }
   if (type === "postTask") {
@@ -677,7 +672,10 @@ function sanitizePayload(
     return { channelId: rec.channelId, task };
   }
   // ingestChannel
-  if (typeof rec.channelId !== "string" || typeof rec.channelName !== "string") {
+  if (
+    typeof rec.channelId !== "string" ||
+    typeof rec.channelName !== "string"
+  ) {
     return null;
   }
   return { channelId: rec.channelId, channelName: rec.channelName };

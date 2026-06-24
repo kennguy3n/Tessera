@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import ConnectorsList from "../components/ConnectorsList";
 import { CONNECTOR_DESCRIPTORS } from "../components/connectorDescriptors";
 import type { ConnectorScopeComparison } from "../types/ipc";
@@ -309,9 +315,9 @@ describe("ConnectorsList", () => {
     });
     fireEvent.click(screen.getByText("Test connection"));
 
-    expect(await screen.findByTestId("connector-test-result")).toHaveTextContent(
-      "Provider rejected the credentials (401).",
-    );
+    expect(
+      await screen.findByTestId("connector-test-result"),
+    ).toHaveTextContent("Provider rejected the credentials (401).");
 
     // Editing a credential invalidates the stale result.
     fireEvent.change(screen.getByLabelText("OAuth Client ID"), {
@@ -344,7 +350,9 @@ describe("ConnectorsList", () => {
     await act(async () => {
       fireEvent.click(syncBtn);
     });
-    await waitFor(() => expect(screen.getByText("Offline")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Offline")).toBeInTheDocument(),
+    );
   });
 
   it("shows a redirect URI hint matching the per-provider port", async () => {
@@ -363,9 +371,7 @@ describe("ConnectorsList", () => {
     // then displays the canonical value from `providerOAuth.ts >
     // PROVIDER_OAUTH_CONFIGS`. Wait for the resolved URI rather than
     // asserting synchronously against the fallback.
-    expect(
-      await screen.findByText(/127\.0\.0\.1:9881/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/127\.0\.0\.1:9881/)).toBeInTheDocument();
   });
 
   it(
@@ -428,14 +434,10 @@ describe("ConnectorsList", () => {
       await waitFor(() =>
         expect(mockApi.connectors.getAllRedirectUris).toHaveBeenCalled(),
       );
-      const localhostNode = await screen.findByText(
-        /localhost:9876\/callback/,
-      );
+      const localhostNode = await screen.findByText(/localhost:9876\/callback/);
       expect(localhostNode).toBeInTheDocument();
       // And the buggy 127.0.0.1:9876 string must NOT appear.
-      expect(
-        screen.queryByText(/127\.0\.0\.1:9876/),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/127\.0\.0\.1:9876/)).not.toBeInTheDocument();
     },
   );
 
@@ -539,9 +541,7 @@ describe("ConnectorsList", () => {
     await screen.findByText("Notion");
     // Each connector card carries a "what we read / what we never
     // touch" disclosure; check one provider's accessible label.
-    expect(
-      screen.getByLabelText("Data access for Notion"),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Data access for Notion")).toBeInTheDocument();
   });
 
   it(
@@ -556,17 +556,16 @@ describe("ConnectorsList", () => {
         connected: p === "slack",
         status: p === "slack" ? "connected" : "disconnected",
       }));
-      mockApi.connectors.inspectScopes.mockImplementation(
-        async (p: string) =>
-          p === "slack"
-            ? {
-                provider: "slack",
-                requested: ["channels:read", "users:read"],
-                granted: ["channels:read"],
-                missing: ["users:read"],
-                fullyGranted: false,
-              }
-            : null,
+      mockApi.connectors.inspectScopes.mockImplementation(async (p: string) =>
+        p === "slack"
+          ? {
+              provider: "slack",
+              requested: ["channels:read", "users:read"],
+              granted: ["channels:read"],
+              missing: ["users:read"],
+              fullyGranted: false,
+            }
+          : null,
       );
 
       await act(async () => {
@@ -593,17 +592,16 @@ describe("ConnectorsList", () => {
         connected: p === "slack",
         status: p === "slack" ? "connected" : "disconnected",
       }));
-      mockApi.connectors.inspectScopes.mockImplementation(
-        async (p: string) =>
-          p === "slack"
-            ? {
-                provider: "slack",
-                requested: ["channels:read", "users:read"],
-                granted: ["channels:read", "users:read"],
-                missing: [],
-                fullyGranted: true,
-              }
-            : null,
+      mockApi.connectors.inspectScopes.mockImplementation(async (p: string) =>
+        p === "slack"
+          ? {
+              provider: "slack",
+              requested: ["channels:read", "users:read"],
+              granted: ["channels:read", "users:read"],
+              missing: [],
+              fullyGranted: true,
+            }
+          : null,
       );
 
       await act(async () => {
@@ -654,8 +652,9 @@ describe("ConnectorsList", () => {
       // cleared from the optimistic state rather than from fresh data —
       // i.e. it never flashes the stale "narrowed" state.
       let inspectCalls = 0;
-      let resolvePending: ((v: ConnectorScopeComparison | null) => void) | null =
-        null;
+      let resolvePending:
+        | ((v: ConnectorScopeComparison | null) => void)
+        | null = null;
       mockApi.connectors.inspectScopes.mockImplementation(
         async (p: string): Promise<ConnectorScopeComparison | null> => {
           if (p !== "slack") return null;

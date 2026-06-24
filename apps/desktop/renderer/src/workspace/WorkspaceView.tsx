@@ -12,7 +12,10 @@ import Pane from "./Pane";
 import PaneSplitter from "./PaneSplitter";
 
 function clampPair(value: number, pairSum: number): number {
-  return Math.max(MIN_PANE_FRACTION, Math.min(pairSum - MIN_PANE_FRACTION, value));
+  return Math.max(
+    MIN_PANE_FRACTION,
+    Math.min(pairSum - MIN_PANE_FRACTION, value),
+  );
 }
 
 /** A label like "Sources / Memory" naming the two panes a handle sits

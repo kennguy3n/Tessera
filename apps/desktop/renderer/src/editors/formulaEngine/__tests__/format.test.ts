@@ -8,11 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  applyCellFormat,
-  cellFormatStyle,
-  valueToDateSerial,
-} from "../format";
+import { applyCellFormat, cellFormatStyle, valueToDateSerial } from "../format";
 import { dateToSerial } from "../functions/date";
 import type { FormulaValue } from "../types";
 import {
@@ -163,9 +159,9 @@ describe("applyCellFormat — scaling and bracket directives", () => {
       "1,234",
     );
     // A negative section with a colour directive renders cleanly.
-    expect(
-      applyCellFormat(-99, { numberFormat: "#,##0;[Red](#,##0)" }),
-    ).toBe("(99)");
+    expect(applyCellFormat(-99, { numberFormat: "#,##0;[Red](#,##0)" })).toBe(
+      "(99)",
+    );
   });
 });
 
@@ -176,21 +172,19 @@ describe("applyCellFormat — date formats", () => {
   );
 
   it("formats with yyyy-mm-dd", () => {
-    expect(
-      applyCellFormat(newMillennium, { numberFormat: "yyyy-mm-dd" }),
-    ).toBe("2000-01-01");
+    expect(applyCellFormat(newMillennium, { numberFormat: "yyyy-mm-dd" })).toBe(
+      "2000-01-01",
+    );
   });
 
   it("formats with m/d/yyyy (US-style)", () => {
-    expect(
-      applyCellFormat(newMillennium, { numberFormat: "m/d/yyyy" }),
-    ).toBe("1/1/2000");
+    expect(applyCellFormat(newMillennium, { numberFormat: "m/d/yyyy" })).toBe(
+      "1/1/2000",
+    );
   });
 
   it("renders month name (mmm) and weekday name (dddd)", () => {
-    expect(applyCellFormat(newMillennium, { numberFormat: "mmm" })).toBe(
-      "Jan",
-    );
+    expect(applyCellFormat(newMillennium, { numberFormat: "mmm" })).toBe("Jan");
     expect(applyCellFormat(newMillennium, { numberFormat: "dddd" })).toBe(
       "Saturday",
     );

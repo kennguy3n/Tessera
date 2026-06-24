@@ -185,7 +185,8 @@ export function listIcons(set: IconSet): string[] {
     if (!/^[A-Z]/.test(key)) continue;
     // Phosphor exposes both `Home` and `HomeIcon` (legacy alias). Strip
     // the trailing Icon so the picker doesn't show duplicates.
-    const base = key.endsWith("Icon") && key.length > 4 ? key.slice(0, -4) : key;
+    const base =
+      key.endsWith("Icon") && key.length > 4 ? key.slice(0, -4) : key;
     if (typeof mod[key] !== "function" && typeof mod[key] !== "object")
       continue;
     seen.add(base);

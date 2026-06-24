@@ -168,7 +168,9 @@ export default function MemoryPage() {
         ...prev,
         [mem.id]: {
           ...prev[mem.id],
-          pinCount: wasPinned ? Math.max(0, mem.pinCount - 1) : mem.pinCount + 1,
+          pinCount: wasPinned
+            ? Math.max(0, mem.pinCount - 1)
+            : mem.pinCount + 1,
         },
       }));
       const result = wasPinned ? await unpin(mem.id) : await pin(mem.id);
@@ -400,7 +402,10 @@ function MemoryRow({
         <p className="memory-content">{memory.content}</p>
 
         <div className="memory-row-foot">
-          <span className="memory-cite" data-testid={`memory-cite-${memory.id}`}>
+          <span
+            className="memory-cite"
+            data-testid={`memory-cite-${memory.id}`}
+          >
             {memory.sourceId
               ? `Source ${formatSourceId(memory.sourceId)}`
               : "No source citation"}

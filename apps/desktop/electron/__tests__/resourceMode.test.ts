@@ -28,10 +28,7 @@ vi.mock("electron", () => ({
 }));
 
 import { _clearConfigCacheForTests, loadConfig, updateConfig } from "../config";
-import {
-  stopOtherSidecarsForExclusivity,
-  type SidecarKind,
-} from "../appState";
+import { stopOtherSidecarsForExclusivity, type SidecarKind } from "../appState";
 
 /** Minimal sidecar stub honouring the slot shape the helper reads. */
 function fakeSidecar(isRunning: boolean): {

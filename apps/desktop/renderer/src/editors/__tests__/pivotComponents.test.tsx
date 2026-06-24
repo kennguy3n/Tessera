@@ -38,7 +38,9 @@ const SPEC: PivotSpec = {
 describe("SheetPivot", () => {
   it("renders the cross-tab with row/column totals", () => {
     const result = computePivot(SPEC, valueAt, textAt);
-    render(<SheetPivot spec={SPEC} result={result} onRemove={() => undefined} />);
+    render(
+      <SheetPivot spec={SPEC} result={result} onRemove={() => undefined} />,
+    );
 
     // Column headers come from the distinct Quarter values plus a Total.
     expect(screen.getByText("Q1")).toBeInTheDocument();

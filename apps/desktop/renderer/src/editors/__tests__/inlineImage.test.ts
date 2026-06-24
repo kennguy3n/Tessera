@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import {
-  MAX_INLINE_IMAGE_BYTES,
-  fileToDataUrl,
-} from "../inlineImage";
+import { MAX_INLINE_IMAGE_BYTES, fileToDataUrl } from "../inlineImage";
 
 // ─────────────────────────────────────────────────────────────────────
 // Shared inline-image helper — `fileToDataUrl` + `MAX_INLINE_IMAGE_BYTES`.
@@ -89,23 +86,35 @@ describe("fileToDataUrl — happy path & error surfacing", () => {
     // (e.g. user revoked permissions to a dropped file mid-read).
     const originalReader = globalThis.FileReader;
     class ErrorReader {
-      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
-      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      onload:
+        | ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown)
+        | null = null;
+      onerror:
+        | ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown)
+        | null = null;
       error: DOMException | null = null;
       result: string | ArrayBuffer | null = null;
       readAsDataURL() {
         queueMicrotask(() => {
-          this.error = new DOMException("permission revoked", "NotReadableError");
-          this.onerror?.call(this as unknown as FileReader, {} as ProgressEvent<FileReader>);
+          this.error = new DOMException(
+            "permission revoked",
+            "NotReadableError",
+          );
+          this.onerror?.call(
+            this as unknown as FileReader,
+            {} as ProgressEvent<FileReader>,
+          );
         });
       }
     }
-    (globalThis as { FileReader: typeof FileReader }).FileReader = ErrorReader as unknown as typeof FileReader;
+    (globalThis as { FileReader: typeof FileReader }).FileReader =
+      ErrorReader as unknown as typeof FileReader;
     try {
       const file = new File(["x"], "x.txt", { type: "text/plain" });
       await expect(fileToDataUrl(file)).rejects.toThrow(/permission revoked/);
     } finally {
-      (globalThis as { FileReader: typeof FileReader }).FileReader = originalReader;
+      (globalThis as { FileReader: typeof FileReader }).FileReader =
+        originalReader;
     }
   });
 
@@ -115,22 +124,31 @@ describe("fileToDataUrl — happy path & error surfacing", () => {
     // (which would happen if a future caller swapped the API call).
     const originalReader = globalThis.FileReader;
     class BufferReader {
-      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
-      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      onload:
+        | ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown)
+        | null = null;
+      onerror:
+        | ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown)
+        | null = null;
       error: DOMException | null = null;
       result: string | ArrayBuffer | null = new ArrayBuffer(8);
       readAsDataURL() {
         queueMicrotask(() => {
-          this.onload?.call(this as unknown as FileReader, {} as ProgressEvent<FileReader>);
+          this.onload?.call(
+            this as unknown as FileReader,
+            {} as ProgressEvent<FileReader>,
+          );
         });
       }
     }
-    (globalThis as { FileReader: typeof FileReader }).FileReader = BufferReader as unknown as typeof FileReader;
+    (globalThis as { FileReader: typeof FileReader }).FileReader =
+      BufferReader as unknown as typeof FileReader;
     try {
       const file = new File(["x"], "x.txt", { type: "text/plain" });
       await expect(fileToDataUrl(file)).rejects.toThrow(/non-string/);
     } finally {
-      (globalThis as { FileReader: typeof FileReader }).FileReader = originalReader;
+      (globalThis as { FileReader: typeof FileReader }).FileReader =
+        originalReader;
     }
   });
 });

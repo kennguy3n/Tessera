@@ -56,9 +56,7 @@ function renderEditor() {
 
 describe("ArtifactEditorPage citation panel wiring", () => {
   beforeEach(() => {
-    window.tessera.artifacts.get = vi
-      .fn()
-      .mockResolvedValue(sheetArtifact);
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(sheetArtifact);
     (
       window.tessera.citations.list as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);

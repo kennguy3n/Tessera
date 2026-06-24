@@ -337,95 +337,95 @@ export function registerRuntimeHandlers(): void {
     // instead of the prior vision model. Use `getInstalledModel` so
     // a stale per-slot record pointing at a manually-deleted file
     // is treated as "no model installed".
-    const current = await getInstalledModel(userDataDir(), requested.capability);
+    const current = await getInstalledModel(
+      userDataDir(),
+      requested.capability,
+    );
     return planDownload(current, requested);
   });
 
-  idempotentHandle(
-    "runtime:downloadModel",
-    async (event, modelId: unknown) => {
-      const id = assertId(modelId, "modelId");
-      const requested = findModelOrThrow(id);
-      // Defense-in-depth at the IPC boundary, mirroring
-      // `runtime:downloadRecommended` and making the rate limiter's
-      // documented "safety net" for this channel real: bound
-      // *renderer-initiated* starts to 1 / 5s so a buggy or compromised
-      // renderer can't hammer the channel with manifest reads +
-      // install-state stats that all funnel into the per-slot download
-      // lock. The budget is keyed PER capability slot so a legitimate
-      // burst across slots (e.g. grabbing the text model then the vision
-      // model from Settings) is never throttled — only repeated starts on
-      // the SAME slot are. Real UI flows never trip it: the slot panel
-      // disables itself (busyModelId + progress) the instant a download
-      // starts. The per-slot download lock still serialises the actual
-      // mutation; this just rejects abusive starts cheaply before that.
-      defaultRateLimiter.consume(
-        `runtime:downloadModel:${requested.capability}`,
-        RATE_LIMIT_PROFILES["runtime:downloadModel"],
+  idempotentHandle("runtime:downloadModel", async (event, modelId: unknown) => {
+    const id = assertId(modelId, "modelId");
+    const requested = findModelOrThrow(id);
+    // Defense-in-depth at the IPC boundary, mirroring
+    // `runtime:downloadRecommended` and making the rate limiter's
+    // documented "safety net" for this channel real: bound
+    // *renderer-initiated* starts to 1 / 5s so a buggy or compromised
+    // renderer can't hammer the channel with manifest reads +
+    // install-state stats that all funnel into the per-slot download
+    // lock. The budget is keyed PER capability slot so a legitimate
+    // burst across slots (e.g. grabbing the text model then the vision
+    // model from Settings) is never throttled — only repeated starts on
+    // the SAME slot are. Real UI flows never trip it: the slot panel
+    // disables itself (busyModelId + progress) the instant a download
+    // starts. The per-slot download lock still serialises the actual
+    // mutation; this just rejects abusive starts cheaply before that.
+    defaultRateLimiter.consume(
+      `runtime:downloadModel:${requested.capability}`,
+      RATE_LIMIT_PROFILES["runtime:downloadModel"],
+    );
+    // Only stop the sidecar if we will actually mutate the model
+    // file AND the affected slot is the one the sidecar is serving
+    // (text today; vision/imagegen sidecars stop themselves in
+    // later blocks). Three cases:
+    //   (a) Requested model is already installed in its slot AND
+    //       file is still on disk -> no-op, do NOT touch the
+    //       sidecar (avoid killing a running inference server when
+    //       no download is needed).
+    //   (b) Requested model is already installed but file is
+    //       missing -> we must re-download. Stop the sidecar in
+    //       case it's still pointing at the now-missing path.
+    //   (c) A different model is installed in this slot (the swap
+    //       case) -> `downloadModel` will evict the existing file.
+    //       The eviction unlinks it, so we MUST stop the sidecar
+    //       first — it holds the OS file handle and on Windows
+    //       that blocks the unlink with EPERM/EBUSY.
+    // There is intentionally no separate `runtime:swapModel`
+    // channel: `downloadModel` already handles both fresh-install
+    // and swap, so a second handler that called the same function
+    // only invited drift.
+    // The sidecar-stop runs INSIDE `withDownloadLock` via the
+    // `beforeMutation` deps hook. Previously this call lived in the
+    // IPC handler BEFORE the lock was acquired, which left a race
+    // window: a parallel `runtime:downloadModel` invocation could
+    // complete its own download in the gap between our sidecar-stop
+    // and lock-acquire, and our subsequent eviction would then
+    // delete a model the other tab had just successfully installed.
+    // Moving it inside the lock makes the entire
+    // (stop -> evict -> download) sequence atomic per slot.
+    //
+    // Register a cancellation handle so `runtime:cancelDownload` can
+    // abort this explicit install too — cancellation is keyed by
+    // capability slot, so "Skip" cancels whatever is downloading in
+    // the text slot regardless of which channel started it. We
+    // register BEFORE the `isModelInstalled` stat (not just around the
+    // transfer) so a cancel landing in that async gap still aborts:
+    // the not-installed branch then hands an already-aborted signal to
+    // `downloadModel`, whose pre-mutation guard bails before touching
+    // the filesystem.
+    const controller = downloadCancellations.begin(requested.capability);
+    try {
+      const installed = await isModelInstalled(
+        userDataDir(),
+        requested.capability,
+        requested.id,
       );
-      // Only stop the sidecar if we will actually mutate the model
-      // file AND the affected slot is the one the sidecar is serving
-      // (text today; vision/imagegen sidecars stop themselves in
-      // later blocks). Three cases:
-      //   (a) Requested model is already installed in its slot AND
-      //       file is still on disk -> no-op, do NOT touch the
-      //       sidecar (avoid killing a running inference server when
-      //       no download is needed).
-      //   (b) Requested model is already installed but file is
-      //       missing -> we must re-download. Stop the sidecar in
-      //       case it's still pointing at the now-missing path.
-      //   (c) A different model is installed in this slot (the swap
-      //       case) -> `downloadModel` will evict the existing file.
-      //       The eviction unlinks it, so we MUST stop the sidecar
-      //       first — it holds the OS file handle and on Windows
-      //       that blocks the unlink with EPERM/EBUSY.
-      // There is intentionally no separate `runtime:swapModel`
-      // channel: `downloadModel` already handles both fresh-install
-      // and swap, so a second handler that called the same function
-      // only invited drift.
-      // The sidecar-stop runs INSIDE `withDownloadLock` via the
-      // `beforeMutation` deps hook. Previously this call lived in the
-      // IPC handler BEFORE the lock was acquired, which left a race
-      // window: a parallel `runtime:downloadModel` invocation could
-      // complete its own download in the gap between our sidecar-stop
-      // and lock-acquire, and our subsequent eviction would then
-      // delete a model the other tab had just successfully installed.
-      // Moving it inside the lock makes the entire
-      // (stop -> evict -> download) sequence atomic per slot.
-      //
-      // Register a cancellation handle so `runtime:cancelDownload` can
-      // abort this explicit install too — cancellation is keyed by
-      // capability slot, so "Skip" cancels whatever is downloading in
-      // the text slot regardless of which channel started it. We
-      // register BEFORE the `isModelInstalled` stat (not just around the
-      // transfer) so a cancel landing in that async gap still aborts:
-      // the not-installed branch then hands an already-aborted signal to
-      // `downloadModel`, whose pre-mutation guard bails before touching
-      // the filesystem.
-      const controller = downloadCancellations.begin(requested.capability);
-      try {
-        const installed = await isModelInstalled(
-          userDataDir(),
-          requested.capability,
-          requested.id,
-        );
-        if (installed) {
-          return installed;
-        }
-        return await downloadModel(
-          userDataDir(),
-          requested,
-          progressEmitter(event),
-          {
-            beforeMutation: sidecarStopperFor(requested.capability),
-            signal: controller.signal,
-          },
-        );
-      } finally {
-        downloadCancellations.end(requested.capability, controller);
+      if (installed) {
+        return installed;
       }
-    },
-  );
+      return await downloadModel(
+        userDataDir(),
+        requested,
+        progressEmitter(event),
+        {
+          beforeMutation: sidecarStopperFor(requested.capability),
+          signal: controller.signal,
+        },
+      );
+    } finally {
+      downloadCancellations.end(requested.capability, controller);
+    }
+  });
 
   // Resolve + install the recommended model for a slot in one call.
   // Unlike `runtime:downloadModel` (which takes an explicit modelId),

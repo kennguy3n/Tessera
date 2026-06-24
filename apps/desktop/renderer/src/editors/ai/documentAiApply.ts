@@ -110,11 +110,7 @@ export function applyAiResult(
     const from = Math.max(0, Math.min(range.from, docSize));
     const to = Math.max(from, Math.min(range.to, docSize));
     if (from >= to) return false;
-    return editor
-      .chain()
-      .focus()
-      .insertContentAt({ from, to }, html)
-      .run();
+    return editor.chain().focus().insertContentAt({ from, to }, html).run();
   }
 
   if (mode === "append") {

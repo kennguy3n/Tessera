@@ -92,9 +92,9 @@ describe("isOfflineError", () => {
     expect(isOfflineError(new Error("connect ECONNREFUSED 127.0.0.1"))).toBe(
       true,
     );
-    expect(isOfflineError(new Error("getaddrinfo ENOTFOUND kchat.example"))).toBe(
-      true,
-    );
+    expect(
+      isOfflineError(new Error("getaddrinfo ENOTFOUND kchat.example")),
+    ).toBe(true);
     expect(isOfflineError(new Error("request timed out"))).toBe(true);
     expect(isOfflineError(new Error("KChat client not connected"))).toBe(true);
   });
@@ -461,10 +461,24 @@ describe("KchatOfflineQueue replay", () => {
       JSON.stringify({
         version: 1,
         operations: [
-          { id: "ok", type: "ingestChannel", payload: { channelId: "c", channelName: "n" }, enqueuedAt: 1, attempts: 0, lastError: null },
+          {
+            id: "ok",
+            type: "ingestChannel",
+            payload: { channelId: "c", channelName: "n" },
+            enqueuedAt: 1,
+            attempts: 0,
+            lastError: null,
+          },
           { id: "bad-type", type: "frobnicate", payload: {} },
-          { type: "ingestChannel", payload: { channelId: "c", channelName: "n" } },
-          { id: "bad-payload", type: "shareArtifact", payload: { artifactId: 123 } },
+          {
+            type: "ingestChannel",
+            payload: { channelId: "c", channelName: "n" },
+          },
+          {
+            id: "bad-payload",
+            type: "shareArtifact",
+            payload: { artifactId: 123 },
+          },
         ],
       }),
     );
@@ -644,9 +658,7 @@ describe("KchatOfflineQueue persist single-writer", () => {
     const parsed = JSON.parse(raw) as {
       operations: { payload: { artifactId?: string } }[];
     };
-    return parsed.operations
-      .map((o) => o.payload.artifactId ?? "")
-      .sort();
+    return parsed.operations.map((o) => o.payload.artifactId ?? "").sort();
   }
 
   function memOps(q: KchatOfflineQueue): string[] {

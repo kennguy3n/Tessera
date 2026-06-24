@@ -79,8 +79,7 @@ export function useQuickSwitcherItems(): UseQuickSwitcherItemsResult {
     refresh: refreshTasks,
   } = useTaskList();
 
-  const hasBridge =
-    typeof window !== "undefined" && Boolean(window.tessera);
+  const hasBridge = typeof window !== "undefined" && Boolean(window.tessera);
 
   const items = useMemo<QuickSwitchItem[]>(() => {
     const out: QuickSwitchItem[] = [];

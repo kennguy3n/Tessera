@@ -105,9 +105,11 @@ export function markEnd(stage: string): number | null {
  */
 export function collectStartupPerf(): PerfMark[] {
   if (!enabled) return [];
-  const measures = performance.getEntriesByType("measure") as Array<
-    { name: string; startTime: number; duration: number }
-  >;
+  const measures = performance.getEntriesByType("measure") as Array<{
+    name: string;
+    startTime: number;
+    duration: number;
+  }>;
   return measures
     .filter((entry) => entry.name.startsWith(STAGE_PREFIX))
     .map((entry) => ({
@@ -204,17 +206,17 @@ function round2(value: number): number {
  */
 export function _resetStartupPerfForTests(): void {
   try {
-    const measures = performance.getEntriesByType("measure") as Array<
-      { name: string }
-    >;
+    const measures = performance.getEntriesByType("measure") as Array<{
+      name: string;
+    }>;
     for (const m of measures) {
       if (m.name.startsWith(STAGE_PREFIX)) {
         performance.clearMeasures(m.name);
       }
     }
-    const marks = performance.getEntriesByType("mark") as Array<
-      { name: string }
-    >;
+    const marks = performance.getEntriesByType("mark") as Array<{
+      name: string;
+    }>;
     for (const m of marks) {
       if (m.name.startsWith(STAGE_PREFIX)) {
         performance.clearMarks(m.name);

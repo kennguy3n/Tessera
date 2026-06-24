@@ -17,9 +17,7 @@ import * as path from "path";
 import { getLogger } from "../logger";
 import { createDefaultContext } from "./context";
 import { defaultRateLimiter } from "./rateLimiter";
-import {
-  getValidAccessTokenForProvider,
-} from "./connectors/handlers";
+import { getValidAccessTokenForProvider } from "./connectors/handlers";
 import type { ProviderId } from "./connectors/providerOAuth";
 
 let sharedConnectorContext: ReturnType<typeof createDefaultContext> | null =

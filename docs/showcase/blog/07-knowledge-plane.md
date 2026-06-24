@@ -1,11 +1,11 @@
 # The knowledge plane: what Tessera extracts, links, and remembers
 
-*Part 7 of the Tessera showcase series — the substrate underneath.*
+_Part 7 of the Tessera showcase series — the substrate underneath._
 
 The first six posts followed people from messy sources to a finished, source-cited artifact.
 This one goes one layer down, to the **knowledge substrate** that makes that retrieval sharp:
-the engines that, on ingest, turn raw indexed text into structured *observations*, score them
-with a decay-based *memory* model, and link recurring entities into a *concept graph*.
+the engines that, on ingest, turn raw indexed text into structured _observations_, score them
+with a decay-based _memory_ model, and link recurring entities into a _concept graph_.
 
 Two ground rules for this post, in keeping with the rest of the showcase:
 
@@ -40,18 +40,18 @@ set of types, using the same keyword and pattern rules the `knowledge` crate use
 Run over Maya's four HIPAA-incident sources, the engine surfaces these entities — each one
 traceable to the exact source file it came from:
 
-| Entity | Memory state | Retention | Corroboration | First seen in |
-|--------|--------------|:---------:|:-------------:|---------------|
-| `LT-2291` (the stolen laptop) | reinforced | 0.94 | 2 sources | `01-helpdesk-ticket-INC-4471.md` |
-| `Privacy Office` | consolidated | 0.78 | 2 sources | `01-helpdesk-ticket-INC-4471.md` |
-| `45 CFR §164.402` (breach rule) | candidate | 0.62 | 1 source | `04-policy-and-context.md` |
-| `CHG-2208` (the unremediated change) | candidate | 0.62 | 1 source | `02-endpoint-mdm-report.md` |
-| `ICD-10` (diagnosis coding) | candidate | 0.62 | 1 source | `03-ehr-export-log.md` |
-| `INC-4471` (the incident itself) | candidate | 0.62 | 1 source | `01-helpdesk-ticket-INC-4471.md` |
+| Entity                               | Memory state | Retention | Corroboration | First seen in                    |
+| ------------------------------------ | ------------ | :-------: | :-----------: | -------------------------------- |
+| `LT-2291` (the stolen laptop)        | reinforced   |   0.94    |   2 sources   | `01-helpdesk-ticket-INC-4471.md` |
+| `Privacy Office`                     | consolidated |   0.78    |   2 sources   | `01-helpdesk-ticket-INC-4471.md` |
+| `45 CFR §164.402` (breach rule)      | candidate    |   0.62    |   1 source    | `04-policy-and-context.md`       |
+| `CHG-2208` (the unremediated change) | candidate    |   0.62    |   1 source    | `02-endpoint-mdm-report.md`      |
+| `ICD-10` (diagnosis coding)          | candidate    |   0.62    |   1 source    | `03-ehr-export-log.md`           |
+| `INC-4471` (the incident itself)     | candidate    |   0.62    |   1 source    | `01-helpdesk-ticket-INC-4471.md` |
 
 This is the difference between "the text is searchable" and "the system knows what's in the
 text." The stolen-laptop asset tag, the breach-classification regulation, and the change
-ticket that *caused* the exposure are now first-class objects, not just substrings.
+ticket that _caused_ the exposure are now first-class objects, not just substrings.
 
 ## Step 2 — memory: not everything is equally important
 
@@ -78,8 +78,8 @@ controls are the explicit signals from Step 2.
 Raw substrate states collapse into three user-facing buckets: **active** (candidate →
 reinforced → consolidated → canonical), **fading** (`superseded`), and **archived** (everything
 aged out of the working set). Scrolling down the same list walks the full gradient — here the
-`RPD-2026-01188` request stays *active* at 62%, the prematurely-closed change `CHG-2208` is
-*fading* at 34%, and the caller's disproven encryption assumption has *archived* at 22%:
+`RPD-2026-01188` request stays _active_ at 62%, the prematurely-closed change `CHG-2208` is
+_fading_ at 34%, and the caller's disproven encryption assumption has _archived_ at 22%:
 
 ![The decay gradient on the Memory page — an active observation (62%), a fading one (CHG-2208, 34%), and three archived ones (22% / 15% / 12%), each with a colored state badge](../assets/screenshots/flow-07b-memory-decay.png)
 
@@ -95,7 +95,7 @@ co-occurs in. From Maya's corpus:
 
 - **`LT-2291`** → linked across `01-helpdesk-ticket` **and** `02-endpoint-mdm-report` — the
   ticket says the laptop was stolen; the MDM report says that same asset was unencrypted. The
-  graph connects the *event* to the *control failure*.
+  graph connects the _event_ to the _control failure_.
 - **`Privacy Office`** → linked across `01-helpdesk-ticket` **and** `04-policy-and-context` —
   who got escalated to, tied to the policy that says they must run the four-factor assessment.
 - **`45 CFR §164.402`** → the breach-classification rule, anchored in the policy file.
@@ -104,13 +104,13 @@ The **concept-graph panel** at the bottom of the Memory page draws this directly
 sized by how connected they are, with **typed** edges between them. Around the `INC-4471` hub
 the four relation types the substrate models all appear, each grounded in the source semantics:
 
-- **`is_a`** — each identifier is typed by its scheme: `INC-4471` *is a* Incident, `LT-2291`
-  *is an* Asset, `ICD-10` *is a* Clinical code.
+- **`is_a`** — each identifier is typed by its scheme: `INC-4471` _is a_ Incident, `LT-2291`
+  _is an_ Asset, `ICD-10` _is a_ Clinical code.
 - **`part_of`** — the asset, the escalation target, and the breach-classification rule are all
-  *part of* the incident: `LT-2291`, `Privacy Office`, and `45 CFR §164.402` → `INC-4471`.
-- **`supersedes`** — the MDM finding that the disk was never encrypted *supersedes* the change
+  _part of_ the incident: `LT-2291`, `Privacy Office`, and `45 CFR §164.402` → `INC-4471`.
+- **`supersedes`** — the MDM finding that the disk was never encrypted _supersedes_ the change
   ticket `CHG-2208` that had been closed without confirming re-encryption.
-- **`contradicts`** — that same finding *contradicts* the caller's assumption that full-disk
+- **`contradicts`** — that same finding _contradicts_ the caller's assumption that full-disk
   encryption "should be on", which is why the assumption decayed to `contradicted`.
 
 Selecting a node lists its relationships and the source evidence behind each one. Node color

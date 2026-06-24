@@ -178,7 +178,8 @@ const VLOOKUP: FunctionImpl = (args, ctx) => {
   const colIdxN = toNumber(evaluate(args[2], ctx));
   if (isFormulaError(colIdxN)) return colIdxN;
   const colIdx = Math.trunc(colIdxN);
-  if (colIdx < 1) return makeError("#VALUE!", "VLOOKUP column index must be >= 1");
+  if (colIdx < 1)
+    return makeError("#VALUE!", "VLOOKUP column index must be >= 1");
   let isSorted = true;
   if (args.length === 4) {
     const sV = evaluate(args[3], ctx);
@@ -260,11 +261,13 @@ const INDEX: FunctionImpl = (args, ctx) => {
   // the second arg picks the single dimension.
   if (args.length === 2) {
     if (rows === 1) {
-      if (row < 1 || row > cols) return makeError("#REF!", "INDEX out of range");
+      if (row < 1 || row > cols)
+        return makeError("#REF!", "INDEX out of range");
       return table[0][row - 1];
     }
     if (cols === 1) {
-      if (row < 1 || row > rows) return makeError("#REF!", "INDEX out of range");
+      if (row < 1 || row > rows)
+        return makeError("#REF!", "INDEX out of range");
       return table[row - 1][0];
     }
     return makeError("#REF!", "INDEX over 2-D range requires column arg");
@@ -369,7 +372,10 @@ const XLOOKUP: FunctionImpl = (args, ctx) => {
   // Locate match.
   const indices =
     searchMode === -1
-      ? Array.from({ length: lookupArr.length }, (_, i) => lookupArr.length - 1 - i)
+      ? Array.from(
+          { length: lookupArr.length },
+          (_, i) => lookupArr.length - 1 - i,
+        )
       : Array.from({ length: lookupArr.length }, (_, i) => i);
   let hit = -1;
   if (matchMode === 0) {
@@ -506,7 +512,8 @@ const ROWS: FunctionImpl = (args, ctx) => {
 };
 
 const COLUMNS: FunctionImpl = (args, ctx) => {
-  if (args.length !== 1) return makeError("#ERR!", "COLUMNS expects 1 argument");
+  if (args.length !== 1)
+    return makeError("#ERR!", "COLUMNS expects 1 argument");
   const arg = resolveRefNode(args[0], ctx);
   if (arg.type === "range") return arg.end.col - arg.start.col + 1;
   if (arg.type === "cell") return 1;

@@ -77,7 +77,10 @@ describe("appInitComplete guard on window-all-closed", () => {
     // syntax and never appears in prose, which keeps the test
     // robust against arbitrary new comments in `main.ts`.
     const whenReadyIdx = source.indexOf("app.whenReady().then");
-    expect(whenReadyIdx, "could not find app.whenReady().then in main.ts").toBeGreaterThan(-1);
+    expect(
+      whenReadyIdx,
+      "could not find app.whenReady().then in main.ts",
+    ).toBeGreaterThan(-1);
     // The unconditional top-level `createWindow();` call (not the
     // one inside the activate listener) is what creates the main
     // window on startup. Anchor on the second occurrence after
@@ -94,11 +97,18 @@ describe("appInitComplete guard on window-all-closed", () => {
       scanIdx = createWindowIdx + 1;
     }
     const flagSetIdx = source.indexOf("appInitComplete = true", whenReadyIdx);
-    expect(createWindowIdx, "the top-level `createWindow();` call must be present in whenReady").toBeGreaterThan(-1);
-    expect(flagSetIdx, "appInitComplete = true must be set in whenReady").toBeGreaterThan(-1);
-    expect(flagSetIdx, "appInitComplete = true must come AFTER the top-level createWindow() call").toBeGreaterThan(
+    expect(
       createWindowIdx,
-    );
+      "the top-level `createWindow();` call must be present in whenReady",
+    ).toBeGreaterThan(-1);
+    expect(
+      flagSetIdx,
+      "appInitComplete = true must be set in whenReady",
+    ).toBeGreaterThan(-1);
+    expect(
+      flagSetIdx,
+      "appInitComplete = true must come AFTER the top-level createWindow() call",
+    ).toBeGreaterThan(createWindowIdx);
   });
 
   it("guards the window-all-closed handler with a leading `if (!appInitComplete) return;`", () => {
@@ -115,7 +125,9 @@ describe("appInitComplete guard on window-all-closed", () => {
     if (!handler) return;
 
     const body = handler[1];
-    const guardMatch = body.match(/if\s*\(\s*!appInitComplete\s*\)\s*return\s*;/);
+    const guardMatch = body.match(
+      /if\s*\(\s*!appInitComplete\s*\)\s*return\s*;/,
+    );
     expect(
       guardMatch,
       `window-all-closed handler is missing the appInitComplete guard.\nHandler body:\n${body}`,
@@ -123,8 +135,15 @@ describe("appInitComplete guard on window-all-closed", () => {
     if (!guardMatch) return;
 
     const platformCheck = body.match(/process\.platform/);
-    expect(platformCheck, "darwin platform check must still be present").toBeTruthy();
-    if (!platformCheck || guardMatch.index === undefined || platformCheck.index === undefined) {
+    expect(
+      platformCheck,
+      "darwin platform check must still be present",
+    ).toBeTruthy();
+    if (
+      !platformCheck ||
+      guardMatch.index === undefined ||
+      platformCheck.index === undefined
+    ) {
       return;
     }
     expect(
@@ -134,8 +153,14 @@ describe("appInitComplete guard on window-all-closed", () => {
   });
 
   it("exposes a test-only reset hook so test harnesses can simulate fresh startup", () => {
-    expect(source).toMatch(/export\s+function\s+_resetAppInitForTests\s*\(\s*\)\s*:\s*void/);
-    expect(source).toMatch(/export\s+function\s+_markAppInitCompleteForTests\s*\(\s*\)\s*:\s*void/);
-    expect(source).toMatch(/export\s+function\s+_appInitCompleteForTests\s*\(\s*\)\s*:\s*boolean/);
+    expect(source).toMatch(
+      /export\s+function\s+_resetAppInitForTests\s*\(\s*\)\s*:\s*void/,
+    );
+    expect(source).toMatch(
+      /export\s+function\s+_markAppInitCompleteForTests\s*\(\s*\)\s*:\s*void/,
+    );
+    expect(source).toMatch(
+      /export\s+function\s+_appInitCompleteForTests\s*\(\s*\)\s*:\s*boolean/,
+    );
   });
 });

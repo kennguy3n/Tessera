@@ -21,9 +21,10 @@ import type { QuickSwitchItem } from "../utils/quickSwitch";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual<typeof import("react-router-dom")>(
-    "react-router-dom",
-  );
+  const actual =
+    await vi.importActual<typeof import("react-router-dom")>(
+      "react-router-dom",
+    );
   return { ...actual, useNavigate: () => navigateMock };
 });
 
@@ -71,7 +72,10 @@ function item(
   };
 }
 
-function setItems(items: QuickSwitchItem[], overrides: Partial<ItemsState> = {}) {
+function setItems(
+  items: QuickSwitchItem[],
+  overrides: Partial<ItemsState> = {},
+) {
   itemsState.items = items;
   itemsState.loading = overrides.loading ?? false;
   itemsState.error = overrides.error ?? null;
@@ -97,10 +101,7 @@ beforeEach(() => {
 
 describe("QuickSwitcher", () => {
   it("renders a combobox + listbox and marks the first row active", () => {
-    setItems([
-      item("a", "Alpha", "/a"),
-      item("b", "Bravo", "/b"),
-    ]);
+    setItems([item("a", "Alpha", "/a"), item("b", "Bravo", "/b")]);
     renderSwitcher();
     const input = screen.getByRole("combobox");
     expect(input).toHaveAttribute("aria-controls");
@@ -209,8 +210,9 @@ describe("QuickSwitcher", () => {
     expect(screen.queryByText("Budget")).not.toBeInTheDocument();
     const listbox = screen.getByRole("listbox");
     // Matched chars render inside <mark> elements.
-    expect(within(listbox).getAllByText(/[a-z]/i, { selector: "mark" }).length)
-      .toBeGreaterThan(0);
+    expect(
+      within(listbox).getAllByText(/[a-z]/i, { selector: "mark" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("surfaces the no-bridge notice even when navigable rows exist", () => {
@@ -219,17 +221,16 @@ describe("QuickSwitcher", () => {
     // alongside the page rows rather than only on an empty list.
     setItems([item("home", "Home", "/")], { hasBridge: false });
     renderSwitcher();
-    expect(
-      screen.getByText(/outside the desktop app/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/outside the desktop app/i)).toBeInTheDocument();
     expect(screen.getByText("Home")).toBeInTheDocument();
   });
 
   it("surfaces a partial-load error notice even when rows exist", () => {
     setItems([item("home", "Home", "/")], { error: "kaboom" });
     renderSwitcher();
-    expect(screen.getByText(/couldn.t load part of your library/i))
-      .toBeInTheDocument();
+    expect(
+      screen.getByText(/couldn.t load part of your library/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/kaboom/)).toBeInTheDocument();
     expect(screen.getByText("Home")).toBeInTheDocument();
   });

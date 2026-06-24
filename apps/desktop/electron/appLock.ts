@@ -262,11 +262,7 @@ function readPersisted(): PersistedAppLock {
     // `fido2` key is a valid old schema, normalised to `null` so the
     // rest of the module (and the validator) can treat `fido2` as
     // an always-present `Fido2Record | null`.
-    if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      !("fido2" in parsed)
-    ) {
+    if (parsed !== null && typeof parsed === "object" && !("fido2" in parsed)) {
       (parsed as Record<string, unknown>).fido2 = null;
     }
     if (!isValidPersisted(parsed)) {
@@ -526,8 +522,7 @@ export async function attemptUnlock(pin: string): Promise<UnlockResult> {
 
   persisted.attempt.failures += 1;
   if (persisted.attempt.failures >= APP_LOCK_LOCKOUT_THRESHOLD) {
-    const extraFails =
-      persisted.attempt.failures - APP_LOCK_LOCKOUT_THRESHOLD;
+    const extraFails = persisted.attempt.failures - APP_LOCK_LOCKOUT_THRESHOLD;
     const backoff = Math.min(
       APP_LOCK_BACKOFF_BASE_MS * Math.pow(2, extraFails),
       APP_LOCK_BACKOFF_MAX_MS,
@@ -777,7 +772,10 @@ function issueChallenge(now: number = Date.now()): string {
  * not been used before — then consume it (single-use). Returns
  * `true` on success.
  */
-function consumeChallenge(challenge: string, now: number = Date.now()): boolean {
+function consumeChallenge(
+  challenge: string,
+  now: number = Date.now(),
+): boolean {
   const expiry = pendingFido2Challenges.get(challenge);
   if (expiry === undefined) return false;
   pendingFido2Challenges.delete(challenge);
@@ -994,7 +992,10 @@ export function verifyFido2Assertion(
     return { kind: "no_pin_set" };
   }
   if (persisted.attempt.nextAttemptAt > now) {
-    return { kind: "locked_out", nextAttemptAt: persisted.attempt.nextAttemptAt };
+    return {
+      kind: "locked_out",
+      nextAttemptAt: persisted.attempt.nextAttemptAt,
+    };
   }
 
   const record = persisted.fido2;
@@ -1022,7 +1023,9 @@ export function verifyFido2Assertion(
   }
   // authenticatorData layout: rpIdHash (32) || flags (1) || counter (4) || ...
   if (authData.length < 37) return fail();
-  if (!authData.subarray(0, 32).equals(Buffer.from(record.rpIdHash, "base64"))) {
+  if (
+    !authData.subarray(0, 32).equals(Buffer.from(record.rpIdHash, "base64"))
+  ) {
     return fail();
   }
   if ((authData[32] & FIDO2_FLAG_USER_PRESENT) === 0) {

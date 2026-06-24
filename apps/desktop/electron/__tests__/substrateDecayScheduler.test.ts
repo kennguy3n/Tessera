@@ -16,9 +16,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const bridgeMock = {
-  bridgeRunDecaySweep: vi
-    .fn()
-    .mockReturnValue({ scored: 0, candidatesArchived: 0, supersededArchived: 0 }),
+  bridgeRunDecaySweep: vi.fn().mockReturnValue({
+    scored: 0,
+    candidatesArchived: 0,
+    supersededArchived: 0,
+  }),
 };
 
 let bridgeAvailable = true;

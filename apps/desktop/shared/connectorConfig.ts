@@ -169,11 +169,11 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "1201234567890123",
-        help:
-          "The numeric gid of the Asana project to index. Open the project in Asana — it is the long number in the URL (…/0/<project gid>/list).",
+        help: "The numeric gid of the Asana project to index. Open the project in Asana — it is the long number in the URL (…/0/<project gid>/list).",
         validation: {
           pattern: "\\d+",
-          message: "The Asana project gid is the numeric value from the project URL.",
+          message:
+            "The Asana project gid is the numeric value from the project URL.",
         },
       },
       {
@@ -185,7 +185,8 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         help: "Leave blank unless Asana directs you to a region-specific API host.",
         validation: {
           httpsUrl: true,
-          message: "Enter a full https:// URL, e.g. https://app.asana.com/api/1.0.",
+          message:
+            "Enter a full https:// URL, e.g. https://app.asana.com/api/1.0.",
         },
       },
     ],
@@ -200,13 +201,13 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: true,
         placeholder: "glpat-…",
-        help:
-          "Create a token with the read-only read_api scope (Settings → Access Tokens). Works for gitlab.com and self-managed instances.",
+        help: "Create a token with the read-only read_api scope (Settings → Access Tokens). Works for gitlab.com and self-managed instances.",
         validation: {
           // GitLab personal/project/group access tokens are the
           // `glpat-` prefix followed by a 20+ char URL-safe body.
           pattern: "glpat-[A-Za-z0-9_-]{20,}",
-          message: "GitLab access tokens start with 'glpat-' followed by the token body.",
+          message:
+            "GitLab access tokens start with 'glpat-' followed by the token body.",
         },
       },
       {
@@ -215,13 +216,14 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "12345  (or  group/subgroup/project)",
-        help:
-          "The numeric project ID (shown on the project's home page) or its full namespace path.",
+        help: "The numeric project ID (shown on the project's home page) or its full namespace path.",
         validation: {
           // Either the numeric id, or a namespace path of one or more
           // `/`-separated segments (group/subgroup/project).
-          pattern: "\\d+|[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*",
-          message: "Enter the numeric project ID or its group/subgroup/project path.",
+          pattern:
+            "\\d+|[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*",
+          message:
+            "Enter the numeric project ID or its group/subgroup/project path.",
         },
       },
       {
@@ -233,7 +235,8 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         help: "Leave blank for gitlab.com. Set the instance origin for self-managed GitLab.",
         validation: {
           httpsUrl: true,
-          message: "Enter a full https:// URL, e.g. https://gitlab.example.com.",
+          message:
+            "Enter a full https:// URL, e.g. https://gitlab.example.com.",
         },
       },
     ],
@@ -247,11 +250,11 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
-        help:
-          "In Teams, open the team → ⋯ → Get link to team; the groupId query parameter (a GUID) is the team ID.",
+        help: "In Teams, open the team → ⋯ → Get link to team; the groupId query parameter (a GUID) is the team ID.",
         validation: {
           // Microsoft group/team IDs are GUIDs.
-          pattern: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+          pattern:
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
           message: "The Team ID is the groupId GUID from the team link.",
         },
       },
@@ -261,8 +264,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "19:abcd…@thread.tacv2",
-        help:
-          "Open the channel → ⋯ → Get link to channel; the channel ID is the first segment of the link.",
+        help: "Open the channel → ⋯ → Get link to channel; the channel ID is the first segment of the link.",
         validation: {
           // Teams channel thread ids: `19:<body>@thread.tacv2` (or the
           // legacy `@thread.skype`).
@@ -295,8 +297,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: true,
         placeholder: "read-only token",
-        help:
-          "On the same page choose Token and authorise read-only access; paste the generated token here.",
+        help: "On the same page choose Token and authorise read-only access; paste the generated token here.",
         validation: {
           // Trello tokens are 64+ alphanumeric characters.
           pattern: "[A-Za-z0-9]{64,}",
@@ -309,12 +310,12 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "24-character board id",
-        help:
-          "Open the board, append .json to its URL, and copy the top-level id value.",
+        help: "Open the board, append .json to its URL, and copy the top-level id value.",
         validation: {
           // The board's short link (8 chars) or its full 24-char hex id.
           pattern: "[A-Za-z0-9]{8}|[a-fA-F0-9]{24}",
-          message: "Enter the board's 24-character id (or its 8-character short link).",
+          message:
+            "Enter the board's 24-character id (or its 8-character short link).",
         },
       },
     ],
@@ -334,15 +335,15 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: true,
         placeholder: "bot token",
-        help:
-          "In the Discord Developer Portal open your application → Bot → Reset Token. Invite the bot to your server with only the read-only View Channels + Read Message History permissions.",
+        help: "In the Discord Developer Portal open your application → Bot → Reset Token. Invite the bot to your server with only the read-only View Channels + Read Message History permissions.",
         validation: {
           // Discord bot tokens are three dot-separated base64url
           // segments (~59-72 chars). Validate the charset + a
           // conservative minimum length without over-constraining the
           // exact segment sizes (which Discord has changed over time).
           pattern: "[A-Za-z0-9_.-]{50,}",
-          message: "Paste the full Discord bot token from the Developer Portal.",
+          message:
+            "Paste the full Discord bot token from the Developer Portal.",
         },
       },
       {
@@ -351,12 +352,12 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "1107583106847408128",
-        help:
-          "Enable Developer Mode (User Settings → Advanced), then right-click the channel → Copy Channel ID.",
+        help: "Enable Developer Mode (User Settings → Advanced), then right-click the channel → Copy Channel ID.",
         validation: {
           // Discord IDs are snowflakes: 17-20 digit integers.
           pattern: "\\d{17,20}",
-          message: "The Channel ID is the 17-20 digit number from Copy Channel ID.",
+          message:
+            "The Channel ID is the 17-20 digit number from Copy Channel ID.",
         },
       },
       {
@@ -368,7 +369,8 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         help: "Leave blank unless you proxy the Discord REST API through a different host.",
         validation: {
           httpsUrl: true,
-          message: "Enter a full https:// URL, e.g. https://discord.com/api/v10.",
+          message:
+            "Enter a full https:// URL, e.g. https://discord.com/api/v10.",
         },
       },
     ],
@@ -383,8 +385,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: true,
         placeholder: "repository access token",
-        help:
-          "Create a Repository (or Workspace) Access Token with the read-only repository + pullrequest scopes (Repository settings → Access tokens). Paste it here.",
+        help: "Create a Repository (or Workspace) Access Token with the read-only repository + pullrequest scopes (Repository settings → Access tokens). Paste it here.",
         validation: {
           // Bitbucket access tokens / app passwords are opaque; only a
           // conservative charset + length is enforced.
@@ -427,7 +428,8 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         help: "Leave blank for Bitbucket Cloud. Set the API origin for Bitbucket Server/Data Center.",
         validation: {
           httpsUrl: true,
-          message: "Enter a full https:// URL, e.g. https://api.bitbucket.org/2.0.",
+          message:
+            "Enter a full https:// URL, e.g. https://api.bitbucket.org/2.0.",
         },
       },
     ],
@@ -442,8 +444,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: true,
         placeholder: "pat…",
-        help:
-          "Create a personal access token at airtable.com/create/tokens with the read-only data.records:read + schema.bases:read scopes, granted to the base you want to index.",
+        help: "Create a personal access token at airtable.com/create/tokens with the read-only data.records:read + schema.bases:read scopes, granted to the base you want to index.",
         validation: {
           // Airtable PATs are `pat` + 14 alphanumerics + "." + a 64+
           // char secret body.
@@ -457,8 +458,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "appXXXXXXXXXXXXXX",
-        help:
-          "Open the base in the Airtable API docs (airtable.com/api) — the base ID is the appXXXXXXXXXXXXXX value.",
+        help: "Open the base in the Airtable API docs (airtable.com/api) — the base ID is the appXXXXXXXXXXXXXX value.",
         validation: {
           // Airtable base IDs are `app` followed by 14 alphanumerics.
           pattern: "app[A-Za-z0-9]{14}",
@@ -500,8 +500,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         // into auth_config_json as a number, not a string.
         valueType: "integer",
         placeholder: "1234567890",
-        help:
-          "Open the board in monday.com — the board ID is the numeric value at the end of the URL (…/boards/<board id>).",
+        help: "Open the board in monday.com — the board ID is the numeric value at the end of the URL (…/boards/<board id>).",
         validation: {
           // monday.com board IDs are integers.
           pattern: "\\d+",
@@ -522,12 +521,12 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         // percent-encodes it into `/api/v2/team/{team_id}/task`, so it
         // is injected as a JSON string (not a number).
         placeholder: "9001234567",
-        help:
-          "Open ClickUp in the browser — the Workspace (Team) ID is the numeric value in the URL (app.clickup.com/<team id>/…).",
+        help: "Open ClickUp in the browser — the Workspace (Team) ID is the numeric value in the URL (app.clickup.com/<team id>/…).",
         validation: {
           // ClickUp Workspace/Team IDs are numeric.
           pattern: "\\d+",
-          message: "The Workspace ID is the numeric value from the ClickUp URL.",
+          message:
+            "The Workspace ID is the numeric value from the ClickUp URL.",
         },
       },
       {
@@ -553,11 +552,11 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: false,
         secret: false,
         placeholder: "https://api.intercom.io",
-        help:
-          "Leave blank for US-hosted workspaces. EU/AU-hosted workspaces use https://api.eu.intercom.io or https://api.au.intercom.io.",
+        help: "Leave blank for US-hosted workspaces. EU/AU-hosted workspaces use https://api.eu.intercom.io or https://api.au.intercom.io.",
         validation: {
           httpsUrl: true,
-          message: "Enter a full https:// URL, e.g. https://api.eu.intercom.io.",
+          message:
+            "Enter a full https:// URL, e.g. https://api.eu.intercom.io.",
         },
       },
     ],
@@ -571,8 +570,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "https://your-domain.my.salesforce.com",
-        help:
-          "Your Salesforce org's My Domain URL (Setup → My Domain). The connector reads Cases from this instance — it is per-org, so it must be provided.",
+        help: "Your Salesforce org's My Domain URL (Setup → My Domain). The connector reads Cases from this instance — it is per-org, so it must be provided.",
         validation: {
           httpsUrl: true,
           message:
@@ -603,8 +601,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "acme",
-        help:
-          "Just your Zendesk subdomain — the first label of your Zendesk URL (https://<subdomain>.zendesk.com). Enter 'acme' for acme.zendesk.com, not the full URL.",
+        help: "Just your Zendesk subdomain — the first label of your Zendesk URL (https://<subdomain>.zendesk.com). Enter 'acme' for acme.zendesk.com, not the full URL.",
         validation: {
           // A single 2–63 char DNS label (matches the seam's
           // INSTANCE_LABEL_RE byte-for-byte, case-insensitively — the
@@ -627,8 +624,7 @@ export const CONNECTOR_CONNECT_SPECS: Record<string, ConnectorConnectSpec> = {
         required: true,
         secret: false,
         placeholder: "dev12345",
-        help:
-          "Just your ServiceNow instance name — the first label of your instance URL (https://<instance>.service-now.com). Enter 'dev12345' for dev12345.service-now.com, not the full URL.",
+        help: "Just your ServiceNow instance name — the first label of your instance URL (https://<instance>.service-now.com). Enter 'dev12345' for dev12345.service-now.com, not the full URL.",
         validation: {
           minLength: 2,
           pattern: "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])",

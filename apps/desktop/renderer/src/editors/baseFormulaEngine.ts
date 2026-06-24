@@ -238,7 +238,9 @@ export function evaluateBaseFormula(
   record: BaseRecord,
   currentFieldName?: string,
 ): FormulaValue {
-  const seed = currentFieldName ? new Set<string>([currentFieldName]) : new Set<string>();
+  const seed = currentFieldName
+    ? new Set<string>([currentFieldName])
+    : new Set<string>();
   return evaluateBaseFormulaInner(source, fields, record, seed);
 }
 
@@ -318,10 +320,7 @@ export function evaluateBaseFormulaInner(
   try {
     return evaluateFormulaString(rewritten, resolver);
   } catch (err) {
-    return makeError(
-      "#ERR!",
-      err instanceof Error ? err.message : String(err),
-    );
+    return makeError("#ERR!", err instanceof Error ? err.message : String(err));
   }
 }
 

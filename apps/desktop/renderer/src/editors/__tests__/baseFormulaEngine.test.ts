@@ -73,9 +73,9 @@ describe("extractFieldRefs", () => {
     // `{Fake}` is still inside the string and `{Real}` outside is
     // the only real reference. The scanner stays aligned with the
     // evaluator on what counts as "inside a literal".
-    expect(
-      extractFieldRefs('"open ""{Fake}"" still open" + {Real}'),
-    ).toEqual(["Real"]);
+    expect(extractFieldRefs('"open ""{Fake}"" still open" + {Real}')).toEqual([
+      "Real",
+    ]);
   });
 
   it("treats a backslash as a literal character (formula engine has no backslash escapes)", () => {
@@ -84,9 +84,9 @@ describe("extractFieldRefs", () => {
     // the scanner intentionally diverges from C-style string
     // semantics and stays in lock-step with the underlying
     // tokenizer (`formulaEngine/tokenizer.ts`).
-    expect(
-      extractFieldRefs('"open \\" + {ClosedRef} + "reopen"'),
-    ).toEqual(["ClosedRef"]);
+    expect(extractFieldRefs('"open \\" + {ClosedRef} + "reopen"')).toEqual([
+      "ClosedRef",
+    ]);
   });
 });
 
@@ -103,9 +103,9 @@ describe("renameFieldInFormula", () => {
   });
 
   it("leaves unrelated references untouched", () => {
-    expect(
-      renameFieldInFormula("{Price} + {Quantity}", "Price", "Cost"),
-    ).toBe("{Cost} + {Quantity}");
+    expect(renameFieldInFormula("{Price} + {Quantity}", "Price", "Cost")).toBe(
+      "{Cost} + {Quantity}",
+    );
   });
 
   it("never touches a `{oldName}` inside a single-quoted string literal", () => {

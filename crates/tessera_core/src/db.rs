@@ -1478,7 +1478,7 @@ mod tests {
         // After TRUNCATE the WAL file should be zero-length (it
         // typically still exists on disk; SQLite truncates rather
         // than unlinks).
-        let wal_size = std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
+        let wal_size = std::fs::metadata(&wal_path).map_or(0, |m| m.len());
         assert_eq!(
             wal_size, 0,
             "wal_checkpoint(TRUNCATE) should leave wal at zero bytes; got {wal_size}"

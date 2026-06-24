@@ -14,10 +14,7 @@
  * inline citation hover cards).
  */
 import type { CSSProperties } from "react";
-import {
-  classifyRelevance,
-  type RelevanceTier,
-} from "./relevanceBadgeHelpers";
+import { classifyRelevance, type RelevanceTier } from "./relevanceBadgeHelpers";
 
 export type { RelevanceTier };
 

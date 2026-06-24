@@ -15,22 +15,14 @@
  * `view` module so the look matches the host. Tests render the
  * component against the JSDOM React 18 root.
  */
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type ReactElement,
-} from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 
 import {
   TesseraLocalApiClient,
   TesseraLocalApiHttpError,
   TesseraLocalApiUnavailableError,
 } from "../client";
-import type {
-  TesseraKchatSourceRow,
-  TesseraLocalApiStatus,
-} from "../types";
+import type { TesseraKchatSourceRow, TesseraLocalApiStatus } from "../types";
 
 export interface SourcesPanelHostBridge {
   /** Read the discovery file managed by Tessera. */
@@ -59,9 +51,7 @@ type LoadState =
   | { kind: "unavailable"; reason: string }
   | { kind: "ready"; data: PanelData };
 
-export function TesseraSourcesPanel(
-  props: SourcesPanelProps,
-): ReactElement {
+export function TesseraSourcesPanel(props: SourcesPanelProps): ReactElement {
   const { bridge } = props;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [pendingIngest, setPendingIngest] = useState(false);
@@ -69,8 +59,7 @@ export function TesseraSourcesPanel(
   const refresh = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      const client =
-        props.client ?? (await buildClient(bridge.readPortFile));
+      const client = props.client ?? (await buildClient(bridge.readPortFile));
       const [status, sources] = await Promise.all([
         client.status(),
         client.listSources(),
@@ -92,8 +81,7 @@ export function TesseraSourcesPanel(
     if (!bridge.currentChannelId || !bridge.currentChannelName) return;
     setPendingIngest(true);
     try {
-      const client =
-        props.client ?? (await buildClient(bridge.readPortFile));
+      const client = props.client ?? (await buildClient(bridge.readPortFile));
       await client.ingestChannel({
         channelId: bridge.currentChannelId,
         channelName: bridge.currentChannelName,
@@ -123,10 +111,7 @@ export function TesseraSourcesPanel(
   );
 
   return (
-    <section
-      className="tessera-sources-panel"
-      aria-label="Tessera Sources"
-    >
+    <section className="tessera-sources-panel" aria-label="Tessera Sources">
       <header className="tessera-sources-panel__header">
         <h2>Tessera Sources</h2>
         <button
@@ -139,9 +124,7 @@ export function TesseraSourcesPanel(
         </button>
       </header>
       {state.kind === "loading" && (
-        <p className="tessera-sources-panel__loading">
-          Connecting to Tessera…
-        </p>
+        <p className="tessera-sources-panel__loading">Connecting to Tessera…</p>
       )}
       {state.kind === "unavailable" && (
         <UnavailableBlock reason={state.reason} onRetry={refresh} />
@@ -165,10 +148,7 @@ function UnavailableBlock(props: {
   onRetry: () => void;
 }): ReactElement {
   return (
-    <div
-      role="status"
-      className="tessera-sources-panel__unavailable"
-    >
+    <div role="status" className="tessera-sources-panel__unavailable">
       <p>Tessera is not running on this machine.</p>
       <p className="tessera-sources-panel__hint">{props.reason}</p>
       <button type="button" onClick={() => void props.onRetry()}>
@@ -188,9 +168,7 @@ function ReadyBlock(props: {
 }): ReactElement {
   const { data } = props;
   const alreadyIndexed = props.currentChannelId
-    ? data.sources.some(
-        (row) => row.channelId === props.currentChannelId,
-      )
+    ? data.sources.some((row) => row.channelId === props.currentChannelId)
     : false;
   return (
     <>

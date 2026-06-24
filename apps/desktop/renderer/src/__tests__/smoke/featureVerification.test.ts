@@ -415,11 +415,7 @@ interface LexJsCallbacks {
   ) => boolean | void;
 }
 
-function lexJs(
-  source: string,
-  startIdx: number,
-  cb: LexJsCallbacks,
-): void {
+function lexJs(source: string, startIdx: number, cb: LexJsCallbacks): void {
   let depth = 0;
   type LexState = "code" | "sl_comment" | "ml_comment" | "bt";
   let state: LexState = "code";
@@ -485,13 +481,7 @@ function lexJs(
         }
         const endPos = j + 1;
         if (
-          cb.onStringLiteral?.(
-            startPos,
-            decoded.join(""),
-            quote,
-            endPos,
-            depth,
-          )
+          cb.onStringLiteral?.(startPos, decoded.join(""), quote, endPos, depth)
         ) {
           return;
         }
@@ -518,7 +508,8 @@ function lexJs(
         //      the matching `{` opened). If the callback signals stop,
         //      return immediately.
         if (templateInterpStack.length > 0) {
-          const interpDepth = templateInterpStack[templateInterpStack.length - 1];
+          const interpDepth =
+            templateInterpStack[templateInterpStack.length - 1];
           if (depth === interpDepth) {
             templateInterpStack.pop();
             depth -= 1;
@@ -625,7 +616,15 @@ function lexJs(
  */
 function extractCategoriesBlock(): string {
   const source = readFileSync(
-    join(REPO_ROOT, "apps", "desktop", "renderer", "src", "pages", "CreatePage.tsx"),
+    join(
+      REPO_ROOT,
+      "apps",
+      "desktop",
+      "renderer",
+      "src",
+      "pages",
+      "CreatePage.tsx",
+    ),
     "utf8",
   );
 
@@ -660,7 +659,9 @@ function extractCategoriesBlock(): string {
   // outside our scan window.
   const eqIdx = source.indexOf("=", decl);
   if (eqIdx === -1) {
-    throw new Error("CATEGORIES declaration is missing the `=` assignment token");
+    throw new Error(
+      "CATEGORIES declaration is missing the `=` assignment token",
+    );
   }
   // Find the opening `{` of the object literal via a real lexer scan
   // rather than a plain `source.indexOf("{", eqIdx)`. The indexOf
@@ -1244,14 +1245,18 @@ describe("phase verification — internal helper invariants", () => {
     expect(extractTopLevelScalar("id: # only a comment\n", "id")).toBeNull();
     // Indented `#` (after the colon, still no preceding non-# tokens)
     // also indicates a comment-only value.
-    expect(extractTopLevelScalar("id:   # leading whitespace then comment\n", "id")).toBeNull();
+    expect(
+      extractTopLevelScalar("id:   # leading whitespace then comment\n", "id"),
+    ).toBeNull();
     // No value at all → YAML null.
     expect(extractTopLevelScalar("id:\n", "id")).toBeNull();
     // Trailing-whitespace-only value → also YAML null.
     expect(extractTopLevelScalar("id:    \n", "id")).toBeNull();
     // A non-empty value with a trailing comment still extracts the
     // value (regression guard for the existing happy path).
-    expect(extractTopLevelScalar("id: foo  # trailing comment\n", "id")).toBe("foo");
+    expect(extractTopLevelScalar("id: foo  # trailing comment\n", "id")).toBe(
+      "foo",
+    );
     // A `#` adjacent to a non-whitespace token is literal per YAML §6.6.
     expect(extractTopLevelScalar("id: foo#bar\n", "id")).toBe("foo#bar");
   });
@@ -1302,6 +1307,8 @@ describe("phase verification — internal helper invariants", () => {
     //    routinely clone into custom directory names (`tessera-fork`,
     //    `tessera-experimental`, `T1`), and the smoke suite must work
     //    in every such layout.
-    expect(__dirname.startsWith(REPO_ROOT + sep) || __dirname === REPO_ROOT).toBe(true);
+    expect(
+      __dirname.startsWith(REPO_ROOT + sep) || __dirname === REPO_ROOT,
+    ).toBe(true);
   });
 });

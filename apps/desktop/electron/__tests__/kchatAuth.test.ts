@@ -63,8 +63,9 @@ beforeEach(() => {
 
 describe("KchatAuthService.connect", () => {
   it("persists the PAT under provider 'kchat' and records server + user metadata", async () => {
-    const fetchFn = vi.fn(async () => userResponse()) as unknown as
-      typeof globalThis.fetch;
+    const fetchFn = vi.fn(async () =>
+      userResponse(),
+    ) as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });
     const svc = new KchatAuthService(client);
     const user = await svc.connect("PAT-good", "https://kchat.example.com");
@@ -91,8 +92,9 @@ describe("KchatAuthService.connect", () => {
     })) as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });
     const svc = new KchatAuthService(client);
-    await expect(svc.connect("PAT-bad", "https://kchat.example.com")).rejects
-      .toBeTruthy();
+    await expect(
+      svc.connect("PAT-bad", "https://kchat.example.com"),
+    ).rejects.toBeTruthy();
     expect(vaultStore.has("kchat")).toBe(false);
   });
 
@@ -115,9 +117,10 @@ describe("KchatAuthService.connect", () => {
       ok: false,
       status: 401,
       statusText: "Unauthorized",
-      text: async () => JSON.stringify({
-        error: `request token ${tokenLiteral} rejected`,
-      }),
+      text: async () =>
+        JSON.stringify({
+          error: `request token ${tokenLiteral} rejected`,
+        }),
       json: async () => ({
         error: `request token ${tokenLiteral} rejected`,
       }),
@@ -171,8 +174,8 @@ describe("KchatAuthService.connect", () => {
     // First a successful PAT connect to put the service in
     // `authMode === "pat"`.
     let nextResponse: () => Promise<Response> = async () => userResponse();
-    const fetchFn = vi.fn(
-      async () => nextResponse(),
+    const fetchFn = vi.fn(async () =>
+      nextResponse(),
     ) as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });
     const svc = new KchatAuthService(client);
@@ -339,9 +342,8 @@ describe("KchatAuthService.connect health-check teardown invariant", () => {
       // future ticks.
       await svc.connect("PAT-same", "https://kchat.example.com");
       expect(client.getState().state).toBe("connected");
-      const callsAfterFirst = (
-        fetchFn as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.length;
+      const callsAfterFirst = (fetchFn as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls.length;
 
       phase = "second";
       // The re-connect rejects (401 is non-retryable so this fails
@@ -349,9 +351,8 @@ describe("KchatAuthService.connect health-check teardown invariant", () => {
       await expect(
         svc.connect("PAT-same", "https://kchat.example.com"),
       ).rejects.toBeTruthy();
-      const callsAfterRetry = (
-        fetchFn as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.length;
+      const callsAfterRetry = (fetchFn as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls.length;
       // Sanity: the second connect did make at least one fetch
       // (its verifyConnection attempt) — otherwise the test is
       // measuring nothing.
@@ -362,9 +363,8 @@ describe("KchatAuthService.connect health-check teardown invariant", () => {
       // verifyConnection call → fetch. With the fix it has been
       // stopped, so no further fetches should occur.
       await vi.advanceTimersByTimeAsync(120_000);
-      const callsAfterAdvance = (
-        fetchFn as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.length;
+      const callsAfterAdvance = (fetchFn as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls.length;
       expect(callsAfterAdvance).toBe(callsAfterRetry);
     } finally {
       vi.useRealTimers();
@@ -438,8 +438,9 @@ describe("KchatAuthService.restoreFromVault", () => {
         json: async () => ({ error: "invalid_token" }),
         arrayBuffer: async () => new ArrayBuffer(0),
       }) as unknown as Response;
-    const fetchFn = vi.fn(async () => pending()) as unknown as
-      typeof globalThis.fetch;
+    const fetchFn = vi.fn(async () =>
+      pending(),
+    ) as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });
     const svc = new KchatAuthService(client);
 
@@ -465,8 +466,9 @@ describe("KchatAuthService.restoreFromVault", () => {
 
 describe("KchatAuthService.getState renderer safety", () => {
   it("never includes the token in any state field after a successful connect", async () => {
-    const fetchFn = vi.fn(async () => userResponse()) as unknown as
-      typeof globalThis.fetch;
+    const fetchFn = vi.fn(async () =>
+      userResponse(),
+    ) as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });
     const svc = new KchatAuthService(client);
     await svc.connect("PAT-secret", "https://kchat.example.com");

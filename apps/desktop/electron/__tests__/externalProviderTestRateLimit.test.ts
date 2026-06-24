@@ -79,19 +79,14 @@ import { _clearConfigCacheForTests } from "../config";
  * the inline shape here is sufficient for asserting on what the
  * IPC handler returns.
  */
-type TestResult =
-  | { ok: true }
-  | { ok: false; error: string };
+type TestResult = { ok: true } | { ok: false; error: string };
 
 function getHandler(
   channel: string,
 ): (event: unknown, ...args: unknown[]) => Promise<unknown> {
   const call = handleMock.mock.calls.find((c) => c[0] === channel);
   if (!call) throw new Error(`No handler registered for ${channel}`);
-  return call[1] as (
-    event: unknown,
-    ...args: unknown[]
-  ) => Promise<unknown>;
+  return call[1] as (event: unknown, ...args: unknown[]) => Promise<unknown>;
 }
 
 describe("externalProvider:test — rate limiter", () => {
@@ -209,7 +204,10 @@ describe("externalProvider:test — rate limiter", () => {
     // rate-limit channel. If this assertion ever flips, the
     // limiter has been reconfigured to share a bucket across
     // channels and the gate posture has regressed.
-    const firstList = (await listHandler({})) as { ok: boolean; error?: string };
+    const firstList = (await listHandler({})) as {
+      ok: boolean;
+      error?: string;
+    };
     expect(firstList.ok).toBe(false);
     if (!firstList.ok && firstList.error !== undefined) {
       expect(firstList.error).not.toMatch(/Rate limit/);

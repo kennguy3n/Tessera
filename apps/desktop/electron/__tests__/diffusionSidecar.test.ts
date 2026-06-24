@@ -116,11 +116,7 @@ describe("resolveDiffusionBinary", () => {
     const appPath = path.join(tmpRoot, "no-app");
     const scriptsPath = path.join(tmpRoot, "no-scripts");
 
-    const resolved = resolveDiffusionBinary(
-      appPath,
-      scriptsPath,
-      undefined,
-    );
+    const resolved = resolveDiffusionBinary(appPath, scriptsPath, undefined);
 
     expect(resolved).toBe(binaryName());
   });

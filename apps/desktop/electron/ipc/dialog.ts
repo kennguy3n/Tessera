@@ -56,17 +56,14 @@ export const PICK_IMAGE_EXTENSIONS: readonly string[] = [
 ];
 
 export function registerDialogHandlers(): void {
-  idempotentHandle(
-    "dialog:showSaveDialog",
-    async (event, options: unknown) => {
-      const parsed = SaveDialogOptionsSchema.parse(options);
-      const win = BrowserWindow.fromWebContents(event.sender);
-      const result = win
-        ? await dialog.showSaveDialog(win, parsed)
-        : await dialog.showSaveDialog(parsed);
-      return result;
-    },
-  );
+  idempotentHandle("dialog:showSaveDialog", async (event, options: unknown) => {
+    const parsed = SaveDialogOptionsSchema.parse(options);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win
+      ? await dialog.showSaveDialog(win, parsed)
+      : await dialog.showSaveDialog(parsed);
+    return result;
+  });
 
   // `dialog:pickImage` — opens an OS file picker locked to image
   // extensions and returns the chosen absolute path (or `null` if the

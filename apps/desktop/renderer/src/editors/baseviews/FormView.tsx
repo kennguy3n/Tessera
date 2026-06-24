@@ -127,9 +127,7 @@ function FieldControl({ field, value, onChange }: FieldControlProps) {
 
   if (field.type === "checkbox") {
     return (
-      <label
-        style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-      >
+      <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
         <input
           type="checkbox"
           aria-label={field.name}
@@ -164,11 +162,11 @@ function FieldControl({ field, value, onChange }: FieldControlProps) {
   if (field.type === "multi_select") {
     const selected = Array.isArray(value) ? (value as string[]) : [];
     const toggle = (opt: string, on: boolean) =>
-      onChange(
-        on ? [...selected, opt] : selected.filter((s) => s !== opt),
-      );
+      onChange(on ? [...selected, opt] : selected.filter((s) => s !== opt));
     return (
-      <fieldset style={{ ...labelStyle, border: "none", padding: 0, margin: 0 }}>
+      <fieldset
+        style={{ ...labelStyle, border: "none", padding: 0, margin: 0 }}
+      >
         <legend style={{ fontWeight: 500, fontSize: "0.875rem", padding: 0 }}>
           {field.name}
         </legend>
@@ -244,10 +242,7 @@ function inputTypeFor(field: BaseField): string {
 
 /** Hint text for the array / structural types entered as plain text. */
 function placeholderFor(field: BaseField): string | undefined {
-  if (
-    field.type === "linked_record" ||
-    field.type === "attachment"
-  ) {
+  if (field.type === "linked_record" || field.type === "attachment") {
     return "comma,separated";
   }
   return undefined;

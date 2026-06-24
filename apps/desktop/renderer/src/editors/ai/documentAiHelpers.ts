@@ -237,7 +237,9 @@ export function buildAiPrompt(input: DocumentAiPromptInput): string {
         "while staying on topic and preserving the original meaning.";
       break;
     case "tone": {
-      const tone = input.tone ? TONE_DESCRIPTIONS[input.tone] : "a clearer tone";
+      const tone = input.tone
+        ? TONE_DESCRIPTIONS[input.tone]
+        : "a clearer tone";
       task = `Rewrite the text below in ${tone}. Keep the meaning intact.`;
       break;
     }
@@ -288,7 +290,10 @@ export function buildAiPrompt(input: DocumentAiPromptInput): string {
   // the selection as the working material. For `continue`, prefer the
   // preceding-text window so the model sees upstream context.
   if (input.action === "continue") {
-    const preceding = clampText((input.precedingText ?? selection).trim(), 2000);
+    const preceding = clampText(
+      (input.precedingText ?? selection).trim(),
+      2000,
+    );
     if (preceding.length > 0) {
       parts.push("", "TEXT SO FAR:", preceding);
     }

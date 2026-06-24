@@ -6,9 +6,7 @@ interface IpcState<T> {
   error: string | null;
 }
 
-export function useIpc<T>(
-  ipcCall: (...args: unknown[]) => Promise<T>,
-) {
+export function useIpc<T>(ipcCall: (...args: unknown[]) => Promise<T>) {
   const [state, setState] = useState<IpcState<T>>({
     data: null,
     loading: false,

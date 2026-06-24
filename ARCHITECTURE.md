@@ -151,20 +151,20 @@ flowchart TB
 
 ## Recommended stack
 
-| Layer | Technology | Reason |
-|---|---|---|
-| Desktop shell | Electron | Cross-platform desktop with native access |
-| UI framework | React + TypeScript + Lucide + Phosphor icons | Productivity UI with strong typing and two complementary icon families (Lucide for action / outline, Phosphor for weighted / branded glyphs) |
-| Editor stack | TipTap (ProseMirror) for documents, custom Slide / Sheet / Base / Infographic / Landing Page editors | Block-level editing with citations and live preview |
-| Diagrams & slides | Mermaid (diagrams), Marp Core + Marpit (slides), Typst (high-fidelity PDF / SVG) | First-class rendering integrations wired into both the editors and the export pipeline |
-| Core engine | Rust | Performance, memory safety, indexing, storage, crypto |
-| Optional later | Go | Remote connector daemons, network services |
-| Local database | SQLite / SQLCipher | Local-first, encrypted, single-file DB |
-| Search | FTS5 full-text + pluggable `EmbeddingProvider` (default `HashTrickEmbedding` offline; optional ONNX Runtime `OnnxEmbeddingProvider` with `all-MiniLM-L6-v2` 22 MB English or `paraphrase-multilingual-MiniLM-L12-v2` ~120 MB multilingual, both 384-dim) + Reciprocal Rank Fusion (k=60) + temporal recency decay (30-day half-life) | Hybrid retrieval without external services; BM25 captures keywords, the embedding signal handles typos / substrings / paraphrase, RRF combines the rankings on rank rather than incomparable raw scores, and the recency decay biases toward fresh material when content similarity ties. The transformer-backed embeddings are opt-in — users can stay fully offline with HashTrick or upgrade to semantic recall (English-only or 50+ languages) without changing the vector dim |
-| Model runtime | llama.cpp / PrismML sidecar | Local GGUF model inference |
-| Apple Silicon | MLX | macOS ARM acceleration |
-| Electron bridge | N-API | Low-overhead Rust ↔ Node.js calls |
-| Packaging | electron-builder / Electron Forge | Platform-specific installers |
+| Layer             | Technology                                                                                                                                                                                                                                                                                                                           | Reason                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop shell     | Electron                                                                                                                                                                                                                                                                                                                             | Cross-platform desktop with native access                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| UI framework      | React + TypeScript + Lucide + Phosphor icons                                                                                                                                                                                                                                                                                         | Productivity UI with strong typing and two complementary icon families (Lucide for action / outline, Phosphor for weighted / branded glyphs)                                                                                                                                                                                                                                                                                                                                       |
+| Editor stack      | TipTap (ProseMirror) for documents, custom Slide / Sheet / Base / Infographic / Landing Page editors                                                                                                                                                                                                                                 | Block-level editing with citations and live preview                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Diagrams & slides | Mermaid (diagrams), Marp Core + Marpit (slides), Typst (high-fidelity PDF / SVG)                                                                                                                                                                                                                                                     | First-class rendering integrations wired into both the editors and the export pipeline                                                                                                                                                                                                                                                                                                                                                                                             |
+| Core engine       | Rust                                                                                                                                                                                                                                                                                                                                 | Performance, memory safety, indexing, storage, crypto                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Optional later    | Go                                                                                                                                                                                                                                                                                                                                   | Remote connector daemons, network services                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Local database    | SQLite / SQLCipher                                                                                                                                                                                                                                                                                                                   | Local-first, encrypted, single-file DB                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Search            | FTS5 full-text + pluggable `EmbeddingProvider` (default `HashTrickEmbedding` offline; optional ONNX Runtime `OnnxEmbeddingProvider` with `all-MiniLM-L6-v2` 22 MB English or `paraphrase-multilingual-MiniLM-L12-v2` ~120 MB multilingual, both 384-dim) + Reciprocal Rank Fusion (k=60) + temporal recency decay (30-day half-life) | Hybrid retrieval without external services; BM25 captures keywords, the embedding signal handles typos / substrings / paraphrase, RRF combines the rankings on rank rather than incomparable raw scores, and the recency decay biases toward fresh material when content similarity ties. The transformer-backed embeddings are opt-in — users can stay fully offline with HashTrick or upgrade to semantic recall (English-only or 50+ languages) without changing the vector dim |
+| Model runtime     | llama.cpp / PrismML sidecar                                                                                                                                                                                                                                                                                                          | Local GGUF model inference                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Apple Silicon     | MLX                                                                                                                                                                                                                                                                                                                                  | macOS ARM acceleration                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Electron bridge   | N-API                                                                                                                                                                                                                                                                                                                                | Low-overhead Rust ↔ Node.js calls                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Packaging         | electron-builder / Electron Forge                                                                                                                                                                                                                                                                                                    | Platform-specific installers                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ---
 
@@ -204,19 +204,19 @@ Concept graph → Retrieval → Source pack → Artifact generation → Citation
 
 The substrate is composed of modular Rust crates:
 
-| Crate | Role |
-|---|---|
-| `evidence_store` | Encrypted append-only storage, hybrid retrieval |
-| `observation_engine` | Entity and fact extraction from evidence |
-| `memory_manager` | Decay state machine, retention scoring, working memory |
-| `concept_graph` | Higher-order synthesized entities and relationships |
-| `synthesis_pipeline` | Transformation of observations into concepts |
-| `inference_router` | Dispatcher for SLM tasks with grammar constraints |
-| `agent_contract` | Lifecycle and promotion logic for agent-generated claims |
-| `crypto` | PQC primitives, DEK management, XChaCha20-Poly1305 |
-| `ffi` | UniFFI bridge for iOS (Swift) and Android (Kotlin) |
-| `napi` | Node.js / Electron bindings for macOS, Windows, and Linux (x64 + arm64) |
-| `export_plane` | Governance, policy simulation, data egress controls |
+| Crate                | Role                                                                    |
+| -------------------- | ----------------------------------------------------------------------- |
+| `evidence_store`     | Encrypted append-only storage, hybrid retrieval                         |
+| `observation_engine` | Entity and fact extraction from evidence                                |
+| `memory_manager`     | Decay state machine, retention scoring, working memory                  |
+| `concept_graph`      | Higher-order synthesized entities and relationships                     |
+| `synthesis_pipeline` | Transformation of observations into concepts                            |
+| `inference_router`   | Dispatcher for SLM tasks with grammar constraints                       |
+| `agent_contract`     | Lifecycle and promotion logic for agent-generated claims                |
+| `crypto`             | PQC primitives, DEK management, XChaCha20-Poly1305                      |
+| `ffi`                | UniFFI bridge for iOS (Swift) and Android (Kotlin)                      |
+| `napi`               | Node.js / Electron bindings for macOS, Windows, and Linux (x64 + arm64) |
+| `export_plane`       | Governance, policy simulation, data egress controls                     |
 
 ### Hybrid retrieval pipeline
 
@@ -263,10 +263,10 @@ a single radio group; switching providers swaps the active backend and
 triggers `backfill_embeddings_tracked` to re-embed the entire corpus
 under the new `model_id`.
 
-| Tier | `model_id` | Dim | Download | Languages | When to pick it |
-|---|---|---|---|---|---|
-| **Fast** | `hash-trick-v1-256d-char3-5` | 256 | 0 (bundled) | Script-agnostic ASCII bias | The default — fully offline, no network. Good baseline for English-with-typography; recall suffers on paraphrase and cross-lingual queries. |
-| **Semantic — English** | `onnx:all-MiniLM-L6-v2:384d` | 384 | 22 MB | English | Smallest semantic option. Best per-MB recall for an English-only workspace; will *not* embed CJK / Arabic / Devanagari well. |
+| Tier                        | `model_id`                                        | Dim | Download     | Languages                                                                                                 | When to pick it                                                                                                                                      |
+| --------------------------- | ------------------------------------------------- | --- | ------------ | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fast**                    | `hash-trick-v1-256d-char3-5`                      | 256 | 0 (bundled)  | Script-agnostic ASCII bias                                                                                | The default — fully offline, no network. Good baseline for English-with-typography; recall suffers on paraphrase and cross-lingual queries.          |
+| **Semantic — English**      | `onnx:all-MiniLM-L6-v2:384d`                      | 384 | 22 MB        | English                                                                                                   | Smallest semantic option. Best per-MB recall for an English-only workspace; will _not_ embed CJK / Arabic / Devanagari well.                         |
 | **Semantic — Multilingual** | `onnx:paraphrase-multilingual-MiniLM-L12-v2:384d` | 384 | ~120 MB INT8 | 50+ languages including all nine non-English Tessera locales (es / fr / de / ja / zh / pt / ko / ar / hi) | Recommended default when any non-English content is indexed. Same retrieval API and same 384-dim, so the rest of the hybrid pipeline doesn't branch. |
 
 The renderer surfaces an auto-recommendation: if the indexed corpus
@@ -321,12 +321,12 @@ React renderer → typed IPC → Electron main → N-API / child process → Rus
 
 ### Anti-patterns to avoid
 
-| Anti-pattern | Why it's dangerous |
-|---|---|
-| Renderer directly accessing files | Bypasses OS permission model |
-| Renderer managing model server | Exposes process control to web context |
-| Renderer holding OAuth tokens | Tokens accessible to any renderer code |
-| Renderer accessing encrypted DB | Encryption keys exposed to web context |
+| Anti-pattern                      | Why it's dangerous                     |
+| --------------------------------- | -------------------------------------- |
+| Renderer directly accessing files | Bypasses OS permission model           |
+| Renderer managing model server    | Exposes process control to web context |
+| Renderer holding OAuth tokens     | Tokens accessible to any renderer code |
+| Renderer accessing encrypted DB   | Encryption keys exposed to web context |
 
 ### TypeScript API interfaces
 
@@ -334,15 +334,31 @@ React renderer → typed IPC → Electron main → N-API / child process → Rus
 interface SourceApi {
   addLocalFolder(path: string): Promise<SourceResult>;
   addLocalFile(path: string): Promise<SourceResult>;
-  connectRemote(provider: RemoteProvider, config: RemoteConfig): Promise<SourceResult>;
+  connectRemote(
+    provider: RemoteProvider,
+    config: RemoteConfig,
+  ): Promise<SourceResult>;
   reindexSource(sourceId: string): Promise<void>;
-  searchSources(query: string, options?: SearchOptions): Promise<SearchResult[]>;
+  searchSources(
+    query: string,
+    options?: SearchOptions,
+  ): Promise<SearchResult[]>;
 }
 
 interface ArtifactApi {
-  createFromTemplate(templateId: string, sourceIds: string[], options?: CreateOptions): Promise<Artifact>;
-  updateArtifact(artifactId: string, changes: ArtifactChanges): Promise<Artifact>;
-  exportArtifact(artifactId: string, format: ExportFormat): Promise<ExportResult>;
+  createFromTemplate(
+    templateId: string,
+    sourceIds: string[],
+    options?: CreateOptions,
+  ): Promise<Artifact>;
+  updateArtifact(
+    artifactId: string,
+    changes: ArtifactChanges,
+  ): Promise<Artifact>;
+  exportArtifact(
+    artifactId: string,
+    format: ExportFormat,
+  ): Promise<ExportResult>;
 }
 
 interface ModelApi {
@@ -379,14 +395,14 @@ unavailable. See `crates/tessera_runtime/src/external_provider.rs`.
 
 ### Inference tasks
 
-| Task | Description |
-|---|---|
-| Importance tagging | Classify evidence chunks by importance tier |
-| Entity extraction | Extract named entities from text |
-| Observation promotion | Promote raw observations to verified facts |
-| Summary generation | Generate summaries from source packs |
-| Concept synthesis | Synthesize higher-order concepts from observations |
-| Contradiction adjudication | Detect and resolve conflicting information |
+| Task                       | Description                                        |
+| -------------------------- | -------------------------------------------------- |
+| Importance tagging         | Classify evidence chunks by importance tier        |
+| Entity extraction          | Extract named entities from text                   |
+| Observation promotion      | Promote raw observations to verified facts         |
+| Summary generation         | Generate summaries from source packs               |
+| Concept synthesis          | Synthesize higher-order concepts from observations |
+| Contradiction adjudication | Detect and resolve conflicting information         |
 
 ### Shared sidecar pattern
 
@@ -418,38 +434,38 @@ update can be disabled from the Settings page.
 
 ### macOS
 
-| Component | Detail |
-|---|---|
-| Shell | Electron 31 + React |
-| Native addon | Swift N-API addon |
-| Preferred runtime | MLX (MLXAdapter) |
-| Embeddings | Core ML |
-| Fallback | LlamaCppAdapter |
+| Component         | Detail              |
+| ----------------- | ------------------- |
+| Shell             | Electron 31 + React |
+| Native addon      | Swift N-API addon   |
+| Preferred runtime | MLX (MLXAdapter)    |
+| Embeddings        | Core ML             |
+| Fallback          | LlamaCppAdapter     |
 
 ### Windows
 
-| Component | Detail |
-|---|---|
-| Shell | Electron 31 + React |
-| Native addon | C++ N-API addon |
-| Runtime | LlamaCppAdapter |
-| CPU-only | AVX2 minimum, AVX-VNNI / AVX-512 VNNI when available |
-| CPU+GPU | Vulkan / CUDA backend |
-| Embeddings | DirectML EP |
-| Fallback | ONNX Runtime CPU EP |
-| Packaging | NSIS installer (`.exe`), portable `.zip` |
+| Component    | Detail                                               |
+| ------------ | ---------------------------------------------------- |
+| Shell        | Electron 31 + React                                  |
+| Native addon | C++ N-API addon                                      |
+| Runtime      | LlamaCppAdapter                                      |
+| CPU-only     | AVX2 minimum, AVX-VNNI / AVX-512 VNNI when available |
+| CPU+GPU      | Vulkan / CUDA backend                                |
+| Embeddings   | DirectML EP                                          |
+| Fallback     | ONNX Runtime CPU EP                                  |
+| Packaging    | NSIS installer (`.exe`), portable `.zip`             |
 
 ### Linux
 
-| Component | Detail |
-|---|---|
-| Shell | Electron 31 + React |
-| Native addon | C++ N-API addon |
-| Runtime | LlamaCppAdapter |
-| CPU | AVX2 minimum, AVX-VNNI / AVX-512 VNNI, ARM NEON / dotprod |
-| GPU | Vulkan, CUDA (NVIDIA), ROCm (AMD) |
-| Embeddings | ONNX Runtime CPU EP |
-| Packaging | AppImage, `.deb` (x64 + arm64) |
+| Component    | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| Shell        | Electron 31 + React                                       |
+| Native addon | C++ N-API addon                                           |
+| Runtime      | LlamaCppAdapter                                           |
+| CPU          | AVX2 minimum, AVX-VNNI / AVX-512 VNNI, ARM NEON / dotprod |
+| GPU          | Vulkan, CUDA (NVIDIA), ROCm (AMD)                         |
+| Embeddings   | ONNX Runtime CPU EP                                       |
+| Packaging    | AppImage, `.deb` (x64 + arm64)                            |
 
 ### Model selection architecture
 
@@ -457,33 +473,33 @@ Selection happens in three independent dimensions that are resolved in this orde
 
 1. **Platform → format.** `detect_platform()` (in `crates/tessera_runtime/src/config.rs`) maps the running target triple to one of `macos-apple-silicon`, `macos-intel`, `windows-x64`, `linux-x64`, `linux-arm64`. macOS Apple Silicon prefers MLX 2-bit; every other platform uses GGUF Q1_0_g128 from the PrismML llama.cpp fork. Q4_K_M is intentionally NOT used — the Q1_0_g128 ternary repack is what makes Bonsai 1.58-bit small (≈248 MB for the 1.7B MLX, ≈450 MB for the 1.7B GGUF).
 2. **Device tier → model size.** `sys_total_ram_gb()` reads physical RAM (sysctl on macOS, `/proc/meminfo` on Linux, PowerShell `Get-CimInstance` then `wmic` fallback on Windows) and buckets it into `low` (1.7B), `medium` (4B), or `high` (8B).
-3. **GPU detection → compute backend.** `detect_compute_backends()` returns the set of acceleration paths actually available on the box (`cpu` is always present; `cuda` when `nvidia-smi` runs; `vulkan` when the runtime library is present; `rocm` on Linux when `/opt/rocm` exists; `metal` on Apple Silicon). The PrismML ggml dispatcher selects the per-kernel implementation at run time, but the substrate still needs the right *binary variant* of `llama-server` — the install scripts (`sidecars/scripts/download-llama-server.{sh,ps1}`) take `--compute=<backend>` and pin one variant per machine.
+3. **GPU detection → compute backend.** `detect_compute_backends()` returns the set of acceleration paths actually available on the box (`cpu` is always present; `cuda` when `nvidia-smi` runs; `vulkan` when the runtime library is present; `rocm` on Linux when `/opt/rocm` exists; `metal` on Apple Silicon). The PrismML ggml dispatcher selects the per-kernel implementation at run time, but the substrate still needs the right _binary variant_ of `llama-server` — the install scripts (`sidecars/scripts/download-llama-server.{sh,ps1}`) take `--compute=<backend>` and pin one variant per machine.
 
-The full registry lives in `sidecars/models.json`. `available_models_for_platform()` filters that registry down to the three sizes valid for the current platform, and `select_model(tier, platform)` picks exactly one. Single-model enforcement (`apps/desktop/electron/modelManagement.ts`) guarantees that swapping tier or size deletes the prior file *before* the new download starts, so only one model weight ever lives on disk.
+The full registry lives in `sidecars/models.json`. `available_models_for_platform()` filters that registry down to the three sizes valid for the current platform, and `select_model(tier, platform)` picks exactly one. Single-model enforcement (`apps/desktop/electron/modelManagement.ts`) guarantees that swapping tier or size deletes the prior file _before_ the new download starts, so only one model weight ever lives on disk.
 
 ### Device tiering
 
-| Tier | Available RAM | Capability |
-|---|---|---|
-| **Low** | 2–3 GB | Lexicon classifiers + XLM-R INT4 embeddings only, no SLM |
-| **Medium** | 4–6 GB | XLM-R INT8 + Bonsai-1.7B gated to active scope |
-| **High** | 8+ GB | Always-on Bonsai-1.7B / 4B / 8B (MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 elsewhere) |
+| Tier       | Available RAM | Capability                                                                             |
+| ---------- | ------------- | -------------------------------------------------------------------------------------- |
+| **Low**    | 2–3 GB        | Lexicon classifiers + XLM-R INT4 embeddings only, no SLM                               |
+| **Medium** | 4–6 GB        | XLM-R INT8 + Bonsai-1.7B gated to active scope                                         |
+| **High**   | 8+ GB         | Always-on Bonsai-1.7B / 4B / 8B (MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 elsewhere) |
 
 ---
 
 ## Security and privacy
 
-| Principle | Implementation |
-|---|---|
-| Local-first storage | All data stored on-device by default |
-| Explicit source access | User authorizes each source connection |
-| Encrypted storage | SQLCipher (via rusqlite `bundled-sqlcipher-vendored-openssl`). 256-bit raw key generated on first launch (`crypto.randomBytes(32)`), wrapped via Electron `safeStorage` (Keychain on macOS, DPAPI on Windows, libsecret on Linux), persisted at `<userData>/db.key`, applied with `PRAGMA key = "x'<hex>'"` at bridge init. Existing plaintext databases are transparently re-encrypted in place via `sqlcipher_export` on first launch with a key. See `apps/desktop/electron/dbKey.ts` and `crates/tessera_core/src/db.rs` for the full chain. |
-| Safe renderer | No direct file, token, or model access from renderer |
-| Secure IPC | Typed, validated messages between renderer and main process |
-| Token vault | OAuth tokens stored in OS keychain, never exposed to renderer |
-| Audit log | All source connections, syncs, generations, and exports logged |
-| Revocation | Disconnect removes local index and revokes remote tokens |
-| Citation tracking | Every generated section links to its source material |
+| Principle              | Implementation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Local-first storage    | All data stored on-device by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Explicit source access | User authorizes each source connection                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Encrypted storage      | SQLCipher (via rusqlite `bundled-sqlcipher-vendored-openssl`). 256-bit raw key generated on first launch (`crypto.randomBytes(32)`), wrapped via Electron `safeStorage` (Keychain on macOS, DPAPI on Windows, libsecret on Linux), persisted at `<userData>/db.key`, applied with `PRAGMA key = "x'<hex>'"` at bridge init. Existing plaintext databases are transparently re-encrypted in place via `sqlcipher_export` on first launch with a key. See `apps/desktop/electron/dbKey.ts` and `crates/tessera_core/src/db.rs` for the full chain. |
+| Safe renderer          | No direct file, token, or model access from renderer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Secure IPC             | Typed, validated messages between renderer and main process                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Token vault            | OAuth tokens stored in OS keychain, never exposed to renderer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Audit log              | All source connections, syncs, generations, and exports logged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Revocation             | Disconnect removes local index and revokes remote tokens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Citation tracking      | Every generated section links to its source material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ### Defense-in-depth controls
 
@@ -498,7 +514,7 @@ regression test under `apps/desktop/electron/__tests__/`.
   random salt, then wraps the SQLCipher DB key + OAuth tokens + API
   keys with **AES-256-GCM**. The vault is unlocked at startup by an
   ephemeral `BrowserWindow` (loaded via `data:text/html`, `sandbox:
-  true`, single-purpose preload). See
+true`, single-purpose preload). See
   `apps/desktop/electron/passwordVault.ts`,
   `vaultCrypto.ts`,
   `passwordPromptPreload.ts`,
@@ -673,21 +689,21 @@ tessera/
 ## KChat integration
 
 Tessera integrates with KChat (a [Mattermost v4](https://api.mattermost.com/)-compatible
-chat server) as a first-class collaboration surface — both as a *source*
+chat server) as a first-class collaboration surface — both as a _source_
 (channels, posts, and files are indexed and become retrievable evidence)
-and as a *destination* (artifacts can be shared into a channel, optionally
+and as a _destination_ (artifacts can be shared into a channel, optionally
 with an evidence pack).
 
 ### Auth model — single PAT path
 
-Tessera and KChat Desktop are *two independent Electron clients* that
+Tessera and KChat Desktop are _two independent Electron clients_ that
 authenticate to the same KChat server backend independently. There is no
 session handoff between them.
 
-| Mode | When it applies | Where credentials live |
-|---|---|---|
-| **`pat`** | A user pastes a personal access token (or server URL + PAT) into the Settings card. | Vault under provider `kchat`. The token is verified against `/users/me` before persistence; on verify-failure the in-memory token is rolled back but `serverUrl` is intentionally NOT rolled back (`setServerUrl("")` would silently fall back to `DEFAULT_KCHAT_SERVER` — a worse failure mode than the stale value — and the token-presence guard in `KchatClient.request()` prevents outbound traffic to the stale URL). |
-| **`none`** | No active KChat connection. | — |
+| Mode       | When it applies                                                                     | Where credentials live                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`pat`**  | A user pastes a personal access token (or server URL + PAT) into the Settings card. | Vault under provider `kchat`. The token is verified against `/users/me` before persistence; on verify-failure the in-memory token is rolled back but `serverUrl` is intentionally NOT rolled back (`setServerUrl("")` would silently fall back to `DEFAULT_KCHAT_SERVER` — a worse failure mode than the stale value — and the token-presence guard in `KchatClient.request()` prevents outbound traffic to the stale URL). |
+| **`none`** | No active KChat connection.                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 `kchat:status` surfaces the current mode; `kchat:desktopBridgeStatus`
 exposes whether a `.kcz` extension running inside KChat Desktop has hit
@@ -782,90 +798,90 @@ code review.
   per-source DEK (`tessera_sources::kchat_crypto`), deletes the post rows
   and indexed files, and zeroises the in-memory DEK. AEAD-sealed chunks
   on disk are unrecoverable thereafter — even if an attacker later
-  recovers the SQLCipher DB file. *(Pinned by
+  recovers the SQLCipher DB file. _(Pinned by
   `tessera_sources::manager::tests::revoke_kchat_source_cryptoshreds_evidence_idempotently`,
   `refresh_kchat_acl_revoke_cryptoshreds_indexed_evidence`, and
-  `cryptoshred_clears_kchat_backfill_state`.)*
+  `cryptoshred_clears_kchat_backfill_state`.)_
 - **Column-level AEAD on posts.** Every encrypted field on `kchat_posts`
   (body, sender display name, channel name) is sealed with a per-source
   256-bit DEK + per-row nonce. The plaintext FTS5 `content` column
   carries only the queryable text; the canonical body lives in
   `content_aead` and is verified on every search hit before the chunk is
-  surfaced to the renderer. *(Pinned by
+  surfaced to the renderer. _(Pinned by
   `tessera_sources::manager::tests::search_kchat_posts_drops_aead_mismatched_rows`,
   `fetch_kchat_thread_context_drops_aead_tampered_rows`,
   `kchat_aead_full_lifecycle_ingest_search_cryptoshred_regrant`, and
-  `kchat_aead_thread_context_survives_cryptoshred_cycle`.)*
+  `kchat_aead_thread_context_survives_cryptoshred_cycle`.)_
 - **RRF scoring-axis consistency.** File search and post search both
   emit ranks through the same `1.0 / (rank + 1.0)` reciprocal-rank
   formula so the renderer can merge file and post hits without
-  type-aware re-scoring. *(Pinned by the
-  `tessera_sources::manager::tests` hybrid-search battery.)*
+  type-aware re-scoring. _(Pinned by the
+  `tessera_sources::manager::tests` hybrid-search battery.)_
 - **Export-path deny-list.** `~/.tessera/kchat-channels/` is on
   `getDenyExportRoots()` so a compromised renderer cannot overwrite
   the KChat cache via `artifacts:exportToFile` and inject
   attacker-controlled content the connector would later ingest.
   Deny-list is checked BEFORE the allow-list in `isSafeExportPath`.
-  *(Pinned by `apps/desktop/electron/__tests__/exportPathSafety.test.ts`
+  _(Pinned by `apps/desktop/electron/__tests__/exportPathSafety.test.ts`
   — 9 containment cases covering prefix-overlap, escape-via-`..`,
-  deny-covers-allow, empty-deny passthrough.)*
+  deny-covers-allow, empty-deny passthrough.)_
 - **SSRF guard on the PAT server URL.** `enforceKchatServerUrl`
   applies to the PAT-supplied server URL on `kchat:connect` and is
   re-validated when restoring a PAT session from the vault
   (defence-in-depth against SSRF policy tightening between sessions
-  and against tampered vault entries). *(Pinned by
+  and against tampered vault entries). _(Pinned by
   `apps/desktop/electron/__tests__/kchatAuth.test.ts` SSRF cases on
-  `connect()` and `restoreFromVault()`.)*
+  `connect()` and `restoreFromVault()`.)_
 - **Symmetric teardown on PAT disconnect.** `disconnect()` flips
   `authMode = "none"` BEFORE calling `client.shutdown()`, so no
   `disconnected` status push ever carries a stale `authMode: "pat"`.
-  *(Pinned by `apps/desktop/electron/__tests__/kchatAuth.test.ts`
-  stale-authMode-push regression.)*
+  _(Pinned by `apps/desktop/electron/__tests__/kchatAuth.test.ts`
+  stale-authMode-push regression.)_
 - **Loopback bind only.** `KchatLocalApiServer` binds to `127.0.0.1`
   exclusively, never `0.0.0.0` or a non-loopback interface. Integration
   test scans every non-loopback address returned by `os.networkInterfaces()`
   and asserts each one rejects a connection with `ECONNREFUSED`.
-  *(Pinned by `apps/desktop/electron/__tests__/kchatDesktopIntegration.test.ts`
-  "binds to 127.0.0.1 only".)*
+  _(Pinned by `apps/desktop/electron/__tests__/kchatDesktopIntegration.test.ts`
+  "binds to 127.0.0.1 only".)_
 - **Bearer-token auth on every request.** The loopback server generates
   a 256-bit random token (`crypto.randomBytes(32)` → base64url) on
   startup and writes it to `{userData}/tessera-kchat-port.json` at
   mode 0600 via atomic rename. Every request passes through
   `requireBearer()` which performs a timing-safe comparison and updates
   the heartbeat. Missing or wrong-token requests return 403 with
-  `code: "forbidden"` and no body leakage. *(Pinned by
-  `kchatDesktopIntegration.test.ts` auth + Host-header policy block.)*
+  `code: "forbidden"` and no body leakage. _(Pinned by
+  `kchatDesktopIntegration.test.ts` auth + Host-header policy block.)_
 - **Host-header SSRF guard.** Every request asserts the `Host` header
   matches `/^127\.0\.0\.1(?::\d+)?$/`. Defends against DNS-rebind
   attacks where a `*.rebind.example.com` resolves to `127.0.0.1` —
   the browser would still send a non-`127.0.0.1` Host. Port is not
   treated as a security boundary (the bearer token is); the regex
   intentionally accepts any port string so the failure path is 403,
-  not 400. *(Pinned by `kchatDesktopIntegration.test.ts` Host-header
-  block.)*
+  not 400. _(Pinned by `kchatDesktopIntegration.test.ts` Host-header
+  block.)_
 - **64 KiB request body cap.** `readJsonBody()` enforces a hard 64 KiB
   cap on `POST` bodies and returns HTTP 413 with `code: "payload_too_large"`
   (paired one-to-one with the status in the typed `LocalApiErrorCode`
   / `TesseraLocalApiError` envelope). Defends against memory-exhaustion
-  by a compromised extension. *(Pinned by `kchatDesktopIntegration.test.ts`
-  413 regression with explicit `code` assertion.)*
+  by a compromised extension. _(Pinned by `kchatDesktopIntegration.test.ts`
+  413 regression with explicit `code` assertion.)_
 - **Port-file write rollback.** If `writeAtomic()` fails after a
   successful `listen()`, the server closes the bound socket and
   clears `this.server` / `this.boundPort` / `this.portFileAbsPath`
   before re-throwing. Without this rollback the listener would orphan
   for the lifetime of the process — `KchatLocalApiServer` exposes no
   external handle to it once the constructor's caller hasn't retained
-  a reference. *(Pinned by `kchatDesktopIntegration.test.ts` —
+  a reference. _(Pinned by `kchatDesktopIntegration.test.ts` —
   the rollback regression captures the kernel-assigned port from
   inside the failing writer, asserts `ECONNREFUSED`, and confirms
-  a second `start()` succeeds.)*
+  a second `start()` succeeds.)_
 - **Symmetric teardown on null-address branch.** If `node:net` returns
   `address() === null` after a successful `listen()` (structurally
   unreachable in current Node, but defended in depth), the bound
   socket is closed before the throw, symmetric with the wrong-address
-  branch right below. *(Pinned by `kchatDesktopIntegration.test.ts` —
+  branch right below. _(Pinned by `kchatDesktopIntegration.test.ts` —
   the null-address regression uses the `createServerFn` injection
-  seam.)*
+  seam.)_
 - **Start / stop concurrency state machine.** A three-slot state
   machine in `appState.ts` (`kchatLocalApiServer` cached slot,
   `kchatLocalApiServerPending` start-in-flight slot,
@@ -876,91 +892,91 @@ code review.
   parks the new start on the stopping promise rather than racing it;
   concurrent stops resolve to one `server.close()` call (Node's
   `http.Server.close()` is not idempotent and would raise
-  `ERR_SERVER_NOT_RUNNING` on the second call). *(Pinned by
+  `ERR_SERVER_NOT_RUNNING` on the second call). _(Pinned by
   `apps/desktop/electron/__tests__/kchatLocalApiServerSingleton.test.ts`
-  — seven race scenarios.)*
+  — seven race scenarios.)_
 - **Deeplink parking.** URLs arriving via `tessera://` before the
   renderer's consumer registers are parked in a FIFO queue in
   `KchatDeeplinkBridge` and dispatched in arrival order once a
   consumer registers via `kchat:registerDeeplinkConsumer`. Argv-scan
   for cold-start URLs runs inside the single-instance-lock else
   branch (primary instance only) so we don't try to ingest a URL
-  on the about-to-quit second instance. *(Pinned by
-  `kchatDesktopIntegration.test.ts` cold-start argv regression.)*
+  on the about-to-quit second instance. _(Pinned by
+  `kchatDesktopIntegration.test.ts` cold-start argv regression.)_
 - **Preload contract.** Every channel in the
   `EXPECTED_KCHAT_CHANNELS` master list (17 entries) has a matching
   `ipcRenderer.invoke("<channel>")` string in `preload.ts`. A handler
   registered in `registerKchatHandlers` but missing from the preload
-  bridge would be silently unreachable from the renderer. *(Pinned by
+  bridge would be silently unreachable from the renderer. _(Pinned by
   `apps/desktop/electron/__tests__/kchatIpc.test.ts` preload contract
   test — reads `preload.ts` source text and asserts every entry of
   `EXPECTED_KCHAT_CHANNELS` has a matching
-  `ipcRenderer.invoke("<channel>")` call.)*
+  `ipcRenderer.invoke("<channel>")` call.)_
 
 ### IPC channels
 
 The 17 KChat-related channels are enumerated with rate-limit and validation
 notes in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). A summary:
 
-| Channel | Purpose |
-|---|---|
-| `kchat:isAvailable` / `kchat:status` | Capability probe + current `authMode` |
-| `kchat:connect` / `kchat:disconnect` | PAT-mode lifecycle |
-| `kchat:openInDesktop` / `kchat:openDesktopExtensions` | Open a `kchat://` deeplink in KChat Desktop via `shell.openExternal()`; shared rate-limiter bucket so a runaway renderer can't multiply the OS-shell budget |
-| `kchat:desktopBridgeStatus` | Whether the `.kcz` extension has hit the loopback API recently (90 s freshness window) — drives the Settings card's passive "KChat Desktop detected" affordance |
-| `kchat:listTeams` / `kchat:listChannels` / `kchat:listMembers` / `kchat:listChannelFiles` | Read-only browse surface |
-| `kchat:shareArtifact` | Share an artifact (optionally with evidence pack) to a channel |
-| `kchat:searchPosts` | AEAD-verified post search (rate-limited) |
-| `kchat:fetchThreadContext` | Thread root + up to 2 earlier replies (3 rows total) for a threaded hit |
-| `kchat:backfillProgress` | Live counters during historical backfill |
-| `sources:addKchatChannel` / `sources:backfillKchatChannel` | Add a channel as a source + manual backfill trigger |
+| Channel                                                                                   | Purpose                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kchat:isAvailable` / `kchat:status`                                                      | Capability probe + current `authMode`                                                                                                                           |
+| `kchat:connect` / `kchat:disconnect`                                                      | PAT-mode lifecycle                                                                                                                                              |
+| `kchat:openInDesktop` / `kchat:openDesktopExtensions`                                     | Open a `kchat://` deeplink in KChat Desktop via `shell.openExternal()`; shared rate-limiter bucket so a runaway renderer can't multiply the OS-shell budget     |
+| `kchat:desktopBridgeStatus`                                                               | Whether the `.kcz` extension has hit the loopback API recently (90 s freshness window) — drives the Settings card's passive "KChat Desktop detected" affordance |
+| `kchat:listTeams` / `kchat:listChannels` / `kchat:listMembers` / `kchat:listChannelFiles` | Read-only browse surface                                                                                                                                        |
+| `kchat:shareArtifact`                                                                     | Share an artifact (optionally with evidence pack) to a channel                                                                                                  |
+| `kchat:searchPosts`                                                                       | AEAD-verified post search (rate-limited)                                                                                                                        |
+| `kchat:fetchThreadContext`                                                                | Thread root + up to 2 earlier replies (3 rows total) for a threaded hit                                                                                         |
+| `kchat:backfillProgress`                                                                  | Live counters during historical backfill                                                                                                                        |
+| `sources:addKchatChannel` / `sources:backfillKchatChannel`                                | Add a channel as a source + manual backfill trigger                                                                                                             |
 
 ### Production-quality IPC channels (batching, recovery, queues, health)
 
 Full validation + rate-limit notes live in
 [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md).
 
-| Channel | Purpose |
-|---|---|
-| `sources:batchReindex` | Re-index N sources in a single bridge call; replaces N round-trips with one and shares the IPC rate-limit budget. |
-| `artifacts:batchExport` | Export N artifacts (same format) in a single bridge call with per-item success/error reporting. |
-| `artifacts:checkRecovery` / `artifacts:discardRecovery` | Inspect / discard the `.tessera-recovery` JSON sidecar an editor leaves on crash mid-save so the user can recover unsaved state on next open. |
-| `artifacts:failedExports` / `artifacts:retryExport` | Read the persistent failed-export queue + retry one entry; queue survives restart via `config.json`. |
-| `audit:getArchives` | List rotated audit-log archives (`audit-archive-<ts>.jsonl.gz`) for the Settings page; rotation fires when the audit table exceeds 100 K rows. |
-| `sources:healthReport` | Per-source last-sync time, sync status (healthy / warning / error), indexed chunk count, storage size estimate — drives the Settings → Source Health dashboard. |
+| Channel                                                                                                                                            | Purpose                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sources:batchReindex`                                                                                                                             | Re-index N sources in a single bridge call; replaces N round-trips with one and shares the IPC rate-limit budget.                                                                                                                                                                                                                     |
+| `artifacts:batchExport`                                                                                                                            | Export N artifacts (same format) in a single bridge call with per-item success/error reporting.                                                                                                                                                                                                                                       |
+| `artifacts:checkRecovery` / `artifacts:discardRecovery`                                                                                            | Inspect / discard the `.tessera-recovery` JSON sidecar an editor leaves on crash mid-save so the user can recover unsaved state on next open.                                                                                                                                                                                         |
+| `artifacts:failedExports` / `artifacts:retryExport`                                                                                                | Read the persistent failed-export queue + retry one entry; queue survives restart via `config.json`.                                                                                                                                                                                                                                  |
+| `audit:getArchives`                                                                                                                                | List rotated audit-log archives (`audit-archive-<ts>.jsonl.gz`) for the Settings page; rotation fires when the audit table exceeds 100 K rows.                                                                                                                                                                                        |
+| `sources:healthReport`                                                                                                                             | Per-source last-sync time, sync status (healthy / warning / error), indexed chunk count, storage size estimate — drives the Settings → Source Health dashboard.                                                                                                                                                                       |
 | `settings:downloadEmbeddingModel` / `settings:switchEmbeddingModel` / `settings:getEmbeddingModelStatus` / `settings:getEmbeddingDownloadProgress` | ONNX Runtime semantic-embedding model management — resumable SHA-256-verified downloads, atomic provider swap with `backfill_embeddings_tracked` kick-off, corpus non-ASCII ratio + currently active model id + per-model installed bit. Per-channel rate limiter (`downloadEmbeddingModel` 1 / 5 s, `switchEmbeddingModel` 1 / 1 s). |
-| `connectors:inspectScopes` | Granted-scope inspection: returns the per-provider `{ requested, granted, missing }` triple so the renderer can detect a narrowed consent screen *before* any provider API call is attempted, surface a precise re-auth CTA, and skip opaque 403 retries. |
-| `appLock:setPin` / `appLock:changePin` / `appLock:removePin` / `appLock:attemptUnlock` / `appLock:attemptBiometric` / `appLock:status` | App-lock IPC surface — scrypt-derived PIN (N = 2^14, per-PIN salt, atomic writes, vault-encrypted at rest, exponential backoff to 1 h cap), TouchID / Windows Hello dispatch. All six handlers share a token-bucket rate limiter (1 / 250 ms) so a compromised renderer can't side-step throttling by alternating channels. |
-| `telemetry:getEvents` / `telemetry:getPersistedEvents` / `telemetry:recordCounter` | Local-only telemetry sink (off by default, opt-in, never opens a socket). Whitelisted counter / event keys; in-memory buffer flushed to a single on-disk JSONL file; disabling truncates the file. |
+| `connectors:inspectScopes`                                                                                                                         | Granted-scope inspection: returns the per-provider `{ requested, granted, missing }` triple so the renderer can detect a narrowed consent screen _before_ any provider API call is attempted, surface a precise re-auth CTA, and skip opaque 403 retries.                                                                             |
+| `appLock:setPin` / `appLock:changePin` / `appLock:removePin` / `appLock:attemptUnlock` / `appLock:attemptBiometric` / `appLock:status`             | App-lock IPC surface — scrypt-derived PIN (N = 2^14, per-PIN salt, atomic writes, vault-encrypted at rest, exponential backoff to 1 h cap), TouchID / Windows Hello dispatch. All six handlers share a token-bucket rate limiter (1 / 250 ms) so a compromised renderer can't side-step throttling by alternating channels.           |
+| `telemetry:getEvents` / `telemetry:getPersistedEvents` / `telemetry:recordCounter`                                                                 | Local-only telemetry sink (off by default, opt-in, never opens a socket). Whitelisted counter / event keys; in-memory buffer flushed to a single on-disk JSONL file; disabling truncates the file.                                                                                                                                    |
 
 ### Production-quality Electron modules
 
-| File | Purpose |
-|---|---|
-| `electron/csp.ts` + `renderer/src/utils/cspNonce.ts` | Per-session 32-byte CSP nonce + React hook; nonce flows main → preload → renderer via `additionalArguments`. Removes `'unsafe-inline'` from `script-src` and `style-src-elem`. |
-| `electron/secureBuffer.ts` | `zeroBuffer()` / `zeroBuffers()` helpers for `finally`-block buffer zeroing of plaintext keys, tokens, and passphrases. Used by `passwordVault.decryptWithPasswordKey()` and `dbKey.generateDbKey()`. |
-| `electron/kchat/kchatRateLimiter.ts` | Sliding-window per-IP rate limiter (default 100 req / 60 s) on the loopback KChat API; emits 429 with `Retry-After` clamped to ≥ 1 s per RFC 7231. |
-| `electron/artifactRecovery.ts` | Editor recovery-sidecar journaling; pairs with `artifacts:checkRecovery`. |
-| `electron/sidecarPidRegistry.ts` (in `sidecar.ts` / `diffusionSidecar.ts`) | PID-file orphan-cleanup at startup + SIGTERM→5s grace→SIGKILL escalation on `will-quit`. |
-| `electron/failedExportQueue.ts` | Persistent queue for failed exports, retryable via `artifacts:retryExport`. |
-| `electron/connectorBackoff.ts` | Per-source backoff policy (base 2 s, max 5 min, jitter); distinguishes transient (timeout / 429 / 503) vs permanent (401 / 403 / 404) failures. |
-| `electron/keychainAcl.ts` | Per-app keychain ACL policy: classifies the active `safeStorage` backend into a trust tier (`enforced-by-os` for macOS Keychain w/ Code-Signing-pinned bundle ID; `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet; `none` for Linux `basic_text` fallback). `assertSafeEncrypt({ enforce })` refuses to write secrets under `basic_text` (which is XOR with a hardcoded key, *not* real encryption); detects mid-session backend drift; logs and counters every boot via `recordCounter("keychain.backend.<name>")`. |
-| `electron/autoUpdater.ts` + `release-tool/signUpdateArtifact.ts` | Auto-updater Ed25519 signature verification — release-tool signs the artifact server-side; `autoUpdater.ts` verifies the signature against a hardcoded `UPDATER_TRUST_ANCHORS` array (multi-anchor for key rotation overlap) on `update-downloaded`, invalidates the cache on `download-progress`, re-checks on `updates:install` so a cache-poisoned artifact can't slip through. |
-| `electron/appLock.ts` + `electron/ipc/appLock.ts` | App-lock module: scrypt (N = 2^14, per-PIN salt, key length 64, `r=8`, `p=1`) PIN derivation with stored parameters read back at verify time (parameter-bump safe), atomic file writes, vault-encrypted at rest, exponential backoff (30 s → 1 h cap) on failed attempts, TouchID (macOS native) / Windows Hello (WinRT `UserConsentVerifier` via PowerShell) dispatch. The IPC surface enforces a 1 / 250 ms token-bucket rate limit shared across all six handlers. |
-| `electron/telemetrySink.ts` + `electron/ipc/telemetry.ts` | Local-only telemetry sink — off by default, opt-in, never opens a socket. Whitelisted counter / event keys; events buffered in memory; flushed every 60 s to a single on-disk JSONL file; capped at `TELEMETRY_BUFFER_MAX_EVENTS` on re-enqueue so retriable errors don't grow the buffer unboundedly; disabling truncates the file. |
-| `electron/ipc/connectors/oauthScope.ts` | OAuth scope-governance helpers: `parseScopeString()` (RFC 6749 § 3.3 space-delimited + Figma comma-delimited), `compareScopes()` (canonical set-diff), `assertScopesGranted()` (throws `MissingScopeError`, classified `permanent`), `OAUTH_META_SCOPES` (filters `offline_access` and similar from the required set), `SCOPELESS_PROVIDERS` (allow-list of providers whose tokens carry no scopes by design — e.g. Notion). |
+| File                                                                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron/csp.ts` + `renderer/src/utils/cspNonce.ts`                       | Per-session 32-byte CSP nonce + React hook; nonce flows main → preload → renderer via `additionalArguments`. Removes `'unsafe-inline'` from `script-src` and `style-src-elem`.                                                                                                                                                                                                                                                                                                                                                           |
+| `electron/secureBuffer.ts`                                                 | `zeroBuffer()` / `zeroBuffers()` helpers for `finally`-block buffer zeroing of plaintext keys, tokens, and passphrases. Used by `passwordVault.decryptWithPasswordKey()` and `dbKey.generateDbKey()`.                                                                                                                                                                                                                                                                                                                                    |
+| `electron/kchat/kchatRateLimiter.ts`                                       | Sliding-window per-IP rate limiter (default 100 req / 60 s) on the loopback KChat API; emits 429 with `Retry-After` clamped to ≥ 1 s per RFC 7231.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `electron/artifactRecovery.ts`                                             | Editor recovery-sidecar journaling; pairs with `artifacts:checkRecovery`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `electron/sidecarPidRegistry.ts` (in `sidecar.ts` / `diffusionSidecar.ts`) | PID-file orphan-cleanup at startup + SIGTERM→5s grace→SIGKILL escalation on `will-quit`.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `electron/failedExportQueue.ts`                                            | Persistent queue for failed exports, retryable via `artifacts:retryExport`.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `electron/connectorBackoff.ts`                                             | Per-source backoff policy (base 2 s, max 5 min, jitter); distinguishes transient (timeout / 429 / 503) vs permanent (401 / 403 / 404) failures.                                                                                                                                                                                                                                                                                                                                                                                          |
+| `electron/keychainAcl.ts`                                                  | Per-app keychain ACL policy: classifies the active `safeStorage` backend into a trust tier (`enforced-by-os` for macOS Keychain w/ Code-Signing-pinned bundle ID; `user-scoped` for Windows DPAPI and Linux gnome-libsecret / kwallet; `none` for Linux `basic_text` fallback). `assertSafeEncrypt({ enforce })` refuses to write secrets under `basic_text` (which is XOR with a hardcoded key, _not_ real encryption); detects mid-session backend drift; logs and counters every boot via `recordCounter("keychain.backend.<name>")`. |
+| `electron/autoUpdater.ts` + `release-tool/signUpdateArtifact.ts`           | Auto-updater Ed25519 signature verification — release-tool signs the artifact server-side; `autoUpdater.ts` verifies the signature against a hardcoded `UPDATER_TRUST_ANCHORS` array (multi-anchor for key rotation overlap) on `update-downloaded`, invalidates the cache on `download-progress`, re-checks on `updates:install` so a cache-poisoned artifact can't slip through.                                                                                                                                                       |
+| `electron/appLock.ts` + `electron/ipc/appLock.ts`                          | App-lock module: scrypt (N = 2^14, per-PIN salt, key length 64, `r=8`, `p=1`) PIN derivation with stored parameters read back at verify time (parameter-bump safe), atomic file writes, vault-encrypted at rest, exponential backoff (30 s → 1 h cap) on failed attempts, TouchID (macOS native) / Windows Hello (WinRT `UserConsentVerifier` via PowerShell) dispatch. The IPC surface enforces a 1 / 250 ms token-bucket rate limit shared across all six handlers.                                                                    |
+| `electron/telemetrySink.ts` + `electron/ipc/telemetry.ts`                  | Local-only telemetry sink — off by default, opt-in, never opens a socket. Whitelisted counter / event keys; events buffered in memory; flushed every 60 s to a single on-disk JSONL file; capped at `TELEMETRY_BUFFER_MAX_EVENTS` on re-enqueue so retriable errors don't grow the buffer unboundedly; disabling truncates the file.                                                                                                                                                                                                     |
+| `electron/ipc/connectors/oauthScope.ts`                                    | OAuth scope-governance helpers: `parseScopeString()` (RFC 6749 § 3.3 space-delimited + Figma comma-delimited), `compareScopes()` (canonical set-diff), `assertScopesGranted()` (throws `MissingScopeError`, classified `permanent`), `OAUTH_META_SCOPES` (filters `offline_access` and similar from the required set), `SCOPELESS_PROVIDERS` (allow-list of providers whose tokens carry no scopes by design — e.g. Notion).                                                                                                             |
 
 ### Production-quality Rust modules
 
-| Crate / file | Purpose |
-|---|---|
-| `crates/tessera_sources` benches (`indexing_bench.rs`, `search_bench.rs`) | Criterion benchmarks for indexing throughput at 100 small / 10 large / mixed corpora and hybrid search at 1K / 10K / 100K chunk corpus sizes. |
-| `crates/tessera_sources::watcher` coalescing | 500 ms watch-event window dedupes per-path rapid write+rename storms before triggering re-index. |
-| `crates/tessera_sources::vector_index` | IVF-Flat ANN index with k-means centroids (5 Lloyd iterations) over up to 50 K+ vectors; cache keyed by `(model_id, embedding_generation)` so an embedding write invalidates the build; `nprobe = ⌈√K⌉` for the recall floor; brute-force fallback for tiny corpora and tied-score regression test coverage of the `MinHeapEntry` inverted-`Ord` eviction tiebreaker. |
-| `crates/tessera_audit` rotation | 100 K-row rotation threshold writes a compressed `audit-archive-<ts>.jsonl.gz` and trims the live table. |
-| `crates/tessera_export` regression suites (`tests/docx_regression.rs`, inline `#[cfg(test)]` in `src/xlsx.rs`, `tests/pdf_mermaid.rs`) | Golden-file DOCX + OOXML schema validation, XLSX formula + named-range preservation, PDF Mermaid SVG embedding. |
-| `scripts/smoke-test-linux.sh` + `scripts/Dockerfile.smoke` | Linux `.deb`/AppImage Docker smoke harness (ubuntu:22.04 + `xvfb-run` + IPC probe). |
-| `scripts/verify-windows-package.ps1` / `scripts/verify-macos-package.sh` | Windows portable-`.zip` integrity + macOS universal-binary verification (`lipo -info` per slice). |
+| Crate / file                                                                                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/tessera_sources` benches (`indexing_bench.rs`, `search_bench.rs`)                                                              | Criterion benchmarks for indexing throughput at 100 small / 10 large / mixed corpora and hybrid search at 1K / 10K / 100K chunk corpus sizes.                                                                                                                                                                                                                         |
+| `crates/tessera_sources::watcher` coalescing                                                                                           | 500 ms watch-event window dedupes per-path rapid write+rename storms before triggering re-index.                                                                                                                                                                                                                                                                      |
+| `crates/tessera_sources::vector_index`                                                                                                 | IVF-Flat ANN index with k-means centroids (5 Lloyd iterations) over up to 50 K+ vectors; cache keyed by `(model_id, embedding_generation)` so an embedding write invalidates the build; `nprobe = ⌈√K⌉` for the recall floor; brute-force fallback for tiny corpora and tied-score regression test coverage of the `MinHeapEntry` inverted-`Ord` eviction tiebreaker. |
+| `crates/tessera_audit` rotation                                                                                                        | 100 K-row rotation threshold writes a compressed `audit-archive-<ts>.jsonl.gz` and trims the live table.                                                                                                                                                                                                                                                              |
+| `crates/tessera_export` regression suites (`tests/docx_regression.rs`, inline `#[cfg(test)]` in `src/xlsx.rs`, `tests/pdf_mermaid.rs`) | Golden-file DOCX + OOXML schema validation, XLSX formula + named-range preservation, PDF Mermaid SVG embedding.                                                                                                                                                                                                                                                       |
+| `scripts/smoke-test-linux.sh` + `scripts/Dockerfile.smoke`                                                                             | Linux `.deb`/AppImage Docker smoke harness (ubuntu:22.04 + `xvfb-run` + IPC probe).                                                                                                                                                                                                                                                                                   |
+| `scripts/verify-windows-package.ps1` / `scripts/verify-macos-package.sh`                                                               | Windows portable-`.zip` integrity + macOS universal-binary verification (`lipo -info` per slice).                                                                                                                                                                                                                                                                     |
 
 ---
 
@@ -968,20 +984,20 @@ Full validation + rate-limit notes live in
 
 Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kchat.com)).
 
-| Token | Value |
-|---|---|
-| **Primary accent** | `#7C3AED` (Purple/Violet) — headlines, CTA buttons, active states, links, icons |
-| **Primary hover** | `#6D28D9` (darker violet) |
-| **Background – page** | `#FFFFFF` (white) |
-| **Background – card/surface** | `#F5F3FF` (light lavender) or `#F9FAFB` (light gray) |
-| **Text – headline** | `#111827` (near-black) |
-| **Text – body** | `#4B5563` (dark gray) |
-| **Text – secondary** | `#6B7280` (medium gray) |
-| **Font family** | `Inter` (primary), system sans-serif fallback stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif` |
-| **Primary button** | Solid `#7C3AED` background, white text, pill/rounded shape (`border-radius: 9999px`) |
-| **Secondary button** | Outlined with `#111827` border, dark text, uppercase tracking |
-| **Cards** | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)` |
-| **Overall feel** | Clean, modern, minimal — purple dominant against white/light surfaces |
+| Token                         | Value                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Primary accent**            | `#7C3AED` (Purple/Violet) — headlines, CTA buttons, active states, links, icons                                                            |
+| **Primary hover**             | `#6D28D9` (darker violet)                                                                                                                  |
+| **Background – page**         | `#FFFFFF` (white)                                                                                                                          |
+| **Background – card/surface** | `#F5F3FF` (light lavender) or `#F9FAFB` (light gray)                                                                                       |
+| **Text – headline**           | `#111827` (near-black)                                                                                                                     |
+| **Text – body**               | `#4B5563` (dark gray)                                                                                                                      |
+| **Text – secondary**          | `#6B7280` (medium gray)                                                                                                                    |
+| **Font family**               | `Inter` (primary), system sans-serif fallback stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif` |
+| **Primary button**            | Solid `#7C3AED` background, white text, pill/rounded shape (`border-radius: 9999px`)                                                       |
+| **Secondary button**          | Outlined with `#111827` border, dark text, uppercase tracking                                                                              |
+| **Cards**                     | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)`                                               |
+| **Overall feel**              | Clean, modern, minimal — purple dominant against white/light surfaces                                                                      |
 
 ---
 

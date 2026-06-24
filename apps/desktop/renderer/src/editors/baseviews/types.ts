@@ -24,7 +24,11 @@ export type BaseViewKind =
 export interface BaseViewProps {
   data: BaseContent;
   /** Apply a single-cell change, e.g. moving a kanban card to a new column. */
-  onUpdateCell: (recordIndex: number, fieldName: string, value: unknown) => void;
+  onUpdateCell: (
+    recordIndex: number,
+    fieldName: string,
+    value: unknown,
+  ) => void;
   /** Append a fresh empty record. Used by quick-create affordances. */
   onAddRecord: () => void;
   /**
@@ -113,10 +117,7 @@ export function defaultViewConfig(fields: BaseField[]): BaseViewConfig {
   // "Name" before falling back to the first field of the relevant
   // type — matches what users intuitively expect when they open a
   // freshly-imported Base.
-  const named = (
-    candidates: string[],
-    type?: FieldType,
-  ): string | null => {
+  const named = (candidates: string[], type?: FieldType): string | null => {
     for (const cand of candidates) {
       const found = fields.find(
         (f) =>
@@ -139,15 +140,17 @@ export function defaultViewConfig(fields: BaseField[]): BaseViewConfig {
       firstOfType("date"),
     timelineStartField:
       named(["start", "start date", "begin", "from"], "date") ??
-      dateFields[0] ?? null,
+      dateFields[0] ??
+      null,
     timelineEndField:
       named(["end", "end date", "finish", "due", "to"], "date") ??
-      dateFields[1] ?? dateFields[0] ?? null,
+      dateFields[1] ??
+      dateFields[0] ??
+      null,
     galleryCoverField:
       named(["cover", "image", "thumbnail", "photo"], "url") ??
       firstOfType("url"),
-    titleField:
-      named(["title", "name", "label"]) ?? fields[0]?.name ?? null,
+    titleField: named(["title", "name", "label"]) ?? fields[0]?.name ?? null,
     gridRowHeight: "short",
     gridGroupField: null,
     gridColorField: null,

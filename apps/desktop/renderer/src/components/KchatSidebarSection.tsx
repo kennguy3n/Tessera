@@ -139,7 +139,9 @@ interface KchatSidebarSectionProps {
   api?: typeof window.tessera.kchat;
 }
 
-export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = {}) {
+export default function KchatSidebarSection({
+  api,
+}: KchatSidebarSectionProps = {}) {
   const kchat = api ?? window.tessera?.kchat;
   const [state, setState] = useState<KchatConnectionStateView>({
     state: "disconnected",
@@ -609,10 +611,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
         // rather than a toast because the sidebar widget has no
         // toast context wired in. The user already sees the dot
         // is grey when the integration isn't reachable.
-        console.warn(
-          "[Tessera] Failed to open channel in KChat Desktop:",
-          err,
-        );
+        console.warn("[Tessera] Failed to open channel in KChat Desktop:", err);
       }
     },
     [kchat],
@@ -715,9 +714,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
               backgroundColor: extensionDotColor,
             }}
           />
-          <strong style={{ color: "var(--color-text-headline)" }}>
-            KChat
-          </strong>
+          <strong style={{ color: "var(--color-text-headline)" }}>KChat</strong>
           <span
             data-testid="kchat-presence-dot"
             data-presence-state={presenceDot.state}
@@ -735,15 +732,9 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           <span
             data-testid="kchat-sync-status"
             data-sync-state={syncing ? "syncing" : "idle"}
-            title={
-              syncing
-                ? "Syncing KChat channels…"
-                : "KChat is up to date"
-            }
+            title={syncing ? "Syncing KChat channels…" : "KChat is up to date"}
             aria-label={
-              syncing
-                ? "Syncing KChat channels"
-                : "KChat is up to date"
+              syncing ? "Syncing KChat channels" : "KChat is up to date"
             }
             style={{
               fontSize: "var(--font-size-xs)",

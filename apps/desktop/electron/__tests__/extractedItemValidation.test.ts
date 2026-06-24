@@ -43,10 +43,7 @@ describe("validateExtractedItems", () => {
   it("returns all items when every payload item is valid", () => {
     const warn = vi.fn();
     const out = validateExtractedItems(
-      [
-        VALID,
-        { ...VALID, itemType: "decision", confidence: 0.4 },
-      ],
+      [VALID, { ...VALID, itemType: "decision", confidence: 0.4 }],
       opts(warn),
     );
     expect(out).toHaveLength(2);
@@ -93,8 +90,8 @@ describe("validateExtractedItems", () => {
     const msg = warn.mock.calls[0][0] as string;
     expect(msg).toContain("dropped 3/5");
     expect(msg).toContain("source-abc123");
-    expect(msg).toContain("itemType=\"TASK\"");
-    expect(msg).toContain("bad-confidence=\"0.9\"");
+    expect(msg).toContain('itemType="TASK"');
+    expect(msg).toContain('bad-confidence="0.9"');
   });
 
   it("throws when 100% of items fail validation against non-empty input", () => {
@@ -119,7 +116,14 @@ describe("validateExtractedItems", () => {
     const errMsg = (() => {
       try {
         validateExtractedItems(
-          [{ item_type: "task", text: "x", sourceCitation: "s", confidence: 1 }],
+          [
+            {
+              item_type: "task",
+              text: "x",
+              sourceCitation: "s",
+              confidence: 1,
+            },
+          ],
           opts(),
         );
       } catch (e) {
@@ -189,9 +193,9 @@ describe("validateExtractedItems", () => {
       ...VALID,
       itemType: `bad${i}`,
     }));
-    expect(() =>
-      validateExtractedItems(bads, opts(warn)),
-    ).toThrowError(/all 8 item\(s\) failed/);
+    expect(() => validateExtractedItems(bads, opts(warn))).toThrowError(
+      /all 8 item\(s\) failed/,
+    );
     const msg = warn.mock.calls[0][0] as string;
     expect(msg).toContain("dropped 8/8");
     // Logger summary head shows the first 5 reasons; tail says "...".
@@ -224,30 +228,21 @@ describe("validateExtractedItems", () => {
 describe("validateExtractedItems — XSS pass-through + render-time safety", () => {
   it("passes <script> tags through unchanged (renderer auto-escapes)", () => {
     const payload = "<script>alert(1)</script>";
-    const out = validateExtractedItems(
-      [{ ...VALID, text: payload }],
-      opts(),
-    );
+    const out = validateExtractedItems([{ ...VALID, text: payload }], opts());
     expect(out).toHaveLength(1);
     expect(out[0].text).toBe(payload);
   });
 
   it("passes <img onerror=...> through unchanged", () => {
-    const payload = '<img src=x onerror="alert(\'pwn\')">';
-    const out = validateExtractedItems(
-      [{ ...VALID, text: payload }],
-      opts(),
-    );
+    const payload = "<img src=x onerror=\"alert('pwn')\">";
+    const out = validateExtractedItems([{ ...VALID, text: payload }], opts());
     expect(out).toHaveLength(1);
     expect(out[0].text).toBe(payload);
   });
 
   it("passes javascript: URI payloads through unchanged", () => {
     const payload = '<a href="javascript:alert(1)">click</a>';
-    const out = validateExtractedItems(
-      [{ ...VALID, text: payload }],
-      opts(),
-    );
+    const out = validateExtractedItems([{ ...VALID, text: payload }], opts());
     expect(out).toHaveLength(1);
     expect(out[0].text).toBe(payload);
   });
@@ -280,9 +275,7 @@ describe("validateExtractedItems — XSS pass-through + render-time safety", () 
     );
     expect(out).toHaveLength(1);
     expect(out[0].text).toBe("Tom & Jerry & friends");
-    expect(out[0].sourceCitation).toBe(
-      "AT&T memo, Johnson & Johnson Q4'25",
-    );
+    expect(out[0].sourceCitation).toBe("AT&T memo, Johnson & Johnson Q4'25");
   });
 
   it("preserves plain (non-HTML) text unchanged (Unicode / emoji / RTL)", () => {
@@ -322,7 +315,7 @@ describe("validateExtractedItems — XSS pass-through + render-time safety", () 
     // or any other code that bypasses the safe text path.
     const payloads = [
       "<script>alert(1)</script>",
-      '<img src=x onerror="alert(\'pwn\')">',
+      "<img src=x onerror=\"alert('pwn')\">",
       '<iframe src="data:text/html,<script>1</script>">',
       '<a href="javascript:alert(1)">click</a>',
       "<svg onload=alert(1)>",

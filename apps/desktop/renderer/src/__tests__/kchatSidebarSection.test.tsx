@@ -72,9 +72,7 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
       portFilePath: "/tmp/tessera-kchat-port.json",
       lastExtensionContactAt: null,
     }),
-    openInDesktop: vi
-      .fn()
-      .mockResolvedValue({ opened: true, url: "kchat://" }),
+    openInDesktop: vi.fn().mockResolvedValue({ opened: true, url: "kchat://" }),
     openDesktopExtensions: vi
       .fn()
       .mockResolvedValue({ opened: true, url: "kchat://" }),
@@ -105,7 +103,9 @@ describe("KchatSidebarSection", () => {
     const api = makeApi();
     render(<KchatSidebarSection api={api} />);
     expect(await screen.findByTestId("kchat-sidebar")).toBeInTheDocument();
-    expect(screen.getByTestId("kchat-sidebar-user")).toHaveTextContent("@alice");
+    expect(screen.getByTestId("kchat-sidebar-user")).toHaveTextContent(
+      "@alice",
+    );
     // The channel list is fetched asynchronously after the
     // connect status resolves; wait for the second effect to land.
     await waitFor(() =>
@@ -120,7 +120,9 @@ describe("KchatSidebarSection", () => {
     render(<KchatSidebarSection api={api} />);
     const dot = await screen.findByTestId("kchat-presence-dot");
     expect(dot).toHaveAttribute("data-presence-state", "online");
-    await waitFor(() => expect(api.getUserStatuses).toHaveBeenCalledWith(["u1"]));
+    await waitFor(() =>
+      expect(api.getUserStatuses).toHaveBeenCalledWith(["u1"]),
+    );
   });
 
   it("drives the presence dot from the current user's real status", async () => {
@@ -197,9 +199,7 @@ describe("KchatSidebarSection", () => {
     // and bails) and React commit the re-render.
     await waitFor(() => expect(api.isAvailable).toHaveBeenCalledTimes(1));
     // Nothing rendered — the feature is unavailable.
-    expect(
-      container.querySelector('[data-testid="kchat-sidebar"]'),
-    ).toBeNull();
+    expect(container.querySelector('[data-testid="kchat-sidebar"]')).toBeNull();
     // The initial probe MAY have invoked `status` once before the
     // effect re-ran with `available=false` (race-free with the
     // `if (available === null)` gate above), but importantly: now
@@ -252,12 +252,12 @@ describe("KchatSidebarSection", () => {
         }),
     );
     let pushStatus: ((s: unknown) => void) | null = null;
-    const onStatusChange = vi.fn().mockImplementation(
-      (cb: (s: unknown) => void) => {
+    const onStatusChange = vi
+      .fn()
+      .mockImplementation((cb: (s: unknown) => void) => {
         pushStatus = cb;
         return () => {};
-      },
-    );
+      });
     const listTeams = vi.fn().mockResolvedValue([]);
     const listChannels = vi.fn().mockResolvedValue([]);
     const listChannelFiles = vi.fn().mockResolvedValue([]);
@@ -311,9 +311,7 @@ describe("KchatSidebarSection", () => {
     // poll arming would have fired by now.
     await vi.advanceTimersByTimeAsync(35_000);
     // The component should render nothing (feature gated off).
-    expect(
-      screen.queryByTestId("kchat-sidebar"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("kchat-sidebar")).not.toBeInTheDocument();
     // None of the three downstream IPCs should have fired. The
     // pre-fix shape would have called `listTeams` (via the
     // channel-fetch effect) and `onEvent` (via the WS listener
@@ -353,8 +351,8 @@ describe("KchatSidebarSection", () => {
     }
     const listChannelFiles = vi
       .fn()
-      .mockImplementation(async (chId: string) =>
-        filesByChannel.get(chId) ?? [],
+      .mockImplementation(
+        async (chId: string) => filesByChannel.get(chId) ?? [],
       );
     const api = makeApi({
       listChannels: vi.fn().mockResolvedValue(channels),
@@ -375,9 +373,7 @@ describe("KchatSidebarSection", () => {
     // ids in order.
     expect(listChannelFiles.mock.calls).toHaveLength(10);
     const calledIds = listChannelFiles.mock.calls.map((c) => c[0]);
-    expect(calledIds).toEqual(
-      channels.slice(0, 10).map((c) => c.id),
-    );
+    expect(calledIds).toEqual(channels.slice(0, 10).map((c) => c.id));
   });
 });
 
@@ -444,7 +440,9 @@ describe("KchatSidebarSection — unread poll does not overlap when slow (eleven
     // loop and triggers the next call.
     for (let i = 0; i < channels.length; i += 1) {
       // Wait for the next resolver to land in the queue.
-      await waitFor(() => expect(resolvers.length).toBeGreaterThanOrEqual(i + 1));
+      await waitFor(() =>
+        expect(resolvers.length).toBeGreaterThanOrEqual(i + 1),
+      );
       resolvers[i]([]);
     }
     await waitFor(() =>
@@ -651,7 +649,9 @@ describe("KchatSidebarSection — WebSocket push increments unread badge (Block 
     // path can't race the WS-driven increment.
     const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
     let onEventListener:
-      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | ((
+          e: import("../../../shared/types").KchatWebSocketEventPayload,
+        ) => void)
       | null = null;
     const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
       onEventListener = cb as typeof onEventListener;
@@ -695,7 +695,9 @@ describe("KchatSidebarSection — WebSocket push increments unread badge (Block 
   it("ignores file_added events for channels not in the live list", async () => {
     const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
     let onEventListener:
-      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | ((
+          e: import("../../../shared/types").KchatWebSocketEventPayload,
+        ) => void)
       | null = null;
     const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
       onEventListener = cb as typeof onEventListener;
@@ -728,7 +730,9 @@ describe("KchatSidebarSection — WebSocket push increments unread badge (Block 
     );
     const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
     let onEventListener:
-      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | ((
+          e: import("../../../shared/types").KchatWebSocketEventPayload,
+        ) => void)
       | null = null;
     const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
       onEventListener = cb as typeof onEventListener;
@@ -757,7 +761,9 @@ describe("KchatSidebarSection — WebSocket push increments unread badge (Block 
   it("ignores non-file_added event types", async () => {
     const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
     let onEventListener:
-      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | ((
+          e: import("../../../shared/types").KchatWebSocketEventPayload,
+        ) => void)
       | null = null;
     const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
       onEventListener = cb as typeof onEventListener;

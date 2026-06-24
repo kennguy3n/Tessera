@@ -251,7 +251,12 @@ describe("manifest loading", () => {
 
   it("listModelsForPlatform returns only GGUF on Windows/Linux", () => {
     const manifest = loadManifest(true, { manifestPath: MANIFEST });
-    for (const target of ["windows-x64", "linux-x64", "linux-arm64", "macos-intel"] as const) {
+    for (const target of [
+      "windows-x64",
+      "linux-x64",
+      "linux-arm64",
+      "macos-intel",
+    ] as const) {
       const models = listModelsForPlatform(manifest, target);
       expect(models.length).toBeGreaterThan(0);
       for (const m of models) {
@@ -343,14 +348,19 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(ghost));
+    await fsp.writeFile(
+      activeModelPath(workdir, "text"),
+      JSON.stringify(ghost),
+    );
     // Sanity check: the raw record IS still readable — this is the bug.
     const raw = await getCurrentModel(workdir, "text");
     expect(raw?.modelId).toBe("ternary-bonsai-1.7b-gguf");
     // But getInstalledModel correctly treats the ghost record as "not installed".
     expect(await getInstalledModel(workdir, "text")).toBeNull();
     // And isModelInstalled, which composes on top, agrees.
-    expect(await isModelInstalled(workdir, "text", "ternary-bonsai-1.7b-gguf")).toBeNull();
+    expect(
+      await isModelInstalled(workdir, "text", "ternary-bonsai-1.7b-gguf"),
+    ).toBeNull();
   });
 
   it("getInstalledModel returns the live record when the referenced file exists", async () => {
@@ -405,7 +415,10 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    const plan = planDownload(installed, makeResolved({ id: "ternary-bonsai-1.7b-gguf" }));
+    const plan = planDownload(
+      installed,
+      makeResolved({ id: "ternary-bonsai-1.7b-gguf" }),
+    );
     expect(plan.kind).toBe("already-installed");
   });
 
@@ -558,7 +571,9 @@ describe("single-model enforcement", () => {
       },
     );
     expect(record.modelId).toBe(requested.id);
-    expect(record.path).toBe(path.join(modelsDir(workdir, "text"), requested.filename));
+    expect(record.path).toBe(
+      path.join(modelsDir(workdir, "text"), requested.filename),
+    );
     expect(await fsp.readFile(record.path)).toEqual(payload);
     expect(progressEvents).toBeGreaterThan(0);
 
@@ -578,19 +593,16 @@ describe("single-model enforcement", () => {
       onProgress(1, 1);
       return { totalBytes: 1 };
     };
-    const first = await downloadModel(workdir, requested, () => {}, { fetcher });
+    const first = await downloadModel(workdir, requested, () => {}, {
+      fetcher,
+    });
     let secondCall = 0;
-    await downloadModel(
-      workdir,
-      requested,
-      () => {},
-      {
-        fetcher: async (...args) => {
-          secondCall += 1;
-          return fetcher(...args);
-        },
+    await downloadModel(workdir, requested, () => {}, {
+      fetcher: async (...args) => {
+        secondCall += 1;
+        return fetcher(...args);
       },
-    );
+    });
     expect(secondCall).toBe(0);
     expect(first.modelId).toBe(requested.id);
   });
@@ -612,21 +624,18 @@ describe("single-model enforcement", () => {
       onProgress(1, 1);
       return { totalBytes: 1 };
     };
-    const first = await downloadModel(workdir, requested, () => {}, { fetcher });
+    const first = await downloadModel(workdir, requested, () => {}, {
+      fetcher,
+    });
     // Simulate the user deleting the model file outside of Tessera.
     await fsp.unlink(first.path);
     let secondCall = 0;
-    const second = await downloadModel(
-      workdir,
-      requested,
-      () => {},
-      {
-        fetcher: async (...args) => {
-          secondCall += 1;
-          return fetcher(...args);
-        },
+    const second = await downloadModel(workdir, requested, () => {}, {
+      fetcher: async (...args) => {
+        secondCall += 1;
+        return fetcher(...args);
       },
-    );
+    });
     expect(secondCall).toBe(1);
     expect(second.modelId).toBe(requested.id);
     // The file must exist again on disk after the re-download.
@@ -644,18 +653,13 @@ describe("single-model enforcement", () => {
       filename: "new.gguf",
       downloadSizeMb: 1000,
     });
-    await downloadModel(
-      workdir,
-      oldRequested,
-      () => {},
-      {
-        fetcher: async (_u, onP, d) => {
-          await fsp.writeFile(d, Buffer.from("old"));
-          onP(3, 3);
-          return { totalBytes: 3 };
-        },
+    await downloadModel(workdir, oldRequested, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("old"));
+        onP(3, 3);
+        return { totalBytes: 3 };
       },
-    );
+    });
     const oldPath = path.join(modelsDir(workdir, "text"), "old.gguf");
     expect(fs.existsSync(oldPath)).toBe(true);
 
@@ -663,22 +667,19 @@ describe("single-model enforcement", () => {
     // writing the new one. This is the contract the proposal calls out.
     // (There is no separate `swapModel` API — `downloadModel` handles the
     // eviction internally.)
-    await downloadModel(
-      workdir,
-      newRequested,
-      () => {},
-      {
-        fetcher: async (_u, onP, d) => {
-          expect(fs.existsSync(oldPath)).toBe(false);
-          await fsp.writeFile(d, Buffer.from("new"));
-          onP(3, 3);
-          return { totalBytes: 3 };
-        },
+    await downloadModel(workdir, newRequested, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        expect(fs.existsSync(oldPath)).toBe(false);
+        await fsp.writeFile(d, Buffer.from("new"));
+        onP(3, 3);
+        return { totalBytes: 3 };
       },
-    );
+    });
     const current = await getCurrentModel(workdir, "text");
     expect(current?.modelId).toBe("ternary-bonsai-4b-gguf");
-    expect(fs.existsSync(path.join(modelsDir(workdir, "text"), "new.gguf"))).toBe(true);
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir, "text"), "new.gguf")),
+    ).toBe(true);
     expect(fs.existsSync(oldPath)).toBe(false);
 
     // Disk should hold exactly ONE model file post-swap.
@@ -708,11 +709,7 @@ describe("single-model enforcement", () => {
     let maxConcurrent = 0;
     const makeFetcher =
       (body: string) =>
-      async (
-        _u: string,
-        onP: (d: number, t: number) => void,
-        d: string,
-      ) => {
+      async (_u: string, onP: (d: number, t: number) => void, d: string) => {
         activeFetchers += 1;
         maxConcurrent = Math.max(maxConcurrent, activeFetchers);
         try {
@@ -759,31 +756,26 @@ describe("single-model enforcement", () => {
       diskSizeMb: 1,
     });
     let extractorCalled = 0;
-    const record = await downloadModel(
-      workdir,
-      requested,
-      () => {},
-      {
-        fetcher: async (_u, onP, d) => {
-          await fsp.writeFile(d, Buffer.from("not-a-real-tarball"));
-          onP(1, 1);
-          return { totalBytes: 1 };
-        },
-        extractTarGz: async (archivePath, destDir) => {
-          extractorCalled += 1;
-          // Verify the extractor sees the post-rename archive (not the
-          // .partial sibling) inside the model cache dir.
-          expect(archivePath).toBe(
-            path.join(modelsDir(workdir, "text"), requested.filename),
-          );
-          expect(fs.existsSync(archivePath)).toBe(true);
-          // Simulate what the real `tar` library does: produce some files
-          // inside destDir representing the MLX layout.
-          await fsp.writeFile(path.join(destDir, "config.json"), "{}");
-          await fsp.writeFile(path.join(destDir, "weights.safetensors"), "w");
-        },
+    const record = await downloadModel(workdir, requested, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("not-a-real-tarball"));
+        onP(1, 1);
+        return { totalBytes: 1 };
       },
-    );
+      extractTarGz: async (archivePath, destDir) => {
+        extractorCalled += 1;
+        // Verify the extractor sees the post-rename archive (not the
+        // .partial sibling) inside the model cache dir.
+        expect(archivePath).toBe(
+          path.join(modelsDir(workdir, "text"), requested.filename),
+        );
+        expect(fs.existsSync(archivePath)).toBe(true);
+        // Simulate what the real `tar` library does: produce some files
+        // inside destDir representing the MLX layout.
+        await fsp.writeFile(path.join(destDir, "config.json"), "{}");
+        await fsp.writeFile(path.join(destDir, "weights.safetensors"), "w");
+      },
+    });
 
     expect(extractorCalled).toBe(1);
     // The InstalledModelRecord.path must point at the extracted directory,
@@ -846,10 +838,7 @@ describe("single-model enforcement", () => {
     const dir = modelsDir(workdir, "text");
     await fsp.mkdir(dir, { recursive: true });
     const extractedDir = path.join(dir, "ternary-bonsai-1.7b-2bit.mlx");
-    const strayArchive = path.join(
-      dir,
-      "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
-    );
+    const strayArchive = path.join(dir, "ternary-bonsai-1.7b-2bit.mlx.tar.gz");
     await fsp.mkdir(extractedDir);
     await fsp.writeFile(path.join(extractedDir, "config.json"), "{}");
     await fsp.writeFile(strayArchive, "stray archive bytes");
@@ -863,7 +852,10 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(record));
+    await fsp.writeFile(
+      activeModelPath(workdir, "text"),
+      JSON.stringify(record),
+    );
 
     await deleteCurrentModel(workdir, "text");
 
@@ -892,13 +884,17 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(record));
+    await fsp.writeFile(
+      activeModelPath(workdir, "text"),
+      JSON.stringify(record),
+    );
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await deleteCurrentModel(workdir, "text");
       expect(fs.existsSync(ggufPath)).toBe(false);
-      const sweepWarned = warnSpy.mock.calls.some(([msg]) =>
-        typeof msg === "string" && msg.includes("sweep stray archive"),
+      const sweepWarned = warnSpy.mock.calls.some(
+        ([msg]) =>
+          typeof msg === "string" && msg.includes("sweep stray archive"),
       );
       expect(sweepWarned).toBe(false);
     } finally {
@@ -930,9 +926,9 @@ describe("single-model enforcement", () => {
         f.startsWith("active-model.json.corrupt-"),
       );
       expect(backup).toBeDefined();
-      expect(
-        (await fsp.readFile(path.join(workdir, backup!), "utf8")),
-      ).toBe("{not valid json");
+      expect(await fsp.readFile(path.join(workdir, backup!), "utf8")).toBe(
+        "{not valid json",
+      );
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("active-model.json was unparseable JSON"),
       );
@@ -966,9 +962,9 @@ describe("single-model enforcement", () => {
           backup,
           `expected ${expectedPrefix}<ts> backup for ${cap}`,
         ).toBeDefined();
-        expect(
-          await fsp.readFile(path.join(workdir, backup!), "utf8"),
-        ).toBe("{not valid json");
+        expect(await fsp.readFile(path.join(workdir, backup!), "utf8")).toBe(
+          "{not valid json",
+        );
 
         // Clean up backups so the next loop iteration's `readdir`
         // search isn't ambiguous.
@@ -1048,10 +1044,7 @@ describe("single-model enforcement", () => {
 
     await Promise.all([slowDownload, deletePromise]);
 
-    expect(events).toEqual([
-      "download-fetcher-resolved",
-      "delete-completed",
-    ]);
+    expect(events).toEqual(["download-fetcher-resolved", "delete-completed"]);
     // And the final on-disk state is "no model" — the delete really did
     // delete, it didn't get clobbered by the download writing afterwards.
     expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(false);
@@ -1072,19 +1065,14 @@ describe("single-model enforcement", () => {
     // First install — beforeMutation should fire once (fresh install
     // counts as a mutation).
     const hook1 = vi.fn(async () => {});
-    await downloadModel(
-      workdir,
-      r,
-      () => {},
-      {
-        fetcher: async (_u, onP, d) => {
-          await fsp.writeFile(d, Buffer.from("payload"));
-          onP(7, 7);
-          return { totalBytes: 7 };
-        },
-        beforeMutation: hook1,
+    await downloadModel(workdir, r, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("payload"));
+        onP(7, 7);
+        return { totalBytes: 7 };
       },
-    );
+      beforeMutation: hook1,
+    });
     expect(hook1).toHaveBeenCalledTimes(1);
 
     // Second call for the SAME model id — `downloadModelLocked`
@@ -1093,24 +1081,27 @@ describe("single-model enforcement", () => {
     // double-clicking Download would needlessly tear down the
     // sidecar that's already happily serving this model.
     const hook2 = vi.fn(async () => {});
-    await downloadModel(
-      workdir,
-      r,
-      () => {},
-      {
-        fetcher: async () => {
-          throw new Error("fetcher must not be called on already-installed fast path");
-        },
-        beforeMutation: hook2,
+    await downloadModel(workdir, r, () => {}, {
+      fetcher: async () => {
+        throw new Error(
+          "fetcher must not be called on already-installed fast path",
+        );
       },
-    );
+      beforeMutation: hook2,
+    });
     expect(hook2).not.toHaveBeenCalled();
   });
 
   it("downloadModel invokes beforeMutation exactly once on swap, before eviction", async () => {
     resetDownloadLocks();
-    const a = makeResolved({ id: "ternary-bonsai-1.7b-gguf", filename: "a.gguf" });
-    const b = makeResolved({ id: "ternary-bonsai-4b-gguf", filename: "b.gguf" });
+    const a = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      filename: "a.gguf",
+    });
+    const b = makeResolved({
+      id: "ternary-bonsai-4b-gguf",
+      filename: "b.gguf",
+    });
 
     // Install A.
     await downloadModel(workdir, a, () => {}, {
@@ -1144,7 +1135,9 @@ describe("single-model enforcement", () => {
     expect(aFileExistedAtHook).toBe(true);
     // Post-conditions: A gone, B installed (single-model invariant).
     expect(fs.existsSync(aFile)).toBe(false);
-    expect(fs.existsSync(path.join(modelsDir(workdir, "text"), b.filename))).toBe(true);
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir, "text"), b.filename)),
+    ).toBe(true);
   });
 
   it("deleteCurrentModel skips beforeMutation when there is nothing to delete", async () => {
@@ -1192,8 +1185,14 @@ describe("single-model enforcement", () => {
     // the hook inside the lock, the swap is fully atomic per
     // userDataDir.
     resetDownloadLocks();
-    const a = makeResolved({ id: "ternary-bonsai-1.7b-gguf", filename: "a.gguf" });
-    const b = makeResolved({ id: "ternary-bonsai-4b-gguf", filename: "b.gguf" });
+    const a = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      filename: "a.gguf",
+    });
+    const b = makeResolved({
+      id: "ternary-bonsai-4b-gguf",
+      filename: "b.gguf",
+    });
 
     // Install A first so the swap path is exercised on the second call.
     await downloadModel(workdir, a, () => {}, {
@@ -1277,18 +1276,13 @@ describe("single-model enforcement", () => {
     });
     const payload = Buffer.from("payload");
     await expect(
-      downloadModel(
-        workdir,
-        requested,
-        () => {},
-        {
-          fetcher: async (_u, onP, d) => {
-            await fsp.writeFile(d, payload);
-            onP(payload.byteLength, payload.byteLength);
-            return { totalBytes: payload.byteLength };
-          },
+      downloadModel(workdir, requested, () => {}, {
+        fetcher: async (_u, onP, d) => {
+          await fsp.writeFile(d, payload);
+          onP(payload.byteLength, payload.byteLength);
+          return { totalBytes: payload.byteLength };
         },
-      ),
+      }),
     ).rejects.toThrow(/Checksum mismatch/);
     const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual([]);
@@ -1300,18 +1294,13 @@ describe("single-model enforcement", () => {
     // The download must atomically rename only on full success.
     const requested = makeResolved();
     await expect(
-      downloadModel(
-        workdir,
-        requested,
-        () => {},
-        {
-          fetcher: async (_u, onP, d) => {
-            await fsp.writeFile(d, Buffer.from("half"));
-            onP(4, 100);
-            throw new Error("simulated network failure");
-          },
+      downloadModel(workdir, requested, () => {}, {
+        fetcher: async (_u, onP, d) => {
+          await fsp.writeFile(d, Buffer.from("half"));
+          onP(4, 100);
+          throw new Error("simulated network failure");
         },
-      ),
+      }),
     ).rejects.toThrow(/simulated network failure/);
     const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual([]);
@@ -1323,7 +1312,8 @@ describe("single-model enforcement", () => {
     // appear on disk until the hash check has passed. Otherwise a process
     // crash between write and verify could leave a bad file at the canonical
     // path.
-    const validHash = "9f2feb1efb6fd87cd84ffd25b5b220e51eff9c5d2c2ade71daa0c46a39b18cd9";
+    const validHash =
+      "9f2feb1efb6fd87cd84ffd25b5b220e51eff9c5d2c2ade71daa0c46a39b18cd9";
     const requested = makeResolved({ sha256: validHash });
     const payload = Buffer.from("contents-that-hash-to-validHash");
 
@@ -1332,25 +1322,23 @@ describe("single-model enforcement", () => {
       observedDestPaths.push(filePath);
       // Confirm hashing happens against the .partial, not the final filename.
       expect(filePath.endsWith(".partial")).toBe(true);
-      const finalPath = path.join(modelsDir(workdir, "text"), requested.filename);
+      const finalPath = path.join(
+        modelsDir(workdir, "text"),
+        requested.filename,
+      );
       expect(fs.existsSync(finalPath)).toBe(false);
       return validHash;
     };
 
-    await downloadModel(
-      workdir,
-      requested,
-      () => {},
-      {
-        fetcher: async (_u, onP, d) => {
-          expect(d.endsWith(".partial")).toBe(true);
-          await fsp.writeFile(d, payload);
-          onP(payload.byteLength, payload.byteLength);
-          return { totalBytes: payload.byteLength };
-        },
-        hasher,
+    await downloadModel(workdir, requested, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        expect(d.endsWith(".partial")).toBe(true);
+        await fsp.writeFile(d, payload);
+        onP(payload.byteLength, payload.byteLength);
+        return { totalBytes: payload.byteLength };
       },
-    );
+      hasher,
+    });
     expect(observedDestPaths.length).toBe(1);
     const finalPath = path.join(modelsDir(workdir, "text"), requested.filename);
     expect(fs.existsSync(finalPath)).toBe(true);
@@ -1374,7 +1362,12 @@ describe("recommendModel format-per-platform", () => {
 
   it("returns GGUF Q1_0_g128 on every other platform", () => {
     const m: ModelManifest = loadManifest(true, { manifestPath: MANIFEST });
-    for (const target of ["windows-x64", "linux-x64", "linux-arm64", "macos-intel"] as const) {
+    for (const target of [
+      "windows-x64",
+      "linux-x64",
+      "linux-arm64",
+      "macos-intel",
+    ] as const) {
       const r = recommendModel(m, target, "low");
       expect(r?.format).toBe("gguf");
       expect(r?.quantization).toBe("Q1_0_g128");
@@ -1432,7 +1425,9 @@ describe("downloadModel survives throwing onProgress", () => {
   let workdir: string;
 
   beforeEach(async () => {
-    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-throw-progress-"));
+    workdir = await fsp.mkdtemp(
+      path.join(os.tmpdir(), "tessera-throw-progress-"),
+    );
     resetDownloadLocks();
   });
 
@@ -1497,7 +1492,9 @@ describe("writeCurrentModel atomic write ", () => {
   let workdir: string;
 
   beforeEach(async () => {
-    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-atomic-write-"));
+    workdir = await fsp.mkdtemp(
+      path.join(os.tmpdir(), "tessera-atomic-write-"),
+    );
     resetDownloadLocks();
   });
 
@@ -1522,7 +1519,10 @@ describe("writeCurrentModel atomic write ", () => {
     };
     await downloadModel(workdir, requested, () => {}, { fetcher });
 
-    const written = await fsp.readFile(activeModelPath(workdir, "text"), "utf8");
+    const written = await fsp.readFile(
+      activeModelPath(workdir, "text"),
+      "utf8",
+    );
     const parsed = JSON.parse(written) as { modelId: string };
     expect(parsed.modelId).toBe(requested.id);
 
@@ -1569,12 +1569,12 @@ describe("writeCurrentModel atomic write ", () => {
     // assert here is the *atomicity* one: active-model.json is never
     // a partially-written / truncated JSON document. Either it parses
     // cleanly or it is absent.
-    const afterRaw = await fsp.readFile(activeModelPath(workdir, "text"), "utf8").catch(
-      (err) => {
+    const afterRaw = await fsp
+      .readFile(activeModelPath(workdir, "text"), "utf8")
+      .catch((err) => {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw err;
-      },
-    );
+      });
     if (afterRaw !== null) {
       // If still present, must be valid JSON (no truncated bytes).
       expect(() => JSON.parse(afterRaw)).not.toThrow();
@@ -1612,9 +1612,9 @@ describe("defaultFetcher reader lifetime ", () => {
       const workdir = await fsp.mkdtemp(
         path.join(os.tmpdir(), "tessera-no-body-"),
       );
-      await expect(
-        downloadModel(workdir, requested, () => {}),
-      ).rejects.toThrow(/Empty response body/);
+      await expect(downloadModel(workdir, requested, () => {})).rejects.toThrow(
+        /Empty response body/,
+      );
       // The destination file must not exist because we threw before
       // opening it.
       const expectedDest = path.join(
@@ -1683,12 +1683,12 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
     const badPath = path.join(workdir, "bad-platform.json");
     await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
 
-    expect(() =>
-      loadManifest(true, { manifestPath: badPath }),
-    ).toThrowError(/linux-riscv64/);
-    expect(() =>
-      loadManifest(true, { manifestPath: badPath }),
-    ).toThrowError(/not one of/);
+    expect(() => loadManifest(true, { manifestPath: badPath })).toThrowError(
+      /linux-riscv64/,
+    );
+    expect(() => loadManifest(true, { manifestPath: badPath })).toThrowError(
+      /not one of/,
+    );
   });
 
   it("rejects a manifest with an unknown llama_server.variants[].compute with a precise error", async () => {
@@ -1711,12 +1711,12 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
     const badPath = path.join(workdir, "bad-compute.json");
     await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
 
-    expect(() =>
-      loadManifest(true, { manifestPath: badPath }),
-    ).toThrowError(/xpu/);
-    expect(() =>
-      loadManifest(true, { manifestPath: badPath }),
-    ).toThrowError(/not one of/);
+    expect(() => loadManifest(true, { manifestPath: badPath })).toThrowError(
+      /xpu/,
+    );
+    expect(() => loadManifest(true, { manifestPath: badPath })).toThrowError(
+      /not one of/,
+    );
   });
 
   it("does not cache a manifest that failed validation", async () => {
@@ -1894,9 +1894,7 @@ describe("manifest validation guard — models[] entries", () => {
     expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
       /models\[0\]\.compute\[1\]/,
     );
-    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
-      /xpu/,
-    );
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(/xpu/);
   });
 
   it("rejects a non-array models[].compute field", async () => {
@@ -2009,9 +2007,7 @@ describe("manifest validation guard — models[] entries", () => {
     // JSON-parses to `null` if literal NaN, so emulate via a code path
     // (manifest could be hand-edited to `"mmprojSizeMb": "abc"` or
     // similar). The validator must reject any non-finite number.
-    const bad = visionManifest(
-      visionGgufEntry({ mmprojSizeMb: Number.NaN }),
-    );
+    const bad = visionManifest(visionGgufEntry({ mmprojSizeMb: Number.NaN }));
     const p = path.join(workdir, "nan-mmproj-size.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
     expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
@@ -2102,12 +2098,10 @@ describe("ModelRuntimeCard fetcher / defaultFetcher socket-leak guard", () => {
     const requested = makeResolved({
       url: "https://example.invalid/will-503",
     });
-    const work = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "tessera-503-leak-"),
+    const work = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-503-leak-"));
+    await expect(downloadModel(work, requested, () => {})).rejects.toThrow(
+      /HTTP 503/,
     );
-    await expect(
-      downloadModel(work, requested, () => {}),
-    ).rejects.toThrow(/HTTP 503/);
     // The fix: cancel must have been called before the throw bubbled.
     expect(cancelMock).toHaveBeenCalledTimes(1);
     await fsp.rm(work, { recursive: true, force: true });
@@ -2133,12 +2127,10 @@ describe("ModelRuntimeCard fetcher / defaultFetcher socket-leak guard", () => {
     const requested = makeResolved({
       url: "https://example.invalid/will-429",
     });
-    const work = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "tessera-429-leak-"),
+    const work = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-429-leak-"));
+    await expect(downloadModel(work, requested, () => {})).rejects.toThrow(
+      /HTTP 429/,
     );
-    await expect(
-      downloadModel(work, requested, () => {}),
-    ).rejects.toThrow(/HTTP 429/);
     expect(cancelMock).toHaveBeenCalledTimes(1);
     await fsp.rm(work, { recursive: true, force: true });
   });
@@ -2694,10 +2686,7 @@ describe("legacy flat-layout migration", () => {
         modelId: "ternary-bonsai-1.7b-gguf",
         format: "gguf",
         filename: "ternary-bonsai-1.7b.gguf",
-        path: path.join(
-          legacyModelsDir(workdir),
-          "ternary-bonsai-1.7b.gguf",
-        ),
+        path: path.join(legacyModelsDir(workdir), "ternary-bonsai-1.7b.gguf"),
         downloadSizeMb: 1,
         diskSizeMb: 1,
         sha256: null,

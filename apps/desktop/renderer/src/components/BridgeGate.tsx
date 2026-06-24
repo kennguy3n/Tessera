@@ -138,9 +138,9 @@ function BridgeFailed({ error }: { error: string | null }) {
     <div className="bridge-failed" role="alert">
       <h1 className="bridge-failed-title">Couldn’t open your workspace</h1>
       <p className="bridge-failed-message">
-        Tessera could not initialise its local store. Your data is safe on
-        disk — please relaunch the app. If this keeps happening, check that
-        another copy of Tessera isn’t already running.
+        Tessera could not initialise its local store. Your data is safe on disk
+        — please relaunch the app. If this keeps happening, check that another
+        copy of Tessera isn’t already running.
       </p>
       {error && <pre className="bridge-failed-detail">{error}</pre>}
       <style nonce={cspNonce}>{`

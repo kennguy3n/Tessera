@@ -143,17 +143,14 @@ export async function listExternalProviderModels(
     // De-dupe and sort for stable display. `Set` preserves insertion
     // order, so the subsequent `.sort()` is the only ordering signal
     // that matters.
-    const deduped = Array.from(new Set(ids)).sort((a, b) =>
-      a.localeCompare(b),
-    );
+    const deduped = Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
     return { ok: true, models: deduped };
   } catch (e) {
     // `e` is `unknown` from a fetch reject: could be AbortError
     // (timeout fired), TypeError (DNS / TLS failure), or any
     // platform-specific error. Surface the message so the UI can
     // show a useful diagnostic.
-    const msg =
-      e instanceof Error ? e.message : String(e ?? "Unknown error");
+    const msg = e instanceof Error ? e.message : String(e ?? "Unknown error");
     if (e instanceof DOMException && e.name === "AbortError") {
       return {
         ok: false,

@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+  act,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import MemoryPage from "../pages/MemoryPage";
 import type { SubstrateMemoryInfo } from "../types/ipc";
@@ -30,9 +37,27 @@ function mem(over: Partial<SubstrateMemoryInfo>): SubstrateMemoryInfo {
 }
 
 const SAMPLE = [
-  mem({ id: "m1", content: "Atlas is the project codename", observationType: "entity", state: "canonical", retentionScore: 0.9 }),
-  mem({ id: "m2", content: "Ship deadline is Q3", observationType: "fact", state: "superseded", retentionScore: 0.4 }),
-  mem({ id: "m3", content: "Old archived decision", observationType: "decision", state: "archived", retentionScore: 0.1 }),
+  mem({
+    id: "m1",
+    content: "Atlas is the project codename",
+    observationType: "entity",
+    state: "canonical",
+    retentionScore: 0.9,
+  }),
+  mem({
+    id: "m2",
+    content: "Ship deadline is Q3",
+    observationType: "fact",
+    state: "superseded",
+    retentionScore: 0.4,
+  }),
+  mem({
+    id: "m3",
+    content: "Old archived decision",
+    observationType: "decision",
+    state: "archived",
+    retentionScore: 0.1,
+  }),
 ];
 
 function renderPage() {
@@ -55,7 +80,9 @@ describe("MemoryPage", () => {
     window.tessera.substrate.unpinMemory = vi
       .fn()
       .mockImplementation(async (id: string) => mem({ id, pinCount: 0 }));
-    window.tessera.substrate.forgetMemory = vi.fn().mockResolvedValue(undefined);
+    window.tessera.substrate.forgetMemory = vi
+      .fn()
+      .mockResolvedValue(undefined);
   });
 
   it("renders extracted memories with content, citation, state and retention", async () => {
@@ -63,9 +90,15 @@ describe("MemoryPage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("memory-list")).toBeInTheDocument(),
     );
-    expect(screen.getByText("Atlas is the project codename")).toBeInTheDocument();
-    expect(screen.getByTestId("memory-retention-m1")).toHaveTextContent("90% retained");
-    expect(screen.getByTestId("memory-cite-m1")).toHaveTextContent(/Source src-1/);
+    expect(
+      screen.getByText("Atlas is the project codename"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("memory-retention-m1")).toHaveTextContent(
+      "90% retained",
+    );
+    expect(screen.getByTestId("memory-cite-m1")).toHaveTextContent(
+      /Source src-1/,
+    );
     // Decay buckets surface as badges (active / fading / archived).
     expect(screen.getByText("active")).toBeInTheDocument();
     expect(screen.getByText("fading")).toBeInTheDocument();
@@ -100,8 +133,12 @@ describe("MemoryPage", () => {
     );
     fireEvent.click(screen.getByTestId("memory-filter-active"));
     const list = screen.getByTestId("memory-list");
-    expect(within(list).getByText("Atlas is the project codename")).toBeInTheDocument();
-    expect(within(list).queryByText("Ship deadline is Q3")).not.toBeInTheDocument();
+    expect(
+      within(list).getByText("Atlas is the project codename"),
+    ).toBeInTheDocument();
+    expect(
+      within(list).queryByText("Ship deadline is Q3"),
+    ).not.toBeInTheDocument();
   });
 
   it("searches within memories", async () => {
@@ -114,7 +151,9 @@ describe("MemoryPage", () => {
     });
     const list = screen.getByTestId("memory-list");
     expect(within(list).getByText("Ship deadline is Q3")).toBeInTheDocument();
-    expect(within(list).queryByText("Atlas is the project codename")).not.toBeInTheDocument();
+    expect(
+      within(list).queryByText("Atlas is the project codename"),
+    ).not.toBeInTheDocument();
   });
 
   it("pins a memory and refreshes", async () => {
@@ -188,10 +227,12 @@ describe("MemoryPage", () => {
   });
 
   it("abbreviates long source ids but leaves short ones without an ellipsis", async () => {
-    window.tessera.substrate.getMemories = vi.fn().mockResolvedValue([
-      mem({ id: "short", content: "short id", sourceId: "abc" }),
-      mem({ id: "long", content: "long id", sourceId: "0123456789abcdef" }),
-    ]);
+    window.tessera.substrate.getMemories = vi
+      .fn()
+      .mockResolvedValue([
+        mem({ id: "short", content: "short id", sourceId: "abc" }),
+        mem({ id: "long", content: "long id", sourceId: "0123456789abcdef" }),
+      ]);
     renderPage();
     await waitFor(() =>
       expect(screen.getByTestId("memory-list")).toBeInTheDocument(),

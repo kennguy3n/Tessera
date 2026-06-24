@@ -50,32 +50,32 @@ The process failure lies in the lack of a formal workflow or access control mech
 
 ## Containment and Remediation Actions
 
-- **Immediate containment:**  
-  - Account disable initiated by Security Officer Raj Patel on 2026-02-18 at 10:25 AM (America/Chicago).  
-  - Target completion date: 2026-03-01.  
-  - System isolation applied to the affected device (MRH-LT-2291) via Endpoint Security team; device offline since 2026-02-18 10:20 AM.  
-  - Target completion date: 2026-03-01.  
-  - Password rotation initiated for user Dana Whitfield (dwhitfield@mercyridge.example); new password assigned on 2026-02-18 10:30 AM.  
-  - Target completion date: 2026-03-01.  
-  - Local backup restore attempted on 2026-02-18 11:00 AM; no recoverable data found due to device offline state and lack of encryption.  
-  - Target completion date: 2026-03-01.  
+- **Immediate containment:**
+  - Account disable initiated by Security Officer Raj Patel on 2026-02-18 at 10:25 AM (America/Chicago).
+  - Target completion date: 2026-03-01.
+  - System isolation applied to the affected device (MRH-LT-2291) via Endpoint Security team; device offline since 2026-02-18 10:20 AM.
+  - Target completion date: 2026-03-01.
+  - Password rotation initiated for user Dana Whitfield (dwhitfield@mercyridge.example); new password assigned on 2026-02-18 10:30 AM.
+  - Target completion date: 2026-03-01.
+  - Local backup restore attempted on 2026-02-18 11:00 AM; no recoverable data found due to device offline state and lack of encryption.
+  - Target completion date: 2026-03-01.
 
-- **Planned remediation:**  
-  - Technical controls: Enforce BitLocker encryption policy for all endpoints; remediate BitLocker exception for MRH-LT-2291.  
-    - Owner: Marcus Lee (Endpoint Security)  
-    - Target completion date: 2026-03-15  
-  - Policy update: Revise POL-PRIV-014 Breach Risk Assessment to explicitly require full-disk encryption for all unsecured PHI-related worklists, including Excel exports.  
-    - Owner: Maya Okonkwo (Clinical Privacy Officer)  
-    - Target completion date: 2026-03-15  
-  - Training: Conduct mandatory security awareness training for all staff who access PHI-related worklists, with emphasis on physical device security and encrypted access requirements.  
-    - Owner: Security Officer Raj Patel  
-    - Target completion date: 2026-03-20  
-  - Contract amendment: Update vendor agreements (including EHR export service provider) to include mandatory encryption of PHI exports and audit trail requirements for data access.  
-    - Owner: General Counsel Eleanor Voss  
-    - Target completion date: 2026-03-25  
-  - Sanctions: Issue formal warning to user Dana Whitfield for unauthorized access to unsecured PHI data; escalate to HR for disciplinary review if violation persists beyond 30 days.  
-    - Owner: Maya Okonkwo (Clinical Privacy Officer)  
-    - Target completion date: 2026-04-05  
+- **Planned remediation:**
+  - Technical controls: Enforce BitLocker encryption policy for all endpoints; remediate BitLocker exception for MRH-LT-2291.
+    - Owner: Marcus Lee (Endpoint Security)
+    - Target completion date: 2026-03-15
+  - Policy update: Revise POL-PRIV-014 Breach Risk Assessment to explicitly require full-disk encryption for all unsecured PHI-related worklists, including Excel exports.
+    - Owner: Maya Okonkwo (Clinical Privacy Officer)
+    - Target completion date: 2026-03-15
+  - Training: Conduct mandatory security awareness training for all staff who access PHI-related worklists, with emphasis on physical device security and encrypted access requirements.
+    - Owner: Security Officer Raj Patel
+    - Target completion date: 2026-03-20
+  - Contract amendment: Update vendor agreements (including EHR export service provider) to include mandatory encryption of PHI exports and audit trail requirements for data access.
+    - Owner: General Counsel Eleanor Voss
+    - Target completion date: 2026-03-25
+  - Sanctions: Issue formal warning to user Dana Whitfield for unauthorized access to unsecured PHI data; escalate to HR for disciplinary review if violation persists beyond 30 days.
+    - Owner: Maya Okonkwo (Clinical Privacy Officer)
+    - Target completion date: 2026-04-05
 
 [01-helpdesk-ticket-INC-4471.md]  
 [02-endpoint-mdm-report.md]  
@@ -84,14 +84,14 @@ The process failure lies in the lack of a formal workflow or access control mech
 
 ## Notification Requirements and Status
 
-| Notification Requirement           | Triggered? | Notification Date / Target                                                                 |
-|------------------------------------|-------------|---------------------------------------------------------------------------------------------|
-| Individual Notification           | Yes         | Within 60 calendar days from discovery (discovery date: 2026-02-18) — notification issued on 2026-03-05 |
-| HHS OCR Notification (annual)    | No          | Not triggered; breach involves < 500 individuals and occurred within a calendar year; no annual threshold met |
-| HHS OCR Notification (cumulative) | No          | Cumulative breach threshold not met; no trigger for annual reporting                      |
-| Media Notification               | No          | Not triggered; breach affects only 220 patients, which is below the ≥ 500 threshold for media notification |
-| Business Associate Notification   | Yes         | Required under POL-PRIV-014; notification issued on 2026-03-05 to Raj Patel (Security Officer) |
-| State-Specific Obligation (Riverside) | Yes       | Breach affects >100 state residents; notification required to Riverside State Attorney General on 2026-03-05 |
+| Notification Requirement              | Triggered? | Notification Date / Target                                                                                    |
+| ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| Individual Notification               | Yes        | Within 60 calendar days from discovery (discovery date: 2026-02-18) — notification issued on 2026-03-05       |
+| HHS OCR Notification (annual)         | No         | Not triggered; breach involves < 500 individuals and occurred within a calendar year; no annual threshold met |
+| HHS OCR Notification (cumulative)     | No         | Cumulative breach threshold not met; no trigger for annual reporting                                          |
+| Media Notification                    | No         | Not triggered; breach affects only 220 patients, which is below the ≥ 500 threshold for media notification    |
+| Business Associate Notification       | Yes        | Required under POL-PRIV-014; notification issued on 2026-03-05 to Raj Patel (Security Officer)                |
+| State-Specific Obligation (Riverside) | Yes        | Breach affects >100 state residents; notification required to Riverside State Attorney General on 2026-03-05  |
 
 ## Lessons Learned and Policy Updates
 

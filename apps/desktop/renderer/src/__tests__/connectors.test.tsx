@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import ConnectorStatus from "../components/ConnectorStatus";
 import DriveFilePicker from "../components/DriveFilePicker";
 import {
@@ -85,7 +91,12 @@ describe("ConnectorStatus", () => {
       connected: true,
       status: "connected",
     });
-    mockApi.connectors.syncDrive.mockResolvedValue({ added: 2, modified: 0, removed: 0, status: "ok" });
+    mockApi.connectors.syncDrive.mockResolvedValue({
+      added: 2,
+      modified: 0,
+      removed: 0,
+      status: "ok",
+    });
 
     const onSync = vi.fn();
     render(<ConnectorStatus provider="google_drive" onSync={onSync} />);
@@ -116,7 +127,9 @@ describe("ConnectorStatus", () => {
     });
 
     const onDisconnect = vi.fn();
-    render(<ConnectorStatus provider="google_drive" onDisconnect={onDisconnect} />);
+    render(
+      <ConnectorStatus provider="google_drive" onDisconnect={onDisconnect} />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText("Disconnect")).toBeInTheDocument();
@@ -127,7 +140,9 @@ describe("ConnectorStatus", () => {
     });
 
     await waitFor(() => {
-      expect(mockApi.connectors.disconnect).toHaveBeenCalledWith("google_drive");
+      expect(mockApi.connectors.disconnect).toHaveBeenCalledWith(
+        "google_drive",
+      );
     });
   });
 
@@ -141,35 +156,32 @@ describe("ConnectorStatus", () => {
     });
   });
 
-  it(
-    "shows Offline badge when sync returns status === 'offline'",
-    async () => {
-      mockApi.connectors.status.mockResolvedValue({
-        provider: "notion",
-        connected: true,
-        status: "connected",
-      });
-      mockApi.connectors.sync.mockResolvedValue({
-        added: 0,
-        modified: 0,
-        removed: 0,
-        status: "offline",
-      });
+  it("shows Offline badge when sync returns status === 'offline'", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "notion",
+      connected: true,
+      status: "connected",
+    });
+    mockApi.connectors.sync.mockResolvedValue({
+      added: 0,
+      modified: 0,
+      removed: 0,
+      status: "offline",
+    });
 
-      render(<ConnectorStatus provider="notion" />);
-      await waitFor(() => {
-        expect(screen.getByText("Sync Now")).toBeInTheDocument();
-      });
+    render(<ConnectorStatus provider="notion" />);
+    await waitFor(() => {
+      expect(screen.getByText("Sync Now")).toBeInTheDocument();
+    });
 
-      await act(async () => {
-        fireEvent.click(screen.getByText("Sync Now"));
-      });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Sync Now"));
+    });
 
-      await waitFor(() => {
-        expect(screen.getByText("Offline")).toBeInTheDocument();
-      });
-    },
-  );
+    await waitFor(() => {
+      expect(screen.getByText("Offline")).toBeInTheDocument();
+    });
+  });
 
   it(
     "clears the Offline badge on subsequent NON-network errors " +
@@ -258,35 +270,32 @@ describe("ConnectorStatus", () => {
     },
   );
 
-  it(
-    "stamps 'Last sync' timestamp on a successful (non-offline) sync",
-    async () => {
-      mockApi.connectors.status.mockResolvedValue({
-        provider: "notion",
-        connected: true,
-        status: "connected",
-      });
-      mockApi.connectors.sync.mockResolvedValue({
-        added: 1,
-        modified: 0,
-        removed: 0,
-        status: "synced",
-      });
+  it("stamps 'Last sync' timestamp on a successful (non-offline) sync", async () => {
+    mockApi.connectors.status.mockResolvedValue({
+      provider: "notion",
+      connected: true,
+      status: "connected",
+    });
+    mockApi.connectors.sync.mockResolvedValue({
+      added: 1,
+      modified: 0,
+      removed: 0,
+      status: "synced",
+    });
 
-      render(<ConnectorStatus provider="notion" />);
-      await waitFor(() => {
-        expect(screen.getByText("Sync Now")).toBeInTheDocument();
-      });
+    render(<ConnectorStatus provider="notion" />);
+    await waitFor(() => {
+      expect(screen.getByText("Sync Now")).toBeInTheDocument();
+    });
 
-      await act(async () => {
-        fireEvent.click(screen.getByText("Sync Now"));
-      });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Sync Now"));
+    });
 
-      await waitFor(() => {
-        expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
-      });
-    },
-  );
+    await waitFor(() => {
+      expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+    });
+  });
 
   it(
     "clears the Offline badge on every thrown sync error, regardless " +
@@ -424,7 +433,9 @@ describe("DriveFilePicker", () => {
 
     render(<DriveFilePicker onSelect={vi.fn()} onCancel={vi.fn()} />);
 
-    expect(screen.getByText("Select files from Google Drive")).toBeInTheDocument();
+    expect(
+      screen.getByText("Select files from Google Drive"),
+    ).toBeInTheDocument();
     expect(screen.getByText("My Drive")).toBeInTheDocument();
   });
 
@@ -432,8 +443,24 @@ describe("DriveFilePicker", () => {
     mockApi.connectors.listDriveFiles.mockResolvedValue({
       nextPageToken: null,
       files: [
-        { id: "f1", name: "report.pdf", mimeType: "application/pdf", size: 102400, modifiedTime: null, isFolder: false, parentId: "root" },
-        { id: "f2", name: "Photos", mimeType: "application/vnd.google-apps.folder", size: 0, modifiedTime: null, isFolder: true, parentId: "root" },
+        {
+          id: "f1",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          size: 102400,
+          modifiedTime: null,
+          isFolder: false,
+          parentId: "root",
+        },
+        {
+          id: "f2",
+          name: "Photos",
+          mimeType: "application/vnd.google-apps.folder",
+          size: 0,
+          modifiedTime: null,
+          isFolder: true,
+          parentId: "root",
+        },
       ],
     });
 
@@ -459,7 +486,9 @@ describe("DriveFilePicker", () => {
   });
 
   it("shows error message on API failure", async () => {
-    mockApi.connectors.listDriveFiles.mockRejectedValue(new Error("Auth expired"));
+    mockApi.connectors.listDriveFiles.mockRejectedValue(
+      new Error("Auth expired"),
+    );
 
     render(<DriveFilePicker onSelect={vi.fn()} onCancel={vi.fn()} />);
 
@@ -469,7 +498,10 @@ describe("DriveFilePicker", () => {
   });
 
   it("calls onCancel when cancel button clicked", async () => {
-    mockApi.connectors.listDriveFiles.mockResolvedValue({ nextPageToken: null, files: [] });
+    mockApi.connectors.listDriveFiles.mockResolvedValue({
+      nextPageToken: null,
+      files: [],
+    });
     const onCancel = vi.fn();
 
     render(<DriveFilePicker onSelect={vi.fn()} onCancel={onCancel} />);
@@ -482,7 +514,15 @@ describe("DriveFilePicker", () => {
     mockApi.connectors.listDriveFiles.mockResolvedValue({
       nextPageToken: null,
       files: [
-        { id: "f1", name: "data.csv", mimeType: "text/csv", size: 1024, modifiedTime: null, isFolder: false, parentId: "root" },
+        {
+          id: "f1",
+          name: "data.csv",
+          mimeType: "text/csv",
+          size: 1024,
+          modifiedTime: null,
+          isFolder: false,
+          parentId: "root",
+        },
       ],
     });
 
@@ -511,13 +551,29 @@ describe("DriveFilePicker", () => {
       .mockResolvedValueOnce({
         nextPageToken: null,
         files: [
-          { id: "folder-1", name: "Projects", mimeType: "application/vnd.google-apps.folder", size: 0, modifiedTime: null, isFolder: true, parentId: "root" },
+          {
+            id: "folder-1",
+            name: "Projects",
+            mimeType: "application/vnd.google-apps.folder",
+            size: 0,
+            modifiedTime: null,
+            isFolder: true,
+            parentId: "root",
+          },
         ],
       })
       .mockResolvedValueOnce({
         nextPageToken: null,
         files: [
-          { id: "f-inner", name: "spec.md", mimeType: "text/markdown", size: 2048, modifiedTime: null, isFolder: false, parentId: "folder-1" },
+          {
+            id: "f-inner",
+            name: "spec.md",
+            mimeType: "text/markdown",
+            size: 2048,
+            modifiedTime: null,
+            isFolder: false,
+            parentId: "folder-1",
+          },
         ],
       });
 
@@ -533,7 +589,9 @@ describe("DriveFilePicker", () => {
       expect(screen.getByText("spec.md")).toBeInTheDocument();
     });
 
-    const breadcrumbs = screen.getAllByRole("button").filter(b => b.classList.contains("breadcrumb-link"));
+    const breadcrumbs = screen
+      .getAllByRole("button")
+      .filter((b) => b.classList.contains("breadcrumb-link"));
     expect(breadcrumbs.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -541,7 +599,15 @@ describe("DriveFilePicker", () => {
     mockApi.connectors.listDriveFiles.mockResolvedValue({
       nextPageToken: null,
       files: [
-        { id: "f1", name: "file.txt", mimeType: "text/plain", size: 100, modifiedTime: null, isFolder: false, parentId: "root" },
+        {
+          id: "f1",
+          name: "file.txt",
+          mimeType: "text/plain",
+          size: 100,
+          modifiedTime: null,
+          isFolder: false,
+          parentId: "root",
+        },
       ],
     });
 

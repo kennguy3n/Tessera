@@ -2,11 +2,11 @@
 
 Tessera ships on Linux as three distribution formats:
 
-| Format    | Target arch | Notes                                                                  |
-|-----------|-------------|------------------------------------------------------------------------|
-| AppImage  | x86_64      | Self-contained, sandbox-friendly; no install required                  |
-| .deb      | x86_64      | Debian / Ubuntu / Pop!\_OS / Mint                                      |
-| .rpm      | x86_64      | Fedora / RHEL / openSUSE                                               |
+| Format   | Target arch | Notes                                                 |
+| -------- | ----------- | ----------------------------------------------------- |
+| AppImage | x86_64      | Self-contained, sandbox-friendly; no install required |
+| .deb     | x86_64      | Debian / Ubuntu / Pop!\_OS / Mint                     |
+| .rpm     | x86_64      | Fedora / RHEL / openSUSE                              |
 
 ## Runtime requirements
 

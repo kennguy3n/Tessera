@@ -40,10 +40,7 @@ import {
   getVisionSidecar,
   isBridgeAvailable,
 } from "../appState";
-import {
-  detectPlatformInfo,
-  getInstalledModel,
-} from "../modelManagement";
+import { detectPlatformInfo, getInstalledModel } from "../modelManagement";
 import { app } from "electron";
 
 function userDataDir(): string {
@@ -276,8 +273,7 @@ export function registerVisionHandlers(): void {
       throw new Error("Native bridge not available");
     }
 
-    const maxTokens =
-      input.maxTokens ?? DEFAULT_MAX_TOKENS_BY_MODE[input.mode];
+    const maxTokens = input.maxTokens ?? DEFAULT_MAX_TOKENS_BY_MODE[input.mode];
 
     // Bracket the bridge call with markGenerationActive /
     // markGenerationIdle so `ModelSidecar`'s idle monitor (60 s

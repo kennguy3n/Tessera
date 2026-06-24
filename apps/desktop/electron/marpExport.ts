@@ -80,7 +80,8 @@ async function defaultRunner(argv: string[]): Promise<number> {
     marpCli?: (argv: string[]) => Promise<number>;
   };
   const fn = mod.default ?? mod.marpCli;
-  if (!fn) throw new Error("@marp-team/marp-cli has no callable default export");
+  if (!fn)
+    throw new Error("@marp-team/marp-cli has no callable default export");
   return await fn(argv);
 }
 
@@ -96,7 +97,10 @@ export function __setMarpRunner(runner: MarpRunner | null) {
 export function buildMarpArgs(
   inputPath: string,
   outputPath: string,
-  opts: Pick<MarpExportOptions, "format" | "theme" | "includeNotes" | "allowHtml">,
+  opts: Pick<
+    MarpExportOptions,
+    "format" | "theme" | "includeNotes" | "allowHtml"
+  >,
 ): string[] {
   const args = [inputPath, "-o", outputPath];
   switch (opts.format) {

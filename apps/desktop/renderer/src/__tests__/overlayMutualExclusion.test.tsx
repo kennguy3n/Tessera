@@ -58,7 +58,9 @@ describe("palette / quick-switcher / shortcuts mutual exclusion", () => {
     await waitFor(() =>
       expect(screen.getByTestId("command-palette-overlay")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("quick-switcher-overlay")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("quick-switcher-overlay"),
+    ).not.toBeInTheDocument();
   });
 
   it("opening the quick switcher closes an open palette", async () => {

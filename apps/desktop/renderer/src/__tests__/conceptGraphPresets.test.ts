@@ -172,7 +172,9 @@ describe("filterMatchesPreset / activePresetId", () => {
     const list = [a, b];
     expect(activePresetId(list, FILTER)).toBe(a.id);
     expect(activePresetId(list, { ...FILTER, decayMode: true })).toBe(b.id);
-    expect(activePresetId(list, { ...FILTER, scopeFilter: "other" })).toBeNull();
+    expect(
+      activePresetId(list, { ...FILTER, scopeFilter: "other" }),
+    ).toBeNull();
   });
 });
 
@@ -245,7 +247,9 @@ describe("serialize/parse round-trip + load/save", () => {
       defaultPresetId: "id-1",
     };
     savePresetStore("scope-x", store);
-    expect(window.localStorage.getItem(presetStorageKey("scope-x"))).toBeTruthy();
+    expect(
+      window.localStorage.getItem(presetStorageKey("scope-x")),
+    ).toBeTruthy();
     expect(loadPresetStore("scope-x")).toEqual(store);
   });
 

@@ -106,10 +106,12 @@ describe("VersionHistory Compare", () => {
     expect(screen.getByText("=2")).toBeInTheDocument();
     // The removed line should be rendered as a remove row.
     const diffPanel = screen.getByLabelText("Version comparison");
-    expect(diffPanel.querySelectorAll(".version-diff-line-remove").length)
-      .toBeGreaterThan(0);
-    expect(diffPanel.querySelectorAll(".version-diff-line-add").length)
-      .toBeGreaterThan(0);
+    expect(
+      diffPanel.querySelectorAll(".version-diff-line-remove").length,
+    ).toBeGreaterThan(0);
+    expect(
+      diffPanel.querySelectorAll(".version-diff-line-add").length,
+    ).toBeGreaterThan(0);
   });
 
   it("switches from preview view to compare view and back", async () => {

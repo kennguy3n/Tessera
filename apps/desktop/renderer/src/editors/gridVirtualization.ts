@@ -176,7 +176,12 @@ export function computeVirtualWindow(input: VirtualWindowInput): VirtualWindow {
 
   // No windowable rows left once the frozen block is removed.
   if (frozen >= rowCount) {
-    return { startIndex: frozen, endIndex: frozen - 1, topPad: 0, bottomPad: 0 };
+    return {
+      startIndex: frozen,
+      endIndex: frozen - 1,
+      topPad: 0,
+      bottomPad: 0,
+    };
   }
 
   const lastIndex = rowCount - 1;

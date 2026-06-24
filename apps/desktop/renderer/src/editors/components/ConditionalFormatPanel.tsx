@@ -143,10 +143,7 @@ export function ConditionalFormatPanel({
               )}
 
               <div className="sheet-cf-style">
-                <label
-                  className="sheet-cf-color"
-                  title="Background colour"
-                >
+                <label className="sheet-cf-color" title="Background colour">
                   <span className="sheet-cf-label">Fill</span>
                   <input
                     type="color"

@@ -57,11 +57,7 @@ import {
   type EvaluationContext,
   type FunctionImpl,
 } from "../evaluator";
-import {
-  isFormulaError,
-  makeError,
-  type FormulaError,
-} from "../types";
+import { isFormulaError, makeError, type FormulaError } from "../types";
 import { formatValueWithPattern } from "../format";
 
 function singleString(
@@ -90,7 +86,10 @@ const CONCATENATE: FunctionImpl = (args, ctx) => {
     if (arg.type === "range") {
       // Excel 2010+ CONCATENATE rejects ranges. Mirror that so users
       // get a precise diagnostic instead of a silently-joined blob.
-      return makeError("#VALUE!", "CONCATENATE does not accept ranges; use CONCAT");
+      return makeError(
+        "#VALUE!",
+        "CONCATENATE does not accept ranges; use CONCAT",
+      );
     }
     const s = singleString(arg, ctx);
     if (isFormulaError(s)) return s;
@@ -188,10 +187,7 @@ const TRIM: FunctionImpl = (args, ctx) => {
   // space and strips leading/trailing ASCII spaces — it intentionally
   // does NOT strip other whitespace like tabs/newlines (the
   // `.trim()` method does). Mirror that exactly.
-  return s
-    .replace(/^ +/, "")
-    .replace(/ +$/, "")
-    .replace(/ {2,}/g, " ");
+  return s.replace(/^ +/, "").replace(/ +$/, "").replace(/ {2,}/g, " ");
 };
 
 const SUBSTITUTE: FunctionImpl = (args, ctx) => {
@@ -361,8 +357,9 @@ const PROPER: FunctionImpl = (args, ctx) => {
   if (isFormulaError(s)) return s;
   // Capitalise the first letter of every run of letters; everything
   // after a non-letter restarts a word, matching Excel.
-  return s.replace(/[A-Za-z\u00C0-\u024F]+/g, (word) =>
-    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+  return s.replace(
+    /[A-Za-z\u00C0-\u024F]+/g,
+    (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
   );
 };
 
@@ -383,7 +380,8 @@ const REPT: FunctionImpl = (args, ctx) => {
 };
 
 const REPLACE: FunctionImpl = (args, ctx) => {
-  if (args.length !== 4) return makeError("#ERR!", "REPLACE expects 4 arguments");
+  if (args.length !== 4)
+    return makeError("#ERR!", "REPLACE expects 4 arguments");
   const s = singleString(args[0], ctx);
   if (isFormulaError(s)) return s;
   const startN = singleNumber(args[1], ctx);
@@ -395,7 +393,8 @@ const REPLACE: FunctionImpl = (args, ctx) => {
   const start = Math.trunc(startN);
   const len = Math.trunc(lenN);
   if (start < 1) return makeError("#VALUE!", "REPLACE start must be >= 1");
-  if (len < 0) return makeError("#VALUE!", "REPLACE length must be non-negative");
+  if (len < 0)
+    return makeError("#VALUE!", "REPLACE length must be non-negative");
   const i = start - 1;
   return s.slice(0, i) + repl + s.slice(i + len);
 };
@@ -448,7 +447,10 @@ const T: FunctionImpl = (args, ctx) => {
 
 const TEXTJOIN: FunctionImpl = (args, ctx) => {
   if (args.length < 3) {
-    return makeError("#ERR!", "TEXTJOIN expects a delimiter, an ignore-empty flag, and at least one value");
+    return makeError(
+      "#ERR!",
+      "TEXTJOIN expects a delimiter, an ignore-empty flag, and at least one value",
+    );
   }
   const delim = singleString(args[0], ctx);
   if (isFormulaError(delim)) return delim;
@@ -473,7 +475,10 @@ const JOIN: FunctionImpl = (args, ctx) => {
   // Google Sheets JOIN(delimiter, value_or_array, ...) — like TEXTJOIN
   // but never skips empties.
   if (args.length < 2) {
-    return makeError("#ERR!", "JOIN expects a delimiter and at least one value");
+    return makeError(
+      "#ERR!",
+      "JOIN expects a delimiter and at least one value",
+    );
   }
   const delim = singleString(args[0], ctx);
   if (isFormulaError(delim)) return delim;
@@ -504,7 +509,8 @@ function compileUserRegex(
 }
 
 const REGEXMATCH: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "REGEXMATCH expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "REGEXMATCH expects 2 arguments");
   const s = singleString(args[0], ctx);
   if (isFormulaError(s)) return s;
   const pat = singleString(args[1], ctx);
@@ -515,7 +521,8 @@ const REGEXMATCH: FunctionImpl = (args, ctx) => {
 };
 
 const REGEXEXTRACT: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "REGEXEXTRACT expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "REGEXEXTRACT expects 2 arguments");
   const s = singleString(args[0], ctx);
   if (isFormulaError(s)) return s;
   const pat = singleString(args[1], ctx);
@@ -530,7 +537,8 @@ const REGEXEXTRACT: FunctionImpl = (args, ctx) => {
 };
 
 const REGEXREPLACE: FunctionImpl = (args, ctx) => {
-  if (args.length !== 3) return makeError("#ERR!", "REGEXREPLACE expects 3 arguments");
+  if (args.length !== 3)
+    return makeError("#ERR!", "REGEXREPLACE expects 3 arguments");
   const s = singleString(args[0], ctx);
   if (isFormulaError(s)) return s;
   const pat = singleString(args[1], ctx);

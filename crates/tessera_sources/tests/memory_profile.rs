@@ -45,7 +45,7 @@ fn indexing_10k_synthetic_chunks_stays_under_200mb_peak_rss() {
     // "peak since process start" rather than "current" so the
     // delta assertion is unreliable.
     let Some(baseline) = current_rss_bytes() else {
-        eprintln!("skipping memory_profile test: current_rss_bytes() unavailable on this platform",);
+        eprintln!("skipping memory_profile test: current_rss_bytes() unavailable on this platform");
         return;
     };
     if !cfg!(target_os = "linux") {
@@ -70,7 +70,7 @@ fn indexing_10k_synthetic_chunks_stays_under_200mb_peak_rss() {
     let mut file_idx: usize = 0;
 
     while chunks_inserted < total_chunks {
-        if chunks_inserted % chunks_per_file == 0 {
+        if chunks_inserted.is_multiple_of(chunks_per_file) {
             file_idx += 1;
         }
         let path = format!("/profile/file-{file_idx:05}.txt");

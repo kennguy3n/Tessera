@@ -96,7 +96,10 @@ export function SheetPivot({ spec, result, onRemove }: SheetPivotProps) {
                 </th>
               ))}
               {showRowTotals && (
-                <th scope="col" className="sheet-pivot-colhead sheet-pivot-total">
+                <th
+                  scope="col"
+                  className="sheet-pivot-colhead sheet-pivot-total"
+                >
                   {PIVOT_TOTAL_LABEL}
                 </th>
               )}
@@ -125,7 +128,10 @@ export function SheetPivot({ spec, result, onRemove }: SheetPivotProps) {
                 {PIVOT_TOTAL_LABEL}
               </th>
               {result.colTotals.map((total, ci) => (
-                <td key={`ct-${ci}`} className="sheet-pivot-cell sheet-pivot-total">
+                <td
+                  key={`ct-${ci}`}
+                  className="sheet-pivot-cell sheet-pivot-total"
+                >
                   {formatCell(total)}
                 </td>
               ))}

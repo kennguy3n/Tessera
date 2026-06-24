@@ -84,11 +84,7 @@ import {
   selectionContains,
   selectionFromCell,
 } from "./sheetSelection";
-import {
-  applyTSVAt,
-  parseTSV,
-  selectionToTSV,
-} from "./sheetCopyPaste";
+import { applyTSVAt, parseTSV, selectionToTSV } from "./sheetCopyPaste";
 import { type FillDirection, fillSeries } from "./sheetAutoFill";
 import { useVirtualRows } from "../hooks/useVirtualRows";
 import {
@@ -173,8 +169,13 @@ export default function SheetEditor({
   onDraftChange,
   autoSaveMs = 2000,
 }: SheetEditorProps) {
-  const [sheet, setSheet] = useState<SheetContent>(() => parseSheetContent(content));
-  const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  const [sheet, setSheet] = useState<SheetContent>(() =>
+    parseSheetContent(content),
+  );
+  const [editingCell, setEditingCell] = useState<{
+    row: number;
+    col: number;
+  } | null>(null);
   // full selection model (anchor + primary range
   // + disjoint extras). `activeCell` is derived from
   // `selection.anchor` so existing call-sites that only need a
@@ -358,9 +359,7 @@ export default function SheetEditor({
 
   const startEdit = (rowIdx: number, colIdx: number) => {
     // Checkbox cells are toggled via their checkbox, never text-edited.
-    if (
-      getColumnValidation(sheet.validations, colIdx)?.kind === "checkbox"
-    ) {
+    if (getColumnValidation(sheet.validations, colIdx)?.kind === "checkbox") {
       return;
     }
     const value = sheet.rows[rowIdx]?.[colIdx] ?? "";
@@ -487,12 +486,7 @@ export default function SheetEditor({
     // A printable single character that isn't a modifier-shortcut
     // promotes the active cell into edit mode, seeding the value
     // with the typed character (matches Excel's overwrite UX).
-    if (
-      e.key.length === 1 &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey
-    ) {
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       const { row, col } = selection.anchor;
       // Checkbox-validated cells are never free-text editable; typing a
@@ -502,7 +496,11 @@ export default function SheetEditor({
       if (getColumnValidation(sheet.validations, col)?.kind === "checkbox") {
         if (e.key === " ") {
           const cur = sheet.rows[row]?.[col] ?? "";
-          updateCell(row, col, cur === CHECKBOX_TRUE ? CHECKBOX_FALSE : CHECKBOX_TRUE);
+          updateCell(
+            row,
+            col,
+            cur === CHECKBOX_TRUE ? CHECKBOX_FALSE : CHECKBOX_TRUE,
+          );
         }
         return;
       }
@@ -742,11 +740,10 @@ export default function SheetEditor({
     () =>
       (sheet.charts ?? []).map((spec) => ({
         spec,
-        data:
-          extractChartData(spec, chartValueAt, chartTextAt) ?? {
-            labels: [],
-            series: [],
-          },
+        data: extractChartData(spec, chartValueAt, chartTextAt) ?? {
+          labels: [],
+          series: [],
+        },
       })),
     [sheet.charts, chartValueAt, chartTextAt],
   );
@@ -929,9 +926,15 @@ export default function SheetEditor({
           columns: prev.columns,
           rows: prev.rows,
         };
-        const next = applyTSVAt(fakeTab, activeCell.row, activeCell.col, parsed, {
-          columnLabelFor: columnLabel,
-        });
+        const next = applyTSVAt(
+          fakeTab,
+          activeCell.row,
+          activeCell.col,
+          parsed,
+          {
+            columnLabelFor: columnLabel,
+          },
+        );
         const updated: SheetContent = {
           ...prev,
           columns: next.columns,
@@ -1009,8 +1012,7 @@ export default function SheetEditor({
       e.preventDefault();
       e.stopPropagation();
       const startX = e.clientX;
-      const startWidth =
-        sheet.columnWidths?.[colIdx] ?? DEFAULT_COLUMN_WIDTH;
+      const startWidth = sheet.columnWidths?.[colIdx] ?? DEFAULT_COLUMN_WIDTH;
       const onMove = (ev: MouseEvent) => {
         const newWidth = Math.max(
           MIN_COLUMN_WIDTH,
@@ -1035,8 +1037,7 @@ export default function SheetEditor({
       e.preventDefault();
       e.stopPropagation();
       const startY = e.clientY;
-      const startHeight =
-        sheet.rowHeights?.[rowIdx] ?? DEFAULT_ROW_HEIGHT;
+      const startHeight = sheet.rowHeights?.[rowIdx] ?? DEFAULT_ROW_HEIGHT;
       const onMove = (ev: MouseEvent) => {
         const newHeight = Math.max(
           MIN_ROW_HEIGHT,
@@ -1286,8 +1287,7 @@ export default function SheetEditor({
             }
             const filled = fillSeries(source, length, direction);
             for (let i = 0; i < length; i++) {
-              const targetRow =
-                direction === "down" ? r2 + 1 + i : r1 - 1 - i;
+              const targetRow = direction === "down" ? r2 + 1 + i : r1 - 1 - i;
               if (targetRow < 0) continue;
               edits.push({ row: targetRow, col, value: filled[i] });
             }
@@ -1302,8 +1302,7 @@ export default function SheetEditor({
             }
             const filled = fillSeries(source, length, direction);
             for (let i = 0; i < length; i++) {
-              const targetCol =
-                direction === "right" ? c2 + 1 + i : c1 - 1 - i;
+              const targetCol = direction === "right" ? c2 + 1 + i : c1 - 1 - i;
               if (targetCol < 0) continue;
               edits.push({ row, col: targetCol, value: filled[i] });
             }
@@ -1328,11 +1327,7 @@ export default function SheetEditor({
             }
           }
         }
-        const newRows = updateCellsInRows(
-          prev.rows,
-          columns.length,
-          edits,
-        );
+        const newRows = updateCellsInRows(prev.rows, columns.length, edits);
         const updated = { ...prev, columns, rows: newRows };
         debouncedSave(updated);
         return updated;
@@ -1347,10 +1342,16 @@ export default function SheetEditor({
           direction === "down"
             ? extendSelection(prev, { row: r2 + length, col: c2 })
             : direction === "up"
-              ? extendSelection(prev, { row: Math.max(0, r1 - length), col: c2 })
+              ? extendSelection(prev, {
+                  row: Math.max(0, r1 - length),
+                  col: c2,
+                })
               : direction === "right"
                 ? extendSelection(prev, { row: r2, col: c2 + length })
-                : extendSelection(prev, { row: r2, col: Math.max(0, c1 - length) });
+                : extendSelection(prev, {
+                    row: r2,
+                    col: Math.max(0, c1 - length),
+                  });
         return newRange;
       });
     },
@@ -1375,10 +1376,7 @@ export default function SheetEditor({
         // mousemove that arrives without it simply doesn't update the
         // hover target rather than throwing.
         if (typeof document.elementFromPoint !== "function") return;
-        const target = document.elementFromPoint(
-          ev.clientX,
-          ev.clientY,
-        );
+        const target = document.elementFromPoint(ev.clientX, ev.clientY);
         const td = target?.closest("td[data-row]");
         if (!td) return;
         const row = Number(td.getAttribute("data-row"));
@@ -1417,10 +1415,8 @@ export default function SheetEditor({
     sheet.columnWidths?.[i] ?? DEFAULT_COLUMN_WIDTH;
   const rowHeight = (i: number): number =>
     sheet.rowHeights?.[i] ?? DEFAULT_ROW_HEIGHT;
-  const isFrozenCol = (i: number): boolean =>
-    (sheet.frozenCols ?? 0) > i;
-  const isFrozenRow = (i: number): boolean =>
-    (sheet.frozenRows ?? 0) > i;
+  const isFrozenCol = (i: number): boolean => (sheet.frozenCols ?? 0) > i;
+  const isFrozenRow = (i: number): boolean => (sheet.frozenRows ?? 0) > i;
   // For sticky positioning we need the cumulative `left` / `top`
   // offset of each frozen index. Memoised against the relevant
   // dimension arrays so we don't reduce them on every cell.
@@ -2035,14 +2031,14 @@ export default function SheetEditor({
             {rowRenderPlan.map((item) => {
               if (item.type === "spacer") {
                 return (
-                  <tr
-                    key={item.key}
-                    data-testid={item.key}
-                    aria-hidden="true"
-                  >
+                  <tr key={item.key} data-testid={item.key} aria-hidden="true">
                     <td
                       colSpan={sheet.columns.length + 1}
-                      style={{ height: item.height, padding: 0, border: "none" }}
+                      style={{
+                        height: item.height,
+                        padding: 0,
+                        border: "none",
+                      }}
                     />
                   </tr>
                 );
@@ -2051,119 +2047,112 @@ export default function SheetEditor({
               const row = sheet.rows[ri];
               const rowFrozen = isFrozenRow(ri);
               return (
-              <tr
-                key={ri}
-                style={{ height: rowHeight(ri) }}
-              >
-                <td
-                  className={`sheet-row-number${rowFrozen ? " frozen" : ""}`}
-                  style={
-                    rowFrozen
-                      ? {
-                          position: "sticky",
-                          top: frozenRowTops[ri],
-                          zIndex: 2,
-                          background:
-                            "var(--color-bg-secondary, #f5f5f5)",
-                        }
-                      : {}
-                  }
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContextMenu({
-                      kind: "row",
-                      index: ri,
-                      x: e.clientX,
-                      y: e.clientY,
-                    });
-                  }}
-                >
-                  {ri + 1}
-                  <button
-                    type="button"
-                    className="sheet-row-remove"
-                    onClick={() => removeRow(ri)}
-                    title="Remove row"
-                  >
-                    x
-                  </button>
-                  <span
-                    className="sheet-row-resize-handle"
-                    data-testid={`sheet-row-resize-${ri}`}
-                    role="separator"
-                    aria-orientation="horizontal"
-                    aria-label={`Resize row ${ri + 1}`}
-                    onMouseDown={(e) => beginRowResize(ri, e)}
-                    style={{
-                      position: "absolute",
-                      bottom: 0,
-                      left: 0,
-                      height: 4,
-                      width: "100%",
-                      cursor: "row-resize",
-                      userSelect: "none",
+                <tr key={ri} style={{ height: rowHeight(ri) }}>
+                  <td
+                    className={`sheet-row-number${rowFrozen ? " frozen" : ""}`}
+                    style={
+                      rowFrozen
+                        ? {
+                            position: "sticky",
+                            top: frozenRowTops[ri],
+                            zIndex: 2,
+                            background: "var(--color-bg-secondary, #f5f5f5)",
+                          }
+                        : {}
+                    }
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setContextMenu({
+                        kind: "row",
+                        index: ri,
+                        x: e.clientX,
+                        y: e.clientY,
+                      });
                     }}
-                  />
-                </td>
-                {sheet.columns.map((_, ci) => {
-                  const isEditing =
-                    editingCell?.row === ri && editingCell?.col === ci;
-                  const isActive =
-                    activeCell?.row === ri && activeCell?.col === ci;
-                  const isSelected = selection
-                    ? selectionContains(selection, ri, ci)
-                    : false;
-                  const isFillHandle =
-                    selection &&
-                    !isEditing &&
-                    (() => {
-                      const { r2, c2 } = normalizeRange(
-                        selection.primary,
-                      );
-                      return ri === r2 && ci === c2;
-                    })();
-                  const rawValue = row[ci] ?? "";
-                  const displayValue = getCellDisplay(rawValue, ri, ci);
-                  // Column data-validation (dropdown / checkbox), if any.
-                  const validation = getColumnValidation(
-                    sheet.validations,
-                    ci,
-                  );
-                  const invalidValue =
-                    validation !== undefined &&
-                    !isValueAllowed(validation, rawValue);
-                  // Conditional formatting reacts to the *displayed*
-                  // value (computed result for formulas), translated
-                  // through the same `cellFormatStyle` used by manual
-                  // cell formats so styling stays consistent.
-                  const conditionalStyle = cellFormatStyle(
-                    conditionalStyleForCell(
-                      sheet.conditionalRules,
+                  >
+                    {ri + 1}
+                    <button
+                      type="button"
+                      className="sheet-row-remove"
+                      onClick={() => removeRow(ri)}
+                      title="Remove row"
+                    >
+                      x
+                    </button>
+                    <span
+                      className="sheet-row-resize-handle"
+                      data-testid={`sheet-row-resize-${ri}`}
+                      role="separator"
+                      aria-orientation="horizontal"
+                      aria-label={`Resize row ${ri + 1}`}
+                      onMouseDown={(e) => beginRowResize(ri, e)}
+                      style={{
+                        position: "absolute",
+                        bottom: 0,
+                        left: 0,
+                        height: 4,
+                        width: "100%",
+                        cursor: "row-resize",
+                        userSelect: "none",
+                      }}
+                    />
+                  </td>
+                  {sheet.columns.map((_, ci) => {
+                    const isEditing =
+                      editingCell?.row === ri && editingCell?.col === ci;
+                    const isActive =
+                      activeCell?.row === ri && activeCell?.col === ci;
+                    const isSelected = selection
+                      ? selectionContains(selection, ri, ci)
+                      : false;
+                    const isFillHandle =
+                      selection &&
+                      !isEditing &&
+                      (() => {
+                        const { r2, c2 } = normalizeRange(selection.primary);
+                        return ri === r2 && ci === c2;
+                      })();
+                    const rawValue = row[ci] ?? "";
+                    const displayValue = getCellDisplay(rawValue, ri, ci);
+                    // Column data-validation (dropdown / checkbox), if any.
+                    const validation = getColumnValidation(
+                      sheet.validations,
                       ci,
-                      displayValue,
-                    ),
-                  );
-                  // Manual per-cell format (bold/align/colour/number).
-                  // Conditional rules overlay it, matching Sheets.
-                  const manualStyle = cellFormatStyle(
-                    getCellFormat(sheet.formats, ri, ci),
-                  );
-                  const colFrozen = isFrozenCol(ci);
-                  // Frozen cells need an OPAQUE background so scrolled
-                  // content doesn't show through. Use the conditional-
-                  // formatting colour when a rule matches (it's a solid
-                  // colour) so the highlight stays visible on frozen
-                  // rows/cols; otherwise fall back to the page colour.
-                  // The shorthand `background` would otherwise reset the
-                  // `backgroundColor` set by `conditionalStyle`.
-                  const frozenBackground =
-                    typeof conditionalStyle.backgroundColor === "string"
-                      ? conditionalStyle.backgroundColor
-                      : typeof manualStyle.backgroundColor === "string"
-                        ? manualStyle.backgroundColor
-                        : "var(--color-bg-page, #ffffff)";
-                  const stickyStyle: React.CSSProperties =
-                    colFrozen
+                    );
+                    const invalidValue =
+                      validation !== undefined &&
+                      !isValueAllowed(validation, rawValue);
+                    // Conditional formatting reacts to the *displayed*
+                    // value (computed result for formulas), translated
+                    // through the same `cellFormatStyle` used by manual
+                    // cell formats so styling stays consistent.
+                    const conditionalStyle = cellFormatStyle(
+                      conditionalStyleForCell(
+                        sheet.conditionalRules,
+                        ci,
+                        displayValue,
+                      ),
+                    );
+                    // Manual per-cell format (bold/align/colour/number).
+                    // Conditional rules overlay it, matching Sheets.
+                    const manualStyle = cellFormatStyle(
+                      getCellFormat(sheet.formats, ri, ci),
+                    );
+                    const colFrozen = isFrozenCol(ci);
+                    // Frozen cells need an OPAQUE background so scrolled
+                    // content doesn't show through. Use the conditional-
+                    // formatting colour when a rule matches (it's a solid
+                    // colour) so the highlight stays visible on frozen
+                    // rows/cols; otherwise fall back to the page colour.
+                    // The shorthand `background` would otherwise reset the
+                    // `backgroundColor` set by `conditionalStyle`.
+                    const frozenBackground =
+                      typeof conditionalStyle.backgroundColor === "string"
+                        ? conditionalStyle.backgroundColor
+                        : typeof manualStyle.backgroundColor === "string"
+                          ? manualStyle.backgroundColor
+                          : "var(--color-bg-page, #ffffff)";
+                    const stickyStyle: React.CSSProperties = colFrozen
                       ? {
                           position: "sticky",
                           left: frozenColLefts[ci],
@@ -2178,140 +2167,139 @@ export default function SheetEditor({
                             background: frozenBackground,
                           }
                         : {};
-                  return (
-                    <td
-                      key={ci}
-                      data-row={ri}
-                      data-col={ci}
-                      data-testid={`sheet-cell-${ri}-${ci}`}
-                      className={[
-                        "sheet-cell",
-                        isEditing ? "editing" : "",
-                        isActive ? "active" : "",
-                        isSelected ? "selected" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")}
-                      style={{
-                        width: colWidth(ci),
-                        position: "relative",
-                        ...manualStyle,
-                        ...conditionalStyle,
-                        outline: isSelected
-                          ? "1px solid var(--color-primary, #1a73e8)"
-                          : isActive
-                            ? "2px solid var(--color-primary, #1a73e8)"
-                            : undefined,
-                        ...stickyStyle,
-                      }}
-                      onClick={(e) =>
-                        selectCell(ri, ci, {
-                          shift: e.shiftKey,
-                          ctrl: e.ctrlKey || e.metaKey,
-                        })
-                      }
-                      onDoubleClick={() => startEdit(ri, ci)}
-                    >
-                      {validation?.kind === "checkbox" ? (
-                        <input
-                          type="checkbox"
-                          className="sheet-cell-checkbox"
-                          data-testid={`sheet-checkbox-${ri}-${ci}`}
-                          checked={rawValue === CHECKBOX_TRUE}
-                          aria-label={`${columnLabel(ci)}${ri + 1} checkbox`}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={() =>
-                            updateCell(
-                              ri,
-                              ci,
-                              rawValue === CHECKBOX_TRUE
-                                ? CHECKBOX_FALSE
-                                : CHECKBOX_TRUE,
-                            )
-                          }
-                        />
-                      ) : isEditing && validation?.kind === "list" ? (
-                        <select
-                          className="sheet-cell-select"
-                          data-testid={`sheet-select-${ri}-${ci}`}
-                          aria-label={`${columnLabel(ci)}${ri + 1} value`}
-                          autoFocus
-                          value={
-                            validation.values.includes(rawValue)
-                              ? rawValue
-                              : ""
-                          }
-                          onChange={(e) => {
-                            updateCell(ri, ci, e.target.value);
-                            setEditingCell(null);
-                          }}
-                          onBlur={() => setEditingCell(null)}
-                        >
-                          <option value="">(blank)</option>
-                          {validation.values.map((v) => (
-                            <option key={v} value={v}>
-                              {v}
-                            </option>
-                          ))}
-                        </select>
-                      ) : isEditing ? (
-                        <input
-                          ref={inputRef}
-                          className="sheet-cell-input"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onBlur={commitEdit}
-                          onKeyDown={handleKeyDown}
-                        />
-                      ) : (
-                        <span className="sheet-cell-display">
-                          {displayValue}
-                        </span>
-                      )}
-                      {invalidValue && !isEditing && (
-                        <span
-                          className="sheet-dv-invalid"
-                          data-testid={`sheet-dv-invalid-${ri}-${ci}`}
-                          aria-label="Value not allowed by data validation"
-                          title="Value not in the column's allowed list"
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            right: 0,
-                            width: 0,
-                            height: 0,
-                            borderTop:
-                              "6px solid var(--color-danger, #d93025)",
-                            borderLeft: "6px solid transparent",
-                          }}
-                        />
-                      )}
-                      {isFillHandle && (
-                        <span
-                          className="sheet-fill-handle"
-                          data-testid={`sheet-fill-handle-${ri}-${ci}`}
-                          aria-label="Auto-fill drag handle"
-                          role="button"
-                          tabIndex={-1}
-                          onMouseDown={beginAutoFill}
-                          style={{
-                            position: "absolute",
-                            right: -4,
-                            bottom: -4,
-                            width: 8,
-                            height: 8,
-                            background:
-                              "var(--color-primary, #1a73e8)",
-                            border: "1px solid white",
-                            cursor: "crosshair",
-                            zIndex: 4,
-                          }}
-                        />
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
+                    return (
+                      <td
+                        key={ci}
+                        data-row={ri}
+                        data-col={ci}
+                        data-testid={`sheet-cell-${ri}-${ci}`}
+                        className={[
+                          "sheet-cell",
+                          isEditing ? "editing" : "",
+                          isActive ? "active" : "",
+                          isSelected ? "selected" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        style={{
+                          width: colWidth(ci),
+                          position: "relative",
+                          ...manualStyle,
+                          ...conditionalStyle,
+                          outline: isSelected
+                            ? "1px solid var(--color-primary, #1a73e8)"
+                            : isActive
+                              ? "2px solid var(--color-primary, #1a73e8)"
+                              : undefined,
+                          ...stickyStyle,
+                        }}
+                        onClick={(e) =>
+                          selectCell(ri, ci, {
+                            shift: e.shiftKey,
+                            ctrl: e.ctrlKey || e.metaKey,
+                          })
+                        }
+                        onDoubleClick={() => startEdit(ri, ci)}
+                      >
+                        {validation?.kind === "checkbox" ? (
+                          <input
+                            type="checkbox"
+                            className="sheet-cell-checkbox"
+                            data-testid={`sheet-checkbox-${ri}-${ci}`}
+                            checked={rawValue === CHECKBOX_TRUE}
+                            aria-label={`${columnLabel(ci)}${ri + 1} checkbox`}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() =>
+                              updateCell(
+                                ri,
+                                ci,
+                                rawValue === CHECKBOX_TRUE
+                                  ? CHECKBOX_FALSE
+                                  : CHECKBOX_TRUE,
+                              )
+                            }
+                          />
+                        ) : isEditing && validation?.kind === "list" ? (
+                          <select
+                            className="sheet-cell-select"
+                            data-testid={`sheet-select-${ri}-${ci}`}
+                            aria-label={`${columnLabel(ci)}${ri + 1} value`}
+                            autoFocus
+                            value={
+                              validation.values.includes(rawValue)
+                                ? rawValue
+                                : ""
+                            }
+                            onChange={(e) => {
+                              updateCell(ri, ci, e.target.value);
+                              setEditingCell(null);
+                            }}
+                            onBlur={() => setEditingCell(null)}
+                          >
+                            <option value="">(blank)</option>
+                            {validation.values.map((v) => (
+                              <option key={v} value={v}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                        ) : isEditing ? (
+                          <input
+                            ref={inputRef}
+                            className="sheet-cell-input"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={commitEdit}
+                            onKeyDown={handleKeyDown}
+                          />
+                        ) : (
+                          <span className="sheet-cell-display">
+                            {displayValue}
+                          </span>
+                        )}
+                        {invalidValue && !isEditing && (
+                          <span
+                            className="sheet-dv-invalid"
+                            data-testid={`sheet-dv-invalid-${ri}-${ci}`}
+                            aria-label="Value not allowed by data validation"
+                            title="Value not in the column's allowed list"
+                            style={{
+                              position: "absolute",
+                              top: 0,
+                              right: 0,
+                              width: 0,
+                              height: 0,
+                              borderTop:
+                                "6px solid var(--color-danger, #d93025)",
+                              borderLeft: "6px solid transparent",
+                            }}
+                          />
+                        )}
+                        {isFillHandle && (
+                          <span
+                            className="sheet-fill-handle"
+                            data-testid={`sheet-fill-handle-${ri}-${ci}`}
+                            aria-label="Auto-fill drag handle"
+                            role="button"
+                            tabIndex={-1}
+                            onMouseDown={beginAutoFill}
+                            style={{
+                              position: "absolute",
+                              right: -4,
+                              bottom: -4,
+                              width: 8,
+                              height: 8,
+                              background: "var(--color-primary, #1a73e8)",
+                              border: "1px solid white",
+                              cursor: "crosshair",
+                              zIndex: 4,
+                            }}
+                          />
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
               );
             })}
           </tbody>
@@ -2407,9 +2395,7 @@ export default function SheetEditor({
           <li
             role="menuitem"
             style={{ padding: "4px 12px", cursor: "pointer" }}
-            onClick={() =>
-              freezeAt(contextMenu.kind, contextMenu.index)
-            }
+            onClick={() => freezeAt(contextMenu.kind, contextMenu.index)}
           >
             Freeze up to this {contextMenu.kind === "row" ? "row" : "column"}
           </li>

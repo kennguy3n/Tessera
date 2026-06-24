@@ -120,7 +120,10 @@ export function runBackupNow(): Promise<BackupInfo> {
     // have to special-case the throw path.
     const info = bridge.bridgeCreateBackup(dir);
     try {
-      const removed = bridge.bridgePruneBackups(dir, config.backupRetentionCount);
+      const removed = bridge.bridgePruneBackups(
+        dir,
+        config.backupRetentionCount,
+      );
       if (removed.length > 0) {
         getLogger().info(
           `[Tessera] Backup pruned ${removed.length} old file(s) beyond retention ${config.backupRetentionCount}.`,
@@ -150,7 +153,9 @@ export function runBackupNow(): Promise<BackupInfo> {
     })
     .catch((err: unknown) => {
       lastBackupError = err instanceof Error ? err.message : String(err);
-      getLogger().error(`[Tessera] Automatic backup failed: ${lastBackupError}`);
+      getLogger().error(
+        `[Tessera] Automatic backup failed: ${lastBackupError}`,
+      );
       throw err;
     })
     .finally(() => {

@@ -1,1 +1,106 @@
-{"fields": [{"name": "Incident ID", "type": "text"}, {"name": "Date Discovered", "type": "date"}, {"name": "Type", "type": "select", "options": ["Lost Device", "Unauthorized Access", "Misdirected Email"]}, {"name": "Severity", "type": "select", "options": ["High", "Medium", "Low"]}, {"name": "Individuals Affected", "type": "number"}, {"name": "Encrypted", "type": "select", "options": ["No", "Yes"]}, {"name": "Status", "type": "select", "options": ["Risk Assessment", "Open", "Closed-Incident", "Reportable"]}, {"name": "Owner", "type": "text"}], "records": [{"Incident ID": "INC-4471", "Date Discovered": "2026-02-18", "Type": "Lost Device", "Severity": "High", "Individuals Affected": "220", "Encrypted": "No", "Status": "Risk Assessment", "Owner": "Marcus Lee"}, {"Incident ID": "CHG-2208", "Date Discovered": "2026-02-18", "Type": "Unauthorized Access", "Severity": "Medium", "Individuals Affected": "198", "Encrypted": "No", "Status": "Open", "Owner": "Dana Whitfield"}, {"Incident ID": "EHR-2024-09-12", "Date Discovered": "2024-09-12", "Type": "Misdirected Email", "Severity": "Low", "Individuals Affected": "60", "Encrypted": "Yes", "Status": "Closed-Incident", "Owner": "Maya Okonkwo"}, {"Incident ID": "USB-2024-03-05", "Date Discovered": "2024-03-05", "Type": "Lost Device", "Severity": "Medium", "Individuals Affected": "60", "Encrypted": "No", "Status": "Reportable", "Owner": "Raj Patel"}, {"Incident ID": "CHG-2023-11-22", "Date Discovered": "2023-11-22", "Type": "Unauthorized Access", "Severity": "High", "Individuals Affected": "210", "Encrypted": "Yes", "Status": "Risk Assessment", "Owner": "Dana Whitfield"}, {"Incident ID": "EHR-2023-07-10", "Date Discovered": "2023-07-10", "Type": "Lost Device", "Severity": "Low", "Individuals Affected": "150", "Encrypted": "No", "Status": "Closed-Incident", "Owner": "Marcus Lee"}, {"Incident ID": "MDM-2022-12-01", "Date Discovered": "2022-12-01", "Type": "Misdirected Email", "Severity": "Medium", "Individuals Affected": "85", "Encrypted": "Yes", "Status": "Open", "Owner": "HIM Analyst"}, {"Incident ID": "CHG-2022-05-15", "Date Discovered": "2022-05-15", "Type": "Lost Device", "Severity": "High", "Individuals Affected": "450", "Encrypted": "No", "Status": "Reportable", "Owner": "Dana Whitfield"}]}
+{
+  "fields": [
+    { "name": "Incident ID", "type": "text" },
+    { "name": "Date Discovered", "type": "date" },
+    {
+      "name": "Type",
+      "type": "select",
+      "options": ["Lost Device", "Unauthorized Access", "Misdirected Email"]
+    },
+    {
+      "name": "Severity",
+      "type": "select",
+      "options": ["High", "Medium", "Low"]
+    },
+    { "name": "Individuals Affected", "type": "number" },
+    { "name": "Encrypted", "type": "select", "options": ["No", "Yes"] },
+    {
+      "name": "Status",
+      "type": "select",
+      "options": ["Risk Assessment", "Open", "Closed-Incident", "Reportable"]
+    },
+    { "name": "Owner", "type": "text" }
+  ],
+  "records": [
+    {
+      "Incident ID": "INC-4471",
+      "Date Discovered": "2026-02-18",
+      "Type": "Lost Device",
+      "Severity": "High",
+      "Individuals Affected": "220",
+      "Encrypted": "No",
+      "Status": "Risk Assessment",
+      "Owner": "Marcus Lee"
+    },
+    {
+      "Incident ID": "CHG-2208",
+      "Date Discovered": "2026-02-18",
+      "Type": "Unauthorized Access",
+      "Severity": "Medium",
+      "Individuals Affected": "198",
+      "Encrypted": "No",
+      "Status": "Open",
+      "Owner": "Dana Whitfield"
+    },
+    {
+      "Incident ID": "EHR-2024-09-12",
+      "Date Discovered": "2024-09-12",
+      "Type": "Misdirected Email",
+      "Severity": "Low",
+      "Individuals Affected": "60",
+      "Encrypted": "Yes",
+      "Status": "Closed-Incident",
+      "Owner": "Maya Okonkwo"
+    },
+    {
+      "Incident ID": "USB-2024-03-05",
+      "Date Discovered": "2024-03-05",
+      "Type": "Lost Device",
+      "Severity": "Medium",
+      "Individuals Affected": "60",
+      "Encrypted": "No",
+      "Status": "Reportable",
+      "Owner": "Raj Patel"
+    },
+    {
+      "Incident ID": "CHG-2023-11-22",
+      "Date Discovered": "2023-11-22",
+      "Type": "Unauthorized Access",
+      "Severity": "High",
+      "Individuals Affected": "210",
+      "Encrypted": "Yes",
+      "Status": "Risk Assessment",
+      "Owner": "Dana Whitfield"
+    },
+    {
+      "Incident ID": "EHR-2023-07-10",
+      "Date Discovered": "2023-07-10",
+      "Type": "Lost Device",
+      "Severity": "Low",
+      "Individuals Affected": "150",
+      "Encrypted": "No",
+      "Status": "Closed-Incident",
+      "Owner": "Marcus Lee"
+    },
+    {
+      "Incident ID": "MDM-2022-12-01",
+      "Date Discovered": "2022-12-01",
+      "Type": "Misdirected Email",
+      "Severity": "Medium",
+      "Individuals Affected": "85",
+      "Encrypted": "Yes",
+      "Status": "Open",
+      "Owner": "HIM Analyst"
+    },
+    {
+      "Incident ID": "CHG-2022-05-15",
+      "Date Discovered": "2022-05-15",
+      "Type": "Lost Device",
+      "Severity": "High",
+      "Individuals Affected": "450",
+      "Encrypted": "No",
+      "Status": "Reportable",
+      "Owner": "Dana Whitfield"
+    }
+  ]
+}

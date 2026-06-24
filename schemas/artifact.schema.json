@@ -4,7 +4,15 @@
   "title": "Tessera Artifact",
   "description": "Schema for validating Tessera artifact structure (export/API contract)",
   "type": "object",
-  "required": ["id", "title", "type", "content", "version", "createdAt", "updatedAt"],
+  "required": [
+    "id",
+    "title",
+    "type",
+    "content",
+    "version",
+    "createdAt",
+    "updatedAt"
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -57,7 +65,17 @@
   "definitions": {
     "Citation": {
       "type": "object",
-      "required": ["citationId", "sourceId", "sourceType", "sourceTitle", "sourceUri", "chunkHash", "confidence", "usedFor", "createdAt"],
+      "required": [
+        "citationId",
+        "sourceId",
+        "sourceType",
+        "sourceTitle",
+        "sourceUri",
+        "chunkHash",
+        "confidence",
+        "usedFor",
+        "createdAt"
+      ],
       "properties": {
         "citationId": {
           "type": "string",
@@ -71,7 +89,16 @@
         },
         "sourceType": {
           "type": "string",
-          "enum": ["local_folder", "local_file", "google_drive", "one_drive", "notion", "jira", "confluence", "figma"],
+          "enum": [
+            "local_folder",
+            "local_file",
+            "google_drive",
+            "one_drive",
+            "notion",
+            "jira",
+            "confluence",
+            "figma"
+          ],
           "description": "Type of the cited source"
         },
         "sourceTitle": {

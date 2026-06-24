@@ -151,8 +151,13 @@ export function isNetworkError(err: unknown): boolean {
   if ((err as { isNotConnectedError?: boolean }).isNotConnectedError === true) {
     return false;
   }
-  if ((err as { isNetworkError?: boolean }).isNetworkError === true) return true;
-  const e = err as { code?: string; message?: string; cause?: { code?: string } };
+  if ((err as { isNetworkError?: boolean }).isNetworkError === true)
+    return true;
+  const e = err as {
+    code?: string;
+    message?: string;
+    cause?: { code?: string };
+  };
   const code = e.code ?? e.cause?.code ?? "";
   if (NETWORK_CODES.has(code)) return true;
   if (code !== "") return false;

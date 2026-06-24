@@ -23,10 +23,7 @@ import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
 import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
-import {
-  enableTelemetry,
-  disableTelemetry,
-} from "../telemetrySink";
+import { enableTelemetry, disableTelemetry } from "../telemetrySink";
 import { hasPinSet, hasFido2Set, clearPin } from "../appLock";
 import { getLogger } from "../logger";
 import type {
@@ -442,9 +439,7 @@ export function registerSettingsHandlers(): void {
       // settings write — the next sidecar `start()` will read the
       // updated config value.
       try {
-        const { applyModelIdleTimeoutToSidecars } = await import(
-          "../appState"
-        );
+        const { applyModelIdleTimeoutToSidecars } = await import("../appState");
         applyModelIdleTimeoutToSidecars(parsed.modelIdleTimeoutSecs);
       } catch (err) {
         console.warn(
@@ -465,10 +460,7 @@ export function registerSettingsHandlers(): void {
       } else {
         disableTelemetry();
       }
-      auditSettingsField(
-        "telemetryEnabled",
-        String(parsed.telemetryEnabled),
-      );
+      auditSettingsField("telemetryEnabled", String(parsed.telemetryEnabled));
     }
     // app-lock mode change. The actual
     // PIN / biometric setup happens via dedicated `appLock:*`
@@ -502,10 +494,7 @@ export function registerSettingsHandlers(): void {
     if (parsed.simplifiedNav !== undefined)
       auditSettingsField("simplifiedNav", String(parsed.simplifiedNav));
     if (parsed.autoDownloadModel !== undefined)
-      auditSettingsField(
-        "autoDownloadModel",
-        String(parsed.autoDownloadModel),
-      );
+      auditSettingsField("autoDownloadModel", String(parsed.autoDownloadModel));
     if (parsed.createPageMode !== undefined)
       auditSettingsField("createPageMode", parsed.createPageMode);
     // resource-management profile. Pure persisted enum; switching to
@@ -607,10 +596,7 @@ export function registerSettingsHandlers(): void {
         "externalProvider.enabled",
         merged.enabled ? "true" : "false",
       );
-      auditSettingsField(
-        "externalProvider.providerType",
-        merged.providerType,
-      );
+      auditSettingsField("externalProvider.providerType", merged.providerType);
       auditSettingsField("externalProvider.modelName", merged.modelName);
       // The API-key write itself is auditable — whether the user
       // stored, cleared, or left the key alone is a security-
@@ -831,7 +817,9 @@ export function registerSettingsHandlers(): void {
       // write is recoverable (next launch will re-read whatever we
       // managed to commit to disk).
       const effective: HybridSearchConfigInfo =
-        bridge.bridgeUpdateHybridSearchConfig(parsed as HybridSearchConfigUpdate);
+        bridge.bridgeUpdateHybridSearchConfig(
+          parsed as HybridSearchConfigUpdate,
+        );
       updateConfig({ hybridSearchConfig: infoToPersisted(effective) });
       // hybrid retrieval is part of the user's
       // surface for tuning *what their data is searched for*, so a
@@ -1004,14 +992,12 @@ export function registerSettingsHandlers(): void {
       // "switching…" spinner for the same wall time and offer no
       // additional information to the user. Errors from the
       // backfill surface through that same progress channel.
-      void bridge
-        .bridgeBackfillEmbeddings(null)
-        .catch(() => {
-          // Swallowed; the progress tracker captures the error
-          // and the renderer's banner renders it. Logging here
-          // would just duplicate the audit row the bridge already
-          // produces.
-        });
+      void bridge.bridgeBackfillEmbeddings(null).catch(() => {
+        // Swallowed; the progress tracker captures the error
+        // and the renderer's banner renders it. Logging here
+        // would just duplicate the audit row the bridge already
+        // produces.
+      });
       return info;
     },
   );
@@ -1101,9 +1087,10 @@ function infoToPersisted(
   let halflife = info.recencyHalflifeSecs;
   if (halflife === null) {
     const prior = loadConfig().hybridSearchConfig.recencyHalflifeSecs;
-    halflife = Number.isFinite(prior) && prior >= 1
-      ? prior
-      : DEFAULT_HYBRID_SEARCH_CONFIG.recencyHalflifeSecs;
+    halflife =
+      Number.isFinite(prior) && prior >= 1
+        ? prior
+        : DEFAULT_HYBRID_SEARCH_CONFIG.recencyHalflifeSecs;
   }
   return {
     bm25Weight: info.bm25Weight,

@@ -349,10 +349,7 @@ export function attachAppEvents(
   bridge: DeeplinkBridge,
   app: Pick<App, "on" | "off">,
 ): () => void {
-  const openUrlListener = (
-    event: ElectronEvent,
-    url: string,
-  ): void => {
+  const openUrlListener = (event: ElectronEvent, url: string): void => {
     event.preventDefault?.();
     bridge.ingestRawUrl(url);
   };

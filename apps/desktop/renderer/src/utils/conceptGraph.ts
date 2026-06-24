@@ -398,7 +398,10 @@ export function computeRadialLayout(
     const perRing = 10;
     const ringIndex = Math.floor((index - 1) / perRing) + 1;
     const slot = (index - 1) % perRing;
-    const ringCount = Math.min(perRing, ordered.length - 1 - (ringIndex - 1) * perRing);
+    const ringCount = Math.min(
+      perRing,
+      ordered.length - 1 - (ringIndex - 1) * perRing,
+    );
     const totalRings = Math.ceil((ordered.length - 1) / perRing);
     const ringRadius =
       totalRings === 0
@@ -541,9 +544,7 @@ export function localGraphView(
     frontier = next;
   }
   const nodes = view.nodes.filter((n) => keep.has(n.id));
-  const edges = view.edges.filter(
-    (e) => keep.has(e.from) && keep.has(e.to),
-  );
+  const edges = view.edges.filter((e) => keep.has(e.from) && keep.has(e.to));
   return freezeView({ ...view, nodes, edges });
 }
 
@@ -920,7 +921,9 @@ export function findNeighborInDirection(
     const score = primary + perpendicular * PERPENDICULAR_NAV_BIAS;
     if (
       score < bestScore ||
-      (score === bestScore && best !== null && compareCodepoint(node.id, best) < 0)
+      (score === bestScore &&
+        best !== null &&
+        compareCodepoint(node.id, best) < 0)
     ) {
       bestScore = score;
       best = node.id;
@@ -945,7 +948,9 @@ export function highestDegreeNodeId(
     const degree = degrees.get(node.id) ?? 0;
     if (
       degree > bestDegree ||
-      (degree === bestDegree && best !== null && compareNodesForLayout(node, best) < 0)
+      (degree === bestDegree &&
+        best !== null &&
+        compareNodesForLayout(node, best) < 0)
     ) {
       bestDegree = degree;
       best = node;
@@ -1002,7 +1007,9 @@ export function computeEdgeCurves(
   const groups = new Map<string, ConceptGraphEdge[]>();
   for (const edge of edges) {
     const key =
-      edge.from === edge.to ? `self\u0000${edge.from}` : pairKey(edge.from, edge.to);
+      edge.from === edge.to
+        ? `self\u0000${edge.from}`
+        : pairKey(edge.from, edge.to);
     const arr = groups.get(key);
     if (arr) arr.push(edge);
     else groups.set(key, [edge]);
@@ -1037,7 +1044,11 @@ export function computeEdgeCurves(
  * edge's own direction. Degenerate (coincident) endpoints fall back to a
  * vertical normal so the result is always finite.
  */
-export function quadraticControlPoint(from: Point, to: Point, offset: number): Point {
+export function quadraticControlPoint(
+  from: Point,
+  to: Point,
+  offset: number,
+): Point {
   const mx = (from.x + to.x) / 2;
   const my = (from.y + to.y) / 2;
   const dx = to.x - from.x;
@@ -1071,7 +1082,11 @@ export interface EdgePath {
  * `B(½) = ¼·from + ½·control + ¼·to`, which is symmetric in `from`/`to`
  * and therefore identical no matter which direction the edge is drawn.
  */
-export function quadraticEdgePath(from: Point, to: Point, control: Point): EdgePath {
+export function quadraticEdgePath(
+  from: Point,
+  to: Point,
+  control: Point,
+): EdgePath {
   return {
     d: `M ${from.x} ${from.y} Q ${control.x} ${control.y} ${to.x} ${to.y}`,
     labelPoint: quadraticMidpoint(from, to, control),
@@ -1086,7 +1101,11 @@ export function quadraticEdgePath(from: Point, to: Point, control: Point): EdgeP
  * the line. Shared by the SVG path and the Canvas renderer so both place
  * labels identically.
  */
-export function quadraticMidpoint(from: Point, to: Point, control: Point): Point {
+export function quadraticMidpoint(
+  from: Point,
+  to: Point,
+  control: Point,
+): Point {
   return {
     x: 0.25 * from.x + 0.5 * control.x + 0.25 * to.x,
     y: 0.25 * from.y + 0.5 * control.y + 0.25 * to.y,

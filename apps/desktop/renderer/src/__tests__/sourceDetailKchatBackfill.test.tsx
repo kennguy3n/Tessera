@@ -299,9 +299,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       const status = screen.getByTestId("kchat-backfill-status");
       expect(status).toHaveAttribute("data-status", "idle");
@@ -318,9 +316,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       const status = screen.getByTestId("kchat-backfill-status");
       expect(status).toHaveAttribute("data-status", "active");
@@ -341,9 +337,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       const bar = screen.getByLabelText("KChat backfill progress");
       expect(bar).toHaveAttribute("value", "30");
@@ -361,9 +355,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       const status = screen.getByTestId("kchat-backfill-status");
       expect(status).toHaveAttribute("data-status", "complete");
@@ -380,9 +372,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       const status = screen.getByTestId("kchat-backfill-status");
       expect(status).toHaveAttribute("data-status", "complete");
@@ -400,9 +390,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       const status = screen.getByTestId("kchat-backfill-status");
       expect(status).toHaveAttribute("data-status", "error");
@@ -424,9 +412,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
       renderWithRoute();
       await waitFor(() => {
-        expect(
-          screen.getByTestId("kchat-backfill-card"),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("kchat-backfill-card")).toBeInTheDocument();
       });
       // Find the row in the Source Information card whose left cell
       // is the "Type" label, and assert the right cell shows the
@@ -537,7 +523,7 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       });
     });
 
-    it("disables the Backfill posts button while the poller reports status === \"active\"", async () => {
+    it('disables the Backfill posts button while the poller reports status === "active"', async () => {
       // Defence-in-depth: even if the click handler isn't
       // currently in flight, an in-flight backfill seen by the
       // poller must keep the button disabled so the user can't
@@ -567,9 +553,11 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
         postsIngested: 0,
         status: "idle",
       });
-      window.tessera.kchat.backfillChannel = vi.fn().mockRejectedValue(
-        new Error("Rate limit exceeded for sources:backfillKchatChannel"),
-      );
+      window.tessera.kchat.backfillChannel = vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Rate limit exceeded for sources:backfillKchatChannel"),
+        );
       renderWithRoute();
       const button = await screen.findByTestId("kchat-backfill-button");
       fireEvent.click(button);

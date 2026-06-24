@@ -343,7 +343,12 @@ export default function EmbeddingModelCard() {
 
   return (
     <Card data-testid="embedding-model-card">
-      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Embedding model</h2>
+      <h2
+        className="section-title"
+        style={{ marginBottom: "var(--spacing-md)" }}
+      >
+        Embedding model
+      </h2>
       <p
         style={{
           fontSize: "var(--font-size-sm)",
@@ -351,10 +356,10 @@ export default function EmbeddingModelCard() {
           marginBottom: "var(--spacing-md)",
         }}
       >
-        Controls which model converts your indexed content into vectors
-        for semantic search. Switching models triggers a background
-        re-embed pass so existing chunks pick up the new model's
-        vectors; the schema (FTS5 + chunk_embeddings) stays the same.
+        Controls which model converts your indexed content into vectors for
+        semantic search. Switching models triggers a background re-embed pass so
+        existing chunks pick up the new model's vectors; the schema (FTS5 +
+        chunk_embeddings) stays the same.
       </p>
 
       {showMultilingualHint && (
@@ -373,18 +378,21 @@ export default function EmbeddingModelCard() {
           <strong>Multilingual content detected.</strong>{" "}
           {status?.nonAsciiChunks.toLocaleString()} of{" "}
           {status?.totalChunks.toLocaleString()} indexed chunks contain
-          non-ASCII characters (CJK, Cyrillic, Arabic, etc.&mdash; or
-          rich English typography like smart quotes and em-dashes).
-          If most of these are non-English content, consider switching
-          to the Multilingual (XLM-R) model for better recall on
-          non-English queries.
+          non-ASCII characters (CJK, Cyrillic, Arabic, etc.&mdash; or rich
+          English typography like smart quotes and em-dashes). If most of these
+          are non-English content, consider switching to the Multilingual
+          (XLM-R) model for better recall on non-English queries.
         </div>
       )}
 
       <div
         role="radiogroup"
         aria-labelledby={`${groupId}-label`}
-        style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-sm)" }}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--spacing-sm)",
+        }}
       >
         <span id={`${groupId}-label`} className="visually-hidden">
           Choose embedding provider
@@ -392,7 +400,9 @@ export default function EmbeddingModelCard() {
         {SELECTABLE_MODELS.map((m) => {
           const info = modelInfoFor(m.slug, status);
           const isActive = activeSlug === m.slug;
-          const isInstalled = m.needsDownload ? (info?.installed ?? false) : true;
+          const isInstalled = m.needsDownload
+            ? (info?.installed ?? false)
+            : true;
           const isPending = pendingSlug === m.slug;
           const inputId = `${groupId}-${m.slug}`;
           const realSize = info ? info.modelSizeBytes : m.sizeBytes;

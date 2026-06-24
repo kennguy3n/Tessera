@@ -59,17 +59,13 @@ describe("ensureRecordIds", () => {
   });
 
   it("preserves the existing id when one is set", () => {
-    const records: BaseRecord[] = [
-      { id: "deadbeefcafebabe", Name: "Kept" },
-    ];
+    const records: BaseRecord[] = [{ id: "deadbeefcafebabe", Name: "Kept" }];
     const out = ensureRecordIds(records);
     expect(out[0].id).toBe("deadbeefcafebabe");
   });
 
   it("returns the input array reference when nothing changed", () => {
-    const records: BaseRecord[] = [
-      { id: "abcdef0123456789", Name: "Stable" },
-    ];
+    const records: BaseRecord[] = [{ id: "abcdef0123456789", Name: "Stable" }];
     const out = ensureRecordIds(records);
     expect(out).toBe(records);
   });
@@ -166,8 +162,14 @@ describe("parseBaseContent — record id integration", () => {
     // records that don't satisfy the type contract; the parser
     // must not blow up.
     const cases = [
-      JSON.stringify({ fields: [{ name: "Name", type: "text" }], records: null }),
-      JSON.stringify({ fields: [{ name: "Name", type: "text" }], records: "oops" }),
+      JSON.stringify({
+        fields: [{ name: "Name", type: "text" }],
+        records: null,
+      }),
+      JSON.stringify({
+        fields: [{ name: "Name", type: "text" }],
+        records: "oops",
+      }),
       JSON.stringify({
         fields: [{ name: "Name", type: "text" }],
         records: { 0: { Name: "A" } },
@@ -313,7 +315,7 @@ describe("aggregateValues", () => {
     expect(aggregateValues([1, "x", 5], "AVG")).toBe("3");
   });
 
-  it("AVG returns \"0\" when no numeric values (degenerate average)", () => {
+  it('AVG returns "0" when no numeric values (degenerate average)', () => {
     // Match Airtable's behavior of treating an empty rollup as the
     // additive identity rather than rendering NaN or a sentinel.
     expect(aggregateValues(["x", null, undefined], "AVG")).toBe("0");
@@ -403,9 +405,9 @@ describe("findRecordsLinkingTo", () => {
       { id: "r1", Tasks: ["t1"] },
       { id: "r2", Tasks: "t1" /* malformed */ },
     ];
-    expect(findRecordsLinkingTo(mixed, "Tasks", "t1").map((r) => r.id)).toEqual([
-      "r1",
-    ]);
+    expect(findRecordsLinkingTo(mixed, "Tasks", "t1").map((r) => r.id)).toEqual(
+      ["r1"],
+    );
   });
 });
 
@@ -519,9 +521,9 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("multi_select", ["red", "blue", "green"], "blu")).toBe(
       true,
     );
-    expect(matchesFilter("multi_select", ["red", "blue", "green"], "yellow")).toBe(
-      false,
-    );
+    expect(
+      matchesFilter("multi_select", ["red", "blue", "green"], "yellow"),
+    ).toBe(false);
     expect(matchesFilter("linked_record", ["abc123", "def456"], "DEF")).toBe(
       true,
     );

@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AuditActivityCard from "../components/AuditActivityCard";
 
 // The Rust `AuditEventType` enum uses `#[serde(rename_all =
@@ -103,7 +98,9 @@ describe("AuditActivityCard", () => {
       rotate: vi.fn().mockResolvedValue(null),
     };
     render(<AuditActivityCard api={api} />);
-    expect(await screen.findByTestId("audit-error")).toHaveTextContent("db locked");
+    expect(await screen.findByTestId("audit-error")).toHaveTextContent(
+      "db locked",
+    );
   });
 
   it("refresh re-fetches when the Refresh button is clicked", async () => {

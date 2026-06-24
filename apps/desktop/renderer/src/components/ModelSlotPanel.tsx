@@ -186,12 +186,10 @@ export default function ModelSlotPanel({
   // slot events to the matching panel.
   useEffect(() => {
     if (!tessera) return;
-    return tessera.runtime.onDownloadProgress(
-      (p: ModelDownloadProgress) => {
-        if (p.capability !== capability) return;
-        setState((s) => ({ ...s, progress: p }));
-      },
-    );
+    return tessera.runtime.onDownloadProgress((p: ModelDownloadProgress) => {
+      if (p.capability !== capability) return;
+      setState((s) => ({ ...s, progress: p }));
+    });
   }, [tessera, capability]);
 
   // 5s poll for the installed-model record so an out-of-band
@@ -345,7 +343,12 @@ export default function ModelSlotPanel({
     // SSR), render a neutral placeholder rather than throwing.
     return (
       <Card>
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>{title}</h2>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-md)" }}
+        >
+          {title}
+        </h2>
         <p>Bridge unavailable.</p>
       </Card>
     );
@@ -353,7 +356,8 @@ export default function ModelSlotPanel({
 
   return (
     <Card>
-      <h2 className="section-title"
+      <h2
+        className="section-title"
         style={{ marginBottom: "var(--spacing-md)" }}
         data-testid={`${testIdPrefix}-title`}
       >
@@ -435,7 +439,9 @@ export default function ModelSlotPanel({
               disabled={state.busyModelId !== null}
               data-testid={`${testIdPrefix}-delete`}
             >
-              {state.busyModelId === "__delete__" ? "Deleting…" : "Delete model"}
+              {state.busyModelId === "__delete__"
+                ? "Deleting…"
+                : "Delete model"}
             </Button>
           </div>
         </div>
@@ -522,8 +528,8 @@ export default function ModelSlotPanel({
                   }}
                 >
                   <span>
-                    <strong>{m.name}</strong> · {m.parameters} ·{" "}
-                    {m.formatLabel} · {m.downloadSizeMb} MB
+                    <strong>{m.name}</strong> · {m.parameters} · {m.formatLabel}{" "}
+                    · {m.downloadSizeMb} MB
                   </span>
                   {isCurrent ? (
                     <em style={{ fontSize: "var(--font-size-xs)" }}>

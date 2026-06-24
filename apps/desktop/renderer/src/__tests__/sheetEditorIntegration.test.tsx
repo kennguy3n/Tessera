@@ -75,9 +75,11 @@ describe("SheetEditor — formula engine integration", () => {
     // Double-click A3 to edit, change to 10, press Enter.
     const a3 = cellAt(2, 0);
     fireEvent.doubleClick(a3);
-    const input = screen.getAllByRole("textbox").find((el) =>
-      el.classList.contains("sheet-cell-input"),
-    ) as HTMLInputElement;
+    const input = screen
+      .getAllByRole("textbox")
+      .find((el) =>
+        el.classList.contains("sheet-cell-input"),
+      ) as HTMLInputElement;
     expect(input).toBeTruthy();
     fireEvent.change(input, { target: { value: "10" } });
     fireEvent.keyDown(input, { key: "Enter" });

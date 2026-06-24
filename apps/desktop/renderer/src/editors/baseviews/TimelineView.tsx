@@ -112,7 +112,11 @@ export default function TimelineView({
     // Pad the range by one tick on each side so the first/last bar
     // doesn't kiss the chart edge.
     const padMs =
-      zoom === "day" ? ONE_DAY_MS : zoom === "week" ? 7 * ONE_DAY_MS : 30 * ONE_DAY_MS;
+      zoom === "day"
+        ? ONE_DAY_MS
+        : zoom === "week"
+          ? 7 * ONE_DAY_MS
+          : 30 * ONE_DAY_MS;
     return {
       scheduled: scheduledOut,
       unscheduled: unscheduledOut,
@@ -374,8 +378,7 @@ function Chart({
         {scheduled.map(({ record, index, start, end }) => {
           const leftPct =
             ((start.getTime() - rangeStart.getTime()) / totalMs) * 100;
-          const widthPct =
-            ((end.getTime() - start.getTime()) / totalMs) * 100;
+          const widthPct = ((end.getTime() - start.getTime()) / totalMs) * 100;
           // Single-day bars get a minimum visible width so they don't
           // collapse into a 0px sliver on multi-month zooms.
           const effectiveWidth = Math.max(widthPct, 0.5);
@@ -388,7 +391,9 @@ function Chart({
                 borderBottom: "1px solid var(--color-border, #f3f4f6)",
               }}
               title={`${
-                titleField ? String(record[titleField] ?? "") : `Record ${index + 1}`
+                titleField
+                  ? String(record[titleField] ?? "")
+                  : `Record ${index + 1}`
               } · ${start.toLocaleDateString()} → ${end.toLocaleDateString()}`}
             >
               <div

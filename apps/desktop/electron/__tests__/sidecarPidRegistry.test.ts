@@ -73,10 +73,7 @@ describe("sidecarPidRegistry: write / clear round-trip", () => {
     writePidFileSync("text", 1000, "/bin/llama-server");
     writePidFileSync("text", 2000, "/bin/llama-server");
     writePidFileSync("text", 3000, "/bin/llama-server");
-    const body = fsSync.readFileSync(
-      path.join(tempDir, "text.pid"),
-      "utf-8",
-    );
+    const body = fsSync.readFileSync(path.join(tempDir, "text.pid"), "utf-8");
     expect(body).toBe("3000\nllama-server\n");
   });
 

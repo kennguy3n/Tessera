@@ -129,10 +129,7 @@ describe("connectorsV2 token wire round-trip", () => {
 
     // A refreshed wire that omits the refresh token must inherit the
     // previous one (providers that don't rotate it).
-    const healed = wireToStored(
-      { ...wire, refresh_token: null },
-      TOKENS,
-    );
+    const healed = wireToStored({ ...wire, refresh_token: null }, TOKENS);
     expect(healed.refreshToken).toBe("refresh-456");
   });
 });
@@ -216,7 +213,10 @@ describe("connectorsV2 buildAuthConfig", () => {
   it("injects the tranche-4 per-target ids under the upstream field names", () => {
     const discord = buildAuthConfig("discord", {
       ...TOKENS,
-      connectorConfig: { bot_token: "secret", channel_id: "1107583106847408128" },
+      connectorConfig: {
+        bot_token: "secret",
+        channel_id: "1107583106847408128",
+      },
     });
     // The bot token travels as the bearer, never in the bag.
     expect(discord.bot_token).toBeUndefined();
@@ -787,9 +787,7 @@ describe("disconnectV2Provider", () => {
     expect(hooks.removed).toContain(created.id);
     expect(hooks.removed).not.toContain(unrelated.id);
     // Sync dir gone.
-    await expect(
-      fsp.stat(path.dirname(created.path)),
-    ).rejects.toBeTruthy();
+    await expect(fsp.stat(path.dirname(created.path))).rejects.toBeTruthy();
   });
 });
 
@@ -902,7 +900,9 @@ describe("connectorsV2 runV2Probe", () => {
     expect(scopeId).toBeNull();
     // The probe must reuse buildAuthConfig + storedToWire verbatim so a
     // green test faithfully predicts a green sync.
-    expect(JSON.parse(authConfigJson)).toEqual(buildAuthConfig("github", TOKENS));
+    expect(JSON.parse(authConfigJson)).toEqual(
+      buildAuthConfig("github", TOKENS),
+    );
     expect(JSON.parse(wireJson)).toEqual(storedToWire(TOKENS));
   });
 

@@ -240,8 +240,8 @@ export default function GenerateImageButton({
         data-testid="imagegen-unavailable"
         role="status"
       >
-        Image generation is not available on this device. Install an image
-        model in Settings → Models, or run on a host with a supported GPU /
+        Image generation is not available on this device. Install an image model
+        in Settings → Models, or run on a host with a supported GPU /
         Apple-Silicon backend.
       </div>
     );
@@ -267,9 +267,7 @@ export default function GenerateImageButton({
           <select
             aria-label="Image dimensions"
             value={dimension}
-            onChange={(e) =>
-              setDimension(e.target.value as ImageGenDimension)
-            }
+            onChange={(e) => setDimension(e.target.value as ImageGenDimension)}
             disabled={inFlight}
           >
             {DIMENSIONS.map((d) => (

@@ -398,9 +398,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
         /This provider does not expose a model listing endpoint/,
       );
       expect(status).toBeInTheDocument();
-      expect(status.textContent).toContain(
-        "http://localhost:9000/v1/models",
-      );
+      expect(status.textContent).toContain("http://localhost:9000/v1/models");
       expect(status.textContent).toContain("Enter the model name manually");
     });
 

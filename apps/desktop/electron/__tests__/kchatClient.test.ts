@@ -48,7 +48,9 @@ function ok<T>(body: T, status = 200): MockResponse {
 }
 
 function makeFetch(
-  responses: MockResponse[] | ((url: string, init: RequestInit) => MockResponse),
+  responses:
+    | MockResponse[]
+    | ((url: string, init: RequestInit) => MockResponse),
 ): {
   fn: typeof globalThis.fetch;
   calls: Array<{ url: string; init: RequestInit }>;
@@ -121,15 +123,17 @@ function mockWebSocketCtor() {
   return { ctor, instances };
 }
 
-function buildClient(overrides: Partial<{
-  fetchFn: typeof globalThis.fetch;
-  webSocketCtor: ReturnType<typeof mockWebSocketCtor>["ctor"];
-  rateLimiter: RateLimiter;
-  sleep: (ms: number) => Promise<void>;
-  random: () => number;
-  now: () => number;
-  logWarn: (message: string, context: Record<string, unknown>) => void;
-}> = {}) {
+function buildClient(
+  overrides: Partial<{
+    fetchFn: typeof globalThis.fetch;
+    webSocketCtor: ReturnType<typeof mockWebSocketCtor>["ctor"];
+    rateLimiter: RateLimiter;
+    sleep: (ms: number) => Promise<void>;
+    random: () => number;
+    now: () => number;
+    logWarn: (message: string, context: Record<string, unknown>) => void;
+  }> = {},
+) {
   const client = new KchatClient({
     fetchFn: overrides.fetchFn,
     webSocketCtor: overrides.webSocketCtor,
@@ -220,7 +224,9 @@ describe("KchatClient.verifyConnection", () => {
   it("surfaces a clear error when no token is configured", async () => {
     const { fn: fetchFn } = makeFetch([]);
     const c = buildClient({ fetchFn });
-    await expect(c.verifyConnection()).rejects.toThrow(/token is not configured/);
+    await expect(c.verifyConnection()).rejects.toThrow(
+      /token is not configured/,
+    );
     expect(c.getState().state).toBe("error");
   });
 });
@@ -372,11 +378,7 @@ describe("KchatClient.uploadFile + downloadFile", () => {
     const c = buildClient();
     c.setToken("T");
     await expect(
-      c.uploadFile(
-        "chid\r\n--evil",
-        "x.md",
-        Buffer.from("x"),
-      ),
+      c.uploadFile("chid\r\n--evil", "x.md", Buffer.from("x")),
     ).rejects.toThrow(/CR or LF/);
   });
 });
@@ -537,11 +539,7 @@ describe("KchatClient.uploadFile retry semantics (seventh-pass invariant)", () =
       rateLimiter: freshLimiter(),
     });
     c.setToken("T");
-    const files = await c.listChannelFiles(
-      "chid0000000000000000abcd",
-      0,
-      60,
-    );
+    const files = await c.listChannelFiles("chid0000000000000000abcd", 0, 60);
     expect(files).toEqual([]);
     expect(calls.length).toBe(2);
   });
@@ -652,17 +650,17 @@ describe("KchatClient.downloadFile server-id validation", () => {
   it("rejects fileId values containing uppercase characters", async () => {
     const c = buildClient();
     c.setToken("T");
-    await expect(
-      c.downloadFile("FID000000000000000000ABCD"),
-    ).rejects.toThrow(/not a valid KChat object id/);
+    await expect(c.downloadFile("FID000000000000000000ABCD")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
   });
 
   it("rejects fileId values containing URL-control characters", async () => {
     const c = buildClient();
     c.setToken("T");
-    await expect(
-      c.downloadFile("fid000000000000?query=1"),
-    ).rejects.toThrow(/not a valid KChat object id/);
+    await expect(c.downloadFile("fid000000000000?query=1")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
   });
 });
 
@@ -679,9 +677,7 @@ describe("KchatClient.scrubMessage", () => {
 
   it("replaces Bearer patterns even when no active token is set", () => {
     const c = buildClient();
-    const scrubbed = c.scrubMessage(
-      "logged header: Bearer abcdef0123456789",
-    );
+    const scrubbed = c.scrubMessage("logged header: Bearer abcdef0123456789");
     expect(scrubbed).toContain("Bearer [REDACTED]");
     expect(scrubbed).not.toContain("abcdef0123456789");
   });
@@ -893,9 +889,9 @@ describe("KchatClient server-id validation at deserialisation boundary", () => {
     const { fn: fetchFn } = makeFetch([userResp, channelsResp]);
     const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
     c.setToken("PAT");
-    await expect(
-      c.listChannels("tid000000000000000000ab"),
-    ).rejects.toThrow(/not a valid KChat object id/);
+    await expect(c.listChannels("tid000000000000000000ab")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
   });
 
   it("listChannelMembers rejects members with malformed user_id", async () => {
@@ -1151,9 +1147,7 @@ describe("KchatClient.connectWebSocket", () => {
     c.onWebSocketEvent((e) => events.push(e));
     await c.connectWebSocket();
     expect(instances).toHaveLength(1);
-    expect(instances[0].url).toBe(
-      "wss://kchat.example.com/api/v4/websocket",
-    );
+    expect(instances[0].url).toBe("wss://kchat.example.com/api/v4/websocket");
     // Simulate the WS hand-shake.
     instances[0].inst.onopen?.({});
     expect(instances[0].sent[0]).toContain("PAT-secret");
@@ -1967,9 +1961,7 @@ describe("KchatClient.connectWebSocket — URL derivation", () => {
     c.setToken("T");
     await c.connectWebSocket();
     expect(instances).toHaveLength(1);
-    expect(instances[0].url).toBe(
-      "wss://kchat.example.com/k/api/v4/websocket",
-    );
+    expect(instances[0].url).toBe("wss://kchat.example.com/k/api/v4/websocket");
   });
 
   it("converts http to ws and tolerates trailing slashes", async () => {
@@ -1979,9 +1971,7 @@ describe("KchatClient.connectWebSocket — URL derivation", () => {
     c.setToken("T");
     await c.connectWebSocket();
     expect(instances).toHaveLength(1);
-    expect(instances[0].url).toBe(
-      "ws://localhost:8065/api/v4/websocket",
-    );
+    expect(instances[0].url).toBe("ws://localhost:8065/api/v4/websocket");
   });
 
   it("rejects non-http(s) server URLs", async () => {
@@ -2055,9 +2045,9 @@ describe("KchatClient.getPost", () => {
     ]);
     const c = buildClient({ fetchFn, rateLimiter: fresh() });
     c.setToken("T");
-    await expect(
-      c.getPost("pid000000000000000000abcd"),
-    ).rejects.toThrow(/not a valid KChat object id/);
+    await expect(c.getPost("pid000000000000000000abcd")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
   });
 
   it("throws when required fields are missing (e.g. message=undefined)", async () => {
@@ -2072,9 +2062,9 @@ describe("KchatClient.getPost", () => {
     ]);
     const c = buildClient({ fetchFn, rateLimiter: fresh() });
     c.setToken("T");
-    await expect(
-      c.getPost("pid000000000000000000abcd"),
-    ).rejects.toThrow(/post\.message missing/);
+    await expect(c.getPost("pid000000000000000000abcd")).rejects.toThrow(
+      /post\.message missing/,
+    );
   });
 
   it("rejects the caller-supplied postId before contacting the server", async () => {
@@ -2263,9 +2253,9 @@ describe("KchatClient.getUsersByIds", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toMatch(/\/api\/v4\/users\/ids$/);
     expect(calls[0].init.method).toBe("POST");
-    expect((calls[0].init.headers as Record<string, string>)["Content-Type"]).toBe(
-      "application/json",
-    );
+    expect(
+      (calls[0].init.headers as Record<string, string>)["Content-Type"],
+    ).toBe("application/json");
     expect(calls[0].init.body).toBe(
       JSON.stringify(["user1234567890abcdefgh", "user2234567890abcdefgh"]),
     );
@@ -2308,9 +2298,9 @@ describe("KchatClient.getUsersByIds", () => {
     ]);
     const c = buildClient({ fetchFn, rateLimiter: fresh() });
     c.setToken("T");
-    await expect(
-      c.getUsersByIds(["user1234567890abcdefgh"]),
-    ).rejects.toThrow(/not a valid KChat object id/);
+    await expect(c.getUsersByIds(["user1234567890abcdefgh"])).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
   });
 });
 
@@ -2339,7 +2329,9 @@ describe("KchatClient.getChannel", () => {
     const channel = await c.getChannel("chid0000000000000000abcd");
     expect(channel.display_name).toBe("General");
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toMatch(/\/api\/v4\/channels\/chid0000000000000000abcd$/);
+    expect(calls[0].url).toMatch(
+      /\/api\/v4\/channels\/chid0000000000000000abcd$/,
+    );
     expect(calls[0].init.method).toBe("GET");
   });
 

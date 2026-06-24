@@ -62,9 +62,10 @@ describe("Sidebar", () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: /more tools/i }));
-    expect(
-      screen.getByRole("button", { name: /more tools/i }),
-    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /more tools/i })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(screen.getByText("Templates")).toBeInTheDocument();
     expect(screen.getByText("Tasks")).toBeInTheDocument();
     expect(screen.getByText("Automations")).toBeInTheDocument();
@@ -151,9 +152,7 @@ describe("PageHeader", () => {
   });
 
   it("renders actions when provided", () => {
-    render(
-      <PageHeader title="Title" actions={<button>Action</button>} />,
-    );
+    render(<PageHeader title="Title" actions={<button>Action</button>} />);
     expect(screen.getByRole("button", { name: "Action" })).toBeInTheDocument();
   });
 });
@@ -191,11 +190,7 @@ describe("EmptyState", () => {
 
   it("renders action when provided", () => {
     render(
-      <EmptyState
-        title="Empty"
-        message="msg"
-        action={<button>Add</button>}
-      />,
+      <EmptyState title="Empty" message="msg" action={<button>Add</button>} />,
     );
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
   });
@@ -366,7 +361,9 @@ describe("ModelRuntimeCard delete-from-non-running flow", () => {
 
     render(<ModelRuntimeCard api={api} />);
 
-    const deleteBtn = await screen.findByRole("button", { name: /Delete model/i });
+    const deleteBtn = await screen.findByRole("button", {
+      name: /Delete model/i,
+    });
     fireEvent.click(deleteBtn);
 
     await waitFor(() => {
@@ -421,7 +418,11 @@ describe("ModelRuntimeCard download-progress lifecycle", () => {
 
   function buildDownloadApi(opts: {
     downloadOutcome: "ok" | "fail";
-    progressBeforeOutcome: { downloadedMb: number; totalMb: number; percent: number };
+    progressBeforeOutcome: {
+      downloadedMb: number;
+      totalMb: number;
+      percent: number;
+    };
   }) {
     type Listener = (p: {
       modelId: string;
@@ -678,8 +679,11 @@ describe("ModelRuntimeCard onDownloadProgress capability filter", () => {
     // Wait for the subscriber to attach (post-mount effect).
     await waitFor(() => {
       expect(
-        (api.runtime.onDownloadProgress as unknown as { mock: { calls: unknown[] } })
-          .mock.calls.length,
+        (
+          api.runtime.onDownloadProgress as unknown as {
+            mock: { calls: unknown[] };
+          }
+        ).mock.calls.length,
       ).toBeGreaterThan(0);
     });
     emit({
@@ -704,8 +708,11 @@ describe("ModelRuntimeCard onDownloadProgress capability filter", () => {
     render(<ModelRuntimeCard api={api} />);
     await waitFor(() => {
       expect(
-        (api.runtime.onDownloadProgress as unknown as { mock: { calls: unknown[] } })
-          .mock.calls.length,
+        (
+          api.runtime.onDownloadProgress as unknown as {
+            mock: { calls: unknown[] };
+          }
+        ).mock.calls.length,
       ).toBeGreaterThan(0);
     });
     emit({
@@ -931,12 +938,10 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
       .mockResolvedValueOnce(initialRecord) // initial refresh()
       .mockResolvedValue(null); // post-failure re-fetch + polls
 
-    const downloadMock = vi
-      .fn()
-      .mockImplementation(async () => {
-        await Promise.resolve();
-        throw new Error("simulated swap failure");
-      });
+    const downloadMock = vi.fn().mockImplementation(async () => {
+      await Promise.resolve();
+      throw new Error("simulated swap failure");
+    });
 
     const api = {
       ...window.tessera,
@@ -1254,7 +1259,9 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
 
     render(<ModelRuntimeCard api={api} />);
 
-    const deleteBtn = await screen.findByRole("button", { name: /Delete model/i });
+    const deleteBtn = await screen.findByRole("button", {
+      name: /Delete model/i,
+    });
     fireEvent.click(deleteBtn);
 
     await waitFor(() => {
@@ -1267,12 +1274,8 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
     await vi.advanceTimersByTimeAsync(5500);
     await vi.advanceTimersByTimeAsync(5500);
 
-    expect(
-      screen.queryByText(/ghost-delete-record/i),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/ghost-delete-status/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/ghost-delete-record/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ghost-delete-status/i)).not.toBeInTheDocument();
 
     // Clean up: release the never-resolving delete.
     resolveDelete();
@@ -1426,13 +1429,11 @@ describe("ModelRuntimeCard handleDelete success path re-fetches current", () => 
       .fn()
       .mockResolvedValueOnce(installedRecord) // initial mount
       .mockResolvedValue(null); // post-success re-fetch + any poll ticks
-    const statusMock = vi
-      .fn()
-      .mockResolvedValue({
-        available: false,
-        modelName: null,
-        status: "stopped",
-      });
+    const statusMock = vi.fn().mockResolvedValue({
+      available: false,
+      modelName: null,
+      status: "stopped",
+    });
     const deleteMock = vi.fn().mockResolvedValue(undefined);
 
     const api = {

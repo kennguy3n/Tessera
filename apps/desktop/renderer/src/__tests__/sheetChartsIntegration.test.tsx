@@ -21,7 +21,12 @@ function renderSheet(sheet: SheetContent) {
 
 describe("SheetEditor — charts", () => {
   it("renders a bar chart bound to a range as SVG marks", () => {
-    const chart: ChartSpec = { id: "c1", type: "bar", range: "A1:A3", title: "Sales" };
+    const chart: ChartSpec = {
+      id: "c1",
+      type: "bar",
+      range: "A1:A3",
+      title: "Sales",
+    };
     renderSheet({
       columns: ["A"],
       rows: [["10"], ["20"], ["30"]],

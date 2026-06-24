@@ -72,11 +72,7 @@ vi.mock("../appState", () => ({
   isBridgeAvailable: () => false,
 }));
 
-import {
-  loadConfig,
-  updateConfig,
-  _clearConfigCacheForTests,
-} from "../config";
+import { loadConfig, updateConfig, _clearConfigCacheForTests } from "../config";
 import { registerSettingsHandlers } from "../ipc/settings";
 import { registerAppLockHandlers } from "../ipc/appLock";
 import {

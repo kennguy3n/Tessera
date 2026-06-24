@@ -215,14 +215,26 @@ export function removeColumnAt(
   const next: SheetContent = { ...content };
   next.columns = content.columns.filter((_, i) => i !== colIdx);
   next.rows = content.rows.map((r) => r.filter((_, i) => i !== colIdx));
-  withField(next, "formats", remapFormatsForColumn(content.formats, colIdx, -1));
-  withField(next, "validations", remapValidations(content.validations, colIdx, -1));
+  withField(
+    next,
+    "formats",
+    remapFormatsForColumn(content.formats, colIdx, -1),
+  );
+  withField(
+    next,
+    "validations",
+    remapValidations(content.validations, colIdx, -1),
+  );
   withField(
     next,
     "conditionalRules",
     remapConditionalRules(content.conditionalRules, colIdx, -1),
   );
-  withField(next, "columnWidths", spliceSizes(content.columnWidths, colIdx, -1));
+  withField(
+    next,
+    "columnWidths",
+    spliceSizes(content.columnWidths, colIdx, -1),
+  );
   withField(next, "frozenCols", adjustFreeze(content.frozenCols, colIdx, -1));
   withField(next, "charts", remapCharts(content.charts, "col", colIdx, -1));
   withField(next, "pivots", remapPivots(content.pivots, "col", colIdx, -1));
@@ -251,14 +263,26 @@ export function insertColumnAt(
     copy.splice(clamped, 0, "");
     return copy;
   });
-  withField(next, "formats", remapFormatsForColumn(content.formats, clamped, 1));
-  withField(next, "validations", remapValidations(content.validations, clamped, 1));
+  withField(
+    next,
+    "formats",
+    remapFormatsForColumn(content.formats, clamped, 1),
+  );
+  withField(
+    next,
+    "validations",
+    remapValidations(content.validations, clamped, 1),
+  );
   withField(
     next,
     "conditionalRules",
     remapConditionalRules(content.conditionalRules, clamped, 1),
   );
-  withField(next, "columnWidths", spliceSizes(content.columnWidths, clamped, 1));
+  withField(
+    next,
+    "columnWidths",
+    spliceSizes(content.columnWidths, clamped, 1),
+  );
   withField(next, "frozenCols", adjustFreeze(content.frozenCols, clamped, 1));
   withField(next, "charts", remapCharts(content.charts, "col", clamped, 1));
   withField(next, "pivots", remapPivots(content.pivots, "col", clamped, 1));

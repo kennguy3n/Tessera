@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ToastProvider } from "../components/Toast";
 import { useToast } from "../components/toastContext";
@@ -11,7 +17,11 @@ import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
 
 describe("ToastProvider", () => {
-  function Probe({ messages }: { messages: Array<["info" | "error", string]> }) {
+  function Probe({
+    messages,
+  }: {
+    messages: Array<["info" | "error", string]>;
+  }) {
     const { addToast } = useToast();
     return (
       <button
@@ -107,8 +117,12 @@ describe("ErrorBoundary", () => {
       // The error message is rendered in the diagnostic <pre>.
       expect(screen.getByText(/kaboom/)).toBeInTheDocument();
       // Reload + Dismiss buttons are present along with a Report link.
-      expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Reload" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Dismiss" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "Report" })).toBeInTheDocument();
     } finally {
       spy.mockRestore();
@@ -202,7 +216,9 @@ describe("ErrorBoundary", () => {
           <ThrowOnce label="ok" />
         </ErrorBoundary>,
       );
-      expect(screen.queryByText("Something went wrong.")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Something went wrong."),
+      ).not.toBeInTheDocument();
       expect(screen.getByText("safe: ok")).toBeInTheDocument();
     } finally {
       spy.mockRestore();
@@ -242,8 +258,7 @@ describe("useKeyboardShortcuts", () => {
 
   it("registers Ctrl/Cmd shortcuts on document and removes them on unmount", () => {
     const events: string[] = [];
-    const navListener = (e: Event) =>
-      events.push((e as CustomEvent).type);
+    const navListener = (e: Event) => events.push((e as CustomEvent).type);
     window.addEventListener("tessera:save", navListener);
     window.addEventListener("tessera:export", navListener);
     window.addEventListener("tessera:focus-search", navListener);

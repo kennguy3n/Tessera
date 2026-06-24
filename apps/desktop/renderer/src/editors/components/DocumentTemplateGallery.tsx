@@ -96,7 +96,11 @@ export function DocumentTemplateGallery({
     category,
     query,
   );
-  const visibleCustom = filterDocumentTemplates(customTemplates, category, query);
+  const visibleCustom = filterDocumentTemplates(
+    customTemplates,
+    category,
+    query,
+  );
   const nothingMatches =
     visibleBuiltIns.length === 0 && visibleCustom.length === 0;
 
@@ -158,9 +162,9 @@ export function DocumentTemplateGallery({
         <div className="document-template-gallery-header">
           <h2>Document templates</h2>
           <p className="document-template-help">
-            Insert a starter at your cursor — or replace an empty document.
-            Save the current document as your own reusable template. Press
-            Esc to close.
+            Insert a starter at your cursor — or replace an empty document. Save
+            the current document as your own reusable template. Press Esc to
+            close.
           </p>
           {/* The search box MUST stay the first focusable control — the
               focus trap defers initial focus to it. Keep the actions +
@@ -218,21 +222,22 @@ export function DocumentTemplateGallery({
           role="group"
           aria-label="Filter templates by category"
         >
-          {[ALL_DOCUMENT_TEMPLATES_CATEGORY, ...DOCUMENT_TEMPLATE_CATEGORIES].map(
-            (chip) => (
-              <button
-                key={chip}
-                type="button"
-                className={`document-template-chip${
-                  category === chip ? " is-active" : ""
-                }`}
-                aria-pressed={category === chip}
-                onClick={() => setCategory(chip)}
-              >
-                {chip}
-              </button>
-            ),
-          )}
+          {[
+            ALL_DOCUMENT_TEMPLATES_CATEGORY,
+            ...DOCUMENT_TEMPLATE_CATEGORIES,
+          ].map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              className={`document-template-chip${
+                category === chip ? " is-active" : ""
+              }`}
+              aria-pressed={category === chip}
+              onClick={() => setCategory(chip)}
+            >
+              {chip}
+            </button>
+          ))}
         </div>
         {visibleCustom.length > 0 && (
           <section
@@ -347,7 +352,9 @@ export function DocumentTemplateGallery({
           </section>
         )}
         {visibleCustom.length > 0 && visibleBuiltIns.length > 0 && (
-          <h3 className="document-template-section-title">Built-in templates</h3>
+          <h3 className="document-template-section-title">
+            Built-in templates
+          </h3>
         )}
         {nothingMatches ? (
           <p

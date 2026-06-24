@@ -57,7 +57,9 @@ describe("parsePmsetOutput (macOS)", () => {
   });
 
   it("reports no battery (AC always) for a desktop with no InternalBattery line", () => {
-    expect(parsePmsetOutput("Now drawing from 'AC Power'\n")).toEqual(AC_ALWAYS);
+    expect(parsePmsetOutput("Now drawing from 'AC Power'\n")).toEqual(
+      AC_ALWAYS,
+    );
   });
 });
 

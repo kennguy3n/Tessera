@@ -58,7 +58,10 @@ import {
   sanitizeBaseField,
   ensureRecordIds,
 } from "./baseEditorHelpers";
-import { linkTargetRecords, type BaseTableResolver } from "./baseDocumentHelpers";
+import {
+  linkTargetRecords,
+  type BaseTableResolver,
+} from "./baseDocumentHelpers";
 import {
   RECORD_CREATED_KEY,
   RECORD_MODIFIED_KEY,
@@ -270,7 +273,9 @@ export function formatValueForCsv(
     }
 
     case "rating":
-      return value == null ? "" : String(Math.max(0, Math.floor(Number(value))));
+      return value == null
+        ? ""
+        : String(Math.max(0, Math.floor(Number(value))));
 
     case "duration": {
       // h:mm — same display the cell uses.
@@ -313,9 +318,7 @@ export function formatValueForCsv(
       const display = field.linkedDisplayField;
       return linked
         .map((r) =>
-          display && r[display] != null
-            ? String(r[display])
-            : r.id.slice(0, 6),
+          display && r[display] != null ? String(r[display]) : r.id.slice(0, 6),
         )
         .join(ARRAY_JOIN);
     }
@@ -573,10 +576,7 @@ function cloneBaseField(source: BaseField): BaseField {
   return cloned;
 }
 
-export function parseCsvToBase(
-  csv: string,
-  schema?: BaseField[],
-): BaseContent {
+export function parseCsvToBase(csv: string, schema?: BaseField[]): BaseContent {
   const rows = parseCsv(csv);
   if (rows.length === 0) return { fields: [], records: [] };
 
@@ -620,10 +620,7 @@ export function parseCsvToBase(
   const uniquify = (base: string, lookAhead: Set<string>): string => {
     if (!usedNames.has(base)) return base;
     let i = 2;
-    while (
-      usedNames.has(`${base} (${i})`) ||
-      lookAhead.has(`${base} (${i})`)
-    ) {
+    while (usedNames.has(`${base} (${i})`) || lookAhead.has(`${base} (${i})`)) {
       i += 1;
     }
     return `${base} (${i})`;

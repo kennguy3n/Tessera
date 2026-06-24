@@ -93,10 +93,7 @@ export function usePinnedArtifacts(): UsePinnedArtifactsResult {
   // for every pinned candidate, so an O(n) check would scale
   // poorly on a 256-entry pinned list. PR #87 Devin Review
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
-  const isPinned = useCallback(
-    (id: string) => pinnedSet.has(id),
-    [pinnedSet],
-  );
+  const isPinned = useCallback((id: string) => pinnedSet.has(id), [pinnedSet]);
 
   const writePinned = useCallback(
     async (next: string[]): Promise<ReadonlyArray<string>> => {

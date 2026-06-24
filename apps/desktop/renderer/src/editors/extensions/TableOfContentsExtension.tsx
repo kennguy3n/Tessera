@@ -77,7 +77,11 @@ function TableOfContentsNodeView({ editor }: NodeViewProps) {
   }, [editor]);
 
   const jumpTo = (pos: number) => {
-    editor.chain().focus().setTextSelection(pos + 1).run();
+    editor
+      .chain()
+      .focus()
+      .setTextSelection(pos + 1)
+      .run();
     const dom = editor.view.nodeDOM(pos);
     if (dom instanceof HTMLElement) {
       dom.scrollIntoView({ behavior: "smooth", block: "start" });

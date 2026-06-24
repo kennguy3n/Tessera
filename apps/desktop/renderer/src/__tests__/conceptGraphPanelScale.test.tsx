@@ -1,6 +1,12 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import ConceptGraphPanel from "../components/ConceptGraphPanel";
 import {
   makePreset,
@@ -20,13 +26,43 @@ import type { SubstrateMemoryInfo } from "../types/ipc";
 
 const SMALL_GRAPH = JSON.stringify({
   nodes: [
-    { id: "atlas", label: "Atlas", state: "canonical", scope_id: "scope-a", connections_count: 2 },
-    { id: "project", label: "Project", state: "candidate", scope_id: "scope-a", connections_count: 1 },
-    { id: "beacon", label: "Beacon", state: "candidate", scope_id: "scope-a", connections_count: 1 },
+    {
+      id: "atlas",
+      label: "Atlas",
+      state: "canonical",
+      scope_id: "scope-a",
+      connections_count: 2,
+    },
+    {
+      id: "project",
+      label: "Project",
+      state: "candidate",
+      scope_id: "scope-a",
+      connections_count: 1,
+    },
+    {
+      id: "beacon",
+      label: "Beacon",
+      state: "candidate",
+      scope_id: "scope-a",
+      connections_count: 1,
+    },
   ],
   edges: [
-    { id: "e1", from: "atlas", to: "project", relation_type: "is_a", scope_id: "scope-a" },
-    { id: "e2", from: "atlas", to: "beacon", relation_type: "part_of", scope_id: "scope-a" },
+    {
+      id: "e1",
+      from: "atlas",
+      to: "project",
+      relation_type: "is_a",
+      scope_id: "scope-a",
+    },
+    {
+      id: "e2",
+      from: "atlas",
+      to: "beacon",
+      relation_type: "part_of",
+      scope_id: "scope-a",
+    },
   ],
   scope_filter: [],
   depth: 2,
@@ -118,9 +154,7 @@ describe("ConceptGraphPanel — scale features", () => {
         "concept-graph-preset-select",
       ) as HTMLSelectElement;
       await waitFor(() =>
-        expect(
-          within(select).getByText("Labelled view"),
-        ).toBeInTheDocument(),
+        expect(within(select).getByText("Labelled view")).toBeInTheDocument(),
       );
 
       // The live filter matches the just-saved preset, so it is selected.
@@ -173,9 +207,7 @@ describe("ConceptGraphPanel — scale features", () => {
       fireEvent.click(screen.getByTestId("concept-graph-preset-save"));
       await waitFor(() =>
         expect(
-          window.localStorage.getItem(
-            "tessera.conceptGraph.presets.scope-1",
-          ),
+          window.localStorage.getItem("tessera.conceptGraph.presets.scope-1"),
         ).toBeTruthy(),
       );
       a.unmount();
@@ -219,9 +251,7 @@ describe("ConceptGraphPanel — scale features", () => {
         "concept-graph-decay-scrubber",
       ) as HTMLInputElement;
       fireEvent.change(scrubber, { target: { value: String(50 * DAY) } });
-      expect(
-        screen.getByTestId("concept-graph-decay-now"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("concept-graph-decay-now")).toBeInTheDocument();
       expect(
         screen.getByTestId("concept-graph-decay-asof"),
       ).not.toHaveTextContent("now");
@@ -246,9 +276,7 @@ describe("ConceptGraphPanel — scale features", () => {
 
       // Focus Atlas (created at 100d) — it owns the roving tab stop.
       fireEvent.click(screen.getByRole("button", { name: /^Atlas/ }));
-      const atlasTabStop = container.querySelector(
-        'g.cg-node[tabindex="0"]',
-      );
+      const atlasTabStop = container.querySelector('g.cg-node[tabindex="0"]');
       expect(atlasTabStop?.getAttribute("aria-label")).toMatch(/^Atlas/);
 
       // Enable decay and rewind before Atlas exists (but after Beacon@10d).
@@ -342,18 +370,16 @@ describe("ConceptGraphPanel — scale features", () => {
         "concept-graph-decay-scrubber",
       ) as HTMLInputElement;
       fireEvent.change(scrubber, { target: { value: String(50 * DAY) } });
-      expect(
-        screen.getByTestId("concept-graph-decay-now"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("concept-graph-decay-now")).toBeInTheDocument();
 
       // Applying another preset keeps decay on but resets the scrubber to now.
       fireEvent.change(select, { target: { value: p2.id } });
       expect(
         screen.getByTestId("concept-graph-decay-controls"),
       ).toBeInTheDocument();
-      expect(
-        screen.getByTestId("concept-graph-decay-asof"),
-      ).toHaveTextContent("now");
+      expect(screen.getByTestId("concept-graph-decay-asof")).toHaveTextContent(
+        "now",
+      );
       expect(
         screen.queryByTestId("concept-graph-decay-now"),
       ).not.toBeInTheDocument();
@@ -466,13 +492,9 @@ describe("ConceptGraphPanel — scale features", () => {
         />,
       );
       await waitFor(() =>
-        expect(
-          screen.getByTestId("concept-graph-canvas"),
-        ).toBeInTheDocument(),
+        expect(screen.getByTestId("concept-graph-canvas")).toBeInTheDocument(),
       );
-      expect(
-        screen.queryByTestId("concept-graph-svg"),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("concept-graph-svg")).not.toBeInTheDocument();
     });
 
     it("Escape exits local-graph mode before clearing selection (SVG parity)", async () => {
@@ -534,10 +556,9 @@ describe("ConceptGraphPanel — scale features", () => {
 
       // Escape must exit local mode first, keeping the selection — so the
       // toggle flips off but stays enabled (a node is still selected).
-      fireEvent.keyDown(
-        screen.getByTestId("concept-graph-canvas"),
-        { key: "Escape" },
-      );
+      fireEvent.keyDown(screen.getByTestId("concept-graph-canvas"), {
+        key: "Escape",
+      });
       await waitFor(() =>
         expect(localToggle).toHaveAttribute("aria-pressed", "false"),
       );

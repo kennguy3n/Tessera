@@ -21,10 +21,7 @@ import {
   MermaidEnvironmentError,
   detectDiagramType,
 } from "../../services/mermaidRenderer";
-import {
-  DEBOUNCE_MS,
-  DEFAULT_DSL,
-} from "./mermaidExtensionInternals";
+import { DEBOUNCE_MS, DEFAULT_DSL } from "./mermaidExtensionInternals";
 
 export interface MermaidNodeAttrs {
   dsl: string;
@@ -74,10 +71,7 @@ export const MermaidNode = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    return [
-      "div",
-      mergeAttributes(HTMLAttributes, { "data-type": "mermaid" }),
-    ];
+    return ["div", mergeAttributes(HTMLAttributes, { "data-type": "mermaid" })];
   },
 
   addNodeView() {

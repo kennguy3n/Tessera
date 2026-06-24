@@ -7,7 +7,11 @@ vi.mock("electron", () => ({
   app: { getPath: vi.fn().mockReturnValue("/tmp") },
 }));
 
-import { syncOneDrive, disconnectOneDrive, __test as oneDriveTest } from "../ipc/connectors/onedrive";
+import {
+  syncOneDrive,
+  disconnectOneDrive,
+  __test as oneDriveTest,
+} from "../ipc/connectors/onedrive";
 import { readManifest } from "../ipc/connectors/syncDir";
 
 interface FakeSource {
@@ -52,7 +56,9 @@ async function makeTempDir(): Promise<string> {
  * stream — streams are one-shot, so reusing one across two downloads
  * would yield an empty body on the second read.
  */
-function streamBody(data: ArrayBuffer | Uint8Array): ReadableStream<Uint8Array> {
+function streamBody(
+  data: ArrayBuffer | Uint8Array,
+): ReadableStream<Uint8Array> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -169,7 +175,11 @@ describe("OneDrive sync", () => {
         ok: true,
         body: streamBody(new TextEncoder().encode("v2!")),
       });
-    const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
+    const result = await syncOneDrive({
+      accessToken: "AT",
+      userDataDir,
+      bridge,
+    });
     expect(result.modified).toBe(1);
     expect(bridge.reindexed).toContain(firstAdded.id);
   });
@@ -206,7 +216,11 @@ describe("OneDrive sync", () => {
         "@odata.deltaLink": "https://example.com/delta-3",
       }),
     });
-    const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
+    const result = await syncOneDrive({
+      accessToken: "AT",
+      userDataDir,
+      bridge,
+    });
     expect(result.removed).toBe(1);
     expect(bridge.removed).toContain(addedSource.id);
   });
@@ -227,7 +241,11 @@ describe("OneDrive sync", () => {
           "@odata.deltaLink": "https://example.com/delta-2",
         }),
       });
-    const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
+    const result = await syncOneDrive({
+      accessToken: "AT",
+      userDataDir,
+      bridge,
+    });
     expect(result.added).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -328,7 +346,10 @@ describe("OneDrive sync", () => {
     // And the delta marker must NOT have advanced past page 1 — we
     // never reached a deltaLink, so the next sync re-walks (which is
     // idempotent because the manifest already has the item).
-    const deltaRaw = await fsp.readFile(oneDriveTest.deltaStatePath(userDataDir), "utf8");
+    const deltaRaw = await fsp.readFile(
+      oneDriveTest.deltaStatePath(userDataDir),
+      "utf8",
+    );
     expect(JSON.parse(deltaRaw)).toEqual({ deltaLink: null });
   });
 
@@ -374,7 +395,8 @@ describe("OneDrive sync", () => {
               name: "section",
               size: 4,
               file: { mimeType: "application/onenote" },
-              "@microsoft.graph.downloadUrl": "https://example.com/onenote-mime",
+              "@microsoft.graph.downloadUrl":
+                "https://example.com/onenote-mime",
             },
             {
               id: "skip-1",
@@ -391,9 +413,16 @@ describe("OneDrive sync", () => {
       .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) })
       .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) })
       .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) })
-      .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) });
+      .mockResolvedValueOnce({
+        ok: true,
+        body: streamBody(new ArrayBuffer(4)),
+      });
 
-    const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
+    const result = await syncOneDrive({
+      accessToken: "AT",
+      userDataDir,
+      bridge,
+    });
     expect(result.added).toBe(4);
     const paths = bridge.added.map((s) => s.path).sort();
     expect(paths.some((p) => p.endsWith(".epub"))).toBe(true);
@@ -417,35 +446,47 @@ describe("OneDrive sync", () => {
   // truthy so only genuine files are considered.
   // ---------------------------------------------------------------
   it("skips non-file items even when their name matches the extension allowlist", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        value: [
-          {
-            id: "remote-1",
-            name: "shared-report.docx",
-            size: 1234,
-            // `file` facet deliberately omitted — this is a remote-item
-            // shortcut or a package, NOT a downloadable file.
-            "@microsoft.graph.downloadUrl": "https://example.com/should-not-be-called",
-          },
-          {
-            id: "real-1",
-            name: "real-report.docx",
-            size: 1234,
-            file: { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
-            "@microsoft.graph.downloadUrl": "https://example.com/real",
-          },
-        ],
-        "@odata.deltaLink": "https://example.com/delta-2",
-      }),
-    })
-    // Only ONE download is expected — for the real file. If the
-    // gate is missing the test will fail because no second mock is
-    // queued for the shortcut's would-be download.
-    .mockResolvedValueOnce({ ok: true, body: streamBody(new ArrayBuffer(4)) });
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          value: [
+            {
+              id: "remote-1",
+              name: "shared-report.docx",
+              size: 1234,
+              // `file` facet deliberately omitted — this is a remote-item
+              // shortcut or a package, NOT a downloadable file.
+              "@microsoft.graph.downloadUrl":
+                "https://example.com/should-not-be-called",
+            },
+            {
+              id: "real-1",
+              name: "real-report.docx",
+              size: 1234,
+              file: {
+                mimeType:
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              },
+              "@microsoft.graph.downloadUrl": "https://example.com/real",
+            },
+          ],
+          "@odata.deltaLink": "https://example.com/delta-2",
+        }),
+      })
+      // Only ONE download is expected — for the real file. If the
+      // gate is missing the test will fail because no second mock is
+      // queued for the shortcut's would-be download.
+      .mockResolvedValueOnce({
+        ok: true,
+        body: streamBody(new ArrayBuffer(4)),
+      });
 
-    const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
+    const result = await syncOneDrive({
+      accessToken: "AT",
+      userDataDir,
+      bridge,
+    });
     expect(result.added).toBe(1);
     expect(bridge.added).toHaveLength(1);
     // Local filenames are derived from sanitiseRemoteId(item.id) + ext

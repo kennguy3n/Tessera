@@ -2,10 +2,7 @@ import { ChildProcess, spawn, SpawnOptions } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { buildSpawnEnv } from "./sidecar";
-import {
-  writePidFileSync,
-  clearPidFileSync,
-} from "./sidecarPidRegistry";
+import { writePidFileSync, clearPidFileSync } from "./sidecarPidRegistry";
 
 /**
  * Diffusion sidecar configuration. Mirrors the shape of
@@ -193,7 +190,9 @@ export class DiffusionSidecar {
 
   setModelPath(modelPath: string): void {
     if (this._isRunning) {
-      throw new Error("Cannot change model path while diffusion sidecar is running");
+      throw new Error(
+        "Cannot change model path while diffusion sidecar is running",
+      );
     }
     this.options.modelPath = modelPath;
   }
@@ -272,7 +271,11 @@ export class DiffusionSidecar {
       detached: this.options.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     };
-    this.process = spawn(this.options.binaryPath, this.buildSpawnArgs(), spawnOpts);
+    this.process = spawn(
+      this.options.binaryPath,
+      this.buildSpawnArgs(),
+      spawnOpts,
+    );
 
     // Mirror ModelSidecar's lifecycle-orphan mitigations exactly:
     //   1. unref() so the detached child doesn't pin Node's event
@@ -280,7 +283,10 @@ export class DiffusionSidecar {
     //   2. Synchronous process.on("exit") fallback that SIGKILLs the
     //      child's process group so the diffusion process doesn't
     //      survive the parent as an orphan holding port 8386.
-    if (this.options.platform !== "win32" && typeof this.process.pid === "number") {
+    if (
+      this.options.platform !== "win32" &&
+      typeof this.process.pid === "number"
+    ) {
       this.process.unref();
       const pid = this.process.pid;
       const handler = () => {
@@ -338,7 +344,10 @@ export class DiffusionSidecar {
       if (code !== 0 && code !== null) {
         this.restartCount++;
         if (this.restartCount <= MAX_RESTART_RETRIES) {
-          const delay = Math.min(3000 * Math.pow(2, this.restartCount - 1), 60_000);
+          const delay = Math.min(
+            3000 * Math.pow(2, this.restartCount - 1),
+            60_000,
+          );
           this.restartTimer = setTimeout(() => {
             this.restartTimer = null;
             this.start().catch(() => {});
@@ -581,7 +590,9 @@ export function resolveDiffusionBinary(
   // explanation of why this needs three levels of ".." to reach the
   // repo root in the dev layout).
   const candidates = [
-    resourcesPath ? path.join(resourcesPath, "sidecars", "sd-server", binaryName) : null,
+    resourcesPath
+      ? path.join(resourcesPath, "sidecars", "sd-server", binaryName)
+      : null,
     path.join(appPath, "sidecars", "sd-server", binaryName),
     path.join(appPath, "..", "sidecars", "sd-server", binaryName),
     path.join(scriptDirname, "..", "..", "sidecars", "sd-server", binaryName),

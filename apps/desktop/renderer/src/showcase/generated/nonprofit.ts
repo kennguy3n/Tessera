@@ -4,8 +4,18 @@ import type { ShowcaseDataset } from "../types";
 
 export const nonprofitDataset: ShowcaseDataset = {
   id: "nonprofit",
-  persona: {"name": "Sofia Alvarez", "role": "Development Director", "org": "Riverside Youth Coalition", "market": "Nonprofit (community services)", "blurb": "Sofia raises the money that keeps after-school programs running. She turns messy program notes and outcomes data into funder-ready grant proposals, then reports impact back to her board.\n"},
-  sourceFiles: ["01-program-notes-and-outcomes.md", "02-funder-rfp-and-board-context.md"],
+  persona: {
+    name: "Sofia Alvarez",
+    role: "Development Director",
+    org: "Riverside Youth Coalition",
+    market: "Nonprofit (community services)",
+    blurb:
+      "Sofia raises the money that keeps after-school programs running. She turns messy program notes and outcomes data into funder-ready grant proposals, then reports impact back to her board.\n",
+  },
+  sourceFiles: [
+    "01-program-notes-and-outcomes.md",
+    "02-funder-rfp-and-board-context.md",
+  ],
   artifacts: [
     {
       slug: "grant-proposal",

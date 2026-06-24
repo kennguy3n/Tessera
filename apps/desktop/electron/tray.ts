@@ -1,8 +1,4 @@
-import {
-  Tray,
-  Menu,
-  type MenuItemConstructorOptions,
-} from "electron";
+import { Tray, Menu, type MenuItemConstructorOptions } from "electron";
 import { createTrayImage } from "./trayIcon";
 
 /**
@@ -61,9 +57,7 @@ export function createTray(actions: {
   if (tray) return tray;
   tray = new Tray(createTrayImage());
   tray.setToolTip("Tessera");
-  tray.setContextMenu(
-    Menu.buildFromTemplate(buildTrayMenuTemplate(actions)),
-  );
+  tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate(actions)));
   // Left-click (Windows/Linux) and a plain click (macOS) bring the
   // window back — the same affordance as the "Show Tessera" menu item.
   tray.on("click", () => actions.onShow());

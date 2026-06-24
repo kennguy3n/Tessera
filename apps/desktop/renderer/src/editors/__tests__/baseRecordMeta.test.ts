@@ -93,10 +93,7 @@ describe("touchModified", () => {
   });
 
   it("preserves an existing created timestamp", () => {
-    const out = touchModified(
-      { id: "r1", [RECORD_CREATED_KEY]: ISO_A },
-      ISO_B,
-    );
+    const out = touchModified({ id: "r1", [RECORD_CREATED_KEY]: ISO_A }, ISO_B);
     expect(out[RECORD_CREATED_KEY]).toBe(ISO_A);
     expect(out[RECORD_MODIFIED_KEY]).toBe(ISO_B);
   });
@@ -108,7 +105,12 @@ describe("getComments", () => {
   });
 
   it("tolerates a non-array / junk shape", () => {
-    expect(getComments({ id: "r1", [RECORD_COMMENTS_KEY]: "nope" } as unknown as BaseRecord)).toEqual([]);
+    expect(
+      getComments({
+        id: "r1",
+        [RECORD_COMMENTS_KEY]: "nope",
+      } as unknown as BaseRecord),
+    ).toEqual([]);
   });
 
   it("filters out malformed comment elements", () => {
@@ -172,7 +174,12 @@ describe("addComment", () => {
 
 describe("removeComment", () => {
   it("removes a comment by id", () => {
-    const withTwo = addComment(addComment({ id: "r1" }, "A", "one", ISO_A), "B", "two", ISO_B);
+    const withTwo = addComment(
+      addComment({ id: "r1" }, "A", "one", ISO_A),
+      "B",
+      "two",
+      ISO_B,
+    );
     const [c1] = getComments(withTwo);
     const out = removeComment(withTwo, c1.id);
     const remaining = getComments(out);

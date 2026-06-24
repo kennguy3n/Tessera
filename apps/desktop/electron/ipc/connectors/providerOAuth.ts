@@ -361,8 +361,7 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     authUrl: "https://slack.com/oauth/v2/authorize",
     tokenUrl: "https://slack.com/api/oauth.v2.access",
     // Read-only history/read scopes for channels, groups and users.
-    scope:
-      "channels:history channels:read groups:history users:read team:read",
+    scope: "channels:history channels:read groups:history users:read team:read",
     redirectPort: 9883,
     extraAuthorizeParams: {},
     // Slack v2 tokens are non-expiring unless workspace token rotation
@@ -894,7 +893,8 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
  * the same contract for the whole roster.
  */
 function assertOAuthConfigInvariant(config: ProviderOAuthConfig): void {
-  const hasFixed = config.authUrl !== undefined || config.tokenUrl !== undefined;
+  const hasFixed =
+    config.authUrl !== undefined || config.tokenUrl !== undefined;
   const hasInstance = config.instanceUrls !== undefined;
   if (hasFixed && hasInstance) {
     throw new Error(
@@ -908,7 +908,11 @@ function assertOAuthConfigInvariant(config: ProviderOAuthConfig): void {
   }
   if (hasInstance) {
     const t = config.instanceUrls!;
-    for (const p of [t.authorizePath, t.tokenPath, ...(t.revokePath ? [t.revokePath] : [])]) {
+    for (const p of [
+      t.authorizePath,
+      t.tokenPath,
+      ...(t.revokePath ? [t.revokePath] : []),
+    ]) {
       if (!p.startsWith("/")) {
         throw new Error(
           `OAuth config for ${config.provider} has a non-absolute instance path "${p}" (must begin with "/").`,
@@ -922,7 +926,9 @@ for (const cfg of Object.values(PROVIDER_OAUTH_CONFIGS)) {
   assertOAuthConfigInvariant(cfg);
 }
 
-export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfig {
+export function getProviderOAuthConfig(
+  provider: ProviderId,
+): ProviderOAuthConfig {
   const cfg = PROVIDER_OAUTH_CONFIGS[provider];
   if (!cfg) throw new Error(`Unknown OAuth provider: ${provider}`);
   return cfg;
@@ -1315,7 +1321,9 @@ export async function runRedirectServer(
           "<html><body><h2>Invalid response</h2><p>State mismatch or missing code.</p></body></html>",
         );
         settleOnce(() =>
-          reject(new Error("Invalid OAuth callback: state mismatch or missing code")),
+          reject(
+            new Error("Invalid OAuth callback: state mismatch or missing code"),
+          ),
         );
         return;
       }
@@ -1365,7 +1373,11 @@ export async function runRedirectServer(
 
     timeoutId = setTimeout(() => {
       settleOnce(() =>
-        reject(new Error(`OAuth flow for ${config.provider} timed out after 5 minutes`)),
+        reject(
+          new Error(
+            `OAuth flow for ${config.provider} timed out after 5 minutes`,
+          ),
+        ),
       );
     }, 300_000);
   });
@@ -1405,9 +1417,9 @@ export async function exchangeAuthorizationCode(
   };
 
   if (config.basicAuth) {
-    const auth = Buffer.from(`${params.clientId}:${params.clientSecret}`).toString(
-      "base64",
-    );
+    const auth = Buffer.from(
+      `${params.clientId}:${params.clientSecret}`,
+    ).toString("base64");
     headers.Authorization = `Basic ${auth}`;
   } else {
     body.set("client_id", params.clientId);
@@ -1447,7 +1459,8 @@ export async function exchangeAuthorizationCode(
   const accessTokenField = config.accessTokenField ?? "access_token";
   const fieldValue = raw[accessTokenField];
   const accessToken =
-    (typeof fieldValue === "string" ? fieldValue : undefined) ?? raw.access_token;
+    (typeof fieldValue === "string" ? fieldValue : undefined) ??
+    raw.access_token;
 
   if (!accessToken) {
     throw new Error(
@@ -1533,9 +1546,9 @@ export async function refreshProviderToken(
     Accept: "application/json",
   };
   if (config.basicAuth) {
-    const auth = Buffer.from(`${params.clientId}:${params.clientSecret}`).toString(
-      "base64",
-    );
+    const auth = Buffer.from(
+      `${params.clientId}:${params.clientSecret}`,
+    ).toString("base64");
     headers.Authorization = `Basic ${auth}`;
   } else {
     body.set("client_id", params.clientId);
@@ -1572,7 +1585,8 @@ export async function refreshProviderToken(
   const accessTokenField = config.accessTokenField ?? "access_token";
   const fieldValue = raw[accessTokenField];
   const accessToken =
-    (typeof fieldValue === "string" ? fieldValue : undefined) ?? raw.access_token;
+    (typeof fieldValue === "string" ? fieldValue : undefined) ??
+    raw.access_token;
 
   if (!accessToken) {
     throw new Error(

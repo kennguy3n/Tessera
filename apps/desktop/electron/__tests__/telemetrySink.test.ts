@@ -271,9 +271,7 @@ describe("flushAsync — re-enqueue cap enforcement", () => {
     hoisted.userData.value = path.join(tmpDir, "does", "not", "exist");
     enableTelemetry();
 
-    const { TELEMETRY_BUFFER_MAX_EVENTS } = await import(
-      "../../shared/types"
-    );
+    const { TELEMETRY_BUFFER_MAX_EVENTS } = await import("../../shared/types");
 
     // Fill the in-memory buffer up to the cap (recordCounter itself
     // applies the cap on push via shift()), then flush — flush will

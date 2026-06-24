@@ -48,11 +48,11 @@ import * as path from "path";
 
 import type { NativeBridge } from "../../appState";
 import type { StoredTokens } from "../../tokenVault";
-import { authConfigFields, connectorTokenType } from "../../../shared/connectorConfig";
 import {
-  resolveProviderOAuthConfig,
-  type ProviderId,
-} from "./providerOAuth";
+  authConfigFields,
+  connectorTokenType,
+} from "../../../shared/connectorConfig";
+import { resolveProviderOAuthConfig, type ProviderId } from "./providerOAuth";
 import { getRequestedScopes } from "../../oauthScope";
 import {
   SourcePathIndex,
@@ -238,7 +238,10 @@ export function wireToStored(
     accessToken: wire.access_token,
     refreshToken: wire.refresh_token ?? previous?.refreshToken ?? null,
     expiresAt: Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now(),
-    scopes: wire.scope.length > 0 ? wire.scope.split(/\s+/) : (previous?.scopes ?? []),
+    scopes:
+      wire.scope.length > 0
+        ? wire.scope.split(/\s+/)
+        : (previous?.scopes ?? []),
     clientId: previous?.clientId,
     clientSecret: previous?.clientSecret,
     // A refresh/exchange never re-collects per-target config, so carry
@@ -277,7 +280,10 @@ export function buildAuthConfig(
   // to their constants unchanged. `connectorConfig` may be absent for
   // whole-account providers — the resolver only requires it for
   // per-instance ones.
-  const oauth = resolveProviderOAuthConfig(provider, tokens?.connectorConfig ?? null);
+  const oauth = resolveProviderOAuthConfig(
+    provider,
+    tokens?.connectorConfig ?? null,
+  );
   const instanceField = oauth.instanceUrls?.instanceField;
   const bag: Record<string, unknown> = {
     provider,

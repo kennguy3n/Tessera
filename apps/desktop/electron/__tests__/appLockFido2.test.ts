@@ -437,7 +437,10 @@ describe("FIDO2 assertion verification", () => {
     const opts = getFido2AssertionOptions();
     if (opts === null) throw new Error("expected options");
     // Use a "webauthn.create" type for an unlock assertion.
-    const clientDataJson = makeClientDataJson("webauthn.create", opts.challenge);
+    const clientDataJson = makeClientDataJson(
+      "webauthn.create",
+      opts.challenge,
+    );
     const authData = makeAuthenticatorData(opts.rpId, true);
     const result = verifyFido2Assertion({
       credentialId: CREDENTIAL_ID,

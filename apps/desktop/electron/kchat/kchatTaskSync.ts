@@ -79,8 +79,7 @@ const PREFIX_RE = /^(?:[-*]\s+)?(.*)$/;
  * Inline priority hint: `!high`, `(priority: critical)`,
  * `[priority=low]`. Returns the matched priority or null.
  */
-const PRIORITY_RE =
-  /(?:!|priority\s*[:=]\s*)\b(low|medium|high|critical)\b/i;
+const PRIORITY_RE = /(?:!|priority\s*[:=]\s*)\b(low|medium|high|critical)\b/i;
 
 /** Inline due-date hint: `due: 2026-06-10` / `due 2026-06-10`. */
 const DUE_RE = /due\s*[:=]?\s*(\d{4}-\d{2}-\d{2})/i;

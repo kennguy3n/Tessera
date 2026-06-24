@@ -108,7 +108,12 @@ export default function HybridSearchCard() {
   if (!config) {
     return (
       <Card>
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Search</h2>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-md)" }}
+        >
+          Search
+        </h2>
         <p style={{ color: "var(--color-text-secondary)" }}>
           Loading search config…
         </p>
@@ -122,7 +127,12 @@ export default function HybridSearchCard() {
 
   return (
     <Card>
-      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>Search</h2>
+      <h2
+        className="section-title"
+        style={{ marginBottom: "var(--spacing-md)" }}
+      >
+        Search
+      </h2>
       <p
         style={{
           fontSize: "var(--font-size-sm)",
@@ -130,10 +140,9 @@ export default function HybridSearchCard() {
           marginBottom: "var(--spacing-md)",
         }}
       >
-        Controls how Tessera ranks search hits. Hybrid mode blends
-        lexical (BM25) and semantic (vector) scoring; recency decay
-        biases recently-modified sources higher when content
-        similarity is equal.
+        Controls how Tessera ranks search hits. Hybrid mode blends lexical
+        (BM25) and semantic (vector) scoring; recency decay biases
+        recently-modified sources higher when content similarity is equal.
       </p>
 
       <div
@@ -252,8 +261,8 @@ export default function HybridSearchCard() {
             opacity: decayEnabled ? 1 : 0.5,
           }}
         >
-          Sources older than the half-life contribute half as much to
-          ranking as a fresh source with the same content.
+          Sources older than the half-life contribute half as much to ranking as
+          a fresh source with the same content.
         </p>
       </div>
 

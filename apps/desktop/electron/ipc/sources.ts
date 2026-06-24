@@ -51,14 +51,17 @@ export function registerSourcesHandlers(): void {
     },
   );
 
-  idempotentHandle("sources:addLocalFile", async (_event, filePath: unknown) => {
-    const validated = assertString(filePath, "filePath", { maxLen: 4096 });
-    const bridge = getBridge();
-    if (bridge) {
-      return bridge.bridgeAddLocalFile(validated);
-    }
-    throw new Error("Native bridge not available");
-  });
+  idempotentHandle(
+    "sources:addLocalFile",
+    async (_event, filePath: unknown) => {
+      const validated = assertString(filePath, "filePath", { maxLen: 4096 });
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeAddLocalFile(validated);
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
 
   idempotentHandle("sources:list", async () => {
     const bridge = getBridge();

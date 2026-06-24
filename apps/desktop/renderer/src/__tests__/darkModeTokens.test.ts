@@ -240,7 +240,7 @@ describe("dark-mode CSS variable enforcement", () => {
     ).toEqual([]);
   });
 
-  it("[data-theme=\"dark\"] and @media (prefers-color-scheme: dark) declare the same tokens with identical values", () => {
+  it('[data-theme="dark"] and @media (prefers-color-scheme: dark) declare the same tokens with identical values', () => {
     // The explicit-Dark scope and the System-Dark media query block
     // are duplicated, and a future patch could update one without
     // the other — silently giving users in System-Dark different
@@ -290,7 +290,7 @@ describe("dark-mode CSS variable enforcement", () => {
     ).toEqual({ onlyInDark: [], onlyInMedia: [], valueDrift: [] });
   });
 
-  it("every primary palette / surface / text token is overridden in [data-theme=\"dark\"]", () => {
+  it('every primary palette / surface / text token is overridden in [data-theme="dark"]', () => {
     // The contract: the dark scope must override every token
     // whose light-mode value would be wrong in dark mode. We pin
     // an explicit list (`REQUIRED_DARK_OVERRIDES`, declared at
@@ -428,10 +428,7 @@ describe("dark-mode CSS variable enforcement", () => {
     // them.
     const bareColorViolations: string[] = [];
     for (const cls of KCHAT_SURFACE_CLASSES) {
-      const ruleRe = new RegExp(
-        `\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`,
-        "g",
-      );
+      const ruleRe = new RegExp(`\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`, "g");
       let m: RegExpExecArray | null;
       while ((m = ruleRe.exec(text)) !== null) {
         const body = m[1];
@@ -501,10 +498,7 @@ describe("dark-mode CSS variable enforcement", () => {
     // sub-test regex but missed this one).
     const unknownTokens: string[] = [];
     for (const cls of KCHAT_SURFACE_CLASSES) {
-      const ruleRe = new RegExp(
-        `\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`,
-        "g",
-      );
+      const ruleRe = new RegExp(`\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`, "g");
       let m: RegExpExecArray | null;
       while ((m = ruleRe.exec(text)) !== null) {
         const body = m[1];

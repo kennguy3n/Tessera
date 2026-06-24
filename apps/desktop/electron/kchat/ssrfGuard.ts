@@ -126,9 +126,7 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
     if (h.startsWith("fe80:")) return true;
     if (h.startsWith("fc") || h.startsWith("fd")) return true;
   }
-  const mappedDec = h.match(
-    /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
-  );
+  const mappedDec = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
   if (mappedDec) return isPrivateOrLoopbackHost(mappedDec[1]);
   const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (mappedHex) {
@@ -234,7 +232,7 @@ export async function enforceKchatServerUrl(
   // PR #61: `??` precedence relative to comparison operators is a
   // common source of confusion, so make the grouping explicit.
   const allowInternal =
-    opts?.allowInternal ?? (readEnv("TESSERA_KCHAT_ALLOW_INTERNAL") === "1");
+    opts?.allowInternal ?? readEnv("TESSERA_KCHAT_ALLOW_INTERNAL") === "1";
   if (allowInternal) {
     return parsed;
   }

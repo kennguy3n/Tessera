@@ -6,7 +6,11 @@ import {
   type DragEvent as ReactDragEvent,
   type ReactNode,
 } from "react";
-import { getActiveTab, type LeafPane, type SplitDirection } from "../utils/paneTree";
+import {
+  getActiveTab,
+  type LeafPane,
+  type SplitDirection,
+} from "../utils/paneTree";
 import { useWorkspace } from "./workspaceContext";
 import { TAB_MIME, readTabDrag } from "./tabDrag";
 import TabStrip from "./TabStrip";
@@ -88,24 +92,21 @@ export default function Pane({ leaf }: PaneProps): ReactNode {
     }, SCROLL_REPORT_MS);
   }, [active.id, leaf.id, reportTabScroll]);
 
-  const edgeFromEvent = useCallback(
-    (e: ReactDragEvent): DropEdge => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      // Distance to each edge; the nearest wins, so a drop near a corner
-      // resolves to whichever side the pointer is closest to.
-      const dists: Array<[DropEdge, number]> = [
-        ["left", x],
-        ["right", 1 - x],
-        ["top", y],
-        ["bottom", 1 - y],
-      ];
-      dists.sort((a, b) => a[1] - b[1]);
-      return dists[0][0];
-    },
-    [],
-  );
+  const edgeFromEvent = useCallback((e: ReactDragEvent): DropEdge => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    // Distance to each edge; the nearest wins, so a drop near a corner
+    // resolves to whichever side the pointer is closest to.
+    const dists: Array<[DropEdge, number]> = [
+      ["left", x],
+      ["right", 1 - x],
+      ["top", y],
+      ["bottom", 1 - y],
+    ];
+    dists.sort((a, b) => a[1] - b[1]);
+    return dists[0][0];
+  }, []);
 
   const onDragOver = useCallback(
     (e: ReactDragEvent) => {

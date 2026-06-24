@@ -117,9 +117,12 @@ function normalizeHops(hops: number): number {
  */
 export function normalizeFilter(filter: PresetFilter): PresetFilter {
   return {
-    disabledRelations: dedupe(filter.disabledRelations.filter(isConceptRelation)),
+    disabledRelations: dedupe(
+      filter.disabledRelations.filter(isConceptRelation),
+    ),
     disabledStates: dedupe(filter.disabledStates.filter(isConceptNodeState)),
-    scopeFilter: typeof filter.scopeFilter === "string" ? filter.scopeFilter : "all",
+    scopeFilter:
+      typeof filter.scopeFilter === "string" ? filter.scopeFilter : "all",
     localMode: !!filter.localMode,
     localHops: normalizeHops(filter.localHops),
     labelsAll: !!filter.labelsAll,
@@ -161,7 +164,9 @@ export function upsertPreset(
     return next;
   }
   const next = [...presets, preset];
-  return next.length > MAX_PRESETS ? next.slice(next.length - MAX_PRESETS) : next;
+  return next.length > MAX_PRESETS
+    ? next.slice(next.length - MAX_PRESETS)
+    : next;
 }
 
 /**
@@ -294,7 +299,9 @@ function parsePreset(value: unknown): ConceptGraphPreset | null {
  * `defaultPresetId` that doesn't resolve to a surviving preset is cleared
  * so the store can never point at a ghost default.
  */
-export function parsePresetStore(raw: string | null): ConceptGraphPresetStore | null {
+export function parsePresetStore(
+  raw: string | null,
+): ConceptGraphPresetStore | null {
   if (raw === null) return null;
   let parsed: unknown;
   try {
@@ -321,7 +328,8 @@ export function parsePresetStore(raw: string | null): ConceptGraphPresetStore | 
 
   const rawDefault =
     typeof rec.defaultPresetId === "string" ? rec.defaultPresetId : null;
-  const defaultPresetId = rawDefault && seen.has(rawDefault) ? rawDefault : null;
+  const defaultPresetId =
+    rawDefault && seen.has(rawDefault) ? rawDefault : null;
 
   return { presets, defaultPresetId };
 }
@@ -343,8 +351,9 @@ export function serializePresetStore(store: ConceptGraphPresetStore): string {
 export function loadPresetStore(scopeId: string): ConceptGraphPresetStore {
   try {
     return (
-      parsePresetStore(window.localStorage.getItem(presetStorageKey(scopeId))) ??
-      defaultPresetStore()
+      parsePresetStore(
+        window.localStorage.getItem(presetStorageKey(scopeId)),
+      ) ?? defaultPresetStore()
     );
   } catch {
     return defaultPresetStore();

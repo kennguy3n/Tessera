@@ -48,10 +48,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import {
-  PICK_IMAGE_EXTENSIONS,
-  registerDialogHandlers,
-} from "../ipc/dialog";
+import { PICK_IMAGE_EXTENSIONS, registerDialogHandlers } from "../ipc/dialog";
 
 function getHandler(
   channel: string,
@@ -147,10 +144,7 @@ describe("dialog:pickImage handler", () => {
       filters: Array<{ name: string; extensions: string[] }>;
     };
     expect(passedOptions.title).toBe("Choose an image");
-    expect(passedOptions.properties).toEqual([
-      "openFile",
-      "dontAddToRecent",
-    ]);
+    expect(passedOptions.properties).toEqual(["openFile", "dontAddToRecent"]);
     expect(passedOptions.filters).toHaveLength(1);
     expect(passedOptions.filters[0]?.extensions).toEqual([
       "jpg",

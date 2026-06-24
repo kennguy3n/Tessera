@@ -79,12 +79,16 @@ export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         e.stopPropagation();
-        setHighlight((h) => (filtered.length === 0 ? 0 : (h + 1) % filtered.length));
+        setHighlight((h) =>
+          filtered.length === 0 ? 0 : (h + 1) % filtered.length,
+        );
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         e.stopPropagation();
         setHighlight((h) =>
-          filtered.length === 0 ? 0 : (h - 1 + filtered.length) % filtered.length,
+          filtered.length === 0
+            ? 0
+            : (h - 1 + filtered.length) % filtered.length,
         );
       } else if (e.key === "Enter" || e.key === "Tab") {
         if (filtered.length === 0) return;
@@ -145,8 +149,10 @@ export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
     "media",
     "inline",
   ];
-  const groups: { category: SlashCommand["category"]; items: SlashCommand[] }[] =
-    [];
+  const groups: {
+    category: SlashCommand["category"];
+    items: SlashCommand[];
+  }[] = [];
   for (const category of groupedOrder) {
     const items = filtered.filter((c) => c.category === category);
     if (items.length > 0) groups.push({ category, items });
@@ -187,13 +193,17 @@ export function SlashMenu({ trigger, onSelect, onDismiss }: SlashMenuProps) {
                   role="option"
                   aria-selected={active}
                   className={
-                    active ? "slash-menu-item slash-menu-item-active" : "slash-menu-item"
+                    active
+                      ? "slash-menu-item slash-menu-item-active"
+                      : "slash-menu-item"
                   }
                   onMouseEnter={() => setHighlight(flatIndex)}
                   onClick={() => select(flatIndex)}
                 >
                   <div className="slash-menu-item-label">{cmd.label}</div>
-                  <div className="slash-menu-item-description">{cmd.description}</div>
+                  <div className="slash-menu-item-description">
+                    {cmd.description}
+                  </div>
                 </button>
               );
             })}

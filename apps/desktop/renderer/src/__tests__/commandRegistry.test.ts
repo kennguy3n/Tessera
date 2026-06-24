@@ -125,7 +125,9 @@ describe("commandRegistry", () => {
   });
 
   it("exposes substrate decay + synthesis commands", () => {
-    const decay = COMMAND_REGISTRY.find((c) => c.id === "substrate:runDecaySweep");
+    const decay = COMMAND_REGISTRY.find(
+      (c) => c.id === "substrate:runDecaySweep",
+    );
     const synth = COMMAND_REGISTRY.find(
       (c) => c.id === "substrate:triggerSynthesis",
     );

@@ -24,9 +24,7 @@ import type { ChartSpec } from "../sheetEditorTypes";
 const LAYOUT: ChartLayout = { width: 320, height: 200, pad: CHART_PAD };
 
 /** A 3-row × 2-col grid accessor used across the extraction tests. */
-function gridAccessors(
-  cells: (number | string | null)[][],
-): {
+function gridAccessors(cells: (number | string | null)[][]): {
   valueAt: (r: number, c: number) => number | null;
   textAt: (r: number, c: number) => string;
 } {
@@ -211,7 +209,9 @@ describe("extractChartData", () => {
 
   it("returns null for a malformed range", () => {
     const { valueAt, textAt } = gridAccessors([[1]]);
-    expect(extractChartData(spec({ range: "nope" }), valueAt, textAt)).toBeNull();
+    expect(
+      extractChartData(spec({ range: "nope" }), valueAt, textAt),
+    ).toBeNull();
   });
 });
 

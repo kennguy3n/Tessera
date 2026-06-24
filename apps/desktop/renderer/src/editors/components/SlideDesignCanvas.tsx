@@ -134,7 +134,11 @@ function DesignBlock({
 }: DesignBlockProps) {
   return (
     <div className="slide-design-block" data-block-type={block.type}>
-      <div className="slide-design-block-controls" role="group" aria-label="Block controls">
+      <div
+        className="slide-design-block-controls"
+        role="group"
+        aria-label="Block controls"
+      >
         <button
           type="button"
           className="slide-design-ctl"
@@ -343,11 +347,7 @@ function DesignBullets({
       }
       return;
     }
-    if (
-      e.key === "Delete" &&
-      collapsed &&
-      selectionStart === value.length
-    ) {
+    if (e.key === "Delete" && collapsed && selectionStart === value.length) {
       const edit = mergeBulletForward(lines, index);
       if (edit) {
         e.preventDefault();

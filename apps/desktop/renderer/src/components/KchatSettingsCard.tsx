@@ -50,7 +50,9 @@ interface KchatSettingsCardProps {
   api?: typeof window.tessera.kchat;
 }
 
-export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) {
+export default function KchatSettingsCard({
+  api,
+}: KchatSettingsCardProps = {}) {
   const kchat = api ?? window.tessera?.kchat;
   const toast = useToast();
   const serverId = useId();
@@ -188,10 +190,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
       return;
     }
     if (!/^https?:\/\//i.test(serverUrl.trim())) {
-      toast.addToast(
-        "Server URL must start with http:// or https://",
-        "error",
-      );
+      toast.addToast("Server URL must start with http:// or https://", "error");
       return;
     }
     setBusy(true);
@@ -259,7 +258,8 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
 
   const connectedLabel = useMemo(() => {
     if (state.state !== "connected" || !state.user) return null;
-    const fullName = `${state.user.firstName ?? ""} ${state.user.lastName ?? ""}`.trim();
+    const fullName =
+      `${state.user.firstName ?? ""} ${state.user.lastName ?? ""}`.trim();
     return fullName
       ? `${fullName} (@${state.user.username})`
       : `@${state.user.username}`;
@@ -275,7 +275,12 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
 
   return (
     <Card data-testid="kchat-settings-card">
-      <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>KChat</h2>
+      <h2
+        className="section-title"
+        style={{ marginBottom: "var(--spacing-md)" }}
+      >
+        KChat
+      </h2>
       <p
         style={{
           fontSize: "var(--font-size-sm)",
@@ -283,11 +288,10 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
           marginBottom: "var(--spacing-md)",
         }}
       >
-        Connect to KChat (Mattermost-compatible) to share artifacts to
-        channels, index channel files as sources, and collaborate
-        with channel members in real time. The personal access token
-        is stored in the OS keychain and never leaves the main
-        process.
+        Connect to KChat (Mattermost-compatible) to share artifacts to channels,
+        index channel files as sources, and collaborate with channel members in
+        real time. The personal access token is stored in the OS keychain and
+        never leaves the main process.
       </p>
 
       {extensionDetected && (
@@ -298,8 +302,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
             padding: "var(--spacing-sm) var(--spacing-md)",
             border: "1px solid var(--color-success, #2c8a3d)",
             borderRadius: "var(--border-radius-md)",
-            background:
-              "var(--color-success-subtle, rgba(44,138,61,0.08))",
+            background: "var(--color-success-subtle, rgba(44,138,61,0.08))",
           }}
         >
           <p
@@ -319,11 +322,10 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
               marginBottom: "var(--spacing-sm)",
             }}
           >
-            The Tessera extension installed in KChat Desktop can open
-            sources, share artifacts, and trigger channel ingestion
-            without leaving the chat client. Both apps still
-            authenticate to the KChat server with their own
-            credentials.
+            The Tessera extension installed in KChat Desktop can open sources,
+            share artifacts, and trigger channel ingestion without leaving the
+            chat client. Both apps still authenticate to the KChat server with
+            their own credentials.
           </p>
           <button
             type="button"

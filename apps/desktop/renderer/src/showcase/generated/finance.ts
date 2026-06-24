@@ -4,7 +4,14 @@ import type { ShowcaseDataset } from "../types";
 
 export const financeDataset: ShowcaseDataset = {
   id: "finance",
-  persona: {"name": "Priya Nair", "role": "Commercial Credit Officer", "org": "Cascade Regional Bank", "market": "Finance (regional commercial bank)", "blurb": "Priya underwrites commercial loans. For every deal she assembles a credit memo that ties the borrower's financials, collateral and risks to a clear recommendation \u2014 and a multi-year projection the credit committee can interrogate.\n"},
+  persona: {
+    name: "Priya Nair",
+    role: "Commercial Credit Officer",
+    org: "Cascade Regional Bank",
+    market: "Finance (regional commercial bank)",
+    blurb:
+      "Priya underwrites commercial loans. For every deal she assembles a credit memo that ties the borrower's financials, collateral and risks to a clear recommendation \u2014 and a multi-year projection the credit committee can interrogate.\n",
+  },
   sourceFiles: ["01-borrower-financials.md", "02-market-and-risk-notes.md"],
   artifacts: [
     {

@@ -135,7 +135,7 @@ ungrouped on top, then "Currency (locale)" and "Date (locale)"
 **Engine separator limitation (the key constraint).** The format engine
 (`formulaEngine/format.ts`) **hardcodes `,` as the thousands separator and
 `.` as the decimal separator**, so a preset cannot render European-style
-`1.234,56`. What a preset *can* — and does — localise is derived from
+`1.234,56`. What a preset _can_ — and does — localise is derived from
 `Intl`:
 
 - the currency **symbol** (`€`, `£`, `¥`, `₹`, `CA$`, …), taken under a

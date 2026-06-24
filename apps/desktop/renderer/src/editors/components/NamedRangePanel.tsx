@@ -120,7 +120,9 @@ export function NamedRangePanel({
                     type="text"
                     value={range.range}
                     aria-label={`Reference for range ${idx + 1}`}
-                    onChange={(e) => updateRange(idx, { range: e.target.value })}
+                    onChange={(e) =>
+                      updateRange(idx, { range: e.target.value })
+                    }
                   />
                 </label>
                 <button

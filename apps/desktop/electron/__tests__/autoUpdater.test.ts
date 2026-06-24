@@ -105,9 +105,9 @@ describe("registerAutoUpdaterIpc — updates:setAutoUpdateEnabled validation", (
     ["undefined", undefined],
   ])("rejects %s and leaves config unchanged", async (_label, value) => {
     mocks.storedAutoUpdate.value = false;
-    await expect(
-      invoke("updates:setAutoUpdateEnabled", value),
-    ).rejects.toThrow(/must be a boolean/);
+    await expect(invoke("updates:setAutoUpdateEnabled", value)).rejects.toThrow(
+      /must be a boolean/,
+    );
     // Config remains untouched on rejection — `assertBoolean` throws
     // before `updateConfig` is reached.
     expect(mocks.storedAutoUpdate.value).toBe(false);

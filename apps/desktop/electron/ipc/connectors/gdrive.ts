@@ -73,7 +73,9 @@ async function streamResponseToFile(
     // stream implementations) but differ in their .d.ts identity, so we
     // bridge the nominal gap with a typed cast rather than `any`.
     await pipeline(
-      Readable.fromWeb(resp.body as unknown as NodeWebReadableStream<Uint8Array>),
+      Readable.fromWeb(
+        resp.body as unknown as NodeWebReadableStream<Uint8Array>,
+      ),
       createWriteStream(tmpPath),
     );
     const { size } = await fsp.stat(tmpPath);
@@ -111,7 +113,9 @@ async function readGdriveManifest(userDataDir: string): Promise<string[]> {
   try {
     const data = await fsp.readFile(manifestPathFor(userDataDir), "utf-8");
     const arr = JSON.parse(data) as unknown;
-    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+    return Array.isArray(arr)
+      ? arr.filter((x): x is string => typeof x === "string")
+      : [];
   } catch {
     return [];
   }
@@ -123,7 +127,11 @@ async function writeGdriveManifest(
 ): Promise<void> {
   const dir = syncDirFor(userDataDir, "gdrive");
   await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(manifestPathFor(userDataDir), JSON.stringify(paths), "utf8");
+  await fsp.writeFile(
+    manifestPathFor(userDataDir),
+    JSON.stringify(paths),
+    "utf8",
+  );
 }
 
 function fileIdFromLocalPath(p: string): string {
@@ -387,11 +395,11 @@ export async function disconnectGoogleDrive(
       }
     }
   }
-  await Promise.all(
-    manifest.map((p) => fsp.unlink(p).catch(() => undefined)),
-  );
+  await Promise.all(manifest.map((p) => fsp.unlink(p).catch(() => undefined)));
   await fsp.unlink(manifestPathFor(userDataDir)).catch(() => undefined);
-  await fsp.rm(syncDir, { recursive: true, force: true }).catch(() => undefined);
+  await fsp
+    .rm(syncDir, { recursive: true, force: true })
+    .catch(() => undefined);
   return { filesRemoved };
 }
 

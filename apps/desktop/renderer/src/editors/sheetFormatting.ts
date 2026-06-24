@@ -53,7 +53,11 @@ export const NUMBER_FORMAT_PRESETS: NumberFormatPreset[] = [
   },
   { id: "date", label: "Date (2024-01-31)", pattern: "yyyy-mm-dd" },
   { id: "date-us", label: "Date (1/31/2024)", pattern: "m/d/yyyy" },
-  { id: "datetime", label: "Date time (2024-01-31 14:30)", pattern: "yyyy-mm-dd hh:mm" },
+  {
+    id: "datetime",
+    label: "Date time (2024-01-31 14:30)",
+    pattern: "yyyy-mm-dd hh:mm",
+  },
   { id: "time", label: "Time (14:30:00)", pattern: "hh:mm:ss" },
 ];
 
@@ -194,7 +198,9 @@ export function allCellsHave(
   key: BoolFormatKey,
 ): boolean {
   if (cells.length === 0) return false;
-  return cells.every(({ row, col }) => !!getCellFormat(formats, row, col)?.[key]);
+  return cells.every(
+    ({ row, col }) => !!getCellFormat(formats, row, col)?.[key],
+  );
 }
 
 /**

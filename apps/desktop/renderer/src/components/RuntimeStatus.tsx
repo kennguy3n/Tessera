@@ -154,7 +154,13 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
   return (
     <div className="runtime-status-expanded">
       <div className="runtime-status-header">
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-xs)" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-xs)",
+          }}
+        >
           <span
             className="runtime-status-dot"
             style={{ backgroundColor: statusColor }}
@@ -180,7 +186,9 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
         <div className="runtime-detail-row">
           <span className="runtime-detail-label">Model</span>
           <span className="runtime-detail-value">
-            {current ? shortModelName(current.modelId) : status.modelName ?? "\u2014"}
+            {current
+              ? shortModelName(current.modelId)
+              : (status.modelName ?? "\u2014")}
           </span>
         </div>
         <div className="runtime-detail-row">
@@ -196,8 +204,13 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
           </span>
         </div>
         {!current && (
-          <div className="runtime-detail-row" style={{ marginTop: "var(--spacing-sm)" }}>
-            <Link to="/settings">{"No model downloaded \u2014 open Settings"}</Link>
+          <div
+            className="runtime-detail-row"
+            style={{ marginTop: "var(--spacing-sm)" }}
+          >
+            <Link to="/settings">
+              {"No model downloaded \u2014 open Settings"}
+            </Link>
           </div>
         )}
       </div>
@@ -206,7 +219,9 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
 }
 
 function shortModelName(modelId: string): string {
-  return modelId.replace(/^ternary-bonsai-/, "Bonsai-").replace(/-(gguf|mlx)$/, "");
+  return modelId
+    .replace(/^ternary-bonsai-/, "Bonsai-")
+    .replace(/-(gguf|mlx)$/, "");
 }
 
 function getStatusColor(status: string): string {

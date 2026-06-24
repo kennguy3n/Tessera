@@ -4,14 +4,16 @@ import HybridSearchCard from "../components/HybridSearchCard";
 
 const DAY = 24 * 60 * 60;
 
-function seedConfig(overrides: Partial<{
-  bm25Weight: number;
-  vectorWeight: number;
-  rrfK: number;
-  recencyDecayEnabled: boolean;
-  recencyHalflifeSecs: number | null;
-  candidatePoolSize: number;
-}> = {}) {
+function seedConfig(
+  overrides: Partial<{
+    bm25Weight: number;
+    vectorWeight: number;
+    rrfK: number;
+    recencyDecayEnabled: boolean;
+    recencyHalflifeSecs: number | null;
+    candidatePoolSize: number;
+  }> = {},
+) {
   const base = {
     bm25Weight: 1.0,
     vectorWeight: 1.0,
@@ -126,9 +128,7 @@ describe("HybridSearchCard", () => {
     await waitFor(() => {
       expect(
         window.tessera.settings.updateHybridSearchConfig,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({ vectorWeight: 0 }),
-      );
+      ).toHaveBeenCalledWith(expect.objectContaining({ vectorWeight: 0 }));
     });
   });
 

@@ -11,10 +11,7 @@ import {
   startSubstrateDecayScheduler,
   stopSubstrateDecayScheduler,
 } from "./substrateDecayScheduler";
-import {
-  startBackupScheduler,
-  stopBackupScheduler,
-} from "./backupScheduler";
+import { startBackupScheduler, stopBackupScheduler } from "./backupScheduler";
 import { startBatteryMonitor, stopBatteryMonitor } from "./batteryMonitor";
 import { startMemoryWatchdog, stopMemoryWatchdog } from "./memoryWatchdog";
 import { maybeAutoDownloadRecommendedModel } from "./autoModelDownload";
@@ -549,12 +546,7 @@ function createWindow(): void {
     // no recovery short of killing the process / editing `config.json`
     // — a lockout (LW-9 review, PR #111). When there is no tray we fall
     // through and let the window close normally.
-    if (
-      !isQuitting &&
-      mainWindow &&
-      loadConfig().closeToTray &&
-      hasTray()
-    ) {
+    if (!isQuitting && mainWindow && loadConfig().closeToTray && hasTray()) {
       event.preventDefault();
       mainWindow.hide();
       void suspendForTray({

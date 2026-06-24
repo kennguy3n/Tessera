@@ -5,12 +5,15 @@
 ## Positioning
 
 **General:**
+
 > Tessera is a local-first open-source productivity workspace for creating documents, slides, sheets, and bases from your own files and connected sources.
 
 **Shorter:**
+
 > Tessera is a local-first workspace for turning your knowledge into documents, slides, sheets, and structured bases.
 
 **Developer-facing:**
+
 > Tessera is an open-source desktop productivity workspace powered by a local knowledge substrate, template-driven artifact generation, and optional local model inference.
 
 ---
@@ -42,21 +45,21 @@
 
 ## Core product surfaces
 
-| Surface | Purpose |
-|---|---|
-| **Home** | Dashboard with recent artifacts, source status, quick actions |
-| **Sources** | Manage local and remote knowledge sources |
-| **Create** | Launch new artifacts from templates |
-| **Documents** | Document editor (PRDs, proposals, SOPs, reports) |
-| **Slides** | Slide deck editor (QBRs, strategy, reviews) |
-| **Sheets** | Spreadsheet editor (budgets, scorecards, trackers) |
-| **Bases** | Structured data editor (vendor register, risk register, roadmap, asset inventory, CRM, incident tracker, employee directory, compliance register) |
-| **Infographics** | Visual one-pager editor (stats overview, process flow, comparison, timeline, org chart, KPI dashboard) |
-| **Landing pages** | Marketing landing-page editor (SaaS product, nonprofit cause, event / conference, personal & agency portfolio) |
-| **Templates** | Browse, create, and manage artifact templates |
-| **Tasks / Plans** | Task lists, project plans, launch checklists |
-| **Automations** | Scheduled index refreshes, template-triggered workflows |
-| **Settings** | Source connections, model runtime config, export defaults, preferences |
+| Surface           | Purpose                                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Home**          | Dashboard with recent artifacts, source status, quick actions                                                                                     |
+| **Sources**       | Manage local and remote knowledge sources                                                                                                         |
+| **Create**        | Launch new artifacts from templates                                                                                                               |
+| **Documents**     | Document editor (PRDs, proposals, SOPs, reports)                                                                                                  |
+| **Slides**        | Slide deck editor (QBRs, strategy, reviews)                                                                                                       |
+| **Sheets**        | Spreadsheet editor (budgets, scorecards, trackers)                                                                                                |
+| **Bases**         | Structured data editor (vendor register, risk register, roadmap, asset inventory, CRM, incident tracker, employee directory, compliance register) |
+| **Infographics**  | Visual one-pager editor (stats overview, process flow, comparison, timeline, org chart, KPI dashboard)                                            |
+| **Landing pages** | Marketing landing-page editor (SaaS product, nonprofit cause, event / conference, personal & agency portfolio)                                    |
+| **Templates**     | Browse, create, and manage artifact templates                                                                                                     |
+| **Tasks / Plans** | Task lists, project plans, launch checklists                                                                                                      |
+| **Automations**   | Scheduled index refreshes, template-triggered workflows                                                                                           |
+| **Settings**      | Source connections, model runtime config, export defaults, preferences                                                                            |
 
 There is **no primary chat feed**. Tessera is an artifact-first workspace.
 
@@ -76,16 +79,16 @@ Connect sources → Index knowledge → Select template → Create artifact → 
 
 **Flow:** Sources → Add source → Local folder → Select folder → Index
 
-| Step | Detail |
-|---|---|
-| Watch folder | File watcher detects new, changed, and deleted files |
-| Detect changes | Content hashing identifies modified files; unchanged files are skipped |
-| Extract text | Text extraction from supported file types |
-| Chunk | Content is split into retrievable chunks |
-| Store evidence | Chunks stored in encrypted local evidence store with content-hash dedup |
-| Search | Hybrid retrieval: FTS5 lexical + `HashTrickEmbedding` vector similarity + temporal recency decay (30-day half-life), fused via Reciprocal Rank Fusion (k=60). Configurable from Settings (hybrid toggle + recency half-life). |
-| Ignored files | `.gitignore`-style patterns, binary files, system files |
-| Provenance | Every chunk tracks source file path, page/section, extraction timestamp |
+| Step           | Detail                                                                                                                                                                                                                        |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Watch folder   | File watcher detects new, changed, and deleted files                                                                                                                                                                          |
+| Detect changes | Content hashing identifies modified files; unchanged files are skipped                                                                                                                                                        |
+| Extract text   | Text extraction from supported file types                                                                                                                                                                                     |
+| Chunk          | Content is split into retrievable chunks                                                                                                                                                                                      |
+| Store evidence | Chunks stored in encrypted local evidence store with content-hash dedup                                                                                                                                                       |
+| Search         | Hybrid retrieval: FTS5 lexical + `HashTrickEmbedding` vector similarity + temporal recency decay (30-day half-life), fused via Reciprocal Rank Fusion (k=60). Configurable from Settings (hybrid toggle + recency half-life). |
+| Ignored files  | `.gitignore`-style patterns, binary files, system files                                                                                                                                                                       |
+| Provenance     | Every chunk tracks source file path, page/section, extraction timestamp                                                                                                                                                       |
 
 **Supported file types:** PDF, DOCX, PPTX, XLSX, CSV, Markdown, TXT, HTML, JSON, Images (with metadata extraction).
 
@@ -95,16 +98,16 @@ Connect sources → Index knowledge → Select template → Create artifact → 
 
 Each remote connector supports:
 
-| Feature | Description |
-|---|---|
-| OAuth | Standard OAuth 2.0 authorization flow |
-| Folder / project selection | User selects which folders, spaces, or projects to sync |
-| Incremental sync | Only changed content is re-fetched on subsequent syncs |
-| Permission snapshot | Records the user's access permissions at connection time |
-| Disconnect / revoke | Clean disconnect removes local index and revokes tokens |
-| Connector health | Status indicator showing last sync time and error state |
-| Local indexing | Selected remote content is indexed locally using the same pipeline |
-| Audit tracking | Connection, sync, and disconnect events logged to audit trail |
+| Feature                    | Description                                                        |
+| -------------------------- | ------------------------------------------------------------------ |
+| OAuth                      | Standard OAuth 2.0 authorization flow                              |
+| Folder / project selection | User selects which folders, spaces, or projects to sync            |
+| Incremental sync           | Only changed content is re-fetched on subsequent syncs             |
+| Permission snapshot        | Records the user's access permissions at connection time           |
+| Disconnect / revoke        | Clean disconnect removes local index and revokes tokens            |
+| Connector health           | Status indicator showing last sync time and error state            |
+| Local indexing             | Selected remote content is indexed locally using the same pipeline |
+| Audit tracking             | Connection, sync, and disconnect events logged to audit trail      |
 
 **Model:** Remote source access is authorized by the user. Selected content is indexed locally. Artifact creation runs entirely locally.
 
@@ -112,12 +115,12 @@ Each remote connector supports:
 
 **Create launcher:**
 
-| Category | Templates |
-|---|---|
-| **Create** | Document, Slides, Sheet, Base, PRD, Proposal, SOP, QBR, Report, Form |
+| Category    | Templates                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| **Create**  | Document, Slides, Sheet, Base, PRD, Proposal, SOP, QBR, Report, Form                                      |
 | **Analyze** | Summarize sources, Compare documents, Extract tasks/risks/decisions, Generate report, Analyze spreadsheet |
-| **Plan** | Project plan, Task list, Risk register, Budget, Meeting agenda, Launch checklist |
-| **Approve** | Purchase, Budget, Policy exception, Vendor review |
+| **Plan**    | Project plan, Task list, Risk register, Budget, Meeting agenda, Launch checklist                          |
+| **Approve** | Purchase, Budget, Policy exception, Vendor review                                                         |
 
 ---
 
@@ -316,16 +319,16 @@ non-English locale ships the full canonical 10-template set.
 
 ### Citation features
 
-| Feature | Description |
-|---|---|
-| Click to open source | Opens the original file or remote source |
-| Show excerpt | Displays the relevant text excerpt from the source |
-| Show file path | Full local path or remote URI |
-| Show page / section | Page number or section heading in the source |
-| Show confidence | Retrieval confidence score |
+| Feature                | Description                                                               |
+| ---------------------- | ------------------------------------------------------------------------- |
+| Click to open source   | Opens the original file or remote source                                  |
+| Show excerpt           | Displays the relevant text excerpt from the source                        |
+| Show file path         | Full local path or remote URI                                             |
+| Show page / section    | Page number or section heading in the source                              |
+| Show confidence        | Retrieval confidence score                                                |
 | Show if source changed | Flags if the source file has been modified since the citation was created |
-| Allow replacement | User can swap a citation for a different source |
-| Allow removal | User can remove a citation entirely |
+| Allow replacement      | User can swap a citation for a different source                           |
+| Allow removal          | User can remove a citation entirely                                       |
 
 ---
 
@@ -333,11 +336,11 @@ non-English locale ships the full canonical 10-template set.
 
 ### Model tiers
 
-| Tier | Model | Parameters | Use case |
-|---|---|---|---|
-| Lightweight | Ternary-Bonsai 1.7B | 1.7B | Quick drafts, extraction, tagging |
-| Balanced | Ternary-Bonsai 4B | 4B | Normal generation |
-| Higher quality | Ternary-Bonsai 8B | 8B | Longer reports, complex artifacts |
+| Tier           | Model               | Parameters | Use case                          |
+| -------------- | ------------------- | ---------- | --------------------------------- |
+| Lightweight    | Ternary-Bonsai 1.7B | 1.7B       | Quick drafts, extraction, tagging |
+| Balanced       | Ternary-Bonsai 4B   | 4B         | Normal generation                 |
+| Higher quality | Ternary-Bonsai 8B   | 8B         | Longer reports, complex artifacts |
 
 ### Runtime design
 
@@ -351,12 +354,12 @@ The renderer does **NOT** manage model binaries, tokens, filesystem, or storage.
 
 ## Compute modes
 
-| Mode | Description |
-|---|---|
-| **Local** | All processing on-device, no network |
-| **Local with connected sources** | Local processing + authorized remote source sync |
-| **Remote connector sync** | Periodic sync of remote source content to local index |
-| **Optional external provider** | External LLM API (disabled by default) |
+| Mode                             | Description                                           |
+| -------------------------------- | ----------------------------------------------------- |
+| **Local**                        | All processing on-device, no network                  |
+| **Local with connected sources** | Local processing + authorized remote source sync      |
+| **Remote connector sync**        | Periodic sync of remote source content to local index |
+| **Optional external provider**   | External LLM API (disabled by default)                |
 
 **MVP default:** Local by default. Remote only when explicitly connected by the user. External providers disabled unless configured in Settings.
 
@@ -366,43 +369,43 @@ The renderer does **NOT** manage model binaries, tokens, filesystem, or storage.
 
 ### Repository names
 
-| Repo | Purpose |
-|---|---|
-| `tessera` | Monorepo or meta repo |
-| `tessera-desktop` | Electron desktop application |
-| `tessera-core` | Rust core engine |
-| `tessera-templates` | Template library |
-| `tessera-connectors` | Source connector plugins |
+| Repo                 | Purpose                      |
+| -------------------- | ---------------------------- |
+| `tessera`            | Monorepo or meta repo        |
+| `tessera-desktop`    | Electron desktop application |
+| `tessera-core`       | Rust core engine             |
+| `tessera-templates`  | Template library             |
+| `tessera-connectors` | Source connector plugins     |
 
 ### Package names
 
-| Package | Registry |
-|---|---|
-| `@tessera/desktop` | npm |
-| `@tessera/ui` | npm |
-| `@tessera/templates` | npm |
+| Package              | Registry |
+| -------------------- | -------- |
+| `@tessera/desktop`   | npm      |
+| `@tessera/ui`        | npm      |
+| `@tessera/templates` | npm      |
 
 ### Rust crate names
 
-| Crate | Purpose |
-|---|---|
-| `tessera_core` | Core engine |
-| `tessera_bridge` | N-API bridge to Electron |
-| `tessera_connectors` | Connector framework |
-| `tessera_export` | Export engine |
+| Crate                | Purpose                  |
+| -------------------- | ------------------------ |
+| `tessera_core`       | Core engine              |
+| `tessera_bridge`     | N-API bridge to Electron |
+| `tessera_connectors` | Connector framework      |
+| `tessera_export`     | Export engine            |
 
 ---
 
 ## Main risks
 
-| Risk | Mitigation |
-|---|---|
-| Electron app size | Offload heavy work to Rust core and sidecars; tree-shake renderer |
-| Connector complexity | Start with local sources, then add one remote connector at a time |
-| Export fidelity | Start with Markdown/HTML/PDF/CSV; add DOCX/PPTX/XLSX incrementally |
-| Model runtime packaging | Platform-specific sidecar binaries; separate download from app install |
-| Data trust | Local-first defaults, encrypted storage, audit logs, revocation support |
-| Template quality | Versioned templates, user-editable, source-aware prompts |
+| Risk                    | Mitigation                                                              |
+| ----------------------- | ----------------------------------------------------------------------- |
+| Electron app size       | Offload heavy work to Rust core and sidecars; tree-shake renderer       |
+| Connector complexity    | Start with local sources, then add one remote connector at a time       |
+| Export fidelity         | Start with Markdown/HTML/PDF/CSV; add DOCX/PPTX/XLSX incrementally      |
+| Model runtime packaging | Platform-specific sidecar binaries; separate download from app install  |
+| Data trust              | Local-first defaults, encrypted storage, audit logs, revocation support |
+| Template quality        | Versioned templates, user-editable, source-aware prompts                |
 
 ---
 
@@ -410,20 +413,20 @@ The renderer does **NOT** manage model binaries, tokens, filesystem, or storage.
 
 Tessera's UI follows the **KChat design system**.
 
-| Token | Value |
-|---|---|
-| **Primary accent** | `#7C3AED` (Purple/Violet) — headlines, CTA buttons, active states, links, icons |
-| **Primary hover** | `#6D28D9` (darker violet) |
-| **Background – page** | `#FFFFFF` (white) |
-| **Background – card/surface** | `#F5F3FF` (light lavender) or `#F9FAFB` (light gray) |
-| **Text – headline** | `#111827` (near-black) |
-| **Text – body** | `#4B5563` (dark gray) |
-| **Text – secondary** | `#6B7280` (medium gray) |
-| **Font family** | `Inter` (primary), system sans-serif fallback stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif` |
-| **Primary button** | Solid `#7C3AED` background, white text, pill/rounded shape (`border-radius: 9999px`) |
-| **Secondary button** | Outlined with `#111827` border, dark text, uppercase tracking |
-| **Cards** | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)` |
-| **Overall feel** | Clean, modern, minimal — purple dominant against white/light surfaces |
+| Token                         | Value                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Primary accent**            | `#7C3AED` (Purple/Violet) — headlines, CTA buttons, active states, links, icons                                                            |
+| **Primary hover**             | `#6D28D9` (darker violet)                                                                                                                  |
+| **Background – page**         | `#FFFFFF` (white)                                                                                                                          |
+| **Background – card/surface** | `#F5F3FF` (light lavender) or `#F9FAFB` (light gray)                                                                                       |
+| **Text – headline**           | `#111827` (near-black)                                                                                                                     |
+| **Text – body**               | `#4B5563` (dark gray)                                                                                                                      |
+| **Text – secondary**          | `#6B7280` (medium gray)                                                                                                                    |
+| **Font family**               | `Inter` (primary), system sans-serif fallback stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif` |
+| **Primary button**            | Solid `#7C3AED` background, white text, pill/rounded shape (`border-radius: 9999px`)                                                       |
+| **Secondary button**          | Outlined with `#111827` border, dark text, uppercase tracking                                                                              |
+| **Cards**                     | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)`                                               |
+| **Overall feel**              | Clean, modern, minimal — purple dominant against white/light surfaces                                                                      |
 
 ---
 

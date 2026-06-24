@@ -147,8 +147,7 @@ function configureUpdater(updater: AutoUpdaterModule): void {
   const adapter: AutoUpdaterLogger = {
     info: (m: unknown) => getLogger().info("autoUpdater", { msg: String(m) }),
     warn: (m: unknown) => getLogger().warn("autoUpdater", { msg: String(m) }),
-    error: (m: unknown) =>
-      getLogger().error("autoUpdater", { msg: String(m) }),
+    error: (m: unknown) => getLogger().error("autoUpdater", { msg: String(m) }),
     debug: () => {
       /* drop — we forward warn/error/info; debug-level chatter is
          intentionally suppressed because electron-updater logs every

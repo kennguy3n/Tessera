@@ -69,12 +69,7 @@ export function LinkPopover({ editor, onClose }: LinkPopoverProps) {
       setError("That link can't be used (unsupported or unsafe URL).");
       return;
     }
-    editor
-      .chain()
-      .focus()
-      .extendMarkRange("link")
-      .setLink({ href })
-      .run();
+    editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
     onClose();
   }, [editor, value, onClose]);
 
@@ -122,7 +117,11 @@ export function LinkPopover({ editor, onClose }: LinkPopoverProps) {
         aria-label="Link URL"
       />
       <div className="link-popover-actions">
-        <button type="button" className="link-popover-btn primary" onClick={apply}>
+        <button
+          type="button"
+          className="link-popover-btn primary"
+          onClick={apply}
+        >
           {existingHref ? "Update" : "Apply"}
         </button>
         {existingHref && (
@@ -131,7 +130,11 @@ export function LinkPopover({ editor, onClose }: LinkPopoverProps) {
           </button>
         )}
         {existingHref && (
-          <button type="button" className="link-popover-btn danger" onClick={remove}>
+          <button
+            type="button"
+            className="link-popover-btn danger"
+            onClick={remove}
+          >
             Remove
           </button>
         )}

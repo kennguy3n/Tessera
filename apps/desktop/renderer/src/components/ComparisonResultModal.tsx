@@ -126,7 +126,8 @@ export default function ComparisonResultModal({
         data-testid="comparison-modal-similarity"
         style={{ marginTop: 0, marginBottom: "var(--spacing-md)" }}
       >
-        <strong>Similarity:</strong> {formatSimilarity(comparison.similarityScore)}
+        <strong>Similarity:</strong>{" "}
+        {formatSimilarity(comparison.similarityScore)}
       </p>
 
       <section

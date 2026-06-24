@@ -138,7 +138,8 @@ function buildSources(ds: ShowcaseDataset) {
 function sourcePathFor(ds: ShowcaseDataset, sourceId: string): string {
   const folderPath = `~/Documents/${ds.persona.org.replace(/[^A-Za-z0-9]+/g, "-")}`;
   const num = sourceId.split("-").pop();
-  const file = ds.sourceFiles.find((f) => f.split("-", 1)[0] === num) ?? ds.sourceFiles[0];
+  const file =
+    ds.sourceFiles.find((f) => f.split("-", 1)[0] === num) ?? ds.sourceFiles[0];
   return `${folderPath}/${file}`;
 }
 
@@ -160,12 +161,20 @@ function textMatches(text: string, tokens: string[]): boolean {
 // the demo search box is never blank; otherwise we rank by token overlap and
 // fall back to retention so retention-weighting (the substrate's 4th RRF
 // signal) is visible.
-function buildSearchHits(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query: string, limit: number) {
+function buildSearchHits(
+  ds: ShowcaseDataset,
+  plane: ShowcaseKnowledgePlane,
+  query: string,
+  limit: number,
+) {
   const tokens = tokenize(query);
   const scored = plane.facts
     .map((f) => {
-      const overlap = tokens.filter((t) => f.content.toLowerCase().includes(t)).length;
-      const relevance = tokens.length === 0 ? f.retentionScore : overlap + f.retentionScore;
+      const overlap = tokens.filter((t) =>
+        f.content.toLowerCase().includes(t),
+      ).length;
+      const relevance =
+        tokens.length === 0 ? f.retentionScore : overlap + f.retentionScore;
       return { f, overlap, relevance };
     })
     .filter((s) => tokens.length === 0 || s.overlap > 0)
@@ -177,13 +186,20 @@ function buildSearchHits(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, que
     chunkHash: f.id,
     chunkContent: f.content,
     // Normalise into a 0..1 search-relevance band, highest first.
-    relevanceScore: Number((0.94 - i * 0.04 + (relevance > 1 ? 0.02 : 0)).toFixed(3)),
+    relevanceScore: Number(
+      (0.94 - i * 0.04 + (relevance > 1 ? 0.02 : 0)).toFixed(3),
+    ),
     excerpt: f.content,
   }));
 }
 
 // Filter a knowledge plane by a query, mirroring `sources:searchEnriched`.
-function buildEnriched(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query: string, limit: number) {
+function buildEnriched(
+  ds: ShowcaseDataset,
+  plane: ShowcaseKnowledgePlane,
+  query: string,
+  limit: number,
+) {
   const tokens = tokenize(query);
   const entities = plane.entities.filter((e) => textMatches(e.content, tokens));
   const facts = plane.facts.filter((f) => textMatches(f.content, tokens));
@@ -191,7 +207,9 @@ function buildEnriched(ds: ShowcaseDataset, plane: ShowcaseKnowledgePlane, query
     (c) => textMatches(c.label, tokens) || textMatches(c.definition, tokens),
   );
   // `memories` is the full ranked match set (entities + facts) by retention.
-  const memories = [...entities, ...facts].sort((a, b) => b.retentionScore - a.retentionScore);
+  const memories = [...entities, ...facts].sort(
+    (a, b) => b.retentionScore - a.retentionScore,
+  );
   return {
     hits: buildSearchHits(ds, plane, query, limit),
     entities,
@@ -270,7 +288,9 @@ function buildConceptGraphJson(
   maxNodes: number | null = null,
 ): string {
   const scopeId =
-    plane.entities[0]?.scopeId ?? plane.facts[0]?.scopeId ?? "sc-showcase-scope";
+    plane.entities[0]?.scopeId ??
+    plane.facts[0]?.scopeId ??
+    "sc-showcase-scope";
   const allConcepts = plane.concepts;
 
   // Build the full typed edge set FIRST — explicit `relations` when present
@@ -303,7 +323,9 @@ function buildConceptGraphJson(
   // ties broken by original index; the kept set is then restored to original
   // order so the serialized output is stable.
   const cap =
-    typeof maxNodes === "number" && maxNodes > 0 ? maxNodes : allConcepts.length;
+    typeof maxNodes === "number" && maxNodes > 0
+      ? maxNodes
+      : allConcepts.length;
   const truncated = cap < allConcepts.length;
   const concepts = truncated
     ? allConcepts
@@ -445,11 +467,18 @@ function buildScaledConceptGraphJson(count: number): string {
   });
 }
 
-function buildCitations(ds: ShowcaseDataset, artifactType: string, count: number) {
+function buildCitations(
+  ds: ShowcaseDataset,
+  artifactType: string,
+  count: number,
+) {
   // Deliberate fallback: when an artifact reports `count` of 0 (e.g. a sheet or
   // base where citations aren't surfaced per-cell), show citations for every
   // source file so the provenance panel is never empty in the demo capture.
-  const files = ds.sourceFiles.slice(0, Math.max(count, 0) || ds.sourceFiles.length);
+  const files = ds.sourceFiles.slice(
+    0,
+    Math.max(count, 0) || ds.sourceFiles.length,
+  );
   return files.map((f, i) => ({
     citationId: `sc-${ds.id}-cite-${i}`,
     sourceId: `sc-${ds.id}-src-local`,
@@ -512,7 +541,11 @@ export function buildShowcaseApi(
 
   const artifacts = buildArtifacts(ds);
   const sources = buildSources(ds);
-  const plane = KNOWLEDGE[personaId] ?? { entities: [], facts: [], concepts: [] };
+  const plane = KNOWLEDGE[personaId] ?? {
+    entities: [],
+    facts: [],
+    concepts: [],
+  };
   let settings = {
     ...settingsData(artifacts),
     ...(themeOverrides.theme ? { theme: themeOverrides.theme } : {}),
@@ -569,19 +602,65 @@ export function buildShowcaseApi(
   });
   const t = (n: number) => `sc-${personaId}-task-${n}`;
   const tasks = [
-    { ...taskDefaults(t(1)), title: `Review ${ds.persona.org} source coverage`, description: "Confirm every connected source finished indexing before the next generation run.", status: "todo", priority: "high", position: 0, dueDate: "2026-05-15T00:00:00.000Z" },
-    { ...taskDefaults(t(2)), title: "Draft executive summary", description: "Summarise the latest artifact for stakeholder sign-off.", status: "in_progress", priority: "medium", position: 0 },
-    { ...taskDefaults(t(3)), title: "Resolve citation gaps", description: "Two facts are missing primary-source citations; backfill from the indexed drive.", status: "blocked", priority: "high", position: 0, dependsOn: [t(1)] },
-    { ...taskDefaults(t(4)), title: "Archive Q1 deliverables", description: "Export finalised artifacts and tuck the workspace snapshot into backups.", status: "done", priority: "low", position: 0 },
-    { ...taskDefaults(t(5)), title: "Schedule weekly reindex", description: "Stand up an automation so sources reindex every Monday.", status: "todo", priority: "medium", position: 1 },
+    {
+      ...taskDefaults(t(1)),
+      title: `Review ${ds.persona.org} source coverage`,
+      description:
+        "Confirm every connected source finished indexing before the next generation run.",
+      status: "todo",
+      priority: "high",
+      position: 0,
+      dueDate: "2026-05-15T00:00:00.000Z",
+    },
+    {
+      ...taskDefaults(t(2)),
+      title: "Draft executive summary",
+      description: "Summarise the latest artifact for stakeholder sign-off.",
+      status: "in_progress",
+      priority: "medium",
+      position: 0,
+    },
+    {
+      ...taskDefaults(t(3)),
+      title: "Resolve citation gaps",
+      description:
+        "Two facts are missing primary-source citations; backfill from the indexed drive.",
+      status: "blocked",
+      priority: "high",
+      position: 0,
+      dependsOn: [t(1)],
+    },
+    {
+      ...taskDefaults(t(4)),
+      title: "Archive Q1 deliverables",
+      description:
+        "Export finalised artifacts and tuck the workspace snapshot into backups.",
+      status: "done",
+      priority: "low",
+      position: 0,
+    },
+    {
+      ...taskDefaults(t(5)),
+      title: "Schedule weekly reindex",
+      description: "Stand up an automation so sources reindex every Monday.",
+      status: "todo",
+      priority: "medium",
+      position: 1,
+    },
   ];
 
   const automations = [
     {
       id: `sc-${personaId}-auto-1`,
       name: "Weekly source reindex",
-      triggerJson: JSON.stringify({ kind: "schedule", interval_seconds: 604800 }),
-      actionJson: JSON.stringify({ kind: "reindex_source", source_id: sources[0]?.id ?? "" }),
+      triggerJson: JSON.stringify({
+        kind: "schedule",
+        interval_seconds: 604800,
+      }),
+      actionJson: JSON.stringify({
+        kind: "reindex_source",
+        source_id: sources[0]?.id ?? "",
+      }),
       enabled: true,
       createdAt: NOW,
       updatedAt: NOW,
@@ -592,8 +671,15 @@ export function buildShowcaseApi(
     {
       id: `sc-${personaId}-auto-2`,
       name: "Draft on new upload",
-      triggerJson: JSON.stringify({ kind: "on_generate", template_id: ds.artifacts[0]?.templateId ?? ds.artifacts[0]?.slug ?? "" }),
-      actionJson: JSON.stringify({ kind: "generate_from_template", template_id: ds.artifacts[0]?.templateId ?? ds.artifacts[0]?.slug ?? "", source_ids: [] }),
+      triggerJson: JSON.stringify({
+        kind: "on_generate",
+        template_id: ds.artifacts[0]?.templateId ?? ds.artifacts[0]?.slug ?? "",
+      }),
+      actionJson: JSON.stringify({
+        kind: "generate_from_template",
+        template_id: ds.artifacts[0]?.templateId ?? ds.artifacts[0]?.slug ?? "",
+        source_ids: [],
+      }),
       enabled: false,
       createdAt: NOW,
       updatedAt: NOW,
@@ -621,32 +707,52 @@ export function buildShowcaseApi(
         return { ...settings };
       },
       getHybridSearchConfig: async () => ({
-        bm25Weight: 1, vectorWeight: 1, rrfK: 60, recencyDecayEnabled: true,
-        recencyHalflifeSecs: 2592000, candidatePoolSize: 0,
+        bm25Weight: 1,
+        vectorWeight: 1,
+        rrfK: 60,
+        recencyDecayEnabled: true,
+        recencyHalflifeSecs: 2592000,
+        candidatePoolSize: 0,
       }),
       updateHybridSearchConfig: async (patch: Record<string, unknown>) => ({
-        bm25Weight: 1, vectorWeight: 1, rrfK: 60, recencyDecayEnabled: true,
-        recencyHalflifeSecs: 2592000, candidatePoolSize: 0, ...patch,
+        bm25Weight: 1,
+        vectorWeight: 1,
+        rrfK: 60,
+        recencyDecayEnabled: true,
+        recencyHalflifeSecs: 2592000,
+        candidatePoolSize: 0,
+        ...patch,
       }),
       getEmbeddingModelStatus: async () => ({
         currentModelId: "onnx:all-MiniLM-L6-v2:384d",
         models: [
           {
-            slug: "all-MiniLM-L6-v2", displayName: "Semantic — English (MiniLM)",
-            dim: 384, modelSizeBytes: 23_068_672, tokenizerSizeBytes: 466_944,
-            languages: "English", installed: true, modelId: "onnx:all-MiniLM-L6-v2:384d",
+            slug: "all-MiniLM-L6-v2",
+            displayName: "Semantic — English (MiniLM)",
+            dim: 384,
+            modelSizeBytes: 23_068_672,
+            tokenizerSizeBytes: 466_944,
+            languages: "English",
+            installed: true,
+            modelId: "onnx:all-MiniLM-L6-v2:384d",
           },
           {
             slug: "paraphrase-multilingual-MiniLM-L12-v2",
             displayName: "Semantic — Multilingual (XLM-R)",
-            dim: 384, modelSizeBytes: 125_829_120, tokenizerSizeBytes: 5_242_880,
-            languages: "50+ languages", installed: false,
+            dim: 384,
+            modelSizeBytes: 125_829_120,
+            tokenizerSizeBytes: 5_242_880,
+            languages: "50+ languages",
+            installed: false,
             modelId: "onnx:paraphrase-multilingual-MiniLM-L12-v2:384d",
           },
         ],
         download: {
-          status: "idle" as const, slug: null, bytesTotal: null,
-          bytesDownloaded: 0, lastError: null,
+          status: "idle" as const,
+          slug: null,
+          bytesTotal: null,
+          bytesDownloaded: 0,
+          lastError: null,
         },
         nonAsciiChunks: 0,
         totalChunks: ds.sourceFiles.length * 6,
@@ -669,7 +775,10 @@ export function buildShowcaseApi(
       getDetail: async (id: string) => ({
         source: sources.find((s) => s.id === id) ?? sources[0],
         files: ds.sourceFiles.map((f) => ({
-          path: f, hash: f, lastModified: NOW, chunkCount: 6,
+          path: f,
+          hash: f,
+          lastModified: NOW,
+          chunkCount: 6,
         })),
       }),
       getIndexingProgress: async () => null,
@@ -712,7 +821,10 @@ export function buildShowcaseApi(
       },
       // Concept graph for the Memory page panel (`useConceptGraph`) + HomePage
       // top-concepts. JSON-serialized `GraphView`, bounded by `maxNodes`.
-      getConceptGraph: async (_scope: string | null = null, maxNodes: number | null = null) => {
+      getConceptGraph: async (
+        _scope: string | null = null,
+        maxNodes: number | null = null,
+      ) => {
         // QA perf harness: `?graphScale=<n>` overrides the persona's small
         // graph with a deterministic n-node graph so the Canvas renderer
         // (engages at 220 nodes) can be budgeted at scale.
@@ -720,7 +832,10 @@ export function buildShowcaseApi(
         if (scale) return buildScaledConceptGraphJson(scale);
         return buildConceptGraphJson(plane, maxNodes);
       },
-      suggestRelatedSources: async (selectedSourceIds: string[] = [], maxSuggestions = 10) => {
+      suggestRelatedSources: async (
+        selectedSourceIds: string[] = [],
+        maxSuggestions = 10,
+      ) => {
         const selected = new Set(selectedSourceIds);
         return plane.concepts
           .map((c) => ({
@@ -799,7 +914,10 @@ export function buildShowcaseApi(
       // return it. Without this the Proxy fallthrough resolves to
       // `undefined`, and CreatePage's `artifact.id` throws
       // "Cannot read properties of undefined (reading 'id')".
-      generateFromTemplate: async (templateId: string, _sourceIds: string[]) => {
+      generateFromTemplate: async (
+        templateId: string,
+        _sourceIds: string[],
+      ) => {
         const match =
           ds.artifacts.find((a) => (a.templateId ?? a.slug) === templateId) ??
           ds.artifacts[0];
@@ -822,8 +940,11 @@ export function buildShowcaseApi(
         const a = ds.artifacts.find((x) => (x.templateId ?? x.slug) === id);
         return a
           ? {
-              id, name: a.templateName, artifactType: a.type,
-              description: a.templateName, sectionCount: 8,
+              id,
+              name: a.templateName,
+              artifactType: a.type,
+              description: a.templateName,
+              sectionCount: 8,
               exportFormats: ["markdown", "pdf", "docx"],
             }
           : null;
@@ -861,25 +982,39 @@ export function buildShowcaseApi(
         imagegen: null,
       }),
       recommendModel: async () => ({
-        id: installedModel.modelId, name: MODEL_NAME,
-        formatLabel: "GGUF (Q1_0_g128)", downloadSizeMb: installedModel.downloadSizeMb,
+        id: installedModel.modelId,
+        name: MODEL_NAME,
+        formatLabel: "GGUF (Q1_0_g128)",
+        downloadSizeMb: installedModel.downloadSizeMb,
       }),
-      listModels: async () => [{
-        id: installedModel.modelId, name: MODEL_NAME,
-        formatLabel: "GGUF (Q1_0_g128)", downloadSizeMb: installedModel.downloadSizeMb,
-      }],
+      listModels: async () => [
+        {
+          id: installedModel.modelId,
+          name: MODEL_NAME,
+          formatLabel: "GGUF (Q1_0_g128)",
+          downloadSizeMb: installedModel.downloadSizeMb,
+        },
+      ],
       isCapabilityAvailable: async () => true,
       onDownloadProgress: () => () => {},
     },
     model: {
-      status: async () => ({ available: true, modelName: MODEL_NAME, status: "ready" }),
+      status: async () => ({
+        available: true,
+        modelName: MODEL_NAME,
+        status: "ready",
+      }),
       onToken: () => () => {},
     },
     // Cloud connectors (Google Drive, etc.) report a clean disconnected state
     // so the Sources page renders its empty/connect affordances rather than
     // crashing on an undefined status.
     connectors: {
-      status: async () => ({ provider: "google_drive", connected: false, status: "disconnected" }),
+      status: async () => ({
+        provider: "google_drive",
+        connected: false,
+        status: "disconnected",
+      }),
       list: async () => [],
       listDriveFiles: async () => [],
       // Maps provider → loopback redirect URI. The contract is a
@@ -951,7 +1086,11 @@ export function buildShowcaseApi(
         const t = tasks.find((x) => x.id === id);
         return t ? { ...t } : null;
       },
-      create: async (req: { title: string; description?: string; priority?: string }) => {
+      create: async (req: {
+        title: string;
+        description?: string;
+        priority?: string;
+      }) => {
         const created = {
           ...taskDefaults(`sc-${personaId}-task-${tasks.length + 1}`),
           title: req.title,
@@ -995,7 +1134,11 @@ export function buildShowcaseApi(
     // scheduler status so the page renders its populated state deterministically.
     automations: {
       list: async () => automations.map((a) => ({ ...a })),
-      create: async (req: { name: string; triggerJson: string; actionJson: string }) => {
+      create: async (req: {
+        name: string;
+        triggerJson: string;
+        actionJson: string;
+      }) => {
         const created = {
           id: `sc-${personaId}-auto-${automations.length + 1}`,
           name: req.name,
@@ -1088,6 +1231,7 @@ export function installShowcaseBridge(
     personaId,
     themeOverrides,
   );
-  (window as unknown as { tesseraCspNonce: string }).tesseraCspNonce = "showcase";
+  (window as unknown as { tesseraCspNonce: string }).tesseraCspNonce =
+    "showcase";
   console.info(`[showcase] mock bridge installed for persona "${personaId}"`);
 }

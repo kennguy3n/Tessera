@@ -37,9 +37,9 @@ function citation(over: Partial<CitationInfo> = {}): CitationInfo {
 }
 
 beforeEach(() => {
-  (window.tessera.citations.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-    citation(),
-  ]);
+  (window.tessera.citations.list as ReturnType<typeof vi.fn>).mockResolvedValue(
+    [citation()],
+  );
   (
     window.tessera.citations.checkFreshness as ReturnType<typeof vi.fn>
   ).mockResolvedValue("fresh");
@@ -53,7 +53,9 @@ describe("CitationPanel sub-dialog reset", () => {
     );
     await screen.findByRole("button", { name: /add a new citation/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /add a new citation/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /add a new citation/i }),
+    );
     expect(
       await screen.findByRole("dialog", { name: /add citation/i }),
     ).toBeInTheDocument();
@@ -61,7 +63,11 @@ describe("CitationPanel sub-dialog reset", () => {
     // Close the panel (component renders null but stays mounted, so its
     // state would otherwise persist) and reopen it.
     rerender(
-      <CitationPanel artifactId="artifact-1" isOpen={false} onClose={() => {}} />,
+      <CitationPanel
+        artifactId="artifact-1"
+        isOpen={false}
+        onClose={() => {}}
+      />,
     );
     rerender(
       <CitationPanel artifactId="artifact-1" isOpen onClose={() => {}} />,
@@ -80,7 +86,9 @@ describe("CitationPanel sub-dialog reset", () => {
     );
     await screen.findByRole("button", { name: /add a new citation/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /add a new citation/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /add a new citation/i }),
+    );
     expect(
       await screen.findByRole("dialog", { name: /add citation/i }),
     ).toBeInTheDocument();

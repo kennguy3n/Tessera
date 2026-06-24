@@ -144,8 +144,8 @@ export function PivotPanel({
       {pivots.length === 0 ? (
         <p className="sheet-cf-empty" data-testid="sheet-pivot-empty">
           No pivots yet. Select a range with a header row (e.g.{" "}
-          <code>A1:D100</code>), choose the row / value fields, and add a
-          pivot summarising that data.
+          <code>A1:D100</code>), choose the row / value fields, and add a pivot
+          summarising that data.
         </p>
       ) : (
         <ul className="sheet-cf-list">
@@ -155,9 +155,7 @@ export function PivotPanel({
               className="sheet-cf-rule sheet-dv-row"
               data-testid={`sheet-pivot-row-${p.id}`}
             >
-              <span className="sheet-dv-col">
-                {p.title?.trim() || "Pivot"}
-              </span>
+              <span className="sheet-dv-col">{p.title?.trim() || "Pivot"}</span>
               <span className="sheet-dv-kind">
                 {PIVOT_AGG_LABELS[p.agg]} of{" "}
                 {fieldLabel(p.valueField, parseA1Range(p.range)?.r1 ?? 0)} ·{" "}

@@ -21,11 +21,7 @@
 import { parseFormula } from "./formulaEngine";
 
 /** The kinds of assistance the panel offers. */
-export type SheetAiAction =
-  | "generate"
-  | "explain"
-  | "fix"
-  | "summarize";
+export type SheetAiAction = "generate" | "explain" | "fix" | "summarize";
 
 /**
  * Grounding context handed to the prompt builders. Deliberately small:
@@ -68,7 +64,10 @@ export function renderContextTable(ctx: SheetAiContext): string {
   if (colCount === 0) return "(empty sheet)";
   const header = ctx.columns
     .slice(0, colCount)
-    .map((label, i) => `${columnLetter(i)}${label ? ` (${clampCell(label)})` : ""}`)
+    .map(
+      (label, i) =>
+        `${columnLetter(i)}${label ? ` (${clampCell(label)})` : ""}`,
+    )
     .join(" | ");
   const rows = ctx.sampleRows.slice(0, MAX_SAMPLE_ROWS).map((row, r) => {
     const cells = [];
@@ -244,6 +243,8 @@ export function buildContext(
     columns,
     activeCellRef: opts.activeCellRef,
     selectionRef: opts.selectionRef,
-    sampleRows: rows.slice(0, MAX_SAMPLE_ROWS).map((r) => r.slice(0, MAX_SAMPLE_COLS)),
+    sampleRows: rows
+      .slice(0, MAX_SAMPLE_ROWS)
+      .map((r) => r.slice(0, MAX_SAMPLE_COLS)),
   };
 }

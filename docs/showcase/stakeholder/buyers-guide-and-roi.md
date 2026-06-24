@@ -1,6 +1,6 @@
 # Tessera — Buyer's Guide & ROI
 
-*A practical framework for evaluating Tessera and estimating its return.*
+_A practical framework for evaluating Tessera and estimating its return._
 
 ## Who this is for
 
@@ -31,13 +31,13 @@ The figures below are an **illustrative framework**, not a benchmark — plug in
 numbers. They show the shape of the return, drawn from the kinds of deliverables in this
 showcase.
 
-| Deliverable | Typical manual time | With Tessera (draft + edit) | Time saved / unit |
-|-------------|--------------------:|----------------------------:|------------------:|
-| HIPAA incident report | 4–6 hrs | 1.5–2 hrs | ~3 hrs |
-| Contract summary + tracker | 2–3 hrs | 0.5–1 hr | ~2 hrs |
-| Credit memo + projection | 5–8 hrs | 2–3 hrs | ~4 hrs |
-| Grant proposal | 8–12 hrs | 3–5 hrs | ~5 hrs |
-| QBR deck + CRM refresh | 4–6 hrs | 1.5–2 hrs | ~3 hrs |
+| Deliverable                | Typical manual time | With Tessera (draft + edit) | Time saved / unit |
+| -------------------------- | ------------------: | --------------------------: | ----------------: |
+| HIPAA incident report      |             4–6 hrs |                   1.5–2 hrs |            ~3 hrs |
+| Contract summary + tracker |             2–3 hrs |                    0.5–1 hr |            ~2 hrs |
+| Credit memo + projection   |             5–8 hrs |                     2–3 hrs |            ~4 hrs |
+| Grant proposal             |            8–12 hrs |                     3–5 hrs |            ~5 hrs |
+| QBR deck + CRM refresh     |             4–6 hrs |                   1.5–2 hrs |            ~3 hrs |
 
 **Worked example.** A 6-person credit team produces ~8 memos/week. At ~4 hours saved per memo
 and a $75/hr loaded cost:

@@ -14,15 +14,15 @@ KChat Desktop both talk to the same KChat / Mattermost server, each
 authenticating independently. The extension's role is purely UX
 plumbing:
 
-| Concern | Owner |
-| --- | --- |
-| Reading messages, channels, files from the KChat server | Both apps independently, via REST + PAT |
-| Indexing channel content for evidence search | Tessera (its own KChat REST connector) |
-| Rendering the KChat conversation UI | KChat Desktop |
-| Showing which channels Tessera has indexed | **This extension** (rightbar view) |
-| Triggering ingestion of the current channel | **This extension** → Tessera localhost API |
-| Sharing a Tessera artifact back to a channel | **This extension** → Tessera localhost API |
-| Cross-app navigation | `kchat://app/conversation/<id>` + `tessera://source/<id>` deeplinks |
+| Concern                                                 | Owner                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------- |
+| Reading messages, channels, files from the KChat server | Both apps independently, via REST + PAT                             |
+| Indexing channel content for evidence search            | Tessera (its own KChat REST connector)                              |
+| Rendering the KChat conversation UI                     | KChat Desktop                                                       |
+| Showing which channels Tessera has indexed              | **This extension** (rightbar view)                                  |
+| Triggering ingestion of the current channel             | **This extension** → Tessera localhost API                          |
+| Sharing a Tessera artifact back to a channel            | **This extension** → Tessera localhost API                          |
+| Cross-app navigation                                    | `kchat://app/conversation/<id>` + `tessera://source/<id>` deeplinks |
 
 There is **no** socket, no named pipe, and no shared session token
 between Tessera and KChat Desktop. The two apps cooperate only
@@ -85,11 +85,11 @@ on the lightest possible cadence.
 
 ## Permissions requested
 
-| Procedure | Category | Why |
-| --- | --- | --- |
-| `kchat.query_messages` | read | Allow the rightbar view to display the names of indexed channels and check whether the current channel has been ingested. |
-| `kchat.query_conversations` | read | Render the list of channels the host has loaded so the user knows which ones Tessera can see. |
-| `kchat.send_message` | write | Post the artifact-share card back into the conversation the user selected. The post is composed by Tessera (link + optional evidence-pack reference); the extension only forwards it. |
+| Procedure                   | Category | Why                                                                                                                                                                                   |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kchat.query_messages`      | read     | Allow the rightbar view to display the names of indexed channels and check whether the current channel has been ingested.                                                             |
+| `kchat.query_conversations` | read     | Render the list of channels the host has loaded so the user knows which ones Tessera can see.                                                                                         |
+| `kchat.send_message`        | write    | Post the artifact-share card back into the conversation the user selected. The post is composed by Tessera (link + optional evidence-pack reference); the extension only forwards it. |
 
 The user is asked to grant each procedure individually at install
 time. Declining `kchat.send_message` still leaves the read-side
@@ -133,7 +133,7 @@ What this means in practice:
 
 - `src/views/sources-panel.tsx` compiles with `"jsx": "react-jsx"`
   (see `tsconfig.json`), which generates `import { jsx } from
-  "react/jsx-runtime"` calls at the bottom of the compiled JS. These
+"react/jsx-runtime"` calls at the bottom of the compiled JS. These
   imports are resolved at extension-activation time by the host's
   module resolver, not at build time.
 - `scripts/build.mjs` does not bundle dependencies — it ships the

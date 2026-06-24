@@ -294,9 +294,9 @@ describe("createDefaultFetcher — in-session Range resume", () => {
     }) as unknown as typeof fetch;
 
     const fetcher = createDefaultFetcher(fetchImpl, undefined, noSleep);
-    await expect(
-      fetcher("https://x/model", () => {}, dest),
-    ).rejects.toThrow(/HTTP 404/);
+    await expect(fetcher("https://x/model", () => {}, dest)).rejects.toThrow(
+      /HTTP 404/,
+    );
     expect(calls).toBe(1);
   });
 
@@ -308,9 +308,9 @@ describe("createDefaultFetcher — in-session Range resume", () => {
     }) as unknown as typeof fetch;
 
     const fetcher = createDefaultFetcher(fetchImpl, 3, noSleep);
-    await expect(
-      fetcher("https://x/model", () => {}, dest),
-    ).rejects.toThrow(/ECONNRESET/);
+    await expect(fetcher("https://x/model", () => {}, dest)).rejects.toThrow(
+      /ECONNRESET/,
+    );
     expect(calls).toBe(3);
   });
 
@@ -326,9 +326,9 @@ describe("createDefaultFetcher — in-session Range resume", () => {
     }) as unknown as typeof fetch;
 
     const fetcher = createDefaultFetcher(fetchImpl, 4, recordSleep);
-    await expect(
-      fetcher("https://x/model", () => {}, dest),
-    ).rejects.toThrow(/ECONNRESET/);
+    await expect(fetcher("https://x/model", () => {}, dest)).rejects.toThrow(
+      /ECONNRESET/,
+    );
 
     expect(calls).toBe(4);
     // Sleep runs before attempts 1, 2, 3 (not before the first attempt).

@@ -61,7 +61,8 @@ const MAX_RESULTS = 50;
 // publishes the active row via `aria-activedescendant`; options are
 // never themselves focused.
 const LISTBOX_ID = "command-palette-listbox";
-const optionDomId = (index: number): string => `command-palette-option-${index}`;
+const optionDomId = (index: number): string =>
+  `command-palette-option-${index}`;
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -70,7 +71,11 @@ interface CommandPaletteProps {
 
 type PaletteRow =
   | { kind: "command"; command: Command }
-  | { kind: "artifact"; artifact: ArtifactInfo; tag: "pinned" | "recent" | "all" };
+  | {
+      kind: "artifact";
+      artifact: ArtifactInfo;
+      tag: "pinned" | "recent" | "all";
+    };
 
 interface PaletteGroup {
   label: string;

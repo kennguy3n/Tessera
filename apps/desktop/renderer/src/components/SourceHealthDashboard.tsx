@@ -255,7 +255,9 @@ export default function SourceHealthDashboard({
           marginBottom: "var(--spacing-md)",
         }}
       >
-        <h2 className="section-title" style={{ margin: 0 }}>Source Health</h2>
+        <h2 className="section-title" style={{ margin: 0 }}>
+          Source Health
+        </h2>
         <Button onClick={refresh} variant="secondary" disabled={loading}>
           <RefreshCw
             size={14}

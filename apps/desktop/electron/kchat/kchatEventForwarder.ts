@@ -106,10 +106,7 @@ import {
 } from "./kchatChannelSyncer";
 import { kchatChannelCacheDir } from "./kchatPaths";
 import { dispatchKchatMessage } from "../scheduler";
-import {
-  buildPostNotification,
-  type PostNotification,
-} from "./kchatNotify";
+import { buildPostNotification, type PostNotification } from "./kchatNotify";
 import { detectTaskFromMessage } from "./kchatTaskSync";
 import type {
   KchatConnectionState,
@@ -250,12 +247,7 @@ interface KchatRevokeOutcomeView {
   vacuumError?: string;
 }
 interface KchatAclRefreshOutcomeView {
-  outcome:
-    | "granted"
-    | "regranted"
-    | "revoked"
-    | "unlinked"
-    | "no_principal";
+  outcome: "granted" | "regranted" | "revoked" | "unlinked" | "no_principal";
   memberCount: number;
   principalPresent: boolean;
   chunksDropped: number;
@@ -437,8 +429,7 @@ export function parsePostPayload(
   if (obj === null) return null;
 
   const id = typeof obj.id === "string" ? obj.id : null;
-  const channelId =
-    typeof obj.channel_id === "string" ? obj.channel_id : null;
+  const channelId = typeof obj.channel_id === "string" ? obj.channel_id : null;
   const userId = typeof obj.user_id === "string" ? obj.user_id : null;
   const message = typeof obj.message === "string" ? obj.message : null;
   const createAt = typeof obj.create_at === "number" ? obj.create_at : null;
@@ -583,9 +574,7 @@ export class KchatEventForwarder {
    * The DI default is a no-op so unit tests don't need to wire
    * the callback unless they're exercising the regrant path.
    */
-  private readonly scheduleChannelResync: (
-    channelId: string,
-  ) => Promise<void>;
+  private readonly scheduleChannelResync: (channelId: string) => Promise<void>;
   /**
    * Pluggable resolver for the on-disk cache directory of a
    * given KChat channel id. Production wires this to the
@@ -768,10 +757,7 @@ export class KchatEventForwarder {
         this.handleStatusChange(state);
       } catch (err) {
         // Same fire-and-forget rationale as the WS listener.
-        console.error(
-          "[KchatEventForwarder] handleStatusChange failed:",
-          err,
-        );
+        console.error("[KchatEventForwarder] handleStatusChange failed:", err);
       }
     });
   }
@@ -928,10 +914,7 @@ export class KchatEventForwarder {
       // file evidence. Body parsing + AEAD sealing happens
       // under `withChannelSyncLock` inside `handlePostedEvent`.
       this.handlePostedEvent(view).catch((err) => {
-        console.error(
-          "[KchatEventForwarder] posted side-effect failed:",
-          err,
-        );
+        console.error("[KchatEventForwarder] posted side-effect failed:", err);
       });
       // Independently of ingestion, fire any `OnKchatMessageMatch`
       // automations whose channel + regex match this post. This is
@@ -1054,10 +1037,7 @@ export class KchatEventForwarder {
         // Drop the rest of the buffer for this window — the
         // `closed` handler above will run shortly and release
         // the state slot.
-        console.error(
-          "[KchatEventForwarder] webContents.send failed:",
-          err,
-        );
+        console.error("[KchatEventForwarder] webContents.send failed:", err);
         state.buffer.length = 0;
         break;
       }
@@ -1081,10 +1061,7 @@ export class KchatEventForwarder {
         // Same fire-and-forget rationale as the WS path. A
         // window that has gone away mid-broadcast must not
         // block delivery to the surviving windows.
-        console.error(
-          "[KchatEventForwarder] status send failed:",
-          err,
-        );
+        console.error("[KchatEventForwarder] status send failed:", err);
       }
     }
   }
@@ -1152,9 +1129,7 @@ export class KchatEventForwarder {
    * semantics. Errors never propagate back into the forwarder's
    * fire-and-forget event loop.
    */
-  private async handleFileAdded(
-    view: KchatWebSocketEventView,
-  ): Promise<void> {
+  private async handleFileAdded(view: KchatWebSocketEventView): Promise<void> {
     const bridge = this.getBridgeFn();
     if (!bridge) {
       // Tests sometimes run the forwarder without a bridge.
@@ -1332,10 +1307,7 @@ export class KchatEventForwarder {
       // bridge throw — degrades to `triggered_reindex=false`.
       // The audit row still lands so operators can correlate
       // the failure with the WS event.
-      console.error(
-        "[KchatEventForwarder] single-file sync failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] single-file sync failed:", err);
       triggeredReindex = false;
     }
 
@@ -1370,10 +1342,7 @@ export class KchatEventForwarder {
         triggeredReindex,
       );
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] audit log failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] audit log failed:", err);
     }
   }
 
@@ -1429,7 +1398,14 @@ export class KchatEventForwarder {
     const channelId = view.channelId;
     const client = this.client;
     if (channelId === null || client === null) {
-      this.safeAuditAclRefreshed(bridge, view.event, channelId, 0, false, "unlinked");
+      this.safeAuditAclRefreshed(
+        bridge,
+        view.event,
+        channelId,
+        0,
+        false,
+        "unlinked",
+      );
       return;
     }
 
@@ -1444,12 +1420,23 @@ export class KchatEventForwarder {
       );
     }
     if (!isLinked) {
-      this.safeAuditAclRefreshed(bridge, view.event, channelId, 0, false, "unlinked");
+      this.safeAuditAclRefreshed(
+        bridge,
+        view.event,
+        channelId,
+        0,
+        false,
+        "unlinked",
+      );
       return;
     }
 
-    let outcome: "granted" | "regranted" | "revoked" | "unlinked" | "no_principal" =
-      "unlinked";
+    let outcome:
+      | "granted"
+      | "regranted"
+      | "revoked"
+      | "unlinked"
+      | "no_principal" = "unlinked";
     let memberCount = 0;
     let principalPresent = false;
     // cryptoshred counters captured
@@ -1598,10 +1585,7 @@ export class KchatEventForwarder {
       vacuumSucceeded = result.vacuumSucceeded;
       vacuumError = result.vacuumError;
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] ACL refresh failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] ACL refresh failed:", err);
       outcome = "unlinked";
     }
 
@@ -1765,10 +1749,7 @@ export class KchatEventForwarder {
         };
       });
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] explicit revoke failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] explicit revoke failed:", err);
     }
     const outcome = result.outcome;
     const chunksDropped = result.chunksDropped;
@@ -1860,9 +1841,7 @@ export class KchatEventForwarder {
    * channel-only form) when there is no client or the lookup fails —
    * a missing name must never suppress the notification itself.
    */
-  private async resolveSenderUsername(
-    userId: string,
-  ): Promise<string | null> {
+  private async resolveSenderUsername(userId: string): Promise<string | null> {
     const cached = this.usernameCache.get(userId);
     if (cached !== undefined) return cached;
     const client = this.client;
@@ -2071,10 +2050,7 @@ export class KchatEventForwarder {
       outcomeShortCode = r.outcome;
       chunkCount = r.chunkCount;
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] post ingest failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] post ingest failed:", err);
     }
 
     this.safeAuditPostIngested(
@@ -2135,10 +2111,7 @@ export class KchatEventForwarder {
       outcomeShortCode = r.outcome;
       chunksDropped = r.chunksDropped;
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] post delete failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] post delete failed:", err);
     }
 
     this.safeAuditPostDeleted(
@@ -2176,10 +2149,7 @@ export class KchatEventForwarder {
         );
       }
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] post-ingest audit log failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] post-ingest audit log failed:", err);
     }
   }
 
@@ -2199,10 +2169,7 @@ export class KchatEventForwarder {
         chunksDropped,
       );
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] post-delete audit log failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] post-delete audit log failed:", err);
     }
   }
 
@@ -2235,10 +2202,7 @@ export class KchatEventForwarder {
         `${outcome}:${eventName}`,
       );
     } catch (err) {
-      console.error(
-        "[KchatEventForwarder] ACL refresh audit log failed:",
-        err,
-      );
+      console.error("[KchatEventForwarder] ACL refresh audit log failed:", err);
     }
   }
 

@@ -20,7 +20,12 @@
 import type { CSSProperties } from "react";
 
 import type { CellFormat } from "../sheetEditorTypes";
-import { isFormulaError, makeError, type FormulaError, type FormulaValue } from "./types";
+import {
+  isFormulaError,
+  makeError,
+  type FormulaError,
+  type FormulaValue,
+} from "./types";
 import { dateToSerial, serialToDate } from "./functions/date";
 
 /** Format `value` as a string using `format` (or General if absent). */

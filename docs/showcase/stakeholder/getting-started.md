@@ -1,6 +1,6 @@
 # Tessera — Getting Started
 
-*From install to your first source-cited artifact.*
+_From install to your first source-cited artifact._
 
 This guide mirrors the flow shown in the [UI/UX walkthrough](../blog/06-ui-ux-walkthrough.md)
 and gets a new user productive quickly.

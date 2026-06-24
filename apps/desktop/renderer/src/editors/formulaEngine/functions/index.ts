@@ -42,4 +42,5 @@ function buildRegistry(): ReadonlyMap<string, FunctionImpl> {
   return map;
 }
 
-export const FUNCTION_REGISTRY: ReadonlyMap<string, FunctionImpl> = buildRegistry();
+export const FUNCTION_REGISTRY: ReadonlyMap<string, FunctionImpl> =
+  buildRegistry();

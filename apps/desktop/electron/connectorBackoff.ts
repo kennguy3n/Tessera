@@ -319,10 +319,10 @@ export function recordConnectorFailure(
   classifier: (e: unknown) => FailureKind,
 ): SyncFailureState {
   const message = errorMessage(err);
-  const next = applyFailureToState(
-    loadSyncFailureState(bridge, sourceId),
-    { kind: classifier(err), message },
-  );
+  const next = applyFailureToState(loadSyncFailureState(bridge, sourceId), {
+    kind: classifier(err),
+    message,
+  });
   saveSyncFailureState(bridge, sourceId, next);
   return next;
 }

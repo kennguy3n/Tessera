@@ -55,6 +55,7 @@ impl FileWatcher {
     pub fn new(path: &Path) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
 
+        let watch_root = canonicalize_path(path);
         let sender = tx.clone();
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             if let Ok(event) = res {
@@ -67,7 +68,7 @@ impl FileWatcher {
         .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
 
         watcher
-            .watch(path, RecursiveMode::Recursive)
+            .watch(&watch_root, RecursiveMode::Recursive)
             .map_err(|e| Error::Io(std::io::Error::other(e.to_string())))?;
 
         Ok(Self {
@@ -342,20 +343,30 @@ pub fn coalesce_directory_bursts(events: Vec<FileEvent>, threshold: usize) -> Ve
 fn translate_event(event: &Event) -> Vec<FileEvent> {
     let mut result = Vec::new();
     for path in &event.paths {
+        let canonical = canonicalize_path(path);
         match event.kind {
             EventKind::Create(_) => {
-                result.push(FileEvent::Created(path.clone()));
+                result.push(FileEvent::Created(canonical));
             }
             EventKind::Modify(_) => {
-                result.push(FileEvent::Modified(path.clone()));
+                result.push(FileEvent::Modified(canonical));
             }
             EventKind::Remove(_) => {
-                result.push(FileEvent::Removed(path.clone()));
+                result.push(FileEvent::Removed(canonical));
             }
             _ => {}
         }
     }
     result
+}
+
+/// Resolve symlinks and relative components in `path` so watcher
+/// paths are stable across macOS `/private` symlink aliasing and
+/// user-supplied symlinked source roots. Falls back to the input
+/// path on failure (e.g., a `Removed` event for a file that was
+/// already deleted before canonicalization runs).
+fn canonicalize_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]
@@ -525,7 +536,7 @@ mod tests {
         // event for that path; that's the contract this test
         // guards.
         let touched_path = batch[0].path().to_path_buf();
-        assert_eq!(touched_path, file_path);
+        assert_eq!(touched_path, canonicalize_path(&file_path));
         let dups_for_same_path = batch.iter().filter(|e| e.path() == touched_path).count();
         assert_eq!(
             dups_for_same_path, 1,
@@ -579,11 +590,11 @@ mod tests {
             1,
             "a single-directory burst must yield exactly one trigger; got {triggers:?}",
         );
+        let expected_dir = canonicalize_path(dir.path());
         match &triggers[0] {
             WatchTrigger::DirectoryRescan(p) => {
                 assert_eq!(
-                    p,
-                    dir.path(),
+                    p, &expected_dir,
                     "rescan must be rooted at the burst directory"
                 );
             }

@@ -32,7 +32,8 @@ export interface StoredTokens {
   connectorConfig?: Record<string, string>;
 }
 
-const VAULT_DIR = (): string => path.join(app.getPath("userData"), "token-vault");
+const VAULT_DIR = (): string =>
+  path.join(app.getPath("userData"), "token-vault");
 
 function ensureVaultDir(): void {
   const dir = VAULT_DIR();

@@ -178,7 +178,8 @@ export function detectDiagramType(dsl: string): MermaidDiagramType | "unknown" {
   for (const raw of dsl.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("%%")) continue;
-    if (line.startsWith("flowchart") || line.startsWith("graph")) return "flowchart";
+    if (line.startsWith("flowchart") || line.startsWith("graph"))
+      return "flowchart";
     if (line.startsWith("sequenceDiagram")) return "sequence";
     if (line.startsWith("classDiagram")) return "class";
     if (line.startsWith("stateDiagram")) return "state";
@@ -207,7 +208,10 @@ function isBrowserEnvironment(): boolean {
   );
 }
 
-function mergeConfig(base: MermaidConfig, override?: MermaidConfig): MermaidConfig {
+function mergeConfig(
+  base: MermaidConfig,
+  override?: MermaidConfig,
+): MermaidConfig {
   if (!override) return base;
   return {
     ...base,
@@ -220,13 +224,18 @@ function mergeConfig(base: MermaidConfig, override?: MermaidConfig): MermaidConf
 }
 
 function cryptoRandomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID().replace(/-/g, "");
   }
   return Math.random().toString(36).slice(2, 14);
 }
 
-function extractBoundingBox(svg: string): { width: number; height: number } | undefined {
+function extractBoundingBox(
+  svg: string,
+): { width: number; height: number } | undefined {
   const m = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
   if (!m) return undefined;
   return { width: parseFloat(m[1]), height: parseFloat(m[2]) };

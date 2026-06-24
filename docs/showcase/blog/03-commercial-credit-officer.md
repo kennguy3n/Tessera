@@ -1,6 +1,6 @@
 # Priya turns borrower financials into a credit memo the committee can interrogate
 
-*Part 3 of the Tessera showcase series — Finance.*
+_Part 3 of the Tessera showcase series — Finance._
 
 > **Persona:** Priya Nair, Commercial Credit Officer, Cascade Regional Bank
 > **The task:** assemble a credit memo that ties a borrower's financials, collateral, and
@@ -59,8 +59,8 @@ Revenue ($32.2M → $34.3M → $36.5M), gross margin (22.1% → 24.0%), EBITDA, 
 service, total debt service, DSCR (2.40x → 2.60x), net income, and cash, laid out across
 FY2026E–FY2028E. The sheet exercises the full spreadsheet surface: a derived **Rev Growth**
 formula column (`=(B3-B2)/B2`), an **AVERAGE summary row** over every numeric series, a
-named **`Revenue`** range, a **frozen header**, and two **range-bound charts** — a *Revenue
-trajectory* line and an *EBITDA by period* bar — both bound to the model's own values and
+named **`Revenue`** range, a **frozen header**, and two **range-bound charts** — a _Revenue
+trajectory_ line and an _EBITDA by period_ bar — both bound to the model's own values and
 excluding the summary row. It's a grid the committee can edit and re-run assumptions
 against, not a static paragraph. Priya saves the finished model from the sheet editor's
 in-editor **template gallery** as a reusable `tessera.sheettemplate`, so the next borrower's

@@ -102,7 +102,9 @@ describe("stopSidecarsList", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const text = {
-      stop: vi.fn().mockRejectedValue(new Error("text sidecar SIGTERM ignored")),
+      stop: vi
+        .fn()
+        .mockRejectedValue(new Error("text sidecar SIGTERM ignored")),
     };
     const vision = {
       stop: vi.fn().mockRejectedValue(new Error("vision sidecar hung")),
@@ -130,9 +132,15 @@ describe("stopSidecarsList", () => {
     // post-mortem audits can distinguish text/vision/diffusion
     // shutdown failures. The exact format isn't load-bearing, but
     // the label and the underlying error message must appear.
-    const calls = errSpy.mock.calls.map((c) => c.map((v) => String(v)).join(" "));
-    expect(calls.some((c) => c.includes("text") && c.includes("SIGTERM ignored"))).toBe(true);
-    expect(calls.some((c) => c.includes("vision") && c.includes("hung"))).toBe(true);
+    const calls = errSpy.mock.calls.map((c) =>
+      c.map((v) => String(v)).join(" "),
+    );
+    expect(
+      calls.some((c) => c.includes("text") && c.includes("SIGTERM ignored")),
+    ).toBe(true);
+    expect(calls.some((c) => c.includes("vision") && c.includes("hung"))).toBe(
+      true,
+    );
   });
 
   it("does not allow one slow sidecar to delay the others' stop() calls", async () => {

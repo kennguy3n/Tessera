@@ -33,7 +33,8 @@ describe("marpRenderer", () => {
     });
 
     it("honours the marp: true frontmatter directive", () => {
-      const md = "---\nmarp: true\ntheme: default\npaginate: true\n---\n\n# Title";
+      const md =
+        "---\nmarp: true\ntheme: default\npaginate: true\n---\n\n# Title";
       const result = renderMarp(md);
       // pagination injects a <p> with the page number marker
       expect(result.html).toMatch(/section/);
@@ -99,7 +100,9 @@ describe("marpRenderer", () => {
       expect(fm).toContain("theme: 'gaia class: lead-injected'");
       // And the literal newline + injected class line must NOT appear as
       // its own directive.
-      expect(fm.split(/\n/).filter((l) => l === "class: lead-injected")).toEqual([]);
+      expect(
+        fm.split(/\n/).filter((l) => l === "class: lead-injected"),
+      ).toEqual([]);
     });
   });
 
@@ -130,7 +133,8 @@ describe("marpRenderer", () => {
     });
 
     it("captures HTML comment blocks per slide", () => {
-      const md = "# A\n\n<!-- notes for A -->\n\n---\n\n# B\n\n<!-- B note 1 -->\n<!-- B note 2 -->";
+      const md =
+        "# A\n\n<!-- notes for A -->\n\n---\n\n# B\n\n<!-- B note 1 -->\n<!-- B note 2 -->";
       const notes = extractSpeakerNotes(md);
       expect(notes[0]).toBe("notes for A");
       expect(notes[1]).toBe("B note 1\nB note 2");
@@ -140,7 +144,9 @@ describe("marpRenderer", () => {
   it("supports the three built-in themes", () => {
     expect(SUPPORTED_THEMES).toEqual(["default", "gaia", "uncover"]);
     for (const theme of SUPPORTED_THEMES) {
-      const result = renderMarp(`---\nmarp: true\ntheme: ${theme}\n---\n# Test`);
+      const result = renderMarp(
+        `---\nmarp: true\ntheme: ${theme}\n---\n# Test`,
+      );
       expect(result.slideCount).toBeGreaterThanOrEqual(1);
     }
   });

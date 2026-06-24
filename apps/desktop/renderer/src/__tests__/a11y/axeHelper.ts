@@ -73,9 +73,7 @@ function buildRunOptions(options: RunAxeOptions): RunOptions {
   ];
   return {
     runOnly: { type: "tag", values: [...A11Y_TAGS] },
-    rules: Object.fromEntries(
-      disabled.map((id) => [id, { enabled: false }]),
-    ),
+    rules: Object.fromEntries(disabled.map((id) => [id, { enabled: false }])),
     // We assert only on definitive `violations`; surfacing passes /
     // incomplete in the payload just bloats memory across hundreds of
     // runs.

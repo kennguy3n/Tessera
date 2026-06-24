@@ -15,12 +15,7 @@
  * clock.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import KchatSettingsCard from "../components/KchatSettingsCard";
 import {
   getStoredDefaultTeamId,
@@ -66,15 +61,11 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
       portFilePath: "/tmp/tessera-kchat-port.json",
       lastExtensionContactAt: null,
     }),
-    openInDesktop: vi
-      .fn()
-      .mockResolvedValue({ opened: true, url: "kchat://" }),
-    openDesktopExtensions: vi
-      .fn()
-      .mockResolvedValue({
-        opened: true,
-        url: "kchat://app/settings/extensions",
-      }),
+    openInDesktop: vi.fn().mockResolvedValue({ opened: true, url: "kchat://" }),
+    openDesktopExtensions: vi.fn().mockResolvedValue({
+      opened: true,
+      url: "kchat://app/settings/extensions",
+    }),
     backfillProgress: vi.fn(),
     onStatusChange: vi.fn().mockReturnValue(() => {}),
     onEvent: vi.fn().mockReturnValue(() => {}),
@@ -146,9 +137,7 @@ describe("KchatSettingsCard", () => {
     expect(screen.getByLabelText(/server url/i)).toHaveValue(
       "https://kchat.com",
     );
-    expect(
-      screen.getByLabelText(/personal access token/i),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/personal access token/i)).toBeInTheDocument();
     expect(screen.getByTestId("kchat-connect")).toHaveTextContent(/connect/i);
   });
 
@@ -273,12 +262,8 @@ describe("KchatSettingsCard", () => {
     const api = makeApi();
     wrap(<KchatSettingsCard api={api} />);
     await screen.findByTestId("kchat-settings-card");
-    await waitFor(() =>
-      expect(api.desktopBridgeStatus).toHaveBeenCalled(),
-    );
-    expect(
-      screen.queryByTestId("kchat-desktop-detected"),
-    ).toBeNull();
+    await waitFor(() => expect(api.desktopBridgeStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("kchat-desktop-detected")).toBeNull();
   });
 
   it("renders the 'KChat Desktop detected' affordance when the extension has recently checked in", async () => {
@@ -330,14 +315,10 @@ describe("KchatSettingsCard", () => {
     });
     wrap(<KchatSettingsCard api={api} />);
     await screen.findByTestId("kchat-settings-card");
-    await waitFor(() =>
-      expect(api.desktopBridgeStatus).toHaveBeenCalled(),
-    );
+    await waitFor(() => expect(api.desktopBridgeStatus).toHaveBeenCalled());
     // Wait briefly so the React batch processes the IPC resolve.
     await new Promise((r) => setTimeout(r, 0));
-    expect(
-      screen.queryByTestId("kchat-desktop-detected"),
-    ).toBeNull();
+    expect(screen.queryByTestId("kchat-desktop-detected")).toBeNull();
   });
 });
 

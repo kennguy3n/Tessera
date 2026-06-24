@@ -27,9 +27,7 @@ describe("useKchatBackfillProgress", () => {
   it("returns null while no channelId is supplied (quiescent)", async () => {
     const spy = vi.fn();
     window.tessera.kchat.backfillProgress = spy;
-    const { result } = renderHook(() =>
-      useKchatBackfillProgress(null, TICK),
-    );
+    const { result } = renderHook(() => useKchatBackfillProgress(null, TICK));
     // Give the queue a few ticks to be sure the hook didn't poll.
     await new Promise((r) => setTimeout(r, 60));
     expect(result.current).toBeNull();
@@ -44,9 +42,7 @@ describe("useKchatBackfillProgress", () => {
       postsIngested: 2,
       status: "active" as const,
     };
-    window.tessera.kchat.backfillProgress = vi
-      .fn()
-      .mockResolvedValue(snap);
+    window.tessera.kchat.backfillProgress = vi.fn().mockResolvedValue(snap);
     const { result } = renderHook(() =>
       useKchatBackfillProgress(CHANNEL_ID, TICK),
     );
@@ -88,13 +84,11 @@ describe("useKchatBackfillProgress", () => {
     expect(spy.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("surfaces a synthetic `status: \"error\"` view after \u2265 3 consecutive transport failures", async () => {
+  it('surfaces a synthetic `status: "error"` view after \u2265 3 consecutive transport failures', async () => {
     // The hook keeps polling even after surfacing the error \u2014
     // the loop self-heals on the next successful tick. Here the
     // mock keeps rejecting so the synthetic error sticks.
-    const spy = vi
-      .fn()
-      .mockRejectedValue(new Error("preload bridge missing"));
+    const spy = vi.fn().mockRejectedValue(new Error("preload bridge missing"));
     window.tessera.kchat.backfillProgress = spy;
 
     const { result } = renderHook(() =>

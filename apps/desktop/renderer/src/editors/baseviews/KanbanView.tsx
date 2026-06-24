@@ -43,15 +43,17 @@ export default function KanbanView({
   // index-based map so we can look up the original `records` index
   // when dispatching `onUpdateCell` after a drop.
   const recordsByColumn = useMemo(() => {
-    const map = new Map<string, { record: Record<string, unknown>; index: number }[]>();
+    const map = new Map<
+      string,
+      { record: Record<string, unknown>; index: number }[]
+    >();
     if (!groupField) return map;
     const knownOptions = new Set(groupField.options ?? []);
     for (let i = 0; i < data.records.length; i++) {
       const r = data.records[i];
       const rawVal = r[groupField.name];
       const val = rawVal == null ? "" : String(rawVal);
-      const bucket =
-        val === "" || !knownOptions.has(val) ? OTHER_COLUMN : val;
+      const bucket = val === "" || !knownOptions.has(val) ? OTHER_COLUMN : val;
       const list = map.get(bucket) ?? [];
       list.push({ record: r, index: i });
       map.set(bucket, list);
@@ -72,9 +74,7 @@ export default function KanbanView({
     return (
       <KanbanFieldPicker
         selectFields={selectFields}
-        onPick={(name) =>
-          onConfigChange({ ...config, kanbanGroupField: name })
-        }
+        onPick={(name) => onConfigChange({ ...config, kanbanGroupField: name })}
       />
     );
   }
@@ -127,7 +127,12 @@ export default function KanbanView({
   return (
     <div
       className="base-kanban"
-      style={{ display: "flex", gap: "1rem", overflowX: "auto", padding: "0.75rem" }}
+      style={{
+        display: "flex",
+        gap: "1rem",
+        overflowX: "auto",
+        padding: "0.75rem",
+      }}
     >
       {columns.map((column) => {
         const isOther = column === OTHER_COLUMN;
@@ -161,13 +166,17 @@ export default function KanbanView({
                 justifyContent: "space-between",
                 fontWeight: 600,
                 fontSize: "0.875rem",
-                color: isOther ? "var(--color-text-secondary, #6b7280)" : "inherit",
+                color: isOther
+                  ? "var(--color-text-secondary, #6b7280)"
+                  : "inherit",
               }}
             >
               {/* Keep the column name and count in a single text node
                   so the header is queryable as one string (test
                   selectors and screen readers both prefer this). */}
-              <span data-testid={`kanban-column-header-${isOther ? "other" : column}`}>
+              <span
+                data-testid={`kanban-column-header-${isOther ? "other" : column}`}
+              >
                 {`${isOther ? "Other" : column} (${recs.length})`}
               </span>
               {!isOther && (
@@ -175,9 +184,7 @@ export default function KanbanView({
                   type="button"
                   className="btn-sm"
                   title="Add card to this column"
-                  onClick={() =>
-                    onAddRecordWith({ [groupField.name]: column })
-                  }
+                  onClick={() => onAddRecordWith({ [groupField.name]: column })}
                   style={{
                     padding: "0.125rem 0.4rem",
                     fontSize: "0.75rem",

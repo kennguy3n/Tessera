@@ -195,7 +195,9 @@ describe("captureBackendAtBoot", () => {
     const d = captureBackendAtBoot();
     expect(d.name).toBe("os_managed");
     expect(d.trustTier).toBe("enforced-by-os");
-    expect(logCalls.filter((l) => l.msg === "keychain.backend.boot")).toHaveLength(1);
+    expect(
+      logCalls.filter((l) => l.msg === "keychain.backend.boot"),
+    ).toHaveLength(1);
     expect(counterCalls).toEqual(["keychain.backend.os_managed"]);
   });
 
@@ -351,9 +353,7 @@ describe("assertSafeEncrypt enforcement policy", () => {
     // should log the drift warning.
     fakeSafeStorage.getSelectedStorageBackend = () => "basic_text";
     assertSafeEncrypt({ enforce: false });
-    const drifts = logCalls.filter(
-      (l) => l.msg === "keychain.backend.drift",
-    );
+    const drifts = logCalls.filter((l) => l.msg === "keychain.backend.drift");
     expect(drifts).toHaveLength(1);
     expect(drifts[0].meta).toMatchObject({
       boot_backend: "kwallet6",
@@ -367,9 +367,7 @@ describe("assertSafeEncrypt enforcement policy", () => {
     captureBackendAtBoot();
     assertSafeEncrypt({ enforce: false });
     assertSafeEncrypt({ enforce: false });
-    const drifts = logCalls.filter(
-      (l) => l.msg === "keychain.backend.drift",
-    );
+    const drifts = logCalls.filter((l) => l.msg === "keychain.backend.drift");
     expect(drifts).toHaveLength(0);
   });
 });

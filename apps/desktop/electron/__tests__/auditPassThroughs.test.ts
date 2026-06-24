@@ -179,7 +179,8 @@ afterEach(() => {
 
 async function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
   const listener = captured.get(channel);
-  if (!listener) throw new Error(`No handler captured for channel "${channel}"`);
+  if (!listener)
+    throw new Error(`No handler captured for channel "${channel}"`);
   // The real `ipcMain.handle` passes `{ sender }` as the first arg;
   // pass a noop event object so handlers that don't read `event` work.
   return listener({} as unknown, ...args);
@@ -237,9 +238,9 @@ describe("model:* IPC handlers — audit pass-throughs", () => {
     // "model already started" outcome.
     sidecarMock.waitForReady.mockResolvedValueOnce(false);
     registerModelHandlers();
-    await expect(
-      invoke("model:start", "/models/llama-3.gguf"),
-    ).rejects.toThrow(/failed to become ready/i);
+    await expect(invoke("model:start", "/models/llama-3.gguf")).rejects.toThrow(
+      /failed to become ready/i,
+    );
     expect(sidecarMock.start).toHaveBeenCalled();
     expect(sidecarMock.stop).toHaveBeenCalledTimes(1);
     // Audit must NOT fire when the sidecar never became ready —
@@ -312,10 +313,7 @@ describe("externalProvider:set IPC — audit pass-throughs", () => {
       "externalProvider.providerType",
       "openai_compatible",
     ]);
-    expect(calls).toContainEqual([
-      "externalProvider.modelName",
-      "gpt-4o-mini",
-    ]);
+    expect(calls).toContainEqual(["externalProvider.modelName", "gpt-4o-mini"]);
     // Defence-in-depth: the URL and the keychain identifier MUST
     // NEVER appear in any audit call as a field name OR as a value.
     for (const [field, value] of calls) {

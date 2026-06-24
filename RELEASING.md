@@ -32,9 +32,11 @@ The preflight script is the same set of gates CI runs, plus an
 before they reach the release workflow.
 
 > **Before the first preflight run on a fresh clone:**
+>
 > ```
 > npm ci   # or `npm install` if package-lock.json is being updated
 > ```
+>
 > `electron-builder` is declared as a `devDependency` of
 > `apps/desktop`, so `npm ci` is what puts the pinned binary on disk.
 > The packaging step uses `npx --no electron-builder ...`,
@@ -64,6 +66,7 @@ The script runs:
    the test targets; `--all-targets` also exercises bench harnesses,
    examples, and the main binary path, so a build-script-level
    regression that `cargo test` would miss surfaces here.
+
 4. `cargo build --release --all-targets`
 
    Mirrors CI's `Build (release mode)` step which runs the same
@@ -76,11 +79,12 @@ The script runs:
    step below, and only blow up at `v*` tag-push time. Running it
    here as part of preflight keeps the four gates (CI, release,
    bash preflight, pwsh preflight) in lock-step on profile coverage.
+
 5. `cargo test --all`
 6. `npm run lint --workspace=apps/desktop`
 7. `npm run type-check --workspace=apps/desktop`
 8. `npm run test --workspace=apps/desktop`
-9. *(macOS / Windows only)* `npm install --no-save --no-package-lock @rollup/rollup-<plat>-<arch>`
+9. _(macOS / Windows only)_ `npm install --no-save --no-package-lock @rollup/rollup-<plat>-<arch>`
 
    On macOS and Windows the script inserts a host-matching Rollup
    binary install before the build step as a workaround for
@@ -94,6 +98,7 @@ The script runs:
    because `npm ci` already installs the correct binary, so the
    per-run "[N/M]" banners show 10 steps on Linux and 11 on
    macOS/Windows.
+
 10. `npm run build`
 
     Invoked at the repo root. The root `package.json` defines `build`
@@ -111,14 +116,15 @@ The script runs:
     workspace-scoped in the `typescript` job's `Lint` /
     `Type-check` / `Test` steps; only the desktop build was
     asymmetric, so the fix lives there.
+
 11. `npx --no electron-builder --config packaging/electron-builder.yml --dir`
 
-   The `--no` flag (npm 10+ canonical form, equivalent to the legacy
-   `--no-install`) prevents npx from silently downloading a different
-   electron-builder version into the npx cache if the workspace one
-   is missing; the preflight script fails loudly in that case so the
-   maintainer can install the missing dependency deliberately rather
-   than ship an installer built by a floating-version binary.
+The `--no` flag (npm 10+ canonical form, equivalent to the legacy
+`--no-install`) prevents npx from silently downloading a different
+electron-builder version into the npx cache if the workspace one
+is missing; the preflight script fails loudly in that case so the
+maintainer can install the missing dependency deliberately rather
+than ship an installer built by a floating-version binary.
 
 A successful run ends with:
 
@@ -226,17 +232,17 @@ code-signing section below).
 Tessera's release workflow already wires code-signing through
 `electron-builder`'s standard environment variables. To produce
 signed installers, set the following as **repository secrets** under
-*Settings → Secrets and variables → Actions* before tagging:
+_Settings → Secrets and variables → Actions_ before tagging:
 
 ### macOS (Apple Developer ID)
 
-| Secret | Description |
-|---|---|
-| `CSC_LINK` | Base64-encoded `.p12` of your Developer ID Application certificate, or an `https://`/`s3://` URL to the file. |
-| `CSC_KEY_PASSWORD` | Password used when the `.p12` was exported. |
-| `APPLE_ID` | Apple ID (email) used to upload the build for notarization. |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password generated at <https://appleid.apple.com>. |
-| `APPLE_TEAM_ID` | (Recommended) Your 10-character Apple Developer Team ID. Required by `notarytool` for organisations with multiple teams. |
+| Secret                        | Description                                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `CSC_LINK`                    | Base64-encoded `.p12` of your Developer ID Application certificate, or an `https://`/`s3://` URL to the file.            |
+| `CSC_KEY_PASSWORD`            | Password used when the `.p12` was exported.                                                                              |
+| `APPLE_ID`                    | Apple ID (email) used to upload the build for notarization.                                                              |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password generated at <https://appleid.apple.com>.                                                          |
+| `APPLE_TEAM_ID`               | (Recommended) Your 10-character Apple Developer Team ID. Required by `notarytool` for organisations with multiple teams. |
 
 When all four (five) values are present, `electron-builder` signs the
 `.app` with the Developer ID certificate and submits the resulting
@@ -244,10 +250,10 @@ When all four (five) values are present, `electron-builder` signs the
 
 ### Windows (Authenticode)
 
-| Secret | Description |
-|---|---|
-| `CSC_LINK` | Base64-encoded `.pfx` for the Authenticode certificate, or an `https://` URL. (Re-used from the macOS row when both certificates are bundled into a single secret pair — otherwise create `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` and adjust `release.yml` to pass them as `CSC_LINK` / `CSC_KEY_PASSWORD` for the Windows job only.) |
-| `CSC_KEY_PASSWORD` | `.pfx` export password. |
+| Secret             | Description                                                                                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CSC_LINK`         | Base64-encoded `.pfx` for the Authenticode certificate, or an `https://` URL. (Re-used from the macOS row when both certificates are bundled into a single secret pair — otherwise create `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` and adjust `release.yml` to pass them as `CSC_LINK` / `CSC_KEY_PASSWORD` for the Windows job only.) |
+| `CSC_KEY_PASSWORD` | `.pfx` export password.                                                                                                                                                                                                                                                                                                               |
 
 `electron-builder` produces signed `.exe` installers when both values
 are set on the Windows runner.
@@ -267,10 +273,10 @@ private key as a repository secret.
 After the release workflow completes:
 
 - **macOS**: `codesign --verify --deep --strict --verbose=2
-  Tessera-*.dmg` and `spctl --assess --type execute
-  /Applications/Tessera.app` should both return success.
-- **Windows**: Right-click the installer → *Properties → Digital
-  Signatures* should show your certificate.
+Tessera-*.dmg` and `spctl --assess --type execute
+/Applications/Tessera.app` should both return success.
+- **Windows**: Right-click the installer → _Properties → Digital
+  Signatures_ should show your certificate.
 
 If signing was not configured, the workflow still produces installable
 unsigned artefacts — they just show OS-level "unidentified developer"

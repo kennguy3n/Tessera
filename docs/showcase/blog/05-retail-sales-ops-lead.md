@@ -1,6 +1,6 @@
 # Marcus runs a QBR off real pipeline data — and a CRM the team can act on
 
-*Part 5 of the Tessera showcase series — Retail / Consumer Goods.*
+_Part 5 of the Tessera showcase series — Retail / Consumer Goods._
 
 > **Persona:** Marcus Chen, Sales Operations Lead, Northwind Outdoor Co.
 > **The task:** consolidate pipeline, performance, and account health into a quarterly
@@ -39,7 +39,7 @@ bookings of **$14.2M (105% of plan, +12% YoY)**, the West region carrying the qu
 Central lagging on risk from a key account, Q2 pipeline coverage light at **1.6x**, and gross
 margin up 150bps on an apparel mix shift. Each bullet carries a `[01-quarterly-sales-data.md]`
 or `[02-key-accounts-and-deals.md]` citation. The deck is built with the slide editor's
-**layout engine** (a *Section Header* opener into *Title + Content* slides), wears the
+**layout engine** (a _Section Header_ opener into _Title + Content_ slides), wears the
 **Aurora** theme, and carries **speaker notes** on every slide for rehearsal in **present
 mode**. Before it goes to leadership, Marcus applies Northwind's **Brand Kit** — company
 colours, fonts, and logo — in one click; the brand re-skins every slide and **survives the

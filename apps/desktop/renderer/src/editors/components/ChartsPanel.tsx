@@ -109,8 +109,8 @@ export function ChartsPanel({
 
       {charts.length === 0 ? (
         <p className="sheet-cf-empty" data-testid="sheet-charts-empty">
-          No charts yet. Select a range (e.g. <code>B2:B10</code>), pick a
-          type, and add a chart bound to that range.
+          No charts yet. Select a range (e.g. <code>B2:B10</code>), pick a type,
+          and add a chart bound to that range.
         </p>
       ) : (
         <ul className="sheet-cf-list">

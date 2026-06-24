@@ -48,9 +48,7 @@ vi.mock("../ipc/connectors/gdrive", () => ({
 
 import { runConnectorSync } from "../ipc/connectors/handlers";
 import type { IpcContext } from "../ipc/context";
-import {
-  getProviderOAuthConfig,
-} from "../ipc/connectors/providerOAuth";
+import { getProviderOAuthConfig } from "../ipc/connectors/providerOAuth";
 import { getRequestedScopes } from "../oauthScope";
 import type { StoredTokens } from "../tokenVault";
 import type { SyncOutcome } from "../ipc/connectors/connectorsV2";
@@ -107,11 +105,12 @@ describe("runSync — Google Drive selective-sync routing", () => {
       bridgeAddLocalFile: (p: string) => ({ id: `src-${p}`, path: p }),
       bridgeReindexSource: () => {},
       bridgeRemoveSource: () => {},
-      bridgeListSources: () => [] as Array<{
-        id: string;
-        path: string;
-        sourceType?: string;
-      }>,
+      bridgeListSources: () =>
+        [] as Array<{
+          id: string;
+          path: string;
+          sourceType?: string;
+        }>,
       // audit pass-through (no-throw on the Rust side)
       bridgeLogConnectorSynced: () => {},
     };

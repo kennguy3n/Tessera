@@ -157,13 +157,10 @@ describe("CreateTaskSchema", () => {
     expect(parsed.status).toBe(s);
   });
 
-  it.each(TASK_PRIORITIES)(
-    "accepts every canonical TaskPriority: %s",
-    (p) => {
-      const parsed = CreateTaskSchema.parse({ title: "t", priority: p });
-      expect(parsed.priority).toBe(p);
-    },
-  );
+  it.each(TASK_PRIORITIES)("accepts every canonical TaskPriority: %s", (p) => {
+    const parsed = CreateTaskSchema.parse({ title: "t", priority: p });
+    expect(parsed.priority).toBe(p);
+  });
 });
 
 describe("UpdateTaskSchema", () => {
@@ -239,9 +236,7 @@ describe("AutomationTriggerSchema", () => {
   });
 
   it("rejects an unknown trigger kind", () => {
-    expect(() =>
-      AutomationTriggerSchema.parse({ kind: "bogus" }),
-    ).toThrow();
+    expect(() => AutomationTriggerSchema.parse({ kind: "bogus" })).toThrow();
   });
 
   it("rejects schedule with interval_seconds < 1", () => {
@@ -312,9 +307,7 @@ describe("AutomationActionSchema", () => {
   });
 
   it("rejects an unknown action kind", () => {
-    expect(() =>
-      AutomationActionSchema.parse({ kind: "bogus" }),
-    ).toThrow();
+    expect(() => AutomationActionSchema.parse({ kind: "bogus" })).toThrow();
   });
 });
 
@@ -362,9 +355,7 @@ describe("SettingsUpdateSchema", () => {
 
   it("rejects an oversized ignorePatterns array", () => {
     const arr = Array.from({ length: 10_001 }, (_, i) => `pat-${i}`);
-    expect(() =>
-      SettingsUpdateSchema.parse({ ignorePatterns: arr }),
-    ).toThrow();
+    expect(() => SettingsUpdateSchema.parse({ ignorePatterns: arr })).toThrow();
   });
 
   it.each(THEMES)("accepts every canonical Theme: %s", (t) => {
@@ -372,13 +363,10 @@ describe("SettingsUpdateSchema", () => {
     expect(parsed.theme).toBe(t);
   });
 
-  it.each(EXPORT_FORMATS)(
-    "accepts every canonical ExportFormat: %s",
-    (f) => {
-      const parsed = SettingsUpdateSchema.parse({ defaultExportFormat: f });
-      expect(parsed.defaultExportFormat).toBe(f);
-    },
-  );
+  it.each(EXPORT_FORMATS)("accepts every canonical ExportFormat: %s", (f) => {
+    const parsed = SettingsUpdateSchema.parse({ defaultExportFormat: f });
+    expect(parsed.defaultExportFormat).toBe(f);
+  });
 });
 
 const VALID_PROVIDER = {
@@ -601,9 +589,7 @@ describe("OpenImageDialogSchema", () => {
     expect(() =>
       OpenImageDialogSchema.parse({ title: "x", properties: ["openFile"] }),
     ).toThrow();
-    expect(() =>
-      OpenImageDialogSchema.parse({ filters: [] }),
-    ).toThrow();
+    expect(() => OpenImageDialogSchema.parse({ filters: [] })).toThrow();
   });
 
   it("rejects a title exceeding 512 chars", () => {
@@ -654,12 +640,8 @@ describe("HybridSearchConfigUpdateSchema", () => {
   });
 
   it("rejects zero or negative rrfK (RRF requires k > 0)", () => {
-    expect(() =>
-      HybridSearchConfigUpdateSchema.parse({ rrfK: 0 }),
-    ).toThrow();
-    expect(() =>
-      HybridSearchConfigUpdateSchema.parse({ rrfK: -10 }),
-    ).toThrow();
+    expect(() => HybridSearchConfigUpdateSchema.parse({ rrfK: 0 })).toThrow();
+    expect(() => HybridSearchConfigUpdateSchema.parse({ rrfK: -10 })).toThrow();
   });
 
   it("rejects sub-second recencyHalflifeSecs (a halflife shorter than 1s is nonsensical for the slider's day-scale resolution)", () => {

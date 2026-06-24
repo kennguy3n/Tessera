@@ -7,13 +7,7 @@
  * JSON. Also checks the pristine-form guard disables submit.
  */
 import { describe, it, expect, vi } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  within,
-  act,
-} from "@testing-library/react";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import BaseEditor from "../BaseEditor";
 import type { BaseRecord } from "../baseEditorTypes";
 

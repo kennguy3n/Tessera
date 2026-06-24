@@ -19,8 +19,17 @@
  *   8. `formatModelSize` formatting (unit).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import type { ModelDownloadProgress, ModelDownloadError } from "../../../shared/types";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
+import type {
+  ModelDownloadProgress,
+  ModelDownloadError,
+} from "../../../shared/types";
 import ModelDownloadBanner from "../components/ModelDownloadBanner";
 import { formatModelSize } from "../utils/formatModelSize";
 
@@ -175,9 +184,7 @@ describe("ModelDownloadBanner", () => {
     render(<ModelDownloadBanner />);
     await waitFor(() => expect(emit).not.toBeNull());
     act(() => emit!(progress(20)));
-    expect(
-      screen.getByTestId("model-download-banner"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("model-download-banner")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("model-download-banner-skip"));
 

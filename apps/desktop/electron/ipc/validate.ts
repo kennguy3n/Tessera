@@ -249,12 +249,13 @@ export function assertStringArray(
   }
   const maxLen = options.maxLen ?? 10_000;
   if (val.length > maxLen) {
-    throw new Error(
-      `${name} has too many entries (${val.length} > ${maxLen})`,
-    );
+    throw new Error(`${name} has too many entries (${val.length} > ${maxLen})`);
   }
   return val.map((v, i) =>
-    assertString(v, `${name}[${i}]`, { maxLen: options.itemMaxLen, allowEmpty: true }),
+    assertString(v, `${name}[${i}]`, {
+      maxLen: options.itemMaxLen,
+      allowEmpty: true,
+    }),
   );
 }
 
@@ -267,6 +268,8 @@ export async function assertDirectoryWritable(
     await fsp.mkdir(dir, { recursive: true });
     await fsp.access(dir, fsConstants.W_OK);
   } catch (e) {
-    throw new Error(`${name} is not writable: ${dir} (${(e as Error).message})`);
+    throw new Error(
+      `${name} is not writable: ${dir} (${(e as Error).message})`,
+    );
   }
 }

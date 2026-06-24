@@ -98,7 +98,11 @@ async function saveDeltaState(
   state: DeltaState,
 ): Promise<void> {
   await fsp.mkdir(syncDirFor(userDataDir, "onedrive"), { recursive: true });
-  await fsp.writeFile(deltaStatePath(userDataDir), JSON.stringify(state), "utf8");
+  await fsp.writeFile(
+    deltaStatePath(userDataDir),
+    JSON.stringify(state),
+    "utf8",
+  );
 }
 
 function extensionFor(item: DriveItem): string {
@@ -155,10 +159,7 @@ function isIndexable(item: DriveItem): boolean {
   return false;
 }
 
-async function graphFetch(
-  url: string,
-  accessToken: string,
-): Promise<Response> {
+async function graphFetch(url: string, accessToken: string): Promise<Response> {
   return fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -213,7 +214,9 @@ async function downloadItem(
     // implementations) but differ in .d.ts identity, so bridge the nominal
     // gap with a typed cast rather than `any`.
     await pipeline(
-      Readable.fromWeb(resp.body as unknown as NodeWebReadableStream<Uint8Array>),
+      Readable.fromWeb(
+        resp.body as unknown as NodeWebReadableStream<Uint8Array>,
+      ),
       createWriteStream(tmpPath),
     );
     await fsp.rename(tmpPath, localPath);
@@ -265,16 +268,14 @@ export interface OneDriveBridgeHooks {
   listSources(): Array<{ id: string; path: string }>;
 }
 
-export async function syncOneDrive(
-  ctx: {
-    accessToken: string;
-    /** Just-in-time refresh hook — called per delta page so a long
-     *  sync does NOT outlive the access token's lifetime. */
-    getAccessToken?: () => Promise<string>;
-    userDataDir: string;
-    bridge: OneDriveBridgeHooks;
-  },
-): Promise<OneDriveSyncResult> {
+export async function syncOneDrive(ctx: {
+  accessToken: string;
+  /** Just-in-time refresh hook — called per delta page so a long
+   *  sync does NOT outlive the access token's lifetime. */
+  getAccessToken?: () => Promise<string>;
+  userDataDir: string;
+  bridge: OneDriveBridgeHooks;
+}): Promise<OneDriveSyncResult> {
   const dir = syncDirFor(ctx.userDataDir, "onedrive");
   await fsp.mkdir(dir, { recursive: true });
 

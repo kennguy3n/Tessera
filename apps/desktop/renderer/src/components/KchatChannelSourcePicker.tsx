@@ -113,9 +113,7 @@ export default function KchatChannelSourcePicker({
       try {
         const list = await kchat.listChannels(selectedTeam);
         if (cancelled) return;
-        const sharable = list.filter(
-          (c) => c.type === "O" || c.type === "P",
-        );
+        const sharable = list.filter((c) => c.type === "O" || c.type === "P");
         setChannels(sharable);
         if (sharable[0]) setSelectedChannel(sharable[0].id);
       } catch (err) {
@@ -163,10 +161,7 @@ export default function KchatChannelSourcePicker({
     setBusy(true);
     setError(null);
     try {
-      const result = await kchat.addChannelSource(
-        selectedChannel,
-        channelName,
-      );
+      const result = await kchat.addChannelSource(selectedChannel, channelName);
       toast.addToast(
         `Added KChat channel "${channelName}" as a source`,
         "success",
@@ -181,12 +176,27 @@ export default function KchatChannelSourcePicker({
   }, [kchat, selectedChannel, channelName, toast, onAdded, onClose]);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add KChat channel as source">
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}>
-        <p style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)" }}>
-          Tessera will download and index the files in the selected
-          channel so you can search and cite them. Future files added
-          to the channel are picked up by the next scheduled sync.
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Add KChat channel as source"
+    >
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--spacing-md)",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "var(--font-size-sm)",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          Tessera will download and index the files in the selected channel so
+          you can search and cite them. Future files added to the channel are
+          picked up by the next scheduled sync.
         </p>
 
         <div>
@@ -233,8 +243,7 @@ export default function KchatChannelSourcePicker({
             ) : (
               channels.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {(c.type === "P" ? "🔒 " : "# ") +
-                    (c.display_name || c.name)}
+                  {(c.type === "P" ? "🔒 " : "# ") + (c.display_name || c.name)}
                 </option>
               ))
             )}
@@ -312,7 +321,8 @@ export default function KchatChannelSourcePicker({
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
-                          fontWeight: "var(--font-weight-medium)" as unknown as number,
+                          fontWeight:
+                            "var(--font-weight-medium)" as unknown as number,
                         }}
                         title={f.name}
                       >
@@ -328,8 +338,8 @@ export default function KchatChannelSourcePicker({
                           textOverflow: "ellipsis",
                         }}
                       >
-                        {formatFileType(f)} · {formatBytes(f.size)} ·{" "}
-                        Uploaded by {formatUploader(f)} on{" "}
+                        {formatFileType(f)} · {formatBytes(f.size)} · Uploaded
+                        by {formatUploader(f)} on{" "}
                         {formatUploadDate(f.create_at)}
                       </span>
                     </div>
@@ -343,14 +353,23 @@ export default function KchatChannelSourcePicker({
         {error && (
           <p
             role="alert"
-            style={{ fontSize: "var(--font-size-sm)", color: "var(--color-error, #c00)" }}
+            style={{
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-error, #c00)",
+            }}
             data-testid="kchat-source-error"
           >
             {error}
           </p>
         )}
 
-        <div style={{ display: "flex", gap: "var(--spacing-sm)", justifyContent: "flex-end" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--spacing-sm)",
+            justifyContent: "flex-end",
+          }}
+        >
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
@@ -410,19 +429,22 @@ function formatFileType(f: { mime_type?: string; extension?: string }): string {
  * inside a fixed-width span so different glyphs don't shift the
  * row baseline.
  */
-function fileTypeIcon(f: {
-  mime_type?: string;
-  extension?: string;
-}): string {
+function fileTypeIcon(f: { mime_type?: string; extension?: string }): string {
   const mime = (f.mime_type ?? "").toLowerCase();
   const ext = (f.extension ?? "").toLowerCase();
-  if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|svg|bmp|heic|heif|avif)$/.test(ext)) {
+  if (
+    mime.startsWith("image/") ||
+    /^(png|jpe?g|gif|webp|svg|bmp|heic|heif|avif)$/.test(ext)
+  ) {
     return "🖼️";
   }
   if (mime.startsWith("video/") || /^(mp4|mov|webm|mkv|avi|m4v)$/.test(ext)) {
     return "🎬";
   }
-  if (mime.startsWith("audio/") || /^(mp3|wav|flac|m4a|aac|ogg|opus)$/.test(ext)) {
+  if (
+    mime.startsWith("audio/") ||
+    /^(mp3|wav|flac|m4a|aac|ogg|opus)$/.test(ext)
+  ) {
     return "🎵";
   }
   if (mime === "application/pdf" || ext === "pdf") return "📕";
@@ -433,15 +455,35 @@ function fileTypeIcon(f: {
   // users who treat them as data dumps. The classification is
   // load-bearing: the spreadsheet regex below must NOT include
   // `csv`/`tsv` — those land in the text icon bucket here.
-  if (mime.startsWith("text/") || /^(md|txt|log|json|yaml|yml|xml|csv|tsv|html|css|js|ts|tsx|jsx|rs|py|go|rb|java|c|h|cpp|hpp|sh|toml)$/.test(ext)) {
+  if (
+    mime.startsWith("text/") ||
+    /^(md|txt|log|json|yaml|yml|xml|csv|tsv|html|css|js|ts|tsx|jsx|rs|py|go|rb|java|c|h|cpp|hpp|sh|toml)$/.test(
+      ext,
+    )
+  ) {
     return "📄";
   }
-  if (/^(zip|tar|gz|tgz|bz2|7z|rar|xz)$/.test(ext) || mime === "application/zip" || mime === "application/x-tar" || mime === "application/gzip") {
+  if (
+    /^(zip|tar|gz|tgz|bz2|7z|rar|xz)$/.test(ext) ||
+    mime === "application/zip" ||
+    mime === "application/x-tar" ||
+    mime === "application/gzip"
+  ) {
     return "🗜️";
   }
   if (mime.includes("word") || /^(doc|docx|odt|rtf)$/.test(ext)) return "📝";
-  if (mime.includes("sheet") || mime.includes("excel") || /^(xls|xlsx|ods)$/.test(ext)) return "📊";
-  if (mime.includes("presentation") || mime.includes("powerpoint") || /^(ppt|pptx|odp|key)$/.test(ext)) return "💽";
+  if (
+    mime.includes("sheet") ||
+    mime.includes("excel") ||
+    /^(xls|xlsx|ods)$/.test(ext)
+  )
+    return "📊";
+  if (
+    mime.includes("presentation") ||
+    mime.includes("powerpoint") ||
+    /^(ppt|pptx|odp|key)$/.test(ext)
+  )
+    return "💽";
   return "📎";
 }
 

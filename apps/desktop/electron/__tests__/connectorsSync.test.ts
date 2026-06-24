@@ -15,7 +15,10 @@ vi.mock("electron", () => ({
 
 import { syncNotion, disconnectNotion } from "../ipc/connectors/notion";
 import { syncJira, disconnectJira } from "../ipc/connectors/jira";
-import { syncConfluence, disconnectConfluence } from "../ipc/connectors/confluence";
+import {
+  syncConfluence,
+  disconnectConfluence,
+} from "../ipc/connectors/confluence";
 import { syncFigma, disconnectFigma } from "../ipc/connectors/figma";
 import { syncGoogleDrive } from "../ipc/connectors/gdrive";
 
@@ -26,7 +29,9 @@ import { syncGoogleDrive } from "../ipc/connectors/gdrive";
  * mocks must expose a `body` stream rather than an `arrayBuffer()`
  * method.
  */
-function streamBody(data: ArrayBuffer | Uint8Array): ReadableStream<Uint8Array> {
+function streamBody(
+  data: ArrayBuffer | Uint8Array,
+): ReadableStream<Uint8Array> {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -221,7 +226,11 @@ describe("Notion sync", () => {
           }),
         });
 
-      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r.added).toBe(1);
       const content = await fsp.readFile(bridge.added[0].path, "utf8");
       expect(content).toContain("# New");
@@ -323,18 +332,27 @@ describe("Notion sync", () => {
           }),
         });
 
-      const r1 = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r1 = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r1.added).toBe(1);
       expect(bridge.added).toHaveLength(1);
       expect(bridge.added[0].path).toContain("page-ok");
 
       // Watermark should now be the newer page's timestamp.
       const watermark = JSON.parse(
-        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+        await fsp.readFile(
+          path.join(dir, "notion-sync", "watermark.json"),
+          "utf8",
+        ),
       ) as { lastSyncIso: string; failedRetries: Array<{ remoteId: string }> };
       expect(watermark.lastSyncIso).toBe("2024-07-01T00:00:00Z");
       // The failed page must be recorded for retry.
-      expect(watermark.failedRetries.map((e) => e.remoteId)).toEqual(["page-fail"]);
+      expect(watermark.failedRetries.map((e) => e.remoteId)).toEqual([
+        "page-fail",
+      ]);
 
       // Pass 2: state has watermark=2024-07-01 and failedRetries=[page-fail].
       // The naive watermark-only scan would never return page-fail
@@ -385,7 +403,11 @@ describe("Notion sync", () => {
           }),
         });
 
-      const r2 = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r2 = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r2.added).toBe(1);
       expect(bridge.added).toHaveLength(2);
       // Verify the recovered file is on disk and contains the title +
@@ -398,7 +420,10 @@ describe("Notion sync", () => {
 
       // Queue must now be empty.
       const watermark2 = JSON.parse(
-        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+        await fsp.readFile(
+          path.join(dir, "notion-sync", "watermark.json"),
+          "utf8",
+        ),
       ) as { lastSyncIso: string; failedRetries: Array<{ remoteId: string }> };
       expect(watermark2.failedRetries).toEqual([]);
     },
@@ -444,10 +469,17 @@ describe("Notion sync", () => {
           }),
         });
 
-      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r.added).toBe(0);
       const watermark = JSON.parse(
-        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+        await fsp.readFile(
+          path.join(dir, "notion-sync", "watermark.json"),
+          "utf8",
+        ),
       ) as { failedRetries: Array<{ remoteId: string }> };
       expect(watermark.failedRetries).toEqual([]);
     },
@@ -498,10 +530,17 @@ describe("Notion sync", () => {
           }),
         });
 
-      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r.added).toBe(0);
       const watermark = JSON.parse(
-        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+        await fsp.readFile(
+          path.join(dir, "notion-sync", "watermark.json"),
+          "utf8",
+        ),
       ) as { failedRetries: Array<{ remoteId: string; failureCount: number }> };
       // The entry should have been dropped because the new failure
       // count (5 + 1 = 6) exceeds FAILED_RETRY_MAX_ATTEMPTS (5). The
@@ -552,7 +591,10 @@ describe("Notion sync", () => {
 
       await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
       const watermark = JSON.parse(
-        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+        await fsp.readFile(
+          path.join(dir, "notion-sync", "watermark.json"),
+          "utf8",
+        ),
       ) as { failedRetries: Array<{ remoteId: string; failureCount: number }> };
       expect(watermark.failedRetries).toHaveLength(1);
       expect(watermark.failedRetries[0].remoteId).toBe("transiently-broken");
@@ -641,7 +683,11 @@ describe("Notion sync", () => {
       await fsp.mkdir(syncDir, { recursive: true });
       await fsp.mkdir(path.join(syncDir, "page-bad.md"), { recursive: true });
 
-      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       // page-good was indexed; page-bad was not.
       expect(r.added).toBe(1);
       expect(bridge.added.map((s) => path.basename(s.path))).toEqual([
@@ -754,7 +800,11 @@ describe("Notion sync", () => {
           }),
         });
 
-      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r.added).toBe(1);
 
       // The retry queue must be empty: the Phase-2 success covers
@@ -840,10 +890,7 @@ describe("Notion sync", () => {
       await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
 
       const watermark = JSON.parse(
-        await fsp.readFile(
-          path.join(stateDir, "watermark.json"),
-          "utf8",
-        ),
+        await fsp.readFile(path.join(stateDir, "watermark.json"), "utf8"),
       ) as {
         lastSyncIso: string | null;
         failedRetries: Array<{ remoteId: string; failureCount: number }>;
@@ -880,7 +927,12 @@ describe("Jira sync", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => [
-          { id: "cloud-1", url: "https://x", name: "site", scopes: ["read:jira-work"] },
+          {
+            id: "cloud-1",
+            url: "https://x",
+            name: "site",
+            scopes: ["read:jira-work"],
+          },
         ],
       })
       .mockResolvedValueOnce({
@@ -926,7 +978,12 @@ describe("Jira sync", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => [
-          { id: "cloud-1", url: "https://x", name: "site", scopes: ["read:jira-work"] },
+          {
+            id: "cloud-1",
+            url: "https://x",
+            name: "site",
+            scopes: ["read:jira-work"],
+          },
         ],
       })
       .mockResolvedValueOnce({
@@ -979,7 +1036,12 @@ describe("Confluence sync", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => [
-          { id: "cloud-1", url: "https://x", name: "site", scopes: ["read:confluence-content.summary"] },
+          {
+            id: "cloud-1",
+            url: "https://x",
+            name: "site",
+            scopes: ["read:confluence-content.summary"],
+          },
         ],
       })
       // spaces
@@ -1026,7 +1088,12 @@ describe("Confluence sync", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => [
-          { id: "cloud-1", url: "https://x", name: "site", scopes: ["read:confluence-content.summary"] },
+          {
+            id: "cloud-1",
+            url: "https://x",
+            name: "site",
+            scopes: ["read:confluence-content.summary"],
+          },
         ],
       })
       .mockResolvedValueOnce({
@@ -1124,31 +1191,29 @@ describe("Confluence sync", () => {
       // Note: after the first sync, `state.cloudId` is persisted so
       // syncConfluence skips the accessible-resources lookup on
       // subsequent runs — only spaces + pages are fetched. ----
-      fetchMock
-        .mockResolvedValueOnce(spacesResp)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            results: [
-              {
-                id: "p1",
-                title: "Original 1",
-                spaceId: "s1",
-                version: { number: 1 },
-                body: { storage: { value: "<p>v1</p>" } },
-                createdAt: "2023-01-01T00:00:00Z",
-              },
-              {
-                id: "p2",
-                title: "Edited 2",
-                spaceId: "s1",
-                version: { number: 6 },
-                body: { storage: { value: "<p>v6 edited</p>" } },
-                createdAt: "2023-01-01T00:00:00Z",
-              },
-            ],
-          }),
-        });
+      fetchMock.mockResolvedValueOnce(spacesResp).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              id: "p1",
+              title: "Original 1",
+              spaceId: "s1",
+              version: { number: 1 },
+              body: { storage: { value: "<p>v1</p>" } },
+              createdAt: "2023-01-01T00:00:00Z",
+            },
+            {
+              id: "p2",
+              title: "Edited 2",
+              spaceId: "s1",
+              version: { number: 6 },
+              body: { storage: { value: "<p>v6 edited</p>" } },
+              createdAt: "2023-01-01T00:00:00Z",
+            },
+          ],
+        }),
+      });
 
       r = await syncConfluence({
         accessToken: "AT",
@@ -1305,14 +1370,8 @@ describe("Confluence sync", () => {
       // mid-iteration scratch). pageVersions therefore stays at 0
       // here — the page is still "pending" from the watermark's
       // perspective.
-      const statePath = path.join(
-        dir,
-        "confluence-sync",
-        "state.json",
-      );
-      const preCap = JSON.parse(
-        await fsp.readFile(statePath, "utf8"),
-      ) as {
+      const statePath = path.join(dir, "confluence-sync", "state.json");
+      const preCap = JSON.parse(await fsp.readFile(statePath, "utf8")) as {
         pageVersions: Record<string, number>;
         failedWrites: Record<string, { version: number; attempts: number }>;
       };
@@ -1455,7 +1514,11 @@ describe("Figma sync", () => {
         ok: true,
         json: async () => ({
           comments: [
-            { message: "Looks good", user: { handle: "alice" }, created_at: "2024-06-02T10:00:00Z" },
+            {
+              message: "Looks good",
+              user: { handle: "alice" },
+              created_at: "2024-06-02T10:00:00Z",
+            },
           ],
         }),
       });
@@ -1481,7 +1544,10 @@ describe("Figma sync", () => {
 
   it("disconnect cleans up", async () => {
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ teams: [{ id: "t1" }] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ teams: [{ id: "t1" }] }),
+      })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ name: "T", projects: [{ id: "p1", name: "P" }] }),
@@ -1490,7 +1556,9 @@ describe("Figma sync", () => {
         ok: true,
         json: async () => ({
           name: "P",
-          files: [{ key: "f1", name: "F", last_modified: "2024-06-01T00:00:00Z" }],
+          files: [
+            { key: "f1", name: "F", last_modified: "2024-06-01T00:00:00Z" },
+          ],
         }),
       })
       .mockResolvedValueOnce({
@@ -1498,10 +1566,16 @@ describe("Figma sync", () => {
         json: async () => ({
           name: "F",
           lastModified: "2024-06-01T00:00:00Z",
-          document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "x" }] },
+          document: {
+            id: "0:0",
+            children: [{ id: "1:1", type: "TEXT", characters: "x" }],
+          },
         }),
       })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ comments: [] }),
+      });
     await syncFigma({ accessToken: "AT", userDataDir: dir, bridge });
     const added = bridge.added[0];
     await disconnectFigma(dir, bridge);
@@ -1536,9 +1610,21 @@ describe("Figma sync", () => {
           json: async () => ({
             name: "Proj",
             files: [
-              { key: "f1", name: "File 1", last_modified: "2024-06-01T12:00:00Z" },
-              { key: "f2", name: "File 2", last_modified: "2024-06-01T08:00:00Z" },
-              { key: "f3", name: "File 3", last_modified: "2024-06-01T12:00:00Z" },
+              {
+                key: "f1",
+                name: "File 1",
+                last_modified: "2024-06-01T12:00:00Z",
+              },
+              {
+                key: "f2",
+                name: "File 2",
+                last_modified: "2024-06-01T08:00:00Z",
+              },
+              {
+                key: "f3",
+                name: "File 3",
+                last_modified: "2024-06-01T12:00:00Z",
+              },
             ],
           }),
         })
@@ -1548,32 +1634,54 @@ describe("Figma sync", () => {
           json: async () => ({
             name: "File 1",
             lastModified: "2024-06-01T12:00:00Z",
-            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 1" }] },
+            document: {
+              id: "0:0",
+              children: [{ id: "1:1", type: "TEXT", characters: "Body 1" }],
+            },
           }),
         })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ comments: [] }),
+        })
         // f2 file body + comments
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
             name: "File 2",
             lastModified: "2024-06-01T08:00:00Z",
-            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 2" }] },
+            document: {
+              id: "0:0",
+              children: [{ id: "1:1", type: "TEXT", characters: "Body 2" }],
+            },
           }),
         })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ comments: [] }),
+        })
         // f3 file body + comments
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
             name: "File 3",
             lastModified: "2024-06-01T12:00:00Z",
-            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 3" }] },
+            document: {
+              id: "0:0",
+              children: [{ id: "1:1", type: "TEXT", characters: "Body 3" }],
+            },
           }),
         })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) });
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ comments: [] }),
+        });
 
-      const r = await syncFigma({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncFigma({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       expect(r.added).toBe(3);
       expect(bridge.added).toHaveLength(3);
     },
@@ -1606,8 +1714,16 @@ describe("Figma sync", () => {
           json: async () => ({
             name: "Proj",
             files: [
-              { key: "f1", name: "File 1", last_modified: "2024-06-01T10:00:00Z" },
-              { key: "f2", name: "File 2", last_modified: "2024-06-01T11:00:00Z" },
+              {
+                key: "f1",
+                name: "File 1",
+                last_modified: "2024-06-01T10:00:00Z",
+              },
+              {
+                key: "f2",
+                name: "File 2",
+                last_modified: "2024-06-01T11:00:00Z",
+              },
             ],
           }),
         })
@@ -1617,22 +1733,37 @@ describe("Figma sync", () => {
           json: async () => ({
             name: "File 1",
             lastModified: "2024-06-01T10:00:00Z",
-            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 1" }] },
+            document: {
+              id: "0:0",
+              children: [{ id: "1:1", type: "TEXT", characters: "Body 1" }],
+            },
           }),
         })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ comments: [] }),
+        })
         // f2 body OK + comments REJECTS (transport-level)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
             name: "File 2",
             lastModified: "2024-06-01T11:00:00Z",
-            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 2" }] },
+            document: {
+              id: "0:0",
+              children: [{ id: "1:1", type: "TEXT", characters: "Body 2" }],
+            },
           }),
         })
-        .mockRejectedValueOnce(new Error("getaddrinfo ENOTFOUND api.figma.com"));
+        .mockRejectedValueOnce(
+          new Error("getaddrinfo ENOTFOUND api.figma.com"),
+        );
 
-      const r = await syncFigma({ accessToken: "AT", userDataDir: dir, bridge });
+      const r = await syncFigma({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
       // Both files were indexed — the comments failure on f2 fell back to "".
       expect(r.added).toBe(2);
       expect(bridge.added).toHaveLength(2);
@@ -1653,10 +1784,9 @@ describe("Figma sync", () => {
         ),
       );
       expect(manifest.entries).toHaveLength(2);
-      expect(manifest.entries.map((e: { remoteId: string }) => e.remoteId).sort()).toEqual([
-        "f1",
-        "f2",
-      ]);
+      expect(
+        manifest.entries.map((e: { remoteId: string }) => e.remoteId).sort(),
+      ).toEqual(["f1", "f2"]);
     },
   );
 
@@ -1732,7 +1862,9 @@ describe("Figma sync", () => {
         JSON.stringify({
           lastSyncIso: "2024-05-01T00:00:00Z",
           teamIds: ["t1"],
-          failedRetries: [{ remoteId: "f-prev", remoteModifiedAt: null, failureCount: 1 }],
+          failedRetries: [
+            { remoteId: "f-prev", remoteModifiedAt: null, failureCount: 1 },
+          ],
         }),
         "utf8",
       );
@@ -1763,7 +1895,10 @@ describe("Figma sync", () => {
       ) as {
         lastSyncIso: string | null;
         teamIds: string[];
-        failedRetries: Array<{ remoteId: string; remoteModifiedAt: string | null }>;
+        failedRetries: Array<{
+          remoteId: string;
+          remoteModifiedAt: string | null;
+        }>;
       };
       expect(state.lastSyncIso).toBe("2024-05-01T00:00:00Z");
       expect(state.teamIds).toEqual(["t1"]);
@@ -1957,7 +2092,10 @@ describe("Jira sync — JQL watermark sanitisation", () => {
           lastSyncIso: "corrupted-value",
           cloudId: "cloud-1",
           failedRetries: [
-            { remoteId: "OLD-1", remoteModifiedAt: "2024-01-01T00:00:00.000+0000" },
+            {
+              remoteId: "OLD-1",
+              remoteModifiedAt: "2024-01-01T00:00:00.000+0000",
+            },
           ],
         }),
         "utf8",
@@ -2109,437 +2247,423 @@ describe("Jira sync — retry-queue load-time validation", () => {
       //    ABC-1 was just succeeded so it leaves the queue. The two
       //    corrupted entries must NOT be carried forward.
       const finalState = JSON.parse(
-        await fsp.readFile(
-          path.join(dir, "jira-sync", "state.json"),
-          "utf8",
-        ),
+        await fsp.readFile(path.join(dir, "jira-sync", "state.json"), "utf8"),
       ) as { failedRetries: Array<{ remoteId: string }> };
       expect(finalState.failedRetries).toEqual([]);
     },
   );
 });
 
-describe(
-  "Confluence sync — carry-forward when a space's listing fails",
-  () => {
-    const original = globalThis.fetch;
-    let fetchMock: ReturnType<typeof makeFetchMock>;
-    let dir: string;
-    let bridge: FakeBridge;
+describe("Confluence sync — carry-forward when a space's listing fails", () => {
+  const original = globalThis.fetch;
+  let fetchMock: ReturnType<typeof makeFetchMock>;
+  let dir: string;
+  let bridge: FakeBridge;
 
-    beforeEach(async () => {
-      fetchMock = makeFetchMock();
-      globalThis.fetch = fetchMock as unknown as typeof fetch;
-      dir = await tmpDir("conf-carry");
-      bridge = new FakeBridge();
-    });
-    afterEach(async () => {
-      globalThis.fetch = original;
-      await fsp.rm(dir, { recursive: true, force: true });
-    });
+  beforeEach(async () => {
+    fetchMock = makeFetchMock();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    dir = await tmpDir("conf-carry");
+    bridge = new FakeBridge();
+  });
+  afterEach(async () => {
+    globalThis.fetch = original;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
 
-    it(
-      "preserves per-page versions for pages in a space whose listing " +
-        "threw, so the next sync does not re-process every page from " +
-        "scratch",
-      async () => {
-        // ---- First sync: two spaces, four pages, all listed successfully ----
-        fetchMock
-          // /oauth/token/accessible-resources
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => [
-              {
-                id: "cloud-1",
-                url: "https://x",
-                name: "site",
-                scopes: ["read:confluence-content.summary"],
-              },
-            ],
-          })
-          // /wiki/api/v2/spaces
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                { id: "s1", key: "ONE", name: "Space One" },
-                { id: "s2", key: "TWO", name: "Space Two" },
-              ],
-            }),
-          })
-          // /wiki/api/v2/pages?space-id=s1
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                {
-                  id: "p1a",
-                  title: "P1A",
-                  spaceId: "s1",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-                {
-                  id: "p1b",
-                  title: "P1B",
-                  spaceId: "s1",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-              ],
-            }),
-          })
-          // /wiki/api/v2/pages?space-id=s2
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                {
-                  id: "p2a",
-                  title: "P2A",
-                  spaceId: "s2",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-                {
-                  id: "p2b",
-                  title: "P2B",
-                  spaceId: "s2",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-              ],
-            }),
-          });
-
-        const r1 = await syncConfluence({
-          accessToken: "AT",
-          userDataDir: dir,
-          bridge,
-        });
-        expect(r1.added).toBe(4);
-        expect(r1.modified).toBe(0);
-
-        // After first sync, state must record both pageVersions AND
-        // pageSpaces from the schema enrichment.
-        const state1 = JSON.parse(
-          await fsp.readFile(
-            path.join(dir, "confluence-sync", "state.json"),
-            "utf8",
-          ),
-        ) as {
-          pageVersions: Record<string, number>;
-          pageSpaces: Record<string, string>;
-        };
-        expect(state1.pageVersions).toEqual({
-          p1a: 1,
-          p1b: 1,
-          p2a: 1,
-          p2b: 1,
-        });
-        expect(state1.pageSpaces).toEqual({
-          p1a: "s1",
-          p1b: "s1",
-          p2a: "s2",
-          p2b: "s2",
-        });
-
-        // ---- Second sync: s1 lists fine, s2 throws on listing ----
-        // The expected behaviour: s1's pages remain in state (their
-        // listings confirm they still exist at version 1). s2's pages
-        // also remain in state (carry-forward because we know nothing
-        // new about them). The previous behaviour dropped p2a/p2b from
-        // state, which would have caused a full re-fetch + re-render
-        // on the *third* sync once s2's listing recovers — wasting an
-        // API call + disk write per page even though the content
-        // didn't change.
-        fetchMock
-          // spaces — same payload (note: cloudId is persisted from
-          // first sync, so accessible-resources is NOT called again).
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                { id: "s1", key: "ONE", name: "Space One" },
-                { id: "s2", key: "TWO", name: "Space Two" },
-              ],
-            }),
-          })
-          // /wiki/api/v2/pages?space-id=s1 — same versions, unchanged.
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                {
-                  id: "p1a",
-                  title: "P1A",
-                  spaceId: "s1",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-                {
-                  id: "p1b",
-                  title: "P1B",
-                  spaceId: "s1",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-              ],
-            }),
-          })
-          // /wiki/api/v2/pages?space-id=s2 — throws.
-          .mockRejectedValueOnce(
-            new Error("ECONNRESET — Atlassian API blip"),
-          );
-
-        const r2 = await syncConfluence({
-          accessToken: "AT",
-          userDataDir: dir,
-          bridge,
-        });
-        // s1 pages skip the body-render path because they're unchanged
-        // (version === previousVersion). s2 pages are not observed at
-        // all. Nothing should be added or modified this pass.
-        expect(r2.added).toBe(0);
-        expect(r2.modified).toBe(0);
-
-        const state2 = JSON.parse(
-          await fsp.readFile(
-            path.join(dir, "confluence-sync", "state.json"),
-            "utf8",
-          ),
-        ) as {
-          pageVersions: Record<string, number>;
-          pageSpaces: Record<string, string>;
-        };
-        // All four pages remain in state with their previous versions —
-        // s1's by direct observation, s2's by carry-forward.
-        expect(state2.pageVersions).toEqual({
-          p1a: 1,
-          p1b: 1,
-          p2a: 1,
-          p2b: 1,
-        });
-        expect(state2.pageSpaces).toEqual({
-          p1a: "s1",
-          p1b: "s1",
-          p2a: "s2",
-          p2b: "s2",
-        });
-      },
-    );
-
-    it(
-      "drops pages whose space listed successfully but no longer " +
-        "contains them (page actually deleted upstream)",
-      async () => {
-        // Pre-seed state as if a previous sync recorded two pages in s1.
-        const syncDir = path.join(dir, "confluence-sync");
-        await fsp.mkdir(syncDir, { recursive: true });
-        await fsp.writeFile(
-          path.join(syncDir, "state.json"),
-          JSON.stringify({
-            cloudId: "cloud-1",
-            pageVersions: { p1a: 1, p1b: 1 },
-            pageSpaces: { p1a: "s1", p1b: "s1" },
-          }),
-          "utf8",
-        );
-
-        fetchMock
-          // spaces
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [{ id: "s1", key: "ONE", name: "Space One" }],
-            }),
-          })
-          // pages — only p1a remains; p1b is gone (deleted upstream).
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                {
-                  id: "p1a",
-                  title: "P1A",
-                  spaceId: "s1",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>v1</p>" } },
-                },
-              ],
-            }),
-          });
-
-        await syncConfluence({
-          accessToken: "AT",
-          userDataDir: dir,
-          bridge,
-        });
-
-        const state = JSON.parse(
-          await fsp.readFile(
-            path.join(dir, "confluence-sync", "state.json"),
-            "utf8",
-          ),
-        ) as {
-          pageVersions: Record<string, number>;
-          pageSpaces: Record<string, string>;
-        };
-        // p1b's space listed cleanly but p1b wasn't returned → drop.
-        expect(state.pageVersions).toEqual({ p1a: 1 });
-        expect(state.pageSpaces).toEqual({ p1a: "s1" });
-      },
-    );
-
-    // ---------------------------------------------------------------
-    // when a Confluence page is confirmed
-    // deleted upstream, the connector must propagate the deletion all
-    // the way through the local workspace:
-    //   - increment the `removed` counter so the IPC return reflects it
-    //   - remove the bridge source-index entry so search stops returning it
-    //   - unlink the local on-disk file so it doesn't linger
-    //   - prune the manifest entry so the next sync's seed doesn't reintroduce it
-    // ---------------------------------------------------------------
-    it(
-      "cascades upstream deletion into bridge / disk / manifest / counter",
-      async () => {
-        const syncDir = path.join(dir, "confluence-sync");
-        await fsp.mkdir(syncDir, { recursive: true });
-
-        // Pre-seed the manifest with a previously-synced page p1b.
-        const p1bPath = path.join(syncDir, "p1b.md");
-        await fsp.writeFile(p1bPath, "# stale\n", "utf8");
-        await fsp.writeFile(
-          path.join(syncDir, "manifest.json"),
-          JSON.stringify({
-            version: 1,
-            provider: "confluence",
-            entries: [
-              { localPath: p1bPath, remoteId: "p1b", remoteModifiedAt: "1" },
-              // p1a manifest entry is intentionally seeded too so the
-              // assertion that *only* p1b is pruned is meaningful.
-              {
-                localPath: path.join(syncDir, "p1a.md"),
-                remoteId: "p1a",
-                remoteModifiedAt: "1",
-              },
-            ],
-          }),
-          "utf8",
-        );
-
-        // Pre-seed the bridge with the matching source so we can
-        // observe the `removeSource` call.
-        const p1bSource = bridge.addLocalFile(p1bPath);
-        bridge.added.length = 0; // ignore the seed in the assertion below
-
-        // Pre-seed the version-state.
-        await fsp.writeFile(
-          path.join(syncDir, "state.json"),
-          JSON.stringify({
-            cloudId: "cloud-1",
-            pageVersions: { p1a: 1, p1b: 1 },
-            pageSpaces: { p1a: "s1", p1b: "s1" },
-          }),
-          "utf8",
-        );
-
-        fetchMock
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [{ id: "s1", key: "ONE", name: "Space One" }],
-            }),
-          })
-          .mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-              results: [
-                {
-                  id: "p1a",
-                  title: "P1A",
-                  spaceId: "s1",
-                  version: { number: 1 },
-                  body: { storage: { value: "<p>still here</p>" } },
-                },
-              ],
-            }),
-          });
-
-        const result = await syncConfluence({
-          accessToken: "AT",
-          userDataDir: dir,
-          bridge,
-        });
-
-        // 1. Counter surfaced to the renderer.
-        expect(result.removed).toBe(1);
-        // 2. Bridge source entry removed.
-        expect(bridge.removed).toContain(p1bSource.id);
-        // 3. Local file unlinked.
-        await expect(fsp.access(p1bPath)).rejects.toThrow();
-        // 4. Manifest entry pruned (and p1a survives).
-        const manifest = JSON.parse(
-          await fsp.readFile(
-            path.join(syncDir, "manifest.json"),
-            "utf8",
-          ),
-        ) as { entries: Array<{ remoteId: string }> };
-        const ids = manifest.entries.map((e) => e.remoteId).sort();
-        expect(ids).toEqual(["p1a"]);
-      },
-    );
-
-    it(
-      "carries forward legacy state entries that lack a recorded " +
-        "space id (state.json migration from pre-pageSpaces format)",
-      async () => {
-        // Legacy state: pageVersions populated, pageSpaces missing.
-        // The carry-forward must default to "unknown" → keep the entry
-        // alive while the state self-heals on the next successful
-        // listing.
-        const syncDir = path.join(dir, "confluence-sync");
-        await fsp.mkdir(syncDir, { recursive: true });
-        await fsp.writeFile(
-          path.join(syncDir, "state.json"),
-          JSON.stringify({
-            cloudId: "cloud-1",
-            pageVersions: { p_legacy: 7 },
-            // pageSpaces deliberately omitted (legacy schema).
-          }),
-          "utf8",
-        );
-
-        // No spaces, no pages this sync (e.g. user lost access
-        // temporarily). The legacy entry must NOT be dropped.
-        fetchMock.mockResolvedValueOnce({
+  it(
+    "preserves per-page versions for pages in a space whose listing " +
+      "threw, so the next sync does not re-process every page from " +
+      "scratch",
+    async () => {
+      // ---- First sync: two spaces, four pages, all listed successfully ----
+      fetchMock
+        // /oauth/token/accessible-resources
+        .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ results: [] }),
+          json: async () => [
+            {
+              id: "cloud-1",
+              url: "https://x",
+              name: "site",
+              scopes: ["read:confluence-content.summary"],
+            },
+          ],
+        })
+        // /wiki/api/v2/spaces
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              { id: "s1", key: "ONE", name: "Space One" },
+              { id: "s2", key: "TWO", name: "Space Two" },
+            ],
+          }),
+        })
+        // /wiki/api/v2/pages?space-id=s1
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "p1a",
+                title: "P1A",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+              {
+                id: "p1b",
+                title: "P1B",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+            ],
+          }),
+        })
+        // /wiki/api/v2/pages?space-id=s2
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "p2a",
+                title: "P2A",
+                spaceId: "s2",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+              {
+                id: "p2b",
+                title: "P2B",
+                spaceId: "s2",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+            ],
+          }),
         });
 
-        await syncConfluence({
-          accessToken: "AT",
-          userDataDir: dir,
-          bridge,
+      const r1 = await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      expect(r1.added).toBe(4);
+      expect(r1.modified).toBe(0);
+
+      // After first sync, state must record both pageVersions AND
+      // pageSpaces from the schema enrichment.
+      const state1 = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "confluence-sync", "state.json"),
+          "utf8",
+        ),
+      ) as {
+        pageVersions: Record<string, number>;
+        pageSpaces: Record<string, string>;
+      };
+      expect(state1.pageVersions).toEqual({
+        p1a: 1,
+        p1b: 1,
+        p2a: 1,
+        p2b: 1,
+      });
+      expect(state1.pageSpaces).toEqual({
+        p1a: "s1",
+        p1b: "s1",
+        p2a: "s2",
+        p2b: "s2",
+      });
+
+      // ---- Second sync: s1 lists fine, s2 throws on listing ----
+      // The expected behaviour: s1's pages remain in state (their
+      // listings confirm they still exist at version 1). s2's pages
+      // also remain in state (carry-forward because we know nothing
+      // new about them). The previous behaviour dropped p2a/p2b from
+      // state, which would have caused a full re-fetch + re-render
+      // on the *third* sync once s2's listing recovers — wasting an
+      // API call + disk write per page even though the content
+      // didn't change.
+      fetchMock
+        // spaces — same payload (note: cloudId is persisted from
+        // first sync, so accessible-resources is NOT called again).
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              { id: "s1", key: "ONE", name: "Space One" },
+              { id: "s2", key: "TWO", name: "Space Two" },
+            ],
+          }),
+        })
+        // /wiki/api/v2/pages?space-id=s1 — same versions, unchanged.
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "p1a",
+                title: "P1A",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+              {
+                id: "p1b",
+                title: "P1B",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+            ],
+          }),
+        })
+        // /wiki/api/v2/pages?space-id=s2 — throws.
+        .mockRejectedValueOnce(new Error("ECONNRESET — Atlassian API blip"));
+
+      const r2 = await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      // s1 pages skip the body-render path because they're unchanged
+      // (version === previousVersion). s2 pages are not observed at
+      // all. Nothing should be added or modified this pass.
+      expect(r2.added).toBe(0);
+      expect(r2.modified).toBe(0);
+
+      const state2 = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "confluence-sync", "state.json"),
+          "utf8",
+        ),
+      ) as {
+        pageVersions: Record<string, number>;
+        pageSpaces: Record<string, string>;
+      };
+      // All four pages remain in state with their previous versions —
+      // s1's by direct observation, s2's by carry-forward.
+      expect(state2.pageVersions).toEqual({
+        p1a: 1,
+        p1b: 1,
+        p2a: 1,
+        p2b: 1,
+      });
+      expect(state2.pageSpaces).toEqual({
+        p1a: "s1",
+        p1b: "s1",
+        p2a: "s2",
+        p2b: "s2",
+      });
+    },
+  );
+
+  it(
+    "drops pages whose space listed successfully but no longer " +
+      "contains them (page actually deleted upstream)",
+    async () => {
+      // Pre-seed state as if a previous sync recorded two pages in s1.
+      const syncDir = path.join(dir, "confluence-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(syncDir, "state.json"),
+        JSON.stringify({
+          cloudId: "cloud-1",
+          pageVersions: { p1a: 1, p1b: 1 },
+          pageSpaces: { p1a: "s1", p1b: "s1" },
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // spaces
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [{ id: "s1", key: "ONE", name: "Space One" }],
+          }),
+        })
+        // pages — only p1a remains; p1b is gone (deleted upstream).
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "p1a",
+                title: "P1A",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+              },
+            ],
+          }),
         });
 
-        const state = JSON.parse(
-          await fsp.readFile(
-            path.join(dir, "confluence-sync", "state.json"),
-            "utf8",
-          ),
-        ) as {
-          pageVersions: Record<string, number>;
-          pageSpaces: Record<string, string>;
-        };
-        expect(state.pageVersions).toEqual({ p_legacy: 7 });
-        // pageSpaces remains empty for the legacy entry — it will
-        // populate on the next sync if/when the page is observed.
-        expect(state.pageSpaces).toEqual({});
-      },
+      await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      const state = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "confluence-sync", "state.json"),
+          "utf8",
+        ),
+      ) as {
+        pageVersions: Record<string, number>;
+        pageSpaces: Record<string, string>;
+      };
+      // p1b's space listed cleanly but p1b wasn't returned → drop.
+      expect(state.pageVersions).toEqual({ p1a: 1 });
+      expect(state.pageSpaces).toEqual({ p1a: "s1" });
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // when a Confluence page is confirmed
+  // deleted upstream, the connector must propagate the deletion all
+  // the way through the local workspace:
+  //   - increment the `removed` counter so the IPC return reflects it
+  //   - remove the bridge source-index entry so search stops returning it
+  //   - unlink the local on-disk file so it doesn't linger
+  //   - prune the manifest entry so the next sync's seed doesn't reintroduce it
+  // ---------------------------------------------------------------
+  it("cascades upstream deletion into bridge / disk / manifest / counter", async () => {
+    const syncDir = path.join(dir, "confluence-sync");
+    await fsp.mkdir(syncDir, { recursive: true });
+
+    // Pre-seed the manifest with a previously-synced page p1b.
+    const p1bPath = path.join(syncDir, "p1b.md");
+    await fsp.writeFile(p1bPath, "# stale\n", "utf8");
+    await fsp.writeFile(
+      path.join(syncDir, "manifest.json"),
+      JSON.stringify({
+        version: 1,
+        provider: "confluence",
+        entries: [
+          { localPath: p1bPath, remoteId: "p1b", remoteModifiedAt: "1" },
+          // p1a manifest entry is intentionally seeded too so the
+          // assertion that *only* p1b is pruned is meaningful.
+          {
+            localPath: path.join(syncDir, "p1a.md"),
+            remoteId: "p1a",
+            remoteModifiedAt: "1",
+          },
+        ],
+      }),
+      "utf8",
     );
-  },
-);
+
+    // Pre-seed the bridge with the matching source so we can
+    // observe the `removeSource` call.
+    const p1bSource = bridge.addLocalFile(p1bPath);
+    bridge.added.length = 0; // ignore the seed in the assertion below
+
+    // Pre-seed the version-state.
+    await fsp.writeFile(
+      path.join(syncDir, "state.json"),
+      JSON.stringify({
+        cloudId: "cloud-1",
+        pageVersions: { p1a: 1, p1b: 1 },
+        pageSpaces: { p1a: "s1", p1b: "s1" },
+      }),
+      "utf8",
+    );
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [{ id: "s1", key: "ONE", name: "Space One" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              id: "p1a",
+              title: "P1A",
+              spaceId: "s1",
+              version: { number: 1 },
+              body: { storage: { value: "<p>still here</p>" } },
+            },
+          ],
+        }),
+      });
+
+    const result = await syncConfluence({
+      accessToken: "AT",
+      userDataDir: dir,
+      bridge,
+    });
+
+    // 1. Counter surfaced to the renderer.
+    expect(result.removed).toBe(1);
+    // 2. Bridge source entry removed.
+    expect(bridge.removed).toContain(p1bSource.id);
+    // 3. Local file unlinked.
+    await expect(fsp.access(p1bPath)).rejects.toThrow();
+    // 4. Manifest entry pruned (and p1a survives).
+    const manifest = JSON.parse(
+      await fsp.readFile(path.join(syncDir, "manifest.json"), "utf8"),
+    ) as { entries: Array<{ remoteId: string }> };
+    const ids = manifest.entries.map((e) => e.remoteId).sort();
+    expect(ids).toEqual(["p1a"]);
+  });
+
+  it(
+    "carries forward legacy state entries that lack a recorded " +
+      "space id (state.json migration from pre-pageSpaces format)",
+    async () => {
+      // Legacy state: pageVersions populated, pageSpaces missing.
+      // The carry-forward must default to "unknown" → keep the entry
+      // alive while the state self-heals on the next successful
+      // listing.
+      const syncDir = path.join(dir, "confluence-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(syncDir, "state.json"),
+        JSON.stringify({
+          cloudId: "cloud-1",
+          pageVersions: { p_legacy: 7 },
+          // pageSpaces deliberately omitted (legacy schema).
+        }),
+        "utf8",
+      );
+
+      // No spaces, no pages this sync (e.g. user lost access
+      // temporarily). The legacy entry must NOT be dropped.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [] }),
+      });
+
+      await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      const state = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "confluence-sync", "state.json"),
+          "utf8",
+        ),
+      ) as {
+        pageVersions: Record<string, number>;
+        pageSpaces: Record<string, string>;
+      };
+      expect(state.pageVersions).toEqual({ p_legacy: 7 });
+      // pageSpaces remains empty for the legacy entry — it will
+      // populate on the next sync if/when the page is observed.
+      expect(state.pageSpaces).toEqual({});
+    },
+  );
+});
 
 describe("Google Drive sync — manifest cleanup", () => {
   const original = globalThis.fetch;
@@ -2583,8 +2707,16 @@ describe("Google Drive sync — manifest cleanup", () => {
 
       // Both metadata fetches 404 → both ids land in failedFileIds.
       fetchMock
-        .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" })
-        .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" });
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          text: async () => "not found",
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          text: async () => "not found",
+        });
 
       const r = await syncGoogleDrive({
         accessToken: "AT",
@@ -2674,7 +2806,9 @@ describe("Google Drive sync — manifest cleanup", () => {
         // Second file's metadata fetch throws (transport-level
         // rejection — what fetch() does on DNS failure or socket reset).
         .mockRejectedValueOnce(
-          Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+          Object.assign(new Error("getaddrinfo ENOTFOUND"), {
+            code: "ENOTFOUND",
+          }),
         );
 
       await expect(
@@ -2733,9 +2867,13 @@ describe("Google Drive sync — manifest cleanup", () => {
         .mockImplementation(async (...args) => {
           const [p] = args;
           if (typeof p === "string" && p.endsWith("manifest.json")) {
-            throw Object.assign(new Error("derived ENOSPC"), { code: "ENOSPC" });
+            throw Object.assign(new Error("derived ENOSPC"), {
+              code: "ENOSPC",
+            });
           }
-          return originalWriteFile(...(args as Parameters<typeof originalWriteFile>));
+          return originalWriteFile(
+            ...(args as Parameters<typeof originalWriteFile>),
+          );
         });
 
       try {
@@ -2926,8 +3064,7 @@ describe("Token refresh + cascading deletions", () => {
   // branch silently kept the local file + source.
   // ---------------------------------------------------------------
   it(
-    "figma cascades upstream-deletion 404 to local file + bridge " +
-      "source",
+    "figma cascades upstream-deletion 404 to local file + bridge " + "source",
     async () => {
       // Pre-seed manifest + bridge so we have something to delete.
       const figmaDir = path.join(dir, "figma-sync");
@@ -3006,8 +3143,7 @@ describe("Token refresh + cascading deletions", () => {
   // delete, increment removed.
   // ---------------------------------------------------------------
   it(
-    "notion cascades upstream-deletion 404 to local file + bridge " +
-      "source",
+    "notion cascades upstream-deletion 404 to local file + bridge " + "source",
     async () => {
       const notionDir = path.join(dir, "notion-sync");
       await fsp.mkdir(notionDir, { recursive: true });
@@ -3079,64 +3215,61 @@ describe("Token refresh + cascading deletions", () => {
   // (issue was deleted in Jira), and the key existed in the prior
   // manifest, the connector must cascade.
   // ---------------------------------------------------------------
-  it(
-    "jira cascades absent-retry-key to local file + bridge source",
-    async () => {
-      const jiraDir = path.join(dir, "jira-sync");
-      await fsp.mkdir(jiraDir, { recursive: true });
-      const localFile = path.join(jiraDir, "PROJ-1.md");
-      await fsp.writeFile(localFile, "stale jira export", "utf8");
-      await fsp.writeFile(
-        path.join(jiraDir, "manifest.json"),
-        JSON.stringify({
-          version: 1,
-          provider: "jira",
-          entries: [
-            {
-              localPath: localFile,
-              remoteId: "PROJ-1",
-              remoteModifiedAt: "2024-01-01T00:00:00Z",
-            },
-          ],
-        }),
-        "utf8",
-      );
-      const seeded = bridge.addLocalFile(localFile);
-      bridge.added = [];
-      // state.json: cloudId pre-resolved, PROJ-1 in retry queue.
-      await fsp.writeFile(
-        path.join(jiraDir, "state.json"),
-        JSON.stringify({
-          cloudId: "cloud-1",
-          lastSyncIso: null,
-          failedRetries: [
-            {
-              remoteId: "PROJ-1",
-              remoteModifiedAt: "2024-01-01T00:00:00Z",
-              failureCount: 1,
-            },
-          ],
-        }),
-        "utf8",
-      );
+  it("jira cascades absent-retry-key to local file + bridge source", async () => {
+    const jiraDir = path.join(dir, "jira-sync");
+    await fsp.mkdir(jiraDir, { recursive: true });
+    const localFile = path.join(jiraDir, "PROJ-1.md");
+    await fsp.writeFile(localFile, "stale jira export", "utf8");
+    await fsp.writeFile(
+      path.join(jiraDir, "manifest.json"),
+      JSON.stringify({
+        version: 1,
+        provider: "jira",
+        entries: [
+          {
+            localPath: localFile,
+            remoteId: "PROJ-1",
+            remoteModifiedAt: "2024-01-01T00:00:00Z",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const seeded = bridge.addLocalFile(localFile);
+    bridge.added = [];
+    // state.json: cloudId pre-resolved, PROJ-1 in retry queue.
+    await fsp.writeFile(
+      path.join(jiraDir, "state.json"),
+      JSON.stringify({
+        cloudId: "cloud-1",
+        lastSyncIso: null,
+        failedRetries: [
+          {
+            remoteId: "PROJ-1",
+            remoteModifiedAt: "2024-01-01T00:00:00Z",
+            failureCount: 1,
+          },
+        ],
+      }),
+      "utf8",
+    );
 
-      // Search response: empty (PROJ-1 not returned → deleted).
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ issues: [], startAt: 0, total: 0, maxResults: 50 }),
-      });
+    // Search response: empty (PROJ-1 not returned → deleted).
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ issues: [], startAt: 0, total: 0, maxResults: 50 }),
+    });
 
-      const r = await syncJira({
-        accessToken: "AT",
-        userDataDir: dir,
-        bridge,
-      });
+    const r = await syncJira({
+      accessToken: "AT",
+      userDataDir: dir,
+      bridge,
+    });
 
-      expect(r.removed).toBe(1);
-      expect(bridge.removed).toContain(seeded.id);
-      await expect(fsp.access(localFile)).rejects.toThrow();
-    },
-  );
+    expect(r.removed).toBe(1);
+    expect(bridge.removed).toContain(seeded.id);
+    await expect(fsp.access(localFile)).rejects.toThrow();
+  });
 });
 
 // =====================================================================
@@ -3284,9 +3417,7 @@ describe("OneDrive per-item download resilience", () => {
       const netErr = Object.assign(new Error("ECONNRESET"), {
         code: "ECONNRESET",
       });
-      fetchMock
-        .mockResolvedValueOnce(deltaResp)
-        .mockRejectedValueOnce(netErr);
+      fetchMock.mockResolvedValueOnce(deltaResp).mockRejectedValueOnce(netErr);
 
       await expect(
         syncOneDrive({

@@ -7,10 +7,7 @@
  */
 import { getBridge } from "../appState";
 import { idempotentHandle } from "./register";
-import {
-  getSchedulerStatus,
-  runNow as schedulerRunNow,
-} from "../scheduler";
+import { getSchedulerStatus, runNow as schedulerRunNow } from "../scheduler";
 import { assertBoolean, assertId } from "./validate";
 import { CreateAutomationSchema } from "./schemas";
 
@@ -34,15 +31,12 @@ export function registerAutomationsHandlers(): void {
     return bridge.bridgeListAutomations();
   });
 
-  idempotentHandle(
-    "automations:get",
-    async (_event, automationId: unknown) => {
-      const validated = assertId(automationId, "automationId");
-      const bridge = getBridge();
-      if (!bridge) throw new Error("Native bridge not available");
-      return bridge.bridgeGetAutomation(validated);
-    },
-  );
+  idempotentHandle("automations:get", async (_event, automationId: unknown) => {
+    const validated = assertId(automationId, "automationId");
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeGetAutomation(validated);
+  });
 
   idempotentHandle(
     "automations:setEnabled",

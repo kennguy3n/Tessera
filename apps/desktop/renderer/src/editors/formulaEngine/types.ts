@@ -54,12 +54,7 @@ export function isFormulaError(value: unknown): value is FormulaError {
 }
 
 /** A single resolved cell value. `null` represents a blank cell. */
-export type FormulaValue =
-  | number
-  | string
-  | boolean
-  | null
-  | FormulaError;
+export type FormulaValue = number | string | boolean | null | FormulaError;
 
 /** Zero-based cell coordinate. */
 export interface CellRef {

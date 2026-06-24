@@ -219,11 +219,13 @@ const settingsStore = (() => {
     // Test-only: reset the store between vitest cases so a test
     // can simulate a fresh app boot without each prior test's
     // settings leaking into it.
-    __resetForTests(initial: SettingsStoreState = {
-      settings: DEFAULT_SETTINGS,
-      loading: true,
-      error: null,
-    }) {
+    __resetForTests(
+      initial: SettingsStoreState = {
+        settings: DEFAULT_SETTINGS,
+        loading: true,
+        error: null,
+      },
+    ) {
       state = initial;
       pendingRefresh = null;
       bootstrapped = false;

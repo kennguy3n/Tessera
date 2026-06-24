@@ -75,7 +75,9 @@ describe("assertUuid", () => {
   });
 
   it("rejects non-UUID strings", () => {
-    expect(() => assertUuid("not-a-uuid", "id")).toThrow(/must be a valid UUID/);
+    expect(() => assertUuid("not-a-uuid", "id")).toThrow(
+      /must be a valid UUID/,
+    );
     expect(() => assertUuid("123", "id")).toThrow(/must be a valid UUID/);
   });
 });
@@ -118,7 +120,9 @@ describe("assertSafePath", () => {
   const safeRoots = ["/tmp", "/home/user/Downloads"];
 
   it("accepts paths inside safe roots", () => {
-    expect(assertSafePath("/tmp/output.txt", safeRoots)).toBe("/tmp/output.txt");
+    expect(assertSafePath("/tmp/output.txt", safeRoots)).toBe(
+      "/tmp/output.txt",
+    );
     expect(assertSafePath("/home/user/Downloads/x.csv", safeRoots)).toBe(
       "/home/user/Downloads/x.csv",
     );

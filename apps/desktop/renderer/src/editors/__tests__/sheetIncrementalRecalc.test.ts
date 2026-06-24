@@ -112,9 +112,7 @@ describe("incrementalRecalc", () => {
   });
 
   it("second render with reference-identical rows is a no-op", () => {
-    const initial = sheet([
-      ["1", "2", "=A1+B1"],
-    ]);
+    const initial = sheet([["1", "2", "=A1+B1"]]);
     const state = makeIncrementalRecalcState();
     const first = incrementalRecalc(initial, state);
     const firstC = first.get(key(0, 2));
@@ -148,9 +146,7 @@ describe("incrementalRecalc", () => {
   it("transitive recomputation walks deep dependency chains", () => {
     // A1 → B1 → C1 → D1 — a 4-deep chain. Editing A1 must
     // propagate through every step.
-    const initial = sheet([
-      ["1", "=A1+1", "=B1+1", "=C1+1"],
-    ]);
+    const initial = sheet([["1", "=A1+1", "=B1+1", "=C1+1"]]);
     const state = makeIncrementalRecalcState();
     incrementalRecalc(initial, state);
 
@@ -165,9 +161,7 @@ describe("incrementalRecalc", () => {
   it("siblings sharing a parent are NOT cross-invalidated", () => {
     // C1 and D1 both read A1. Editing E1 (independent) must NOT
     // invalidate C1 or D1.
-    const initial = sheet([
-      ["1", "0", "=A1*2", "=A1*3", "5"],
-    ]);
+    const initial = sheet([["1", "0", "=A1*2", "=A1*3", "5"]]);
     const state = makeIncrementalRecalcState();
     const first = incrementalRecalc(initial, state);
     const firstC = first.get(key(0, 2));
@@ -183,9 +177,7 @@ describe("incrementalRecalc", () => {
   it("changing a formula's source updates BOTH cache and dep graph", () => {
     // C1 = A1+B1 initially. Change C1 to read only A1. After the
     // change, editing B1 must NOT invalidate C1.
-    const initial = sheet([
-      ["1", "2", "=A1+B1"],
-    ]);
+    const initial = sheet([["1", "2", "=A1+B1"]]);
     const state = makeIncrementalRecalcState();
     incrementalRecalc(initial, state);
 
@@ -203,9 +195,7 @@ describe("incrementalRecalc", () => {
   it("formula → literal: dropped edges don't cause phantom recompute", () => {
     // C1 starts as =A1+B1. Change to literal 99. Edit A1 → must
     // NOT recompute C1 (C1 has no edges any more).
-    const initial = sheet([
-      ["1", "2", "=A1+B1"],
-    ]);
+    const initial = sheet([["1", "2", "=A1+B1"]]);
     const state = makeIncrementalRecalcState();
     incrementalRecalc(initial, state);
 
@@ -224,9 +214,7 @@ describe("incrementalRecalc", () => {
   it("literal → formula: new edges fire downstream invalidation", () => {
     // C1 starts as literal 99. Change to =A1. Then edit A1 → C1
     // must recompute.
-    const initial = sheet([
-      ["1", "2", "99"],
-    ]);
+    const initial = sheet([["1", "2", "99"]]);
     const state = makeIncrementalRecalcState();
     incrementalRecalc(initial, state);
 
@@ -241,9 +229,7 @@ describe("incrementalRecalc", () => {
 
   it("circular references surface #CIRCULAR! and stay flagged across renders", () => {
     // A1 = B1, B1 = A1.
-    const initial = sheet([
-      ["=B1", "=A1"],
-    ]);
+    const initial = sheet([["=B1", "=A1"]]);
     const state = makeIncrementalRecalcState();
     const cache1 = incrementalRecalc(initial, state);
     expect(valAt(cache1, 0, 0)).toBe("#CIRCULAR!");
@@ -266,9 +252,7 @@ describe("incrementalRecalc", () => {
     // C1 starts =A1+B1, then user mid-types '=A1+' (parse error),
     // then resolves to '=A1+B1' again. Stale edges from the broken
     // state must not double-up.
-    const initial = sheet([
-      ["1", "2", "=A1+B1"],
-    ]);
+    const initial = sheet([["1", "2", "=A1+B1"]]);
     const state = makeIncrementalRecalcState();
     incrementalRecalc(initial, state);
 
@@ -301,9 +285,7 @@ describe("incrementalRecalc", () => {
     );
     const state = makeIncrementalRecalcState();
     const first = incrementalRecalc(initial, state);
-    const refs = Array.from({ length: 10 }, (_, r) =>
-      first.get(key(r, 2)),
-    );
+    const refs = Array.from({ length: 10 }, (_, r) => first.get(key(r, 2)));
 
     // Edit only row 5 column 0 → 100. Row-5 C must update; every
     // other row's C must keep the SAME FormulaValue reference.
@@ -349,10 +331,7 @@ describe("incrementalRecalc", () => {
     // the deleted cell as `null` when B1 walks A2 during eval,
     // so we assert on B1's value (the actual stale-cache bug),
     // not on A2's cache presence.
-    const initial = sheet([
-      ["10", "=A1+A2"],
-      ["20"],
-    ]);
+    const initial = sheet([["10", "=A1+A2"], ["20"]]);
     const state = makeIncrementalRecalcState();
     const before = incrementalRecalc(initial, state);
     expect(valAt(before, 0, 1)).toBe(30);
@@ -368,10 +347,7 @@ describe("incrementalRecalc", () => {
     // by C1. Delete A2 (shrink to 1 row). Both B1 and C1 must
     // recompute, even though `usedBy(A2)` only directly names B1.
     // `recalcOrder` walks B1 → C1 transitively from the extraSeed.
-    const initial = sheet([
-      ["10", "=A1+A2", "=B1*10"],
-      ["20"],
-    ]);
+    const initial = sheet([["10", "=A1+A2", "=B1*10"], ["20"]]);
     const state = makeIncrementalRecalcState();
     const before = incrementalRecalc(initial, state);
     expect(valAt(before, 0, 1)).toBe(30);
@@ -384,9 +360,7 @@ describe("incrementalRecalc", () => {
   });
 
   it("self-reference surfaces #CIRCULAR! and recovers when broken", () => {
-    const initial = sheet([
-      ["=A1"],
-    ]);
+    const initial = sheet([["=A1"]]);
     const state = makeIncrementalRecalcState();
     const cache = incrementalRecalc(initial, state);
     expect(valAt(cache, 0, 0)).toBe("#CIRCULAR!");
@@ -577,10 +551,7 @@ describe("updateCellsInRows (multi-edit row-reference preservation)", () => {
   it("auto-extends rows/cols past current bounds (fill-series scenario)", () => {
     // Vertical fill from a 2-row source down into rows 2 and 3 of a
     // 2-row sheet — matches the actual fill-series shape.
-    const rows = [
-      ["1"],
-      ["2"],
-    ];
+    const rows = [["1"], ["2"]];
     const next = updateCellsInRows(rows, 1, [
       { row: 2, col: 0, value: "3" },
       { row: 3, col: 0, value: "4" },

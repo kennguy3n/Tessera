@@ -21,7 +21,11 @@ import { isBatteryLow } from "../batteryMonitor";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
-import { loadConfig, updateConfig, type ExternalProviderConfig } from "../config";
+import {
+  loadConfig,
+  updateConfig,
+  type ExternalProviderConfig,
+} from "../config";
 import * as secretsVault from "../secretsVault";
 import {
   streamExternalProvider,

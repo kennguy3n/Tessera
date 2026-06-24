@@ -83,7 +83,8 @@ function reduceNumbers(
   return acc;
 }
 
-const SUM: FunctionImpl = (args, ctx) => reduceNumbers(args, ctx, 0, (a, b) => a + b);
+const SUM: FunctionImpl = (args, ctx) =>
+  reduceNumbers(args, ctx, 0, (a, b) => a + b);
 
 const PRODUCT: FunctionImpl = (args, ctx) => {
   let count = 0;
@@ -104,7 +105,8 @@ const AVERAGE: FunctionImpl = (args, ctx) => {
     sum += v;
     count++;
   }
-  if (count === 0) return makeError("#DIV/0!", "AVERAGE over no numeric values");
+  if (count === 0)
+    return makeError("#DIV/0!", "AVERAGE over no numeric values");
   return sum / count;
 };
 
@@ -147,7 +149,10 @@ const MAX: FunctionImpl = (args, ctx) => {
   return best === null ? 0 : best;
 };
 
-function singleNumber(arg: AstNode, ctx: EvaluationContext): number | FormulaError {
+function singleNumber(
+  arg: AstNode,
+  ctx: EvaluationContext,
+): number | FormulaError {
   const v = evaluate(arg, ctx);
   if (isFormulaError(v)) return v;
   return toNumber(v);
@@ -414,7 +419,8 @@ const ODD: FunctionImpl = (args, ctx) => {
 };
 
 const MROUND: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "MROUND expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "MROUND expects 2 arguments");
   const v = singleNumber(args[0], ctx);
   if (isFormulaError(v)) return v;
   const factor = singleNumber(args[1], ctx);
@@ -427,7 +433,8 @@ const MROUND: FunctionImpl = (args, ctx) => {
 };
 
 const QUOTIENT: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "QUOTIENT expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "QUOTIENT expects 2 arguments");
   const a = singleNumber(args[0], ctx);
   if (isFormulaError(a)) return a;
   const b = singleNumber(args[1], ctx);
@@ -449,7 +456,8 @@ const FACT: FunctionImpl = (args, ctx) => {
 };
 
 const COMBIN: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "COMBIN expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "COMBIN expects 2 arguments");
   const nV = singleNumber(args[0], ctx);
   if (isFormulaError(nV)) return nV;
   const kV = singleNumber(args[1], ctx);

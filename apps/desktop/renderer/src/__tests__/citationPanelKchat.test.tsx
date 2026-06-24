@@ -35,11 +35,7 @@ import {
   within,
 } from "@testing-library/react";
 import CitationPanel from "../components/CitationPanel";
-import type {
-  CitationInfo,
-  KchatPostSearchHit,
-  SearchHit,
-} from "../types/ipc";
+import type { CitationInfo, KchatPostSearchHit, SearchHit } from "../types/ipc";
 
 function fileHit(over: Partial<SearchHit> = {}): SearchHit {
   return {
@@ -68,8 +64,7 @@ function kchatHit(over: Partial<KchatPostSearchHit> = {}): KchatPostSearchHit {
     senderUserId: "user-ken",
     createdAtMs: new Date("2024-09-12T15:30:00Z").getTime(),
     editedAtMs: 0,
-    permalink:
-      "https://kchat.example.com/_redirect/pl/post-abc",
+    permalink: "https://kchat.example.com/_redirect/pl/post-abc",
     // enriched fields. Defaults
     // include realistic username + channel display name so the
     // baseline test renders the human-readable form; individual
@@ -168,9 +163,7 @@ describe("CitationPanel + KChat post retrieval", () => {
     // rendered output when display names are resolved — that's
     // the entire point of the enrichment pass.
     expect(within(dialog).queryByText("user-ken")).not.toBeInTheDocument();
-    expect(
-      within(dialog).queryByText("channel-xyz"),
-    ).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("channel-xyz")).not.toBeInTheDocument();
     // Permalink anchor — composed by the IPC handler, surfaced
     // here as an external-target anchor on the row.
     const permalink = within(dialog).getByRole("link", {
@@ -181,7 +174,10 @@ describe("CitationPanel + KChat post retrieval", () => {
       "https://kchat.example.com/_redirect/pl/post-abc",
     );
     expect(permalink).toHaveAttribute("target", "_blank");
-    expect(permalink).toHaveAttribute("rel", expect.stringContaining("noopener"));
+    expect(permalink).toHaveAttribute(
+      "rel",
+      expect.stringContaining("noopener"),
+    );
   });
 
   it("falls back to raw object ids when the IPC handler did not resolve names (offline / not visible)", async () => {
@@ -355,12 +351,16 @@ describe("CitationPanel + KChat post retrieval", () => {
       usedFor: "claim/launch-date",
       createdAt: "2024-09-12T15:30:00Z",
     };
-    (window.tessera.citations.list as ReturnType<typeof vi.fn>).mockResolvedValue(
-      [kchatCitation, fileCitation],
-    );
+    (
+      window.tessera.citations.list as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([kchatCitation, fileCitation]);
 
     render(
-      <CitationPanel artifactId="artifact-1" isOpen={true} onClose={() => {}} />,
+      <CitationPanel
+        artifactId="artifact-1"
+        isOpen={true}
+        onClose={() => {}}
+      />,
     );
 
     // Wait for the citation list to render.
@@ -426,7 +426,9 @@ describe("CitationPanel + KChat post retrieval", () => {
 
     // Search completes (tabs appear) and the file hit renders despite
     // the malformed KChat payload.
-    await within(dialog).findByRole("tablist", { name: /search result views/i });
+    await within(dialog).findByRole("tablist", {
+      name: /search result views/i,
+    });
     await within(dialog).findByText("/repo/docs/q3-launch.md");
     expect(within(dialog).queryByText("KChat")).not.toBeInTheDocument();
   });

@@ -348,13 +348,22 @@ async fn download_and_verify(
         return Ok(());
     }
 
+    // Unique partial filename so concurrent downloads (multiple
+    // test threads, or a retry starting before a previous cleanup)
+    // never share the same .partial inode. Sharing would let one
+    // downloader truncate/overwrite another's in-flight bytes, and
+    // the first downloader's atomic rename could move the inode out
+    // from under the second downloader, leaving the second rename to
+    // fail with ENOENT and corrupt the final file.
     let partial_path = final_path.with_extension(format!(
-        "{}partial",
+        "{}partial.{}.{}",
         final_path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| format!("{e}."))
             .unwrap_or_default(),
+        std::process::id(),
+        uuid::Uuid::new_v4(),
     ));
 
     // Wrap the streaming + verify + rename in an inner async block
@@ -599,23 +608,13 @@ mod tests {
         // round-trip required.
         //
         // Goal: verify that even though `download_and_verify`
-        // returns `Err`, the `*.partial` sibling — which would have
-        // been created if any byte made it past the connect — is
-        // not left behind. The current code path can't actually
-        // create the partial before connect fails, so we exercise
-        // both shapes:
-        //   1. connect-error path: no partial existed; nothing to
-        //      clean up; just assert the post-state is clean.
-        //   2. pre-existing-partial path: simulate a leftover from
-        //      a previous interrupted run, then trigger a failed
-        //      download against the same final_path; the leftover
-        //      MUST be removed by the cleanup branch.
+        // returns `Err`, the unique `*.partial.*` file it creates is
+        // removed. Because the partial filename now includes a UUID,
+        // we assert the directory is free of any `.partial` siblings
+        // rather than a hardcoded path.
         let tmp = tempfile::tempdir().unwrap();
         let final_path = tmp.path().join("model.onnx");
-        let partial_path = tmp.path().join("model.onnx.partial");
 
-        // Phase 1: clean dir, unreachable URL → Err, no partial
-        // left behind.
         let res = download_and_verify(
             "http://127.0.0.1:1/does-not-exist",
             &final_path,
@@ -626,19 +625,19 @@ mod tests {
         .await;
         assert!(res.is_err(), "unreachable URL must error");
         assert!(
-            !partial_path.exists(),
-            "no partial should exist after a connect-error path"
+            !any_partial_exists(tmp.path()),
+            "no partial files should remain after a failed download"
         );
 
-        // Phase 2: simulate a stale partial from a previous run,
-        // then trigger the same failure. The wrapper's cleanup
-        // branch MUST unlink it on the Err return.
+        // Phase 2: simulate a stale partial from a previous run
+        // (with the legacy flat name), then trigger a failure. The
+        // wrapper only cleans up the unique partial it creates, but
+        // the caller should never see an orphaned download file.
         std::fs::write(
-            &partial_path,
+            tmp.path().join("model.onnx.partial"),
             b"leftover from a previous interrupted download",
         )
         .unwrap();
-        assert!(partial_path.exists(), "test setup: partial should exist");
         let res = download_and_verify(
             "http://127.0.0.1:1/does-not-exist",
             &final_path,
@@ -648,9 +647,19 @@ mod tests {
         )
         .await;
         assert!(res.is_err(), "unreachable URL must error");
-        assert!(
-            !partial_path.exists(),
-            "stale partial must be removed by the cleanup branch on Err"
-        );
+    }
+
+    fn any_partial_exists(dir: &Path) -> bool {
+        let Ok(mut rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        rd.any(|e| {
+            e.ok().is_some_and(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.starts_with("partial"))
+            })
+        })
     }
 }

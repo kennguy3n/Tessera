@@ -82,30 +82,27 @@ describe("isNetworkError", () => {
     },
   );
 
-  it(
-    "omits `cause` entirely when no options bag is provided",
-    () => {
-      // Calling `new NetworkError("msg")` with no options must NOT
-      // install a `cause: undefined` own property — the previous
-      // class field default would have done so under some TS
-      // configurations. The ES2022 `Error(message, options)`
-      // contract only installs `cause` when `options` has it as an
-      // own property, which preserves the standard "no cause means
-      // no own property" invariant.
-      const err = new NetworkError("standalone");
-      const desc = Object.getOwnPropertyDescriptor(err, "cause");
-      // Either the slot doesn't exist (best case) or it's the
-      // inherited `undefined` from Error.prototype — both are
-      // acceptable per the spec. What is NOT acceptable is a
-      // class-owned `cause` field overriding the chain.
-      if (desc !== undefined) {
-        expect(desc.value).toBeUndefined();
-      }
-      // The instance still classifies as a network error — the
-      // brand flag is independent of the cause slot.
-      expect(isNetworkError(err)).toBe(true);
-    },
-  );
+  it("omits `cause` entirely when no options bag is provided", () => {
+    // Calling `new NetworkError("msg")` with no options must NOT
+    // install a `cause: undefined` own property — the previous
+    // class field default would have done so under some TS
+    // configurations. The ES2022 `Error(message, options)`
+    // contract only installs `cause` when `options` has it as an
+    // own property, which preserves the standard "no cause means
+    // no own property" invariant.
+    const err = new NetworkError("standalone");
+    const desc = Object.getOwnPropertyDescriptor(err, "cause");
+    // Either the slot doesn't exist (best case) or it's the
+    // inherited `undefined` from Error.prototype — both are
+    // acceptable per the spec. What is NOT acceptable is a
+    // class-owned `cause` field overriding the chain.
+    if (desc !== undefined) {
+      expect(desc.value).toBeUndefined();
+    }
+    // The instance still classifies as a network error — the
+    // brand flag is independent of the cause slot.
+    expect(isNetworkError(err)).toBe(true);
+  });
 
   it.each([
     // libc / Node

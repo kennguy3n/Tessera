@@ -71,8 +71,8 @@ describe("iconResolver", () => {
       const svg = resolveIconSvg("lucide:home", { size: 24 });
       expect(svg).toBeTruthy();
       expect(svg!.startsWith("<svg")).toBe(true);
-      expect(svg!).toContain("width=\"24\"");
-      expect(svg!).toContain("height=\"24\"");
+      expect(svg!).toContain('width="24"');
+      expect(svg!).toContain('height="24"');
     });
 
     it("honours strokeWidth on lucide icons", () => {
@@ -80,7 +80,7 @@ describe("iconResolver", () => {
         size: 24,
         strokeWidth: 1.5,
       });
-      expect(svg).toContain("stroke-width=\"1.5\"");
+      expect(svg).toContain('stroke-width="1.5"');
     });
 
     it("renders a phosphor icon to <svg>", () => {
@@ -125,10 +125,12 @@ describe("iconResolver", () => {
     });
 
     it("accepts well-formed rgb() and hsl() colors", () => {
-      expect(resolveIconSvg("lucide:home", { color: "rgb(124, 58, 237)" }))
-        .toMatch(/rgb\(124, 58, 237\)/);
-      expect(resolveIconSvg("lucide:home", { color: "hsl(258, 85%, 58%)" }))
-        .toMatch(/hsl\(258, 85%, 58%\)/);
+      expect(
+        resolveIconSvg("lucide:home", { color: "rgb(124, 58, 237)" }),
+      ).toMatch(/rgb\(124, 58, 237\)/);
+      expect(
+        resolveIconSvg("lucide:home", { color: "hsl(258, 85%, 58%)" }),
+      ).toMatch(/hsl\(258, 85%, 58%\)/);
     });
   });
 
@@ -173,8 +175,8 @@ describe("iconResolver", () => {
       const out = embedIcons(
         "{{icon:lucide:home size=32 color=#FF0000 strokeWidth=1.5}}",
       );
-      expect(out).toContain("width=\"32\"");
-      expect(out).toContain("stroke-width=\"1.5\"");
+      expect(out).toContain('width="32"');
+      expect(out).toContain('stroke-width="1.5"');
       expect(out).toMatch(/#FF0000/);
     });
 

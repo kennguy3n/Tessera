@@ -4,7 +4,14 @@ import type { ShowcaseDataset } from "../types";
 
 export const retailDataset: ShowcaseDataset = {
   id: "retail",
-  persona: {"name": "Marcus Chen", "role": "Sales Operations Lead", "org": "Northwind Outdoor Co.", "market": "Retail / Consumer Goods", "blurb": "Marcus runs the quarterly business review for a consumer-goods sales org. He consolidates pipeline, performance and account health into a QBR deck and a clean CRM view the team can actually act on.\n"},
+  persona: {
+    name: "Marcus Chen",
+    role: "Sales Operations Lead",
+    org: "Northwind Outdoor Co.",
+    market: "Retail / Consumer Goods",
+    blurb:
+      "Marcus runs the quarterly business review for a consumer-goods sales org. He consolidates pipeline, performance and account health into a QBR deck and a clean CRM view the team can actually act on.\n",
+  },
   sourceFiles: ["01-quarterly-sales-data.md", "02-key-accounts-and-deals.md"],
   artifacts: [
     {

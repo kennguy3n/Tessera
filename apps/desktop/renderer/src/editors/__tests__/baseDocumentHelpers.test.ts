@@ -14,11 +14,7 @@ import {
   linkTargetRecords,
   linkTargetFields,
 } from "../baseDocumentHelpers";
-import type {
-  BaseContent,
-  BaseDocument,
-  BaseField,
-} from "../baseEditorTypes";
+import type { BaseContent, BaseDocument, BaseField } from "../baseEditorTypes";
 
 const legacy: BaseContent = {
   fields: [
@@ -56,8 +52,18 @@ describe("parseBaseDocument — multi-table shape", () => {
   it("parses { tables, activeTableId } and keeps the active pointer", () => {
     const docIn: BaseDocument = {
       tables: [
-        { id: "t1", name: "People", fields: [{ name: "Name", type: "text" }], records: [] },
-        { id: "t2", name: "Tasks", fields: [{ name: "Title", type: "text" }], records: [] },
+        {
+          id: "t1",
+          name: "People",
+          fields: [{ name: "Name", type: "text" }],
+          records: [],
+        },
+        {
+          id: "t2",
+          name: "Tasks",
+          fields: [{ name: "Title", type: "text" }],
+          records: [],
+        },
       ],
       activeTableId: "t2",
     };
@@ -69,7 +75,12 @@ describe("parseBaseDocument — multi-table shape", () => {
   it("repairs a stale activeTableId to the first table", () => {
     const docIn = {
       tables: [
-        { id: "t1", name: "People", fields: [{ name: "Name", type: "text" }], records: [] },
+        {
+          id: "t1",
+          name: "People",
+          fields: [{ name: "Name", type: "text" }],
+          records: [],
+        },
       ],
       activeTableId: "does-not-exist",
     };
@@ -80,7 +91,12 @@ describe("parseBaseDocument — multi-table shape", () => {
   it("trims a padded persisted table name (matching renameTable)", () => {
     const docIn = {
       tables: [
-        { id: "t1", name: "  Tasks  ", fields: [{ name: "Title", type: "text" }], records: [] },
+        {
+          id: "t1",
+          name: "  Tasks  ",
+          fields: [{ name: "Title", type: "text" }],
+          records: [],
+        },
       ],
       activeTableId: "t1",
     };
@@ -91,7 +107,12 @@ describe("parseBaseDocument — multi-table shape", () => {
   it("falls back to the positional name when the persisted name is blank", () => {
     const docIn = {
       tables: [
-        { id: "t1", name: "   ", fields: [{ name: "Title", type: "text" }], records: [] },
+        {
+          id: "t1",
+          name: "   ",
+          fields: [{ name: "Title", type: "text" }],
+          records: [],
+        },
       ],
       activeTableId: "t1",
     };
@@ -149,7 +170,9 @@ describe("addTable / uniqueTableName", () => {
     const doc = addTable(singleTableDocument(legacy));
     expect(doc.tables).toHaveLength(2);
     expect(getActiveTable(doc).records).toHaveLength(0);
-    expect(getActiveTable(doc).fields).toEqual([{ name: "Name", type: "text" }]);
+    expect(getActiveTable(doc).fields).toEqual([
+      { name: "Name", type: "text" },
+    ]);
   });
 
   it("generates a non-colliding default name", () => {
@@ -392,7 +415,10 @@ describe("linkTargetRecords / linkTargetFields", () => {
         id: "t2",
         name: "Tasks",
         fields: [{ name: "Title", type: "text" }],
-        records: [{ id: "k1", Title: "Do" }, { id: "k2", Title: "Done" }],
+        records: [
+          { id: "k1", Title: "Do" },
+          { id: "k2", Title: "Done" },
+        ],
       },
     ],
     activeTableId: "t1",
@@ -406,23 +432,41 @@ describe("linkTargetRecords / linkTargetFields", () => {
   });
 
   it("resolves cross-table records via the resolver", () => {
-    const field: BaseField = { name: "Tasks", type: "linked_record", linkedTableId: "t2" };
+    const field: BaseField = {
+      name: "Tasks",
+      type: "linked_record",
+      linkedTableId: "t2",
+    };
     const out = linkTargetRecords(field, doc.tables[0].records, resolver);
     expect(out.map((r) => r.id)).toEqual(["k1", "k2"]);
   });
 
   it("returns [] for a cross-table link with no resolver", () => {
-    const field: BaseField = { name: "Tasks", type: "linked_record", linkedTableId: "t2" };
+    const field: BaseField = {
+      name: "Tasks",
+      type: "linked_record",
+      linkedTableId: "t2",
+    };
     expect(linkTargetRecords(field, doc.tables[0].records)).toEqual([]);
   });
 
   it("returns [] for a cross-table link to a deleted table", () => {
-    const field: BaseField = { name: "Gone", type: "linked_record", linkedTableId: "missing" };
-    expect(linkTargetRecords(field, doc.tables[0].records, resolver)).toEqual([]);
+    const field: BaseField = {
+      name: "Gone",
+      type: "linked_record",
+      linkedTableId: "missing",
+    };
+    expect(linkTargetRecords(field, doc.tables[0].records, resolver)).toEqual(
+      [],
+    );
   });
 
   it("linkTargetFields resolves the target table's fields", () => {
-    const field: BaseField = { name: "Tasks", type: "linked_record", linkedTableId: "t2" };
+    const field: BaseField = {
+      name: "Tasks",
+      type: "linked_record",
+      linkedTableId: "t2",
+    };
     const out = linkTargetFields(field, doc.tables[0].fields, resolver);
     expect(out.map((f) => f.name)).toEqual(["Title"]);
   });

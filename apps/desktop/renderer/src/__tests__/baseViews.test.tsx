@@ -13,13 +13,7 @@
  *    debounce timer.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  act,
-  within,
-} from "@testing-library/react";
+import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import BaseEditor from "../editors/BaseEditor";
 import { formatTimestamp } from "../editors/baseRecordMeta";
 
@@ -27,9 +21,7 @@ function renderEditor(content: object, onSave = vi.fn()) {
   const json = JSON.stringify(content);
   return {
     onSave,
-    ...render(
-      <BaseEditor content={json} onSave={onSave} autoSaveMs={10} />,
-    ),
+    ...render(<BaseEditor content={json} onSave={onSave} autoSaveMs={10} />),
   };
 }
 
@@ -294,7 +286,9 @@ describe("CalendarView", () => {
     // value in the right field.
     const days = screen
       .getAllByRole("button")
-      .filter((b) => /^Click to add a record on/.test(b.getAttribute("title") ?? ""));
+      .filter((b) =>
+        /^Click to add a record on/.test(b.getAttribute("title") ?? ""),
+      );
     expect(days.length).toBeGreaterThan(0);
     fireEvent.click(days[0]);
 
@@ -354,8 +348,7 @@ describe("GalleryView", () => {
     const { onSave } = renderEditor(GALLERY_BASE);
     fireEvent.click(screen.getByRole("tab", { name: "Gallery" }));
 
-    const deleteButtons = screen
-      .getAllByRole("button", { name: "Delete" });
+    const deleteButtons = screen.getAllByRole("button", { name: "Delete" });
     fireEvent.click(deleteButtons[0]);
 
     await flushSave();

@@ -113,11 +113,10 @@ type VerifyFn = (
 let _verifyImpl: VerifyFn = (algorithm, data, key, signature) =>
   crypto.verify(algorithm, data, key, signature);
 
-export function _setVerifyImplForTests(
-  override: VerifyFn | null,
-): void {
+export function _setVerifyImplForTests(override: VerifyFn | null): void {
   _verifyImpl =
-    override ?? ((algorithm, data, key, signature) =>
+    override ??
+    ((algorithm, data, key, signature) =>
       crypto.verify(algorithm, data, key, signature));
 }
 
@@ -424,12 +423,7 @@ export function verifyUpdateSignatureFromBuffers(
 
     let accepted = false;
     try {
-      accepted = _verifyImpl(
-        null,
-        artifactBytes,
-        anchorKey,
-        signatureBytes,
-      );
+      accepted = _verifyImpl(null, artifactBytes, anchorKey, signatureBytes);
     } catch (err) {
       // `crypto.verify` throws on truly malformed key material; the
       // anchor-length guard inside `decodeAnchor` should make that
@@ -457,10 +451,7 @@ export function verifyUpdateSignatureFromBuffers(
   // issue) rather than a tampering signal. Surface that as
   // `verifier-error` with all per-anchor messages so the operator can
   // see which anchors are healthy and which need replacement.
-  if (
-    verifierErrors.length === anchors.length &&
-    verifierErrors.length > 0
-  ) {
+  if (verifierErrors.length === anchors.length && verifierErrors.length > 0) {
     return {
       ok: false,
       reason: "verifier-error",
@@ -481,9 +472,7 @@ export function verifyUpdateSignatureFromBuffers(
       "key, or the artifact-signature pair was substituted." +
       (verifierErrors.length > 0
         ? ` (Note: ${verifierErrors.length} anchor(s) threw during verification and were skipped: ` +
-          verifierErrors
-            .map((e) => `#${e.index} (${e.message})`)
-            .join(", ") +
+          verifierErrors.map((e) => `#${e.index} (${e.message})`).join(", ") +
           ".)"
         : ""),
   };

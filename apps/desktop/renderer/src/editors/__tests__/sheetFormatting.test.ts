@@ -86,9 +86,9 @@ describe("number-format presets", () => {
   it("the base set is the prefix of the full set", () => {
     // The formula-engine test renders NUMBER_FORMAT_PRESETS exhaustively,
     // so the base set must stay the canonical, unextended menu.
-    expect(ALL_NUMBER_FORMAT_PRESETS.slice(0, NUMBER_FORMAT_PRESETS.length)).toEqual(
-      NUMBER_FORMAT_PRESETS,
-    );
+    expect(
+      ALL_NUMBER_FORMAT_PRESETS.slice(0, NUMBER_FORMAT_PRESETS.length),
+    ).toEqual(NUMBER_FORMAT_PRESETS);
     expect(ALL_NUMBER_FORMAT_PRESETS.length).toBeGreaterThan(
       NUMBER_FORMAT_PRESETS.length,
     );

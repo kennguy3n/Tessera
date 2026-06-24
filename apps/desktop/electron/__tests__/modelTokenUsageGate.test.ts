@@ -33,8 +33,7 @@ const removeHandlerMock = vi.fn((channel: string) => {
 
 vi.mock("electron", () => ({
   ipcMain: {
-    removeHandler: (...args: unknown[]) =>
-      removeHandlerMock(args[0] as string),
+    removeHandler: (...args: unknown[]) => removeHandlerMock(args[0] as string),
     handle: (...args: unknown[]) =>
       handleMock(args[0] as string, args[1] as IpcListener),
   },
@@ -94,13 +93,14 @@ vi.mock("../secretsVault", () => ({
 type EmitCb = (chunk: { content: string }) => void;
 type OnBodyOpenedCb = () => void;
 
-const streamExternalProviderMock = vi.fn<
-  (
-    opts: unknown,
-    emit: EmitCb,
-    onBodyOpened?: OnBodyOpenedCb,
-  ) => Promise<void>
->();
+const streamExternalProviderMock =
+  vi.fn<
+    (
+      opts: unknown,
+      emit: EmitCb,
+      onBodyOpened?: OnBodyOpenedCb,
+    ) => Promise<void>
+  >();
 
 vi.mock("../externalProviderStream", () => ({
   streamExternalProvider: (

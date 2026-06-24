@@ -28,10 +28,7 @@ import TasksPage from "../pages/TasksPage";
 import AutomationsPage from "../pages/AutomationsPage";
 import TemplatesPage from "../pages/TemplatesPage";
 
-function expectEmptyStateRendered(
-  title: string,
-  messageFragment: string,
-) {
+function expectEmptyStateRendered(title: string, messageFragment: string) {
   // The `.empty-state` class is added by `EmptyState.tsx` to its
   // outermost wrapper. Asserting on the class rather than role
   // guarantees the styling contract — a regression that hid the
@@ -57,9 +54,7 @@ describe("empty-state illustrations", () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(
-        screen.getByText("No sources connected"),
-      ).toBeInTheDocument(),
+      expect(screen.getByText("No sources connected")).toBeInTheDocument(),
     );
     expectEmptyStateRendered("No sources connected", "Add a local folder");
   });
@@ -114,9 +109,6 @@ describe("empty-state illustrations", () => {
     await waitFor(() =>
       expect(screen.getByText("No matching templates")).toBeInTheDocument(),
     );
-    expectEmptyStateRendered(
-      "No matching templates",
-      "No templates match",
-    );
+    expectEmptyStateRendered("No matching templates", "No templates match");
   });
 });

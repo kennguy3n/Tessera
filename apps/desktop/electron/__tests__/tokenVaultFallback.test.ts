@@ -109,7 +109,7 @@ describe("tokenVault fallback — safeStorage path (baseline)", () => {
 // cares about dispatch behavior between safeStorage and the password
 // vault, so a synthetic key is sufficient and 1–2 seconds faster
 // per test.
-const FIXED_TEST_KEY = Buffer.alloc(32, 0xCD);
+const FIXED_TEST_KEY = Buffer.alloc(32, 0xcd);
 
 describe("tokenVault fallback — password-vault path", () => {
   beforeEach(() => {
@@ -179,9 +179,7 @@ describe("tokenVault fallback — refusal cases", () => {
       /password-vault encrypted.*TSPV format.*password vault is not active/,
     );
     // Negative check: the old misleading message must NOT appear.
-    expect(() => getTokens("notion")).not.toThrow(
-      /Encryption not available/,
-    );
+    expect(() => getTokens("notion")).not.toThrow(/Encryption not available/);
   });
 
   it("refuses to read a safeStorage blob after the keyring goes away", () => {

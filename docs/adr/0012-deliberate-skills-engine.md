@@ -34,7 +34,7 @@ trips the IPC-audit quality gate, so it was explicitly kept out of scope.
 
 Add a renderer-side, surface-agnostic **Skills engine** that orchestrates
 several deliberate steps (plan → draft → critique → revise, …) over the
-*existing* single-shot IPC. A small model run through a deliberate loop
+_existing_ single-shot IPC. A small model run through a deliberate loop
 produces markedly better output than the same model run once.
 
 New module `apps/desktop/renderer/src/skills/`:

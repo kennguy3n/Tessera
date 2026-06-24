@@ -24,10 +24,7 @@
  * tears down every in-flight transfer anyway, so there is nothing to
  * persist.
  */
-import {
-  DownloadAbortedError,
-  type ModelCapability,
-} from "./modelManagement";
+import { DownloadAbortedError, type ModelCapability } from "./modelManagement";
 
 export class DownloadCancellationRegistry {
   private readonly inFlight = new Map<ModelCapability, Set<AbortController>>();

@@ -32,12 +32,8 @@ function mkProvider(
 /** Strip the terminating empty-stop chunk so test assertions can
  *  focus on the parsed content events. The terminator is its own
  *  test in `appends_terminal_stop_chunk`. */
-function contentChunks(
-  chunks: ExternalProviderStreamChunk[],
-): string[] {
-  return chunks
-    .filter((c) => c.content.length > 0)
-    .map((c) => c.content);
+function contentChunks(chunks: ExternalProviderStreamChunk[]): string[] {
+  return chunks.filter((c) => c.content.length > 0).map((c) => c.content);
 }
 
 describe("externalProviderStream — OpenAI-compatible SSE parser", () => {
@@ -60,7 +56,8 @@ describe("externalProviderStream — OpenAI-compatible SSE parser", () => {
   });
 
   it("emits the terminal stop chunk last", () => {
-    const sse = 'data: {"choices":[{"delta":{"content":"x"}}]}\n\n' + "data: [DONE]\n\n";
+    const sse =
+      'data: {"choices":[{"delta":{"content":"x"}}]}\n\n' + "data: [DONE]\n\n";
     const chunks = parseExternalProviderSSE(sse, "openai_compatible");
     expect(chunks.length).toBeGreaterThan(0);
     const last = chunks[chunks.length - 1];
@@ -79,7 +76,8 @@ describe("externalProviderStream — OpenAI-compatible SSE parser", () => {
 
   it("treats `custom` provider type as OpenAI-shaped", () => {
     const sse =
-      'data: {"choices":[{"delta":{"content":"via-custom"}}]}\n\n' + "data: [DONE]\n\n";
+      'data: {"choices":[{"delta":{"content":"via-custom"}}]}\n\n' +
+      "data: [DONE]\n\n";
     const chunks = parseExternalProviderSSE(sse, "custom");
     expect(contentChunks(chunks)).toEqual(["via-custom"]);
   });
@@ -96,7 +94,8 @@ describe("externalProviderStream — OpenAI-compatible SSE parser", () => {
 
   it("accepts CRLF line endings (nginx-style proxies)", () => {
     const sse =
-      'data: {"choices":[{"delta":{"content":"crlf"}}]}\r\n\r\n' + "data: [DONE]\r\n\r\n";
+      'data: {"choices":[{"delta":{"content":"crlf"}}]}\r\n\r\n' +
+      "data: [DONE]\r\n\r\n";
     const chunks = parseExternalProviderSSE(sse, "openai_compatible");
     expect(contentChunks(chunks)).toEqual(["crlf"]);
   });
@@ -151,7 +150,8 @@ describe("externalProviderStream — OpenAI-compatible SSE parser", () => {
     const state = newSseParserState();
     const emitted: ExternalProviderStreamChunk[] = [];
     feedSse(
-      'data: {"choices":[{"delta":{"content":"before"}}]}\n\n' + "data: [DONE]\n\n",
+      'data: {"choices":[{"delta":{"content":"before"}}]}\n\n' +
+        "data: [DONE]\n\n",
       state,
       "openai_compatible",
       (c) => emitted.push(c),
@@ -285,7 +285,8 @@ describe("externalProviderStream — incremental feedSse byte splits", () => {
     // Multiple `data:` lines in the same event are concatenated with
     // `\n` per spec. Providers that emit JSON containing literal
     // newlines (rare, but technically legal) rely on this.
-    const sse = 'data: {"choices":[\ndata: {"delta":{"content":"multiline"}}]}\n\n';
+    const sse =
+      'data: {"choices":[\ndata: {"delta":{"content":"multiline"}}]}\n\n';
     const state = newSseParserState();
     const out: ExternalProviderStreamChunk[] = [];
     feedSse(sse, state, "openai_compatible", (c) => out.push(c));
@@ -651,9 +652,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   it("does NOT retry on 400 (bad request) — fails immediately", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        makeErrorResponse(400, '{"error":"bad request"}'),
-      );
+      .mockResolvedValueOnce(makeErrorResponse(400, '{"error":"bad request"}'));
     await expect(
       streamExternalProvider(
         { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
@@ -1053,7 +1052,9 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     const controller = new AbortController();
     let netAbortListeners = 0;
     const origAdd = controller.signal.addEventListener.bind(controller.signal);
-    const origRemove = controller.signal.removeEventListener.bind(controller.signal);
+    const origRemove = controller.signal.removeEventListener.bind(
+      controller.signal,
+    );
     controller.signal.addEventListener = (
       type: string,
       listener: EventListenerOrEventListenerObject | null,
@@ -1107,7 +1108,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     // so we're definitively mid-stream, then user-cancel — the
     // promise must reject with AbortError, NOT hang.
     const controller = new AbortController();
-    let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | null =
+      null;
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((_input, init) => {

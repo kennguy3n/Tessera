@@ -57,11 +57,15 @@ describe("parseDocumentContent", () => {
   });
 
   it("wraps plain text in a single <p> when there are no blank-line separators", () => {
-    expect(parseDocumentContent("Just one line.")).toBe("<p>Just one line.</p>");
+    expect(parseDocumentContent("Just one line.")).toBe(
+      "<p>Just one line.</p>",
+    );
   });
 
   it("splits paragraphs on blank-line separators", () => {
-    const out = parseDocumentContent("Paragraph one.\n\nParagraph two.\n\nParagraph three.");
+    const out = parseDocumentContent(
+      "Paragraph one.\n\nParagraph two.\n\nParagraph three.",
+    );
     expect(out).toBe(
       "<p>Paragraph one.</p><p>Paragraph two.</p><p>Paragraph three.</p>",
     );
@@ -87,7 +91,9 @@ describe("parseSheetContent", () => {
     const out = parseSheetContent("");
     expect(out.columns).toEqual(["A", "B", "C"]);
     expect(out.rows).toHaveLength(3);
-    expect(out.rows.every((r) => r.length === 3 && r.every((c) => c === ""))).toBe(true);
+    expect(
+      out.rows.every((r) => r.length === 3 && r.every((c) => c === "")),
+    ).toBe(true);
   });
 
   it("falls back to the empty grid for non-JSON input", () => {

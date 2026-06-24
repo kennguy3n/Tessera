@@ -108,9 +108,10 @@ vi.mock("../appState", () => ({
 }));
 
 vi.mock("../modelManagement", async () => {
-  const actual = await vi.importActual<
-    typeof import("../modelManagement")
-  >("../modelManagement");
+  const actual =
+    await vi.importActual<typeof import("../modelManagement")>(
+      "../modelManagement",
+    );
   return {
     ...actual,
     getInstalledModel: (...args: unknown[]) => getInstalledModelMock(...args),
@@ -130,7 +131,9 @@ import {
 } from "../ipc/imagegen";
 import { defaultRateLimiter } from "../ipc/rateLimiter";
 
-function getHandler(channel: string): (event: unknown, ...args: unknown[]) => unknown {
+function getHandler(
+  channel: string,
+): (event: unknown, ...args: unknown[]) => unknown {
   const call = handleMock.mock.calls.find((c) => c[0] === channel);
   if (!call) throw new Error(`No handler registered for ${channel}`);
   return call[1] as (event: unknown, ...args: unknown[]) => unknown;
@@ -308,9 +311,7 @@ describe("imagegen IPC handlers", () => {
       });
       detectComputeBackendsMock.mockReturnValue(["cpu"]);
       getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
-      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
-        /GPU/,
-      );
+      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(/GPU/);
     });
 
     it("rejects when waitForReady times out so the next imagegen:generate doesn't race the listener bind with ECONNREFUSED", async () => {
@@ -538,16 +539,11 @@ describe("imagegen IPC handlers", () => {
       expect(out.path.startsWith(fallbackDir + path.sep)).toBe(true);
       // Defence-in-depth: the resolved file MUST live under the
       // generated-images root, never directly in userData.
-      const generatedRoot = path.resolve(
-        userDataDirValue,
-        "generated-images",
-      );
+      const generatedRoot = path.resolve(userDataDirValue, "generated-images");
       expect(out.path.startsWith(generatedRoot + path.sep)).toBe(true);
       const writtenInRoot = await fsp.readdir(userDataDirValue);
       // No stray PNGs should land at the userData root.
-      expect(
-        writtenInRoot.some((entry) => entry.endsWith(".png")),
-      ).toBe(false);
+      expect(writtenInRoot.some((entry) => entry.endsWith(".png"))).toBe(false);
     });
 
     it("forwards optional sampling overrides to the bridge", async () => {
@@ -622,10 +618,7 @@ describe("imagegen IPC handlers", () => {
       // `mockImplementationOnce`'s executor would race the first
       // handler call's `await` chain and leave `releaseFirst`
       // undefined when the test tries to call it.
-      let releaseFirst!: (v: {
-        pngBytes: Buffer;
-        seed: bigint;
-      }) => void;
+      let releaseFirst!: (v: { pngBytes: Buffer; seed: bigint }) => void;
       const firstBridgePromise = new Promise<{
         pngBytes: Buffer;
         seed: bigint;
@@ -713,10 +706,7 @@ describe("imagegen IPC handlers", () => {
 
     it("returns scheduled=true and aborts the in-flight controller", async () => {
       getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
-      let releaseFirst!: (v: {
-        pngBytes: Buffer;
-        seed: bigint;
-      }) => void;
+      let releaseFirst!: (v: { pngBytes: Buffer; seed: bigint }) => void;
       const firstBridgePromise = new Promise<{
         pngBytes: Buffer;
         seed: bigint;
@@ -726,12 +716,15 @@ describe("imagegen IPC handlers", () => {
       bridgeGenerateImageMock.mockImplementationOnce(() => firstBridgePromise);
       const generateHandler = getHandler("imagegen:generate");
       const cancelHandler = getHandler("imagegen:cancel");
-      const inflight = generateHandler({}, {
-        prompt: "x",
-        width: 1024,
-        height: 1024,
-        artifactId: "a",
-      });
+      const inflight = generateHandler(
+        {},
+        {
+          prompt: "x",
+          width: 1024,
+          height: 1024,
+          artifactId: "a",
+        },
+      );
       // Wait until the bridge is actually parked so the cancel
       // call observes the in-flight controller — see the
       // "single in-flight" test for the same rationale.

@@ -12,12 +12,7 @@
  * hook) so Vite's fast-refresh boundary stays clean.
  */
 
-import {
-  type CSSProperties,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useCspNonce } from "../utils/cspNonce";
 
 export interface ContextMenuItem {
@@ -140,11 +135,17 @@ export default function ContextMenu({
   const style: CSSProperties = {
     left: Math.max(
       4,
-      Math.min(position.x, (typeof window !== "undefined" ? window.innerWidth : 1024) - 220),
+      Math.min(
+        position.x,
+        (typeof window !== "undefined" ? window.innerWidth : 1024) - 220,
+      ),
     ),
     top: Math.max(
       4,
-      Math.min(position.y, (typeof window !== "undefined" ? window.innerHeight : 768) - 220),
+      Math.min(
+        position.y,
+        (typeof window !== "undefined" ? window.innerHeight : 768) - 220,
+      ),
     ),
   };
 

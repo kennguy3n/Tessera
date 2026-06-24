@@ -158,14 +158,18 @@ describe("PROVIDER_OAUTH_CONFIGS", () => {
     // `boards:write`, `data.records:write`) breaks this test — the
     // security contract for 5000 SME tenants.
     expect(PROVIDER_OAUTH_CONFIGS.discord.scope).toBe("messages.read");
-    expect(PROVIDER_OAUTH_CONFIGS.bitbucket.scope).toBe("repository pullrequest");
+    expect(PROVIDER_OAUTH_CONFIGS.bitbucket.scope).toBe(
+      "repository pullrequest",
+    );
     expect(PROVIDER_OAUTH_CONFIGS.airtable.scope).toBe(
       "data.records:read schema.bases:read",
     );
     expect(PROVIDER_OAUTH_CONFIGS.monday.scope).toBe("boards:read me:read");
     // No write/manage scope leaks into any of them.
     for (const id of ["discord", "bitbucket", "airtable", "monday"] as const) {
-      expect(PROVIDER_OAUTH_CONFIGS[id].scope).not.toMatch(/write|manage|admin|delete/);
+      expect(PROVIDER_OAUTH_CONFIGS[id].scope).not.toMatch(
+        /write|manage|admin|delete/,
+      );
     }
   });
 
@@ -530,7 +534,10 @@ describe("exchangeAuthorizationCode", () => {
       clientId: "ID",
       clientSecret: "SECRET",
     });
-    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    const headers = fetchMock.mock.calls[0][1].headers as Record<
+      string,
+      string
+    >;
     expect(headers.Authorization).toMatch(/^Basic /);
     const decoded = Buffer.from(
       headers.Authorization.replace(/^Basic /, ""),
@@ -741,14 +748,11 @@ describe("refreshProviderToken", () => {
         token_type: "Bearer",
       }),
     });
-    const tokens = await refreshProviderToken(
-      getProviderOAuthConfig("jira"),
-      {
-        refreshToken: "ORIG_RT",
-        clientId: "ID",
-        clientSecret: "SECRET",
-      },
-    );
+    const tokens = await refreshProviderToken(getProviderOAuthConfig("jira"), {
+      refreshToken: "ORIG_RT",
+      clientId: "ID",
+      clientSecret: "SECRET",
+    });
     expect(tokens.refreshToken).toBe("NEW_RT");
   });
 

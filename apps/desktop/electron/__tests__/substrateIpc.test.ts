@@ -56,9 +56,11 @@ const bridgeMock = {
       score: 1,
     },
   ]),
-  bridgeRunDecaySweep: vi
-    .fn()
-    .mockReturnValue({ scored: 3, candidatesArchived: 1, supersededArchived: 0 }),
+  bridgeRunDecaySweep: vi.fn().mockReturnValue({
+    scored: 3,
+    candidatesArchived: 1,
+    supersededArchived: 0,
+  }),
   bridgeTriggerSynthesis: vi.fn().mockReturnValue({
     windowId: "44444444-4444-4444-8444-444444444444",
     scopeId: sampleMemory.scopeId,
@@ -114,7 +116,9 @@ describe("substrate IPC handlers", () => {
   it("forwards a valid sourceId to bridgeExtractObservations", async () => {
     const count = await invoke("substrate:extractObservations", SOURCE_ID);
     expect(count).toBe(7);
-    expect(bridgeMock.bridgeExtractObservations).toHaveBeenCalledWith(SOURCE_ID);
+    expect(bridgeMock.bridgeExtractObservations).toHaveBeenCalledWith(
+      SOURCE_ID,
+    );
   });
 
   it("defaults an omitted scope to null on getMemories", async () => {
@@ -141,7 +145,10 @@ describe("substrate IPC handlers", () => {
     await invoke("substrate:getConceptGraph", null, 50);
     expect(bridgeMock.bridgeGetConceptGraph).toHaveBeenCalledWith(null, 50);
     await invoke("substrate:getConceptGraph", "default", null);
-    expect(bridgeMock.bridgeGetConceptGraph).toHaveBeenCalledWith("default", null);
+    expect(bridgeMock.bridgeGetConceptGraph).toHaveBeenCalledWith(
+      "default",
+      null,
+    );
   });
 
   it("runs a decay sweep and returns the report", async () => {

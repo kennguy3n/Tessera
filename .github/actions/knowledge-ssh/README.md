@@ -9,7 +9,7 @@ ADR-0011 (`docs/adr/0011-knowledge-substrate-integration.md`), which lands
 with the companion integration PR.
 
 This composite action fixes that with a **read-only SSH deploy key**: it
-writes the key, pins github.com's host keys, rewrites *only* the
+writes the key, pins github.com's host keys, rewrites _only_ the
 `https://github.com/kennguy3n/knowledge` remote to SSH (via `insteadOf`,
 scoped so Tessera's own token-based https checkout is untouched), and sets
 `CARGO_NET_GIT_FETCH_WITH_CLI=true` so cargo fetches through the system
@@ -36,13 +36,13 @@ It is wired into every cargo job: `rust` and `supply-chain` in
    (public).
 
 2. **Add the PUBLIC key as a read-only deploy key on the knowledge repo:**
-   `kennguy3n/knowledge` → Settings → Deploy keys → *Add deploy key*.
+   `kennguy3n/knowledge` → Settings → Deploy keys → _Add deploy key_.
    Paste the contents of `knowledge_deploy.pub`. **Leave "Allow write
    access" unchecked** (read-only is all CI needs).
 
 3. **Add the PRIVATE key as an Actions secret on the Tessera repo:**
    `kennguy3n/Tessera` → Settings → Secrets and variables → Actions →
-   *New repository secret*. Name it exactly **`KNOWLEDGE_DEPLOY_KEY`** and
+   _New repository secret_. Name it exactly **`KNOWLEDGE_DEPLOY_KEY`** and
    paste the full contents of `knowledge_deploy` (including the
    `-----BEGIN …-----` / `-----END …-----` lines).
 

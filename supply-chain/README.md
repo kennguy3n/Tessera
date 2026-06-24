@@ -20,7 +20,7 @@ The store was bootstrapped with `cargo vet init`, which records the
 **entire current** dependency graph as `[[exemptions.*]]` entries (~587
 crates). This is the intentional baseline: we are **not** claiming to
 have hand-audited every transitive crate. The value of the gate is
-**forward-looking** — a PR that pulls in a *new* crate (or bumps one to a
+**forward-looking** — a PR that pulls in a _new_ crate (or bumps one to a
 version outside its exemption) makes `cargo vet` fail until a human
 either audits it or consciously exempts it. That turns "a dependency
 silently appeared" into a reviewable event.

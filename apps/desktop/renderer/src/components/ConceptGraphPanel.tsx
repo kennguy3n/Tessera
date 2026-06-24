@@ -68,9 +68,7 @@ import {
   type ConceptGraphPresetStore,
   type PresetFilter,
 } from "../utils/conceptGraphPresets";
-import ConceptGraphCanvas, {
-  type CanvasNodeStyle,
-} from "./ConceptGraphCanvas";
+import ConceptGraphCanvas, { type CanvasNodeStyle } from "./ConceptGraphCanvas";
 import { conceptMentionMatcher, formatSourceId } from "../utils/memories";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
@@ -153,7 +151,10 @@ function detectColorScheme(): "light" | "dark" {
     if (attr === "dark") return "dark";
     if (attr === "light") return "light";
   }
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function"
+  ) {
     return window.matchMedia("(prefers-color-scheme: dark)").matches
       ? "dark"
       : "light";
@@ -641,7 +642,10 @@ function DecayControls({ bounds, asOf, onScrub, scheme }: DecayControlsProps) {
 
   if (!hasRange || bounds.min === null || bounds.max === null) {
     return (
-      <div className="cg-decay-controls" data-testid="concept-graph-decay-controls">
+      <div
+        className="cg-decay-controls"
+        data-testid="concept-graph-decay-controls"
+      >
         <span>Recency overlay (no dated memories for these concepts).</span>
         {ramp}
       </div>
@@ -655,7 +659,10 @@ function DecayControls({ bounds, asOf, onScrub, scheme }: DecayControlsProps) {
   const value = asOf ?? max;
   const step = Math.max(1, Math.round((max - min) / 200));
   return (
-    <div className="cg-decay-controls" data-testid="concept-graph-decay-controls">
+    <div
+      className="cg-decay-controls"
+      data-testid="concept-graph-decay-controls"
+    >
       <label className="cg-decay-scrubber">
         <span className="cg-sr-only">Show graph as of date</span>
         <span className="cg-decay-time" aria-hidden="true">
@@ -723,7 +730,9 @@ export default function ConceptGraphPanel({
   // Loaded once at mount for the initial scope; scope *changes* are
   // re-applied by an effect below. Falls back to defaults if absent or
   // corrupt (loadViewState never throws).
-  const initialViewState = useRef(loadViewState(scopeKey) ?? defaultViewState());
+  const initialViewState = useRef(
+    loadViewState(scopeKey) ?? defaultViewState(),
+  );
 
   const [scopeFilter, setScopeFilter] = useState<string>(
     () => initialViewState.current.scopeFilter,
@@ -768,7 +777,10 @@ export default function ConceptGraphPanel({
     const update = () => setScheme(detectColorScheme());
     const root = document.documentElement;
     const observer = new MutationObserver(update);
-    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     const mq =
       typeof window.matchMedia === "function"
         ? window.matchMedia("(prefers-color-scheme: dark)")
@@ -911,7 +923,9 @@ export default function ConceptGraphPanel({
       }
       const d = decayMap.get(id);
       const t =
-        d && decayNow !== null ? recencyFraction(d, decayNow, timeBounds) : null;
+        d && decayNow !== null
+          ? recencyFraction(d, decayNow, timeBounds)
+          : null;
       return {
         fill: decayColor(t, scheme),
         alpha: decayOpacity(t),
@@ -1129,7 +1143,10 @@ export default function ConceptGraphPanel({
     [zoomAround],
   );
 
-  const fitToView = useCallback(() => applyViewBox(baseFit), [applyViewBox, baseFit]);
+  const fitToView = useCallback(
+    () => applyViewBox(baseFit),
+    [applyViewBox, baseFit],
+  );
   const zoomByButton = useCallback(
     (factor: number) => zoomAround(0.5, 0.5, factor),
     [zoomAround],
@@ -1150,7 +1167,12 @@ export default function ConceptGraphPanel({
   const panBy = useCallback(
     (dx: number, dy: number) => {
       const vb = viewBoxRef.current;
-      applyViewBox({ x: vb.x + dx, y: vb.y + dy, width: vb.width, height: vb.height });
+      applyViewBox({
+        x: vb.x + dx,
+        y: vb.y + dy,
+        width: vb.width,
+        height: vb.height,
+      });
     },
     [applyViewBox],
   );
@@ -1177,8 +1199,12 @@ export default function ConceptGraphPanel({
 
   const onNodeKeyDown = useCallback(
     (e: ReactKeyboardEvent<SVGGElement>, nodeId: string) => {
-      const { nodes, view: navView, degrees: navDegrees, localMode: navLocal } =
-        navRef.current;
+      const {
+        nodes,
+        view: navView,
+        degrees: navDegrees,
+        localMode: navLocal,
+      } = navRef.current;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         e.stopPropagation();
@@ -1296,7 +1322,9 @@ export default function ConceptGraphPanel({
 
   // Announce selection changes. Seeded with the restored selection so a
   // persisted selection isn't re-announced on mount (it wasn't a user act).
-  const prevSelectedRef = useRef<string | null>(initialViewState.current.selectedId);
+  const prevSelectedRef = useRef<string | null>(
+    initialViewState.current.selectedId,
+  );
   useEffect(() => {
     if (selectedId === prevSelectedRef.current) return;
     prevSelectedRef.current = selectedId;
@@ -1333,7 +1361,14 @@ export default function ConceptGraphPanel({
         n === 1 ? "" : "s"
       }`,
     );
-  }, [localMode, localHops, selectedId, graph.nodes, view.nodes.length, announce]);
+  }, [
+    localMode,
+    localHops,
+    selectedId,
+    graph.nodes,
+    view.nodes.length,
+    announce,
+  ]);
 
   // ===== persistence: re-apply on scope change + debounced save =====
   // A render-synchronous mirror of the serializable view state, so both the
@@ -1563,7 +1598,10 @@ export default function ConceptGraphPanel({
         const vb = viewBoxRef.current;
         const dx = ((e.clientX - drag.startX) / rect.width) * vb.width;
         const dy = ((e.clientY - drag.startY) / rect.height) * vb.height;
-        if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 3) {
+        if (
+          !drag.moved &&
+          Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 3
+        ) {
           drag.moved = true;
           suppressClickRef.current = true;
         }
@@ -1613,8 +1651,7 @@ export default function ConceptGraphPanel({
   const onNodePointerDown = useCallback(
     (e: ReactPointerEvent<SVGGElement>, node: PositionedNode) => {
       e.stopPropagation();
-      const current =
-        dragPosRef.current.get(node.id) ??
+      const current = dragPosRef.current.get(node.id) ??
         displayRef.current.get(node.id) ?? { x: node.x, y: node.y };
       dragNodeRef.current = {
         id: node.id,
@@ -1680,7 +1717,10 @@ export default function ConceptGraphPanel({
   const renderPos = useMemo(() => {
     const map = new Map<string, Point>();
     for (const n of layout.nodes) {
-      map.set(n.id, dragPos.get(n.id) ?? displayPos.get(n.id) ?? { x: n.x, y: n.y });
+      map.set(
+        n.id,
+        dragPos.get(n.id) ?? displayPos.get(n.id) ?? { x: n.x, y: n.y },
+      );
     }
     return map;
   }, [layout.nodes, dragPos, displayPos]);
@@ -1726,7 +1766,11 @@ export default function ConceptGraphPanel({
       const swap = compareCodepoint(edge.from, edge.to) > 0;
       const canonFrom = swap ? to : from;
       const canonTo = swap ? from : to;
-      const control = quadraticControlPoint(canonFrom, canonTo, curve?.offset ?? 0);
+      const control = quadraticControlPoint(
+        canonFrom,
+        canonTo,
+        curve?.offset ?? 0,
+      );
       map.set(edge.id, quadraticEdgePath(from, to, control));
     }
     return map;
@@ -1830,7 +1874,8 @@ export default function ConceptGraphPanel({
     [view.edges, asOfHidden],
   );
   const canvasStyleOf = useCallback(
-    (node: PositionedNode): CanvasNodeStyle => decayStyleOf(node.state, node.id),
+    (node: PositionedNode): CanvasNodeStyle =>
+      decayStyleOf(node.state, node.id),
     [decayStyleOf],
   );
 
@@ -2081,7 +2126,9 @@ export default function ConceptGraphPanel({
                   <button
                     type="button"
                     className="cg-iconbtn"
-                    aria-pressed={presetStore.defaultPresetId === currentPresetId}
+                    aria-pressed={
+                      presetStore.defaultPresetId === currentPresetId
+                    }
                     data-testid="concept-graph-preset-default"
                     onClick={() => setDefaultPreset(currentPresetId)}
                     title="Load this view automatically for this scope"
@@ -2114,7 +2161,11 @@ export default function ConceptGraphPanel({
           )}
 
           {truncated && (
-            <div className="cg-banner" role="status" data-testid="concept-graph-truncation">
+            <div
+              className="cg-banner"
+              role="status"
+              data-testid="concept-graph-truncation"
+            >
               <span>
                 Showing the {nodeCount} most-connected concepts (graph{" "}
                 {view.truncation.replace(/_/g, " ")}).
@@ -2125,7 +2176,9 @@ export default function ConceptGraphPanel({
                   className="cg-iconbtn"
                   data-testid="concept-graph-show-more"
                   onClick={() =>
-                    setNodeCap((cap) => Math.min(NODE_CAP_CEILING, cap + maxNodes))
+                    setNodeCap((cap) =>
+                      Math.min(NODE_CAP_CEILING, cap + maxNodes),
+                    )
                   }
                 >
                   Show more
@@ -2169,174 +2222,191 @@ export default function ConceptGraphPanel({
                   announce={announce}
                 />
               ) : (
-              <svg
-                ref={attachSvg}
-                className={`cg-canvas${isPanning ? " cg-panning" : ""}`}
-                // `application` (rather than `img`) so a screen reader
-                // forwards arrow / +/- / 0 keys to our canvas pan-zoom
-                // handler instead of swallowing them for browse-mode
-                // navigation. The roledescription keeps the announcement
-                // meaningful, and the SVG is a tab stop for canvas control.
-                role="application"
-                aria-roledescription="Concept graph canvas"
-                aria-label={`Concept graph with ${view.nodes.length} concepts and ${view.edges.length} relationships. Arrow keys pan, plus and minus zoom, 0 or F fits to view.`}
-                tabIndex={0}
-                viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-                style={{ aspectRatio: `${CANVAS_WIDTH} / ${height}` }}
-                data-testid="concept-graph-svg"
-                onPointerDown={onBackgroundPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={endPointer}
-                onPointerCancel={endPointer}
-                onKeyDown={onCanvasKeyDown}
-              >
-                <defs>
-                  {usedMarkerColors.map((color) => (
-                    <marker
-                      key={color}
-                      id={markerId(color)}
-                      viewBox="0 0 10 10"
-                      refX="9"
-                      refY="5"
-                      markerWidth="7"
-                      markerHeight="7"
-                      orient="auto-start-reverse"
-                    >
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
-                    </marker>
-                  ))}
-                </defs>
-                <g className="cg-edges">
-                  {view.edges.map((edge) => {
-                    // As-of scrubber: hide edges touching a not-yet-present
-                    // concept (keeps layout stable; see `asOfHidden`).
-                    if (asOfHidden.has(edge.from) || asOfHidden.has(edge.to)) {
-                      return null;
-                    }
-                    const geo = edgeGeometry.get(edge.id);
-                    if (!geo) return null;
-                    const color = RELATION_COLORS[edge.relationType];
-                    const dimmed = focus ? !focus.edgeIds.has(edge.id) : false;
-                    const labelThisEdge = visibleEdgeLabelIds.has(edge.id);
-                    return (
-                      <g
-                        key={edge.id}
-                        className={`cg-edge${dimmed ? " cg-dim" : ""}`}
+                <svg
+                  ref={attachSvg}
+                  className={`cg-canvas${isPanning ? " cg-panning" : ""}`}
+                  // `application` (rather than `img`) so a screen reader
+                  // forwards arrow / +/- / 0 keys to our canvas pan-zoom
+                  // handler instead of swallowing them for browse-mode
+                  // navigation. The roledescription keeps the announcement
+                  // meaningful, and the SVG is a tab stop for canvas control.
+                  role="application"
+                  aria-roledescription="Concept graph canvas"
+                  aria-label={`Concept graph with ${view.nodes.length} concepts and ${view.edges.length} relationships. Arrow keys pan, plus and minus zoom, 0 or F fits to view.`}
+                  tabIndex={0}
+                  viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+                  style={{ aspectRatio: `${CANVAS_WIDTH} / ${height}` }}
+                  data-testid="concept-graph-svg"
+                  onPointerDown={onBackgroundPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={endPointer}
+                  onPointerCancel={endPointer}
+                  onKeyDown={onCanvasKeyDown}
+                >
+                  <defs>
+                    {usedMarkerColors.map((color) => (
+                      <marker
+                        key={color}
+                        id={markerId(color)}
+                        viewBox="0 0 10 10"
+                        refX="9"
+                        refY="5"
+                        markerWidth="7"
+                        markerHeight="7"
+                        orient="auto-start-reverse"
                       >
-                        <path
-                          d={geo.d}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth={1.5}
-                          strokeOpacity={0.7}
-                          markerEnd={`url(#${markerId(color)})`}
-                        />
-                        {labelThisEdge && (
-                          <text
-                            x={geo.labelPoint.x}
-                            y={geo.labelPoint.y}
-                            className="cg-edge-label"
-                            fill={color}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                          >
-                            {RELATION_LABELS[edge.relationType]}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                </g>
-                <g className="cg-nodes" ref={nodesGroupRef}>
-                  {paintNodes.map((node) => {
-                    // As-of scrubber: omit concepts not yet present.
-                    if (asOfHidden.has(node.id)) return null;
-                    const pos = renderPos.get(node.id) ?? { x: node.x, y: node.y };
-                    const isSelected = node.id === selectedId;
-                    const dimmed = focus ? !focus.nodeIds.has(node.id) : false;
-                    // Decay overlay overrides fill/opacity/size with the
-                    // recency ramp; otherwise the lifecycle-state palette.
-                    const decay = decayMode
-                      ? decayStyleOf(node.state, node.id)
-                      : null;
-                    const fill = decay
-                      ? decay.fill
-                      : STATE_COLORS[node.state] ?? STATE_COLORS.unknown;
-                    const dotRadius = decay
-                      ? node.radius * decay.sizeFactor
-                      : node.radius;
-                    const dotOpacity = decay
-                      ? decay.alpha
-                      : isSelected
-                        ? 0.95
-                        : 0.78;
-                    return (
-                      <g
-                        key={node.id}
-                        className={`cg-node${dimmed ? " cg-dim" : ""}`}
-                        transform={`translate(${pos.x}, ${pos.y})`}
-                        role="button"
-                        // Roving tabindex: exactly one node is in the tab
-                        // order at a time; arrow keys move focus between the
-                        // rest. Putting all (up to 600) nodes at tabIndex 0
-                        // would itself be an accessibility problem.
-                        tabIndex={node.id === effectiveRovingId ? 0 : -1}
-                        aria-pressed={isSelected}
-                        aria-label={`${node.label} (${node.state}, ${node.connectionsCount} connections)`}
-                        data-testid={`concept-node-${node.id}`}
-                        data-cg-node={node.id}
-                        onPointerDown={(e) => onNodePointerDown(e, node)}
-                        onClick={() => {
-                          setRovingId(node.id);
-                          onNodeClick(node.id);
-                        }}
-                        onPointerEnter={() => setHoveredId(node.id)}
-                        onPointerLeave={() =>
-                          setHoveredId((cur) => (cur === node.id ? null : cur))
-                        }
-                        onFocus={() => setHoveredId(node.id)}
-                        onBlur={() =>
-                          setHoveredId((cur) => (cur === node.id ? null : cur))
-                        }
-                        onKeyDown={(e) => onNodeKeyDown(e, node.id)}
-                      >
-                        {/* Generous transparent hit area for easier grabbing. */}
-                        <circle className="cg-node-hit" r={node.radius + 8} />
-                        <circle
-                          className="cg-node-focusring"
-                          r={node.radius + 5}
-                        />
-                        <circle
-                          className="cg-node-dot"
-                          r={dotRadius}
-                          fill={fill}
-                          fillOpacity={dotOpacity}
-                          stroke={
-                            isSelected
-                              ? "var(--color-text, #111827)"
-                              : "var(--color-surface, #ffffff)"
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
+                      </marker>
+                    ))}
+                  </defs>
+                  <g className="cg-edges">
+                    {view.edges.map((edge) => {
+                      // As-of scrubber: hide edges touching a not-yet-present
+                      // concept (keeps layout stable; see `asOfHidden`).
+                      if (
+                        asOfHidden.has(edge.from) ||
+                        asOfHidden.has(edge.to)
+                      ) {
+                        return null;
+                      }
+                      const geo = edgeGeometry.get(edge.id);
+                      if (!geo) return null;
+                      const color = RELATION_COLORS[edge.relationType];
+                      const dimmed = focus
+                        ? !focus.edgeIds.has(edge.id)
+                        : false;
+                      const labelThisEdge = visibleEdgeLabelIds.has(edge.id);
+                      return (
+                        <g
+                          key={edge.id}
+                          className={`cg-edge${dimmed ? " cg-dim" : ""}`}
+                        >
+                          <path
+                            d={geo.d}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={1.5}
+                            strokeOpacity={0.7}
+                            markerEnd={`url(#${markerId(color)})`}
+                          />
+                          {labelThisEdge && (
+                            <text
+                              x={geo.labelPoint.x}
+                              y={geo.labelPoint.y}
+                              className="cg-edge-label"
+                              fill={color}
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                            >
+                              {RELATION_LABELS[edge.relationType]}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
+                  <g className="cg-nodes" ref={nodesGroupRef}>
+                    {paintNodes.map((node) => {
+                      // As-of scrubber: omit concepts not yet present.
+                      if (asOfHidden.has(node.id)) return null;
+                      const pos = renderPos.get(node.id) ?? {
+                        x: node.x,
+                        y: node.y,
+                      };
+                      const isSelected = node.id === selectedId;
+                      const dimmed = focus
+                        ? !focus.nodeIds.has(node.id)
+                        : false;
+                      // Decay overlay overrides fill/opacity/size with the
+                      // recency ramp; otherwise the lifecycle-state palette.
+                      const decay = decayMode
+                        ? decayStyleOf(node.state, node.id)
+                        : null;
+                      const fill = decay
+                        ? decay.fill
+                        : (STATE_COLORS[node.state] ?? STATE_COLORS.unknown);
+                      const dotRadius = decay
+                        ? node.radius * decay.sizeFactor
+                        : node.radius;
+                      const dotOpacity = decay
+                        ? decay.alpha
+                        : isSelected
+                          ? 0.95
+                          : 0.78;
+                      return (
+                        <g
+                          key={node.id}
+                          className={`cg-node${dimmed ? " cg-dim" : ""}`}
+                          transform={`translate(${pos.x}, ${pos.y})`}
+                          role="button"
+                          // Roving tabindex: exactly one node is in the tab
+                          // order at a time; arrow keys move focus between the
+                          // rest. Putting all (up to 600) nodes at tabIndex 0
+                          // would itself be an accessibility problem.
+                          tabIndex={node.id === effectiveRovingId ? 0 : -1}
+                          aria-pressed={isSelected}
+                          aria-label={`${node.label} (${node.state}, ${node.connectionsCount} connections)`}
+                          data-testid={`concept-node-${node.id}`}
+                          data-cg-node={node.id}
+                          onPointerDown={(e) => onNodePointerDown(e, node)}
+                          onClick={() => {
+                            setRovingId(node.id);
+                            onNodeClick(node.id);
+                          }}
+                          onPointerEnter={() => setHoveredId(node.id)}
+                          onPointerLeave={() =>
+                            setHoveredId((cur) =>
+                              cur === node.id ? null : cur,
+                            )
                           }
-                          strokeWidth={isSelected ? 3 : 1.5}
-                        />
-                        {labelVisible(node) && (
-                          <text
-                            className="cg-node-label"
-                            y={dotRadius + 12}
-                            textAnchor="middle"
-                          >
-                            {node.label.length > 22
-                              ? `${node.label.slice(0, 21)}…`
-                              : node.label}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                </g>
-              </svg>
+                          onFocus={() => setHoveredId(node.id)}
+                          onBlur={() =>
+                            setHoveredId((cur) =>
+                              cur === node.id ? null : cur,
+                            )
+                          }
+                          onKeyDown={(e) => onNodeKeyDown(e, node.id)}
+                        >
+                          {/* Generous transparent hit area for easier grabbing. */}
+                          <circle className="cg-node-hit" r={node.radius + 8} />
+                          <circle
+                            className="cg-node-focusring"
+                            r={node.radius + 5}
+                          />
+                          <circle
+                            className="cg-node-dot"
+                            r={dotRadius}
+                            fill={fill}
+                            fillOpacity={dotOpacity}
+                            stroke={
+                              isSelected
+                                ? "var(--color-text, #111827)"
+                                : "var(--color-surface, #ffffff)"
+                            }
+                            strokeWidth={isSelected ? 3 : 1.5}
+                          />
+                          {labelVisible(node) && (
+                            <text
+                              className="cg-node-label"
+                              y={dotRadius + 12}
+                              textAnchor="middle"
+                            >
+                              {node.label.length > 22
+                                ? `${node.label.slice(0, 21)}…`
+                                : node.label}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
+                </svg>
               )}
               {localMode && selectedNode && (
-                <div className="cg-focus-pill" data-testid="concept-graph-focus-pill">
+                <div
+                  className="cg-focus-pill"
+                  data-testid="concept-graph-focus-pill"
+                >
                   <span>
                     Local: {selectedNode.label} · {localHops}-hop
                   </span>
@@ -2390,14 +2460,18 @@ export default function ConceptGraphPanel({
                   <section className="cg-detail-section">
                     <h5 className="cg-detail-subhead">Relationships</h5>
                     {selectedRelations.length === 0 ? (
-                      <p className="cg-detail-empty">No relationships in view.</p>
+                      <p className="cg-detail-empty">
+                        No relationships in view.
+                      </p>
                     ) : (
                       <ul className="cg-detail-list">
                         {selectedRelations.map((rel) => (
                           <li key={rel.id}>
                             <span
                               className="cg-rel-dot"
-                              style={{ background: RELATION_COLORS[rel.relationType] }}
+                              style={{
+                                background: RELATION_COLORS[rel.relationType],
+                              }}
                               aria-hidden="true"
                             />
                             {rel.direction === "out" ? (
@@ -2444,7 +2518,10 @@ export default function ConceptGraphPanel({
                   </section>
                 </div>
               ) : (
-                <p className="cg-detail-empty" data-testid="concept-detail-empty">
+                <p
+                  className="cg-detail-empty"
+                  data-testid="concept-detail-empty"
+                >
                   Select a concept to see its relationships and source evidence.
                 </p>
               )}

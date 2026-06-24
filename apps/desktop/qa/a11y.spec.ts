@@ -31,7 +31,10 @@ test.describe("a11y (browser / contrast)", () => {
           const report = results.violations
             .map((v) => {
               const nodes = v.nodes
-                .map((n) => `      - ${n.target.join(" ")}\n        ${n.failureSummary?.replace(/\n/g, "\n        ")}`)
+                .map(
+                  (n) =>
+                    `      - ${n.target.join(" ")}\n        ${n.failureSummary?.replace(/\n/g, "\n        ")}`,
+                )
                 .join("\n");
               return `  [${v.impact}] ${v.id}: ${v.help}\n    ${v.helpUrl}\n${nodes}`;
             })

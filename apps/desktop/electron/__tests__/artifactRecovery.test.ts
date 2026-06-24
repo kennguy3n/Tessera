@@ -245,7 +245,9 @@ describe("artifactRecovery: path-traversal defence", () => {
     // have appended JSON to /etc/passwd (which would be denied
     // by the kernel anyway, but the test is the assertion
     // either way).
-    const etcContent = await fs.readFile("/etc/passwd", "utf-8").catch(() => "");
+    const etcContent = await fs
+      .readFile("/etc/passwd", "utf-8")
+      .catch(() => "");
     expect(etcContent).not.toContain(sentinel);
   });
 

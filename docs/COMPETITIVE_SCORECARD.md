@@ -3,7 +3,7 @@
 How Tessera stacks up on the six dimensions from the original product
 critique. Tessera is a **local-first desktop app** (Electron + Rust core,
 single-file encrypted SQLite) with **KChat (Mattermost v4)** as its
-collaboration layer — it is deliberately *not* a SaaS, so it is compared to
+collaboration layer — it is deliberately _not_ a SaaS, so it is compared to
 Notion, Coda, and Google Workspace on capability and engineering quality,
 not on cloud-hosted multi-tenant operations.
 
@@ -12,14 +12,14 @@ board); "Tessera" reflects the product as it ships today, including the
 additive on-device knowledge substrate (encrypted sibling DBs; see
 [ADR-0011](adr/0011-knowledge-substrate-integration.md)).
 
-| Dimension | Baseline | Tessera | What moved it |
-|---|:---:|:---:|---|
-| Architecture | 7 | 9 | Versioned migration framework + typed errors + auto-sized read pool; **knowledge substrate as an additive native layer (encrypted sibling DBs)** |
-| Features | 7 | 9 | **Editor parity wave: Document callout/toggle/TOC blocks + outline/reading-time + AI writing assistant; Sheet 160+ formula functions + named ranges + data validation + conditional formatting + range-bound charts + pivot tables; Base multi-table linked records + lookup/rollup + expand-record modal + group-by + form view + App mode; Slide layout engine + deck templates + themes + speaker notes + presenter mode + Brand Kit; in-editor template galleries + save-as-template + portable template files across all four editors; a deliberate multi-step Skills engine; registry-derived Create + 287-template (530 with locales) library**; inline comments, task deps + Gantt, multi-step automations; observation extraction, decay-based memory, concept graph, **33 read-only connectors**, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) ships in the renderer |
-| Performance | 6 | 9 | Incremental IVF, 100K/500K benches, virtual scrolling, read-pool pre-warm, 3s cold-start CI gate |
-| Cost / install size | 7 | 8 | Symbol stripping, locale pruning, delta updates, resumable model downloads, sharper CI cache |
-| Security | 8 | 9 | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates; **XChaCha20-Poly1305 DEK wrapping, optional ML-KEM-768 KEM, ML-DSA-65 export signing** |
-| Maintainability | 6 | 9 | 11 ADRs, `missing_docs` + `cargo doc` gate, generated IPC types, error boundaries, dependency inventory; **single upstream-`crypto` source of truth** |
+| Dimension           | Baseline | Tessera | What moved it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------- | :------: | :-----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture        |    7     |    9    | Versioned migration framework + typed errors + auto-sized read pool; **knowledge substrate as an additive native layer (encrypted sibling DBs)**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Features            |    7     |    9    | **Editor parity wave: Document callout/toggle/TOC blocks + outline/reading-time + AI writing assistant; Sheet 160+ formula functions + named ranges + data validation + conditional formatting + range-bound charts + pivot tables; Base multi-table linked records + lookup/rollup + expand-record modal + group-by + form view + App mode; Slide layout engine + deck templates + themes + speaker notes + presenter mode + Brand Kit; in-editor template galleries + save-as-template + portable template files across all four editors; a deliberate multi-step Skills engine; registry-derived Create + 287-template (530 with locales) library**; inline comments, task deps + Gantt, multi-step automations; observation extraction, decay-based memory, concept graph, **33 read-only connectors**, local backup/restore; the knowledge browser (Memory page, concept-graph panel, "Knowledge" citation tab, HomePage insights) ships in the renderer |
+| Performance         |    6     |    9    | Incremental IVF, 100K/500K benches, virtual scrolling, read-pool pre-warm, 3s cold-start CI gate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Cost / install size |    7     |    8    | Symbol stripping, locale pruning, delta updates, resumable model downloads, sharper CI cache                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Security            |    8     |    9    | FIDO2 app-lock, secure_delete everywhere, keychain enforce-block, tightened CSP, supply-chain CI gates; **XChaCha20-Poly1305 DEK wrapping, optional ML-KEM-768 KEM, ML-DSA-65 export signing**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Maintainability     |    6     |    9    | 11 ADRs, `missing_docs` + `cargo doc` gate, generated IPC types, error boundaries, dependency inventory; **single upstream-`crypto` source of truth**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ---
 
@@ -37,7 +37,7 @@ additive on-device knowledge substrate (encrypted sibling DBs; see
 - **Adaptive read pool.** Reader connections auto-size to CPU count
   (capped at 4) and are pre-warmed at boot.
 
-*vs. competitors:* a single-file, schema-versioned, fully typed local
+_vs. competitors:_ a single-file, schema-versioned, fully typed local
 core is more transparent and portable than the opaque server-side schemas
 of Notion/Coda; parity-or-better on engineering rigor.
 
@@ -109,7 +109,7 @@ of Notion/Coda; parity-or-better on engineering rigor.
   `on_kchat_message_match(channel_id, regex)` trigger, and **multi-step**
   automation actions with per-step error handling.
 
-*vs. competitors:* closes the visible gaps with Notion/Coda/Airtable and
+_vs. competitors:_ closes the visible gaps with Notion/Coda/Airtable and
 Google/Microsoft (rich blocks + AI writing, a real formula library,
 multi-table linked records with lookup/rollup, slide layouts/themes/
 presenter mode) while keeping every editor and every connector
@@ -124,7 +124,7 @@ offline-capable and least-privilege.
 - **Boot:** read-pool pre-warm + a CI **cold-start gate** that fails if
   boot-to-first-render exceeds 3s on the ubuntu runner.
 
-*vs. competitors:* sub-second local retrieval at large corpus sizes with
+_vs. competitors:_ sub-second local retrieval at large corpus sizes with
 no network round-trips, which web apps cannot match.
 
 ## Cost / install size — 7 → 8
@@ -135,7 +135,7 @@ no network round-trips, which web apps cannot match.
   model downloads cut bytes-on-the-wire.
 - CI cargo cache key hashes `rustc --version` alongside `Cargo.lock`.
 
-*vs. competitors:* zero per-seat subscription; smaller download/update
+_vs. competitors:_ zero per-seat subscription; smaller download/update
 footprint than a typical Electron app of this scope.
 
 ## Security — 8 → 9
@@ -148,7 +148,7 @@ footprint than a typical Electron app of this scope.
 - `cargo vet` + `npm audit --audit-level=high` as CI **supply-chain
   gates**.
 
-*vs. competitors:* data stays on-device in an encrypted single-file DB;
+_vs. competitors:_ data stays on-device in an encrypted single-file DB;
 no server-side data custody to breach.
 
 ## Maintainability — 6 → 9
@@ -207,13 +207,13 @@ encryption-at-rest posture. See
   the `pqc` feature; exports carry ML-DSA-65 (FIPS 204) provenance
   signatures.
 
-*vs. competitors:* structured, on-device knowledge extraction and a
+_vs. competitors:_ structured, on-device knowledge extraction and a
 local concept graph over the user's own sources — with post-quantum-ready
 encryption and zero-config local backup — go beyond the raw
 text-search-and-store model of Notion/Coda while keeping everything
 offline-capable.
 
-*CI note:* `kennguy3n/knowledge` is a private git dependency. CI now
+_CI note:_ `kennguy3n/knowledge` is a private git dependency. CI now
 clones and builds it over a **read-only SSH deploy key** (the
 `KNOWLEDGE_DEPLOY_KEY` repo secret, wired through the
 `.github/actions/knowledge-ssh` composite action), so substrate-touching
@@ -222,11 +222,11 @@ clone the private dependency" limitation no longer applies. Local
 validation (`cargo +1.88 fmt`/`clippy`/`test`, desktop
 `lint`/`type-check`/`test`) remains the fast first-line check.
 
-*vs. competitors:* documentation and generated-contract discipline that
+_vs. competitors:_ documentation and generated-contract discipline that
 is unusually strong for a desktop app of this size.
 
 ---
 
-*Generated as part of the competitive-upgrade integration. See
+_Generated as part of the competitive-upgrade integration. See
 `CHANGELOG.md` (Unreleased → Competitive upgrade) for the full change
-list and `ARCHITECTURE.md` for subsystem detail.*
+list and `ARCHITECTURE.md` for subsystem detail._

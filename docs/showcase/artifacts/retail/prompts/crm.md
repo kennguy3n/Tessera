@@ -16,4 +16,3 @@ Tessera runs each template section prompt below against the source files, ground
 **Template sections:** ['Companies', 'Contacts', 'Deals and Pipeline Stages', 'Activities and Notes', 'Forecast Roll-Up', 'Lead Routing and SLA', 'Hygiene and Governance']
 
 **Structure hint:** Use these fields: Account (text), Region (select: West / Central / East / Intl), Owner (text), ARR ($) (text), Open Opportunity (text), Amount ($) (text), Stage (select: Pipeline / Best Case / Commit), Health (select: Green / Yellow / Red). One record per strategic account / open opportunity from the source notes (Summit Sports, Alpine Co-op, TrailMart, Nordic Outfitters, Urban Trek, RidgeLine).
-

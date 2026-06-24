@@ -129,7 +129,7 @@ fn synthetic_chunk_content(i: usize) -> String {
         let t = COMMON_TOKENS[(i + j) % COMMON_TOKENS.len()];
         words.push(t.to_string());
     }
-    if i % 5 == 0 {
+    if i.is_multiple_of(5) {
         words.push(format!("uniqueid{i:06}"));
     }
     words.join(" ")

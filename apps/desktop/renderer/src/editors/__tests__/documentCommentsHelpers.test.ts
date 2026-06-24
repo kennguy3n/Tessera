@@ -66,7 +66,11 @@ describe("sortComments", () => {
   it("orders open before resolved, then oldest-first", () => {
     const input = [
       comment({ id: "b", createdAt: "2024-03-01T00:00:00.000Z" }),
-      comment({ id: "r", resolved: true, createdAt: "2024-01-01T00:00:00.000Z" }),
+      comment({
+        id: "r",
+        resolved: true,
+        createdAt: "2024-01-01T00:00:00.000Z",
+      }),
       comment({ id: "a", createdAt: "2024-02-01T00:00:00.000Z" }),
     ];
     expect(sortComments(input).map((c) => c.id)).toEqual(["a", "b", "r"]);
@@ -82,10 +86,7 @@ describe("sortComments", () => {
   });
 
   it("does not mutate its input", () => {
-    const input = [
-      comment({ id: "b" }),
-      comment({ id: "a" }),
-    ];
+    const input = [comment({ id: "b" }), comment({ id: "a" })];
     const snapshot = input.map((c) => c.id);
     sortComments(input);
     expect(input.map((c) => c.id)).toEqual(snapshot);
@@ -114,8 +115,8 @@ describe("formatCommentTimestamp", () => {
   });
 
   it("formats a valid ISO timestamp into a non-empty label", () => {
-    expect(formatCommentTimestamp("2024-01-01T12:34:00.000Z").length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      formatCommentTimestamp("2024-01-01T12:34:00.000Z").length,
+    ).toBeGreaterThan(0);
   });
 });

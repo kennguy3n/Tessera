@@ -366,7 +366,10 @@ export:
         let info = &templates[0];
         assert_eq!(info.id, "pitch-v1-es");
         assert_eq!(info.locale, "es");
-        assert_eq!(info.industry, vec!["finance".to_string(), "legal".to_string()]);
+        assert_eq!(
+            info.industry,
+            vec!["finance".to_string(), "legal".to_string()]
+        );
         assert_eq!(
             info.category, "slides",
             "category must be derived from the slides artifact type"

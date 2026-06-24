@@ -24,10 +24,7 @@ import { updateCellsInRows, type CellEdit } from "./sheetEditorHelpers";
  *
  * Empty primary (somehow) returns the empty string.
  */
-export function selectionToTSV(
-  rows: string[][],
-  selection: Selection,
-): string {
+export function selectionToTSV(rows: string[][], selection: Selection): string {
   const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
   const out: string[] = [];
   for (let r = r1; r <= r2; r++) {
@@ -42,11 +39,7 @@ export function selectionToTSV(
 }
 
 function escapeTsvCell(value: string): string {
-  if (
-    value.includes("\t") ||
-    value.includes("\n") ||
-    value.includes('"')
-  ) {
+  if (value.includes("\t") || value.includes("\n") || value.includes('"')) {
     return '"' + value.replace(/"/g, '""') + '"';
   }
   return value;
@@ -129,8 +122,7 @@ export function applyTSVAt(
   options: { columnLabelFor?: (i: number) => string } = {},
 ): SheetTab {
   if (tsv.length === 0) return sheet;
-  const neededCols =
-    anchorCol + Math.max(...tsv.map((r) => r.length), 0);
+  const neededCols = anchorCol + Math.max(...tsv.map((r) => r.length), 0);
   // Widen the column header array if the paste extends past the
   // current right edge. Default labels match the Excel-style A..Z,
   // AA, AB... sequence the renderer also uses for unlabelled cols.

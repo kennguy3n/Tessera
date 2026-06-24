@@ -16,4 +16,3 @@ Tessera runs each template section prompt below against the source files, ground
 **Instruction:** General-purpose tracker for items with status, owner, due date, priority, notes, and last-updated columns
 
 **Structure hint:** Columns: Obligation, Responsible Party, Trigger / Clause, Due Date, Priority, Status. Each row is a concrete obligation or deadline drawn from the agreement and reviewer notes (e.g. non-renewal notice deadline 2027-12-31, breach notification 72h, SLA credit triggers, liability-cap negotiation, fee true-up). Use ISO dates.
-

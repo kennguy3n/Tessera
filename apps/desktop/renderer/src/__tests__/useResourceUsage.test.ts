@@ -55,9 +55,7 @@ function snapshot(rssMb: number): ResourceUsage {
 
 afterEach(() => {
   vi.useRealTimers();
-  window.tessera.resources.getUsage = vi
-    .fn()
-    .mockResolvedValue(snapshot(180));
+  window.tessera.resources.getUsage = vi.fn().mockResolvedValue(snapshot(180));
 });
 
 describe("useResourceUsage", () => {

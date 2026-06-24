@@ -61,14 +61,9 @@ export function registerTelemetryHandlers(): void {
   // the IPC boundary, key-whitelist at the sink boundary.
   idempotentHandle(
     "telemetry:recordCounter",
-    async (
-      _event,
-      keyRaw: unknown,
-      incrementRaw: unknown,
-    ): Promise<void> => {
+    async (_event, keyRaw: unknown, incrementRaw: unknown): Promise<void> => {
       if (typeof keyRaw !== "string") return;
-      const increment =
-        typeof incrementRaw === "number" ? incrementRaw : 1;
+      const increment = typeof incrementRaw === "number" ? incrementRaw : 1;
       recordCounter(keyRaw, increment);
     },
   );

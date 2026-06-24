@@ -399,10 +399,7 @@ function npvAtPeriodZero(rate: number, flows: number[]): number {
  * stalls (flat derivative or divergence). Returns `null` when no sign change
  * brackets a root so callers can surface `#NUM!`.
  */
-function solveRate(
-  f: (rate: number) => number,
-  guess: number,
-): number | null {
+function solveRate(f: (rate: number) => number, guess: number): number | null {
   const MAX_ITER = 100;
   const TOL = 1e-7;
   let rate = guess;
@@ -460,7 +457,10 @@ const IRR: FunctionImpl = (args, ctx) => {
   const hasPos = flows.some((f) => f > 0);
   const hasNeg = flows.some((f) => f < 0);
   if (!hasPos || !hasNeg) {
-    return makeError("#NUM!", "IRR needs at least one positive and one negative cash flow");
+    return makeError(
+      "#NUM!",
+      "IRR needs at least one positive and one negative cash flow",
+    );
   }
   const guess = optNum(args, 1, ctx, 0.1);
   if (isFormulaError(guess)) return guess;
@@ -527,7 +527,10 @@ function readDatedFlows(
   const rawDates = [...collectValues(datesArg, ctx)];
   for (const d of rawDates) if (isFormulaError(d)) return d;
   if (rawValues.length !== rawDates.length) {
-    return makeError("#NUM!", `${label}: values and dates must be the same size`);
+    return makeError(
+      "#NUM!",
+      `${label}: values and dates must be the same size`,
+    );
   }
   if (rawValues.length < 2) {
     return makeError("#NUM!", `${label} needs at least two cash flows`);
@@ -580,14 +583,14 @@ const XIRR: FunctionImpl = (args, ctx) => {
   const hasPos = flows.values.some((f) => f > 0);
   const hasNeg = flows.values.some((f) => f < 0);
   if (!hasPos || !hasNeg) {
-    return makeError("#NUM!", "XIRR needs at least one positive and one negative cash flow");
+    return makeError(
+      "#NUM!",
+      "XIRR needs at least one positive and one negative cash flow",
+    );
   }
   const guess = optNum(args, 2, ctx, 0.1);
   if (isFormulaError(guess)) return guess;
-  const root = solveRate(
-    (r) => xnpvAt(r, flows.values, flows.dates),
-    guess,
-  );
+  const root = solveRate((r) => xnpvAt(r, flows.values, flows.dates), guess);
   if (root === null) return makeError("#NUM!", "XIRR did not converge");
   return root;
 };
@@ -655,7 +658,8 @@ const DB: FunctionImpl = (args, ctx) => {
   }
   if (cost === 0) return 0;
   // Excel rounds the fixed declining rate to three decimals.
-  const rate = Math.round((1 - Math.pow(salvage / cost, 1 / life)) * 1000) / 1000;
+  const rate =
+    Math.round((1 - Math.pow(salvage / cost, 1 / life)) * 1000) / 1000;
   const first = (cost * rate * month) / 12;
   if (period === 1) return first;
   let accumulated = first;
@@ -721,7 +725,8 @@ const DDB: FunctionImpl = (args, ctx) => {
 };
 
 const EFFECT: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "EFFECT expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "EFFECT expects 2 arguments");
   const nominal = num(args[0], ctx);
   if (isFormulaError(nominal)) return nominal;
   const nperyRaw = num(args[1], ctx);
@@ -734,7 +739,8 @@ const EFFECT: FunctionImpl = (args, ctx) => {
 };
 
 const NOMINAL: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "NOMINAL expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "NOMINAL expects 2 arguments");
   const effect = num(args[0], ctx);
   if (isFormulaError(effect)) return effect;
   const nperyRaw = num(args[1], ctx);

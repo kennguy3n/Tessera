@@ -122,7 +122,8 @@ function blockText(block: NotionBlock): string {
       const payload = block.code as
         | { rich_text?: Array<{ plain_text?: string }>; language?: string }
         | undefined;
-      const code = payload?.rich_text?.map((rt) => rt.plain_text ?? "").join("") ?? "";
+      const code =
+        payload?.rich_text?.map((rt) => rt.plain_text ?? "").join("") ?? "";
       return `\`\`\`${payload?.language ?? ""}\n${code}\n\`\`\``;
     }
     case "callout":
@@ -152,7 +153,9 @@ async function fetchAllBlocks(
     const url = new URL(`${NOTION_API}/blocks/${blockId}/children`);
     url.searchParams.set("page_size", "100");
     if (cursor) url.searchParams.set("start_cursor", cursor);
-    const resp = await fetch(url.toString(), { headers: notionHeaders(accessToken) });
+    const resp = await fetch(url.toString(), {
+      headers: notionHeaders(accessToken),
+    });
     if (!resp.ok) {
       const text = await resp.text();
       // Avoid the phrase "fetch failed" in the message body — that
@@ -308,7 +311,8 @@ async function listAllPages(
       // footgun if Notion ever returns a mix of `Z` / `+00:00` /
       // millisecond-precision suffixes for `last_edited_time`. See
       // `parseWatermarkIso` in `syncDir.ts` for the parsing contract.
-      if (lastSyncIso && !isAfterWatermark(p.last_edited_time, lastSyncIso)) continue;
+      if (lastSyncIso && !isAfterWatermark(p.last_edited_time, lastSyncIso))
+        continue;
       pages.push(p);
     }
     if (!data.has_more || !data.next_cursor) break;
@@ -400,7 +404,10 @@ export async function syncNotion(ctx: {
   // (e.g. permissions revoked, OAuth scope changed) wasted one API
   // call per sync forever.
   const succeededIds = new Set<string>();
-  const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
+  const failedThisPass: Array<{
+    remoteId: string;
+    remoteModifiedAt: string | null;
+  }> = [];
 
   let added = 0;
   let modified = 0;
@@ -654,7 +661,10 @@ export async function syncNotion(ctx: {
     // recovery regression test in `connectorsSync.test.ts` locks in.
     // Figma's Phase 1 and Phase 2 both call `getFile`, so pre-filter
     // there is correct.
-    const dedupedFailures = new Map<string, { remoteId: string; remoteModifiedAt: string | null }>();
+    const dedupedFailures = new Map<
+      string,
+      { remoteId: string; remoteModifiedAt: string | null }
+    >();
     for (const entry of failedThisPass) {
       dedupedFailures.set(entry.remoteId, entry);
     }

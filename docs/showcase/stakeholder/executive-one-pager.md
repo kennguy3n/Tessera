@@ -22,7 +22,7 @@ Tessera inverts the usual AI demo. Instead of a prompt box and a black box, it m
 1. **Pick what you need** — document, slides, sheet, or base, from a structured template.
 2. **Choose your sources** — local folders Tessera has indexed, plus any cloud sources you
    explicitly connect.
-3. **Generate** — a local model drafts each template section against *your* material.
+3. **Generate** — a local model drafts each template section against _your_ material.
 4. **Verify** — every section cites the source file behind it; you edit in a real editor and
    export to the formats you actually use.
 
@@ -32,13 +32,13 @@ This showcase demonstrates the full flow with genuinely AI-generated artifacts (
 own on-device **Ternary-Bonsai 4B** model, real template prompts, no hand-editing) across
 five professionals:
 
-| Persona | Market | Deliverables |
-|---------|--------|--------------|
-| Clinical Privacy Officer | Healthcare | HIPAA breach assessment + incident tracker |
-| Corporate Paralegal | Legal | Contract summary + obligation tracker |
-| Commercial Credit Officer | Finance | Credit memo + 3-year projection |
-| Development Director | Nonprofit | Grant proposal + board deck |
-| Sales-Ops Lead | Retail | QBR deck + CRM |
+| Persona                   | Market     | Deliverables                               |
+| ------------------------- | ---------- | ------------------------------------------ |
+| Clinical Privacy Officer  | Healthcare | HIPAA breach assessment + incident tracker |
+| Corporate Paralegal       | Legal      | Contract summary + obligation tracker      |
+| Commercial Credit Officer | Finance    | Credit memo + 3-year projection            |
+| Development Director      | Nonprofit  | Grant proposal + board deck                |
+| Sales-Ops Lead            | Retail     | QBR deck + CRM                             |
 
 Every input, prompt, and output is inspectable in [`docs/showcase`](../README.md).
 

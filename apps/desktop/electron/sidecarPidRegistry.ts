@@ -137,10 +137,7 @@ export function clearPidFileSync(label: string): void {
     // Any other error (EACCES, EBUSY) is logged but not thrown —
     // the parent is exiting, and a stale PID file will be reaped
     // next launch anyway.
-    console.warn(
-      `[tessera] failed to clear sidecar PID file for ${label}:`,
-      e,
-    );
+    console.warn(`[tessera] failed to clear sidecar PID file for ${label}:`, e);
   }
 }
 
@@ -247,7 +244,10 @@ function processName(pid: number): string | null {
  */
 function binariesMatch(recorded: string, actual: string): boolean {
   const norm = (s: string) =>
-    path.basename(s).replace(/\.exe$/i, "").toLowerCase();
+    path
+      .basename(s)
+      .replace(/\.exe$/i, "")
+      .toLowerCase();
   const r = norm(recorded);
   const a = norm(actual);
   if (r === a) return true;
@@ -324,7 +324,10 @@ export async function reapOrphanedSidecars(): Promise<ReapOutcome> {
       outcome.skipped.push({ label, reason: "unreadable" });
       continue;
     }
-    const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+    const lines = body
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
     if (lines.length < 2) {
       outcome.skipped.push({ label, reason: "malformed" });
       await fsp.unlink(fullPath).catch(() => undefined);

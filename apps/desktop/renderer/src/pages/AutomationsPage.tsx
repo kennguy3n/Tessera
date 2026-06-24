@@ -180,7 +180,9 @@ export default function AutomationsPage() {
         !Number.isFinite(draft.intervalSeconds) ||
         draft.intervalSeconds <= 0
       ) {
-        setSubmitError("Schedule interval must be a positive number of seconds");
+        setSubmitError(
+          "Schedule interval must be a positive number of seconds",
+        );
         return;
       }
       trigger = {
@@ -327,7 +329,9 @@ export default function AutomationsPage() {
           >
             <Clock size={14} strokeWidth={2} aria-hidden="true" />
             <span>
-              {schedulerStatus?.running ? "Scheduler running" : "Scheduler idle"}
+              {schedulerStatus?.running
+                ? "Scheduler running"
+                : "Scheduler idle"}
             </span>
           </span>
           <span className="scheduler-last-tick">
@@ -435,9 +439,7 @@ export default function AutomationsPage() {
                     {info.lastRunStatus ? ` (${info.lastRunStatus})` : ""}
                   </span>
                   {info.nextScheduledAt && (
-                    <span>
-                      Next: {formatTimestamp(info.nextScheduledAt)}
-                    </span>
+                    <span>Next: {formatTimestamp(info.nextScheduledAt)}</span>
                   )}
                 </div>
               </div>
@@ -490,7 +492,9 @@ export default function AutomationsPage() {
                 }
               >
                 <option value="schedule">Schedule</option>
-                <option value="on_generate">When a template is generated</option>
+                <option value="on_generate">
+                  When a template is generated
+                </option>
               </select>
             </label>
             {draft.triggerKind === "schedule" && (
@@ -660,9 +664,7 @@ export default function AutomationsPage() {
           </Button>
           <Button
             variant="danger"
-            onClick={() =>
-              confirmDelete && void handleDelete(confirmDelete)
-            }
+            onClick={() => confirmDelete && void handleDelete(confirmDelete)}
           >
             Delete
           </Button>

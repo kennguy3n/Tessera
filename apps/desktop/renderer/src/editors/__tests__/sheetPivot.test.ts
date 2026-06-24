@@ -84,7 +84,13 @@ describe("computePivot — single row field", () => {
       return raw.trim() === "" ? null : Number(raw);
     };
     const range = `A1:B${n + 1}`;
-    const base: PivotSpec = { id: "big", range, rowField: 0, valueField: 1, agg: "min" };
+    const base: PivotSpec = {
+      id: "big",
+      range,
+      rowField: 0,
+      valueField: 1,
+      agg: "min",
+    };
     expect(() => computePivot(base, v, t)).not.toThrow();
     expect(computePivot(base, v, t)!.grandTotal).toBe(0);
     expect(computePivot({ ...base, agg: "max" }, v, t)!.grandTotal).toBe(n - 1);
@@ -131,7 +137,9 @@ describe("computePivot — edge cases", () => {
   });
 
   it("returns null for an unparseable range", () => {
-    expect(computePivot(spec({ range: "not-a-range" }), valueAt, textAt)).toBeNull();
+    expect(
+      computePivot(spec({ range: "not-a-range" }), valueAt, textAt),
+    ).toBeNull();
   });
 
   it("returns an empty-but-valid result when a field is outside the range", () => {
@@ -178,7 +186,12 @@ describe("shiftPivotForStructuralEdit", () => {
 
   it("invalidates a field whose column is removed", () => {
     // Remove column 1 (the colField). rowField(0) stays, valueField(2)→1.
-    const next = shiftPivotForStructuralEdit(spec({ colField: 1 }), "col", 1, -1);
+    const next = shiftPivotForStructuralEdit(
+      spec({ colField: 1 }),
+      "col",
+      1,
+      -1,
+    );
     expect(next.rowField).toBe(0);
     expect(next.valueField).toBe(1);
     expect(next.colField).toBeUndefined();
@@ -197,7 +210,12 @@ describe("shiftPivotForStructuralEdit", () => {
   });
 
   it("only shifts the range (not column fields) on a row edit", () => {
-    const next = shiftPivotForStructuralEdit(spec({ colField: 1 }), "row", 0, 1);
+    const next = shiftPivotForStructuralEdit(
+      spec({ colField: 1 }),
+      "row",
+      0,
+      1,
+    );
     expect(next.range).toBe("A2:C6");
     expect(next.rowField).toBe(0);
     expect(next.colField).toBe(1);
@@ -206,12 +224,22 @@ describe("shiftPivotForStructuralEdit", () => {
 
   it("flags a required field collapsed to the -1 sentinel via pivotHasRemovedField", () => {
     // Removing the rowField's own column (col 0) collapses it to -1.
-    const removed = shiftPivotForStructuralEdit(spec({ rowField: 0 }), "col", 0, -1);
+    const removed = shiftPivotForStructuralEdit(
+      spec({ rowField: 0 }),
+      "col",
+      0,
+      -1,
+    );
     expect(removed.rowField).toBe(-1);
     expect(pivotHasRemovedField(removed)).toBe(true);
     // A healthy spec (and one that only lost its optional colField) is not flagged.
     expect(pivotHasRemovedField(spec())).toBe(false);
-    const colOnly = shiftPivotForStructuralEdit(spec({ colField: 1 }), "col", 1, -1);
+    const colOnly = shiftPivotForStructuralEdit(
+      spec({ colField: 1 }),
+      "col",
+      1,
+      -1,
+    );
     expect(pivotHasRemovedField(colOnly)).toBe(false);
   });
 });

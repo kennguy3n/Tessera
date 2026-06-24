@@ -72,12 +72,18 @@ describe("downloadHostFor", () => {
   it("returns the host for http/https URLs", () => {
     expect(downloadHostFor(model)).toBe("models.example.com");
     expect(
-      downloadHostFor({ ...model, url: "http://h.test/m.gguf" } as ResolvedModel),
+      downloadHostFor({
+        ...model,
+        url: "http://h.test/m.gguf",
+      } as ResolvedModel),
     ).toBe("h.test");
   });
   it("returns null for non-network URLs (skip the DNS probe)", () => {
     expect(
-      downloadHostFor({ ...model, url: "file:///models/m.gguf" } as ResolvedModel),
+      downloadHostFor({
+        ...model,
+        url: "file:///models/m.gguf",
+      } as ResolvedModel),
     ).toBeNull();
   });
   it("returns null for an unparseable URL", () => {

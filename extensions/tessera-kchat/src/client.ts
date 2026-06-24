@@ -72,10 +72,7 @@ export class TesseraLocalApiClient {
         "Tessera local API port is invalid.",
       );
     }
-    if (
-      !opts.portFile.token ||
-      opts.portFile.token.length < MIN_TOKEN_LENGTH
-    ) {
+    if (!opts.portFile.token || opts.portFile.token.length < MIN_TOKEN_LENGTH) {
       // Defence in depth: the port-file reader (`readPortFile()`)
       // applies the same check before constructing this client, but
       // a test seam that wires `props.client` directly into the
@@ -112,9 +109,7 @@ export class TesseraLocalApiClient {
     );
   }
 
-  shareArtifact(
-    req: ShareArtifactRequest,
-  ): Promise<ShareArtifactResponse> {
+  shareArtifact(req: ShareArtifactRequest): Promise<ShareArtifactResponse> {
     return this.request<ShareArtifactResponse>(
       "POST",
       "/api/share-artifact",
@@ -135,9 +130,7 @@ export class TesseraLocalApiClient {
         headers: {
           authorization: `Bearer ${this.token}`,
           accept: "application/json",
-          ...(body !== undefined
-            ? { "content-type": "application/json" }
-            : {}),
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         redirect: "error",
@@ -158,8 +151,7 @@ export class TesseraLocalApiClient {
       ) {
         throw err;
       }
-      const message =
-        err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err);
       throw new TesseraLocalApiUnavailableError(
         `Tessera local API request failed: ${message}`,
       );

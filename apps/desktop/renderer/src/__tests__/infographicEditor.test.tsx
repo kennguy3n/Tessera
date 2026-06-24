@@ -37,7 +37,11 @@ describe("parseInfographicContent", () => {
     const json = JSON.stringify({
       title: "My Infographic",
       layout: "grid",
-      colorScheme: { primary: "#FF0000", secondary: "#00FF00", accent: "#0000FF" },
+      colorScheme: {
+        primary: "#FF0000",
+        secondary: "#00FF00",
+        accent: "#0000FF",
+      },
       sections: [{ heading: "A", body: "B" }],
     });
     const parsed = parseInfographicContent(json);
@@ -54,7 +58,11 @@ describe("buildPreviewHtml", () => {
       title: "Top Metrics",
       subtitle: "Q3",
       layout: "vertical",
-      colorScheme: { primary: "#7C3AED", secondary: "#0EA5E9", accent: "#F59E0B" },
+      colorScheme: {
+        primary: "#7C3AED",
+        secondary: "#0EA5E9",
+        accent: "#F59E0B",
+      },
       sections: [
         { heading: "Revenue", body: "Up 15%", stat: "15%", statLabel: "QoQ" },
         { heading: "Users", body: "10k MAU" },
@@ -162,9 +170,7 @@ describe("parseInfographicContent layout allowlist", () => {
 describe("InfographicEditor", () => {
   it("renders the title input and a section card", () => {
     render(<InfographicEditor content="" onSave={() => {}} autoSaveMs={10} />);
-    expect(
-      screen.getByLabelText("Infographic title"),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Infographic title")).toBeInTheDocument();
     expect(screen.getByLabelText("Section 1 heading")).toBeInTheDocument();
   });
 
@@ -172,9 +178,7 @@ describe("InfographicEditor", () => {
     vi.useFakeTimers();
     const onSave = vi.fn();
     try {
-      render(
-        <InfographicEditor content="" onSave={onSave} autoSaveMs={50} />,
-      );
+      render(<InfographicEditor content="" onSave={onSave} autoSaveMs={50} />);
       fireEvent.change(screen.getByLabelText("Infographic title"), {
         target: { value: "New Title" },
       });
@@ -326,8 +330,7 @@ describe("InfographicEditor hero image", () => {
       colorScheme: { primary: "#7C3AED" },
       sections: [{ heading: "S", body: "B" }],
       heroImage: {
-        assetUrl:
-          "tessera-asset://generated-images/artifact-004/old-hero.png",
+        assetUrl: "tessera-asset://generated-images/artifact-004/old-hero.png",
         prompt: "Old prompt",
         seed: 7,
         width: 1024,
@@ -342,9 +345,7 @@ describe("InfographicEditor hero image", () => {
         autoSaveMs={10}
       />,
     );
-    const preview = await screen.findByTestId(
-      "infographic-hero-image-preview",
-    );
+    const preview = await screen.findByTestId("infographic-hero-image-preview");
     const img = preview.querySelector("img");
     expect(img?.getAttribute("src")).toBe(
       "tessera-asset://generated-images/artifact-004/old-hero.png",

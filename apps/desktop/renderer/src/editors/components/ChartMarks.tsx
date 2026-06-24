@@ -98,8 +98,7 @@ function renderYAxis(layout: MarkLayout, max: number) {
   return (
     <>
       {ticks.map((t, i) => {
-        const y =
-          layout.pad.top + plotH - (max > 0 ? (t / max) * plotH : 0);
+        const y = layout.pad.top + plotH - (max > 0 ? (t / max) * plotH : 0);
         return (
           <g key={i}>
             <line
@@ -255,10 +254,19 @@ function renderScatter(data: ChartData, layout: MarkLayout) {
  */
 function renderCombo(data: ChartData, layout: MarkLayout) {
   const max = axisMax(data);
-  const barData: ChartData = { labels: data.labels, series: data.series.slice(0, 1) };
-  const lineData: ChartData = { labels: data.labels, series: data.series.slice(1) };
+  const barData: ChartData = {
+    labels: data.labels,
+    series: data.series.slice(0, 1),
+  };
+  const lineData: ChartData = {
+    labels: data.labels,
+    series: data.series.slice(1),
+  };
   const { bars } = barLayout(barData, layout, max);
-  const { lines } = lineLayout(lineData, layout, { maxOverride: max, align: "band" });
+  const { lines } = lineLayout(lineData, layout, {
+    maxOverride: max,
+    align: "band",
+  });
   return (
     <>
       {renderYAxis(layout, max)}

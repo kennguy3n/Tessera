@@ -100,9 +100,7 @@ export default function SourceDetailPage() {
       // The substrate-level outcomes (`access_revoked`, etc.)
       // come back through `kchatBackfill` rather than as a
       // rejection.
-      setKchatBackfillError(
-        err instanceof Error ? err.message : String(err),
-      );
+      setKchatBackfillError(err instanceof Error ? err.message : String(err));
     } finally {
       setKchatBackfilling(false);
     }
@@ -206,7 +204,10 @@ export default function SourceDetailPage() {
   if (loading) {
     return (
       <div>
-        <PageHeader title="Source Detail" description="Loading source info..." />
+        <PageHeader
+          title="Source Detail"
+          description="Loading source info..."
+        />
         <p>Loading...</p>
       </div>
     );
@@ -531,7 +532,10 @@ export default function SourceDetailPage() {
           <Card>
             <h2 className="card-title">Extracted Tasks &amp; Decisions</h2>
             {extractError && (
-              <p style={{ color: "var(--color-danger, #ef4444)" }} data-testid="extract-error">
+              <p
+                style={{ color: "var(--color-danger, #ef4444)" }}
+                data-testid="extract-error"
+              >
                 {extractError}
               </p>
             )}
@@ -541,13 +545,24 @@ export default function SourceDetailPage() {
               </p>
             )}
             {extracted && extracted.length > 0 && (
-              <ul data-testid="extracted-list" style={{ paddingLeft: "var(--spacing-md)" }}>
+              <ul
+                data-testid="extracted-list"
+                style={{ paddingLeft: "var(--spacing-md)" }}
+              >
                 {extracted.map((item, idx) => (
                   <li key={idx} style={{ marginBottom: "var(--spacing-xs)" }}>
-                    <strong>{item.itemType === "task" ? "Task" : "Decision"}:</strong>{" "}
+                    <strong>
+                      {item.itemType === "task" ? "Task" : "Decision"}:
+                    </strong>{" "}
                     {item.text}{" "}
-                    <span style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>
-                      ({item.sourceCitation}, confidence {(item.confidence * 100).toFixed(0)}%)
+                    <span
+                      style={{
+                        fontSize: "var(--font-size-xs)",
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      ({item.sourceCitation}, confidence{" "}
+                      {(item.confidence * 100).toFixed(0)}%)
                     </span>
                   </li>
                 ))}
@@ -617,9 +632,7 @@ export default function SourceDetailPage() {
         </Card>
 
         <Card>
-          <h2 className="card-title">
-            Indexed Files ({files.length})
-          </h2>
+          <h2 className="card-title">Indexed Files ({files.length})</h2>
           {files.length === 0 ? (
             <p className="card-description">
               No files indexed yet. Click Reindex to start.
@@ -640,16 +653,24 @@ export default function SourceDetailPage() {
                       textAlign: "left",
                     }}
                   >
-                    <th style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}>
+                    <th
+                      style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}
+                    >
                       File Path
                     </th>
-                    <th style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}>
+                    <th
+                      style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}
+                    >
                       Hash
                     </th>
-                    <th style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}>
+                    <th
+                      style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}
+                    >
                       Last Modified
                     </th>
-                    <th style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}>
+                    <th
+                      style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}
+                    >
                       Chunks
                     </th>
                   </tr>
@@ -680,10 +701,18 @@ export default function SourceDetailPage() {
                       >
                         {file.hash.slice(0, 12)}...
                       </td>
-                      <td style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}>
+                      <td
+                        style={{
+                          padding: "var(--spacing-xs) var(--spacing-sm)",
+                        }}
+                      >
                         {new Date(file.lastModified).toLocaleString()}
                       </td>
-                      <td style={{ padding: "var(--spacing-xs) var(--spacing-sm)" }}>
+                      <td
+                        style={{
+                          padding: "var(--spacing-xs) var(--spacing-sm)",
+                        }}
+                      >
                         {file.chunkCount}
                       </td>
                     </tr>
@@ -718,7 +747,9 @@ function SourceKnowledgeCard({
     <Card data-testid="source-knowledge-card">
       <h2 className="card-title">
         Knowledge from this source
-        {!loading && !error && memories.length > 0 ? ` (${memories.length})` : ""}
+        {!loading && !error && memories.length > 0
+          ? ` (${memories.length})`
+          : ""}
       </h2>
       {loading && (
         <p
@@ -742,10 +773,7 @@ function SourceKnowledgeCard({
         </p>
       )}
       {!loading && !error && memories.length === 0 && (
-        <p
-          className="card-description"
-          data-testid="source-knowledge-empty"
-        >
+        <p className="card-description" data-testid="source-knowledge-empty">
           No observations extracted from this source yet. Run{" "}
           <strong>Extract Tasks &amp; Decisions</strong> or reindex to populate
           the knowledge substrate.
@@ -774,8 +802,8 @@ function SourceKnowledgeCard({
                   color: "var(--color-text-secondary)",
                 }}
               >
-                ({mem.state}, retention{" "}
-                {(mem.retentionScore * 100).toFixed(0)}%)
+                ({mem.state}, retention {(mem.retentionScore * 100).toFixed(0)}
+                %)
               </span>
             </li>
           ))}

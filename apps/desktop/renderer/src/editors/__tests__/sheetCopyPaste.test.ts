@@ -11,28 +11,28 @@ describe("sheetCopyPaste", () => {
         ["4", "5", "6"],
         ["7", "8", "9"],
       ];
-      const sel = extendSelection(
-        selectionFromCell({ row: 0, col: 0 }),
-        { row: 1, col: 1 },
-      );
+      const sel = extendSelection(selectionFromCell({ row: 0, col: 0 }), {
+        row: 1,
+        col: 1,
+      });
       expect(selectionToTSV(rows, sel)).toBe("1\t2\n4\t5");
     });
 
     it("quotes cells that contain a tab", () => {
       const rows = [["a\tb", "x"]];
-      const sel = extendSelection(
-        selectionFromCell({ row: 0, col: 0 }),
-        { row: 0, col: 1 },
-      );
+      const sel = extendSelection(selectionFromCell({ row: 0, col: 0 }), {
+        row: 0,
+        col: 1,
+      });
       expect(selectionToTSV(rows, sel)).toBe('"a\tb"\tx');
     });
 
     it("quotes cells with embedded newlines or quotes", () => {
       const rows = [["a\nb", 'say "hi"']];
-      const sel = extendSelection(
-        selectionFromCell({ row: 0, col: 0 }),
-        { row: 0, col: 1 },
-      );
+      const sel = extendSelection(selectionFromCell({ row: 0, col: 0 }), {
+        row: 0,
+        col: 1,
+      });
       expect(selectionToTSV(rows, sel)).toBe('"a\nb"\t"say ""hi"""');
     });
 
@@ -42,10 +42,10 @@ describe("sheetCopyPaste", () => {
         ["3", "4"],
       ];
       // bottom-right anchor, top-left head
-      const sel = extendSelection(
-        selectionFromCell({ row: 1, col: 1 }),
-        { row: 0, col: 0 },
-      );
+      const sel = extendSelection(selectionFromCell({ row: 1, col: 1 }), {
+        row: 0,
+        col: 0,
+      });
       expect(selectionToTSV(rows, sel)).toBe("1\t2\n3\t4");
     });
   });

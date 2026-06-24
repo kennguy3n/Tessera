@@ -425,9 +425,7 @@ export async function downloadKchatFileToCache(
     ? `kchat-file-${sanitisedId}`
     : `kchat-file-${idHints.page}-${idHints.idx}`;
   const safeName =
-    baseName && baseName !== "." && baseName !== ".."
-      ? baseName
-      : idFallback;
+    baseName && baseName !== "." && baseName !== ".." ? baseName : idFallback;
 
   let finalName = safeName;
   if (seenNames.has(finalName)) {

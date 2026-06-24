@@ -179,7 +179,9 @@ export function feedSse(
     if (line.length === 0) {
       // Event terminator. Dispatch what we've accumulated.
       if (state.eventData.length > 0) {
-        if (dispatchEvent(state.eventName, state.eventData, providerType, emit)) {
+        if (
+          dispatchEvent(state.eventName, state.eventData, providerType, emit)
+        ) {
           state.sawStopSentinel = true;
         }
       }
@@ -505,10 +507,7 @@ export function resolveProviderModelsEndpoint(
   // longer-suffix `endsWith` checks for `/v1/models` / `/models`
   // don't match. See `stripBareV1Suffix` for the ordering invariant.
   apiUrl = stripBareV1Suffix(apiUrl);
-  if (
-    apiUrl.endsWith("/v1/models") ||
-    apiUrl.endsWith("/models")
-  ) {
+  if (apiUrl.endsWith("/v1/models") || apiUrl.endsWith("/models")) {
     return apiUrl;
   }
   return `${apiUrl}/v1/models`;
@@ -1077,7 +1076,7 @@ export async function streamExternalProvider(
     // server-sent `Retry-After: 0` can't trick us into a tight
     // retry loop).
     const retryAfterMs =
-      outcome.kind === "http" ? outcome.retryAfterMs ?? 0 : 0;
+      outcome.kind === "http" ? (outcome.retryAfterMs ?? 0) : 0;
     const delay = Math.max(baseDelay, retryAfterMs);
     await delayWithAbort(delay, inputs.signal);
   }

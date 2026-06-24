@@ -48,7 +48,10 @@ describe("connectorConfig specs", () => {
       if (spec.connectMethod !== "token") continue;
       expect(spec.tokenField).toBeDefined();
       const field = spec.configFields.find((f) => f.key === spec.tokenField);
-      expect(field, `${provider} tokenField must be a declared field`).toBeDefined();
+      expect(
+        field,
+        `${provider} tokenField must be a declared field`,
+      ).toBeDefined();
       // The credential that becomes the bearer token must be a secret
       // (rendered as a password input, stored only in the keychain).
       expect(field?.secret).toBe(true);
@@ -82,7 +85,8 @@ describe("connectorConfig specs", () => {
   it("every declared validation rule has a non-empty message", () => {
     for (const spec of Object.values(CONNECTOR_CONNECT_SPECS)) {
       for (const f of spec.configFields) {
-        if (f.validation) expect(f.validation.message.length).toBeGreaterThan(0);
+        if (f.validation)
+          expect(f.validation.message.length).toBeGreaterThan(0);
       }
     }
   });
@@ -108,13 +112,17 @@ describe("connectorConfig specs", () => {
 
 describe("validateConnectorField", () => {
   it("treats an empty required field as invalid and an empty optional field as valid", () => {
-    expect(validateConnectorField(field("gitlab", "project_id"), "  ")).toEqual({
-      valid: false,
-      error: "Project ID or path is required.",
-    });
-    expect(validateConnectorField(field("gitlab", "api_base_url"), "")).toEqual({
-      valid: true,
-    });
+    expect(validateConnectorField(field("gitlab", "project_id"), "  ")).toEqual(
+      {
+        valid: false,
+        error: "Project ID or path is required.",
+      },
+    );
+    expect(validateConnectorField(field("gitlab", "api_base_url"), "")).toEqual(
+      {
+        valid: true,
+      },
+    );
   });
 
   it("trims before validating", () => {
@@ -127,7 +135,12 @@ describe("validateConnectorField", () => {
   });
 
   it("enforces the GitLab PAT prefix + length", () => {
-    expect(validateConnectorField(field("gitlab", "personal_access_token"), "glpat-secret").valid).toBe(false);
+    expect(
+      validateConnectorField(
+        field("gitlab", "personal_access_token"),
+        "glpat-secret",
+      ).valid,
+    ).toBe(false);
     expect(
       validateConnectorField(
         field("gitlab", "personal_access_token"),
@@ -137,9 +150,12 @@ describe("validateConnectorField", () => {
   });
 
   it("accepts a numeric id or a namespace path for the GitLab project", () => {
-    expect(validateConnectorField(field("gitlab", "project_id"), "42").valid).toBe(true);
     expect(
-      validateConnectorField(field("gitlab", "project_id"), "group/sub/project").valid,
+      validateConnectorField(field("gitlab", "project_id"), "42").valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("gitlab", "project_id"), "group/sub/project")
+        .valid,
     ).toBe(true);
     expect(
       validateConnectorField(field("gitlab", "project_id"), "bad space").valid,
@@ -148,19 +164,35 @@ describe("validateConnectorField", () => {
 
   it("requires a full https:// URL for an optional base URL", () => {
     const f = field("gitlab", "api_base_url");
-    expect(validateConnectorField(f, "https://gitlab.example.com").valid).toBe(true);
-    expect(validateConnectorField(f, "http://gitlab.example.com").valid).toBe(false);
+    expect(validateConnectorField(f, "https://gitlab.example.com").valid).toBe(
+      true,
+    );
+    expect(validateConnectorField(f, "http://gitlab.example.com").valid).toBe(
+      false,
+    );
     expect(validateConnectorField(f, "gitlab.example.com").valid).toBe(false);
   });
 
   it("enforces Trello key/token/board id shapes", () => {
-    expect(validateConnectorField(field("trello", "key"), "a".repeat(32)).valid).toBe(true);
-    expect(validateConnectorField(field("trello", "key"), "a".repeat(10)).valid).toBe(false);
-    expect(validateConnectorField(field("trello", "token"), "b".repeat(64)).valid).toBe(true);
-    expect(validateConnectorField(field("trello", "token"), "b".repeat(10)).valid).toBe(false);
+    expect(
+      validateConnectorField(field("trello", "key"), "a".repeat(32)).valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("trello", "key"), "a".repeat(10)).valid,
+    ).toBe(false);
+    expect(
+      validateConnectorField(field("trello", "token"), "b".repeat(64)).valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("trello", "token"), "b".repeat(10)).valid,
+    ).toBe(false);
     // 8-char short link OR 24-char hex id.
-    expect(validateConnectorField(field("trello", "board_id"), "abcd1234").valid).toBe(true);
-    expect(validateConnectorField(field("trello", "board_id"), "0".repeat(24)).valid).toBe(true);
+    expect(
+      validateConnectorField(field("trello", "board_id"), "abcd1234").valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("trello", "board_id"), "0".repeat(24)).valid,
+    ).toBe(true);
   });
 
   it("rejects a non-GUID Teams id and accepts a GUID", () => {
@@ -170,34 +202,73 @@ describe("validateConnectorField", () => {
         "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
       ).valid,
     ).toBe(true);
-    expect(validateConnectorField(field("teams", "team_id"), "not-a-guid").valid).toBe(false);
+    expect(
+      validateConnectorField(field("teams", "team_id"), "not-a-guid").valid,
+    ).toBe(false);
   });
 
   // ── Tranche 4: per-target / per-resource providers ─────────────────
 
   it("validates the Discord bot token + channel snowflake", () => {
     // Bot token: charset + conservative min length (50).
-    expect(validateConnectorField(field("discord", "bot_token"), "a".repeat(60)).valid).toBe(true);
-    expect(validateConnectorField(field("discord", "bot_token"), "a".repeat(20)).valid).toBe(false);
     expect(
-      validateConnectorField(field("discord", "bot_token"), `has space ${"a".repeat(60)}`).valid,
+      validateConnectorField(field("discord", "bot_token"), "a".repeat(60))
+        .valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("discord", "bot_token"), "a".repeat(20))
+        .valid,
+    ).toBe(false);
+    expect(
+      validateConnectorField(
+        field("discord", "bot_token"),
+        `has space ${"a".repeat(60)}`,
+      ).valid,
     ).toBe(false);
     // Channel ID: 17-20 digit snowflake.
-    expect(validateConnectorField(field("discord", "channel_id"), "1107583106847408128").valid).toBe(true);
-    expect(validateConnectorField(field("discord", "channel_id"), "123").valid).toBe(false);
-    expect(validateConnectorField(field("discord", "channel_id"), "12345678901234567890123").valid).toBe(false);
+    expect(
+      validateConnectorField(
+        field("discord", "channel_id"),
+        "1107583106847408128",
+      ).valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("discord", "channel_id"), "123").valid,
+    ).toBe(false);
+    expect(
+      validateConnectorField(
+        field("discord", "channel_id"),
+        "12345678901234567890123",
+      ).valid,
+    ).toBe(false);
   });
 
   it("validates the Bitbucket workspace + repo slugs", () => {
-    expect(validateConnectorField(field("bitbucket", "workspace"), "my-workspace").valid).toBe(true);
-    expect(validateConnectorField(field("bitbucket", "workspace"), "-leading").valid).toBe(false);
-    expect(validateConnectorField(field("bitbucket", "repo_slug"), "my.repo-1").valid).toBe(true);
-    expect(validateConnectorField(field("bitbucket", "repo_slug"), "bad slug").valid).toBe(false);
+    expect(
+      validateConnectorField(field("bitbucket", "workspace"), "my-workspace")
+        .valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("bitbucket", "workspace"), "-leading").valid,
+    ).toBe(false);
+    expect(
+      validateConnectorField(field("bitbucket", "repo_slug"), "my.repo-1")
+        .valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("bitbucket", "repo_slug"), "bad slug").valid,
+    ).toBe(false);
   });
 
   it("validates the Airtable base id + PAT shape", () => {
-    expect(validateConnectorField(field("airtable", "base_id"), "app1234567890ABCD").valid).toBe(true);
-    expect(validateConnectorField(field("airtable", "base_id"), "tbl1234567890ABCD").valid).toBe(false);
+    expect(
+      validateConnectorField(field("airtable", "base_id"), "app1234567890ABCD")
+        .valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("airtable", "base_id"), "tbl1234567890ABCD")
+        .valid,
+    ).toBe(false);
     expect(
       validateConnectorField(
         field("airtable", "personal_access_token"),
@@ -205,42 +276,69 @@ describe("validateConnectorField", () => {
       ).valid,
     ).toBe(true);
     expect(
-      validateConnectorField(field("airtable", "personal_access_token"), "not-a-pat").valid,
+      validateConnectorField(
+        field("airtable", "personal_access_token"),
+        "not-a-pat",
+      ).valid,
     ).toBe(false);
     // A free-text table name is accepted (id or human label).
-    expect(validateConnectorField(field("airtable", "table"), "Tasks").valid).toBe(true);
+    expect(
+      validateConnectorField(field("airtable", "table"), "Tasks").valid,
+    ).toBe(true);
   });
 
   it("validates the Monday numeric board id", () => {
-    expect(validateConnectorField(field("monday", "board_id"), "1234567890").valid).toBe(true);
-    expect(validateConnectorField(field("monday", "board_id"), "not-a-number").valid).toBe(false);
+    expect(
+      validateConnectorField(field("monday", "board_id"), "1234567890").valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("monday", "board_id"), "not-a-number").valid,
+    ).toBe(false);
   });
 
   // ── Tranche 5: read-only support / CRM providers ───────────────────
 
   it("validates the ClickUp numeric workspace id + optional API base URL", () => {
-    expect(validateConnectorField(field("clickup", "team_id"), "9001234567").valid).toBe(true);
-    expect(validateConnectorField(field("clickup", "team_id"), "not-a-number").valid).toBe(false);
+    expect(
+      validateConnectorField(field("clickup", "team_id"), "9001234567").valid,
+    ).toBe(true);
+    expect(
+      validateConnectorField(field("clickup", "team_id"), "not-a-number").valid,
+    ).toBe(false);
     // Required: an empty value is rejected before any IPC round-trip.
-    expect(validateConnectorField(field("clickup", "team_id"), "  ").valid).toBe(false);
+    expect(
+      validateConnectorField(field("clickup", "team_id"), "  ").valid,
+    ).toBe(false);
     const base = field("clickup", "api_base_url");
     expect(validateConnectorField(base, "").valid).toBe(true);
-    expect(validateConnectorField(base, "https://api.clickup.com").valid).toBe(true);
-    expect(validateConnectorField(base, "http://api.clickup.com").valid).toBe(false);
+    expect(validateConnectorField(base, "https://api.clickup.com").valid).toBe(
+      true,
+    );
+    expect(validateConnectorField(base, "http://api.clickup.com").valid).toBe(
+      false,
+    );
   });
 
   it("validates Intercom's optional regional API base URL", () => {
     const base = field("intercom", "api_base_url");
     expect(validateConnectorField(base, "").valid).toBe(true);
-    expect(validateConnectorField(base, "https://api.eu.intercom.io").valid).toBe(true);
-    expect(validateConnectorField(base, "ftp://api.intercom.io").valid).toBe(false);
+    expect(
+      validateConnectorField(base, "https://api.eu.intercom.io").valid,
+    ).toBe(true);
+    expect(validateConnectorField(base, "ftp://api.intercom.io").valid).toBe(
+      false,
+    );
   });
 
   it("requires a full https:// My Domain URL for Salesforce", () => {
     const base = field("salesforce", "api_base_url");
     expect(base.required).toBe(true);
-    expect(validateConnectorField(base, "https://acme.my.salesforce.com").valid).toBe(true);
-    expect(validateConnectorField(base, "acme.my.salesforce.com").valid).toBe(false);
+    expect(
+      validateConnectorField(base, "https://acme.my.salesforce.com").valid,
+    ).toBe(true);
+    expect(validateConnectorField(base, "acme.my.salesforce.com").valid).toBe(
+      false,
+    );
     // Required: a blank instance URL is rejected inline.
     expect(validateConnectorField(base, "   ").valid).toBe(false);
   });
@@ -253,7 +351,9 @@ describe("validateConnectorField", () => {
     }
     // The per-target ids survive into the auth_config bag.
     expect(authConfigFields("clickup").map((f) => f.key)).toContain("team_id");
-    expect(authConfigFields("salesforce").map((f) => f.key)).toContain("api_base_url");
+    expect(authConfigFields("salesforce").map((f) => f.key)).toContain(
+      "api_base_url",
+    );
   });
 
   it("anchors the per-instance subdomain field to a single DNS label (Zendesk/ServiceNow)", () => {
@@ -273,9 +373,9 @@ describe("validateConnectorField", () => {
       // the host can only ever be `<label>.<baseDomain>`.
       expect(validateConnectorField(sub, "acme.zendesk.com").valid).toBe(false);
       expect(validateConnectorField(sub, "evil.com").valid).toBe(false);
-      expect(validateConnectorField(sub, "https://acme.zendesk.com").valid).toBe(
-        false,
-      );
+      expect(
+        validateConnectorField(sub, "https://acme.zendesk.com").valid,
+      ).toBe(false);
       expect(validateConnectorField(sub, "acme/path").valid).toBe(false);
       expect(validateConnectorField(sub, "-acme").valid).toBe(false);
       expect(validateConnectorField(sub, "   ").valid).toBe(false);
@@ -310,7 +410,9 @@ describe("validateConnectorField", () => {
     expect(getConnectSpec("bitbucket").connectMethod).toBe("token");
     expect(getConnectSpec("airtable").connectMethod).toBe("token");
     // The per-target id fields survive into the auth_config bag.
-    expect(authConfigFields("discord").map((f) => f.key)).toContain("channel_id");
+    expect(authConfigFields("discord").map((f) => f.key)).toContain(
+      "channel_id",
+    );
     expect(authConfigFields("bitbucket").map((f) => f.key)).toEqual(
       expect.arrayContaining(["workspace", "repo_slug"]),
     );

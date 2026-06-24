@@ -118,12 +118,12 @@ beforeEach(() => {
 
 describe("normalizePresentation", () => {
   it("clamps startIndex into range", () => {
-    expect(normalizePresentation({ ...SAMPLE, startIndex: 99 }).startIndex).toBe(
-      1,
-    );
     expect(
-      normalizePresentation({ ...SAMPLE, startIndex: 0 }).startIndex,
-    ).toBe(0);
+      normalizePresentation({ ...SAMPLE, startIndex: 99 }).startIndex,
+    ).toBe(1);
+    expect(normalizePresentation({ ...SAMPLE, startIndex: 0 }).startIndex).toBe(
+      0,
+    );
   });
 
   it("defaults a blank deck title", () => {
@@ -193,7 +193,7 @@ describe("buildPresentationHtml", () => {
     // attacker-influenced input, so embedding it must be escaped too.
     const html = buildPresentationHtml(
       normalizePresentation(SAMPLE),
-      'evil</script><script>alert(1)</script>',
+      "evil</script><script>alert(1)</script>",
     );
     expect(html).not.toContain("</script><script>alert(1)");
     expect(html).toContain("\\u003c/script\\u003e");
@@ -203,7 +203,7 @@ describe("buildPresentationHtml", () => {
     const html = buildPresentationHtml(
       normalizePresentation({
         ...SAMPLE,
-        deckTitle: '</title><script>alert(1)</script>',
+        deckTitle: "</title><script>alert(1)</script>",
       }),
     );
     expect(html).not.toContain("<script>alert(1)</script>");
@@ -229,8 +229,12 @@ describe("buildPresentationHtml", () => {
     const html = buildPresentationHtml(normalizePresentation(SAMPLE));
     // P/R mutate presenter-only state, so they are gated on the role and
     // must not preventDefault in the audience window.
-    expect(html).toContain('(e.key === "p" || e.key === "P") && role === "presenter"');
-    expect(html).toContain('(e.key === "r" || e.key === "R") && role === "presenter"');
+    expect(html).toContain(
+      '(e.key === "p" || e.key === "P") && role === "presenter"',
+    );
+    expect(html).toContain(
+      '(e.key === "r" || e.key === "R") && role === "presenter"',
+    );
     // Blank keys stay global (shared state, valid from either window).
     expect(html).toContain('} else if (e.key === "b" || e.key === "B") {');
   });
@@ -240,7 +244,9 @@ describe("buildPresentationHtml", () => {
     // The interval is gated on the presenter role so the hidden audience
     // bar doesn't do wasted DOM writes every 500ms. Its handle is kept so
     // pagehide can clear it (see the cleanup test below).
-    expect(html).toContain('var timerInterval = null;\n  if (role === "presenter") {\n    renderTimers();\n    timerInterval = setInterval(renderTimers, 500);');
+    expect(html).toContain(
+      'var timerInterval = null;\n  if (role === "presenter") {\n    renderTimers();\n    timerInterval = setInterval(renderTimers, 500);',
+    );
   });
 
   it("cleans up its localStorage sync keys when the window closes", () => {
@@ -252,7 +258,9 @@ describe("buildPresentationHtml", () => {
     expect(html).toContain("window.localStorage.removeItem(BLANK_KEY)");
     // The 500ms timer interval is cleared on the same teardown so it
     // can't keep firing against a tearing-down document.
-    expect(html).toContain("if (timerInterval !== null) clearInterval(timerInterval);");
+    expect(html).toContain(
+      "if (timerInterval !== null) clearInterval(timerInterval);",
+    );
     // The storage listener ignores removals so teardown cleanup in one
     // window doesn't transiently re-render / un-blank the sibling.
     expect(html).toContain("if (e.newValue === null) return;");
@@ -316,9 +324,7 @@ describe("registerSlidesHandlers", () => {
   it("rejects a malformed payload (missing slides array)", async () => {
     registerSlidesHandlers();
     const handler = getHandler("slides:startPresentation");
-    await expect(
-      handler({}, { startIndex: 0 }),
-    ).rejects.toBeTruthy();
+    await expect(handler({}, { startIndex: 0 })).rejects.toBeTruthy();
   });
 
   it("opens a fullscreen audience window and a presenter window", async () => {
@@ -332,7 +338,8 @@ describe("registerSlidesHandlers", () => {
     expect(loadFileMock).toHaveBeenCalledTimes(2);
 
     const [audienceOpts, presenterOpts] = browserWindowCtor.mock.calls.map(
-      (c) => c[0] as { fullscreen?: boolean; webPreferences: { partition: string } },
+      (c) =>
+        c[0] as { fullscreen?: boolean; webPreferences: { partition: string } },
     );
     expect(audienceOpts.fullscreen).toBe(true);
     expect(presenterOpts.fullscreen).toBeUndefined();

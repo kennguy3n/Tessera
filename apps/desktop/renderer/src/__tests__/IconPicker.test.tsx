@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import IconPicker, {
-  type IconPickerValue,
-} from "../components/IconPicker";
+import IconPicker, { type IconPickerValue } from "../components/IconPicker";
 
 describe("IconPicker", () => {
   it("renders the default lucide tab and a populated grid", () => {
@@ -29,9 +27,10 @@ describe("IconPicker", () => {
   it("switches to phosphor tab and exposes weight selector", () => {
     render(<IconPicker onChange={() => {}} />);
     fireEvent.click(screen.getByRole("tab", { name: /phosphor/i }));
-    expect(
-      screen.getByRole("tab", { name: /phosphor/i }),
-    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /phosphor/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(screen.getByLabelText(/phosphor weight/i)).toBeInTheDocument();
   });
 

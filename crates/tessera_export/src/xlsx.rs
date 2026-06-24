@@ -1065,7 +1065,7 @@ mod tests {
         // 30-char base + "~2" = 32 chars; the base must be trimmed by 1
         // so the final candidate is exactly 31 chars.
         let long = "A".repeat(31);
-        let res = dedupe_sheet_name(&long, &[long.clone()]);
+        let res = dedupe_sheet_name(&long, std::slice::from_ref(&long));
         assert_eq!(
             res.chars().count(),
             31,

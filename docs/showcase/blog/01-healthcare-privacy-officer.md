@@ -1,6 +1,6 @@
 # Maya has five days and a stolen laptop: a defensible HIPAA breach assessment
 
-*Part 1 of the Tessera showcase series — Healthcare.*
+_Part 1 of the Tessera showcase series — Healthcare._
 
 > **Persona:** Maya Okonkwo, Clinical Privacy Officer, Mercy Ridge Health (410-bed regional
 > health system)
@@ -19,7 +19,7 @@ Maya now has a regulatory clock running. Under the HITECH Act she needs a four-f
 assessment and a breach-vs-incident determination, and she has a few business days to
 produce something a regulator — and her General Counsel — will accept.
 
-The catch: the only way to write this report is to work *with* the most sensitive data in
+The catch: the only way to write this report is to work _with_ the most sensitive data in
 the building. PHI. That material can never go to a cloud AI service. This is precisely the
 constraint Tessera is built for.
 
@@ -36,7 +36,7 @@ Maya points Tessera at the folder for this incident. Four files:
 
 Maya picks the **HIPAA Incident Report** template and selects those four files as sources.
 The template isn't a single prompt — it's a structured set of sections, each with its own
-instruction. For the risk assessment section, Tessera sends the model this *verbatim*
+instruction. For the risk assessment section, Tessera sends the model this _verbatim_
 prompt (from [`prompts/hipaa-incident-report.md`](../artifacts/healthcare/prompts/hipaa-incident-report.md)):
 
 > Document the four-factor risk assessment required by the HITECH Act: (1) the nature and

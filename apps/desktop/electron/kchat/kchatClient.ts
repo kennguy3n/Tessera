@@ -243,7 +243,9 @@ export class KchatRequestError extends Error {
     public readonly endpoint: string,
     body: string,
   ) {
-    super(`KChat ${status} ${statusText} at ${endpoint}: ${body.slice(0, 256)}`);
+    super(
+      `KChat ${status} ${statusText} at ${endpoint}: ${body.slice(0, 256)}`,
+    );
     this.name = "KchatRequestError";
   }
 }
@@ -380,8 +382,7 @@ function escapeRegExp(value: string): string {
  */
 function normalisePost(raw: Record<string, unknown>): KchatPostInfo {
   const id = typeof raw.id === "string" ? raw.id : null;
-  const channelId =
-    typeof raw.channel_id === "string" ? raw.channel_id : null;
+  const channelId = typeof raw.channel_id === "string" ? raw.channel_id : null;
   const userId = typeof raw.user_id === "string" ? raw.user_id : null;
   const message = typeof raw.message === "string" ? raw.message : null;
   const createAt = typeof raw.create_at === "number" ? raw.create_at : null;
@@ -679,9 +680,7 @@ export class KchatClient {
    * silent path still transitions to `error` so the renderer learns
    * the connection has degraded.
    */
-  async verifyConnection(
-    opts: { silent?: boolean } = {},
-  ): Promise<KchatUser> {
+  async verifyConnection(opts: { silent?: boolean } = {}): Promise<KchatUser> {
     if (!opts.silent) {
       this.transition({ state: "connecting", serverUrl: this.serverUrl });
     }
@@ -909,9 +908,7 @@ export class KchatClient {
    * `status` is one of `online | away | dnd | offline`. Ids are
    * validated at the boundary in both directions.
    */
-  async getUserStatusesByIds(
-    ids: string[],
-  ): Promise<KchatUserStatus[]> {
+  async getUserStatusesByIds(ids: string[]): Promise<KchatUserStatus[]> {
     if (ids.length === 0) return [];
     for (const id of ids) {
       assertCallerObjectId(id, "userId");
@@ -1157,10 +1154,7 @@ export class KchatClient {
       posts?: unknown;
       prev_post_id?: unknown;
       next_post_id?: unknown;
-    }>(
-      "GET",
-      `/api/v4/channels/${channelId}/posts?${params.toString()}`,
-    );
+    }>("GET", `/api/v4/channels/${channelId}/posts?${params.toString()}`);
 
     // KChat returns `posts` as a dictionary keyed by post id +
     // an `order` array giving the canonical (newest-first)
@@ -1307,10 +1301,7 @@ export class KchatClient {
    */
   async downloadFile(fileId: string): Promise<Uint8Array> {
     assertKchatServerObjectId(fileId, "fileId");
-    const resp = await this.rawRequest(
-      "GET",
-      `/api/v4/files/${fileId}`,
-    );
+    const resp = await this.rawRequest("GET", `/api/v4/files/${fileId}`);
     const ab = await resp.arrayBuffer();
     return new Uint8Array(ab);
   }
@@ -1549,17 +1540,14 @@ export class KchatClient {
       this.wsDropWarnCooldown.clear();
     }
     this.wsDropWarnCooldown.set(key, now);
-    this.logWarn(
-      "[KchatClient] dropped malformed WS frame at trust boundary",
-      {
-        event: name,
-        reason,
-        // The cooldown means an operator who notices ONE warning
-        // should treat it as "the actual rate is at least 1 per
-        // 60 s for this tuple", not as a single-occurrence event.
-        cooldownMs: WS_DROP_WARN_COOLDOWN_MS,
-      },
-    );
+    this.logWarn("[KchatClient] dropped malformed WS frame at trust boundary", {
+      event: name,
+      reason,
+      // The cooldown means an operator who notices ONE warning
+      // should treat it as "the actual rate is at least 1 per
+      // 60 s for this tuple", not as a single-occurrence event.
+      cooldownMs: WS_DROP_WARN_COOLDOWN_MS,
+    });
   }
 
   private handleWsMessage(raw: unknown): void {
@@ -1837,15 +1825,14 @@ export class KchatClient {
 
       if (attempt + 1 < MAX_ATTEMPTS) {
         const jitter = 1 + (this.random() - 0.5) * 0.4;
-        const wait = Math.min(
-          BACKOFF_CAP_MS,
-          BACKOFF_BASE_MS * 2 ** attempt,
-        );
+        const wait = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt);
         await this.sleep(Math.max(0, wait * jitter));
       }
     }
     if (lastError instanceof Error) throw lastError;
-    throw new Error(`KChat ${method} ${endpoint} failed after ${MAX_ATTEMPTS} attempts`);
+    throw new Error(
+      `KChat ${method} ${endpoint} failed after ${MAX_ATTEMPTS} attempts`,
+    );
   }
 }
 

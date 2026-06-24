@@ -67,8 +67,7 @@ export function parseInfographicContent(content: string): InfographicContent {
         subtitle: parsed.subtitle ?? "",
         layout: sanitizeInfographicLayout(parsed.layout),
         colorScheme: {
-          primary:
-            parsed.colorScheme?.primary ?? DEFAULT_INFOGRAPHIC_PRIMARY,
+          primary: parsed.colorScheme?.primary ?? DEFAULT_INFOGRAPHIC_PRIMARY,
           secondary:
             parsed.colorScheme?.secondary ?? DEFAULT_INFOGRAPHIC_SECONDARY,
           accent: parsed.colorScheme?.accent ?? DEFAULT_INFOGRAPHIC_ACCENT,

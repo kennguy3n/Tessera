@@ -290,10 +290,9 @@ export function registerAssetProtocolHandler(assetsRoot: string): void {
       // when triaging a real server-side fault later. Devin
       // Review PR #38 pass-7 📝 finding.
       if (decoded.includes("\0")) {
-        return new Response(
-          `Bad Request: NUL byte in path: ${url.pathname}`,
-          { status: 400 },
-        );
+        return new Response(`Bad Request: NUL byte in path: ${url.pathname}`, {
+          status: 400,
+        });
       }
       const resolved = path.resolve(allowedRoot, "." + decoded);
       // Path-traversal guard: the resolved path must be strictly

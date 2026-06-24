@@ -18,8 +18,7 @@ function cellAt(row: number, col: number): HTMLElement {
 }
 
 function colHeader(col: number): HTMLElement {
-  const headers =
-    document.querySelectorAll<HTMLElement>(".sheet-col-header");
+  const headers = document.querySelectorAll<HTMLElement>(".sheet-col-header");
   return headers[col];
 }
 

@@ -84,7 +84,9 @@ const enriched = {
     },
   ],
   entities: [sampleMemory],
-  facts: [{ ...sampleMemory, observationType: "fact", content: "Acme ships Q4" }],
+  facts: [
+    { ...sampleMemory, observationType: "fact", content: "Acme ships Q4" },
+  ],
   concepts: [sampleConcept],
   memories: [sampleMemory],
 };

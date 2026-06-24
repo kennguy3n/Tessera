@@ -354,7 +354,9 @@ describe("workspace shell — ergonomics (Feature 4)", () => {
     expect(screen.getByTestId("focused-stacked").textContent).toBe("no");
     fireBus("tessera:toggle-stacked");
     expect(screen.getByTestId("focused-stacked").textContent).toBe("yes");
-    expect(document.querySelector(".workspace-tabstrip.is-stacked")).toBeTruthy();
+    expect(
+      document.querySelector(".workspace-tabstrip.is-stacked"),
+    ).toBeTruthy();
     fireBus("tessera:toggle-stacked");
     expect(screen.getByTestId("focused-stacked").textContent).toBe("no");
   });

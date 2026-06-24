@@ -24,11 +24,7 @@
  * is the per-item semantics.
  */
 import { describe, expect, it, vi } from "vitest";
-import {
-  BATCH_MAX_ITEMS,
-  type BatchItemResult,
-  runBatch,
-} from "../ipc/batch";
+import { BATCH_MAX_ITEMS, type BatchItemResult, runBatch } from "../ipc/batch";
 import { assertStringArray } from "../ipc/validate";
 
 describe("runBatch (IPC bulk operation primitive)", () => {
@@ -191,7 +187,9 @@ describe("batch validators (input sanitization)", () => {
       { length: BATCH_MAX_ITEMS },
       (_, i) => `id-${i}`,
     );
-    const out = assertStringArray(atMax, "sourceIds", { maxLen: BATCH_MAX_ITEMS });
+    const out = assertStringArray(atMax, "sourceIds", {
+      maxLen: BATCH_MAX_ITEMS,
+    });
     expect(out).toHaveLength(BATCH_MAX_ITEMS);
   });
 
@@ -208,9 +206,9 @@ describe("batch validators (input sanitization)", () => {
   });
 
   it("rejects arrays containing non-string entries", () => {
-    expect(() =>
-      assertStringArray(["a", 42, "c"], "sourceIds"),
-    ).toThrowError(/sourceIds\[1\]/);
+    expect(() => assertStringArray(["a", 42, "c"], "sourceIds")).toThrowError(
+      /sourceIds\[1\]/,
+    );
   });
 });
 

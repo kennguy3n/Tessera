@@ -1,9 +1,6 @@
 import { ChildProcess, spawn, SpawnOptions } from "child_process";
 import * as path from "path";
-import {
-  writePidFileSync,
-  clearPidFileSync,
-} from "./sidecarPidRegistry";
+import { writePidFileSync, clearPidFileSync } from "./sidecarPidRegistry";
 
 export interface SidecarOptions {
   binaryPath: string;
@@ -268,7 +265,10 @@ export class ModelSidecar {
     //      tearing down and we just need the child reaped, not gracefully
     //      shut down. The normal `stop()` path runs *before* 'exit' fires
     //      and clears the handler so we never double-signal.
-    if (this.options.platform !== "win32" && typeof this.process.pid === "number") {
+    if (
+      this.options.platform !== "win32" &&
+      typeof this.process.pid === "number"
+    ) {
       this.process.unref();
       const pid = this.process.pid;
       const handler = () => {
@@ -345,7 +345,10 @@ export class ModelSidecar {
       if (code !== 0 && code !== null) {
         this.restartCount++;
         if (this.restartCount <= MAX_RESTART_RETRIES) {
-          const delay = Math.min(3000 * Math.pow(2, this.restartCount - 1), 60_000);
+          const delay = Math.min(
+            3000 * Math.pow(2, this.restartCount - 1),
+            60_000,
+          );
           this.restartTimer = setTimeout(() => {
             this.restartTimer = null;
             this.start().catch(() => {});
@@ -525,7 +528,11 @@ export class ModelSidecar {
     if (this.options.idleUnloadMs <= 0) return;
     this.idleTimer = setInterval(async () => {
       const idleTime = Date.now() - this.lastRequestTime;
-      if (idleTime > this.options.idleUnloadMs && this._isRunning && this._generationActiveCount === 0) {
+      if (
+        idleTime > this.options.idleUnloadMs &&
+        this._isRunning &&
+        this._generationActiveCount === 0
+      ) {
         await this.stop();
       }
     }, 10_000);

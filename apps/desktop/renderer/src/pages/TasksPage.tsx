@@ -50,7 +50,11 @@ const COLUMNS: ColumnDef[] = [
     label: "In Progress",
     accent: "var(--color-primary)",
   },
-  { status: "blocked", label: "Blocked", accent: "var(--color-danger, #b91c1c)" },
+  {
+    status: "blocked",
+    label: "Blocked",
+    accent: "var(--color-danger, #b91c1c)",
+  },
   { status: "done", label: "Done", accent: "var(--color-success, #15803d)" },
 ];
 
@@ -431,7 +435,9 @@ export default function TasksPage() {
 
       {!loading && tasks.length === 0 && (
         <EmptyState
-          icon={<ClipboardList size={48} strokeWidth={1.5} aria-hidden="true" />}
+          icon={
+            <ClipboardList size={48} strokeWidth={1.5} aria-hidden="true" />
+          }
           title="No tasks yet"
           message="Create a task or extract tasks from one of your sources to populate this board."
           action={
@@ -501,11 +507,7 @@ export default function TasksPage() {
                       )}
                       {task.dueDate && (
                         <span className="task-card-chip">
-                          <Calendar
-                            size={12}
-                            strokeWidth={1.75}
-                            aria-hidden
-                          />
+                          <Calendar size={12} strokeWidth={1.75} aria-hidden />
                           {formatDate(task.dueDate)}
                         </span>
                       )}
@@ -697,8 +699,8 @@ export default function TasksPage() {
       >
         <p>
           This will permanently remove
-          {confirmDelete ? ` "${confirmDelete.title}"` : " this task"} from
-          your task board.
+          {confirmDelete ? ` "${confirmDelete.title}"` : " this task"} from your
+          task board.
         </p>
         <div className="task-form-actions">
           <Button variant="secondary" onClick={() => setConfirmDelete(null)}>
@@ -706,9 +708,7 @@ export default function TasksPage() {
           </Button>
           <Button
             variant="danger"
-            onClick={() =>
-              confirmDelete && void handleDelete(confirmDelete)
-            }
+            onClick={() => confirmDelete && void handleDelete(confirmDelete)}
           >
             Delete
           </Button>

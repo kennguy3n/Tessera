@@ -126,9 +126,9 @@ describe("OnboardingWizard", () => {
       });
     });
 
-    expect(
-      screen.getByTestId("onboarding-model-progress"),
-    ).toHaveTextContent("65%");
+    expect(screen.getByTestId("onboarding-model-progress")).toHaveTextContent(
+      "65%",
+    );
   });
 
   it("Finish on step 3 persists onboardingCompleted before onDismiss", async () => {

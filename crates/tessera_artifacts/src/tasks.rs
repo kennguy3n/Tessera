@@ -874,7 +874,7 @@ mod tests {
         // cycle.
         let dangling = TaskId::new();
         let a = task_with_deps("a", vec![dangling]);
-        let order = topological_sort(&[a.clone()]).expect("dangling dep tolerated");
+        let order = topological_sort(std::slice::from_ref(&a)).expect("dangling dep tolerated");
         assert_eq!(order, vec![a.id]);
     }
 

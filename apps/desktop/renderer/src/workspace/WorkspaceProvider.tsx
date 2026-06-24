@@ -60,7 +60,10 @@ const STORAGE_KEY = "tessera:workspace-layout";
 const PERSIST_DEBOUNCE_MS = 200;
 
 function genId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   // Fallback for environments without WebCrypto (very old WebViews).
@@ -336,7 +339,8 @@ export default function WorkspaceProvider({
     const onFocusNextPane = () => focusAdjacentPane("next");
     const onFocusPrevPane = () => focusAdjacentPane("prev");
     // Ergonomics commands act on the focused pane / its active tab.
-    const onMaximize = () => toggleMaximize(getFocusedLeaf(stateRef.current).id);
+    const onMaximize = () =>
+      toggleMaximize(getFocusedLeaf(stateRef.current).id);
     const onEvenSplit = () => equalizeSplits();
     const onCloseOthers = () => {
       const leaf = getFocusedLeaf(stateRef.current);

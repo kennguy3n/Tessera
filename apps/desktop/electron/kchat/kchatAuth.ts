@@ -215,8 +215,7 @@ export class KchatAuthService {
    * propagates with no vault write.
    */
   async connect(token: string, serverUrl: string): Promise<KchatUser> {
-    const trimmedToken =
-      typeof token === "string" ? token.trim() : "";
+    const trimmedToken = typeof token === "string" ? token.trim() : "";
     if (trimmedToken.length === 0) {
       throw new Error("KChat token is required");
     }

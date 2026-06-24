@@ -185,9 +185,7 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
 
   const computeIndex = useCallback(
     (e: ReactDragEvent, tabIndex: number): number => {
-      const rect = (
-        e.currentTarget as HTMLElement
-      ).getBoundingClientRect();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const after = e.clientX > rect.left + rect.width / 2;
       return after ? tabIndex + 1 : tabIndex;
     },
@@ -205,12 +203,15 @@ export default function TabStrip({ leaf }: TabStripProps): ReactNode {
     [computeIndex],
   );
 
-  const onStripDragOver = useCallback((e: ReactDragEvent) => {
-    if (!e.dataTransfer.types.includes(TAB_MIME)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDropIndex((cur) => (cur === null ? leaf.tabs.length : cur));
-  }, [leaf.tabs.length]);
+  const onStripDragOver = useCallback(
+    (e: ReactDragEvent) => {
+      if (!e.dataTransfer.types.includes(TAB_MIME)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDropIndex((cur) => (cur === null ? leaf.tabs.length : cur));
+    },
+    [leaf.tabs.length],
+  );
 
   const onDrop = useCallback(
     (e: ReactDragEvent) => {

@@ -18,10 +18,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import {
-  CommentMark,
-  collectCommentsFromDoc,
-} from "../extensions/CommentMark";
+import { CommentMark, collectCommentsFromDoc } from "../extensions/CommentMark";
 
 const liveEditors: Editor[] = [];
 

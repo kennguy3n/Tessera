@@ -58,9 +58,7 @@ export default function KeyboardShortcutsHelp({
                   <li key={cmd.id} className="shortcuts-row">
                     <div className="shortcuts-row-text">
                       <div className="shortcuts-row-title">{cmd.title}</div>
-                      <div className="shortcuts-row-sub">
-                        {cmd.description}
-                      </div>
+                      <div className="shortcuts-row-sub">{cmd.description}</div>
                     </div>
                     <kbd className="shortcuts-kbd">
                       {cmd.chord ? formatChord(cmd.chord, isMac) : ""}

@@ -47,9 +47,9 @@ describe("SourceDetailPage Re-embed button", () => {
     const button = await screen.findByTestId("reembed-button");
     fireEvent.click(button);
     await waitFor(() => {
-      expect(
-        window.tessera.sources.backfillEmbeddings,
-      ).toHaveBeenCalledTimes(1);
+      expect(window.tessera.sources.backfillEmbeddings).toHaveBeenCalledTimes(
+        1,
+      );
     });
   });
 
@@ -192,9 +192,7 @@ describe("SourceDetailPage Re-embed button", () => {
 
     fireEvent.click(button);
     await waitFor(() => {
-      expect(
-        screen.getByTestId("embedding-progress-card"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("embedding-progress-card")).toBeInTheDocument();
     });
 
     fireEvent.click(button);
@@ -231,8 +229,9 @@ describe("SourceDetailPage Re-embed button", () => {
     // terminating, so this sequence lets the effect terminate
     // cleanly after each cycle.
     let pollCount = 0;
-    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
-      async () => {
+    window.tessera.sources.getEmbeddingProgress = vi
+      .fn()
+      .mockImplementation(async () => {
         pollCount += 1;
         // Odd polls = running, even polls = done. So each cycle
         // (running → done) is two polls.
@@ -254,8 +253,7 @@ describe("SourceDetailPage Re-embed button", () => {
           modelId: "hash-trick-v1",
           lastError: null,
         };
-      },
-    );
+      });
     window.tessera.sources.backfillEmbeddings = vi.fn().mockResolvedValue({
       embedded: 5,
       progress: {
@@ -272,7 +270,9 @@ describe("SourceDetailPage Re-embed button", () => {
 
     fireEvent.click(button);
     await waitFor(() => {
-      expect(window.tessera.sources.backfillEmbeddings).toHaveBeenCalledTimes(1);
+      expect(window.tessera.sources.backfillEmbeddings).toHaveBeenCalledTimes(
+        1,
+      );
     });
     await waitFor(() => {
       expect((button as HTMLButtonElement).disabled).toBe(false);
@@ -288,7 +288,9 @@ describe("SourceDetailPage Re-embed button", () => {
 
     fireEvent.click(button);
     await waitFor(() => {
-      expect(window.tessera.sources.backfillEmbeddings).toHaveBeenCalledTimes(2);
+      expect(window.tessera.sources.backfillEmbeddings).toHaveBeenCalledTimes(
+        2,
+      );
     });
     // The second polling cycle must fire at least one additional
     // `getEmbeddingProgress` call. If the effect had failed to
@@ -315,8 +317,9 @@ describe("SourceDetailPage Re-embed button", () => {
     // ended Failed and the bridge hasn't reset yet"). See
     // `useEmbeddingProgress` for the full discussion.
     let pollCount = 0;
-    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
-      async () => {
+    window.tessera.sources.getEmbeddingProgress = vi
+      .fn()
+      .mockImplementation(async () => {
         pollCount += 1;
         if (pollCount === 1) {
           return {
@@ -336,8 +339,7 @@ describe("SourceDetailPage Re-embed button", () => {
           modelId: "hash-trick-v1",
           lastError: "embedder crashed",
         };
-      },
-    );
+      });
     window.tessera.sources.backfillEmbeddings = vi.fn().mockResolvedValue({
       embedded: 3,
       progress: {
@@ -371,8 +373,9 @@ describe("SourceDetailPage Re-embed button", () => {
     // keeping the poll loop alive until the worker thread finishes
     // resetting state.
     let pollCount = 0;
-    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
-      async () => {
+    window.tessera.sources.getEmbeddingProgress = vi
+      .fn()
+      .mockImplementation(async () => {
         pollCount += 1;
         // Poll 1: race — see previous run's stale `done` snapshot
         if (pollCount === 1) {
@@ -405,8 +408,7 @@ describe("SourceDetailPage Re-embed button", () => {
           modelId: "hash-trick-v1",
           lastError: null,
         };
-      },
-    );
+      });
     window.tessera.sources.backfillEmbeddings = vi.fn().mockResolvedValue({
       embedded: 10,
       progress: {
@@ -469,8 +471,9 @@ describe("SourceDetailPage Re-embed button", () => {
     // (three full 500 ms intervals) is enough to catch a
     // never-ending poller.
     let pollCount = 0;
-    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
-      async () => {
+    window.tessera.sources.getEmbeddingProgress = vi
+      .fn()
+      .mockImplementation(async () => {
         pollCount += 1;
         // Simulate the "previous run finished" / fresh-launch
         // case: tracker is sitting in a stale `done` state. The
@@ -484,8 +487,7 @@ describe("SourceDetailPage Re-embed button", () => {
           modelId: "hash-trick-v1",
           lastError: null,
         };
-      },
-    );
+      });
     window.tessera.sources.backfillEmbeddings = vi
       .fn()
       .mockRejectedValueOnce(

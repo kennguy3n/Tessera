@@ -1,6 +1,7 @@
 # Market, Collateral & Risk Notes — Riverbend Logistics Facility
 
 ## Industry / market context
+
 - LTL freight demand in the Pacific Northwest grew ~4% YoY in 2025; Riverbend's
   two new lanes (Spokane–Boise, Spokane–Portland) target underserved mid-size shippers.
 - Diesel price volatility is the main margin risk; Riverbend passes ~70% of fuel
@@ -9,12 +10,14 @@
   customer = 9%. No customer > 10%.
 
 ## Collateral analysis
+
 - Financed equipment (18 tractors + 24 trailers): vendor quotes total **$3,640K**;
   loan-to-value at funding ≈ **88%**.
 - New Class-8 tractors hold value well; estimated 3-year residual ≈ 55-60% of cost.
 - Blanket UCC-1 on AR ($3.1M) and other rolling stock provides secondary coverage.
 
 ## Risk factors
+
 1. **Fuel/margin:** mitigated by surcharge pass-through; stress test at +30% diesel
    still yields DSCR > 1.7x.
 2. **Driver availability:** tight labor market; Riverbend's turnover (38%) is below
@@ -25,6 +28,7 @@
    recommended as a condition.
 
 ## Recommendation context
+
 - Relationship is clean (prior loan repaid, no NSFs in 24 months).
 - Proposed covenants: minimum DSCR 1.25x tested quarterly; max total debt/EBITDA 2.5x;
   $2M key-person life insurance assigned to bank.

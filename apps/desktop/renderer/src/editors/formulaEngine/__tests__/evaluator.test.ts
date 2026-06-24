@@ -84,8 +84,7 @@ describe("evaluator — coercion", () => {
   const grid = [["1", "2", "hello", "", "TRUE"]];
   it("coerces blank cell to 0", () =>
     expect(evalFormula("=D1+1", grid)).toBe(1));
-  it("coerces TRUE to 1", () =>
-    expect(evalFormula("=E1+1", grid)).toBe(2));
+  it("coerces TRUE to 1", () => expect(evalFormula("=E1+1", grid)).toBe(2));
   it("returns #VALUE! on non-numeric string in arithmetic", () => {
     const v = evalFormula("=C1+1", grid);
     expect(isFormulaError(v) && v.code).toBe("#VALUE!");
@@ -101,8 +100,7 @@ describe("evaluator — comparisons", () => {
   it("=1<>2 → true", () => expect(evalFormula("=1<>2", [])).toBe(true));
   it("=3<5 → true", () => expect(evalFormula("=3<5", [])).toBe(true));
   it('="a"<"b" → true', () => expect(evalFormula('="a"<"b"', [])).toBe(true));
-  it("blank equals 0", () =>
-    expect(evalFormula("=A1=0", [[""]])).toBe(true));
+  it("blank equals 0", () => expect(evalFormula("=A1=0", [[""]])).toBe(true));
 });
 
 describe("evaluator — cell and range references", () => {
@@ -111,8 +109,7 @@ describe("evaluator — cell and range references", () => {
     ["2", "20"],
     ["3", "30"],
   ];
-  it("reads a single cell", () =>
-    expect(evalFormula("=A1", grid)).toBe(1));
+  it("reads a single cell", () => expect(evalFormula("=A1", grid)).toBe(1));
   it("reads a chained cell", () => {
     expect(evalFormula("=B3", grid)).toBe(30);
   });
@@ -162,14 +159,13 @@ describe("evaluator — conditional aggregation", () => {
   it("AVERAGEIF text criterion", () =>
     expect(evalFormula('=AVERAGEIF(A1:A4,"apple",B1:B4)', grid)).toBe(20));
   it("SUMIFS with two ranges", () =>
-    expect(
-      evalFormula('=SUMIFS(B1:B4,A1:A4,"apple",B1:B4,">15")', grid),
-    ).toBe(30));
+    expect(evalFormula('=SUMIFS(B1:B4,A1:A4,"apple",B1:B4,">15")', grid)).toBe(
+      30,
+    ));
 });
 
 describe("evaluator — logic", () => {
-  it("IF true branch", () =>
-    expect(evalFormula("=IF(TRUE,1,2)", [])).toBe(1));
+  it("IF true branch", () => expect(evalFormula("=IF(TRUE,1,2)", [])).toBe(1));
   it("IF false branch", () =>
     expect(evalFormula("=IF(FALSE,1,2)", [])).toBe(2));
   it("nested IF", () =>
@@ -188,7 +184,9 @@ describe("evaluator — logic", () => {
   it("SWITCH matches a case", () =>
     expect(evalFormula('=SWITCH(2,1,"a",2,"b","default")', [])).toBe("b"));
   it("SWITCH falls through to default", () =>
-    expect(evalFormula('=SWITCH(99,1,"a",2,"b","default")', [])).toBe("default"));
+    expect(evalFormula('=SWITCH(99,1,"a",2,"b","default")', [])).toBe(
+      "default",
+    ));
 });
 
 describe("evaluator — errors", () => {

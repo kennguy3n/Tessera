@@ -71,14 +71,17 @@ describe("diffLines", () => {
     // Diff against "alpha" should show 1 equal-blank or 1 remove + 1 add;
     // either is acceptable as long as the summary is consistent with
     // the entries.
-    expect(emptyToContent.summary.unchanged + emptyToContent.summary.removed)
-      .toBe(1);
-    expect(emptyToContent.summary.added + emptyToContent.summary.unchanged)
-      .toBe(1);
+    expect(
+      emptyToContent.summary.unchanged + emptyToContent.summary.removed,
+    ).toBe(1);
+    expect(
+      emptyToContent.summary.added + emptyToContent.summary.unchanged,
+    ).toBe(1);
 
     const contentToEmpty = diffLines("alpha", "");
-    expect(contentToEmpty.summary.removed + contentToEmpty.summary.unchanged)
-      .toBe(1);
+    expect(
+      contentToEmpty.summary.removed + contentToEmpty.summary.unchanged,
+    ).toBe(1);
   });
 
   it("falls back to a single replace block past the line cap", () => {

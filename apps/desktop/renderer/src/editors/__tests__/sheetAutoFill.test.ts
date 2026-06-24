@@ -117,11 +117,7 @@ describe("sheetAutoFill", () => {
     });
 
     it("falls through to copy when sources mix text and numbers", () => {
-      expect(fillSeries(["foo", "1"], 3, "down")).toEqual([
-        "foo",
-        "1",
-        "foo",
-      ]);
+      expect(fillSeries(["foo", "1"], 3, "down")).toEqual(["foo", "1", "foo"]);
     });
 
     it("returns empty array when length is zero", () => {

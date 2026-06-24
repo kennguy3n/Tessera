@@ -10,13 +10,7 @@
  * computed result for known inputs.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  within,
-  act,
-} from "@testing-library/react";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import BaseEditor from "../BaseEditor";
 
 function flushSave() {
@@ -288,8 +282,9 @@ describe("BaseEditor — long_text field", () => {
 
     // Cells in OTHER records / OTHER fields stay editable — the lock
     // is scoped to the exact (recordId, fieldName) pair.
-    const otherInput = screen.getByDisplayValue("untouched") as
-      HTMLInputElement;
+    const otherInput = screen.getByDisplayValue(
+      "untouched",
+    ) as HTMLInputElement;
     expect(otherInput.disabled).toBe(false);
   });
 });
@@ -300,8 +295,9 @@ describe("BaseEditor — email field", () => {
       fields: [{ name: "Email", type: "email" }],
       records: [{ id: "r1", Email: "" }],
     });
-    const input = screen.getByPlaceholderText("name@example.com") as
-      HTMLInputElement;
+    const input = screen.getByPlaceholderText(
+      "name@example.com",
+    ) as HTMLInputElement;
     expect(input.type).toBe("email");
     fireEvent.change(input, { target: { value: "test@example.com" } });
     await flushSave();
@@ -315,7 +311,9 @@ describe("BaseEditor — phone field", () => {
       fields: [{ name: "Phone", type: "phone" }],
       records: [{ id: "r1", Phone: "" }],
     });
-    const input = screen.getByPlaceholderText("+1 555-0123") as HTMLInputElement;
+    const input = screen.getByPlaceholderText(
+      "+1 555-0123",
+    ) as HTMLInputElement;
     expect(input.type).toBe("tel");
     fireEvent.change(input, { target: { value: "555-1234" } });
     await flushSave();
@@ -653,9 +651,7 @@ describe("BaseEditor — record-identity guards", () => {
 describe("BaseEditor — formula cycle detection", () => {
   it("returns #CIRCULAR! for a self-referencing formula instead of crashing", () => {
     renderEditor({
-      fields: [
-        { name: "Self", type: "formula", formula: "{Self} + 1" },
-      ],
+      fields: [{ name: "Self", type: "formula", formula: "{Self} + 1" }],
       records: [{ id: "r1", Self: null }],
     });
     // The rendered cell should display #CIRCULAR! — the engine's
@@ -834,9 +830,7 @@ describe("BaseEditor — bulk-delete scoped to visible records", () => {
 
     // Trigger the bulk delete. Only the two visible (`alpha`) rows
     // should be removed; the two hidden (`beta`) rows must survive.
-    fireEvent.click(
-      screen.getByRole("button", { name: /Delete 2 selected/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Delete 2 selected/ }));
     await flushSave();
     const records = lastSavedRecords(onSave);
     expect(records).toHaveLength(2);
@@ -866,7 +860,9 @@ describe("BaseEditor — expanded modal auto-closes when target record is delete
     const expandButtons = screen.getAllByTitle("Expand");
     fireEvent.click(expandButtons[0]);
     // The modal opens (dialog role with name `Edit Body`).
-    expect(screen.getByRole("dialog", { name: /Edit Body/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: /Edit Body/ }),
+    ).toBeInTheDocument();
     // Now delete r1 from the grid. With the cleanup effect in
     // place, the modal should disappear because expandedCell is
     // cleared to null.
@@ -911,9 +907,7 @@ describe("BaseEditor — expanded modal auto-closes when target field is removed
     await flushSave();
     // The cleanup effect must have cleared `expandedCell`, so the
     // dialog is gone.
-    expect(
-      screen.queryByRole("dialog", { name: /Edit Body/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("dialog", { name: /Edit Body/ })).toBeNull();
   });
 
   it("does not write the removed field's key back when the modal closes silently", async () => {

@@ -290,9 +290,7 @@ export async function enqueueFailedExport(args: {
   // catcher rather than a behavioural change for any reachable
   // code path today.
   if (typeof args.filePath !== "string" || args.filePath.length === 0) {
-    throw new Error(
-      "enqueueFailedExport: filePath must be a non-empty string",
-    );
+    throw new Error("enqueueFailedExport: filePath must be a non-empty string");
   }
   if (!path.isAbsolute(args.filePath)) {
     throw new Error(

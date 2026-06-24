@@ -70,7 +70,9 @@ interface AuditActivityCardProps {
   api?: typeof window.tessera.audit;
 }
 
-export default function AuditActivityCard({ api }: AuditActivityCardProps = {}) {
+export default function AuditActivityCard({
+  api,
+}: AuditActivityCardProps = {}) {
   const audit = api ?? window.tessera?.audit;
   const [events, setEvents] = useState<AuditEventView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,7 +119,9 @@ export default function AuditActivityCard({ api }: AuditActivityCardProps = {}) 
           marginBottom: "var(--spacing-md)",
         }}
       >
-        <h2 className="section-title" style={{ margin: 0 }}>Recent activity</h2>
+        <h2 className="section-title" style={{ margin: 0 }}>
+          Recent activity
+        </h2>
         <Button variant="secondary" onClick={refresh} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh"}
         </Button>
@@ -129,9 +133,9 @@ export default function AuditActivityCard({ api }: AuditActivityCardProps = {}) 
           marginBottom: "var(--spacing-md)",
         }}
       >
-        Every connect, share, model start, and source change is appended to
-        the local audit log. Filter by category to focus on a subset (KChat
-        sharing, connector sync, model lifecycle, …).
+        Every connect, share, model start, and source change is appended to the
+        local audit log. Filter by category to focus on a subset (KChat sharing,
+        connector sync, model lifecycle, …).
       </p>
 
       <div
@@ -230,7 +234,8 @@ export default function AuditActivityCard({ api }: AuditActivityCardProps = {}) 
               >
                 <span
                   style={{
-                    fontWeight: "var(--font-weight-medium)" as unknown as number,
+                    fontWeight:
+                      "var(--font-weight-medium)" as unknown as number,
                     color: "var(--color-text-headline)",
                   }}
                 >

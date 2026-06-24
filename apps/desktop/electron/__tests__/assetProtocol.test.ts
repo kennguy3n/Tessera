@@ -80,9 +80,11 @@ let capturedHandler:
   | ((request: Request) => Promise<Response> | Response)
   | null = null;
 const registerSchemesMock = vi.fn();
-const protocolHandleMock = vi.fn((_scheme: string, handler: typeof capturedHandler) => {
-  capturedHandler = handler;
-});
+const protocolHandleMock = vi.fn(
+  (_scheme: string, handler: typeof capturedHandler) => {
+    capturedHandler = handler;
+  },
+);
 const netFetchMock = vi.fn(async (url: string, _opts?: unknown) => {
   return new Response(`fetched:${url}`, {
     status: 200,

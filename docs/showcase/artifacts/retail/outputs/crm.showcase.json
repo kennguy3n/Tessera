@@ -1,1 +1,196 @@
-{"tables": [{"id": "tbl-accounts", "name": "Accounts", "fields": [{"name": "Account", "type": "text"}, {"name": "Region", "type": "select", "options": ["West", "Central", "East", "Intl"]}, {"name": "Owner", "type": "linked_record", "linkedTableId": "tbl-reps", "linkedDisplayField": "Name"}, {"name": "ARR($)", "type": "text"}, {"name": "Open Opportunity", "type": "text"}, {"name": "Amount($)", "type": "text"}, {"name": "Stage", "type": "select", "options": ["Best Case", "Commit (save)", "Commit", "Pipeline"]}, {"name": "Health", "type": "select", "options": ["Green", "Yellow", "Red"]}, {"name": "Rep Region", "type": "lookup", "linkedField": "Owner", "targetField": "Region"}, {"name": "Health Score", "type": "rating"}], "records": [{"id": "rec-acct-0", "Account": "Summit Sports", "Region": "West", "Owner": ["rec-rep-0"], "ARR($)": "1.2M", "Open Opportunity": "Footwear expansion", "Amount($)": "220K", "Stage": "Best Case", "Health": "Green", "Health Score": 5, "__created": "2026-01-06T09:00:00.000Z", "__modified": "2026-03-28T17:20:00.000Z", "__comments": [{"id": "cm-1", "author": "Marcus Chen", "body": "Renewal in commit; expansion into footwear line being scoped.", "createdAt": "2026-03-10T11:00:00.000Z"}, {"id": "cm-2", "author": "A. Okafor", "body": "Champion confirmed budget. Pushing for Q2 close.", "createdAt": "2026-03-28T17:20:00.000Z"}]}, {"id": "rec-acct-1", "Account": "Alpine Co-op", "Region": "Central", "Owner": ["rec-rep-1"], "ARR($)": "780K", "Open Opportunity": "Retention/renewal", "Amount($)": "410K", "Stage": "Commit (save)", "Health": "Yellow", "Health Score": 3}, {"id": "rec-acct-2", "Account": "TrailMart", "Region": "East", "Owner": ["rec-rep-2"], "ARR($)": "2.1M", "Open Opportunity": "Private-label packs", "Amount($)": "540K", "Stage": "Commit", "Health": "Green", "Health Score": 5}, {"id": "rec-acct-3", "Account": "Nordic Outfitters", "Region": "Intl", "Owner": ["rec-rep-3"], "ARR($)": "640K", "Open Opportunity": "Scandinavia lane", "Amount($)": "300K", "Stage": "Pipeline", "Health": "Green", "Health Score": 5}, {"id": "rec-acct-4", "Account": "Urban Trek", "Region": "West", "Owner": ["rec-rep-0"], "ARR($)": "410K", "Open Opportunity": "Retention/renewal", "Amount($)": "410K", "Stage": "Commit (save)", "Health": "Red", "Health Score": 1}, {"id": "rec-acct-5", "Account": "RidgeLine Gear", "Region": "Intl", "Owner": ["rec-rep-0"], "ARR($)": "", "Open Opportunity": "New logo \u2014 RidgeLine", "Amount($)": "180K", "Stage": "Best Case", "Health": "Green", "Health Score": 5}]}, {"id": "tbl-reps", "name": "Sales Reps", "fields": [{"name": "Name", "type": "text"}, {"name": "Region", "type": "select", "options": ["West", "Central", "East", "Intl"]}, {"name": "Email", "type": "email"}, {"name": "Accounts", "type": "linked_record", "linkedTableId": "tbl-accounts", "linkedDisplayField": "Account"}, {"name": "Account Count", "type": "rollup", "linkedField": "Accounts", "targetField": "Account", "aggregation": "COUNT"}, {"name": "Account ARRs", "type": "rollup", "linkedField": "Accounts", "targetField": "ARR($)", "aggregation": "CONCAT"}], "records": [{"id": "rec-rep-0", "Name": "A. Okafor", "Region": "West", "Email": "a.okafor@northwind.example", "Accounts": ["rec-acct-0", "rec-acct-4", "rec-acct-5"]}, {"id": "rec-rep-1", "Name": "R. Mills", "Region": "Central", "Email": "r.mills@northwind.example", "Accounts": ["rec-acct-1"]}, {"id": "rec-rep-2", "Name": "D. Singh", "Region": "East", "Email": "d.singh@northwind.example", "Accounts": ["rec-acct-2"]}, {"id": "rec-rep-3", "Name": "L. Tran", "Region": "Intl", "Email": "l.tran@northwind.example", "Accounts": ["rec-acct-3"]}]}], "activeTableId": "tbl-accounts"}
+{
+  "tables": [
+    {
+      "id": "tbl-accounts",
+      "name": "Accounts",
+      "fields": [
+        { "name": "Account", "type": "text" },
+        {
+          "name": "Region",
+          "type": "select",
+          "options": ["West", "Central", "East", "Intl"]
+        },
+        {
+          "name": "Owner",
+          "type": "linked_record",
+          "linkedTableId": "tbl-reps",
+          "linkedDisplayField": "Name"
+        },
+        { "name": "ARR($)", "type": "text" },
+        { "name": "Open Opportunity", "type": "text" },
+        { "name": "Amount($)", "type": "text" },
+        {
+          "name": "Stage",
+          "type": "select",
+          "options": ["Best Case", "Commit (save)", "Commit", "Pipeline"]
+        },
+        {
+          "name": "Health",
+          "type": "select",
+          "options": ["Green", "Yellow", "Red"]
+        },
+        {
+          "name": "Rep Region",
+          "type": "lookup",
+          "linkedField": "Owner",
+          "targetField": "Region"
+        },
+        { "name": "Health Score", "type": "rating" }
+      ],
+      "records": [
+        {
+          "id": "rec-acct-0",
+          "Account": "Summit Sports",
+          "Region": "West",
+          "Owner": ["rec-rep-0"],
+          "ARR($)": "1.2M",
+          "Open Opportunity": "Footwear expansion",
+          "Amount($)": "220K",
+          "Stage": "Best Case",
+          "Health": "Green",
+          "Health Score": 5,
+          "__created": "2026-01-06T09:00:00.000Z",
+          "__modified": "2026-03-28T17:20:00.000Z",
+          "__comments": [
+            {
+              "id": "cm-1",
+              "author": "Marcus Chen",
+              "body": "Renewal in commit; expansion into footwear line being scoped.",
+              "createdAt": "2026-03-10T11:00:00.000Z"
+            },
+            {
+              "id": "cm-2",
+              "author": "A. Okafor",
+              "body": "Champion confirmed budget. Pushing for Q2 close.",
+              "createdAt": "2026-03-28T17:20:00.000Z"
+            }
+          ]
+        },
+        {
+          "id": "rec-acct-1",
+          "Account": "Alpine Co-op",
+          "Region": "Central",
+          "Owner": ["rec-rep-1"],
+          "ARR($)": "780K",
+          "Open Opportunity": "Retention/renewal",
+          "Amount($)": "410K",
+          "Stage": "Commit (save)",
+          "Health": "Yellow",
+          "Health Score": 3
+        },
+        {
+          "id": "rec-acct-2",
+          "Account": "TrailMart",
+          "Region": "East",
+          "Owner": ["rec-rep-2"],
+          "ARR($)": "2.1M",
+          "Open Opportunity": "Private-label packs",
+          "Amount($)": "540K",
+          "Stage": "Commit",
+          "Health": "Green",
+          "Health Score": 5
+        },
+        {
+          "id": "rec-acct-3",
+          "Account": "Nordic Outfitters",
+          "Region": "Intl",
+          "Owner": ["rec-rep-3"],
+          "ARR($)": "640K",
+          "Open Opportunity": "Scandinavia lane",
+          "Amount($)": "300K",
+          "Stage": "Pipeline",
+          "Health": "Green",
+          "Health Score": 5
+        },
+        {
+          "id": "rec-acct-4",
+          "Account": "Urban Trek",
+          "Region": "West",
+          "Owner": ["rec-rep-0"],
+          "ARR($)": "410K",
+          "Open Opportunity": "Retention/renewal",
+          "Amount($)": "410K",
+          "Stage": "Commit (save)",
+          "Health": "Red",
+          "Health Score": 1
+        },
+        {
+          "id": "rec-acct-5",
+          "Account": "RidgeLine Gear",
+          "Region": "Intl",
+          "Owner": ["rec-rep-0"],
+          "ARR($)": "",
+          "Open Opportunity": "New logo \u2014 RidgeLine",
+          "Amount($)": "180K",
+          "Stage": "Best Case",
+          "Health": "Green",
+          "Health Score": 5
+        }
+      ]
+    },
+    {
+      "id": "tbl-reps",
+      "name": "Sales Reps",
+      "fields": [
+        { "name": "Name", "type": "text" },
+        {
+          "name": "Region",
+          "type": "select",
+          "options": ["West", "Central", "East", "Intl"]
+        },
+        { "name": "Email", "type": "email" },
+        {
+          "name": "Accounts",
+          "type": "linked_record",
+          "linkedTableId": "tbl-accounts",
+          "linkedDisplayField": "Account"
+        },
+        {
+          "name": "Account Count",
+          "type": "rollup",
+          "linkedField": "Accounts",
+          "targetField": "Account",
+          "aggregation": "COUNT"
+        },
+        {
+          "name": "Account ARRs",
+          "type": "rollup",
+          "linkedField": "Accounts",
+          "targetField": "ARR($)",
+          "aggregation": "CONCAT"
+        }
+      ],
+      "records": [
+        {
+          "id": "rec-rep-0",
+          "Name": "A. Okafor",
+          "Region": "West",
+          "Email": "a.okafor@northwind.example",
+          "Accounts": ["rec-acct-0", "rec-acct-4", "rec-acct-5"]
+        },
+        {
+          "id": "rec-rep-1",
+          "Name": "R. Mills",
+          "Region": "Central",
+          "Email": "r.mills@northwind.example",
+          "Accounts": ["rec-acct-1"]
+        },
+        {
+          "id": "rec-rep-2",
+          "Name": "D. Singh",
+          "Region": "East",
+          "Email": "d.singh@northwind.example",
+          "Accounts": ["rec-acct-2"]
+        },
+        {
+          "id": "rec-rep-3",
+          "Name": "L. Tran",
+          "Region": "Intl",
+          "Email": "l.tran@northwind.example",
+          "Accounts": ["rec-acct-3"]
+        }
+      ]
+    }
+  ],
+  "activeTableId": "tbl-accounts"
+}

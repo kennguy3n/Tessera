@@ -66,7 +66,10 @@ import {
   DEFAULT_HYBRID_SEARCH_CONFIG,
   _clearConfigCacheForTests,
 } from "../config";
-import { registerSettingsHandlers, replayPersistedHybridSearchConfigToBridge } from "../ipc/settings";
+import {
+  registerSettingsHandlers,
+  replayPersistedHybridSearchConfigToBridge,
+} from "../ipc/settings";
 import { registerSourcesHandlers } from "../ipc/sources";
 import { defaultRateLimiter } from "../ipc/rateLimiter";
 import type {
@@ -76,7 +79,9 @@ import type {
   BackfillEmbeddingsResult,
 } from "../../shared/types";
 
-function getHandler(channel: string): (event: unknown, ...args: unknown[]) => unknown {
+function getHandler(
+  channel: string,
+): (event: unknown, ...args: unknown[]) => unknown {
   const call = handleMock.mock.calls.find((c) => c[0] === channel);
   if (!call) {
     throw new Error(`No handler registered for ${channel}`);
@@ -149,7 +154,9 @@ function makeBridge(initial: HybridSearchConfigInfo): {
       // that forgets to `await` (and silently reads a field off
       // the Promise) will fail in tests the same way it would in
       // production.
-      async (_batchSize?: number | null): Promise<BackfillEmbeddingsResult> => ({
+      async (
+        _batchSize?: number | null,
+      ): Promise<BackfillEmbeddingsResult> => ({
         embedded: 7,
         progress: {
           status: "done",
@@ -248,10 +255,13 @@ describe("hybrid search config IPC", () => {
     stubBridge = bridge;
     registerSettingsHandlers();
     const handler = getHandler("settings:updateHybridSearchConfig");
-    const result = (await handler({}, {
-      vectorWeight: 0.6,
-      recencyHalflifeSecs: 3 * 24 * 60 * 60,
-    })) as HybridSearchConfigInfo;
+    const result = (await handler(
+      {},
+      {
+        vectorWeight: 0.6,
+        recencyHalflifeSecs: 3 * 24 * 60 * 60,
+      },
+    )) as HybridSearchConfigInfo;
     expect(result.vectorWeight).toBe(0.6);
     expect(result.recencyHalflifeSecs).toBe(3 * 24 * 60 * 60);
     expect(bridge.bridgeUpdateHybridSearchConfig).toHaveBeenCalledTimes(1);
@@ -342,10 +352,7 @@ describe("hybrid search config IPC", () => {
       ["hybridSearch.vectorWeight", "0.6"],
       ["hybridSearch.rrfK", "75"],
       ["hybridSearch.recencyDecayEnabled", "true"],
-      [
-        "hybridSearch.recencyHalflifeSecs",
-        String(14 * 24 * 60 * 60),
-      ],
+      ["hybridSearch.recencyHalflifeSecs", String(14 * 24 * 60 * 60)],
       // `candidatePoolSize` is preserved from the prior config because
       // the update payload did not pass a new value; the bridge mock
       // surfaces whatever is currently stored. Default seed is `0`.
@@ -393,21 +400,16 @@ describe("hybrid search config IPC", () => {
     await handler({}, { recencyDecayEnabled: false });
     const calls = bridge.bridgeLogSettingsChanged.mock.calls;
     const halflifeRow = calls.find(
-      (c: [string, string]) =>
-        c[0] === "hybridSearch.recencyHalflifeSecs",
+      (c: [string, string]) => c[0] === "hybridSearch.recencyHalflifeSecs",
     );
     expect(halflifeRow).toEqual([
       "hybridSearch.recencyHalflifeSecs",
       "disabled",
     ]);
     const decayRow = calls.find(
-      (c: [string, string]) =>
-        c[0] === "hybridSearch.recencyDecayEnabled",
+      (c: [string, string]) => c[0] === "hybridSearch.recencyDecayEnabled",
     );
-    expect(decayRow).toEqual([
-      "hybridSearch.recencyDecayEnabled",
-      "false",
-    ]);
+    expect(decayRow).toEqual(["hybridSearch.recencyDecayEnabled", "false"]);
   });
 
   it("settings:updateHybridSearchConfig rate-limits aggressive updates beyond burst", async () => {

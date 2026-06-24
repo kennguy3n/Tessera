@@ -90,7 +90,10 @@ export class MemoryWatchdog {
   private readonly lowWaterMarkBytes: number;
   private readonly pollIntervalMs: number;
   private readonly sampleRssBytes: () => number;
-  private readonly onPressureChange?: (paused: boolean, rssBytes: number) => void;
+  private readonly onPressureChange?: (
+    paused: boolean,
+    rssBytes: number,
+  ) => void;
 
   private paused = false;
   private lastRssBytes = 0;

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import ConceptGraphPanel from "../components/ConceptGraphPanel";
 import type { SubstrateMemoryInfo } from "../types/ipc";
 
@@ -11,13 +17,43 @@ import type { SubstrateMemoryInfo } from "../types/ipc";
 
 const GRAPH_JSON = JSON.stringify({
   nodes: [
-    { id: "atlas", label: "Atlas", state: "Canonical", scope_id: "scope-a", connections_count: 2 },
-    { id: "project", label: "Project", state: "candidate", scope_id: "scope-a", connections_count: 1 },
-    { id: "beacon", label: "Beacon", state: "candidate", scope_id: "scope-b", connections_count: 1 },
+    {
+      id: "atlas",
+      label: "Atlas",
+      state: "Canonical",
+      scope_id: "scope-a",
+      connections_count: 2,
+    },
+    {
+      id: "project",
+      label: "Project",
+      state: "candidate",
+      scope_id: "scope-a",
+      connections_count: 1,
+    },
+    {
+      id: "beacon",
+      label: "Beacon",
+      state: "candidate",
+      scope_id: "scope-b",
+      connections_count: 1,
+    },
   ],
   edges: [
-    { id: "e1", from: "atlas", to: "project", relation_type: "is_a", scope_id: "scope-a" },
-    { id: "e2", from: "atlas", to: "beacon", relation_type: "part_of", scope_id: "scope-b" },
+    {
+      id: "e1",
+      from: "atlas",
+      to: "project",
+      relation_type: "is_a",
+      scope_id: "scope-a",
+    },
+    {
+      id: "e2",
+      from: "atlas",
+      to: "beacon",
+      relation_type: "part_of",
+      scope_id: "scope-b",
+    },
   ],
   scope_filter: [],
   depth: 2,
@@ -106,7 +142,9 @@ describe("ConceptGraphPanel", () => {
     // Filtering to scope-b drops the scope-a-only "project" node.
     fireEvent.change(select, { target: { value: "scope-b" } });
     await waitFor(() =>
-      expect(screen.queryByTestId("concept-node-project")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByTestId("concept-node-project"),
+      ).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("concept-node-beacon")).toBeInTheDocument();
   });
@@ -190,7 +228,9 @@ describe("ConceptGraphPanel", () => {
     fireEvent.click(screen.getByTestId("concept-node-project"));
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(screen.queryByTestId("concept-node-beacon")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByTestId("concept-node-beacon"),
+      ).not.toBeInTheDocument(),
     );
     expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
     expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument();
@@ -299,9 +339,9 @@ describe("ConceptGraphPanel", () => {
     const focusable = nodes.filter((n) => n.getAttribute("tabindex") === "0");
     expect(focusable).toHaveLength(1);
     // Every other node is reachable only by arrow keys (tabindex -1).
-    expect(nodes.filter((n) => n.getAttribute("tabindex") === "-1")).toHaveLength(
-      nodes.length - 1,
-    );
+    expect(
+      nodes.filter((n) => n.getAttribute("tabindex") === "-1"),
+    ).toHaveLength(nodes.length - 1);
   });
 
   it("selects a node with Enter and announces it on the live region", async () => {
@@ -309,7 +349,9 @@ describe("ConceptGraphPanel", () => {
     await waitFor(() =>
       expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
     );
-    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), {
+      key: "Enter",
+    });
     expect(await screen.findByTestId("concept-detail")).toBeInTheDocument();
     // Debounced live-region announcement names the node + its degree.
     await waitFor(() =>
@@ -325,7 +367,9 @@ describe("ConceptGraphPanel", () => {
       expect(screen.getByTestId("concept-node-project")).toBeInTheDocument(),
     );
     // From any node, End targets the hub (atlas, degree 2).
-    fireEvent.keyDown(screen.getByTestId("concept-node-project"), { key: "End" });
+    fireEvent.keyDown(screen.getByTestId("concept-node-project"), {
+      key: "End",
+    });
     await waitFor(() =>
       expect(screen.getByTestId("concept-node-atlas")).toHaveAttribute(
         "tabindex",
@@ -339,9 +383,13 @@ describe("ConceptGraphPanel", () => {
     await waitFor(() =>
       expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
     );
-    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), {
+      key: "Enter",
+    });
     expect(await screen.findByTestId("concept-detail")).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), {
+      key: "Escape",
+    });
     await waitFor(() =>
       expect(screen.getByTestId("concept-detail-empty")).toBeInTheDocument(),
     );
@@ -416,7 +464,9 @@ describe("ConceptGraphPanel", () => {
     // Seed the roving focus on a *different* node first; `effectiveRovingId`
     // prefers a valid rovingId over the selection, so without endPointer
     // updating rovingId the tabindex would stay stranded on atlas.
-    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("concept-node-atlas"), {
+      key: "Enter",
+    });
     await waitFor(() =>
       expect(screen.getByTestId("concept-node-atlas")).toHaveAttribute(
         "tabindex",
@@ -444,7 +494,9 @@ describe("ConceptGraphPanel", () => {
   });
 
   it("persists filters + selection across a remount (same scope)", async () => {
-    const first = render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />);
+    const first = render(
+      <ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />,
+    );
     await waitFor(() =>
       expect(screen.getByTestId("concept-node-atlas")).toBeInTheDocument(),
     );
@@ -455,16 +507,16 @@ describe("ConceptGraphPanel", () => {
     // Wait for the debounced write to land in localStorage.
     await waitFor(() =>
       expect(
-        window.localStorage.getItem(
-          "tessera.conceptGraph.viewState.scope-x",
-        ),
+        window.localStorage.getItem("tessera.conceptGraph.viewState.scope-x"),
       ).toBeTruthy(),
     );
     first.unmount();
 
     // Remount the same scope: the selection is restored from storage.
     render(<ConceptGraphPanel memories={EVIDENCE} scope="scope-x" />);
-    expect(await screen.findByTestId("concept-detail")).toHaveTextContent("Atlas");
+    expect(await screen.findByTestId("concept-detail")).toHaveTextContent(
+      "Atlas",
+    );
   });
 
   it("flushes a pending view-state change on unmount (no debounce loss)", async () => {
@@ -504,7 +556,9 @@ describe("ConceptGraphPanel", () => {
     );
     // The graph renders normally (no crash, not stuck in an empty local view).
     expect(screen.getByTestId("concept-node-project")).toBeInTheDocument();
-    expect(screen.queryByTestId("concept-graph-focus-pill")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("concept-graph-focus-pill"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("concept-detail-empty")).toBeInTheDocument();
   });
 

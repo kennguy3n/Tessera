@@ -106,7 +106,8 @@ describe("MermaidNode TipTap extension", () => {
     editor.commands.updateMermaidDsl("flowchart LR\nX-->Y");
     let nextDsl: string | null = null;
     editor.state.doc.descendants((node) => {
-      if (node.type.name === "mermaid") nextDsl = (node.attrs as { dsl: string }).dsl;
+      if (node.type.name === "mermaid")
+        nextDsl = (node.attrs as { dsl: string }).dsl;
     });
     expect(nextDsl).toBe("flowchart LR\nX-->Y");
   });
@@ -126,7 +127,8 @@ describe("MermaidNode TipTap extension", () => {
     );
     let parsedDsl: string | null = null;
     editor.state.doc.descendants((node) => {
-      if (node.type.name === "mermaid") parsedDsl = (node.attrs as { dsl: string }).dsl;
+      if (node.type.name === "mermaid")
+        parsedDsl = (node.attrs as { dsl: string }).dsl;
     });
     expect(parsedDsl).toBe("pie\ntitle Roundtrip\nA: 2");
   });

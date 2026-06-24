@@ -17,11 +17,7 @@
  * way to suppress a `FormulaError` returned from a sub-tree without
  * losing the error's structure.
  */
-import {
-  evaluate,
-  toBoolean,
-  type FunctionImpl,
-} from "../evaluator";
+import { evaluate, toBoolean, type FunctionImpl } from "../evaluator";
 import {
   isFormulaError,
   makeError,
@@ -43,7 +39,8 @@ const IF: FunctionImpl = (args, ctx) => {
 };
 
 const AND: FunctionImpl = (args, ctx) => {
-  if (args.length === 0) return makeError("#ERR!", "AND expects at least 1 argument");
+  if (args.length === 0)
+    return makeError("#ERR!", "AND expects at least 1 argument");
   for (const arg of args) {
     const v = evaluate(arg, ctx);
     if (isFormulaError(v)) return v;
@@ -55,7 +52,8 @@ const AND: FunctionImpl = (args, ctx) => {
 };
 
 const OR: FunctionImpl = (args, ctx) => {
-  if (args.length === 0) return makeError("#ERR!", "OR expects at least 1 argument");
+  if (args.length === 0)
+    return makeError("#ERR!", "OR expects at least 1 argument");
   for (const arg of args) {
     const v = evaluate(arg, ctx);
     if (isFormulaError(v)) return v;
@@ -76,7 +74,8 @@ const NOT: FunctionImpl = (args, ctx) => {
 };
 
 const IFERROR: FunctionImpl = (args, ctx) => {
-  if (args.length !== 2) return makeError("#ERR!", "IFERROR expects 2 arguments");
+  if (args.length !== 2)
+    return makeError("#ERR!", "IFERROR expects 2 arguments");
   let primary: FormulaValue;
   try {
     primary = evaluate(args[0], ctx);
@@ -107,7 +106,10 @@ const IFS: FunctionImpl = (args, ctx) => {
 
 const SWITCH: FunctionImpl = (args, ctx) => {
   if (args.length < 3) {
-    return makeError("#ERR!", "SWITCH expects expr + at least one (match, value) pair");
+    return makeError(
+      "#ERR!",
+      "SWITCH expects expr + at least one (match, value) pair",
+    );
   }
   const expr = evaluate(args[0], ctx);
   if (isFormulaError(expr)) return expr;
@@ -130,7 +132,8 @@ function equals(a: FormulaValue, b: FormulaValue): boolean {
   if (a === null) a = "";
   if (b === null) b = "";
   if (typeof a === typeof b) {
-    if (typeof a === "string") return a.toLowerCase() === (b as string).toLowerCase();
+    if (typeof a === "string")
+      return a.toLowerCase() === (b as string).toLowerCase();
     return a === b;
   }
   return false;
@@ -192,7 +195,8 @@ function isPredicate(
   test: (v: FormulaValue) => boolean,
 ): FunctionImpl {
   return (args, ctx) => {
-    if (args.length !== 1) return makeError("#ERR!", `${name} expects 1 argument`);
+    if (args.length !== 1)
+      return makeError("#ERR!", `${name} expects 1 argument`);
     const v = evaluate(args[0], ctx);
     // IS* functions never propagate errors — that's the whole point
     // of ISERROR / ISERR / ISNA. They classify the value instead.
@@ -203,20 +207,14 @@ function isPredicate(
 const ISBLANK = isPredicate("ISBLANK", (v) => v === null);
 const ISNUMBER = isPredicate("ISNUMBER", (v) => typeof v === "number");
 const ISTEXT = isPredicate("ISTEXT", (v) => typeof v === "string");
-const ISNONTEXT = isPredicate(
-  "ISNONTEXT",
-  (v) => typeof v !== "string",
-);
+const ISNONTEXT = isPredicate("ISNONTEXT", (v) => typeof v !== "string");
 const ISLOGICAL = isPredicate("ISLOGICAL", (v) => typeof v === "boolean");
 const ISERROR = isPredicate("ISERROR", (v) => isFormulaError(v));
 const ISERR = isPredicate(
   "ISERR",
   (v) => isFormulaError(v) && v.code !== "#N/A",
 );
-const ISNA = isPredicate(
-  "ISNA",
-  (v) => isFormulaError(v) && v.code === "#N/A",
-);
+const ISNA = isPredicate("ISNA", (v) => isFormulaError(v) && v.code === "#N/A");
 
 export const LOGIC_FUNCTIONS: Record<string, FunctionImpl> = {
   IF,
@@ -243,7 +241,9 @@ export const LOGIC_FUNCTIONS: Record<string, FunctionImpl> = {
 };
 
 // Re-exported for callers that need to know which codes IFERROR catches.
-export const ERROR_CODES_CAUGHT_BY_IFERROR: ReadonlyArray<FormulaError["code"]> = [
+export const ERROR_CODES_CAUGHT_BY_IFERROR: ReadonlyArray<
+  FormulaError["code"]
+> = [
   "#ERR!",
   "#REF!",
   "#NAME?",

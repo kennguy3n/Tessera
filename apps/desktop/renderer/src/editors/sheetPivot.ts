@@ -78,7 +78,10 @@ function emptyBucket(): Bucket {
 }
 
 /** Apply an aggregation to a bucket; `null` when there is nothing to show. */
-function aggregate(agg: PivotAggregation, b: Bucket | undefined): number | null {
+function aggregate(
+  agg: PivotAggregation,
+  b: Bucket | undefined,
+): number | null {
   if (!b) return null;
   if (agg === "count") return b.count;
   if (b.values.length === 0) return null;
@@ -111,7 +114,11 @@ function pushRecord(b: Bucket, value: number | null, nonEmpty: boolean): void {
 }
 
 /** Resolve a header label for a grid column, falling back to its letter. */
-function headerLabel(textAt: TextValueAt, headerRow: number, col: number): string {
+function headerLabel(
+  textAt: TextValueAt,
+  headerRow: number,
+  col: number,
+): string {
   const text = textAt(headerRow, col).trim();
   return text !== "" ? text : columnLetter(col);
 }

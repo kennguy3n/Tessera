@@ -157,7 +157,11 @@ function buildDecorations(
 ): DecorationSet {
   if (!highlight.query) return DecorationSet.empty;
   const snapshot = buildDocText(doc);
-  const matches = findAllMatches(snapshot.text, highlight.query, highlight.opts);
+  const matches = findAllMatches(
+    snapshot.text,
+    highlight.query,
+    highlight.opts,
+  );
   if (matches.length === 0) return DecorationSet.empty;
   const decos: Decoration[] = [];
   for (let i = 0; i < matches.length; i += 1) {
@@ -251,7 +255,9 @@ export const FindReplaceExtension = Extension.create({
         },
         props: {
           decorations(state) {
-            return PLUGIN_KEY.getState(state)?.decorations ?? DecorationSet.empty;
+            return (
+              PLUGIN_KEY.getState(state)?.decorations ?? DecorationSet.empty
+            );
           },
         },
       }),
@@ -281,4 +287,7 @@ export const FindReplaceExtension = Extension.create({
   },
 });
 
-export { PLUGIN_KEY as FindReplacePluginKey, EMPTY_OPTS as DEFAULT_FIND_OPTIONS };
+export {
+  PLUGIN_KEY as FindReplacePluginKey,
+  EMPTY_OPTS as DEFAULT_FIND_OPTIONS,
+};

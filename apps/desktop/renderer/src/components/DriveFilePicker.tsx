@@ -11,7 +11,10 @@ interface BreadcrumbEntry {
   name: string;
 }
 
-export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerProps) {
+export default function DriveFilePicker({
+  onSelect,
+  onCancel,
+}: DriveFilePickerProps) {
   const [files, setFiles] = useState<ConnectorFileInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -24,50 +27,56 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
 
   const currentFolderId = breadcrumbs[breadcrumbs.length - 1].id;
 
-  const loadFiles = useCallback(async (folderId: string, pageToken?: string) => {
-    const api = window.tessera;
-    if (!api) return;
-    if (pageToken) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const fid = folderId === "root" ? undefined : folderId;
-      const result: DriveFileListResult = await api.connectors.listDriveFiles(fid, pageToken);
-      // `offline: true` is the soft-offline contract the IPC handler
-      // returns when it catches a transport failure (DNS, TCP, TLS,
-      // fetch reject without status) so the picker can render a
-      // network-specific affordance instead of a misleading
-      // "Auth expired" banner.
-      if (result.offline) {
-        setError(
-          "You appear to be offline. Check your network connection and try again.",
-        );
-        // Drop the page token so a retry refetches from the first
-        // page rather than trying to resume a paginated cursor that
-        // the soft-offline branch never advanced.
-        nextPageTokenRef.current = null;
-        if (!pageToken) {
-          setFiles([]);
-        }
-        return;
-      }
-      const items = result.files ?? [];
+  const loadFiles = useCallback(
+    async (folderId: string, pageToken?: string) => {
+      const api = window.tessera;
+      if (!api) return;
       if (pageToken) {
-        setFiles((prev) => [...prev, ...items]);
+        setLoadingMore(true);
       } else {
-        setFiles(items);
+        setLoading(true);
+        setError(null);
       }
-      nextPageTokenRef.current = result.nextPageToken ?? null;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to list files");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, []);
+      try {
+        const fid = folderId === "root" ? undefined : folderId;
+        const result: DriveFileListResult = await api.connectors.listDriveFiles(
+          fid,
+          pageToken,
+        );
+        // `offline: true` is the soft-offline contract the IPC handler
+        // returns when it catches a transport failure (DNS, TCP, TLS,
+        // fetch reject without status) so the picker can render a
+        // network-specific affordance instead of a misleading
+        // "Auth expired" banner.
+        if (result.offline) {
+          setError(
+            "You appear to be offline. Check your network connection and try again.",
+          );
+          // Drop the page token so a retry refetches from the first
+          // page rather than trying to resume a paginated cursor that
+          // the soft-offline branch never advanced.
+          nextPageTokenRef.current = null;
+          if (!pageToken) {
+            setFiles([]);
+          }
+          return;
+        }
+        const items = result.files ?? [];
+        if (pageToken) {
+          setFiles((prev) => [...prev, ...items]);
+        } else {
+          setFiles(items);
+        }
+        nextPageTokenRef.current = result.nextPageToken ?? null;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to list files");
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     nextPageTokenRef.current = null;
@@ -125,7 +134,11 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
     <div className="drive-picker">
       <div className="drive-picker-header">
         <h3 className="drive-picker-title">Select files from Google Drive</h3>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={onCancel}
+        >
           Cancel
         </button>
       </div>
@@ -221,6 +234,7 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }

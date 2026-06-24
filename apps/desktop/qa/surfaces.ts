@@ -38,17 +38,83 @@ export interface QaSurface {
 
 export const SURFACES: readonly QaSurface[] = [
   { id: "home", title: "Home", persona: "finance", kind: "route", path: "/" },
-  { id: "sources", title: "Sources", persona: "finance", kind: "route", path: "/sources" },
-  { id: "templates", title: "Templates", persona: "finance", kind: "route", path: "/templates" },
-  { id: "create", title: "Create", persona: "finance", kind: "route", path: "/create" },
-  { id: "tasks", title: "Tasks", persona: "finance", kind: "route", path: "/tasks" },
-  { id: "automations", title: "Automations", persona: "finance", kind: "route", path: "/automations" },
-  { id: "memory", title: "Memory (concept graph)", persona: "finance", kind: "route", path: "/memory" },
-  { id: "settings", title: "Settings", persona: "finance", kind: "route", path: "/settings" },
-  { id: "editor-document", title: "Document editor", persona: "finance", kind: "editor", artifactType: "document" },
-  { id: "editor-sheet", title: "Sheet editor", persona: "finance", kind: "editor", artifactType: "sheet" },
-  { id: "editor-slides", title: "Slide editor", persona: "retail", kind: "editor", artifactType: "slides" },
-  { id: "editor-base", title: "Base editor", persona: "retail", kind: "editor", artifactType: "base" },
+  {
+    id: "sources",
+    title: "Sources",
+    persona: "finance",
+    kind: "route",
+    path: "/sources",
+  },
+  {
+    id: "templates",
+    title: "Templates",
+    persona: "finance",
+    kind: "route",
+    path: "/templates",
+  },
+  {
+    id: "create",
+    title: "Create",
+    persona: "finance",
+    kind: "route",
+    path: "/create",
+  },
+  {
+    id: "tasks",
+    title: "Tasks",
+    persona: "finance",
+    kind: "route",
+    path: "/tasks",
+  },
+  {
+    id: "automations",
+    title: "Automations",
+    persona: "finance",
+    kind: "route",
+    path: "/automations",
+  },
+  {
+    id: "memory",
+    title: "Memory (concept graph)",
+    persona: "finance",
+    kind: "route",
+    path: "/memory",
+  },
+  {
+    id: "settings",
+    title: "Settings",
+    persona: "finance",
+    kind: "route",
+    path: "/settings",
+  },
+  {
+    id: "editor-document",
+    title: "Document editor",
+    persona: "finance",
+    kind: "editor",
+    artifactType: "document",
+  },
+  {
+    id: "editor-sheet",
+    title: "Sheet editor",
+    persona: "finance",
+    kind: "editor",
+    artifactType: "sheet",
+  },
+  {
+    id: "editor-slides",
+    title: "Slide editor",
+    persona: "retail",
+    kind: "editor",
+    artifactType: "slides",
+  },
+  {
+    id: "editor-base",
+    title: "Base editor",
+    persona: "retail",
+    kind: "editor",
+    artifactType: "base",
+  },
   {
     id: "command-palette",
     title: "Command palette",
@@ -86,7 +152,10 @@ export const THEME_VARIANTS: readonly ThemeVariant[] = [
 ] as const;
 
 function surfaceQuery(surface: QaSurface, variant: ThemeVariant): string {
-  const params = new URLSearchParams({ showcase: surface.persona, theme: variant.theme });
+  const params = new URLSearchParams({
+    showcase: surface.persona,
+    theme: variant.theme,
+  });
   if (variant.accent) params.set("accent", variant.accent);
   return params.toString();
 }
@@ -97,11 +166,16 @@ interface BridgeArtifact {
   artifactType: ArtifactType;
 }
 
-async function resolveArtifactId(page: Page, type: ArtifactType): Promise<string> {
+async function resolveArtifactId(
+  page: Page,
+  type: ArtifactType,
+): Promise<string> {
   const id = await page.evaluate(async (wanted) => {
-    const bridge = (window as unknown as {
-      tessera?: { artifacts?: { list?: () => Promise<BridgeArtifact[]> } };
-    }).tessera;
+    const bridge = (
+      window as unknown as {
+        tessera?: { artifacts?: { list?: () => Promise<BridgeArtifact[]> } };
+      }
+    ).tessera;
     const list = (await bridge?.artifacts?.list?.()) ?? [];
     return list.find((a) => a.artifactType === wanted)?.id ?? null;
   }, type);
@@ -142,7 +216,8 @@ export async function gotoSurface(
   const query = surfaceQuery(surface, variant);
 
   if (surface.kind === "editor") {
-    if (!surface.artifactType) throw new Error(`editor surface ${surface.id} missing artifactType`);
+    if (!surface.artifactType)
+      throw new Error(`editor surface ${surface.id} missing artifactType`);
     // First load any route to install the bridge, resolve the artifact
     // id, then deep-link the editor with the same showcase query so the
     // bridge re-installs on the editor page.
@@ -171,8 +246,14 @@ export async function gotoSurface(
   );
 
   if (surface.kind === "overlay" && surface.openEvent) {
-    await page.evaluate((evt) => window.dispatchEvent(new Event(evt)), surface.openEvent);
-    await page.locator('[role="dialog"]').first().waitFor({ state: "visible", timeout: 10_000 });
+    await page.evaluate(
+      (evt) => window.dispatchEvent(new Event(evt)),
+      surface.openEvent,
+    );
+    await page
+      .locator('[role="dialog"]')
+      .first()
+      .waitFor({ state: "visible", timeout: 10_000 });
   }
 
   // Settle: wait for a signal that proves the surface has finished

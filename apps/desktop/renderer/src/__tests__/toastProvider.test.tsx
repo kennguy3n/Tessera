@@ -187,10 +187,7 @@ describe("ToastProvider", () => {
     render(
       <ToastProvider>
         <TestConsumer
-          toasts={[
-            { label: "info-one" },
-            { label: "err-one", type: "error" },
-          ]}
+          toasts={[{ label: "info-one" }, { label: "err-one", type: "error" }]}
         />
       </ToastProvider>,
     );

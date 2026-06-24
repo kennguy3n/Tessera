@@ -344,7 +344,7 @@ pub fn export_pdf_with_svgs<S: std::hash::BuildHasher>(
         // Emit a Typst image reference. width: auto + height: auto
         // lets Typst use the SVG's intrinsic dimensions; we cap
         // width to the available text width so wide diagrams scale.
-        let _ = write!(markup, "\n#image(\"{virt_name}\", width: 100%)\n\n",);
+        let _ = write!(markup, "\n#image(\"{virt_name}\", width: 100%)\n\n");
         cursor = end;
     }
     // Trailing text after the last block.

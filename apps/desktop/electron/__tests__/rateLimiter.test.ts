@@ -88,7 +88,9 @@ describe("RateLimiter", () => {
   });
 
   it("RATE_LIMIT_PROFILES exports stable channel keys", () => {
-    expect(RATE_LIMIT_PROFILES["connectors:authenticate"].intervalMs).toBe(5000);
+    expect(RATE_LIMIT_PROFILES["connectors:authenticate"].intervalMs).toBe(
+      5000,
+    );
     expect(RATE_LIMIT_PROFILES["connectors:sync"].intervalMs).toBe(30_000);
     expect(RATE_LIMIT_PROFILES["sources:search"].tokensPerInterval).toBe(10);
   });

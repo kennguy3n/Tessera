@@ -136,9 +136,7 @@ export interface UseCustomDocumentTemplatesResult {
    * Clone a template under a fresh id (label suffixed "(copy)") and
    * persist it. Returns the build result, or `null` when `id` is unknown.
    */
-  duplicateTemplate: (
-    id: string,
-  ) => CustomDocumentTemplateBuildResult | null;
+  duplicateTemplate: (id: string) => CustomDocumentTemplateBuildResult | null;
   /** Resolve a (possibly unknown/absent) template id, or `null`. */
   templateById: (
     id: string | undefined | null,

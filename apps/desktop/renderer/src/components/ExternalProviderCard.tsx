@@ -90,9 +90,7 @@ export default function ExternalProviderCard() {
    *  never been opened — the manual text input is the only
    *  control. Empty array means "list returned no models"
    *  (different from "never listed"). */
-  const [availableModels, setAvailableModels] = useState<string[] | null>(
-    null,
-  );
+  const [availableModels, setAvailableModels] = useState<string[] | null>(null);
 
   const refresh = useCallback(async () => {
     // Fetch both the provider config AND the token usage in
@@ -252,7 +250,12 @@ export default function ExternalProviderCard() {
   if (!provider) {
     return (
       <Card>
-        <h2 className="section-title" style={{ marginBottom: "var(--spacing-md)" }}>External Provider</h2>
+        <h2
+          className="section-title"
+          style={{ marginBottom: "var(--spacing-md)" }}
+        >
+          External Provider
+        </h2>
         <p style={{ color: "var(--color-text-secondary)" }}>Loading…</p>
       </Card>
     );
@@ -340,10 +343,7 @@ export default function ExternalProviderCard() {
         : draftKey.length > 0
           ? draftKey
           : null;
-      const saved = await window.tessera.externalProvider.set(
-        payload,
-        apiKey,
-      );
+      const saved = await window.tessera.externalProvider.set(payload, apiKey);
       setProvider(saved);
       setDraftKey("");
       setClearKey(false);
@@ -410,7 +410,9 @@ export default function ExternalProviderCard() {
           marginBottom: "var(--spacing-md)",
         }}
       >
-        <h2 className="section-title" style={{ margin: 0 }}>External Provider</h2>
+        <h2 className="section-title" style={{ margin: 0 }}>
+          External Provider
+        </h2>
         <label
           style={{ display: "flex", alignItems: "center", gap: 8 }}
           aria-label="Enable external provider"
@@ -434,8 +436,8 @@ export default function ExternalProviderCard() {
         }}
       >
         Off by default. When on, Tessera will fall back to the configured
-        OpenAI-compatible or Anthropic endpoint after the local model. The
-        API key is stored in the OS keychain, never on disk.
+        OpenAI-compatible or Anthropic endpoint after the local model. The API
+        key is stored in the OS keychain, never on disk.
       </p>
 
       {provider.enabled && (
@@ -449,10 +451,7 @@ export default function ExternalProviderCard() {
               className="input"
               value={provider.providerType}
               onChange={(e) =>
-                setField(
-                  "providerType",
-                  e.target.value as ExternalProviderType,
-                )
+                setField("providerType", e.target.value as ExternalProviderType)
               }
             >
               <option value="openai_compatible">OpenAI-compatible</option>
@@ -784,8 +783,8 @@ export default function ExternalProviderCard() {
             }}
           >
             Counts are client-side estimates (~4 chars/token) since not every
-            OpenAI-compatible proxy returns authoritative usage in stream
-            mode. Use the provider's billing dashboard for exact figures.
+            OpenAI-compatible proxy returns authoritative usage in stream mode.
+            Use the provider's billing dashboard for exact figures.
           </p>
         </div>
       )}

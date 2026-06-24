@@ -84,9 +84,7 @@ import { CalloutNode } from "./extensions/CalloutExtension";
 import { ToggleNode } from "./extensions/ToggleExtension";
 import { BlockLineHeight } from "./extensions/BlockLineHeight";
 import { TableOfContentsNode } from "./extensions/TableOfContentsExtension";
-import {
-  FindReplaceExtension,
-} from "./extensions/FindReplaceExtension";
+import { FindReplaceExtension } from "./extensions/FindReplaceExtension";
 import {
   SlashCommandExtension,
   type SlashTriggerState,
@@ -95,10 +93,7 @@ import {
   KchatMentionExtension,
   type MentionTriggerState,
 } from "./extensions/KchatMentionExtension";
-import {
-  CommentMark,
-  collectCommentsFromDoc,
-} from "./extensions/CommentMark";
+import { CommentMark, collectCommentsFromDoc } from "./extensions/CommentMark";
 import {
   parseDocumentContent,
   countDocText,
@@ -190,7 +185,10 @@ const FONT_FAMILY_GROUPS: ReadonlyArray<{
       { label: "Default", value: "" },
       { label: "Sans serif", value: "Inter, system-ui, sans-serif" },
       { label: "Serif", value: "Georgia, 'Times New Roman', serif" },
-      { label: "Monospace", value: "'JetBrains Mono', 'Courier New', monospace" },
+      {
+        label: "Monospace",
+        value: "'JetBrains Mono', 'Courier New', monospace",
+      },
       { label: "Arial", value: "Arial, Helvetica, sans-serif" },
       { label: "Georgia", value: "Georgia, serif" },
       { label: "Times New Roman", value: "'Times New Roman', Times, serif" },
@@ -213,7 +211,8 @@ const FONT_FAMILY_GROUPS: ReadonlyArray<{
       },
       {
         label: "Hiragino / ヒラギノ (JP)",
-        value: "'Hiragino Sans', 'ヒラギノ角ゴ Pro', 'Yu Gothic', Meiryo, sans-serif",
+        value:
+          "'Hiragino Sans', 'ヒラギノ角ゴ Pro', 'Yu Gothic', Meiryo, sans-serif",
       },
       {
         label: "Yu Gothic / 游ゴシック (JP)",
@@ -221,7 +220,8 @@ const FONT_FAMILY_GROUPS: ReadonlyArray<{
       },
       {
         label: "Malgun Gothic / 맑은 고딕 (KR)",
-        value: "'Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', sans-serif",
+        value:
+          "'Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', sans-serif",
       },
     ],
   },
@@ -1028,7 +1028,8 @@ function TypographyControls({ editor }: { editor: Editor }) {
     editor.getAttributes("paragraph").lineHeight ??
     editor.getAttributes("heading").lineHeight ??
     "";
-  const currentHighlight: string = editor.getAttributes("highlight").color ?? "";
+  const currentHighlight: string =
+    editor.getAttributes("highlight").color ?? "";
 
   return (
     <div className="toolbar-typography" role="group" aria-label="Typography">
@@ -1061,7 +1062,11 @@ function TypographyControls({ editor }: { editor: Editor }) {
             </optgroup>
           ),
         )}
-        {customTypographyOption(FONT_FAMILY_OPTIONS, currentFont, () => "Custom")}
+        {customTypographyOption(
+          FONT_FAMILY_OPTIONS,
+          currentFont,
+          () => "Custom",
+        )}
       </select>
       <select
         className="toolbar-select toolbar-select-narrow"
@@ -1096,12 +1101,16 @@ function TypographyControls({ editor }: { editor: Editor }) {
           type="color"
           aria-label="Text color"
           value={currentColor || DEFAULT_TEXT_COLOR}
-          onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
+          onChange={(e) =>
+            editor.chain().focus().setColor(e.target.value).run()
+          }
         />
       </label>
       <button
         type="button"
-        className={editor.isActive("highlight") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("highlight") ? "toolbar-btn active" : "toolbar-btn"
+        }
         title="Highlight"
         aria-label="Highlight"
         aria-pressed={editor.isActive("highlight")}
@@ -1109,14 +1118,20 @@ function TypographyControls({ editor }: { editor: Editor }) {
           editor
             .chain()
             .focus()
-            .toggleHighlight({ color: currentHighlight || DEFAULT_HIGHLIGHT_COLOR })
+            .toggleHighlight({
+              color: currentHighlight || DEFAULT_HIGHLIGHT_COLOR,
+            })
             .run()
         }
       >
         <Highlighter size={16} aria-hidden="true" />
       </button>
       <span className="toolbar-separator" />
-      <div className="toolbar-align-group" role="group" aria-label="Text alignment">
+      <div
+        className="toolbar-align-group"
+        role="group"
+        aria-label="Text alignment"
+      >
         {TEXT_ALIGNMENTS.map(([value, Icon, label]) => {
           const active = editor.isActive({ textAlign: value });
           return (
@@ -1199,7 +1214,9 @@ function Toolbar({
       <span className="toolbar-separator" />
       <button
         type="button"
-        className={editor.isActive("bold") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("bold") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleBold().run()}
         title="Bold (Ctrl+B)"
         aria-label="Bold"
@@ -1209,7 +1226,9 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("italic") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("italic") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleItalic().run()}
         title="Italic (Ctrl+I)"
         aria-label="Italic"
@@ -1222,7 +1241,9 @@ function Toolbar({
           toggleUnderline()/isActive("underline") are available without it. */}
       <button
         type="button"
-        className={editor.isActive("underline") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("underline") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleUnderline().run()}
         title="Underline (Ctrl+U)"
         aria-label="Underline"
@@ -1235,7 +1256,11 @@ function Toolbar({
       <span className="toolbar-separator" />
       <button
         type="button"
-        className={editor.isActive("heading", { level: 1 }) ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("heading", { level: 1 })
+            ? "toolbar-btn active"
+            : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
         title="Heading 1"
         aria-label="Heading 1"
@@ -1245,7 +1270,11 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("heading", { level: 2 }) ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("heading", { level: 2 })
+            ? "toolbar-btn active"
+            : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         title="Heading 2"
         aria-label="Heading 2"
@@ -1255,7 +1284,11 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("heading", { level: 3 }) ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("heading", { level: 3 })
+            ? "toolbar-btn active"
+            : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
         title="Heading 3"
         aria-label="Heading 3"
@@ -1266,7 +1299,9 @@ function Toolbar({
       <span className="toolbar-separator" />
       <button
         type="button"
-        className={editor.isActive("bulletList") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("bulletList") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         title="Bullet List"
         aria-label="Bullet list"
@@ -1276,7 +1311,9 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("orderedList") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("orderedList") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         title="Ordered List"
         aria-label="Ordered list"
@@ -1286,7 +1323,9 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("taskList") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("taskList") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleTaskList().run()}
         title="Task List"
         aria-label="Task list"
@@ -1296,7 +1335,9 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("blockquote") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("blockquote") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         title="Blockquote"
         aria-label="Blockquote"
@@ -1306,7 +1347,9 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("codeBlock") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("codeBlock") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={() => editor.chain().focus().toggleCodeBlock().run()}
         title="Code Block"
         aria-label="Code block"
@@ -1316,7 +1359,9 @@ function Toolbar({
       </button>
       <button
         type="button"
-        className={editor.isActive("link") ? "toolbar-btn active" : "toolbar-btn"}
+        className={
+          editor.isActive("link") ? "toolbar-btn active" : "toolbar-btn"
+        }
         onClick={onSetLink}
         title="Link (Ctrl+K)"
         aria-label="Insert link"
@@ -1568,7 +1613,11 @@ function OutlinePanel({
 
   const jumpTo = useCallback(
     (entry: HeadingEntry) => {
-      editor.chain().focus().setTextSelection(entry.pos + 1).run();
+      editor
+        .chain()
+        .focus()
+        .setTextSelection(entry.pos + 1)
+        .run();
       const dom = editor.view.nodeDOM(entry.pos);
       if (dom instanceof HTMLElement) {
         const reduceMotion = window.matchMedia(
@@ -1595,7 +1644,9 @@ function OutlinePanel({
           key={h.id}
           type="button"
           className={
-            i === activeIndex ? "outline-item outline-item-active" : "outline-item"
+            i === activeIndex
+              ? "outline-item outline-item-active"
+              : "outline-item"
           }
           aria-current={i === activeIndex ? "true" : undefined}
           style={{ paddingLeft: `${(h.level - 1) * 12 + 8}px` }}

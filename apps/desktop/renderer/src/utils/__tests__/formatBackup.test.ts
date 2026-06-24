@@ -48,9 +48,7 @@ describe("formatRelativeTime", () => {
     expect(formatRelativeTime(now - 60_000, now)).toBe("1m ago");
     expect(formatRelativeTime(now - 5 * 60_000, now)).toBe("5m ago");
     expect(formatRelativeTime(now - 2 * 60 * 60_000, now)).toBe("2h ago");
-    expect(formatRelativeTime(now - 3 * 24 * 60 * 60_000, now)).toBe(
-      "3d ago",
-    );
+    expect(formatRelativeTime(now - 3 * 24 * 60 * 60_000, now)).toBe("3d ago");
   });
 
   it("collapses a future timestamp (clock skew) to 'just now'", () => {

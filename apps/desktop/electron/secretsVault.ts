@@ -24,7 +24,8 @@ import {
 // stores in plain config (e.g. `"tessera.external_provider.openai"`).
 // The actual API key never leaves this module unencrypted.
 
-const SECRET_DIR = (): string => path.join(app.getPath("userData"), "secret-vault");
+const SECRET_DIR = (): string =>
+  path.join(app.getPath("userData"), "secret-vault");
 
 const VALID_KEY_RE = /^[A-Za-z0-9._-]+$/;
 

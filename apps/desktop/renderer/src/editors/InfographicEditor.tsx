@@ -131,7 +131,11 @@ export default function InfographicEditor({
     setData((prev) => {
       const sections = [
         ...prev.sections,
-        { heading: `Section ${prev.sections.length + 1}`, body: "", icon: "lucide:sparkles" },
+        {
+          heading: `Section ${prev.sections.length + 1}`,
+          body: "",
+          icon: "lucide:sparkles",
+        },
       ];
       const next = { ...prev, sections };
       debouncedSave(next);
@@ -285,7 +289,10 @@ export default function InfographicEditor({
               value={data.colorScheme.secondary ?? DEFAULT_SECONDARY}
               onChange={(e) =>
                 update({
-                  colorScheme: { ...data.colorScheme, secondary: e.target.value },
+                  colorScheme: {
+                    ...data.colorScheme,
+                    secondary: e.target.value,
+                  },
                 })
               }
             />
@@ -379,7 +386,11 @@ export default function InfographicEditor({
                 />
               </div>
               {pickerOpenFor === i && (
-                <div className="infographic-icon-picker-popover" role="dialog" aria-label="Icon picker">
+                <div
+                  className="infographic-icon-picker-popover"
+                  role="dialog"
+                  aria-label="Icon picker"
+                >
                   <button
                     type="button"
                     className="infographic-icon-picker-close"

@@ -74,7 +74,7 @@ describe("parseDocumentContent — artifact text → TipTap-friendly HTML", () =
 
 describe("escapeHtml", () => {
   it("escapes the five state-changing characters and leaves everything else alone", () => {
-    expect(escapeHtml('<b>"hi" & \'bye\'</b>')).toBe(
+    expect(escapeHtml("<b>\"hi\" & 'bye'</b>")).toBe(
       "&lt;b&gt;&quot;hi&quot; &amp; &#39;bye&#39;&lt;/b&gt;",
     );
     expect(escapeHtml("plain text")).toBe("plain text");
@@ -214,13 +214,19 @@ describe("findAllMatches — find-in-page algorithm", () => {
   it("is case-insensitive by default and case-sensitive when opts.caseSensitive=true", () => {
     expect(findAllMatches("Hello hello HELLO", "hello", opts)).toHaveLength(3);
     expect(
-      findAllMatches("Hello hello HELLO", "hello", { ...opts, caseSensitive: true }),
+      findAllMatches("Hello hello HELLO", "hello", {
+        ...opts,
+        caseSensitive: true,
+      }),
     ).toEqual([{ start: 6, end: 11 }]);
   });
 
   it("wholeWord wraps the needle in \\b boundaries (hello matches `hello`, not `hellos`)", () => {
     expect(
-      findAllMatches("hello hellos rehello", "hello", { ...opts, wholeWord: true }),
+      findAllMatches("hello hellos rehello", "hello", {
+        ...opts,
+        wholeWord: true,
+      }),
     ).toEqual([{ start: 0, end: 5 }]);
   });
 
@@ -234,7 +240,9 @@ describe("findAllMatches — find-in-page algorithm", () => {
   });
 
   it("returns [] (no crash) on an invalid regex (half-typed `[abc`)", () => {
-    expect(findAllMatches("anything", "[abc", { ...opts, regex: true })).toEqual([]);
+    expect(
+      findAllMatches("anything", "[abc", { ...opts, regex: true }),
+    ).toEqual([]);
   });
 
   it("escapes regex metachars in plain-text mode (`. * +` are literal)", () => {
@@ -405,9 +413,7 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
   it("exposes the trust list in a stable, lowercase, deduplicated, alphabetised shape", () => {
     // Static structural invariants. If anyone changes the list, the
     // snapshot below also has to change — which is the whole point.
-    expect(TRUSTED_LEADING_TAGS.every((t) => t === t.toLowerCase())).toBe(
-      true,
-    );
+    expect(TRUSTED_LEADING_TAGS.every((t) => t === t.toLowerCase())).toBe(true);
     expect(new Set(TRUSTED_LEADING_TAGS).size).toBe(
       TRUSTED_LEADING_TAGS.length,
     );
@@ -426,7 +432,10 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
       ["h1", "@tiptap/extension-heading (level 1)"],
       ["h2", "@tiptap/extension-heading (level 2)"],
       ["h3", "@tiptap/extension-heading (level 3)"],
-      ["ul", "@tiptap/extension-bullet-list (also @tiptap/extension-task-list)"],
+      [
+        "ul",
+        "@tiptap/extension-bullet-list (also @tiptap/extension-task-list)",
+      ],
       ["ol", "@tiptap/extension-ordered-list"],
       ["li", "@tiptap/extension-list-item (also @tiptap/extension-task-item)"],
       ["blockquote", "@tiptap/extension-blockquote"],
@@ -522,7 +531,9 @@ describe("TRUSTED_LEADING_TAGS — round-trip whitelist parity with registered e
       await import("@tiptap/starter-kit");
     const StarterKit = starterKitMod.default;
     const inst = StarterKit.configure({}) as {
-      config: { addExtensions: (this: unknown) => Array<{ type: string; name: string }> };
+      config: {
+        addExtensions: (this: unknown) => Array<{ type: string; name: string }>;
+      };
     };
     const exts = inst.config.addExtensions.call(inst);
 
@@ -622,9 +633,7 @@ describe("normalizeLinkHref — link sanitisation", () => {
     expect(normalizeLinkHref("https://example.com/x")).toBe(
       "https://example.com/x",
     );
-    expect(normalizeLinkHref("http://example.com")).toBe(
-      "http://example.com",
-    );
+    expect(normalizeLinkHref("http://example.com")).toBe("http://example.com");
   });
 
   it("prepends https:// to a bare domain", () => {

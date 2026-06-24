@@ -167,9 +167,7 @@ export function computeGanttLayout(tasks: TaskInfo[]): GanttLayout {
 
   // Time domain across all resolved dates. Unparseable tasks bucket at
   // the minimum so they still render at the left edge.
-  const dates = ordered
-    .map(taskDateMs)
-    .filter((v): v is number => v !== null);
+  const dates = ordered.map(taskDateMs).filter((v): v is number => v !== null);
   let min = dates.length > 0 ? Math.min(...dates) : 0;
   let max = dates.length > 0 ? Math.max(...dates) : 0;
   if (min === max) {

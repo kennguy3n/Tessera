@@ -158,10 +158,9 @@ describe("IPMT / PPMT / CUMIPMT / CUMPRINC — amortisation", () => {
 
   it("CUMIPMT matches the Excel example", () => {
     // =CUMIPMT(0.09/12, 30*12, 125000, 13, 24, 0) → -11135.23 (Microsoft).
-    expect(numberValue("=CUMIPMT(0.09/12, 360, 125000, 13, 24, 0)")).toBeCloseTo(
-      -11135.23,
-      2,
-    );
+    expect(
+      numberValue("=CUMIPMT(0.09/12, 360, 125000, 13, 24, 0)"),
+    ).toBeCloseTo(-11135.23, 2);
   });
 
   it("CUMPRINC matches the Excel single-period example", () => {
@@ -185,7 +184,9 @@ describe("IPMT / PPMT / CUMIPMT / CUMPRINC — amortisation", () => {
   it("CUMIPMT truncates a fractional nper for the range check (Excel parity)", () => {
     // nper 360.9 truncates to 360, so end = 360 is the valid final period and
     // must not be rejected as out of range; the result matches integer nper 360.
-    const fractional = numberValue("=CUMIPMT(0.06/12, 360.9, 200000, 1, 360, 0)");
+    const fractional = numberValue(
+      "=CUMIPMT(0.06/12, 360.9, 200000, 1, 360, 0)",
+    );
     const integer = numberValue("=CUMIPMT(0.06/12, 360, 200000, 1, 360, 0)");
     expect(fractional).toBeCloseTo(integer, 6);
   });
@@ -253,9 +254,10 @@ describe("XNPV / XIRR — dated cash flows", () => {
   ];
 
   it("XNPV matches the documented result", () => {
-    expect(
-      numberValue("=XNPV(0.09, A1:A5, B1:B5)", datedGrid),
-    ).toBeCloseTo(2086.65, 1);
+    expect(numberValue("=XNPV(0.09, A1:A5, B1:B5)", datedGrid)).toBeCloseTo(
+      2086.65,
+      1,
+    );
   });
 
   it("XIRR matches the documented result", () => {

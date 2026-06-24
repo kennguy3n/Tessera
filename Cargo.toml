@@ -52,12 +52,12 @@ rusqlite = { version = "0.36", features = ["bundled-sqlcipher-vendored-openssl",
 # Session-7 post-quantum layer (tessera_core/tessera_sources/tessera_export)
 # both depend on this one alias/rev, so only ONE copy of `crypto` (and its
 # ML-KEM/ML-DSA transitive tree) is ever compiled and audited.
-knowledge_crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
-evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
-observation_engine = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
-memory_manager = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
-concept_graph = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
-synthesis_pipeline = { git = "https://github.com/kennguy3n/knowledge", rev = "b49daf4c4b4f567aa94eb4d11fcbb2ac6df56537" }
+knowledge_crypto = { package = "crypto", git = "https://github.com/kennguy3n/knowledge", rev = "02050cd1aada1dbbdb83de320f69abaf6a87a361" }
+evidence_store = { git = "https://github.com/kennguy3n/knowledge", rev = "02050cd1aada1dbbdb83de320f69abaf6a87a361" }
+observation_engine = { git = "https://github.com/kennguy3n/knowledge", rev = "02050cd1aada1dbbdb83de320f69abaf6a87a361" }
+memory_manager = { git = "https://github.com/kennguy3n/knowledge", rev = "02050cd1aada1dbbdb83de320f69abaf6a87a361" }
+concept_graph = { git = "https://github.com/kennguy3n/knowledge", rev = "02050cd1aada1dbbdb83de320f69abaf6a87a361" }
+synthesis_pipeline = { git = "https://github.com/kennguy3n/knowledge", rev = "02050cd1aada1dbbdb83de320f69abaf6a87a361" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 tempfile = "3"
 walkdir = "2"

@@ -16,20 +16,18 @@
  */
 import { availableParallelism } from "node:os";
 import { idempotentHandle } from "./register";
-import { getModelSidecar, getVisionSidecar, getDiffusionSidecarState } from "../appState";
 import {
-  getBatteryStatus,
-  isBatteryLow,
-} from "../batteryMonitor";
+  getModelSidecar,
+  getVisionSidecar,
+  getDiffusionSidecarState,
+} from "../appState";
+import { getBatteryStatus, isBatteryLow } from "../batteryMonitor";
 import {
   isIndexingDeferredForMemory,
   memoryPressureSnapshot,
 } from "../memoryWatchdog";
 import { loadConfig } from "../config";
-import type {
-  ResourceUsage,
-  ResourceUsageSidecar,
-} from "../../shared/types";
+import type { ResourceUsage, ResourceUsageSidecar } from "../../shared/types";
 
 /**
  * Upper bound on the SQLCipher read pool. MIRRORS

@@ -50,11 +50,7 @@ export {
   validateNamedRange,
   type NamedRangeInput,
 } from "./namedRanges";
-export {
-  applyCellFormat,
-  cellFormatStyle,
-  valueToDateSerial,
-} from "./format";
+export { applyCellFormat, cellFormatStyle, valueToDateSerial } from "./format";
 export { dateToSerial, serialToDate } from "./functions/date";
 
 import { parseFormula } from "./parser";
@@ -64,11 +60,7 @@ import {
   type FunctionImpl,
 } from "./evaluator";
 import { FUNCTION_REGISTRY } from "./functions";
-import {
-  makeError,
-  type CellResolver,
-  type FormulaValue,
-} from "./types";
+import { makeError, type CellResolver, type FormulaValue } from "./types";
 
 /** Build an `EvaluationContext` with the standard function registry. */
 export function defaultContext(

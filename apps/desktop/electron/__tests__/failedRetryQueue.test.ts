@@ -34,13 +34,21 @@ describe("nextFailedRetryQueue", () => {
       failed: [{ remoteId: "a", remoteModifiedAt: "2024-06-01T00:00:00Z" }],
     });
     expect(next).toEqual([
-      { remoteId: "a", remoteModifiedAt: "2024-06-01T00:00:00Z", failureCount: 1 },
+      {
+        remoteId: "a",
+        remoteModifiedAt: "2024-06-01T00:00:00Z",
+        failureCount: 1,
+      },
     ]);
   });
 
   it("bumps failureCount on a repeated failure", () => {
     const previous: FailedRetryEntry[] = [
-      { remoteId: "a", remoteModifiedAt: "2024-06-01T00:00:00Z", failureCount: 2 },
+      {
+        remoteId: "a",
+        remoteModifiedAt: "2024-06-01T00:00:00Z",
+        failureCount: 2,
+      },
     ];
     const next = nextFailedRetryQueue(previous, {
       succeeded: [],
@@ -68,49 +76,56 @@ describe("nextFailedRetryQueue", () => {
     expect(next.map((e) => e.remoteId)).toEqual(["a"]);
   });
 
-  it(
-    `drops an item after ${FAILED_RETRY_MAX_ATTEMPTS} consecutive failures (perma-broken)`,
-    () => {
-      const previous: FailedRetryEntry[] = [
-        {
-          remoteId: "a",
-          remoteModifiedAt: null,
-          failureCount: FAILED_RETRY_MAX_ATTEMPTS,
-        },
-      ];
-      const next = nextFailedRetryQueue(previous, {
-        succeeded: [],
-        failed: [{ remoteId: "a", remoteModifiedAt: null }],
-      });
-      // After the bump we'd hit MAX_ATTEMPTS + 1 → dropped.
-      expect(next).toEqual([]);
-    },
-  );
+  it(`drops an item after ${FAILED_RETRY_MAX_ATTEMPTS} consecutive failures (perma-broken)`, () => {
+    const previous: FailedRetryEntry[] = [
+      {
+        remoteId: "a",
+        remoteModifiedAt: null,
+        failureCount: FAILED_RETRY_MAX_ATTEMPTS,
+      },
+    ];
+    const next = nextFailedRetryQueue(previous, {
+      succeeded: [],
+      failed: [{ remoteId: "a", remoteModifiedAt: null }],
+    });
+    // After the bump we'd hit MAX_ATTEMPTS + 1 → dropped.
+    expect(next).toEqual([]);
+  });
 
-  it(
-    `bounds the queue at FAILED_RETRY_QUEUE_MAX (${FAILED_RETRY_QUEUE_MAX}) entries, FIFO`,
-    () => {
-      const previous: FailedRetryEntry[] = [];
-      const failed = Array.from({ length: FAILED_RETRY_QUEUE_MAX + 25 }, (_, i) => ({
+  it(`bounds the queue at FAILED_RETRY_QUEUE_MAX (${FAILED_RETRY_QUEUE_MAX}) entries, FIFO`, () => {
+    const previous: FailedRetryEntry[] = [];
+    const failed = Array.from(
+      { length: FAILED_RETRY_QUEUE_MAX + 25 },
+      (_, i) => ({
         remoteId: `id-${i}`,
         remoteModifiedAt: null,
-      }));
-      const next = nextFailedRetryQueue(previous, {
-        succeeded: [],
-        failed,
-      });
-      expect(next).toHaveLength(FAILED_RETRY_QUEUE_MAX);
-      // The earliest-inserted ids are evicted; the most recent should
-      // remain.
-      expect(next[next.length - 1].remoteId).toBe(`id-${FAILED_RETRY_QUEUE_MAX + 24}`);
-      expect(next[0].remoteId).toBe(`id-25`);
-    },
-  );
+      }),
+    );
+    const next = nextFailedRetryQueue(previous, {
+      succeeded: [],
+      failed,
+    });
+    expect(next).toHaveLength(FAILED_RETRY_QUEUE_MAX);
+    // The earliest-inserted ids are evicted; the most recent should
+    // remain.
+    expect(next[next.length - 1].remoteId).toBe(
+      `id-${FAILED_RETRY_QUEUE_MAX + 24}`,
+    );
+    expect(next[0].remoteId).toBe(`id-25`);
+  });
 
   it("preserves prior failureCount when the same item fails again", () => {
     const previous: FailedRetryEntry[] = [
-      { remoteId: "a", remoteModifiedAt: "2024-06-01T00:00:00Z", failureCount: 3 },
-      { remoteId: "b", remoteModifiedAt: "2024-06-01T00:00:00Z", failureCount: 1 },
+      {
+        remoteId: "a",
+        remoteModifiedAt: "2024-06-01T00:00:00Z",
+        failureCount: 3,
+      },
+      {
+        remoteId: "b",
+        remoteModifiedAt: "2024-06-01T00:00:00Z",
+        failureCount: 1,
+      },
     ];
     const next = nextFailedRetryQueue(previous, {
       succeeded: ["b"],
@@ -119,7 +134,11 @@ describe("nextFailedRetryQueue", () => {
     expect(next).toEqual([
       // a is retained with bumped count + falls back to existing
       // remoteModifiedAt since the new event reported null.
-      { remoteId: "a", remoteModifiedAt: "2024-06-01T00:00:00Z", failureCount: 4 },
+      {
+        remoteId: "a",
+        remoteModifiedAt: "2024-06-01T00:00:00Z",
+        failureCount: 4,
+      },
     ]);
   });
 
@@ -162,14 +181,17 @@ describe("parseWatermarkIso", () => {
     );
   });
 
-  it("returns the same epoch ms for equivalent `Z` and `+00:00` " +
-    "suffixes (regression: " +
-    "lexicographic compare used to give the wrong answer here)", () => {
-    const z = parseWatermarkIso("2024-06-01T12:00:00Z");
-    const plusZero = parseWatermarkIso("2024-06-01T12:00:00+00:00");
-    expect(z).not.toBeNull();
-    expect(z).toBe(plusZero);
-  });
+  it(
+    "returns the same epoch ms for equivalent `Z` and `+00:00` " +
+      "suffixes (regression: " +
+      "lexicographic compare used to give the wrong answer here)",
+    () => {
+      const z = parseWatermarkIso("2024-06-01T12:00:00Z");
+      const plusZero = parseWatermarkIso("2024-06-01T12:00:00+00:00");
+      expect(z).not.toBeNull();
+      expect(z).toBe(plusZero);
+    },
+  );
 
   it("handles fractional seconds + non-UTC offsets equivalently", () => {
     const a = parseWatermarkIso("2024-06-01T12:00:00.500Z");
@@ -234,12 +256,12 @@ describe("maxWatermark", () => {
   });
 
   it("returns the later of two parsable timestamps verbatim", () => {
-    expect(
-      maxWatermark("2024-06-01T12:00:00Z", "2024-07-01T00:00:00Z"),
-    ).toBe("2024-07-01T00:00:00Z");
-    expect(
-      maxWatermark("2024-07-01T00:00:00Z", "2024-06-01T12:00:00Z"),
-    ).toBe("2024-07-01T00:00:00Z");
+    expect(maxWatermark("2024-06-01T12:00:00Z", "2024-07-01T00:00:00Z")).toBe(
+      "2024-07-01T00:00:00Z",
+    );
+    expect(maxWatermark("2024-07-01T00:00:00Z", "2024-06-01T12:00:00Z")).toBe(
+      "2024-07-01T00:00:00Z",
+    );
   });
 
   it("preserves the original ISO string (not the parsed epoch ms)", () => {

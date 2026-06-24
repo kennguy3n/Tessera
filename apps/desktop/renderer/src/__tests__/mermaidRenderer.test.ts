@@ -26,25 +26,28 @@ describe("mermaidRenderer", () => {
     });
 
     it("detects all officially supported types", () => {
-      const samples: Record<(typeof SUPPORTED_DIAGRAM_TYPES)[number], string> = {
-        flowchart: "flowchart TD\nA-->B",
-        sequence: "sequenceDiagram\nA->>B: Hi",
-        class: "classDiagram\nclass Foo",
-        state: "stateDiagram-v2\n[*] --> A",
-        gantt: "gantt\ntitle Demo",
-        er: "erDiagram\nA ||--o{ B : has",
-        pie: "pie\ntitle Breakdown",
-        architecture: "architecture-beta\ngroup api",
-        mindmap: "mindmap\nroot",
-        timeline: "timeline\ntitle History",
-      };
+      const samples: Record<(typeof SUPPORTED_DIAGRAM_TYPES)[number], string> =
+        {
+          flowchart: "flowchart TD\nA-->B",
+          sequence: "sequenceDiagram\nA->>B: Hi",
+          class: "classDiagram\nclass Foo",
+          state: "stateDiagram-v2\n[*] --> A",
+          gantt: "gantt\ntitle Demo",
+          er: "erDiagram\nA ||--o{ B : has",
+          pie: "pie\ntitle Breakdown",
+          architecture: "architecture-beta\ngroup api",
+          mindmap: "mindmap\nroot",
+          timeline: "timeline\ntitle History",
+        };
       for (const [type, dsl] of Object.entries(samples)) {
         expect(detectDiagramType(dsl)).toBe(type);
       }
     });
 
     it("skips %% comment lines", () => {
-      expect(detectDiagramType("%% header\n%% notes\npie\ntitle X")).toBe("pie");
+      expect(detectDiagramType("%% header\n%% notes\npie\ntitle X")).toBe(
+        "pie",
+      );
     });
 
     it("returns 'unknown' for empty input", () => {
@@ -78,8 +81,12 @@ describe("mermaidRenderer", () => {
 
   describe("renderMermaid", () => {
     it("rejects empty DSL with a typed error", async () => {
-      await expect(renderMermaid("")).rejects.toBeInstanceOf(MermaidRenderError);
-      await expect(renderMermaid("   ")).rejects.toBeInstanceOf(MermaidRenderError);
+      await expect(renderMermaid("")).rejects.toBeInstanceOf(
+        MermaidRenderError,
+      );
+      await expect(renderMermaid("   ")).rejects.toBeInstanceOf(
+        MermaidRenderError,
+      );
     });
 
     it("returns SVG for a valid flowchart", async () => {
@@ -109,9 +116,9 @@ describe("mermaidRenderer", () => {
       // @ts-expect-error simulating non-browser
       delete globalThis.document;
       try {
-        await expect(renderMermaid("flowchart TD\nA-->B")).rejects.toBeInstanceOf(
-          MermaidEnvironmentError,
-        );
+        await expect(
+          renderMermaid("flowchart TD\nA-->B"),
+        ).rejects.toBeInstanceOf(MermaidEnvironmentError);
       } finally {
         globalThis.window = origWindow;
         globalThis.document = origDocument;

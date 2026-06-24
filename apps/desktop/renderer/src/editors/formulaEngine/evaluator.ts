@@ -336,11 +336,14 @@ function looseEquals(a: FormulaValue, b: FormulaValue): boolean {
   if (a === null) a = "";
   if (b === null) b = "";
   if (typeof a === typeof b) {
-    if (typeof a === "string") return a.toLowerCase() === (b as string).toLowerCase();
+    if (typeof a === "string")
+      return a.toLowerCase() === (b as string).toLowerCase();
     return a === b;
   }
-  if (typeof a === "number" && typeof b === "string" && b === "") return a === 0;
-  if (typeof a === "string" && a === "" && typeof b === "number") return b === 0;
+  if (typeof a === "number" && typeof b === "string" && b === "")
+    return a === 0;
+  if (typeof a === "string" && a === "" && typeof b === "number")
+    return b === 0;
   return false;
 }
 

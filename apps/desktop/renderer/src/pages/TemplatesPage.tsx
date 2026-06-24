@@ -29,20 +29,92 @@ interface TemplateCardData {
 }
 
 const BUILTIN_TEMPLATES: TemplateCardData[] = [
-  { id: "prd-v1", name: "PRD", description: "Product Requirements Document with problem, solution, scope, and success criteria", type: "document" },
-  { id: "proposal-v1", name: "Proposal", description: "Business or project proposal with executive summary and budget", type: "document" },
-  { id: "sop-v1", name: "SOP", description: "Standard Operating Procedure with step-by-step instructions", type: "document" },
-  { id: "report-v1", name: "Report", description: "Analytical report with findings and recommendations", type: "document" },
-  { id: "memo-v1", name: "Memo", description: "Internal communication memo with context and action items", type: "document" },
-  { id: "qbr-v1", name: "QBR", description: "Quarterly Business Review with metrics and next quarter plan", type: "slides" },
-  { id: "strategy-v1", name: "Strategy Deck", description: "Strategic planning with vision, market analysis, and roadmap", type: "slides" },
-  { id: "review-v1", name: "Review", description: "Project or performance review with status and next steps", type: "slides" },
-  { id: "budget-v1", name: "Budget", description: "Budget spreadsheet with categories and variance analysis", type: "sheet" },
-  { id: "scorecard-v1", name: "Scorecard", description: "Performance scorecard with KPIs and targets", type: "sheet" },
-  { id: "roadmap-v1", name: "Roadmap", description: "Product or project roadmap with phases and milestones", type: "sheet" },
-  { id: "vendor-register-v1", name: "Vendor Register", description: "Vendor management with contracts and risk ratings", type: "base" },
-  { id: "risk-register-v1", name: "Risk Register", description: "Risk management with likelihood, impact, and mitigations", type: "base" },
-  { id: "decision-log-v1", name: "Decision Log", description: "Decision tracking with context, options, and outcomes", type: "base" },
+  {
+    id: "prd-v1",
+    name: "PRD",
+    description:
+      "Product Requirements Document with problem, solution, scope, and success criteria",
+    type: "document",
+  },
+  {
+    id: "proposal-v1",
+    name: "Proposal",
+    description:
+      "Business or project proposal with executive summary and budget",
+    type: "document",
+  },
+  {
+    id: "sop-v1",
+    name: "SOP",
+    description: "Standard Operating Procedure with step-by-step instructions",
+    type: "document",
+  },
+  {
+    id: "report-v1",
+    name: "Report",
+    description: "Analytical report with findings and recommendations",
+    type: "document",
+  },
+  {
+    id: "memo-v1",
+    name: "Memo",
+    description: "Internal communication memo with context and action items",
+    type: "document",
+  },
+  {
+    id: "qbr-v1",
+    name: "QBR",
+    description: "Quarterly Business Review with metrics and next quarter plan",
+    type: "slides",
+  },
+  {
+    id: "strategy-v1",
+    name: "Strategy Deck",
+    description: "Strategic planning with vision, market analysis, and roadmap",
+    type: "slides",
+  },
+  {
+    id: "review-v1",
+    name: "Review",
+    description: "Project or performance review with status and next steps",
+    type: "slides",
+  },
+  {
+    id: "budget-v1",
+    name: "Budget",
+    description: "Budget spreadsheet with categories and variance analysis",
+    type: "sheet",
+  },
+  {
+    id: "scorecard-v1",
+    name: "Scorecard",
+    description: "Performance scorecard with KPIs and targets",
+    type: "sheet",
+  },
+  {
+    id: "roadmap-v1",
+    name: "Roadmap",
+    description: "Product or project roadmap with phases and milestones",
+    type: "sheet",
+  },
+  {
+    id: "vendor-register-v1",
+    name: "Vendor Register",
+    description: "Vendor management with contracts and risk ratings",
+    type: "base",
+  },
+  {
+    id: "risk-register-v1",
+    name: "Risk Register",
+    description: "Risk management with likelihood, impact, and mitigations",
+    type: "base",
+  },
+  {
+    id: "decision-log-v1",
+    name: "Decision Log",
+    description: "Decision tracking with context, options, and outcomes",
+    type: "base",
+  },
 ];
 
 /**
@@ -373,7 +445,9 @@ export default function TemplatesPage() {
 
       {!hasTemplates ? (
         <EmptyState
-          icon={<LayoutTemplate size={48} strokeWidth={1.5} aria-hidden="true" />}
+          icon={
+            <LayoutTemplate size={48} strokeWidth={1.5} aria-hidden="true" />
+          }
           title="No templates available"
           message="Template files could not be loaded. Check your templates directory."
         />
@@ -499,10 +573,7 @@ export default function TemplatesPage() {
                               strokeWidth={1.75}
                               aria-hidden="true"
                             />
-                            <span
-                              className="card-title"
-                              style={{ margin: 0 }}
-                            >
+                            <span className="card-title" style={{ margin: 0 }}>
                               {tmpl.name}
                             </span>
                           </div>

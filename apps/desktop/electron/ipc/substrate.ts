@@ -34,10 +34,13 @@ function requireBridge() {
 }
 
 export function registerSubstrateHandlers(): void {
-  idempotentHandle("substrate:extractObservations", async (_event, sourceId) => {
-    const id = assertId(sourceId, "sourceId");
-    return requireBridge().bridgeExtractObservations(id);
-  });
+  idempotentHandle(
+    "substrate:extractObservations",
+    async (_event, sourceId) => {
+      const id = assertId(sourceId, "sourceId");
+      return requireBridge().bridgeExtractObservations(id);
+    },
+  );
 
   idempotentHandle("substrate:getMemories", async (_event, scope) => {
     const s = assertOptionalString(scope, "scope", { maxLen: MAX_SCOPE_LEN });

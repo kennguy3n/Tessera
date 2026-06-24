@@ -6,12 +6,12 @@ Thank you for your interest in contributing to Tessera! This guide covers everyt
 
 ## Prerequisites
 
-| Tool | Version | Purpose |
-|---|---|---|
-| **Rust** | 1.88+ (stable) | Core engine, N-API bridge |
-| **Node.js** | 20+ | Electron shell, React renderer |
-| **npm** | 10+ | Package management |
-| **C toolchain** | GCC / Clang | Build bundled SQLCipher + OpenSSL |
+| Tool            | Version        | Purpose                           |
+| --------------- | -------------- | --------------------------------- |
+| **Rust**        | 1.88+ (stable) | Core engine, N-API bridge         |
+| **Node.js**     | 20+            | Electron shell, React renderer    |
+| **npm**         | 10+            | Package management                |
+| **C toolchain** | GCC / Clang    | Build bundled SQLCipher + OpenSSL |
 
 ### Platform-specific setup
 

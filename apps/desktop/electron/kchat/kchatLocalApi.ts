@@ -317,9 +317,7 @@ export class KchatLocalApiServer {
     });
     if (opts.tokenForTesting !== undefined) {
       if (opts.tokenForTesting.length < 32) {
-        throw new Error(
-          "tokenForTesting must be at least 32 characters",
-        );
+        throw new Error("tokenForTesting must be at least 32 characters");
       }
       this.token = opts.tokenForTesting;
     } else {
@@ -389,11 +387,7 @@ export class KchatLocalApiServer {
           res,
           err instanceof LocalApiError
             ? err
-            : new LocalApiError(
-                500,
-                "internal_error",
-                "internal server error",
-              ),
+            : new LocalApiError(500, "internal_error", "internal server error"),
           err instanceof LocalApiError ? null : err,
         );
       });
@@ -589,11 +583,7 @@ export class KchatLocalApiServer {
   private validateHostHeader(req: IncomingMessage): void {
     const host = req.headers.host;
     if (!host) {
-      throw new LocalApiError(
-        400,
-        "invalid_request",
-        "missing Host header",
-      );
+      throw new LocalApiError(400, "invalid_request", "missing Host header");
     }
     // Allow only `127.0.0.1:<port>` to defeat DNS-rebinding attacks
     // that swing a public hostname onto loopback. The bound port is
@@ -622,22 +612,14 @@ export class KchatLocalApiServer {
   private requireBearer(req: IncomingMessage): void {
     const header = req.headers.authorization;
     if (typeof header !== "string" || !header.startsWith("Bearer ")) {
-      throw new LocalApiError(
-        401,
-        "unauthorized",
-        "missing bearer token",
-      );
+      throw new LocalApiError(401, "unauthorized", "missing bearer token");
     }
     const provided = header.slice("Bearer ".length).trim();
     const expected = this.token;
     const a = Buffer.from(provided, "utf8");
     const b = Buffer.from(expected, "utf8");
     if (a.length !== b.length || !timingSafeEqual(a, b)) {
-      throw new LocalApiError(
-        401,
-        "unauthorized",
-        "invalid bearer token",
-      );
+      throw new LocalApiError(401, "unauthorized", "invalid bearer token");
     }
     // Record the heartbeat AFTER the constant-time comparison so a
     // failed-auth attempt cannot move the timestamp forward. The
@@ -669,9 +651,7 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     const buf =
-      chunk instanceof Buffer
-        ? chunk
-        : Buffer.from(chunk as Uint8Array);
+      chunk instanceof Buffer ? chunk : Buffer.from(chunk as Uint8Array);
     total += buf.length;
     if (total > MAX_BODY_BYTES) {
       // the code paired
@@ -702,18 +682,12 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   }
 }
 
-function validateIngestChannelRequest(
-  body: IngestChannelRequest,
-): void {
+function validateIngestChannelRequest(body: IngestChannelRequest): void {
   if (!body || typeof body !== "object") {
     throw new LocalApiError(400, "invalid_request", "body must be an object");
   }
   if (typeof body.channelId !== "string" || body.channelId.length === 0) {
-    throw new LocalApiError(
-      400,
-      "invalid_request",
-      "channelId is required",
-    );
+    throw new LocalApiError(400, "invalid_request", "channelId is required");
   }
   if (
     typeof body.channelName !== "string" ||
@@ -742,25 +716,11 @@ function validateShareArtifactRequest(body: ShareArtifactRequest): void {
   if (!body || typeof body !== "object") {
     throw new LocalApiError(400, "invalid_request", "body must be an object");
   }
-  if (
-    typeof body.artifactId !== "string" ||
-    body.artifactId.length === 0
-  ) {
-    throw new LocalApiError(
-      400,
-      "invalid_request",
-      "artifactId is required",
-    );
+  if (typeof body.artifactId !== "string" || body.artifactId.length === 0) {
+    throw new LocalApiError(400, "invalid_request", "artifactId is required");
   }
-  if (
-    typeof body.channelId !== "string" ||
-    body.channelId.length === 0
-  ) {
-    throw new LocalApiError(
-      400,
-      "invalid_request",
-      "channelId is required",
-    );
+  if (typeof body.channelId !== "string" || body.channelId.length === 0) {
+    throw new LocalApiError(400, "invalid_request", "channelId is required");
   }
   if (
     body.message !== undefined &&
@@ -784,11 +744,7 @@ function validateShareArtifactRequest(body: ShareArtifactRequest): void {
   }
 }
 
-function respond(
-  res: ServerResponse,
-  status: number,
-  body: unknown,
-): void {
+function respond(res: ServerResponse, status: number, body: unknown): void {
   const payload = Buffer.from(JSON.stringify(body), "utf8");
   res.writeHead(status, {
     "content-type": "application/json",

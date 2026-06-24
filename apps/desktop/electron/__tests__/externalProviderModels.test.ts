@@ -69,27 +69,31 @@ describe("listExternalProviderModels — OpenAI-compatible", () => {
 
   it("strips a non-versioned `/chat/completions` suffix (LM Studio / older shims)", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: [{ id: "local" }] }), { status: 200 }),
+      new Response(JSON.stringify({ data: [{ id: "local" }] }), {
+        status: 200,
+      }),
     );
     await listExternalProviderModels(
       mkProvider({ apiUrl: "http://localhost:1234/chat/completions" }),
       "sk",
     );
     // The trim removes `/chat/completions`, then `/v1/models` is appended.
-    expect(fetchSpy.mock.calls[0]![0]).toBe(
-      "http://localhost:1234/v1/models",
-    );
+    expect(fetchSpy.mock.calls[0]![0]).toBe("http://localhost:1234/v1/models");
   });
 
   it("accepts an already-resolved `/v1/models` URL without double-appending", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: [{ id: "x" }] }), { status: 200 }),
-    );
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [{ id: "x" }] }), { status: 200 }),
+      );
     await listExternalProviderModels(
       mkProvider({ apiUrl: "https://api.example.com/v1/models" }),
       "sk",
     );
-    expect(fetchSpy.mock.calls[0]![0]).toBe("https://api.example.com/v1/models");
+    expect(fetchSpy.mock.calls[0]![0]).toBe(
+      "https://api.example.com/v1/models",
+    );
   });
 
   it("returns kind: error on non-2xx with body preview included", async () => {
@@ -221,7 +225,10 @@ describe("listExternalProviderModels — Anthropic short-circuit", () => {
   it("returns kind: unsupported without making an HTTP call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const result = await listExternalProviderModels(
-      mkProvider({ providerType: "anthropic", apiUrl: "https://api.anthropic.com" }),
+      mkProvider({
+        providerType: "anthropic",
+        apiUrl: "https://api.anthropic.com",
+      }),
       "sk",
     );
     expect(result).toEqual({ ok: false, kind: "unsupported" });

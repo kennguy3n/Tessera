@@ -1,1 +1,86 @@
-{"fields": [{"name": "Account", "type": "text"}, {"name": "Region", "type": "select", "options": ["West", "Central", "East", "Intl"]}, {"name": "Owner", "type": "text"}, {"name": "ARR($)", "type": "text"}, {"name": "Open Opportunity", "type": "text"}, {"name": "Amount($)", "type": "text"}, {"name": "Stage", "type": "select", "options": ["Best Case", "Commit (save)", "Commit", "Pipeline"]}, {"name": "Health", "type": "select", "options": ["Green", "Yellow", "Red"]}], "records": [{"Account": "Summit Sports", "Region": "West", "Owner": "A. Okafor", "ARR($)": "1.2M", "Open Opportunity": "Footwear expansion", "Amount($)": "220K", "Stage": "Best Case", "Health": "Green"}, {"Account": "Alpine Co-op", "Region": "Central", "Owner": "R. Mills", "ARR($)": "780K", "Open Opportunity": "Retention/renewal", "Amount($)": "410K", "Stage": "Commit (save)", "Health": "Yellow"}, {"Account": "TrailMart", "Region": "East", "Owner": "D. Singh", "ARR($)": "2.1M", "Open Opportunity": "Private-label packs", "Amount($)": "540K", "Stage": "Commit", "Health": "Green"}, {"Account": "Nordic Outfitters", "Region": "Intl", "Owner": "L. Tran", "ARR($)": "640K", "Open Opportunity": "Scandinavia lane", "Amount($)": "300K", "Stage": "Pipeline", "Health": "Green"}, {"Account": "Urban Trek", "Region": "West", "Owner": "A. Okafor", "ARR($)": "410K", "Open Opportunity": "Retention/renewal", "Amount($)": "410K", "Stage": "Commit (save)", "Health": "Red"}, {"Account": "RidgeLine Gear", "Region": "Intl", "Owner": "A. Okafor", "ARR($)": "None", "Open Opportunity": "New logo \u2014 RidgeLine", "Amount($)": "180K", "Stage": "Best Case", "Health": "Green"}]}
+{
+  "fields": [
+    { "name": "Account", "type": "text" },
+    {
+      "name": "Region",
+      "type": "select",
+      "options": ["West", "Central", "East", "Intl"]
+    },
+    { "name": "Owner", "type": "text" },
+    { "name": "ARR($)", "type": "text" },
+    { "name": "Open Opportunity", "type": "text" },
+    { "name": "Amount($)", "type": "text" },
+    {
+      "name": "Stage",
+      "type": "select",
+      "options": ["Best Case", "Commit (save)", "Commit", "Pipeline"]
+    },
+    {
+      "name": "Health",
+      "type": "select",
+      "options": ["Green", "Yellow", "Red"]
+    }
+  ],
+  "records": [
+    {
+      "Account": "Summit Sports",
+      "Region": "West",
+      "Owner": "A. Okafor",
+      "ARR($)": "1.2M",
+      "Open Opportunity": "Footwear expansion",
+      "Amount($)": "220K",
+      "Stage": "Best Case",
+      "Health": "Green"
+    },
+    {
+      "Account": "Alpine Co-op",
+      "Region": "Central",
+      "Owner": "R. Mills",
+      "ARR($)": "780K",
+      "Open Opportunity": "Retention/renewal",
+      "Amount($)": "410K",
+      "Stage": "Commit (save)",
+      "Health": "Yellow"
+    },
+    {
+      "Account": "TrailMart",
+      "Region": "East",
+      "Owner": "D. Singh",
+      "ARR($)": "2.1M",
+      "Open Opportunity": "Private-label packs",
+      "Amount($)": "540K",
+      "Stage": "Commit",
+      "Health": "Green"
+    },
+    {
+      "Account": "Nordic Outfitters",
+      "Region": "Intl",
+      "Owner": "L. Tran",
+      "ARR($)": "640K",
+      "Open Opportunity": "Scandinavia lane",
+      "Amount($)": "300K",
+      "Stage": "Pipeline",
+      "Health": "Green"
+    },
+    {
+      "Account": "Urban Trek",
+      "Region": "West",
+      "Owner": "A. Okafor",
+      "ARR($)": "410K",
+      "Open Opportunity": "Retention/renewal",
+      "Amount($)": "410K",
+      "Stage": "Commit (save)",
+      "Health": "Red"
+    },
+    {
+      "Account": "RidgeLine Gear",
+      "Region": "Intl",
+      "Owner": "A. Okafor",
+      "ARR($)": "None",
+      "Open Opportunity": "New logo \u2014 RidgeLine",
+      "Amount($)": "180K",
+      "Stage": "Best Case",
+      "Health": "Green"
+    }
+  ]
+}

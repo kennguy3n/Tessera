@@ -178,10 +178,10 @@ export function sanitiseRemoteId(id: string): string {
   // id that differs only in those positions. Disambiguate with a
   // truncated SHA-1 of the ORIGINAL id (not of `safe`, so siblings
   // that sanitise to the same prefix still get distinct suffixes).
-  const hash = createHash("sha1").update(id).digest("hex").slice(
-    0,
-    COLLISION_HASH_LEN,
-  );
+  const hash = createHash("sha1")
+    .update(id)
+    .digest("hex")
+    .slice(0, COLLISION_HASH_LEN);
   const suffix = `_${hash}`;
   const head = safe.slice(0, REMOTE_ID_MAX_LEN - suffix.length);
   return `${head}${suffix}`;
@@ -251,7 +251,9 @@ export const FAILED_RETRY_MAX_ATTEMPTS = 5;
  * the watermark scan skips the unparsable value, the unfiltered
  * scan keeps it.
  */
-export function parseWatermarkIso(value: string | null | undefined): number | null {
+export function parseWatermarkIso(
+  value: string | null | undefined,
+): number | null {
   if (!value) return null;
   const ms = Date.parse(value);
   return Number.isNaN(ms) ? null : ms;

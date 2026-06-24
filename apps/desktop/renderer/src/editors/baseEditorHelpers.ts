@@ -28,7 +28,11 @@ import type {
   RollupAggregation,
 } from "./baseEditorTypes";
 import type { BaseViewConfig } from "./baseviews/types";
-import { pruneColumnSummaries, pruneSorts, type SortRule } from "./baseGridHelpers";
+import {
+  pruneColumnSummaries,
+  pruneSorts,
+  type SortRule,
+} from "./baseGridHelpers";
 
 /**
  * Names the user must not assign to a field. `id` is the stable
@@ -336,29 +340,21 @@ export function aggregateValues(
         .map((v) => (Array.isArray(v) ? v.join(", ") : String(v)))
         .join(", ");
     case "SUM": {
-      const nums = values
-        .map(asNumber)
-        .filter((n): n is number => n !== null);
+      const nums = values.map(asNumber).filter((n): n is number => n !== null);
       return String(nums.reduce((a, b) => a + b, 0));
     }
     case "AVG": {
-      const nums = values
-        .map(asNumber)
-        .filter((n): n is number => n !== null);
+      const nums = values.map(asNumber).filter((n): n is number => n !== null);
       if (nums.length === 0) return "0";
       return String(nums.reduce((a, b) => a + b, 0) / nums.length);
     }
     case "MIN": {
-      const nums = values
-        .map(asNumber)
-        .filter((n): n is number => n !== null);
+      const nums = values.map(asNumber).filter((n): n is number => n !== null);
       if (nums.length === 0) return "";
       return String(Math.min(...nums));
     }
     case "MAX": {
-      const nums = values
-        .map(asNumber)
-        .filter((n): n is number => n !== null);
+      const nums = values.map(asNumber).filter((n): n is number => n !== null);
       if (nums.length === 0) return "";
       return String(Math.max(...nums));
     }
@@ -391,9 +387,7 @@ export function lookupValues(
  * cleverer than Airtable here; the user can sort by this field to
  * preserve insertion order even after a re-arrange.)
  */
-export function computeAutoNumber(
-  recordIndex: number,
-): number {
+export function computeAutoNumber(recordIndex: number): number {
   return recordIndex + 1;
 }
 
@@ -751,16 +745,17 @@ export type ViewConfigFieldPointer = {
     : never;
 }[keyof BaseViewConfig];
 
-export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<ViewConfigFieldPointer> = [
-  "kanbanGroupField",
-  "calendarDateField",
-  "timelineStartField",
-  "timelineEndField",
-  "galleryCoverField",
-  "titleField",
-  "gridGroupField",
-  "gridColorField",
-];
+export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<ViewConfigFieldPointer> =
+  [
+    "kanbanGroupField",
+    "calendarDateField",
+    "timelineStartField",
+    "timelineEndField",
+    "galleryCoverField",
+    "titleField",
+    "gridGroupField",
+    "gridColorField",
+  ];
 
 /**
  * After replacing the entire Base content via import (or any other

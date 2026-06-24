@@ -100,8 +100,8 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
   // the user has not toggled it yet. Read once from localStorage on
   // mount; subsequent toggles update both this state and the stored
   // value so the choice survives relaunches.
-  const [moreToolsChoice, setMoreToolsChoice] = useState<boolean | null>(
-    () => readStoredMoreToolsExpanded(),
+  const [moreToolsChoice, setMoreToolsChoice] = useState<boolean | null>(() =>
+    readStoredMoreToolsExpanded(),
   );
   // Effective open state: an explicit user choice always wins;
   // otherwise the section defaults to collapsed under simplified
@@ -206,9 +206,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
         </button>
         {moreToolsExpanded && (
           <ul className="sidebar-nav" id="sidebar-more-tools-list">
-            {SECONDARY_SIDEBAR_ITEMS.map((item) =>
-              renderNavItem(item, true),
-            )}
+            {SECONDARY_SIDEBAR_ITEMS.map((item) => renderNavItem(item, true))}
           </ul>
         )}
       </div>

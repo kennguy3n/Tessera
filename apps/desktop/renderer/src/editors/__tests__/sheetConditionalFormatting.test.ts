@@ -97,7 +97,10 @@ describe("cellMatchesRule — equality", () => {
 describe("cellMatchesRule — text + emptiness", () => {
   it("contains / notContains do substring checks", () => {
     expect(
-      cellMatchesRule("hello world", rule({ operator: "contains", value: "wor" })),
+      cellMatchesRule(
+        "hello world",
+        rule({ operator: "contains", value: "wor" }),
+      ),
     ).toBe(true);
     expect(
       cellMatchesRule("hello", rule({ operator: "notContains", value: "zzz" })),
@@ -114,9 +117,9 @@ describe("cellMatchesRule — text + emptiness", () => {
     expect(
       cellMatchesRule("data", rule({ operator: "notEmpty", value: "" })),
     ).toBe(true);
-    expect(
-      cellMatchesRule("", rule({ operator: "notEmpty", value: "" })),
-    ).toBe(false);
+    expect(cellMatchesRule("", rule({ operator: "notEmpty", value: "" }))).toBe(
+      false,
+    );
   });
 });
 
@@ -146,8 +149,18 @@ describe("conditionalStyleForCell — column scope + cascade", () => {
 
   it("cascades multiple matching rules, later overriding earlier", () => {
     const rules = [
-      rule({ id: "a", operator: "gt", value: "5", style: { background: "#aaa", bold: true } }),
-      rule({ id: "b", operator: "gt", value: "8", style: { background: "#bbb" } }),
+      rule({
+        id: "a",
+        operator: "gt",
+        value: "5",
+        style: { background: "#aaa", bold: true },
+      }),
+      rule({
+        id: "b",
+        operator: "gt",
+        value: "8",
+        style: { background: "#bbb" },
+      }),
     ];
     // value 10 matches both → background from the later rule, bold from earlier
     expect(conditionalStyleForCell(rules, 0, "10")).toEqual({

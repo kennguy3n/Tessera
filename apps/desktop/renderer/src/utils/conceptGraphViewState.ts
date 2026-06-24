@@ -114,7 +114,8 @@ function parseFitBox(value: unknown): FitBox | null {
   const y = asFiniteNumber(rec.y);
   const width = asFiniteNumber(rec.width);
   const height = asFiniteNumber(rec.height);
-  if (x === null || y === null || width === null || height === null) return null;
+  if (x === null || y === null || width === null || height === null)
+    return null;
   if (width <= 0 || height <= 0) return null;
   return { x, y, width, height };
 }
@@ -159,7 +160,9 @@ export function computeViewSignature(ids: Iterable<string>): number {
  * `conceptGraph` type guards so a corrupt blob can't inject bogus
  * relation/state values into the renderer.
  */
-export function parseViewState(raw: string | null): ConceptGraphViewState | null {
+export function parseViewState(
+  raw: string | null,
+): ConceptGraphViewState | null {
   if (raw === null) return null;
   let parsed: unknown;
   try {
@@ -192,8 +195,10 @@ export function parseViewState(raw: string | null): ConceptGraphViewState | null
   return {
     disabledRelations,
     disabledStates,
-    labelsAll: typeof rec.labelsAll === "boolean" ? rec.labelsAll : base.labelsAll,
-    localMode: typeof rec.localMode === "boolean" ? rec.localMode : base.localMode,
+    labelsAll:
+      typeof rec.labelsAll === "boolean" ? rec.labelsAll : base.labelsAll,
+    localMode:
+      typeof rec.localMode === "boolean" ? rec.localMode : base.localMode,
     localHops,
     selectedId: typeof rec.selectedId === "string" ? rec.selectedId : null,
     scopeFilter:
@@ -226,7 +231,9 @@ export function serializeViewState(state: ConceptGraphViewState): string {
  */
 export function loadViewState(scopeId: string): ConceptGraphViewState | null {
   try {
-    return parseViewState(window.localStorage.getItem(viewStateStorageKey(scopeId)));
+    return parseViewState(
+      window.localStorage.getItem(viewStateStorageKey(scopeId)),
+    );
   } catch {
     return null;
   }
@@ -237,7 +244,10 @@ export function loadViewState(scopeId: string): ConceptGraphViewState | null {
  * unavailable or the write is rejected (quota/locked), so persistence is
  * always best-effort and never a failure path for the renderer.
  */
-export function saveViewState(scopeId: string, state: ConceptGraphViewState): void {
+export function saveViewState(
+  scopeId: string,
+  state: ConceptGraphViewState,
+): void {
   try {
     window.localStorage.setItem(
       viewStateStorageKey(scopeId),

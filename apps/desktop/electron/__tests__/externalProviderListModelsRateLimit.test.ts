@@ -92,10 +92,7 @@ function getHandler(
 ): (event: unknown, ...args: unknown[]) => Promise<unknown> {
   const call = handleMock.mock.calls.find((c) => c[0] === channel);
   if (!call) throw new Error(`No handler registered for ${channel}`);
-  return call[1] as (
-    event: unknown,
-    ...args: unknown[]
-  ) => Promise<unknown>;
+  return call[1] as (event: unknown, ...args: unknown[]) => Promise<unknown>;
 }
 
 describe("externalProvider:listModels — rate limiter", () => {
@@ -177,9 +174,7 @@ describe("externalProvider:listModels — rate limiter", () => {
     // hatch the limiter exposes for exactly this case).
     defaultRateLimiter.reset();
 
-    const unblocked = (await handler(
-      {},
-    )) as ExternalProviderListModelsResult;
+    const unblocked = (await handler({})) as ExternalProviderListModelsResult;
     expect(unblocked.ok).toBe(false);
     if (!unblocked.ok && unblocked.kind === "error") {
       // Must NOT be the rate-limit error anymore — should be the

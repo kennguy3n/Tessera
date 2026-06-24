@@ -133,7 +133,12 @@ describe("paneTree — openTab", () => {
 
 describe("paneTree — setActiveTab / navigateTab", () => {
   it("activates a tab and focuses its pane", () => {
-    let ws = openTab(defaultWs(), "pane-1", { id: "t2", path: "/a" }, { activate: false });
+    let ws = openTab(
+      defaultWs(),
+      "pane-1",
+      { id: "t2", path: "/a" },
+      { activate: false },
+    );
     ws = setActiveTab(ws, "pane-1", "t2");
     expect(asLeaf(ws, "pane-1").activeTabId).toBe("t2");
   });
@@ -342,7 +347,11 @@ describe("paneTree — moveTab", () => {
   it("reorders within a pane", () => {
     let ws = openTab(defaultWs(), "pane-1", { id: "t2", path: "/a" });
     ws = openTab(ws, "pane-1", { id: "t3", path: "/b" });
-    ws = moveTab(ws, { paneId: "pane-1", tabId: "t3" }, { paneId: "pane-1", index: 0 });
+    ws = moveTab(
+      ws,
+      { paneId: "pane-1", tabId: "t3" },
+      { paneId: "pane-1", index: 0 },
+    );
     expect(asLeaf(ws, "pane-1").tabs.map((t) => t.id)).toEqual([
       "t3",
       "tab-1",
@@ -380,7 +389,11 @@ describe("paneTree — moveTab", () => {
   it("no-ops for unknown tabs/panes and full destinations", () => {
     const ws = twoPane();
     expect(
-      moveTab(ws, { paneId: "pane-1", tabId: "ghost" }, { paneId: "pane-2", index: 0 }),
+      moveTab(
+        ws,
+        { paneId: "pane-1", tabId: "ghost" },
+        { paneId: "pane-2", index: 0 },
+      ),
     ).toBe(ws);
   });
 });
@@ -423,7 +436,10 @@ describe("paneTree — resizeSplit", () => {
 
 describe("paneTree — persistence round-trip", () => {
   it("serializes and deserializes a complex layout losslessly", () => {
-    let ws = openTab(defaultWs("/sources"), "pane-1", { id: "t2", path: "/tasks" });
+    let ws = openTab(defaultWs("/sources"), "pane-1", {
+      id: "t2",
+      path: "/tasks",
+    });
     ws = splitPane(ws, "pane-1", "row", {
       newPaneId: "pane-2",
       newTabId: "tab-2",
@@ -468,8 +484,18 @@ describe("paneTree — persistence round-trip", () => {
           direction: "row",
           sizes: [0.5, 0.5],
           children: [
-            { type: "leaf", id: "dup", tabs: [{ id: "a", path: "/" }], activeTabId: "a" },
-            { type: "leaf", id: "dup", tabs: [{ id: "b", path: "/" }], activeTabId: "b" },
+            {
+              type: "leaf",
+              id: "dup",
+              tabs: [{ id: "a", path: "/" }],
+              activeTabId: "a",
+            },
+            {
+              type: "leaf",
+              id: "dup",
+              tabs: [{ id: "b", path: "/" }],
+              activeTabId: "b",
+            },
           ],
         },
       },
@@ -488,7 +514,12 @@ describe("paneTree — persistence round-trip", () => {
       version: WORKSPACE_SCHEMA_VERSION,
       state: {
         focusedPaneId: "does-not-exist",
-        root: { type: "leaf", id: "real", tabs: [{ id: "a", path: "/" }], activeTabId: "a" },
+        root: {
+          type: "leaf",
+          id: "real",
+          tabs: [{ id: "a", path: "/" }],
+          activeTabId: "a",
+        },
       },
     };
     const ws = deserializeWorkspace(JSON.stringify(blob));
@@ -504,7 +535,10 @@ describe("paneTree — persistence round-trip", () => {
         root: {
           type: "leaf",
           id: "real",
-          tabs: [{ id: "a", path: "/" }, { id: "b", path: "/tasks" }],
+          tabs: [
+            { id: "a", path: "/" },
+            { id: "b", path: "/tasks" },
+          ],
           activeTabId: "ghost",
         },
       },
@@ -524,7 +558,12 @@ describe("paneTree — persistence round-trip", () => {
           direction: "row",
           sizes: [1],
           children: [
-            { type: "leaf", id: "leaf", tabs: [{ id: "a", path: "/" }], activeTabId: "a" },
+            {
+              type: "leaf",
+              id: "leaf",
+              tabs: [{ id: "a", path: "/" }],
+              activeTabId: "a",
+            },
           ],
         },
       },
@@ -680,7 +719,12 @@ describe("paneTree — maximize / restore", () => {
       state: {
         focusedPaneId: "leaf",
         maximizedPaneId: "ghost",
-        root: { type: "leaf", id: "leaf", tabs: [{ id: "a", path: "/" }], activeTabId: "a" },
+        root: {
+          type: "leaf",
+          id: "leaf",
+          tabs: [{ id: "a", path: "/" }],
+          activeTabId: "a",
+        },
       },
     };
     const ws = deserializeWorkspace(JSON.stringify(blob));
@@ -688,7 +732,9 @@ describe("paneTree — maximize / restore", () => {
   });
 
   it("restores a valid maximize flag from a persisted blob", () => {
-    const ws = deserializeWorkspace(serializeWorkspace(maximizePane(twoPane(), "pane-1")));
+    const ws = deserializeWorkspace(
+      serializeWorkspace(maximizePane(twoPane(), "pane-1")),
+    );
     expect(ws!.maximizedPaneId).toBe("pane-1");
   });
 });
@@ -757,16 +803,16 @@ describe("paneTree — closeOtherTabs / closeTabsToRight", () => {
 describe("paneTree — splitWithTab (drag-to-split)", () => {
   it("moves a tab into a new pane on the trailing side of the target", () => {
     let ws = openTab(defaultWs(), "pane-1", { id: "t2", path: "/a" });
-    ws = splitWithTab(
-      ws,
-      { paneId: "pane-1", tabId: "t2" },
-      "pane-1",
-      "row",
-      { newPaneId: "p2", newTabId: "ignored", newSplitId: "s1" },
-    );
+    ws = splitWithTab(ws, { paneId: "pane-1", tabId: "t2" }, "pane-1", "row", {
+      newPaneId: "p2",
+      newTabId: "ignored",
+      newSplitId: "s1",
+    });
     // Same pane with >1 tab falls back to splitPane carving t2 out.
     expect(countLeaves(ws.root)).toBe(2);
-    const moved = listLeaves(ws.root).find((l) => l.tabs.some((t) => t.id === "t2"));
+    const moved = listLeaves(ws.root).find((l) =>
+      l.tabs.some((t) => t.id === "t2"),
+    );
     expect(moved).toBeTruthy();
   });
 
@@ -792,12 +838,16 @@ describe("paneTree — splitWithTab (drag-to-split)", () => {
     const ws = twoPane();
     expect(
       splitWithTab(ws, { paneId: "ghost", tabId: "x" }, "pane-2", "row", {
-        newPaneId: "p", newTabId: "t", newSplitId: "s",
+        newPaneId: "p",
+        newTabId: "t",
+        newSplitId: "s",
       }),
     ).toBe(ws);
     expect(
       splitWithTab(ws, { paneId: "pane-1", tabId: "tab-1" }, "ghost", "row", {
-        newPaneId: "p", newTabId: "t", newSplitId: "s",
+        newPaneId: "p",
+        newTabId: "t",
+        newSplitId: "s",
       }),
     ).toBe(ws);
   });
@@ -855,7 +905,9 @@ describe("paneTree — linked panes", () => {
 
   it("clears a link with null and lists followers", () => {
     let ws = setPaneLink(twoPane(), "pane-2", "pane-1");
-    expect(listLinkedFollowers(ws.root, "pane-1").map((l) => l.id)).toEqual(["pane-2"]);
+    expect(listLinkedFollowers(ws.root, "pane-1").map((l) => l.id)).toEqual([
+      "pane-2",
+    ]);
     ws = setPaneLink(ws, "pane-2", null);
     expect(asLeaf(ws, "pane-2").followPaneId).toBeUndefined();
     expect(listLinkedFollowers(ws.root, "pane-1")).toHaveLength(0);

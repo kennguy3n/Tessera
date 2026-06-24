@@ -205,10 +205,7 @@ const api: TesseraApi = {
     getIndexingProgress: (id: string) =>
       ipcRenderer.invoke("sources:getIndexingProgress", id),
     backfillEmbeddings: (batchSize?: number) =>
-      ipcRenderer.invoke(
-        "sources:backfillEmbeddings",
-        batchSize ?? null,
-      ),
+      ipcRenderer.invoke("sources:backfillEmbeddings", batchSize ?? null),
     getEmbeddingProgress: () =>
       ipcRenderer.invoke("sources:getEmbeddingProgress"),
     // Source Health dashboard.
@@ -354,8 +351,7 @@ const api: TesseraApi = {
     setPin: (pin: string) => ipcRenderer.invoke("appLock:setPin", pin),
     changePin: (oldPin: string, newPin: string) =>
       ipcRenderer.invoke("appLock:changePin", oldPin, newPin),
-    removePin: (pin: string) =>
-      ipcRenderer.invoke("appLock:removePin", pin),
+    removePin: (pin: string) => ipcRenderer.invoke("appLock:removePin", pin),
     attemptUnlock: (pin: string) =>
       ipcRenderer.invoke("appLock:attemptUnlock", pin),
     attemptBiometric: (reason?: string) =>
@@ -683,8 +679,7 @@ const api: TesseraApi = {
      * queue (pending `shareArtifact` / `ingestChannel` ops) so the
      * Sidebar can show a "N pending" badge.
      */
-    offlineQueueStatus: () =>
-      ipcRenderer.invoke("kchat:offlineQueueStatus"),
+    offlineQueueStatus: () => ipcRenderer.invoke("kchat:offlineQueueStatus"),
     /**
      * Session 8 Task 3: set which channels raise native OS
      * notifications for new posts. Task auto-create is a separate
@@ -772,8 +767,7 @@ const api: TesseraApi = {
      * extension bridge state. Used by the Settings card to render
      * the "KChat Desktop detected" affordance.
      */
-    desktopBridgeStatus: () =>
-      ipcRenderer.invoke("kchat:desktopBridgeStatus"),
+    desktopBridgeStatus: () => ipcRenderer.invoke("kchat:desktopBridgeStatus"),
     /**
      * KChat channel backfill progress. The
      * SourceDetailPage subscribes to this while a backfill is

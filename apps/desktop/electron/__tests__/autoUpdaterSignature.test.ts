@@ -119,9 +119,9 @@ vi.mock("../telemetrySink", () => ({
 // `verifyUpdateSignature(path)` call. The real implementation is
 // imported here (NOT mocked away) so the actual Ed25519 crypto runs.
 vi.mock("../updaterSignature", async () => {
-  const actual = await vi.importActual<
-    typeof import("../updaterSignature")
-  >("../updaterSignature");
+  const actual = await vi.importActual<typeof import("../updaterSignature")>(
+    "../updaterSignature",
+  );
   return {
     ...actual,
     verifyUpdateSignature: (

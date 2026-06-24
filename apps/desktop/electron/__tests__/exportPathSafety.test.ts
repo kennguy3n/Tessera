@@ -123,7 +123,11 @@ const KCHAT_CACHE = path.join(HOME, ".tessera", "kchat-channels");
 describe("isSafeExportPath with denyRoots", () => {
   it("rejects a path inside the KChat channel cache even though it is inside HOME", () => {
     // Without the deny-list this would pass because HOME is in ROOTS.
-    const target = path.join(KCHAT_CACHE, "chidabcdef1234567890abcd", "file.md");
+    const target = path.join(
+      KCHAT_CACHE,
+      "chidabcdef1234567890abcd",
+      "file.md",
+    );
     expect(isSafeExportPath(target, ROOTS, [KCHAT_CACHE])).toBe(false);
   });
 
@@ -147,14 +151,24 @@ describe("isSafeExportPath with denyRoots", () => {
   it("rejects paths that escape the deny-root via .. but resolve back inside it", () => {
     // `kchat-channels/foo/../../kchat-channels/bar/x` resolves to
     // `kchat-channels/bar/x` which is inside the deny-root.
-    const escape = path.join(KCHAT_CACHE, "foo", "..", "..", "kchat-channels", "bar", "x.md");
+    const escape = path.join(
+      KCHAT_CACHE,
+      "foo",
+      "..",
+      "..",
+      "kchat-channels",
+      "bar",
+      "x.md",
+    );
     expect(isSafeExportPath(escape, ROOTS, [KCHAT_CACHE])).toBe(false);
   });
 
   it("still allows normal export paths when a deny-root is active", () => {
     // Downloads is not inside the deny-root.
     expect(
-      isSafeExportPath(path.join(DOWNLOADS, "export.pdf"), ROOTS, [KCHAT_CACHE]),
+      isSafeExportPath(path.join(DOWNLOADS, "export.pdf"), ROOTS, [
+        KCHAT_CACHE,
+      ]),
     ).toBe(true);
     expect(
       isSafeExportPath(path.join(TMP, "test.xlsx"), ROOTS, [KCHAT_CACHE]),
@@ -169,16 +183,16 @@ describe("isSafeExportPath with denyRoots", () => {
 
   it("rejects everything when deny-root covers the allow-root", () => {
     // If HOME is both allowed AND denied, deny wins.
-    expect(
-      isSafeExportPath(path.join(HOME, "file.pdf"), [HOME], [HOME]),
-    ).toBe(false);
+    expect(isSafeExportPath(path.join(HOME, "file.pdf"), [HOME], [HOME])).toBe(
+      false,
+    );
   });
 
   it("ignores empty string entries in the deny-list", () => {
     // An empty deny entry must not cause false-reject (an empty string
     // `path.resolve("")` is cwd, which is typically inside HOME).
-    expect(
-      isSafeExportPath(path.join(DOWNLOADS, "ok.pdf"), ROOTS, [""]),
-    ).toBe(true);
+    expect(isSafeExportPath(path.join(DOWNLOADS, "ok.pdf"), ROOTS, [""])).toBe(
+      true,
+    );
   });
 });

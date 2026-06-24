@@ -163,10 +163,7 @@ export function removeComment(
  * Uses the host locale via `toLocaleString`, matching how the rest of
  * the renderer presents dates.
  */
-export function formatTimestamp(
-  iso: unknown,
-  includeTime: boolean,
-): string {
+export function formatTimestamp(iso: unknown, includeTime: boolean): string {
   if (typeof iso !== "string" || iso.trim() === "") return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return String(iso);

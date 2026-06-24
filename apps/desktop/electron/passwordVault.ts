@@ -357,7 +357,9 @@ export function decryptWithPasswordKey(blob: Buffer): string {
  * a file produced by a previous session.
  */
 export function isPasswordVaultBlob(blob: Buffer): boolean {
-  return blob.length >= MAGIC.length && blob.subarray(0, MAGIC.length).equals(MAGIC);
+  return (
+    blob.length >= MAGIC.length && blob.subarray(0, MAGIC.length).equals(MAGIC)
+  );
 }
 
 /**
@@ -383,7 +385,8 @@ export async function promptForVaultPassword(opts: {
   confirmRequired: boolean;
 }): Promise<string> {
   const promptHtml = renderPromptHtml({
-    message: opts.prompt ??
+    message:
+      opts.prompt ??
       "Tessera could not detect an OS keyring on this machine. Enter a password to encrypt your local OAuth tokens and API keys. You will be asked for this password every time the app starts.",
     confirmRequired: opts.confirmRequired,
   });
@@ -462,10 +465,7 @@ export async function promptForVaultPassword(opts: {
       return e.sender === win.webContents;
     };
 
-    const onSubmit = (
-      e: Electron.IpcMainEvent,
-      payload: unknown,
-    ): void => {
+    const onSubmit = (e: Electron.IpcMainEvent, payload: unknown): void => {
       if (settled) return;
       if (!isFromPromptWindow(e)) return;
       // Runtime validation: the TS annotation is compile-time only;
@@ -535,11 +535,7 @@ export async function promptForVaultPassword(opts: {
       setImmediate(() => {
         if (!win.isDestroyed()) win.close();
       });
-      reject(
-        new Error(
-          "Vault password prompt was cancelled by the user.",
-        ),
-      );
+      reject(new Error("Vault password prompt was cancelled by the user."));
     };
 
     ipcMain.on(PASSWORD_PROMPT_SUBMIT_CHANNEL, onSubmit);
@@ -713,8 +709,7 @@ function renderPromptHtml(opts: {
  * "prompt suppressed by policy") they will have distinct sentinels
  * and the main.ts side can decide per-reason whether to warn.
  */
-export const VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE =
-  "safeStorage is available";
+export const VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE = "safeStorage is available";
 
 /**
  * Top-level initialiser called from `main.ts`'s `maybeInitPasswordVault`

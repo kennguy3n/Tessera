@@ -7,12 +7,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import {
-  DependencyGraph,
-  cellKey,
-  extractReferences,
-  parseFormula,
-} from "..";
+import { DependencyGraph, cellKey, extractReferences, parseFormula } from "..";
 
 function refsOf(formula: string): string[] {
   const r = parseFormula(formula);
@@ -28,9 +23,7 @@ describe("extractReferences", () => {
     expect(refsOf("=A1")).toEqual(["0,0"]);
   });
   it("expands a range into every cell", () => {
-    expect(refsOf("=SUM(A1:B2)")).toEqual(
-      ["0,0", "0,1", "1,0", "1,1"].sort(),
-    );
+    expect(refsOf("=SUM(A1:B2)")).toEqual(["0,0", "0,1", "1,0", "1,1"].sort());
   });
   it("walks into nested function calls", () => {
     expect(refsOf("=IF(A1>0,B1,C1)")).toEqual(["0,0", "0,1", "0,2"].sort());

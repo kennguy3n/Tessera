@@ -359,10 +359,7 @@ export const SUMMARY_LABELS: Record<RollupAggregation, string> = {
  * so it reads "Checked" rather than the generic "Filled" — which would be
  * misleading since every checkbox row, checked or not, holds a value.
  */
-export function summaryLabel(
-  kind: RollupAggregation,
-  type: FieldType,
-): string {
+export function summaryLabel(kind: RollupAggregation, type: FieldType): string {
   if (kind === "COUNT" && type === "checkbox") return "Checked";
   return SUMMARY_LABELS[kind];
 }
@@ -433,7 +430,10 @@ export function formatSummaryValue(
       // Re-clamp to `toFixed`'s [0,100] domain (defence in depth — the
       // parser already clamps `percentPrecision` to [0,20]) so an
       // in-memory mutation can't throw a RangeError mid-render.
-      const digits = Math.min(20, Math.max(0, Math.floor(field.percentPrecision ?? 0)));
+      const digits = Math.min(
+        20,
+        Math.max(0, Math.floor(field.percentPrecision ?? 0)),
+      );
       return `${(n * 100).toFixed(digits)}%`;
     }
     case "duration":
