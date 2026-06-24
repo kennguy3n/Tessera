@@ -3102,6 +3102,14 @@ export interface DialogApi {
   openBundle: (
     options?: OpenBundleDialogOptions,
   ) => Promise<OpenImageDialogResult>;
+  /**
+   * Open a native file picker for arbitrary files (Sources → Add Source
+   * → Local File). Returns `{ canceled: true, filePath: null }` if
+   * dismissed, else `{ canceled: false, filePath: <absolute path> }`.
+   */
+  openFile: (
+    options?: OpenFileDialogOptions,
+  ) => Promise<OpenImageDialogResult>;
 }
 
 /** Options for `dialog:openDirectory`. Only the title is exposed. */
@@ -3111,6 +3119,11 @@ export interface OpenDirectoryDialogOptions {
 
 /** Options for `dialog:openBundle`. Only the title is exposed. */
 export interface OpenBundleDialogOptions {
+  title?: string;
+}
+
+/** Options for `dialog:openFile`. Only the title is exposed. */
+export interface OpenFileDialogOptions {
   title?: string;
 }
 

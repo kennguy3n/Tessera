@@ -592,6 +592,8 @@ const api: TesseraApi = {
       ipcRenderer.invoke("dialog:openDirectory", options ?? {}),
     openBundle: (options?: { title?: string }) =>
       ipcRenderer.invoke("dialog:openBundle", options ?? {}),
+    openFile: (options?: { title?: string }) =>
+      ipcRenderer.invoke("dialog:openFile", options ?? {}),
   },
   backup: {
     create: () => ipcRenderer.invoke("backup:create"),

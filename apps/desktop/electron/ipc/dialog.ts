@@ -21,6 +21,7 @@ import { idempotentHandle } from "./register";
 import {
   OpenBundleDialogSchema,
   OpenDirectoryDialogSchema,
+  OpenFileDialogSchema,
   OpenImageDialogSchema,
   SaveDialogOptionsSchema,
 } from "./schemas";
@@ -147,6 +148,26 @@ export function registerDialogHandlers(): void {
         { name: "Tessera workspace bundle", extensions: [BUNDLE_EXTENSION] },
         { name: "All files", extensions: ["*"] },
       ],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, filePath: null };
+    }
+    return { canceled: false, filePath: result.filePaths[0] };
+  });
+
+  // `dialog:openFile` — opens an OS file picker for arbitrary files and
+  // returns the chosen absolute path (or `null` if cancelled). Used by
+  // Sources → Add Source → Local File so the user gets a native browse
+  // dialog instead of typing a path manually.
+  idempotentHandle("dialog:openFile", async (event, options: unknown) => {
+    const parsed = OpenFileDialogSchema.parse(options ?? {});
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions: Electron.OpenDialogOptions = {
+      title: parsed.title ?? "Choose a file",
+      properties: ["openFile", "dontAddToRecent"],
     };
     const result = win
       ? await dialog.showOpenDialog(win, dialogOptions)

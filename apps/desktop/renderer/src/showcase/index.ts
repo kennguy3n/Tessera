@@ -897,6 +897,7 @@ export function buildShowcaseApi(
       showSaveDialog: async () => ({ canceled: true }),
       openBundle: async () => ({ canceled: true, filePath: null }),
       pickImage: async () => ({ canceled: true, filePath: null }),
+      openFile: async () => ({ canceled: true, filePath: null }),
     },
     artifacts: {
       list: async () => artifacts,

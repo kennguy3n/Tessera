@@ -118,7 +118,9 @@ export function buildCsp(opts: BuildCspOptions): string {
 
   const directives: string[] = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'`,
+    isDev
+      ? `script-src 'self' 'unsafe-inline' http://localhost:5173`
+      : `script-src 'self' 'nonce-${nonce}'`,
     `style-src-elem 'self' 'nonce-${nonce}' https://fonts.googleapis.com`,
     "style-src-attr 'unsafe-inline'",
     "font-src 'self' https://fonts.gstatic.com",

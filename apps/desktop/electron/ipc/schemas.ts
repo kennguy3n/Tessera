@@ -823,3 +823,11 @@ export const OpenBundleDialogSchema = z
   .object({ title: z.string().max(512).optional() })
   .strict();
 export type OpenBundleDialogInput = z.infer<typeof OpenBundleDialogSchema>;
+
+// `dialog:openFile` — native file picker for arbitrary files, used by
+// Sources → Add Source → Local File. Same strict/bounded-title hardening
+// as the other dialog schemas.
+export const OpenFileDialogSchema = z
+  .object({ title: z.string().max(512).optional() })
+  .strict();
+export type OpenFileDialogInput = z.infer<typeof OpenFileDialogSchema>;

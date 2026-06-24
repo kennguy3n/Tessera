@@ -336,6 +336,8 @@ export function getCspNonce(): string {
  * env check — so it cannot affect production startup behaviour.
  */
 const PERF_SMOKE = process.env.TESSERA_PERF_SMOKE === "1";
+/** Use the built renderer bundle instead of the Vite dev server, without the perf-smoke quit. */
+const USE_BUILT_RENDERER = process.env.TESSERA_BUILT === "1";
 
 function installContentSecurityPolicy(): void {
   // The CSP `img-src` widening below includes `tessera-asset:` as a
@@ -409,6 +411,7 @@ function installContentSecurityPolicy(): void {
  * distinguishes "main window already open" from "any window open".
  */
 function createWindow(): void {
+  console.log("[Tessera] createWindow called");
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     // Already open from a previous call (e.g. activate listener
     // fired first) — or hidden to the tray (LW-9). Bring it to the
@@ -496,7 +499,19 @@ function createWindow(): void {
   // dev server: the cold-start gate runs against `npm run build`
   // output with no dev server listening on :5173, and pointing at a
   // dead URL would never fire `ready-to-show`.
-  const isDev = !app.isPackaged && !PERF_SMOKE;
+  const isDev = !app.isPackaged && !PERF_SMOKE && !USE_BUILT_RENDERER;
+  console.log("[Tessera] isDev:", isDev, "isPackaged:", app.isPackaged, "PERF_SMOKE:", PERF_SMOKE, "USE_BUILT_RENDERER:", USE_BUILT_RENDERER);
+
+  mainWindow.webContents.on("did-start-loading", () => {
+    console.log("[Tessera] renderer: did-start-loading");
+  });
+  mainWindow.webContents.on("did-fail-load", (_e, code, desc, url) => {
+    console.error("[Tessera] renderer: did-fail-load", { code, desc, url });
+  });
+  mainWindow.webContents.on("did-finish-load", () => {
+    console.log("[Tessera] renderer: did-finish-load");
+  });
+
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
@@ -733,14 +748,25 @@ async function maybeInitPasswordVault(): Promise<void> {
  */
 const cspLogSeen = new Map<string, true>();
 const CSP_LOG_DEDUP_LIMIT = 50;
+/** When `TESSERA_DEVTOOLS=1`: open DevTools on every window and log all renderer warnings/errors. */
+const DEVTOOLS_MODE = process.env.TESSERA_DEVTOOLS === "1";
+
 function installCSPDevtoolsLogger(): void {
   app.on("web-contents-created", (_event, contents) => {
+    if (DEVTOOLS_MODE) {
+      contents.once("dom-ready", () => contents.openDevTools());
+    }
     // WebContents emits `console-message` with positional args:
     //   (event, level, message, line, sourceId)
     // (NOT the Event2 MessageDetails shape used by ServiceWorkers in
     // newer Electron — different overload entirely.) `level` is
     // numeric: 0=verbose, 1=info, 2=warning, 3=error.
     contents.on("console-message", (_emEvent, level, message) => {
+      // In devtools mode log everything at warning+ so renderer errors are
+      // visible in the terminal without attaching a remote debugger.
+      if (DEVTOOLS_MODE && level >= 2) {
+        console.error("[renderer]", message);
+      }
       // Match warning (2) and error (3) — Chromium logs CSP
       // violations at one of these levels. Match the modern
       // "Refused to load" prefix OR the literal "Content Security

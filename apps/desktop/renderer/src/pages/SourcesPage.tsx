@@ -252,16 +252,37 @@ export default function SourcesPage() {
     }
   };
 
+  const [addError, setAddError] = useState<string | null>(null);
+
   const handleAdd = async () => {
     if (!folderPath.trim()) return;
-    if (addMode === "folder") {
-      await addFolder(folderPath.trim());
-    } else {
-      await addFile(folderPath.trim());
+    setAddError(null);
+    try {
+      if (addMode === "folder") {
+        await addFolder(folderPath.trim());
+      } else {
+        await addFile(folderPath.trim());
+      }
+      setFolderPath("");
+      setModalOpen(false);
+      refresh();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : String(err));
     }
-    setFolderPath("");
-    setModalOpen(false);
-    refresh();
+  };
+
+  const handleBrowse = async () => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) return;
+    const title =
+      addMode === "folder" ? "Choose a folder to index" : "Choose a file to index";
+    const result =
+      addMode === "folder"
+        ? await api.dialog.openDirectory({ title })
+        : await api.dialog.openFile({ title });
+    if (!result.canceled && result.filePath) {
+      setFolderPath(result.filePath);
+    }
   };
 
   const handleRemove = async (id: string) => {
@@ -292,7 +313,7 @@ export default function SourcesPage() {
               data-testid="connect-google-drive"
             >
               {driveStatus.connected
-                ? "Manage Google Drive"
+                ? "Google Drive Settings"
                 : "Connect Google Drive"}
             </Button>
             {driveStatus.connected && (
@@ -491,7 +512,11 @@ export default function SourcesPage() {
 
       <Modal
         isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          setModalOpen(false);
+          setFolderPath("");
+          setAddError(null);
+        }}
         title="Add Source"
       >
         <div
@@ -503,30 +528,68 @@ export default function SourcesPage() {
         >
           <Button
             variant={addMode === "folder" ? "primary" : "secondary"}
-            onClick={() => setAddMode("folder")}
+            onClick={() => {
+              setAddMode("folder");
+              setFolderPath("");
+            }}
           >
             Local Folder
           </Button>
           <Button
             variant={addMode === "file" ? "primary" : "secondary"}
-            onClick={() => setAddMode("file")}
+            onClick={() => {
+              setAddMode("file");
+              setFolderPath("");
+            }}
           >
             Local File
           </Button>
         </div>
-        <input
-          className="input"
-          placeholder={
-            addMode === "folder"
-              ? "Enter folder path (e.g., /home/user/docs)"
-              : "Enter file path (e.g., /home/user/report.md)"
-          }
-          value={folderPath}
-          onChange={(e) => setFolderPath(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleAdd();
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-sm)",
+            padding: "var(--spacing-sm)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--color-bg-elevated)",
+            border: "1px solid var(--color-border)",
           }}
-        />
+        >
+          <span
+            style={{
+              flex: 1,
+              fontFamily: "var(--font-family-mono, monospace)",
+              fontSize: "var(--font-size-sm)",
+              color: folderPath
+                ? "var(--color-text-body)"
+                : "var(--color-text-secondary)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {folderPath ||
+              (addMode === "folder"
+                ? "No folder selected"
+                : "No file selected")}
+          </span>
+          <Button variant="secondary" onClick={handleBrowse}>
+            {folderPath ? "Change" : "Browse…"}
+          </Button>
+        </div>
+        {addError && (
+          <p
+            style={{
+              color: "var(--color-danger, #ef4444)",
+              fontSize: "var(--font-size-sm)",
+              marginTop: "var(--spacing-sm)",
+            }}
+            data-testid="add-source-error"
+          >
+            {addError}
+          </p>
+        )}
         <div
           style={{
             display: "flex",
@@ -535,7 +598,14 @@ export default function SourcesPage() {
             marginTop: "var(--spacing-md)",
           }}
         >
-          <Button variant="secondary" onClick={() => setModalOpen(false)}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setModalOpen(false);
+              setFolderPath("");
+              setAddError(null);
+            }}
+          >
             Cancel
           </Button>
           <Button onClick={handleAdd} disabled={!folderPath.trim()}>
@@ -556,15 +626,65 @@ export default function SourcesPage() {
           style={{
             marginBottom: "var(--spacing-md)",
             fontSize: "var(--font-size-sm)",
+            color: "var(--color-text-secondary)",
           }}
         >
-          Provide an OAuth client created in Google Cloud Console (Desktop app
-          type). Tessera stores the resulting refresh token encrypted in the
-          platform keystore.
+          Connect your Google Drive to search and index your documents, sheets,
+          and files. Tessera only requests read-only access.
         </p>
+        <div
+          style={{
+            padding: "var(--spacing-md)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--color-bg-elevated)",
+            border: "1px solid var(--color-border)",
+            marginBottom: "var(--spacing-md)",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "var(--font-size-sm)",
+              fontWeight: "var(--font-weight-semibold)",
+              marginBottom: "var(--spacing-xs)",
+            }}
+          >
+            Quick setup (2 minutes)
+          </p>
+          <ol
+            style={{
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-text-secondary)",
+              paddingLeft: "var(--spacing-lg)",
+              lineHeight: 1.6,
+            }}
+          >
+            <li>
+              Open{" "}
+              <a
+                href="https://console.cloud.google.com/apis/credentials"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "var(--color-text-link)" }}
+              >
+                Google Cloud Console
+              </a>{" "}
+              and sign in
+            </li>
+            <li>Create a project (or pick an existing one)</li>
+            <li>
+              Enable the <strong>Google Drive API</strong> under APIs &amp;
+              Services
+            </li>
+            <li>
+              Create credentials: <strong>OAuth client ID</strong> &rarr;{" "}
+              <strong>Desktop app</strong>
+            </li>
+            <li>Copy the Client ID and Client Secret here</li>
+          </ol>
+        </div>
         <input
           className="input"
-          placeholder="Client ID"
+          placeholder="Client ID (e.g., 123456-abc.apps.googleusercontent.com)"
           value={driveAuthClientId}
           onChange={(e) => setDriveAuthClientId(e.target.value)}
           style={{ marginBottom: "var(--spacing-sm)" }}
@@ -613,7 +733,7 @@ export default function SourcesPage() {
               !driveAuthClientSecret.trim()
             }
           >
-            {driveAuthBusy ? "Authenticating…" : "Authenticate"}
+            {driveAuthBusy ? "Connecting…" : "Connect Drive"}
           </Button>
         </div>
       </Modal>
