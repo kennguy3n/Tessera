@@ -643,7 +643,6 @@ dependencies = [
 [[package]]
 name = "concept_graph"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
@@ -660,7 +659,6 @@ dependencies = [
 [[package]]
 name = "connector_framework"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
@@ -679,7 +677,6 @@ dependencies = [
 [[package]]
 name = "connectors"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "connector_framework",
@@ -845,7 +842,6 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "crypto"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1253,11 +1249,11 @@ dependencies = [
 [[package]]
 name = "evidence_store"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
  "inference_router",
+ "libc",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "rusqlite",
@@ -2306,7 +2302,6 @@ checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 [[package]]
 name = "inference_router"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
@@ -2744,7 +2739,6 @@ dependencies = [
 [[package]]
 name = "memory_manager"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
@@ -3133,12 +3127,13 @@ dependencies = [
 [[package]]
 name = "observation_engine"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
  "evidence_store",
+ "inference_router",
  "memory_manager",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -3327,7 +3322,6 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "permission_service"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
@@ -4611,7 +4605,6 @@ dependencies = [
 [[package]]
 name = "synthesis_pipeline"
 version = "1.2.0"
-source = "git+https://github.com/kennguy3n/knowledge?rev=02050cd1aada1dbbdb83de320f69abaf6a87a361#02050cd1aada1dbbdb83de320f69abaf6a87a361"
 dependencies = [
  "chrono",
  "crypto",
